@@ -1,0 +1,84 @@
+{
+  "_provenance": "Hand-constructed so each scenario's expected decision follows from checkable arithmetic on the fixture's own return series -- no producer-computed dollar/rate/percent values are pinned (feedback_no_hardcoded_test_values). Compounding uses the shipped simple-return convention: prod(1 + r/100) - 1 over a pct-scale series (composer_backtest_client._extract_returns docstring; analytics.compute_quantstats_metrics pct-scale-in contract). backtest_mdd_pct and the forward-MDD comparison both use POSITIVE percentage magnitude (see .claude/tdd-handoff.md unit-convention correction against analytics.py:441-443 -- qs_stats.max_drawdown returns a NEGATIVE fraction).",
+  "_design_refs": [
+    "feature-plans/strategy-incubation-gate.md AC-4 (promotion criteria, early-MDD-fail)",
+    ".claude/tdd-handoff.md - Promotion evaluation section",
+    "analytics.py:348-447 (compute_quantstats_metrics)",
+    "advisors/backtest_gate_engine.py (SPY-baseline date-alignment shape this mirrors)"
+  ],
+
+  "scenarios": {
+    "promotes_when_alpha_nonnegative_and_mdd_within_multiplier": {
+      "_description": "Window-complete (63 trading days). Candidate compounds to a clearly higher cumulative return than SPY every 3-day block ([0.40,0.10,-0.15] vs [0.10,0.05,-0.05] pct/day, repeated 21x) -- alpha strictly positive. Worst single day is -0.15%, so forward MDD stays far below the 12.0% breach threshold (1.5 x 8.0).",
+      "forward_return_pct_block": [0.40, 0.10, -0.15],
+      "spy_return_pct_block": [0.10, 0.05, -0.05],
+      "block_repeats": 21,
+      "backtest_mdd_pct": 8.0,
+      "days_observed": 63,
+      "expected_decision": "PROMOTED",
+      "expected_reason": null
+    },
+
+    "fails_when_forward_alpha_negative_at_window_complete": {
+      "_description": "Window-complete. Candidate compounds NEGATIVE every 3-day block ([-0.20,-0.05,0.05] pct/day) while SPY compounds positive ([0.10,0.05,-0.02] pct/day) -- alpha strictly negative. Drawdown stays modest (~4-5%, well under the 12.0% threshold) so this is unambiguously an alpha failure, not an MDD breach.",
+      "forward_return_pct_block": [-0.20, -0.05, 0.05],
+      "spy_return_pct_block": [0.10, 0.05, -0.02],
+      "block_repeats": 21,
+      "backtest_mdd_pct": 8.0,
+      "days_observed": 63,
+      "expected_decision": "FAILED",
+      "expected_reason_is_mdd_breach": false
+    },
+
+    "early_fails_on_mdd_breach_before_window_complete": {
+      "_description": "Only 10 of 63 trading days observed (window incomplete) but a single -9.0% day breaches 1.5x the 5.0% backtest MDD (threshold 7.5%) -- AC-4's early-fail-any-time rule must fire immediately, not wait for the window.",
+      "forward_return_pct": [0.1, 0.1, 0.1, 0.1, -9.0, 0.1, 0.1, 0.1, 0.1, 0.1],
+      "spy_return_pct": [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
+      "backtest_mdd_pct": 5.0,
+      "days_observed": 10,
+      "expected_decision": "FAILED",
+      "expected_reason": "mdd_breach"
+    },
+
+    "defers_when_benchmark_missing": {
+      "_description": "Window-complete (63 days) with a clean positive candidate series and safe MDD, but only 1 of 63 SPY-paired observations is non-null -- below the minimum-2 SPY-paired-observations floor. Promotion must DEFER (stay INCUBATING), never promote/fail benchmark-blind, even though day-count and MDD alone would otherwise qualify.",
+      "forward_return_pct": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+      "spy_return_pct": [0.05, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+      "backtest_mdd_pct": 20.0,
+      "days_observed": 63,
+      "expected_decision": "DEFERRED",
+      "expected_reason": null
+    },
+
+    "continues_incubating_when_window_incomplete_and_no_early_fail": {
+      "_description": "Only 20 of 63 trading days observed, steady mild-positive candidate, no MDD breach (backtest_mdd_pct=10.0 is generous against a near-zero drawdown series) -- no promotion decision yet, status must remain INCUBATING (decision CONTINUE), neither promoted nor failed.",
+      "forward_return_pct": [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+      "spy_return_pct": [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05],
+      "backtest_mdd_pct": 10.0,
+      "days_observed": 20,
+      "expected_decision": "CONTINUE",
+      "expected_reason": null
+    },
+
+    "exactly_at_alpha_zero_boundary_promotes": {
+      "_description": "Candidate and SPY use the IDENTICAL 63-day return series (block [0.3,-0.1,0.05] repeated 21x) so cumulative alpha is exactly 0.0 by construction (same arithmetic, same operands). AC-4's promotion rule is 'alpha >= 0' (inclusive) -- exactly-zero must PROMOTE, not defer or fail.",
+      "forward_return_pct_block": [0.3, -0.1, 0.05],
+      "spy_return_pct_block": [0.3, -0.1, 0.05],
+      "block_repeats": 21,
+      "backtest_mdd_pct": 8.0,
+      "days_observed": 63,
+      "expected_decision": "PROMOTED",
+      "expected_reason": null
+    },
+
+    "exactly_at_mdd_multiplier_boundary_does_not_early_fail": {
+      "_description": "A single-day drop of exactly -15.0% immediately after a peak produces a drawdown of EXACTLY 15.0% (peak * (1 - 0.15) / peak = 0.85, independent of the peak's absolute value). backtest_mdd_pct=10.0 -> threshold exactly 15.0. The breach rule is strict '>' (never '>='), so landing exactly on the threshold must NOT early-fail. Window incomplete (5 of 63 days) and no benchmark-missing issue -> expected decision is CONTINUE, proving the boundary is inclusive-safe (not a breach) rather than accidentally PROMOTED/FAILED.",
+      "forward_return_pct": [1.0, -15.0, 1.0, 0.5, 0.3],
+      "spy_return_pct": [0.1, 0.1, 0.1, 0.1, 0.1],
+      "backtest_mdd_pct": 10.0,
+      "days_observed": 5,
+      "expected_decision": "CONTINUE",
+      "expected_reason": null
+    }
+  }
+}

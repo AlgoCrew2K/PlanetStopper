@@ -1,13 +1,13 @@
 # advisors/strategy_builder_engine
 
-> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, persists survivors as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`; (AC-10) also queues survivors for the Frontrunner Builder's shared approval-to-Composer-create path.
+> Phase-2 Strategy Builder proposal engine: drives the real C1→C2→C3 builder pipeline to generate candidates, backtests them, gates via Harvey-Liu FDR + C5b PBO veto + SPY-OOS baseline, registers gate-survivors into the Strategy Incubation Gate's forward-tracking ledger (survivors no longer surface as immediate recommendations — see "Step 4b" below), persists survivors and rejected candidates as advisory observations, and (R2-1) carries a run-level provenance object — generation model, mode, injected-evidence manifest, run-id — on every `ProposalRun`; (AC-10) also queues survivors for the Frontrunner Builder's shared approval-to-Composer-create path (unaffected by incubation status — see "Step 4b" below).
 
 **Source:** `advisors/strategy_builder_engine.py`
-**Last updated:** 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-030 -- `propose_strategies`/`_persist_survivor`/`_persist_rejected` gain `invocation_source`, an additive advisory-DB write-attribution field; see the new F-030 section below). Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder AC-10 retrofit `f1592a2` integrated with R2-1 provenance; 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now) ALSO: 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
+**Last updated:** 2026-07-25 (strategy-incubation-gate, `DE-INCUBATION-GATE-001` -- Step 4b: every screened survivor is now registered into the Strategy Incubation Gate's forward-tracking ledger (`advisors.incubation.admit_candidate`) BEFORE the pre-existing Step-5 persist -- gate-survivors no longer surface as immediate operator recommendations; see the new "Step 4b" section below. Prior: 2026-07-21 (fix-ops-cluster, `DE-OPS-CLUSTER-001` F-030 -- `propose_strategies`/`_persist_survivor`/`_persist_rejected` gain `invocation_source`, an additive advisory-DB write-attribution field; see the new F-030 section below). Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder AC-10 retrofit `f1592a2` integrated with R2-1 provenance; 2026-07-13 (R2-1 -- `ProposalRun.run_id`/`.provenance` + `propose_strategies(reasoning_context=, reasoning_manifest=, run_id=)`, `DE-ADVISOR-R2-1-001`; Internal Dependencies corrected per r2-review's Finding-2 (transitive `alpha_bot_execution` import via the new `import ai_advisor` edge) -- see below; prior: advisor-outage-degrade: honest backtest_unavailable rollup, DE-SB-DEGRADE-001; also reconciled a pre-existing gap -- ProposalRun.error_category, added in R1 AC-11, was never documented here until now) ALSO: 2026-07-11 (AC-10 Frontrunner Builder retrofit, `f1592a2`; prior: 2026-06-20)
 
 ## Overview
 
-`advisors/strategy_builder_engine.py` proposes new candidate symphonies from scratch (versus engines that mutate live ones). The pipeline is: generate candidate trees via the real C1→C2→C3 builder (C4 body swap) and/or caller-injected community strategies → backtest via `composer_backtest_client` (1 req/s) → gate the full batch via `backtest_gate_engine.evaluate_candidate_batch` (Harvey-Liu BHY FDR, **C5b: + PBO veto + real SPY-OOS baseline**) → apply `ScreenConfig` post-gate presentation filters → persist survivors and rejected candidates as advisory observations.
+`advisors/strategy_builder_engine.py` proposes new candidate symphonies from scratch (versus engines that mutate live ones). The pipeline is: generate candidate trees via the real C1→C2→C3 builder (C4 body swap) and/or caller-injected community strategies → backtest via `composer_backtest_client` (1 req/s) → gate the full batch via `backtest_gate_engine.evaluate_candidate_batch` (Harvey-Liu BHY FDR, **C5b: + PBO veto + real SPY-OOS baseline**) → apply `ScreenConfig` post-gate presentation filters → **register each screened survivor into the Strategy Incubation Gate's forward-tracking ledger** (Step 4b, `DE-INCUBATION-GATE-001`, 2026-07-25 -- gate-survivors no longer surface as immediate operator recommendations; see the dedicated section below) → persist survivors and rejected candidates as advisory observations.
 
 Off-execution-path (never imported from `alpha_bot_execution.py`). Advisory-only (`is_advisory_only=1` on all persisted observations). Never raises — all exceptions surface as `ProposalRun.error`.
 
@@ -165,7 +165,10 @@ Step 2:  run_backtest per candidate — per-candidate try/except (backtest_error
 Step 3:  evaluate_candidate_batch(ALL backtested candidates, spy_returns_fn=lambda: _spy_returns_dict)
          C5b: + batch PBO veto (dated_returns) + SPY-OOS-fold baseline (spy_returns_fn)
 Step 4:  _passes_screens on gate survivors only
-Step 5:  persist survivors + rejected candidates
+Step 4b: admit each screened survivor into the Strategy Incubation Gate ledger
+         (advisors.incubation.admit_candidate) -- single wiring seam, DE-INCUBATION-GATE-001
+Step 5:  persist survivors + rejected candidates (raw_response gains an additive
+         candidate_hash key -- never a frozen incubation status, see below)
 ```
 
 ---
@@ -319,6 +322,46 @@ The feature plan's AC-9 reads "bounded so a large real tree can't blow `build_pl
 
 ---
 
+## Step 4b — Strategy Incubation Gate Admission (`DE-INCUBATION-GATE-001`, 2026-07-25)
+
+**Gate-survivors no longer surface as immediate operator recommendations.** Before this cycle, every candidate that reached Step 5 (persisted as an advisory observation) was immediately visible on the Strategy Builder tab as a recommendation. This closed the third and final graduated gate from `docs/research/methodology-validation-2026-07.md` (recommendation 3): a candidate tree is itself LLM-generated, so a purely-retrospective backtest gate cannot rule out the model having pattern-matched training-era market history. Step 4b intercepts every screened survivor and registers it into `advisors.incubation`'s forward-tracking ledger as `INCUBATING` instead — only candidates that clear a genuinely forward (paper, zero-capital, zero-execution) evaluation window are later `PROMOTED` to recommendation status. See `docs/generated/advisors_incubation.md` for the full ledger/tick/promotion design and the memorization-free rationale.
+
+**Single wiring seam, not two.** Both the on-demand route (`POST /ai-advisor/strategy-builder/run`) and the weekly scheduler (`advisors/strategy_builder_scheduler.py`) already funnel through this one function. Admission is wired inside `propose_strategies`'s existing Step-5 loop, not duplicated at the route or the scheduler — a `ga3-tw` recon finding caught that the original plan text described two wiring points, which would have double-admitted every scheduler-sourced survivor. See `docs/generated/advisors_incubation.md`'s "Admission — single wiring seam" section for the full account.
+
+**What Step 4b does, per screened survivor, before Step 5:**
+
+```python
+_hash = incubation.candidate_hash(info.tree)
+_backtest_mdd_pct = _resolve_admission_mdd_baseline(info.metrics.get("max_drawdown"))
+if _backtest_mdd_pct is None:
+    # review Finding 1: decline admission, never a coerced 0.0 baseline.
+    logger.info("propose_strategies: candidate %s declined incubation admission ...", cid)
+    continue
+_admission = incubation.admit_candidate(
+    candidate_hash=_hash,
+    tree_json=json.dumps(info.tree),
+    objective=info.params.get("objective", ""),
+    provenance=info.template_id,
+    backtest_mdd_pct=_backtest_mdd_pct,
+)
+```
+
+Survivors are processed in `oos_alpha` descending order (`sorted(screened_survivors, key=lambda gr: gr.oos_alpha, reverse=True)`) — this is what makes the incubation ledger's `MAX_INCUBATING` cap (20, see `docs/generated/database.md`) exclude the LOWEST-`oos_alpha` candidates first when a batch would otherwise overflow it, rather than an arbitrary batch-order truncation. D-1: one candidate's admission failure (caught in its own `try/except`) never breaks another candidate's admission, and never breaks the pre-existing Step-5 `_persist_survivor` call below it — same try/except-and-log pattern as the shipped `insert_frontrunner_proposal` precedent (see "Frontrunner Builder Retrofit" above).
+
+### `_resolve_admission_mdd_baseline(raw_mdd: float | None) -> float | None` (review Finding 1, `7173d269`, 2026-07-25)
+
+Pure function extracted from the inline `abs(...) * 100.0 if ... else 0.0` expression Step 4b originally used. Converts a candidate's backtest `max_drawdown` (quantstats' negative-fraction convention) into the ledger's positive-pct-magnitude convention -- `-0.08` (an 8% drawdown) converts to `8.0` -- **or signals "decline this candidate's admission entirely" by returning `None` when the input itself is `None`.** Step 4b treats a `None` return as a decline: it logs the reason and `continue`s to the next candidate, never calling `admit_candidate`. A genuinely real `0.0` drawdown (a monotonically non-decreasing candidate) is NOT treated as missing -- only an actual `None` input triggers the decline path; `0.0` in still converts to `0.0` out.
+
+**Why this replaced the prior `... else 0.0` coercion:** the original code substituted a `0.0` baseline for a missing MDD as "a conservative choice." Review Finding 1 (`ga3-rev`) correctly identified this as backwards -- a fabricated `0.0` baseline is not conservative, it manufactures a false result: `evaluate_promotion`'s early-fail check (see `docs/generated/advisors_incubation.md`) compares forward MDD against `INCUBATION_MDD_BREACH_MULT * backtest_mdd_pct`, so a `0.0` baseline would trip an `mdd_breach` verdict the very first time the candidate showed ANY nonzero forward drawdown -- misreporting genuinely missing data as a risk-exceeded finding, not "erring safe."
+
+**Severity, as re-graded by `ga3-tw`'s adversarial verification (frozen in `.claude/tdd-handoff.md`) -- read this precisely, it is deliberately NOT "closes a live bug":** as of this cycle, a candidate whose `info.metrics["max_drawdown"]` is `None` **cannot reach Step 4b at all** via the real `propose_strategies()` call path in production. `_passes_screens` (`strategy_builder_engine.py:516-518`) already fails closed on ANY `None` metric earlier in the pipeline, unconditionally, with no `screen_config`-dependent bypass -- pinned by the pre-existing `tests/advisors/test_strategy_builder_engine.py::TestAdversarialCycle3::test_passes_screens_returns_false_when_max_drawdown_is_none`, which was independently verified GREEN before this fix landed. `_resolve_admission_mdd_baseline`'s `None`-handling is therefore **second-layer defense, not a fix for a currently-exploitable bug** -- correct, honest defensive code that ensures the seam never manufactures a fabricated verdict if a future refactor ever changes call ordering, changes `_passes_screens`'s `None`-handling, or adds an alternate entry point that bypasses screens. `evaluate_promotion` itself is byte-unchanged by this fix.
+
+**`_persist_survivor` gains one new optional kwarg, `candidate_hash: str | None = None`.** Threaded through from Step 4b's result (`_candidate_hashes.get(cid)`, `None` for rejected candidates, which are never admitted). Stamped into `raw_response["candidate_hash"]` as the ONLY additive key this feature adds — deliberately **not** a frozen `"incubation_status"` key, because `advisor_observations` rows are append-only/immutable (no update/delete accessor exists): a status frozen at persist time would always read the admission-moment value and could never reflect a later promotion/failure. Status is instead computed LIVE at render/API time by joining this `candidate_hash` against the incubation ledger — see `app.py`'s `_incubation_badge`/`GET /api/incubation`/`ai_advisor_tab()` stamping in `docs/generated/app.md`.
+
+**Frontrunner Builder queuing is unaffected.** `_persist_survivor`'s pre-existing, unconditional `insert_frontrunner_proposal` call (the AC-10 retrofit, "Frontrunner Builder Retrofit" above) still fires for every non-rejected candidate regardless of incubation status — Step 4b only gates the Strategy Builder tab's own recommendation badge. The Frontrunner Builder's separate operator-approval-to-Composer-create queue and its trigger condition are both byte-unchanged by this cycle.
+
+**No change to `evaluate_candidate_batch`, the FDR gate, `ScreenConfig`, or which candidates survive Step 3/Step 4.** Step 4b runs strictly after screening — it changes what happens to a survivor next (enters a forward-tracking ledger instead of becoming an immediate recommendation), never which candidates ARE survivors.
+
 ## Internal Dependencies
 
 - `ai_advisor` — `_EMPTY_MANIFEST` (R2-1, module-level `import ai_advisor` at `strategy_builder_engine.py:21` — NOT a lazy/CC-2 import like the other `advisors.*` dependencies below; used only as the `provenance["evidence_injected"]` fallback default when `reasoning_manifest` is omitted). This module does NOT call `ai_advisor.build_reasoning_context` itself — that call happens at the route layer (see [app](app.md)); the engine only consumes the already-assembled `reasoning_context` string and `reasoning_manifest` dict as plain parameters.
@@ -331,6 +374,7 @@ The feature plan's AC-9 reads "bounded so a large real tree can't blow `build_pl
 - `advisors.composer_backtest_client` — `run_backtest` (1 req/s pacing; also used for SPY benchmark sourcing, Step 2a, AC-25)
 - `analytics` — `compute_quantstats_metrics`
 - `database` — `insert_advisor_observation`, `insert_frontrunner_proposal` (AC-10 retrofit)
+- `advisors.incubation` — `candidate_hash`, `admit_candidate` (Step 4b, `DE-INCUBATION-GATE-001` -- module-level `from advisors import incubation, symphony_schema` at `strategy_builder_engine.py:21`, NOT a lazy/CC-2 import, same top-level-import style as the `ai_advisor` dependency above; see `docs/generated/advisors_incubation.md`)
 
 **Direct imports at this file's own top level:** no `alpha_bot_execution`, `autotuner`, or execution-module import — verified by grepping this file directly.
 

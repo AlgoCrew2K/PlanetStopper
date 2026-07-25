@@ -928,6 +928,33 @@ def _run_lens_pipeline() -> None:
     t.start()
 
 
+def _incubation_tick_worker() -> None:
+    """Background worker that runs the Strategy Incubation Gate's daily tick.
+
+    Imported lazily to keep advisors.incubation off the execution path (CC-2).
+    D-1 error contract: only type(exc).__name__ appears in log records at WARNING+.
+    """
+    try:
+        from advisors.incubation import run_incubation_tick  # lazy — not module-level (CC-2)
+
+        run_incubation_tick()
+        _daemon_log.info("Incubation tick complete.")
+    except Exception as exc:
+        _daemon_log.error("Incubation tick worker failed: %s", type(exc).__name__)
+
+
+def _run_incubation_tick() -> None:
+    """Non-blocking daily off-hours wrapper for the incubation tick (AC-3).
+
+    Spawns a daemon thread so the scheduler thread returns immediately —
+    the tick never blocks the 1-minute execution path (arch constraint 1).
+    """
+    import threading
+
+    t = threading.Thread(target=_incubation_tick_worker, daemon=True, name="incubation-tick")
+    t.start()
+
+
 def run_scheduler():
     schedule.every().minute.at(":00").do(threaded_trigger)
     schedule.every().minute.at(":00").do(_refresh_account_totals)
@@ -935,6 +962,9 @@ def run_scheduler():
     # Component 7+8: daily off-hours lens pipeline — Market Prism summary (CYCLE4-BRIEF.md).
     # Runs at 03:00 (off-hours) so it never overlaps the live market-hours execution path.
     schedule.every().day.at("03:00").do(_run_lens_pipeline)
+    # Strategy Incubation Gate daily tick — staggered 30 minutes after the lens
+    # pipeline slot so the two off-hours jobs never contend for the same minute.
+    schedule.every().day.at("03:30").do(_run_incubation_tick)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -3399,6 +3429,119 @@ def guard_alpha_summary():
     )
 
 
+def _incubation_badge(row: dict) -> dict:
+    """Compute a human-readable badge label + BEM modifier for one strategy_incubation
+    ledger row (AC-5). Pure, no I/O -- shared by GET /api/incubation and the Strategy
+    Builder persisted-survivor chip stamping in ai_advisor_tab() so wording never
+    drifts between the two render sites. The caller is responsible for sourcing `row`
+    LIVE (database.get_incubation_overview()) on every call -- never from a frozen
+    advisor_observations field (AC-5 amendment: those rows are append-only/immutable).
+
+    INCUBATION_WINDOW_TRADING_DAYS is lazily imported from advisors.incubation (CC-2)
+    inside a try/except: if that module isn't present yet the "of N" suffix is simply
+    omitted from the INCUBATING label -- an honest degrade, never a duplicated
+    magic-number fallback and never a raise.
+    """
+    status = (row.get("status") or "").upper()
+    reason = row.get("status_reason")
+    days = row.get("days_observed")
+    # days_observed is a SQL COUNT(*) -- always a real int in production. A
+    # non-finite value (None, or a NaN injected upstream) degrades to 0 for
+    # display rather than leaking a non-numeric token into the label text.
+    _days_is_nonfinite = days is None or (isinstance(days, float) and math.isnan(days))
+    days_display = 0 if _days_is_nonfinite else days
+
+    if status == "PROMOTED":
+        modifier = "promoted"
+        label = "Promoted — recommended"
+    elif status == "FAILED":
+        modifier = "failed"
+        label = f"Failed incubation ({reason})" if reason else "Failed incubation"
+    elif status == "EXPIRED":
+        modifier = "expired"
+        label = f"Expired ({reason})" if reason else "Expired"
+    else:
+        # INCUBATING (or an unrecognized future status -- degrades to the same
+        # "incubating"-shaped display rather than fabricating a 5th modifier).
+        modifier = "incubating"
+        try:
+            from advisors.incubation import (
+                INCUBATION_WINDOW_TRADING_DAYS,  # noqa: PLC0415 -- CC-2 lazy
+            )
+
+            label = f"Incubating — day {days_display} of {INCUBATION_WINDOW_TRADING_DAYS}"
+        except Exception:
+            label = f"Incubating — day {days_display}"
+
+    return {"label": label, "modifier": modifier}
+
+
+@app.route("/api/incubation")
+def api_incubation():
+    """Return the forward-incubation ledger for the Strategy Builder tab (AC-7).
+
+    Read-only -- calls database.get_incubation_overview() fresh on every request,
+    no caching anywhere in this path (two requests straddling a real status
+    transition must return different values -- see
+    tests/app/test_incubation_route.py::TestIncubationRouteNoStaleCaching).
+    Covered by the global _auth_before_request hook (no extra decorator needed,
+    same as guard_alpha_summary) -- NOT in _SETTINGS_WRITE_ALLOWLIST, no
+    LIVE_EXECUTION interaction.
+
+    Response shape: {"incubating": [{candidate_hash, status, status_reason,
+    days_observed, admitted_at, promoted_at, objective, provenance, badge_label,
+    badge_modifier}, ...]}. tree_json is stored server-side only and is NEVER
+    read into this projection -- no tree exfil via the API (Strategy Builder
+    already has its own tree display path with its own controls).
+
+    Empty ledger -> {"incubating": []}, never a 500. A ledger read failure
+    degrades to the same empty-list shape (this route IS the one section it
+    covers) rather than 500ing.
+
+    Strict-JSON safe: days_observed is sanitized through a local NaN/Infinity
+    guard (RFC 8259 -- json.dumps would otherwise emit the bare tokens, which a
+    real browser's response.json() rejects for the WHOLE response) before it
+    ever reaches jsonify(), mirroring the shipped guard_alpha_preconditions
+    pattern (this file's other _json_safe_float, app.py:3128).
+    """
+
+    def _json_safe_float(value):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        return value
+
+    try:
+        rows = database.get_incubation_overview()
+    except Exception:
+        _daemon_log.debug("api_incubation: ledger read failed", exc_info=True)
+        rows = []
+
+    out = []
+    for row in rows:
+        try:
+            badge = _incubation_badge(row)
+            out.append(
+                {
+                    "candidate_hash": row.get("candidate_hash"),
+                    "status": row.get("status"),
+                    "status_reason": row.get("status_reason"),
+                    "days_observed": _json_safe_float(row.get("days_observed")),
+                    "admitted_at": row.get("admitted_at"),
+                    "promoted_at": row.get("promoted_at"),
+                    "objective": row.get("objective"),
+                    "provenance": row.get("provenance"),
+                    "badge_label": badge["label"],
+                    "badge_modifier": badge["modifier"],
+                }
+            )
+        except Exception:
+            # One malformed row must never break the whole route (AC-6).
+            _daemon_log.debug("api_incubation: row degraded", exc_info=True)
+            continue
+
+    return jsonify({"incubating": out})
+
+
 @app.route("/api/exit-turnover")
 def exit_turnover():
     """Return per-symphony exit-trigger turnover stats + an estimated annual
@@ -5538,6 +5681,39 @@ def ai_advisor_tab():
             }
             # Inject sparkline points directly onto obs for template rendering.
             _obs["sparkline_points"] = _rr.get("equity_curve_downsampled")
+
+    # ------------------------------------------------------------------ #
+    # Strategy incubation gate: live-join each survivor's persisted        #
+    # raw_response.candidate_hash against the incubation ledger, computed  #
+    # FRESH on every request (AC-5 amendment -- advisor_observations rows  #
+    # are append-only/immutable, so status is never read from a frozen     #
+    # field; see .claude/tdd-handoff.md "raw_response contract"). Mirrors  #
+    # the RF-1 per_lens_digest in-place-stamp precedent above. A survivor  #
+    # with no candidate_hash (pre-feature row) or no matching ledger row   #
+    # (admission failed/capped) is left un-stamped -- the template renders #
+    # no chip rather than fabricating a status.                            #
+    # ------------------------------------------------------------------ #
+    if sb_observations:
+        try:
+            _incubation_by_hash = {
+                _row.get("candidate_hash"): _row for _row in database.get_incubation_overview()
+            }
+        except Exception:
+            _incubation_by_hash = {}
+        for _obs in sb_observations:
+            _rr = _obs.get("raw_response")
+            if not isinstance(_rr, dict):
+                continue
+            _c_hash = _rr.get("candidate_hash")
+            _ledger_row = _incubation_by_hash.get(_c_hash) if _c_hash else None
+            if _ledger_row is None:
+                continue
+            try:
+                _badge = _incubation_badge(_ledger_row)
+            except Exception:
+                continue
+            _obs["_incubation_badge_label"] = _badge["label"]
+            _obs["_incubation_badge_modifier"] = _badge["modifier"]
 
     # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #

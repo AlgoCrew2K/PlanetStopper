@@ -619,6 +619,49 @@
         .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem; }
         .card-candidate-id { font-size: 0.875rem; font-weight: 700; color: var(--studio-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
+        /* Strategy incubation gate status chip — mirrors .prism-sentiment-chip's
+           shape exactly. Status is computed LIVE via a candidate_hash join at
+           render/API time (never a frozen field on the observation row) — see
+           .claude/tdd-handoff.md "raw_response contract" (AC-5 amendment).
+           Only --promoted carries the actionable/recommended visual weight;
+           the other three statuses stay informational-only (no new action
+           affordances — Strategy Builder survivor cards remain
+           advisory/ZERO-action per the existing house convention). */
+        .incubation-status-chip {
+            display: inline-block;
+            padding: 0.2rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            border: 1px solid var(--studio-border);
+            margin-top: 0.5rem;
+        }
+
+        .incubation-status-chip--incubating {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
+        }
+
+        .incubation-status-chip--promoted {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: rgba(31, 122, 77, 0.12);
+            font-weight: 800;
+        }
+
+        .incubation-status-chip--failed {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
+        }
+
+        .incubation-status-chip--expired {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-warn, var(--studio-border));
+            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.05));
+        }
+
         /* Objective strip */
         .objective-strip {
             background: var(--studio-accent-tint, rgba(46,165,102,0.06));
@@ -1891,6 +1934,15 @@
                         <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
                         <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
                     </div>
+                    {# Forward incubation status chip — only rendered when app.py's
+                       ai_advisor_tab() found a live ledger match for this survivor's
+                       candidate_hash; absent for pre-feature rows or a failed/capped
+                       admission (honest — never a fabricated status). #}
+                    {% if obs._incubation_badge_modifier %}
+                    <span class="incubation-status-chip incubation-status-chip--{{ obs._incubation_badge_modifier }}"
+                          data-testid="incubation-status-chip"
+                          data-candidate-hash="{{ rr.get('candidate_hash', '') | e }}">{{ obs._incubation_badge_label | e }}</span>
+                    {% endif %}
                     {{ render_sb_sparkline(obs.sparkline_points) }}
                     <div class="objective-strip" data-testid="objective-strip">
                         {% set obj = rr.get('objective', '') %}

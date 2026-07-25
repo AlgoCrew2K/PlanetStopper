@@ -1750,6 +1750,7 @@ _MIGRATION_FILES = [
     "034_frontrunner_proposals.sql",
     "035_sleeves.sql",
     "036_sleeve_rule_fires.sql",
+    "037_strategy_incubation.sql",
 ]
 
 
@@ -4676,6 +4677,293 @@ def count_uploaded_frontrunner_proposals() -> int:
     row = cursor.fetchone()
     conn.close()
     return int(row[0]) if row and row[0] is not None else 0
+
+
+# --- 037: Strategy Incubation Gate ---
+# Layering: database.py never imports FROM advisors.* (backwards-layering /
+# circular-import risk — advisors/incubation.py imports FROM database.py, not the
+# other way around). register_incubation_candidate()'s cap and refractory checks
+# run INSIDE this module, so their two operator-knob constants live here (the other
+# three incubation constants — INCUBATION_WINDOW_TRADING_DAYS,
+# INCUBATION_MDD_BREACH_MULT, INCUBATION_MAX_FETCH_FAILURES — are tick/promotion-only
+# and live in advisors/incubation.py). Same house convention as math_engine.py's
+# no-magic-numbers rule. Both are operator knobs — NEVER Optuna/advisor-tunable.
+MAX_INCUBATING = 20  # cap on concurrently INCUBATING rows
+INCUBATION_REFRACTORY_DAYS = 90  # a FAILED or EXPIRED hash cannot be re-admitted for this many days
+
+_STRATEGY_INCUBATION_COLUMNS = [
+    "id",
+    "candidate_hash",
+    "tree_json",
+    "objective",
+    "provenance",
+    "admitted_at",
+    "backtest_mdd_pct",
+    "status",
+    "status_reason",
+    "status_changed_at",
+    "promoted_at",
+]
+
+
+def _incubation_within_refractory_window(status_changed_at: "str | None") -> bool:
+    """True if status_changed_at is within INCUBATION_REFRACTORY_DAYS of now (UTC).
+
+    status_changed_at is a TEXT column written by set_incubation_status() via
+    SQLite's datetime('now') (format 'YYYY-MM-DD HH:MM:SS', UTC). A missing
+    timestamp on a FAILED/EXPIRED row should never happen via the public accessors
+    (set_incubation_status always stamps it on every transition) — treated here as
+    "elapsed" (permits reentry) rather than blocking forever on a data anomaly.
+    """
+    if status_changed_at is None:
+        return False
+    changed = datetime.strptime(status_changed_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+    return (datetime.now(UTC) - changed) < timedelta(days=INCUBATION_REFRACTORY_DAYS)
+
+
+def register_incubation_candidate(
+    candidate_hash: str,
+    tree_json: str,
+    objective: str,
+    provenance: str,
+    backtest_mdd_pct: "float | None",
+) -> dict:
+    """Admit a candidate into the incubation ledger, or no-op per the idempotency/
+    refractory/cap contract (AC-2). Returns {"admitted": bool, "status": str | None,
+    "reason": str | None}.
+
+    - No existing row: cap-checked INSERT. reason=None on success,
+      "cap_exceeded" on refusal (count(status='INCUBATING') >= MAX_INCUBATING).
+    - Existing row INCUBATING or PROMOTED: permanent no-op, clock never resets.
+      reason="already_tracked".
+    - Existing row FAILED or EXPIRED, still within INCUBATION_REFRACTORY_DAYS of
+      status_changed_at: no-op. reason="refractory_window".
+    - Existing row FAILED or EXPIRED, refractory window elapsed: cap-checked
+      UPDATE-in-place (candidate_hash is UNIQUE, so this is an UPDATE, never a
+      second INSERT) — a genuinely fresh incubation attempt with a RESET clock.
+      reason="refractory_reentry" on success, "cap_exceeded" on refusal.
+
+    Write path (get_connection()), parameterized SQL throughout.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        row = cursor.execute(
+            "SELECT status, status_changed_at FROM strategy_incubation WHERE candidate_hash = ?",
+            (candidate_hash,),
+        ).fetchone()
+
+        if row is not None:
+            existing_status, status_changed_at = row
+            if existing_status in ("INCUBATING", "PROMOTED"):
+                return {"admitted": False, "status": existing_status, "reason": "already_tracked"}
+
+            # existing_status in ("FAILED", "EXPIRED") — EXPIRED treated identically
+            # to FAILED for the refractory window (ga3-tw coordination decision,
+            # .claude/tdd-handoff.md "Idempotency + refractory rule").
+            if _incubation_within_refractory_window(status_changed_at):
+                return {"admitted": False, "status": existing_status, "reason": "refractory_window"}
+
+            incubating_count = cursor.execute(
+                "SELECT COUNT(*) FROM strategy_incubation WHERE status = 'INCUBATING'"
+            ).fetchone()[0]
+            if incubating_count >= MAX_INCUBATING:
+                return {"admitted": False, "status": existing_status, "reason": "cap_exceeded"}
+
+            cursor.execute(
+                "UPDATE strategy_incubation SET tree_json = ?, objective = ?, provenance = ?, "
+                "backtest_mdd_pct = ?, status = 'INCUBATING', admitted_at = datetime('now'), "
+                "status_reason = NULL, status_changed_at = NULL, promoted_at = NULL "
+                "WHERE candidate_hash = ?",
+                (tree_json, objective, provenance, backtest_mdd_pct, candidate_hash),
+            )
+            conn.commit()
+            return {"admitted": True, "status": "INCUBATING", "reason": "refractory_reentry"}
+
+        incubating_count = cursor.execute(
+            "SELECT COUNT(*) FROM strategy_incubation WHERE status = 'INCUBATING'"
+        ).fetchone()[0]
+        if incubating_count >= MAX_INCUBATING:
+            return {"admitted": False, "status": None, "reason": "cap_exceeded"}
+
+        cursor.execute(
+            "INSERT INTO strategy_incubation "
+            "(candidate_hash, tree_json, objective, provenance, backtest_mdd_pct) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (candidate_hash, tree_json, objective, provenance, backtest_mdd_pct),
+        )
+        conn.commit()
+        return {"admitted": True, "status": "INCUBATING", "reason": None}
+    finally:
+        conn.close()
+
+
+def append_incubation_day(
+    candidate_hash: str,
+    trading_day: str,
+    forward_return_pct: float,
+    spy_return_pct: "float | None",
+) -> bool:
+    """Record one candidate's forward return for one trading day; return True if a
+    new row was inserted, False if (candidate_hash, trading_day) already existed
+    (idempotent re-run safety — a tick re-run or same-day double-fire never
+    double-inserts, structural via the UNIQUE(candidate_hash, trading_day)
+    constraint + INSERT OR IGNORE). Write path (get_connection()), parameterized SQL.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR IGNORE INTO incubation_daily "
+            "(candidate_hash, trading_day, forward_return_pct, spy_return_pct) "
+            "VALUES (?, ?, ?, ?)",
+            (candidate_hash, trading_day, forward_return_pct, spy_return_pct),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_incubation_status(
+    candidate_hash: str,
+    status: str,
+    status_reason: "str | None" = None,
+) -> None:
+    """Dumb write — updates status, status_reason, status_changed_at=datetime('now'),
+    and promoted_at=datetime('now') iff status == "PROMOTED" (left untouched
+    otherwise). Valid-transition logic lives in advisors/incubation.py, not here
+    (same layering as set_symphony_live_mode). Write path (get_connection()).
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if status == "PROMOTED":
+            cursor.execute(
+                "UPDATE strategy_incubation SET status = ?, status_reason = ?, "
+                "status_changed_at = datetime('now'), promoted_at = datetime('now') "
+                "WHERE candidate_hash = ?",
+                (status, status_reason, candidate_hash),
+            )
+        else:
+            cursor.execute(
+                "UPDATE strategy_incubation SET status = ?, status_reason = ?, "
+                "status_changed_at = datetime('now') WHERE candidate_hash = ?",
+                (status, status_reason, candidate_hash),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_incubating() -> "list[dict]":
+    """All strategy_incubation rows with status='INCUBATING', oldest admitted_at
+    first. Read path (get_ro_connection(), architecture constraint 5). Never raises
+    for an empty ledger — returns [].
+    """
+    conn = get_ro_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            + ", ".join(_STRATEGY_INCUBATION_COLUMNS)
+            + " FROM strategy_incubation WHERE status = 'INCUBATING' ORDER BY admitted_at ASC"
+        )
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+    return [dict(zip(_STRATEGY_INCUBATION_COLUMNS, row)) for row in rows]
+
+
+def get_incubation_overview() -> "list[dict]":
+    """ALL strategy_incubation rows regardless of status, each augmented with
+    days_observed (a COUNT(*) over incubation_daily for that candidate_hash — pure
+    SQL aggregation, not a re-run of promotion decision logic; the already-persisted
+    status IS the decision — architecture constraint 5 "UI never reruns the engine"
+    refers to that decision). Read path (get_ro_connection()). Never raises for an
+    empty ledger — returns [].
+    """
+    conn = get_ro_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            + ", ".join(_STRATEGY_INCUBATION_COLUMNS)
+            + ", (SELECT COUNT(*) FROM incubation_daily d WHERE d.candidate_hash = "
+            "s.candidate_hash) AS days_observed FROM strategy_incubation s ORDER BY admitted_at ASC"
+        )
+        rows = cursor.fetchall()
+    finally:
+        conn.close()
+    columns = [*_STRATEGY_INCUBATION_COLUMNS, "days_observed"]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def record_incubation_fetch_outcome(candidate_hash: str, ok: bool) -> int:
+    """The ONLY sanctioned way advisors/incubation.py touches
+    strategy_incubation.fetch_failure_count — no raw SQL against that column from
+    outside database.py (added 2026-07-25, PM ruling, supersedes an earlier
+    first-pass "no new accessor" decision — see .claude/tdd-handoff.md).
+
+    ok=False (a fetch error, not a 422 — those go straight to
+    set_incubation_status(..., "EXPIRED", ...) and never call this) increments
+    fetch_failure_count by 1; ok=True (a successful fetch, regardless of whether it
+    yielded any new date keys) resets it to 0. Returns the RESULTING count after the
+    write, so the caller in advisors/incubation.py can compare it against
+    INCUBATION_MAX_FETCH_FAILURES in the same call, no second round-trip query.
+    Policy (the threshold comparison, what to do once the count is reached) stays in
+    advisors/incubation.py — this accessor only stores and returns the count, it
+    never reads INCUBATION_MAX_FETCH_FAILURES or decides EXPIRED itself (same
+    policy/storage split used everywhere else in this handoff). Write path
+    (get_connection()), parameterized SQL.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        if ok:
+            cursor.execute(
+                "UPDATE strategy_incubation SET fetch_failure_count = 0 WHERE candidate_hash = ?",
+                (candidate_hash,),
+            )
+        else:
+            cursor.execute(
+                "UPDATE strategy_incubation SET fetch_failure_count = fetch_failure_count + 1 "
+                "WHERE candidate_hash = ?",
+                (candidate_hash,),
+            )
+        conn.commit()
+        row = cursor.execute(
+            "SELECT fetch_failure_count FROM strategy_incubation WHERE candidate_hash = ?",
+            (candidate_hash,),
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    finally:
+        conn.close()
+
+
+def get_incubation_daily_series(candidate_hash: str) -> "tuple[list[float], list[float | None]]":
+    """Return (forward_return_pct, spy_return_pct) — two lists, ordered by
+    trading_day ASCENDING, index-aligned (index i in both lists is the same
+    trading_day, since both columns come from the same incubation_daily row).
+    spy_return_pct entries are None wherever that row's spy_return_pct column is
+    NULL (the SPY-missing degradation case) — never skipped/compacted, which would
+    misalign the two lists. Shaped to drop directly into evaluate_promotion's first
+    two positional args. Empty tuple of empty lists ([], []) for a candidate with
+    zero recorded days or an unknown hash — never raises. Read path
+    (get_ro_connection(), architecture constraint 5).
+    """
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute(
+            "SELECT forward_return_pct, spy_return_pct FROM incubation_daily "
+            "WHERE candidate_hash = ? ORDER BY trading_day ASC",
+            (candidate_hash,),
+        ).fetchall()
+    finally:
+        conn.close()
+    forward_return_pct = [row[0] for row in rows]
+    spy_return_pct = [row[1] for row in rows]
+    return forward_return_pct, spy_return_pct
 
 
 # Initialize tables on import

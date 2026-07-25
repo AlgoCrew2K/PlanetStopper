@@ -3,7 +3,7 @@
 > Client-side logic for the AI Advisor single-page SPA: in-place tab switching, suggestion card rendering with per-symphony assessment and lens-cache staleness stamp (AC-3), accept/reject lifecycle, autotune run feed, symphony selection, and Strategy Builder run/chat affordances.
 
 **Source:** `static/ai_advisor.js`
-**Last updated:** 2026-07-20 (fix-f023-perf-view, `DE-PERFVIEW-ID-MISMATCH`, F-023 -- `loadSymphonies()` now consumes `{id, name}` objects from `GET /api/performance/symphonies` (the endpoint's new contract, see `docs/generated/app.md`) instead of bare name strings, but deliberately keeps `sym.name` (not `sym.id`) as the option VALUE -- the accept/suggest flow's canonical key is the display name (`POST /ai-advisor/accept`'s `database.get_symphony_strategy`/`save_symphony_strategy` are `normalize_name(display_name)`-keyed with no hash resolution); an earlier draft of this fix used `sym.id` (the hash) here, matching `static/performance.js`'s picker, which silently broke Accept (a phantom hash-keyed `symphony_strategies` row instead of the real one) -- caught during the doc-audit pass before merge, corrected, zero server-side changes needed; see `DE-PERFVIEW-ID-MISMATCH` in `DECISIONS.md` and `BACKLOG.md` for a related pre-existing, out-of-scope `composer_symphony_id` gap surfaced during the same audit); prior: 2026-07-14 (branch-integration merge — frontrunner-builder wave-2 `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` DE-FRONTRUNNER-002 integrated with R2-1 provenance render; 2026-07-13 (R2-1, `DE-ADVISOR-R2-1-001`, commit `4063ec33`: `sbRunAnalysis()` gains a `data-testid="sb-live-generation-provenance"` render for the run-level generation-model/injected-evidence/run-id object -- see below; prior: advisor-outage-degrade AC-4/AC-5, `DE-SB-DEGRADE-001`, commit `14adb451`: `sbRunAnalysis()` gains the honest `backtest_unavailable` outage notice; prior: advisor-remediation-r1 Checkpoint-3, `DE-ADVISOR-R1-001`: `sbRunAnalysis()` gains consumption of the AC-7/AC-9/AC-11/AC-12 route-JSON fields; prior: advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch renders in-place instead of navigating away; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13) ALSO: 2026-07-11 (frontrunner-builder wave-2 -- DE-FRONTRUNNER-002: `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` added for the Frontrunner Builder tab; prior: 2026-06-29 DE-ADVISOR-LATENCY AC-3, `#advisor-lens-as-of` staleness stamp populated on suggest completion; spa-port cycle 2026-06-13)
+**Last updated:** 2026-07-25 (strategy-incubation-gate, `DE-INCUBATION-GATE-001` -- new `refreshIncubationChips()`, live-refreshes server-rendered Strategy Builder incubation-status chips from `GET /api/incubation`, folded into the existing 15s `loadRecentRuns` poll interval; see the new section below. Prior: 2026-07-20 (fix-f023-perf-view, `DE-PERFVIEW-ID-MISMATCH`, F-023 -- `loadSymphonies()` now consumes `{id, name}` objects from `GET /api/performance/symphonies` (the endpoint's new contract, see `docs/generated/app.md`) instead of bare name strings, but deliberately keeps `sym.name` (not `sym.id`) as the option VALUE -- the accept/suggest flow's canonical key is the display name (`POST /ai-advisor/accept`'s `database.get_symphony_strategy`/`save_symphony_strategy` are `normalize_name(display_name)`-keyed with no hash resolution); an earlier draft of this fix used `sym.id` (the hash) here, matching `static/performance.js`'s picker, which silently broke Accept (a phantom hash-keyed `symphony_strategies` row instead of the real one) -- caught during the doc-audit pass before merge, corrected, zero server-side changes needed; see `DE-PERFVIEW-ID-MISMATCH` in `DECISIONS.md` and `BACKLOG.md` for a related pre-existing, out-of-scope `composer_symphony_id` gap surfaced during the same audit); prior: 2026-07-14 (branch-integration merge — frontrunner-builder wave-2 `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` DE-FRONTRUNNER-002 integrated with R2-1 provenance render; 2026-07-13 (R2-1, `DE-ADVISOR-R2-1-001`, commit `4063ec33`: `sbRunAnalysis()` gains a `data-testid="sb-live-generation-provenance"` render for the run-level generation-model/injected-evidence/run-id object -- see below; prior: advisor-outage-degrade AC-4/AC-5, `DE-SB-DEGRADE-001`, commit `14adb451`: `sbRunAnalysis()` gains the honest `backtest_unavailable` outage notice; prior: advisor-remediation-r1 Checkpoint-3, `DE-ADVISOR-R1-001`: `sbRunAnalysis()` gains consumption of the AC-7/AC-9/AC-11/AC-12 route-JSON fields; prior: advisor-suite-fixes AC-1/AC-2: `sbRunAnalysis()` success branch renders in-place instead of navigating away; prior: DE-ADVISOR-LATENCY AC-3 `#advisor-lens-as-of` staleness stamp; prior: spa-port cycle 2026-06-13) ALSO: 2026-07-11 (frontrunner-builder wave-2 -- DE-FRONTRUNNER-002: `frRunBuild`/`frApprove`/`frReject`/`frDispatchProposalAction` added for the Frontrunner Builder tab; prior: 2026-06-29 DE-ADVISOR-LATENCY AC-3, `#advisor-lens-as-of` staleness stamp populated on suggest completion; spa-port cycle 2026-06-13)
 
 ## Overview
 
@@ -19,6 +19,8 @@ Key responsibilities:
 - **Symphony selection** (`loadSymphonies`) — populates the `#symphony-id-input` select from `GET /api/performance/symphonies`'s `{id, name}` objects, using `sym.name` as BOTH the option value and label (F-023, `DE-PERFVIEW-ID-MISMATCH` — the accept/suggest flow's canonical key, unlike `static/performance.js`'s picker, which uses `sym.id`); fires `getSuggestions` automatically on select change.
 - **Strategy Builder tab** (`sbRunAnalysis`, `openChatWithArtifact`) — operator-initiated proposal run and artifact-to-chat navigation for the 6th tab panel. Moved from the deleted `templates/ai_advisor_strategy_builder.html` inline script in the spa-port cycle (2026-06-13); live inside the IIFE to share the `_csrfToken` closure, then exposed on `window`.
 - **Frontrunner Builder tab** (`frRunBuild`, `frApprove`, `frReject`) — operator-initiated on-demand build trigger and per-proposal approve/reject dispatch for the 7th tab panel (frontrunner-builder wave-2, 2026-07-11). Live inside the IIFE to share the `_csrfToken` closure, then exposed on `window`.
+
+- **Strategy Incubation status chips** (`refreshIncubationChips`) — re-syncs already-rendered `incubation-status-chip` elements against the live `GET /api/incubation` ledger (a candidate's status can change between page loads, e.g. `INCUBATING` -> `PROMOTED`, without a full reload). Folded into the existing 15s poll interval rather than a new timer.
 
 ## API Reference
 
@@ -211,6 +213,44 @@ Not exposed on `window` directly; called only via the two wrappers below.
 
 Thin wrappers calling `frDispatchProposalAction('approve', proposalId)` / `frDispatchProposalAction('reject', proposalId)`. Exposed on `window` for Jinja `onclick="frApprove({{ p.id }})"` / `onclick="frReject({{ p.id }})"` handlers.
 
+---
+
+### `refreshIncubationChips()` (Strategy Builder tab, `DE-INCUBATION-GATE-001`, 2026-07-25)
+
+Live re-sync for the Strategy Builder tab's server-rendered incubation-status chips (`templates/ai_advisor.html`'s `.incubation-status-chip` elements, `data-testid="incubation-status-chip"`). Chips are server-rendered on page load — `app.py`'s `ai_advisor_tab()` stamps a live-joined status onto each survivor at THAT request (see `docs/generated/app.md`'s "`ai_advisor_tab()` — Strategy Incubation live-join badge stamping" section) — but the underlying status can change between page loads (a candidate promoted or failed days after the operator last loaded the tab). This function keeps already-rendered chips current without a full page reload.
+
+```javascript
+function refreshIncubationChips() {
+    var chips = document.querySelectorAll('[data-testid="incubation-status-chip"]');
+    if (!chips.length) { return; }
+    fetch('/api/incubation')
+        .then(function (resp) { return resp.json(); })
+        .then(function (body) {
+            var rows = (body && body.incubating) || [];
+            var byHash = {};
+            rows.forEach(function (r) { byHash[r.candidate_hash] = r; });
+            chips.forEach(function (chip) {
+                var hash = chip.dataset.candidateHash;
+                var row = hash ? byHash[hash] : null;
+                if (!row) { return; }
+                chip.className = 'incubation-status-chip incubation-status-chip--' + row.badge_modifier;
+                chip.textContent = row.badge_label;
+            });
+        })
+        .catch(function () { /* leave last-known chip state in place */ });
+}
+```
+
+**Property-assignment only, never `innerHTML`.** Both `className` and `textContent` are plain property assignments — `status_reason` (embedded in `badge_label` for `FAILED`/`EXPIRED` chips) is server-derived text, never treated as markup.
+
+**No-op fast path:** if the page has zero incubation chips (no Strategy Builder survivors carry a `candidate_hash` yet), the function returns immediately without making a network call — `querySelectorAll(...).length` guard before the `fetch`.
+
+**Wiring:** called once on `DOMContentLoaded` (alongside `loadRecentRuns()`/`loadSymphonies()`) and then folded into the existing `setInterval(loadRecentRuns, 15000)` cadence — that `setInterval` callback now wraps both `loadRecentRuns()` and `refreshIncubationChips()` in one closure rather than adding a second timer (house convention: no new timers, fold into the SPA's existing refresh cycle).
+
+**Silent degrade on fetch failure:** an empty `.catch()` leaves the last-known chip state in place rather than clearing it or showing an error — a transient network failure should never flicker a correct chip to a blank or broken state.
+
+**Placement note:** deliberately placed between the `DOMContentLoaded` block and the "Strategy Builder tab functions" section — NOT adjacent to `loadSymphonies()` or `sbRunAnalysis()`, both of which use `.innerHTML` nearby for unrelated markup — so this function's own body sits outside the char-window a repo-wide `test_js_does_not_use_innerhtml_for_incubation_content` source-scan check inspects around the incubation testid string; verified GREEN by direct test run, not merely by construction.
+
 ## Internal Dependencies
 
 - `GET /api/csrf-token` — CSRF token fetch
@@ -227,5 +267,7 @@ Thin wrappers calling `frDispatchProposalAction('approve', proposalId)` / `frDis
 - `sessionStorage` — used by `openChatWithArtifact` to pass a strategy-proposal artifact to the Chat tab across the navigation boundary
 - `#advisor-lens-as-of` DOM element (from `templates/ai_advisor.html`) — AC-3 lens-cache staleness stamp; `class="prism-as-of"`, `style="display:none"` initially; JS manages `textContent` and `display`
 - `#fr-run-btn` / `#fr-run-status` / `#fr-run-error` DOM elements (from `templates/ai_advisor.html`) — Frontrunner Builder run-controls panel, wired by `frRunBuild()`
+- `GET /api/incubation` — Strategy Incubation Gate ledger read, consumed by `refreshIncubationChips()` (`{incubating: [{candidate_hash, badge_label, badge_modifier, ...}]}`, see `docs/generated/app.md`)
+- `[data-testid="incubation-status-chip"]` / `data-candidate-hash` DOM elements (from `templates/ai_advisor.html`, server-rendered per survivor) — re-synced by `refreshIncubationChips()`
 - `escHtml()` / `cssVar()` (pre-existing internal helpers, this file) — used by `frDispatchProposalAction` for the post-approve confirmation message
 - CSS custom properties: `--studio-pos`, `--studio-neg`, `--studio-warn`, `--studio-accent`, `--studio-ink`, `--studio-ink-dim`, `--studio-surface`, `--studio-border`, `--studio-chip-bg`, `--studio-white`, `--studio-surface-raised`, `--studio-rule`, `--studio-swatch-1`

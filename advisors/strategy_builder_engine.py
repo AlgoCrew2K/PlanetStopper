@@ -13,6 +13,7 @@ Advisory-only (is_advisory_only=1 on all persisted observations).
 from __future__ import annotations
 
 import enum
+import json
 import logging
 import math
 import uuid
@@ -21,7 +22,7 @@ from dataclasses import dataclass, field
 import ai_advisor
 import database
 import model_config
-from advisors import symphony_schema
+from advisors import incubation, symphony_schema
 from advisors.backtest_gate_engine import (
     HARVEY_LIU_FDR_Q,
     SURVIVOR_OVERFITTING_CAVEAT,
@@ -634,6 +635,7 @@ def _persist_survivor(
     run_id: str = "",
     evidence_injected: dict | None = None,
     invocation_source: str = "unattributed-direct-call",
+    candidate_hash: str | None = None,
 ) -> None:
     """Persist an ADOPT_CANDIDATE survivor (or rejected candidate) as an advisory observation.
 
@@ -665,6 +667,15 @@ def _persist_survivor(
             route tag, "weekly-scheduler", or the honest
             "unattributed-direct-call" default), so every advisory-DB write
             is attributable back to its production invocation path.
+        candidate_hash: Strategy Incubation Gate (AC-5, amended) — the
+            tree-structural hash this candidate was (or would have been)
+            admitted into the incubation ledger under. Stamped into
+            raw_response as the ONLY additive key this feature adds; status
+            is deliberately NOT frozen here (advisor_observations rows are
+            append-only, so a frozen status could never reflect a later
+            promotion/failure) — it is computed live via this join key at
+            render/API time instead. None for rejected candidates, which are
+            never admitted.
     """
     _live_returns = live_returns or []
     # returns_pct kwarg takes priority; info._returns_pct is a test/fallback seam
@@ -725,6 +736,10 @@ def _persist_survivor(
         "evidence_injected": evidence_injected if evidence_injected is not None else {},
         # F-030 (AC-5): additive, same free-form-blob precedent as run_id above.
         "invocation_source": invocation_source,
+        # Strategy Incubation Gate (AC-5, amended): the ONLY additive key this
+        # feature adds — an immutable join key, never a frozen status (see
+        # the candidate_hash docstring entry above).
+        "candidate_hash": candidate_hash,
     }
 
     # PA-3: live_baseline key is ABSENT (not None, not present) when live_returns empty.
@@ -824,6 +839,36 @@ def _persist_rejected(
         evidence_injected=evidence_injected,
         invocation_source=invocation_source,
     )
+
+
+def _resolve_admission_mdd_baseline(raw_mdd: float | None) -> float | None:
+    """Convert a candidate's backtest max_drawdown into the incubation ledger's
+    positive-pct-magnitude convention, or signal "decline admission" via None.
+
+    Unit correction (.claude/tdd-handoff.md "Migration 037"): quantstats'
+    max_drawdown is a NEGATIVE fraction; the ledger stores a POSITIVE pct
+    magnitude — a real value converts via abs(raw_mdd) * 100.0. A genuinely
+    unknown baseline (raw_mdd is None) must NOT coerce to 0.0: a 0.0 baseline
+    would fabricate an mdd_breach verdict the first time evaluate_promotion
+    checks any nonzero forward drawdown, misreporting missing data as a
+    risk-exceeded finding (review Finding 1). None in, None out — the caller
+    (Step 4b below) treats a None return as "decline this candidate's
+    admission," never a manufactured risk verdict.
+
+    Reachability (review Finding 1, severity re-grade): as of this cycle, a
+    candidate whose info.metrics["max_drawdown"] is None CANNOT reach this
+    seam via propose_strategies() in production — _passes_screens already
+    fails closed on ANY None metric before Step 4b ever runs, unconditionally
+    (see TestAdversarialCycle3::test_passes_screens_returns_false_when_max_drawdown_is_none
+    in tests/advisors/test_strategy_builder_engine.py). This function is
+    SECOND-LAYER DEFENSE, not a fix for a currently-exploitable bug — it
+    exists so the code never does the wrong thing if a future refactor ever
+    changes call ordering, _passes_screens's None-handling, or adds an
+    alternate entry point that bypasses screens.
+    """
+    if raw_mdd is None:
+        return None
+    return abs(raw_mdd) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -1062,6 +1107,62 @@ def propose_strategies(
             if _passes_screens(info.metrics, live_returns, screen_config, returns_pct):
                 screened_survivors.append(gate_result)
 
+        # Step 4b: Strategy Incubation Gate — admit every screened survivor into
+        # the forward-incubation ledger at this ONE seam (.claude/tdd-handoff.md
+        # "Admission adapter — single wiring seam"; neither the route nor the
+        # weekly scheduler may call incubation.admit_candidate directly, both
+        # already reach it through this function). Cap-aware priority ordering
+        # (AC-2) is OUR responsibility as the caller: sort by gate-time
+        # oos_alpha descending so a MAX_INCUBATING cap naturally excludes the
+        # lowest-oos_alpha candidates first, then admit in that order. D-1:
+        # one candidate's admission failure never breaks another's, and never
+        # breaks the existing Step-5 persist below (same try/except-and-log
+        # pattern as the shipped insert_frontrunner_proposal precedent,
+        # strategy_builder_engine.py:770-789).
+        _candidate_hashes: dict[str, str] = {}
+        for gate_result in sorted(screened_survivors, key=lambda gr: gr.oos_alpha, reverse=True):
+            cid = gate_result.candidate_id
+            info = next((i for i in candidate_infos if i.candidate_id == cid), None)
+            if info is None:
+                continue
+            try:
+                _hash = incubation.candidate_hash(info.tree)
+                _raw_mdd = info.metrics.get("max_drawdown")
+                _backtest_mdd_pct = _resolve_admission_mdd_baseline(_raw_mdd)
+                if _backtest_mdd_pct is None:
+                    # Review Finding 1: an unresolvable MDD baseline declines
+                    # admission entirely — never a coerced 0.0 that would
+                    # fabricate a risk-exceeded verdict from missing data. See
+                    # _resolve_admission_mdd_baseline's docstring for the
+                    # reachability note (this branch is second-layer defense,
+                    # unreachable via propose_strategies today).
+                    logger.info(
+                        "propose_strategies: candidate %s declined incubation "
+                        "admission (unresolvable backtest MDD baseline)",
+                        cid,
+                    )
+                    continue
+                _admission = incubation.admit_candidate(
+                    candidate_hash=_hash,
+                    tree_json=json.dumps(info.tree),
+                    objective=info.params.get("objective", ""),
+                    provenance=info.template_id,
+                    backtest_mdd_pct=_backtest_mdd_pct,
+                )
+                _candidate_hashes[cid] = _hash
+                if not _admission.get("admitted"):
+                    logger.info(
+                        "propose_strategies: candidate %s not admitted into incubation (reason=%s)",
+                        cid,
+                        _admission.get("reason"),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "propose_strategies: incubation admission failed for candidate %s (%s)",
+                    cid,
+                    type(exc).__name__,
+                )
+
         # Step 5: Persist survivors (is_advisory_only=1)
         obs_written = 0
         n_survivors = len(screened_survivors)
@@ -1084,6 +1185,7 @@ def propose_strategies(
                     run_id=run_id,
                     evidence_injected=provenance["evidence_injected"],
                     invocation_source=_invocation_source,
+                    candidate_hash=_candidate_hashes.get(cid),
                 )
                 obs_written += 1
             except Exception:
