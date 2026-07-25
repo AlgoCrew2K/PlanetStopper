@@ -3111,6 +3111,24 @@ def get_windowed_strip(window):
     return jsonify(strip)
 
 
+def _is_symphony_state_entry(value) -> bool:
+    """Structural discriminator: does this bot_state top-level value describe a
+    real symphony, not portfolio-level metadata (date/last_execution_mode/
+    last_market_close_snapshot/last_successful_cycle_at/post_mortem_run)?
+
+    Mirrors the existing "isinstance(v, dict) and 'name' in v" shape check
+    used elsewhere in this file (e.g. app.py:1205, 1214, 1320, 1363, 1504,
+    2760, 3012) -- every real symphony entry is stamped with "name"
+    unconditionally each cycle (alpha_bot_execution.py:1633) as soon as it is
+    created, which no top-level metadata value (a plain str/bool, or a
+    differently-shaped dict like last_market_close_snapshot) ever carries.
+    Structural, not a name denylist (AC-2): a future metadata key is excluded
+    automatically as long as it doesn't happen to be a dict carrying a "name"
+    key.
+    """
+    return isinstance(value, dict) and "name" in value
+
+
 @app.route("/api/guard-alpha-preconditions")
 def guard_alpha_preconditions():
     """Per-symphony Kaminski & Lo (2014) stop-justification preconditions.
@@ -3196,7 +3214,9 @@ def guard_alpha_preconditions():
     db_file = analytics._get_shadow_db_file()
     symphonies_out: dict = {}
 
-    for sym_id in bot_state_dict:
+    for sym_id, sym_data in bot_state_dict.items():
+        if not _is_symphony_state_entry(sym_data):
+            continue
         try:
             try:
                 replay_series = autotuner.build_if_held_replay_series(sym_id)
