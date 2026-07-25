@@ -29,6 +29,12 @@ THE IMPLEMENTATION DELIVERABLES (all must land for these tests to go GREEN):
            fetch_failure_count, ok=True resets it to 0, returns the resulting
            count. The ONLY sanctioned write path to that column -- no raw SQL
            against it from advisors/incubation.py.]
+       get_incubation_daily_series(candidate_hash) -> tuple[list[float], list[float | None]]
+           [added 2026-07-25, ga3-adv recon finding -- returns
+           (forward_return_pct, spy_return_pct) ordered by trading_day
+           ascending, index-aligned, shaped to feed directly into
+           evaluate_promotion's first two positional args. ([], []) for an
+           unknown/empty candidate -- never raises.]
 
 Coverage (all FAIL RED until GREEN implementation lands):
   M1: migration file exists on disk
@@ -44,6 +50,7 @@ Coverage (all FAIL RED until GREEN implementation lands):
   GI1-GI3: get_incubating filter/order/empty contract
   GO1-GO3: get_incubation_overview all-statuses/days_observed/empty contract
   RFO1-RFO5: record_incubation_fetch_outcome increment/reset/return contract
+  GDS1-GDS5: get_incubation_daily_series ordering/alignment/empty contract
 
 Fixture: none -- rows are seeded directly via the production accessors under
 test, matching feedback_no_hardcoded_test_values -- every expected value is
@@ -607,3 +614,81 @@ class TestRecordIncubationFetchOutcome:
             f"Expected the reset to be durably persisted at 0, found {persisted} "
             "in the database on independent read-back."
         )
+
+
+# ---------------------------------------------------------------------------
+# GDS1-GDS5: get_incubation_daily_series contract
+# (ga3-adv recon finding, 2026-07-25 -- evaluate_promotion cannot run without
+#  the real per-day series; none of the other accessors return it.)
+# ---------------------------------------------------------------------------
+
+
+class TestGetIncubationDailySeries:
+    def test_empty_for_a_candidate_with_zero_recorded_days(self, migrated_db):
+        """GDS1: a freshly-admitted candidate with no incubation_daily rows yet
+        returns ([], []), never raises."""
+        db_module.register_incubation_candidate("hash-gds-1", "{}", "cut_drawdown", "built-new", 8.0)
+        forward, spy = db_module.get_incubation_daily_series("hash-gds-1")
+        assert forward == []
+        assert spy == []
+
+    def test_empty_for_an_unknown_candidate_hash(self, migrated_db):
+        """GDS2: a hash that was never admitted at all also returns ([], []) --
+        never raises, matching the honest-empty convention of the other read
+        accessors (get_incubating/get_incubation_overview)."""
+        forward, spy = db_module.get_incubation_daily_series("hash-never-admitted")
+        assert forward == []
+        assert spy == []
+
+    def test_returns_values_ordered_by_trading_day_ascending(self, migrated_db):
+        """GDS3: rows inserted OUT OF ORDER must come back sorted by trading_day
+        ascending -- the caller (evaluate_promotion) needs chronological order for
+        compounding math."""
+        db_module.register_incubation_candidate("hash-gds-3", "{}", "cut_drawdown", "built-new", 8.0)
+        # Insert deliberately out of chronological order.
+        db_module.append_incubation_day("hash-gds-3", "2026-01-07", 0.30, 0.10)
+        db_module.append_incubation_day("hash-gds-3", "2026-01-05", 0.10, 0.05)
+        db_module.append_incubation_day("hash-gds-3", "2026-01-06", 0.20, 0.08)
+
+        forward, spy = db_module.get_incubation_daily_series("hash-gds-3")
+        assert forward == [0.10, 0.20, 0.30], (
+            f"Expected forward_return_pct ordered by trading_day ascending "
+            f"(2026-01-05, 06, 07), got {forward}."
+        )
+        assert spy == [0.05, 0.08, 0.10], (
+            f"Expected spy_return_pct ordered the same way, got {spy}."
+        )
+
+    def test_forward_and_spy_lists_are_index_aligned_by_trading_day(self, migrated_db):
+        """GDS4: index i in forward_return_pct and index i in spy_return_pct must
+        refer to the SAME trading_day (both columns come from the same row) --
+        including when spy_return_pct is NULL for some days (SPY-missing
+        degradation), which must appear as None at the matching index, not be
+        skipped/compacted (which would misalign the two lists)."""
+        db_module.register_incubation_candidate("hash-gds-4", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.append_incubation_day("hash-gds-4", "2026-01-05", 0.10, 0.05)
+        db_module.append_incubation_day("hash-gds-4", "2026-01-06", 0.20, None)
+        db_module.append_incubation_day("hash-gds-4", "2026-01-07", 0.30, 0.09)
+
+        forward, spy = db_module.get_incubation_daily_series("hash-gds-4")
+        assert len(forward) == len(spy) == 3, (
+            f"Both lists must be the same length (one entry per recorded day), "
+            f"got forward={forward}, spy={spy}."
+        )
+        assert spy[1] is None, (
+            f"The middle day's NULL spy_return_pct must appear as None at index 1 "
+            f"(not skipped, which would misalign forward[2]/spy[2]), got spy={spy}."
+        )
+        assert forward[1] == 0.20, "forward[1] must still be the 2026-01-06 value."
+
+    def test_does_not_include_another_candidates_rows(self, migrated_db):
+        """GDS5: rows belonging to a DIFFERENT candidate_hash must never leak into
+        this candidate's series (adversarial cross-candidate isolation check)."""
+        db_module.register_incubation_candidate("hash-gds-5a", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.register_incubation_candidate("hash-gds-5b", "{}", "cut_drawdown", "built-new", 8.0)
+        db_module.append_incubation_day("hash-gds-5a", "2026-01-05", 0.10, 0.05)
+        db_module.append_incubation_day("hash-gds-5b", "2026-01-05", 99.0, 99.0)
+
+        forward, spy = db_module.get_incubation_daily_series("hash-gds-5a")
+        assert forward == [0.10], f"Expected only hash-gds-5a's own row, got {forward}."
+        assert spy == [0.05]
