@@ -3,11 +3,11 @@
 > SQLite state management for Planet Stopper: schema, migrations, all read/write accessors for the state DB, and a pytest sentinel guard that structurally prevents tests from writing to the production DB.
 
 **Source:** `database.py`
-**Last updated:** 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- new `get_exit_turnover_stats`/`compute_est_annual_friction_drag_pct` accessors in the Exit Trigger Telemetry section below; no schema migration, `exit_triggers` already existed. Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder migration renumbered 033→**034** `frontrunner_proposals` on top of main's migration 033 `candidate_alert_state`; combines: Frontrunner Builder `frontrunner_proposals` table + accessors + `_VALID_DOF_EVIDENCE_SOURCES` addition; candidate-alert cycle migration 033 `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
+**Last updated:** 2026-07-25 (strategy-incubation-gate, `DE-INCUBATION-GATE-001` -- new migration 037 `strategy_incubation`/`incubation_daily` tables + 7 new accessors, see the "Strategy Incubation Ledger" section below. Prior: 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- new `get_exit_turnover_stats`/`compute_est_annual_friction_drag_pct` accessors in the Exit Trigger Telemetry section below; no schema migration, `exit_triggers` already existed. Prior: 2026-07-14 (branch-integration merge — Frontrunner Builder migration renumbered 033→**034** `frontrunner_proposals` on top of main's migration 033 `candidate_alert_state`; combines: Frontrunner Builder `frontrunner_proposals` table + accessors + `_VALID_DOF_EVIDENCE_SOURCES` addition; candidate-alert cycle migration 033 `candidate_alert_state` — five new accessors, `get_candidate_alert_viewed_marker`/`set_candidate_alert_viewed_marker`/`mark_candidate_alert_viewed`/`get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`, back the header candidate-alert indicator; prior: Workstream E, advisor-rewire cycle: `save_autotune_run` gains `s_count`; prior: 2026-07-09 DE-PROD-ACCURACY-001: `save_state` sanitizes numpy/non-finite values via `_sanitize_state_for_json` before every write, new `load_latest_shadow_row`/`load_earliest_shadow_row` Stage-1 accessors, `record_exit_trigger` now returns the inserted row id; prior: 2026-07-02 DE-PRISM-NUMERIC-VERIFY-001 `get_latest_market_prism_verification_for_run` accessor; prior: DE-ADVISOR-LATENCY `get_latest_market_lens_cache()`; DE-PRISM-SOURCES-001 `get_latest_market_prism_sources_for_run`)
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 36 numbered migration SQL files (001-036), and every public accessor function. `_MIGRATION_FILES` wires 33 active entries (004-036); migrations 001-003 use a separate bootstrap path. **[Reconcile note, exit-friction-realized-savings doc pass, 2026-07-24: this Overview and the Schema Migrations section below were stale at 34/31/034 -- predating the Managed Sleeves epic (`035_sleeves.sql`, `036_sleeve_rule_fires.sql`, PR #94), which never updated this file. Corrected in this sweep; no migration added by exit-friction-realized-savings itself.]** The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 37 numbered migration SQL files (001-037), and every public accessor function. `_MIGRATION_FILES` wires 34 active entries (004-037); migrations 001-003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,11 +15,11 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **036** (`036_sleeve_rule_fires.sql`), following **035** (`035_sleeves.sql`) -- both from the Managed Sleeves epic (PR #94); see `docs/generated/sleeves.md` for their schema.
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **037** (`037_strategy_incubation.sql`), following **036** (`036_sleeve_rule_fires.sql`) and **035** (`035_sleeves.sql`, the Managed Sleeves epic, PR #94); see `docs/generated/sleeves.md` for the sleeves schema and the "Strategy Incubation Ledger" section below for 037.
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
-Migrations 026–034:
+Migrations 026–037:
 - `026_mc_regime_match_telemetry.sql` — regime match columns on `exit_triggers`
 - `027_regime_label_cache.sql` — `regime_label_cache` table
 - `028_autotune_runs_pbo.sql` — `pbo` column on `autotune_runs`
@@ -29,6 +29,8 @@ Migrations 026–034:
 - `032_prism_audit_log.sql` — `prism_audit_log` table + `idx_prism_audit_log_run_id` index (Prism Phase 1)
 - `033_candidate_alert_state.sql` — `candidate_alert_state` table (single-row viewed-marker for the header candidate-alert indicator; see `feature-plans/candidate-alert.md`)
 - `034_frontrunner_proposals.sql` — `frontrunner_proposals` table (Frontrunner Builder AC-8/9/10; renumbered 033→034 during branch integration to sit after main's migration 033 `candidate_alert_state`): a MUTABLE approval-status lifecycle table (`pending`/`approved`/`rejected`/`uploaded`), deliberately separate from the append-only `advisor_observations` (which has no update accessor, by design). Shared by both the Frontrunner Builder's own candidates and the `strategy_builder_engine.propose_strategies` retrofit (`proposal_source` column distinguishes `'frontrunner_builder'` from `'strategy_builder_retrofit'`). Accessors: `insert_frontrunner_proposal`, `update_frontrunner_proposal_status`, `get_frontrunner_proposal`, `get_frontrunner_proposals_for_symphony`, `get_pending_frontrunner_proposals`, `count_uploaded_frontrunner_proposals`. Additive, idempotent (`IF NOT EXISTS`), two indexes (`symphony_id`, `approval_status`).
+- `035_sleeves.sql` / `036_sleeve_rule_fires.sql` — Managed Sleeves epic (PR #94); see `docs/generated/sleeves.md`.
+- `037_strategy_incubation.sql` — `strategy_incubation` (per-candidate incubation-ledger status row) + `incubation_daily` (per-candidate-per-day forward-return observations, `UNIQUE(candidate_hash, trading_day)`) tables. Additive-only, no existing table modified. See the "Strategy Incubation Ledger" section below and `docs/generated/advisors_incubation.md`.
 
 An earlier migration, `023_autotune_runs_s_count.sql`, added the `s_count` column to `autotune_runs` — but until the advisor-rewire cycle (2026-07-12, Workstream E) no caller ever populated it; see `save_autotune_run` below.
 
@@ -497,6 +499,84 @@ if last_run is None:
 else:
     print(f"{last_run['ran_at']}: {last_run['evaluated']} evaluated, {last_run['survivors']} survived")
 ```
+
+### Strategy Incubation Ledger (migration 037)
+
+Backs the Strategy Incubation Gate — see `docs/generated/advisors_incubation.md` and `DE-INCUBATION-GATE-001` in `DECISIONS.md`. Two additive tables; no existing schema modified.
+
+**Table `strategy_incubation`** — one row per admitted candidate:
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | |
+| `candidate_hash` | TEXT | NOT NULL UNIQUE | Tree-structural SHA-256 — MUST match `community_strats._composition_hash` exactly (NOT `compute_composition_hash`, which hashes `list[str]` symphony IDs for portfolio-set identity, an unrelated concept) |
+| `tree_json` | TEXT | NOT NULL | The compiled Composer `raw_value` tree, JSON-serialized — server-side only, never exposed via `GET /api/incubation` |
+| `objective` | TEXT | NOT NULL | Matches `strategy_builder_engine.Objective` enum value |
+| `provenance` | TEXT | NOT NULL | `"built-new"` \| `"atlas-suggested"` — same provenance-tag rule as the rest of Strategy Builder (never `"T1"`-`"T7"`, never `"community"`) |
+| `admitted_at` | TEXT | NOT NULL DEFAULT `datetime('now')` | Incubation clock anchor; never reset while `INCUBATING`/`PROMOTED`; reset on a refractory reentry |
+| `backtest_mdd_pct` | REAL | | Gate-time backtest max drawdown, stored as a positive percentage magnitude (e.g. `8.0` = an 8% drawdown). Caller converts from quantstats' negative-fraction convention (`abs(x) * 100.0`) before insert — see `advisors_incubation.md` |
+| `status` | TEXT | NOT NULL DEFAULT `'INCUBATING'` | `INCUBATING` \| `PROMOTED` \| `FAILED` \| `EXPIRED` |
+| `status_reason` | TEXT | NULLable | Static token only, never `str(exc)` (C5 sanitized-error precedent). Known tokens: `"mdd_breach"`, `"fetch_failures_exhausted"`, `"composer_422_tree_invalid"`, `"forward_alpha_negative"`. NULL while `INCUBATING`/`PROMOTED` |
+| `status_changed_at` | TEXT | NULLable | Timestamp of the last status transition; the refractory-window anchor. NULL until the first transition away from `INCUBATING` |
+| `promoted_at` | TEXT | NULLable | Set only on the transition to `PROMOTED` |
+| `fetch_failure_count` | INTEGER | NOT NULL DEFAULT 0 | Durable consecutive-Composer-fetch-failure counter for the daily tick (added same-cycle, `record_incubation_fetch_outcome` addendum below — cannot be derived from `incubation_daily` gaps, since a genuine fetch failure leaves zero rows there; an in-memory counter would reset on every `app.py` restart). The only sanctioned writer is `record_incubation_fetch_outcome` — no raw SQL against this column from `advisors/incubation.py` or elsewhere |
+
+Index: `idx_strategy_incubation_status` on `status` (accelerates `get_incubating()`'s hot filter).
+
+**Table `incubation_daily`** — one row per candidate per observed forward trading day:
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | |
+| `candidate_hash` | TEXT | NOT NULL | Soft FK to `strategy_incubation.candidate_hash` (no `PRAGMA foreign_keys` anywhere in this codebase — documented, not DB-enforced, matching migrations 035/036's precedent) |
+| `trading_day` | TEXT | NOT NULL | ISO date string, a genuine NYSE trading day (`market_calendar.is_trading_day`), never a weekday proxy |
+| `forward_return_pct` | REAL | NOT NULL | Candidate's simple daily return for that day, pct scale (times 100 of the raw fraction `composer_backtest_client` returns) |
+| `spy_return_pct` | REAL | NULLable | Shared SPY benchmark return for that same day, same pct scale; NULL when the shared SPY call failed that tick — candidate rows are still recorded, promotion evaluation defers |
+| | | UNIQUE(`candidate_hash`, `trading_day`) | Idempotency guard: a tick re-run or a same-day double-fire never double-inserts — `append_incubation_day` relies on this via `INSERT OR IGNORE`. Promoted by review to a hard requirement: tick idempotency must be structural (DB-enforced), never just "the loop only looks at dates after the last known day" application logic |
+
+**Layering note (module placement):** `database.py` never imports FROM `advisors.*`. Because `register_incubation_candidate`'s cap-and-refractory checks run inside this module, their two constants live here rather than in `advisors/incubation.py`:
+
+```python
+MAX_INCUBATING = 20  # cap on concurrently INCUBATING rows [PM-ASSUMED]
+INCUBATION_REFRACTORY_DAYS = 90  # a FAILED/EXPIRED hash cannot be re-admitted for this many days [PM-ASSUMED]
+```
+
+The other three incubation constants (`INCUBATION_WINDOW_TRADING_DAYS`, `INCUBATION_MDD_BREACH_MULT`, `INCUBATION_MAX_FETCH_FAILURES`) are tick/promotion-only and live in `advisors/incubation.py` — see `docs/generated/advisors_incubation.md`.
+
+#### `register_incubation_candidate(candidate_hash, tree_json, objective, provenance, backtest_mdd_pct) -> dict`
+
+Admits a candidate, or no-ops, per the idempotency/refractory/cap contract. Write path (`get_connection()`), parameterized SQL.
+
+- No existing row -> cap-checked INSERT. `reason=None` on success, `"cap_exceeded"` on refusal (`count(status='INCUBATING') >= MAX_INCUBATING`).
+- Existing row `INCUBATING`/`PROMOTED` -> permanent no-op, clock never resets. `reason="already_tracked"`.
+- Existing row `FAILED`/`EXPIRED`, still within `INCUBATION_REFRACTORY_DAYS` of `status_changed_at` -> no-op. `reason="refractory_window"`. `EXPIRED` is treated identically to `FAILED` for this window (a `ga3-tw` coordination decision — both represent "this hash did not make it").
+- Existing row `FAILED`/`EXPIRED`, refractory window elapsed -> cap-checked UPDATE-in-place (`candidate_hash` is UNIQUE, so this is always an UPDATE, never a second INSERT) — a genuinely fresh incubation attempt with a reset clock (`admitted_at`, `status_reason`, `status_changed_at`, `promoted_at` all cleared; `tree_json`/`objective`/`provenance`/`backtest_mdd_pct` refreshed to the newly-proposed values). `reason="refractory_reentry"` on success, `"cap_exceeded"` on refusal.
+
+**Returns:** `{"admitted": bool, "status": str | None, "reason": str | None}`.
+
+#### `append_incubation_day(candidate_hash, trading_day, forward_return_pct, spy_return_pct) -> bool`
+
+Records one candidate's forward return for one trading day via `INSERT OR IGNORE` against the `UNIQUE(candidate_hash, trading_day)` constraint — never a Python-side SELECT-then-INSERT check (that has a TOCTOU gap the DB constraint closes for free). Returns `True` if a new row was inserted, `False` if the (candidate_hash, trading_day) pair already existed. Write path, parameterized SQL.
+
+#### `set_incubation_status(candidate_hash, status, status_reason=None) -> None`
+
+Dumb write — updates `status`, `status_reason`, `status_changed_at=datetime('now')`, and `promoted_at=datetime('now')` iff `status == "PROMOTED"` (left untouched otherwise). Valid-transition logic lives in `advisors/incubation.py`, not here (same layering as `set_symphony_live_mode`). Write path.
+
+#### `get_incubating() -> list[dict]`
+
+All `strategy_incubation` rows with `status='INCUBATING'`, oldest `admitted_at` first. Read path (`get_ro_connection()`, architecture constraint 5).
+
+#### `get_incubation_overview() -> list[dict]`
+
+All rows regardless of status, each augmented with `days_observed` (a `COUNT(*)` over `incubation_daily` for that `candidate_hash` — pure SQL aggregation, not a re-run of promotion-decision logic; architecture constraint 5's "UI never reruns the engine" refers to the decision itself, which is already persisted in `status`). Read path. Never raises for an empty ledger — returns `[]`. Sole read path for `GET /api/incubation` and `ai_advisor_tab()`'s live-join badge stamping — see `docs/generated/app.md`.
+
+#### `record_incubation_fetch_outcome(candidate_hash, ok) -> int`
+
+Added same-cycle (2026-07-25), PM ruling — supersedes an earlier "no new accessor, raw SQL from `advisors/incubation.py`" first-pass decision. The only sanctioned way `advisors/incubation.py` touches `fetch_failure_count` — no raw SQL against that column from outside `database.py` (same layering principle as the constants split above: state-DB writes go through named accessors, callers never hand-roll SQL against them). `ok=False` (a fetch error, not a 422 — those go straight to `set_incubation_status(..., "EXPIRED", ...)` and never call this) increments the counter by 1; `ok=True` (a successful fetch, regardless of whether it yielded any new date keys) resets it to 0. Returns the resulting count after the write so the caller can compare it against `INCUBATION_MAX_FETCH_FAILURES` in the same call, no second round-trip query. Policy (the threshold comparison, what to do once the count is reached) stays in `advisors/incubation.py` — this accessor only stores and returns the count. Write path, parameterized SQL.
+
+#### `get_incubation_daily_series(candidate_hash) -> tuple[list[float], list[float | None]]`
+
+Added same-cycle (2026-07-25), a real schema gap found while implementing `run_incubation_tick()` — none of the accessors above return the actual `incubation_daily` values for a candidate; `get_incubation_overview()` only gives a `days_observed` count, and `evaluate_promotion` (see `advisors_incubation.md`) cannot run without the real per-day series. Returns `(forward_return_pct, spy_return_pct)` — two lists, ordered by `trading_day` ascending, index-aligned (index `i` in both lists is the same `trading_day`, since both columns come from the same row — no separate date-matching needed on this read path). `spy_return_pct` entries are `None` wherever that row's column is NULL (the SPY-missing degradation case) — never skipped/compacted, which would misalign the two lists. Shaped to drop directly into `evaluate_promotion`'s first two positional args: `evaluate_promotion(*database.get_incubation_daily_series(hash), backtest_mdd_pct, days_observed)`. Returns `([], [])` for a candidate with zero recorded days or an unknown hash — never raises. Read path (`get_ro_connection()`).
 
 ## Types
 
