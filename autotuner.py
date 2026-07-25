@@ -3046,6 +3046,17 @@ def run_autotuner(
         # Stability and prior-anchor scores are computed as placeholder 1.0/1.0
         # until the full advisor wiring is in place; the gate's load-bearing
         # invariants (vetoes-dominant, one-directional brake) hold regardless.
+        #
+        # FORWARD-LOOKING FRICTION-MISMATCH RISK (incumbent_stability_score /
+        # incumbent_prior_anchor_score specifically): if a future cycle wires
+        # real DB-sourced values into these two INCUMBENT fields, confirm
+        # they were computed on a friction-consistent basis with the
+        # candidate score. A historical incumbent score computed by whatever
+        # replay code existed when that history was recorded (possibly
+        # gross-of-cost, pre-dating SIM_EXIT_FRICTION_PCT — see autotuner.py)
+        # compared against a candidate score from TODAY's friction-aware
+        # replay is a mismatched comparison — nothing currently catches that
+        # silently. See tests/autotuner/test_incumbent_score_friction_tripwire.py.
         _gate_verdict = _acceptance_gate.evaluate_acceptance_gate(
             winner_trial_is_none=(winner_trial is None if haircut_trials else True),
             winner_p_adj=(winner_p_adj if haircut_trials else None),
