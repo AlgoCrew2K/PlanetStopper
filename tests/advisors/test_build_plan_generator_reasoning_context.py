@@ -18,6 +18,15 @@ written):
 
 No live network — the LLM client seam (_build_client) is mocked throughout;
 this file never constructs a real anthropic client.
+
+Prompt-caching cross-cutting note (cache-fix cycle, DE-ADVISOR-CACHE-001):
+the two ``sent_content`` extraction sites below route through
+``extract_text()`` rather than treating ``messages[0]["content"]`` as a bare
+string — the caching restructure (tested separately in
+test_build_plan_generator_prompt_caching.py) turns that value into a list of
+content blocks. ``extract_text()`` is shape-agnostic (string or block-list),
+so these existing AC-1/AC-2/AC-8 assertions keep testing the same thing
+regardless of which shape is in effect.
 """
 
 from __future__ import annotations
@@ -27,6 +36,8 @@ import json
 import pathlib
 
 import pytest
+
+from tests.advisors._prompt_cache_test_helpers import extract_text
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _GOLDEN_FIXTURE_PATH = (
@@ -234,7 +245,7 @@ def test_generate_build_plans_threads_reasoning_context_into_sdk_prompt(bpg, mon
     )
 
     assert client.calls, "generate_build_plans never called client.messages.create() at all."
-    sent_content = client.calls[0].get("messages", [{}])[0].get("content", "")
+    sent_content = extract_text(client.calls[0].get("messages", [{}])[0].get("content", ""))
     assert "## OPERATOR CONTEXT" in sent_content, (
         "GAP: generate_build_plans did not thread reasoning_context into the actual SDK "
         "prompt payload — '## OPERATOR CONTEXT' section absent from messages[0]['content']."
@@ -260,7 +271,7 @@ def test_generate_build_plans_omitted_reasoning_context_sends_no_operator_sectio
     bpg.generate_build_plans(bpg.Objective.diversify, universe, n_plans=12)
 
     assert client.calls, "generate_build_plans never called client.messages.create() at all."
-    sent_content = client.calls[0].get("messages", [{}])[0].get("content", "")
+    sent_content = extract_text(client.calls[0].get("messages", [{}])[0].get("content", ""))
     assert "## OPERATOR CONTEXT" not in sent_content, (
         "GAP: '## OPERATOR CONTEXT' leaked into the SDK prompt payload despite "
         "reasoning_context being omitted entirely."
