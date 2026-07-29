@@ -320,3 +320,101 @@ class TestHistoryWindowPickerAppWideDayCounts:
             "static/history.js must not carry a residual 1260 special-case once the "
             "5Y button itself is updated to 1825"
         )
+
+
+# ---------------------------------------------------------------------------
+# Sufficiency-review finding (gas-review, Revise phase): the windowed-empty
+# fallback dishonestly diverts to the day-1/no-post-mortems-ever branch.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def out_of_window_pm_dir(tmp_path, monkeypatch):
+    """One post-mortem file dated 60 days ago (outside a 30d window) with a
+    valid $500 trigger -- proves post-mortem HISTORY EXISTS, just not inside
+    the requested window."""
+    pm_dir = tmp_path / "post_mortems"
+    pm_dir.mkdir()
+    date_60d_ago = _recent_date_str(60)
+    _write_pm(pm_dir, date_60d_ago, 500.0, "Sym-OutOfWindow")
+    monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(pm_dir))
+    return {"dir": pm_dir, "date": date_60d_ago}
+
+
+class TestWindowedEmptyResultStaysHonest:
+    """THE BUG (gas-review, empirically proved): guard_alpha_summary's
+    `if dates: / else:` fallback gates on the WINDOW-FILTERED `dates` list
+    (post-AC-2), not on "do any post-mortem files exist at all". When files
+    exist but NONE fall inside the requested window (e.g. a 60-day-old $500
+    save, ?window=30d), every file hits the AC-2 cutoff `continue` BEFORE its
+    date is appended to `dates` -- so `dates` ends up empty and the route
+    wrongly takes the day-1/no-post-mortems-yet branch: source flips to
+    "exit_triggers_intraday" and (with zero of today's exit_triggers rows,
+    the common case) basis_label becomes "no guard events yet" -- dishonestly
+    implying NO guard event has EVER happened, when in fact one just happened
+    outside this window. analytics.get_history_summary(days=30) on the
+    IDENTICAL fixture honestly returns total_saved=0.0 with no such false
+    claim -- this is the cycle's own "same range same number" + honesty
+    purpose, and the THIRD-STATE edge case (files-exist-but-none-in-window,
+    distinct from both "day-1, zero files anywhere" and "files exist, some
+    in-window") that the approved plan specified but GREEN missed.
+    """
+
+    def test_source_is_not_the_intraday_fallback(self, client, out_of_window_pm_dir):
+        resp = client.get("/api/guard-alpha-summary?window=30d")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["source"] != "exit_triggers_intraday", (
+            f"post-mortem files EXIST (just outside the 30d window) -- the route "
+            f"must not divert to the day-1 exit_triggers_intraday fallback, which "
+            f"is reserved for 'no post-mortem history exists at all'. Got source="
+            f"{data['source']!r}"
+        )
+
+    def test_basis_label_does_not_claim_no_guard_events_ever(self, client, out_of_window_pm_dir):
+        resp = client.get("/api/guard-alpha-summary?window=30d")
+        data = resp.get_json()
+        assert data["basis_label"] != "no guard events yet", (
+            f"a real guard event exists (60 days ago) -- the basis_label must "
+            f"never claim 'no guard events yet', which dishonestly implies none "
+            f"has ever happened. Got basis_label={data['basis_label']!r}"
+        )
+
+    def test_windowed_empty_result_is_an_honest_zero_from_post_mortem_source(
+        self, client, out_of_window_pm_dir
+    ):
+        resp = client.get("/api/guard-alpha-summary?window=30d")
+        data = resp.get_json()
+        assert data["cumulative_saved_dollars"] == pytest.approx(0.0, abs=1e-9), (
+            f"nothing falls inside the 30d window -- the honest sum is 0.0 (matching "
+            f"analytics.get_history_summary(days=30) on the identical fixture), not "
+            f"a fabricated non-zero and not a diversion to a different data source; "
+            f"got {data['cumulative_saved_dollars']}"
+        )
+        assert data["source"] == "post_mortem_eod", (
+            f"the post-mortem-file source produced the (honestly empty) window-scoped "
+            f"result -- source must say so, not silently swap to a different "
+            f"data-source label; got {data['source']!r}"
+        )
+        assert data["basis_label"] and isinstance(data["basis_label"], str), (
+            "an honest window-scoped basis_label must still be a non-empty string "
+            "(never blank just because the window is empty)"
+        )
+
+    def test_windowed_empty_matches_history_summary_honest_zero(
+        self, client, out_of_window_pm_dir
+    ):
+        """The literal byte-parity proof extended to the zero case: History's
+        own producer, on the IDENTICAL fixture, honestly returns 0.0 -- the
+        windowed route must match, not divert to a different code path
+        that produces a different (dishonest) answer."""
+        route_sum = client.get(
+            "/api/guard-alpha-summary?window=30d"
+        ).get_json()["cumulative_saved_dollars"]
+        history_sum = analytics_module.get_history_summary(
+            days=30, base_dir=str(out_of_window_pm_dir["dir"])
+        )["total_saved"]
+        assert route_sum == pytest.approx(history_sum, abs=1e-9) == 0.0, (
+            f"windowed route ({route_sum}) must match History's honest zero "
+            f"({history_sum}) for the identical out-of-window fixture"
+        )
