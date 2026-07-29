@@ -28,6 +28,7 @@ actually reaches the outgoing webhook payload when sleeves exist.
 from __future__ import annotations
 
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -172,4 +173,85 @@ class TestSendEodDiscordPostIncludesSleevesSection:
         assert _SENTINEL_SLEEVE_NAME not in combined, (
             "with zero sleeves, no sleeves-section content must appear in the "
             "outgoing Discord payload"
+        )
+
+
+# ===========================================================================
+# DE-GAS-COHERENCE-001 -- realized_pnl_usd sign coherence (reporting.py:253-254)
+#
+# THE BUG: `f"${realized_pnl:+,.2f}"` forces a literal sign character with NO
+# accompanying word -- a losing rule renders "realized $-37.50" (naked
+# minus), a winning rule "realized $+12.00" (a redundant '+' with no word
+# either). Fix: route through the shared analytics.format_dollar_saved with
+# this surface's own word pair -- "gain"/"loss" (team-lead copy ruling;
+# distinct from the guard-alpha web surfaces' "saved"/"lost" because
+# realized_pnl_usd is a generic per-rule P&L figure, not a guard-alpha
+# savings figure). Same abs+no-sign+word shape either way.
+# ===========================================================================
+
+
+def _summary_with_realized_pnl(realized_pnl_usd) -> list[dict]:
+    return [
+        {
+            "name": _SENTINEL_SLEEVE_NAME,
+            "status": "PAPER",
+            "rules": [
+                {
+                    "name": _SENTINEL_RULE_NAME,
+                    "today_fires": 2,
+                    "lifetime_fires": 14,
+                    "realized_pnl_usd": realized_pnl_usd,
+                    "benched": False,
+                }
+            ],
+        }
+    ]
+
+
+class TestBuildSleevesDigestSectionRealizedPnlSignCoherence:
+    def test_negative_realized_pnl_has_no_naked_minus(self):
+        result = reporting.build_sleeves_digest_section(_summary_with_realized_pnl(-37.5))
+        assert "$-" not in result and "-$" not in result, (
+            f"a negative realized_pnl_usd must never render a naked sign character "
+            f"(today's `{{:+,.2f}}` format does exactly that); got: {result!r}"
+        )
+
+    def test_negative_realized_pnl_renders_the_word_loss(self):
+        result = reporting.build_sleeves_digest_section(_summary_with_realized_pnl(-37.5))
+        assert "loss" in result, (
+            f"a negative realized_pnl_usd must render the word 'loss' (this surface's "
+            f"word pair is gain/loss, not the guard-alpha saved/lost pair) -- today "
+            f"there is no word at all, only a forced sign character; got: {result!r}"
+        )
+        assert re.search(r"\$37\.50", result), (
+            f"the magnitude must still be present (ABS, no sign); got: {result!r}"
+        )
+
+    def test_positive_realized_pnl_renders_the_word_gain(self):
+        result = reporting.build_sleeves_digest_section(_summary_with_realized_pnl(12.0))
+        assert "gain" in result, (
+            f"a positive realized_pnl_usd must render the word 'gain'; got: {result!r}"
+        )
+        assert "$+" not in result, (
+            f"a positive value must not carry a redundant leading '+' sign character "
+            f"either -- ABS magnitude + word only; got: {result!r}"
+        )
+
+    def test_zero_realized_pnl_renders_the_word_gain_not_loss(self):
+        result = reporting.build_sleeves_digest_section(_summary_with_realized_pnl(0.0))
+        assert "gain" in result and "loss" not in result, (
+            f"zero must render as 'gain' (the positive word), matching the "
+            f"operator-locked zero-boundary convention; got: {result!r}"
+        )
+
+    def test_non_numeric_realized_pnl_still_renders_na_not_a_crash(self):
+        """The existing None/non-numeric -> 'n/a' degrade path (audit finding
+        #8: a fabricated '$+0.00' is a value claim) must be preserved
+        unchanged by this fix -- format_dollar_saved is only reached for a
+        genuine numeric value."""
+        result = reporting.build_sleeves_digest_section(_summary_with_realized_pnl(None))
+        assert "n/a" in result, (
+            f"a None realized_pnl_usd must still degrade to the explicit 'n/a' marker "
+            f"-- this pre-existing contract must survive the sign-coherence fix; "
+            f"got: {result!r}"
         )
