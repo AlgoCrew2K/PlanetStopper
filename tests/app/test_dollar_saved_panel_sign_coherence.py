@@ -28,13 +28,21 @@ all-time.
 Follows the established source-window regex-extraction pattern from
 tests/app/test_dollar_saved_display_contract.py (`_js_block`) -- this
 codebase asserts JS behavior via targeted source-text assertions, not a
-jsdom/execution harness.
+jsdom/execution harness, EXCEPT for one deliberate exception at the bottom of
+this file (TestApplyHeroWindowHandlesTokenStrings) -- see that class's
+docstring for why a real `node -e` execution harness was justified there
+instead of a regex assertion.
 """
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+import shutil
+import subprocess
+
+import pytest
 
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _PROJECT_ROOT / "templates" / "index.html"
@@ -191,4 +199,169 @@ class TestDollarSavedPanelJoinsWindowPicker:
             "alongside its existing /api/hero-chart + windowed-strip fetches -- "
             "otherwise the $-saved panel silently stays on whatever window it loaded "
             "with while every other hero metric re-windows live"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sufficiency-review finding (Red/Green/Revise): applyHeroWindow cannot parse
+# the token-shaped strings _heroWindow now holds.
+# ---------------------------------------------------------------------------
+
+
+def _extract_function_with_signature(source: str, func_name: str) -> str:
+    """Extract `function name(...) { ... }` (signature + full body) via brace
+    counting, for embedding verbatim in a standalone Node harness -- same
+    technique tests/ui/test_cycle_5_history.py uses to extract renderHero's
+    body, extended here to keep the signature (needed to actually CALL the
+    function from the harness, not just inspect its text)."""
+    match = re.search(rf"function\s+{func_name}\s*\([^)]*\)\s*\{{", source)
+    assert match is not None, f"{func_name} not found in static/index.js"
+    brace_start = source.index("{", match.start())
+    depth = 0
+    i = brace_start
+    while i < len(source):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[match.start() : i + 1]
+        i += 1
+    pytest.fail(f"Could not extract {func_name} -- unbalanced braces")
+
+
+def _run_apply_hero_window(token: str, n_days: int) -> dict:
+    """Executes the REAL applyHeroWindow source (extracted live from
+    static/index.js, never hardcoded) against a synthetic `n_days`-entry
+    history ending today, and returns the resulting labels-array length.
+
+    Deliberate exception to this file's regex-only convention: a source-text
+    assertion cannot distinguish "parses the token correctly" from "looks like
+    it might" -- and this specific gap was found by empirically verifying (a
+    throwaway `node -e` one-liner, outside this test) that
+    `dates.slice(-'30d')` evaluates to `dates.slice(NaN)`, which
+    Array.prototype.slice treats as `slice(0)` -- the FULL array, not a
+    30-entry window. Given the severity (this fires on every dashboard page
+    load once _heroWindow's default becomes the string '30d' -- see below),
+    only a real execution proves the fix actually parses the token rather
+    than merely referencing it somewhere in the function body.
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node not installed -- skipping applyHeroWindow execution check")
+
+    fn_src = _extract_function_with_signature(_js(), "applyHeroWindow")
+
+    harness = f"""
+    var _today = new Date();
+    var _heroFull = {{ dates: [], bot: [], held: [] }};
+    for (var i = {n_days} - 1; i >= 0; i--) {{
+        var d = new Date(_today.getFullYear(), _today.getMonth(), _today.getDate() - i);
+        _heroFull.dates.push(d.toISOString().slice(0, 10));
+        _heroFull.bot.push(i);
+        _heroFull.held.push(i * 2);
+    }}
+    var _cumChart = {{
+        data: {{ labels: [], datasets: [{{ data: [] }}, {{ data: [] }}] }},
+        update: function () {{}}
+    }};
+
+    {fn_src}
+
+    applyHeroWindow({json.dumps(token)});
+    console.log(JSON.stringify({{ labels_len: _cumChart.data.labels.length }}));
+    """
+
+    result = subprocess.run(
+        ["node", "-e", harness], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 0, (
+        f"applyHeroWindow('{token}') harness crashed:\n{result.stderr}"
+    )
+    return json.loads(result.stdout.strip())
+
+
+class TestApplyHeroWindowHandlesTokenStrings:
+    """SUFFICIENCY-REVIEW FINDING, not part of the original RED plan: gas-impl's
+    GREEN implementation correctly satisfies
+    test_hero_window_initial_value_is_a_token_string_not_a_bare_number (above)
+    by changing `_heroWindow`'s initial value from the number 30 to the
+    string '30d' -- but applyHeroWindow(days) (index.js ~49-67) was written
+    for a BARE NUMBER (`dates.slice(-days)`) or the literal 'ytd', never a
+    '<N>d'-shaped token. `dates.slice(-'30d')` evaluates to
+    `dates.slice(NaN)`, and Array.prototype.slice treats a NaN start as 0 --
+    i.e. the FULL lifetime history, not a 30-day window.
+
+    Blast radius: applyHeroWindow(_heroWindow) fires (a) immediately after the
+    very first chart render on every page load (index.js ~129) -- so the hero
+    cumulative-return chart's default view is now the WHOLE history, not the
+    intended 30-day default -- and (b) on every subsequent poll once
+    _cumChart already exists (index.js ~83, called from every
+    updateDashboard -> renderHeroChart, i.e. every ~1-30s per the SSE/poll
+    cadence) for WHATEVER token is currently selected. This second path is a
+    PRE-EXISTING latent bug (any token the user clicks -- '60d'/'90d'/etc --
+    already breaks the same way one poll cycle after the click, since
+    _heroWindow becomes that string token regardless of this cycle's fix) --
+    this cycle's change is what newly exposes it on the FIRST render too, via
+    the same code path. One fix (teaching applyHeroWindow to parse the token
+    shapes) closes both.
+
+    Verified empirically before writing this test (not merely asserted):
+    `node -e "console.log([1,2,3].slice(-'30d').length)"` prints 3 (the
+    whole array), not a slice.
+    """
+
+    def test_30d_token_slices_to_last_30_not_the_full_history(self):
+        result = _run_apply_hero_window("30d", n_days=100)
+        assert result["labels_len"] == 30, (
+            f"applyHeroWindow('30d') must slice to the last 30 entries -- got "
+            f"{result['labels_len']} entries instead (100 == the NaN-slice bug "
+            f"silently returning the whole array). _heroWindow is initialized to "
+            f"the string '30d' by this cycle's own fix, so this fires on EVERY "
+            f"dashboard page load, not just after a window-picker click."
+        )
+
+    def test_60d_token_slices_to_last_60(self):
+        result = _run_apply_hero_window("60d", n_days=100)
+        assert result["labels_len"] == 60, (
+            f"applyHeroWindow('60d') must slice to 60 entries, got {result['labels_len']}"
+        )
+
+    def test_125d_token_slices_to_last_125(self):
+        result = _run_apply_hero_window("125d", n_days=200)
+        assert result["labels_len"] == 125, (
+            f"applyHeroWindow('125d') must slice to 125 entries, got {result['labels_len']}"
+        )
+
+    def test_1y_token_slices_to_365_not_full_history(self):
+        """1y must resolve to 365 -- the SAME app-wide day-count this cycle's
+        AC-2 fix already established server-side (analytics._WINDOW_TRAILING_DAYS
+        ['1y']) -- so the hero CHART and the windowed $-saved/strip VALUES agree
+        on what '1y' means, not just the two server-side routes agreeing with
+        each other."""
+        result = _run_apply_hero_window("1y", n_days=400)
+        assert result["labels_len"] == 365, (
+            f"applyHeroWindow('1y') must slice to 365 entries, got {result['labels_len']}"
+        )
+
+    def test_all_token_returns_the_full_history(self):
+        """Regression guard: 'all' currently returns the full array only BY
+        ACCIDENT (it also hits the NaN-slice path) -- a real fix must
+        preserve this behavior deliberately, not lose it while adding
+        numeric-token parsing for the other tokens."""
+        result = _run_apply_hero_window("all", n_days=100)
+        assert result["labels_len"] == 100, (
+            f"applyHeroWindow('all') must return the full unsliced history "
+            f"(100 entries), got {result['labels_len']}"
+        )
+
+    def test_ytd_token_still_filters_to_the_current_year(self):
+        """Regression guard: 'ytd' already has dedicated, working handling --
+        a fix for the numeric-token parsing above must not disturb it. With
+        400 days of history ending today, a correct ytd slice must exclude
+        at least last year's entries (i.e. strictly fewer than 400)."""
+        result = _run_apply_hero_window("ytd", n_days=400)
+        assert 0 < result["labels_len"] < 400, (
+            f"applyHeroWindow('ytd') must still filter to entries on/after "
+            f"Jan 1 of the current year -- got {result['labels_len']} out of 400 "
+            f"(400 would mean the ytd filter silently stopped filtering)"
         )
