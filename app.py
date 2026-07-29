@@ -3386,6 +3386,17 @@ def guard_alpha_summary():
         # cannot read as current ("the number doesn't move while triggers fire").
         basis_label = f"snapshot-time basis, since {earliest} · through {latest}"
         source = "post_mortem_eod"
+    elif files:
+        # AC-2/AC-3 windowed-empty case (gas-review sufficiency finding): real
+        # post-mortem files exist overall, just none fall inside the selected
+        # window (every file hit the cutoff `continue` above) — an honest
+        # window-scoped zero. Must NOT fall through to the day-1 exit_triggers
+        # fallback below, which is reserved for "no post-mortem history exists
+        # at all" and would dishonestly claim "no guard events yet" when a real
+        # guard event exists, just outside this window.
+        date_range = {"earliest": None, "latest": None}
+        basis_label = "no guard events in this window"
+        source = "post_mortem_eod"
     else:
         date_range = {"earliest": None, "latest": None}
         # No post-mortem files yet (day-1 droplet) — fall back to exit_triggers DB rows.
