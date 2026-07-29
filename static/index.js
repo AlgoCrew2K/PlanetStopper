@@ -57,8 +57,23 @@
             var idx = 0;
             while (idx < dates.length && dates[idx] < jan1) idx++;
             sliced = { dates: dates.slice(idx), bot: bot.slice(idx), held: held.slice(idx) };
+        } else if (days === 'all') {
+            // DE-GAS-COHERENCE-001 (sufficiency-review finding): explicit lifetime --
+            // no slice. Previously this fell into the else branch below and only
+            // "worked" because dates.slice(-NaN) coincidentally returns the full
+            // array; made deliberate so it survives the token-parsing fix below.
+            sliced = { dates: dates, bot: bot, held: held };
         } else {
-            sliced = { dates: dates.slice(-days), bot: bot.slice(-days), held: held.slice(-days) };
+            // DE-GAS-COHERENCE-001 (sufficiency-review finding): _heroWindow is now
+            // ALWAYS one of the window-picker's string tokens ('30d'/'60d'/'90d'/
+            // '125d'/'1y'/'ytd'/'all') -- never a bare number. Parse the '<N>d'
+            // shape and the '1y' special-case (365, matching the app-wide
+            // analytics._WINDOW_TRAILING_DAYS['1y'] this cycle's server-side AC-2
+            // fix already established) before falling back to parseInt for a bare
+            // numeric argument (defensive compatibility -- parseInt(30, 10) still
+            // yields 30 via string coercion).
+            var n = days === '1y' ? 365 : parseInt(days, 10);
+            sliced = { dates: dates.slice(-n), bot: bot.slice(-n), held: held.slice(-n) };
         }
         _cumChart.data.labels = sliced.dates;
         _cumChart.data.datasets[0].data = sliced.bot;
