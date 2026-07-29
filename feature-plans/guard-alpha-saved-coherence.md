@@ -1,23 +1,39 @@
 # Feature: Guard-Alpha $-Saved Display Coherence — Sign Convention + Windowing
 Status: ready
 Created: 2026-07-29
-Revised: 2026-07-29 (reconciled to the full operator-locked contract + gas-test's committed RED tests — see Revision note)
+Revised: 2026-07-29 (reconciled to the full operator-locked contract + gas-test's committed RED tests; JS-helper shape finalized as per-file-local — see Revision notes)
 
-## Revision note (why this doc changed shape)
+## Revision notes (why this doc changed shape)
 The first draft of this plan (commit `a2ab0805`) scoped the fix to the History tab only —
 narrower than the operator-locked contract. gas-review correctly held the gate pending
-reconciliation. This revision is built from two sources of truth, not a re-guess: (1) the
-team lead's explicit ruling on the missing surfaces (dashboard panel windowing + both
-index.js headlines + a shared formatter), and (2) a direct read of gas-test's own committed/
-staged RED tests (`tests/app/test_guard_alpha_summary_windowed.py`,
+reconciliation. The second revision (`937e5d6e`) was built from two sources of truth, not a
+re-guess: (1) the team lead's explicit ruling on the missing surfaces (dashboard panel
+windowing + both index.js headlines + a shared formatter), and (2) a direct read of
+gas-test's own committed/staged RED tests (`tests/app/test_guard_alpha_summary_windowed.py`,
 `tests/analytics/test_format_dollar_saved.py`,
 `tests/app/test_dollar_saved_panel_sign_coherence.py`, plus additions to
 `tests/app/test_sleeves_digest_extension.py`, `tests/ui/test_cycle_5_history.py`, and
-`tests/reporting/test_reporting.py`) — which pin THREE surfaces beyond what either the
-original draft or the team lead's punch-list named: the History "Recent triggers" Detail
-column color, the Discord EOD "Total Saved" embed line, and the QuickChart "Daily Saved ($)"
-bar coloring. This doc is the lagging artifact; it now matches the RED tests, not the other
-way around. All ACs below are cross-referenced to the actual test file/class that pins them.
+`tests/reporting/test_reporting.py`). The team lead has since confirmed the History Detail
+column, the Discord "Total Saved" line, and the QuickChart bar coloring were already part of
+their original surface enumeration, not additional scope this doc-writer discovered —
+documented here with cited ACs either way, since the point is that the plan now matches the
+RED tests exactly.
+
+**JS-helper shape finalized (this revision):** the second revision flagged a tension between
+a single shared `static/format_saved.js` module (the team lead's original item-5 directive)
+and the already-committed JS RED tests, which assert literal tokens inside each CALLING
+function's own source-text window. The team lead has RESOLVED this: the shared-module
+directive is relaxed. **JS = a per-file-local helper duplicated in EACH of `index.js`/
+`history.js`, with an IDENTICAL contract (abs magnitude + no sign char + saved/lost word +
+sign→color), enforced by PARALLEL body-extraction tests** — matching what gas-test's
+committed RED already encodes, so no RED rewrite is needed. **Python stays ONE shared
+`analytics.format_dollar_saved`** (imports make DRY natural there; no per-file-local
+tension exists in Python). The DRY invariant for JS is contract-IDENTITY across the two
+files, enforced by parallel tests — not a single module. This supersedes this doc's earlier
+"pass words as explicit call-site arguments to a shared module" proposal; see Architecture
+and Decisions below for the corrected language.
+
+All ACs below are cross-referenced to the actual test file/class that pins them.
 
 ## Summary
 Every dollar figure and several color/window surfaces tied to guard-alpha "$-saved" violate
@@ -27,8 +43,8 @@ a WORD (not a `+`/`-`) convey direction — the positive word ("saved" by defaul
 dashboard's $-saved panel is ALWAYS all-time while the History tab's $-saved is calendar-
 windowed — for a given nominal window ("1Y") the two surfaces can show two unrelated,
 unreconcilable numbers, and neither surface discloses which window backs its own number
-without reading source. Nine concrete defects, four files, one new Python helper, one new
-shared JS helper, one new route parameter:
+without reading source. Nine concrete defects, four files, one new Python helper, two
+per-file-local JS helpers with an identical contract, one new route parameter:
 
 1. **`static/history.js` `renderHero()`** hardcodes `val-total-saved` to green
    (`--studio-pos`) unconditionally, and its VALUE string carries a naked leading `-` for a
@@ -53,7 +69,7 @@ shared JS helper, one new route parameter:
    all-time cumulative sum, while History's own $-saved is calendar-windowed from the SAME
    `saved_dollars` field in the SAME `post_mortem_*.json` files — two numbers, no shared
    token, no way to reconcile them.
-7. **No shared dollar-formatting helper exists anywhere** — every surface (dashboard panel,
+7. **No shared dollar-formatting contract exists anywhere** — every surface (dashboard panel,
    History hero/by-reason, the Managed Sleeves EOD digest, the Discord EOD embed) does its
    own ad-hoc sign handling, which is why the SAME bug (naked sign character under an
    unconditional word) is independently present in at least five places.
@@ -170,11 +186,19 @@ staged in the shared worktree as of this revision).
       actual `saved_dollars` VALUE computation (`reporting.py:91-94`) and every
       PERCENTAGE-figure surface (Avg Guard Alpha, total_alpha, etc.) are untouched — the
       no-naked-sign convention governs DOLLAR figures only.
+- [ ] **AC-13 — JS contract-identity across surfaces.** `index.js` and `history.js` each
+      contain their OWN per-file-local dollar-format logic with an IDENTICAL contract to
+      `format_dollar_saved` (abs magnitude, no sign char, sign-conditional word, sign→color);
+      no shared `static/*.js` module is introduced. Parallel body-extraction tests (already
+      committed — see AC-7/8/9's and AC-10's pinning tests) enforce the two files stay
+      contract-identical; a future change to one file's convention without the other is
+      caught by this parallel-test pair, not by a shared import.
 
 ## Architecture
 - **`analytics.py`** — new `format_dollar_saved(value, *, positive_word="saved",
   negative_word="lost") -> str` (AC-1). Pure function, no I/O, alongside the existing
-  `get_history_summary`/`_window_cutoff_date` in the same module.
+  `get_history_summary`/`_window_cutoff_date` in the same module. ONE shared implementation —
+  Python's import model makes this natural (AC-2's callers just import it).
 - **`app.py`** — `guard_alpha_summary()` (~`app.py:2172`) gains the `?window=` param (AC-4),
   resolved via `analytics._window_cutoff_date` (reuse — see Decisions), filtering the same
   `post_mortem_*.json` glob to in-window files before summing; response gains `window` +
@@ -183,27 +207,27 @@ staged in the shared worktree as of this revision).
   itself (AC-12) — only the CALLER-supplied day-counts change (AC-6, a template/JS constant
   fix, not a function-body change).
 - **`static/history.js`** — `renderHero()` (AC-7), `renderReasonCards()` (AC-8),
-  `renderTriggers()` (AC-9).
+  `renderTriggers()` (AC-9); a per-file-local dollar-format helper this file owns (AC-13).
 - **`templates/history.html`** — window-picker `data-window` values (AC-6); no new elements
   needed here (AC-7's contract is color+abs only).
 - **`templates/index.html`** — two new verb elements (AC-10).
 - **`static/index.js`** — `fetchGuardAlphaSummary()` gains a window-token param + verb-element
   sign logic (AC-10/AC-11); the window-picker click handler (`var windowTokenMap = {...}`)
-  gains one more call (AC-11); `_heroWindow`'s initial value becomes a string (AC-11).
-- **`static/format_saved.js` (NEW, team-lead directive, item 5)** — ONE shared JS helper
-  mirroring `format_dollar_saved`'s contract, consumed by BOTH `index.js` and `history.js` —
-  no per-surface JS reimplementation. **Reconciliation note (flagged, not silently decided):**
-  the ALREADY-COMMITTED RED tests in `test_dollar_saved_panel_sign_coherence.py` and
-  `test_cycle_5_history.py` assert literal tokens (`'lost'`, `Math.abs`) are present INSIDE
-  each calling function's own source-text window (`_js_block`/brace-matched body extraction —
-  this codebase's no-jsdom idiom). A shared helper is compatible with those assertions ONLY
-  if each call site passes its words EXPLICITLY (e.g. `formatSaved(value, 'saved', 'lost')`,
-  mirroring the Python helper's keyword-explicit style) rather than relying on silent
-  in-module defaults — that keeps the literal word visible at the call site the existing RED
-  tests inspect, while still centralizing the abs/sign logic in one file. gas-impl should
-  follow this pattern; if gas-test finds it insufficient, the JS RED tests' extraction scope
-  (not this plan's AC) is the thing to revise, and that revision should be called out
-  explicitly to the team lead/PM before GREEN, not folded in silently.
+  gains one more call (AC-11); `_heroWindow`'s initial value becomes a string (AC-11); its
+  OWN per-file-local dollar-format helper (AC-13, separate from `history.js`'s).
+- **JS helper shape — FINAL (per team-lead ruling, this revision):** NO shared
+  `static/format_saved.js`. Each of `index.js`/`history.js` implements its own local
+  dollar-format logic to the SAME contract (abs magnitude + no sign char + saved/lost word +
+  sign→color). This matches the repo's no-bundler architecture and the body-extraction test
+  idiom (each RED test inspects one function's own source text — a cross-file import would
+  make the literal tokens those tests grep for invisible at the call site). The DRY
+  invariant is enforced by PARALLEL tests asserting contract-identity across the two files
+  (AC-13), not by a shared module. **No RED rewrite needed** — gas-test's already-committed
+  tests already assert each file's local contract independently; this ruling makes the plan
+  match what was already written, not the other way around. (Supersedes this doc's earlier,
+  second-revision proposal to route a shared JS module's calls through explicit
+  `formatSaved(value, 'saved', 'lost')`-style arguments — that approach is no longer needed
+  since there is no shared module to call.)
 - **`reporting.py`** — `build_sleeves_digest_section` (~:253-254), the Discord "Total Saved"
   line (~:581), and the QuickChart "Daily Saved ($)" dataset builder — AC-2(a)/(b)/AC-3. The
   actual `saved_dollars`/`realized_pnl_usd` VALUE computations (~:91-94, and wherever
@@ -231,16 +255,20 @@ staged in the shared worktree as of this revision).
 - Server local-time vs ET in `get_history_summary`'s `end_date = datetime.now()` — a
   PRE-EXISTING, OUT-OF-SCOPE quirk, not touched by this fix (unchanged from the original
   draft's scoping note).
+- `index.js`'s and `history.js`'s per-file-local helpers drifting apart over time (AC-13's
+  risk) — mitigated by the parallel body-extraction tests, not by a shared module; a reviewer
+  should treat a future change to one file's convention without a matching change to the
+  other as a regression this test pair is specifically there to catch.
 
 ## Security Considerations
 - No new user input surface of consequence — `window` is validated against the existing
   strip-route allowlist pattern (unrecognized → safe degrade to `all`, never a raw string
   interpolated into a query or a path); History's picker values are fixed template literals
   (a constant edit, not a new input path).
-- `format_dollar_saved`/the shared JS helper are pure formatting functions over a
-  server-computed float — no new DB access, no new secret exposure, no `innerHTML` with
-  interpolated external-origin strings (JS changes use `textContent`/DOM APIs per this
-  codebase's existing XSS-hygiene pattern).
+- `format_dollar_saved` and each file's local JS dollar-format helper are pure formatting
+  functions over a server-computed float — no new DB access, no new secret exposure, no
+  `innerHTML` with interpolated external-origin strings (JS changes use `textContent`/DOM
+  APIs per this codebase's existing XSS-hygiene pattern).
 - The QuickChart per-index color array and the windowed `date_range` are derived entirely
   from values the route/producer already computes in-memory — no new query, no new external
   call.
@@ -263,16 +291,21 @@ Python behavior, not source-text-only.
   convention) so the suite stays correct regardless of run date.
 - `tests/app/test_dollar_saved_panel_sign_coherence.py` — AC-10/AC-11 (template verb
   elements, no-naked-minus on both headlines, window-picker join wiring, `_heroWindow` string
-  init).
-- `tests/ui/test_cycle_5_history.py` (extended) — AC-7/AC-8/AC-9. Note: this SUPERSEDES the
-  prior `test_history_js_render_hero_total_saved_always_pos` test (deleted/replaced by
-  `test_history_js_render_hero_total_saved_colored_by_sign`) — the OLD test encoded the bug
-  itself as an assertion; its removal is intentional, not a regression.
+  init) — these `index.js`-scoped body-extraction assertions are also `index.js`'s half of
+  AC-13's parallel contract-identity pair.
+- `tests/ui/test_cycle_5_history.py` (extended) — AC-7/AC-8/AC-9 — these `history.js`-scoped
+  body-extraction assertions are `history.js`'s half of AC-13's parallel pair. Note: this
+  SUPERSEDES the prior `test_history_js_render_hero_total_saved_always_pos` test
+  (deleted/replaced by `test_history_js_render_hero_total_saved_colored_by_sign`) — the OLD
+  test encoded the bug itself as an assertion; its removal is intentional, not a regression.
 - `tests/app/test_sleeves_digest_extension.py` (extended) — AC-2(a)
   (`TestBuildSleevesDigestSectionRealizedPnlSignCoherence`, including the `None` → `"n/a"`
   non-regression case).
 - `tests/reporting/test_reporting.py` (extended) — AC-2(b)/AC-3
   (`TestDiscordTotalSavedSignCoherence`, `TestQuickChartDailySavedBarColorBySign`).
+- AC-13 is proven by the EXISTING parallel structure above (index.js's tests vs history.js's
+  tests, both already committed) — no separate new test file is needed for it; it is a
+  naming/framing AC over tests that already exist, not a new RED requirement.
 - Consumer-suite discovery (house lesson, `feedback_consumer_suite_discovery_before_sufficiency`):
   before GREEN, grep the whole tree for existing consumers of `get_history_summary`'s dict
   shape, `guard_alpha_summary`'s response shape, and any other test asserting the OLD "always
@@ -290,21 +323,22 @@ Python behavior, not source-text-only.
 ## Decisions
 | Decision | Rationale |
 |----------|-----------|
-| Scope reconciled to include the dashboard panel windowing + both index.js headlines + a shared formatter + the Discord/QuickChart/sleeves-digest surfaces | The first draft under-scoped based on the one-line relay alone; gas-test's already-committed RED tests are the authoritative contract (team-lead ruling: "the doc is the lagging artifact, catch it up"). This revision matches the RED tests file-for-file. |
-| ONE shared `analytics.format_dollar_saved` (Python) + ONE shared `static/format_saved.js` (JS) | Team-lead directive (item 5) — the same bug (naked sign under an unconditional word) was independently present in 5+ places precisely BECAUSE there was no shared implementation; centralizing removes the class of bug, not just today's instances. |
-| Shared JS helper takes words as EXPLICIT call-site arguments, not silent in-module defaults | Reconciles the new shared-module directive with the ALREADY-COMMITTED RED tests, which assert literal `'lost'`/`Math.abs` tokens inside each CALLING function's own source-text window (this codebase's no-jsdom idiom extracts function bodies, not cross-file call graphs). Explicit-argument call sites keep the literal token visible where the existing tests look. Flagged to the team lead as the resolution path, not silently assumed — if gas-test judges this insufficient, revising the JS RED tests' extraction scope is the correct fix, called out explicitly rather than folded in. |
+| Scope reconciled to include the dashboard panel windowing + both index.js headlines + a shared Python formatter + the Discord/QuickChart/sleeves-digest surfaces | The first draft under-scoped based on the one-line relay alone; gas-test's already-committed RED tests are the authoritative contract (team-lead ruling: "the doc is the lagging artifact, catch it up"). This revision matches the RED tests file-for-file. The team lead has since confirmed the Detail-column/Discord/QuickChart surfaces were part of their original enumeration, not net-new scope this doc-writer added. |
+| ONE shared `analytics.format_dollar_saved` (Python); NO shared JS module — per-file-local helpers in `index.js` and `history.js` instead | FINAL team-lead ruling (this revision), relaxing the original item-5 "one shared static/format_saved.js" directive. A shared JS module fights this repo's no-bundler architecture and its body-extraction test idiom (tests inspect one function's own source text; a cross-file call would hide the literal tokens those tests grep for). Python has no such tension — imports make DRY natural there, so it stays ONE shared function. |
+| DRY for the JS convention is enforced by PARALLEL identical-contract tests, not a shared module | Team-lead's explicit framing: "the DRY invariant is contract-IDENTITY across surfaces (parallel tests enforce it), not a single module." gas-test's already-committed RED (`test_dollar_saved_panel_sign_coherence.py` for index.js, the `test_cycle_5_history.py` extensions for history.js) already IS that parallel pair — no RED rewrite required. |
 | `get_history_summary`'s calendar-day arithmetic itself stays unchanged; only caller-supplied day-counts (AC-6) change | Unchanged from the original draft's finding: `end_date - timedelta(days=days)` is ALREADY arithmetically identical to `_window_cutoff_date`'s bare-int branch. The divergence was always in the TEMPLATE's mislabeled button values, not in two different date-math implementations. |
 | Percentage-figure surfaces keep their existing `+`/`-` convention | Team-lead ruling (item 3): the no-naked-sign convention is scoped to DOLLAR figures. A percentage change conventionally displays a leading sign; this fix does not touch that surface. |
 | `reporting.py:91-94` (the `saved_dollars` VALUE formula) stays untouched | Team-lead ruling (item 3) — this is a pure display/formatting fix; the underlying guard-alpha dollar computation is out of scope and already correct per `DE-GUARD-ALPHA-SAVED-001`. |
 
 ## Scope Boundaries
-- **IN:** the shared Python (`analytics.format_dollar_saved`) and JS (`static/format_saved.js`)
-  formatters (AC-1); every Python call site routed through the formatter — sleeves digest,
-  Discord Total-Saved line, and any other blast-radius hit (AC-2); QuickChart bar coloring by
-  sign (AC-3); the windowed `GET /api/guard-alpha-summary` route + byte-parity proof +
-  History's corrected 1Y/5Y values (AC-4/5/6); History hero/by-reason/Detail-column sign
-  coloring + abs magnitude (AC-7/8/9); the dashboard panel's verb elements + no-naked-sign +
-  windowing wiring (AC-10/11); explicit no-regression guarantees (AC-12).
+- **IN:** the shared Python formatter (`analytics.format_dollar_saved`, AC-1) and two
+  per-file-local JS formatters with an identical enforced contract (AC-13, no shared JS
+  module); every Python call site routed through the formatter — sleeves digest, Discord
+  Total-Saved line, and any other blast-radius hit (AC-2); QuickChart bar coloring by sign
+  (AC-3); the windowed `GET /api/guard-alpha-summary` route + byte-parity proof + History's
+  corrected 1Y/5Y values (AC-4/5/6); History hero/by-reason/Detail-column sign coloring + abs
+  magnitude (AC-7/8/9); the dashboard panel's verb elements + no-naked-sign + windowing
+  wiring (AC-10/11); explicit no-regression guarantees (AC-12).
 - **OUT:** the actual `saved_dollars`/`realized_pnl_usd` VALUE computations
   (`reporting.py:91-94` and wherever `realized_pnl_usd` is computed) — untouched, already
   correct. Every PERCENTAGE-figure surface (Avg Guard Alpha, `total_alpha`, `alphaColor`'s own
@@ -318,4 +352,6 @@ Python behavior, not source-text-only.
   window token (e.g. a real "5y" entry in the shared `_WINDOW_TRAILING_DAYS` table, or any
   OTHER tab's window menu beyond History/the hero strip) — this cycle only fixes the EXISTING
   History-tab picker's mislabeled values and wires the EXISTING hero-strip tokens into the
-  $-saved panel; it does not expand any tab's window options.
+  $-saved panel; it does not expand any tab's window options. A shared/bundled JS module for
+  the dollar formatter — explicitly ruled out this revision; per-file-local + parallel tests
+  is the final shape.
