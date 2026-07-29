@@ -3295,9 +3295,25 @@ def guard_alpha_summary():
             entry missing realized data is EXCLUDED from saved_dollars_realized,
             COUNTED in total, never counted in with_data, never substituted with
             the snapshot-basis value.
+        window (str): AC-2/AC-3 — the resolved window token (mirrors
+            /api/strip/<window>'s own echo-back pattern). Omitted or unrecognized
+            `?window=` query values resolve to "all" (lifetime, today's original
+            behavior) — never a 404/500, this is a read-only advisory route.
+
+    AC-2 (DE-GAS-COHERENCE-001): an optional `?window=<token>` query param, using
+    the SAME token vocabulary as /api/strip/<window> (_STRIP_WINDOW_TOKENS) and
+    resolved via the SAME analytics._window_cutoff_date the strip route uses —
+    filters both the summed cumulative_saved_dollars and date_range to only the
+    in-window post_mortem files. Omitting the param preserves the pre-existing
+    all-time default (regression guard for existing callers of this route).
     """
     import glob as _glob
     import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    raw_window = (request.args.get("window") or "").lower()
+    resolved_window = raw_window if raw_window in _STRIP_WINDOW_TOKENS else "all"
+    _cutoff = analytics._window_cutoff_date(resolved_window)
+    _cutoff_iso = _cutoff.isoformat() if _cutoff is not None else None
 
     pm_dir = analytics._POST_MORTEMS_DIR
     pattern = os.path.join(pm_dir, "post_mortem_*.json")
@@ -3326,6 +3342,16 @@ def guard_alpha_summary():
             )
             continue
 
+        # Extract YYYY-MM-DD from filename post_mortem_YYYY-MM-DD.json — done
+        # BEFORE the trigger-aggregation loop below so AC-2's window cutoff can
+        # skip an out-of-window file entirely (date_range/AC-3 must reflect only
+        # the in-window file dates, not the all-time range).
+        basename = os.path.basename(fpath)
+        date_str = basename[len("post_mortem_") : len("post_mortem_") + 10]
+
+        if _cutoff_iso is not None and (len(date_str) != 10 or date_str < _cutoff_iso):
+            continue
+
         # F-008: only entries with a recognized if_held_source provenance stamp
         # contribute — a missing/unrecognized stamp means the if-held basis is
         # untrustworthy (see analytics.is_valid_post_mortem_entry). Distinct
@@ -3349,9 +3375,6 @@ def guard_alpha_summary():
             else:
                 excluded_invalid_count += 1
 
-        # Extract YYYY-MM-DD from filename post_mortem_YYYY-MM-DD.json
-        basename = os.path.basename(fpath)
-        date_str = basename[len("post_mortem_") : len("post_mortem_") + 10]
         if len(date_str) == 10:
             dates.append(date_str)
 
@@ -3445,6 +3468,7 @@ def guard_alpha_summary():
             # (DE-GUARD-ALPHA-SAVED-001 semantics preserved).
             "saved_dollars_realized": saved_dollars_realized,
             "realized_coverage": {"with_data": realized_with_data, "total": realized_total},
+            "window": resolved_window,
         }
     )
 

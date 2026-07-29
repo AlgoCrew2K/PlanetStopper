@@ -4,7 +4,7 @@
     var _cumChart = null;
     var _sparks = {};
     var _heroFull = { dates: [], bot: [], held: [] };
-    var _heroWindow = 30;
+    var _heroWindow = '30d';
     var _botState = {};
     var _symIds = [];
     var _intradayChart = null;
@@ -1411,8 +1411,9 @@
     // continuous polling; the panel updates when the engine actually cycles.
     // Uses dollar-saved-headline — NOT guard-alpha-headline (that carries the windowed
     // % guard alpha from /api/strip/<window> and must not be clobbered).
-    function fetchGuardAlphaSummary() {
-        fetch('/api/guard-alpha-summary')
+    function fetchGuardAlphaSummary(windowToken) {
+        var url = '/api/guard-alpha-summary' + (windowToken ? '?window=' + encodeURIComponent(windowToken) : '');
+        fetch(url)
             .then(function (response) {
                 if (!response.ok) return;
                 return response.json();
@@ -1420,6 +1421,7 @@
             .then(function (data) {
                 if (!data) return;
                 var headlineEl = document.getElementById('dollar-saved-headline');
+                var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
                 var labelEl = document.getElementById('dollar-saved-basis-label');
                 if (data.guard_event_count === 0) {
@@ -1427,13 +1429,15 @@
                     if (countEl) countEl.textContent = '0';
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 } else {
-                    // Finding 9: sign drives format ("-$N.NN") and color — same idiom
-                    // as the guard-alpha-headline renderer. Never hardcoded green.
+                    // DE-GAS-COHERENCE-001: ABS magnitude, no sign character -- the
+                    // dedicated verb element (below) carries 'saved'/'lost' by sign,
+                    // color follows the same sign. Never hardcoded green.
                     var saved = data.cumulative_saved_dollars;
                     if (headlineEl) {
-                        headlineEl.textContent = (saved < 0 ? '-$' : '$') + Math.abs(saved).toFixed(2);
+                        headlineEl.textContent = '$' + Math.abs(saved).toFixed(2);
                         headlineEl.style.color = saved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
                     }
+                    if (verbEl) verbEl.textContent = saved >= 0 ? 'saved' : 'lost';
                     if (countEl) countEl.textContent = data.guard_event_count;
                     if (labelEl) labelEl.textContent = data.basis_label || '';
                 }
@@ -1442,6 +1446,7 @@
                 // headline — additive sibling render, independent of the
                 // snapshot-basis guard_event_count branch above.
                 var realizedHeadlineEl = document.getElementById('dollar-saved-realized-headline');
+                var realizedVerbEl = document.getElementById('dollar-saved-realized-verb');
                 var realizedCoverageEl = document.getElementById('dollar-saved-realized-coverage');
                 var coverage = data.realized_coverage || { with_data: 0, total: 0 };
                 if (coverage.with_data === 0) {
@@ -1453,9 +1458,10 @@
                 } else {
                     var realizedSaved = data.saved_dollars_realized;
                     if (realizedHeadlineEl) {
-                        realizedHeadlineEl.textContent = (realizedSaved < 0 ? '-$' : '$') + Math.abs(realizedSaved).toFixed(2);
+                        realizedHeadlineEl.textContent = '$' + Math.abs(realizedSaved).toFixed(2);
                         realizedHeadlineEl.style.color = realizedSaved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
                     }
+                    if (realizedVerbEl) realizedVerbEl.textContent = realizedSaved >= 0 ? 'saved' : 'lost';
                     if (realizedCoverageEl) realizedCoverageEl.textContent = coverage.with_data + ' of ' + coverage.total;
                 }
             })
@@ -1472,11 +1478,11 @@
             var _es = new EventSource('/api/events');
             // Finding 8: the $-saved panel rides the same event — a page left open
             // across the EOD post-mortem write (or a new guard event) updates live.
-            _es.addEventListener('cycle-complete', function () { loadState(); fetchGuardAlphaSummary(); });
+            _es.addEventListener('cycle-complete', function () { loadState(); fetchGuardAlphaSummary(_heroWindow); });
             _es.onerror = function () { /* silent — poll fallback handles reconnect */ };
         }
 
-        fetchGuardAlphaSummary();
+        fetchGuardAlphaSummary(_heroWindow);
 
         // AC-3: each picker button maps to a lowercase URL window token. The SAME
         // token drives BOTH /api/strip/<token> (re-windows the hero VALUE + vs-rows
@@ -1529,6 +1535,9 @@
                 // Re-window the headline guard-alpha VALUE + the three vs-rows so the
                 // label always matches the actual window (kills the F1 mislabel).
                 fetchWindowedStrip(token);
+                // AC-2: the $-saved panel re-windows in lockstep with the rest of
+                // the hero instead of always showing the all-time sum.
+                fetchGuardAlphaSummary(token);
             });
         });
     });
