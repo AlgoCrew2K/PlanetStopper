@@ -857,9 +857,7 @@ def _capture_discord_embed_description(tmp_path, monkeypatch, *, saved_dollars: 
 
     # The main EOD embed is sent via the multipart `data=` branch
     # (payload_data = {"payload_json": json.dumps({"embeds": first_batch})}).
-    discord_calls = [
-        c for c in mock_post.call_args_list if "quickchart" not in c.args[0]
-    ]
+    discord_calls = [c for c in mock_post.call_args_list if "quickchart" not in c.args[0]]
     assert discord_calls, "send_eod_discord_post never POSTed to the Discord webhook"
     payload_json = discord_calls[0].kwargs.get("data", {}).get("payload_json")
     assert payload_json, "the Discord POST must carry a payload_json field with the embeds"
@@ -869,18 +867,14 @@ def _capture_discord_embed_description(tmp_path, monkeypatch, *, saved_dollars: 
 
 class TestDiscordTotalSavedSignCoherence:
     def test_negative_total_saved_has_no_naked_minus(self, tmp_path, monkeypatch):
-        description = _capture_discord_embed_description(
-            tmp_path, monkeypatch, saved_dollars=-50.0
-        )
+        description = _capture_discord_embed_description(tmp_path, monkeypatch, saved_dollars=-50.0)
         assert "$-" not in description, (
             f"a negative Total Saved figure must never render a naked minus under "
             f"the 'Total Saved:' label; got description: {description!r}"
         )
 
     def test_negative_total_saved_says_lost(self, tmp_path, monkeypatch):
-        description = _capture_discord_embed_description(
-            tmp_path, monkeypatch, saved_dollars=-50.0
-        )
+        description = _capture_discord_embed_description(tmp_path, monkeypatch, saved_dollars=-50.0)
         assert "lost" in description, (
             f"a negative Total Saved figure must carry the word 'lost' somewhere in "
             f"its line -- today there is no word at all, only a forced sign "
@@ -891,9 +885,7 @@ class TestDiscordTotalSavedSignCoherence:
         )
 
     def test_positive_total_saved_has_no_redundant_plus_sign(self, tmp_path, monkeypatch):
-        description = _capture_discord_embed_description(
-            tmp_path, monkeypatch, saved_dollars=50.0
-        )
+        description = _capture_discord_embed_description(tmp_path, monkeypatch, saved_dollars=50.0)
         assert "$+" not in description, (
             f"a positive Total Saved figure must not carry a redundant leading '+' "
             f"sign character -- ABS magnitude + word only; got: {description!r}"
@@ -962,7 +954,9 @@ class TestQuickChartDailySavedBarColorBySign:
     def _daily_saved_dataset(self, chart_config: dict) -> dict:
         datasets = chart_config["data"]["datasets"]
         matches = [d for d in datasets if d.get("label") == "Daily Saved ($)"]
-        assert matches, f"no 'Daily Saved ($)' dataset found among: {[d.get('label') for d in datasets]}"
+        assert matches, (
+            f"no 'Daily Saved ($)' dataset found among: {[d.get('label') for d in datasets]}"
+        )
         return matches[0]
 
     def test_background_color_is_a_per_index_array_not_one_string(self, tmp_path, monkeypatch):

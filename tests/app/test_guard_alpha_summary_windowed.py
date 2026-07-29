@@ -82,9 +82,7 @@ def _write_pm(base_dir: pathlib.Path, date_str: str, saved_dollars: float, symph
             }
         ]
     }
-    (base_dir / f"post_mortem_{date_str}.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (base_dir / f"post_mortem_{date_str}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 # Three tiers relative to the shared window tokens under test:
@@ -207,9 +205,9 @@ class TestByteParityWithHistorySummary:
     agree to the cent, computed from ONE shared fixture -- never hardcoded."""
 
     def test_30d_matches_get_history_summary_days_30(self, client, three_tier_pm_dir):
-        route_sum = client.get(
-            "/api/guard-alpha-summary?window=30d"
-        ).get_json()["cumulative_saved_dollars"]
+        route_sum = client.get("/api/guard-alpha-summary?window=30d").get_json()[
+            "cumulative_saved_dollars"
+        ]
         history_sum = analytics_module.get_history_summary(
             days=30, base_dir=str(three_tier_pm_dir["dir"])
         )["total_saved"]
@@ -223,9 +221,9 @@ class TestByteParityWithHistorySummary:
         """The corollary-bug proof: 1y must resolve to 365 on BOTH sides (not
         252, History's pre-fix day-count for its own "1Y" button) for this
         byte-parity to hold at the 1-year token."""
-        route_sum = client.get(
-            "/api/guard-alpha-summary?window=1y"
-        ).get_json()["cumulative_saved_dollars"]
+        route_sum = client.get("/api/guard-alpha-summary?window=1y").get_json()[
+            "cumulative_saved_dollars"
+        ]
         history_sum = analytics_module.get_history_summary(
             days=365, base_dir=str(three_tier_pm_dir["dir"])
         )["total_saved"]
@@ -401,16 +399,14 @@ class TestWindowedEmptyResultStaysHonest:
             "(never blank just because the window is empty)"
         )
 
-    def test_windowed_empty_matches_history_summary_honest_zero(
-        self, client, out_of_window_pm_dir
-    ):
+    def test_windowed_empty_matches_history_summary_honest_zero(self, client, out_of_window_pm_dir):
         """The literal byte-parity proof extended to the zero case: History's
         own producer, on the IDENTICAL fixture, honestly returns 0.0 -- the
         windowed route must match, not divert to a different code path
         that produces a different (dishonest) answer."""
-        route_sum = client.get(
-            "/api/guard-alpha-summary?window=30d"
-        ).get_json()["cumulative_saved_dollars"]
+        route_sum = client.get("/api/guard-alpha-summary?window=30d").get_json()[
+            "cumulative_saved_dollars"
+        ]
         history_sum = analytics_module.get_history_summary(
             days=30, base_dir=str(out_of_window_pm_dir["dir"])
         )["total_saved"]

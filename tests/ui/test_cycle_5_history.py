@@ -674,9 +674,7 @@ def test_history_js_render_hero_total_saved_colored_by_sign():
     else:
         pytest.fail("Could not extract renderHero body")
 
-    assert "total-saved" in body, (
-        "renderHero does not reference val-total-saved element"
-    )
+    assert "total-saved" in body, "renderHero does not reference val-total-saved element"
     # Scope narrowly to the total-saved block specifically -- renderHero also
     # references --studio-pos/--studio-neg for total_alpha and win_rate
     # elsewhere in this same body, which would false-pass a body-wide search.

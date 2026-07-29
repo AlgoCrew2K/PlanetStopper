@@ -94,7 +94,9 @@ class TestFormatDollarSavedParameterizedWords:
 
     def test_positive_value_with_custom_words_uses_positive_word(self):
         result = analytics.format_dollar_saved(75.0, positive_word="gain", negative_word="loss")
-        assert result == "$75.00 gain", f"custom positive_word must be used verbatim, got {result!r}"
+        assert result == "$75.00 gain", (
+            f"custom positive_word must be used verbatim, got {result!r}"
+        )
 
     def test_negative_value_with_custom_words_uses_negative_word_no_sign(self):
         result = analytics.format_dollar_saved(-75.0, positive_word="gain", negative_word="loss")

@@ -271,12 +271,8 @@ def _run_apply_hero_window(token: str, n_days: int) -> dict:
     console.log(JSON.stringify({{ labels_len: _cumChart.data.labels.length }}));
     """
 
-    result = subprocess.run(
-        ["node", "-e", harness], capture_output=True, text=True, timeout=10
-    )
-    assert result.returncode == 0, (
-        f"applyHeroWindow('{token}') harness crashed:\n{result.stderr}"
-    )
+    result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, f"applyHeroWindow('{token}') harness crashed:\n{result.stderr}"
     return json.loads(result.stdout.strip())
 
 
