@@ -3,7 +3,7 @@
 > Discord webhook notifications and QuickChart-embedded EOD post-mortem generation.
 
 **Source:** `reporting.py`
-**Last updated:** 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- Stage 2 gains additive realized-basis $-saved fields (`realized_observed_return`/`realized_source`/`saved_dollars_realized`), sourced exclusively from `shadow_history` via the same accessor Stage 1 uses; see the new Stage 2 section below.) Prior: 2026-07-19 (`DE-AUTOTUNE-REPORTING-001`: `send_eod_discord_post` shape-guards the per-symphony changes dict against non-`{old,new}` sibling entries and distinguishes an aborted autotune run from a genuine no-change day -- see the new API Reference entry below.) Prior: 2026-07-09 (DE-PROD-ACCURACY-001: Stage-1 if-held sourcing corrected to read the `shadow_history` table directly, with explicit `if_held_source` provenance and an off-schedule snapshot-cutoff invariant; supersedes the 2026-06-22 doc claim below)
+**Last updated:** 2026-07-29 (guard-alpha-saved-coherence, `DE-GAS-COHERENCE-001` -- three sign-coherence fixes: `build_sleeves_digest_section`'s `realized_pnl_usd` line and `send_eod_discord_post`'s "Total Saved" embed line both now route through the new shared `analytics.format_dollar_saved` (no more forced `:+,.2f` sign character); the QuickChart "Daily Saved ($)" bar dataset's `backgroundColor` is now a per-index array colored by each day's own sign, replacing a single hardcoded amber applied to every bar regardless of sign. See the new sections below.) Prior: 2026-07-24 (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001` -- Stage 2 gains additive realized-basis $-saved fields (`realized_observed_return`/`realized_source`/`saved_dollars_realized`), sourced exclusively from `shadow_history` via the same accessor Stage 1 uses; see the new Stage 2 section below.) Prior: 2026-07-19 (`DE-AUTOTUNE-REPORTING-001`: `send_eod_discord_post` shape-guards the per-symphony changes dict against non-`{old,new}` sibling entries and distinguishes an aborted autotune run from a genuine no-change day -- see the new API Reference entry below.) Prior: 2026-07-09 (DE-PROD-ACCURACY-001: Stage-1 if-held sourcing corrected to read the `shadow_history` table directly, with explicit `if_held_source` provenance and an off-schedule snapshot-cutoff invariant; supersedes the 2026-06-22 doc claim below)
 
 ## Overview
 
@@ -13,6 +13,8 @@
 **Stage 2 (post-rebalance, 16:00 ET):** Fills in tomorrow's target holdings from Composer.
 
 Post-mortem files are written to `post_mortems/post_mortem_YYYY-MM-DD.json` (directory created on first write, anchored to project root regardless of CWD via `os.path.dirname(os.path.abspath(__file__))`).
+
+As of `DE-GAS-COHERENCE-001` (2026-07-29), this module additively `import analytics` -- the first cross-import between the two files -- solely to reach the new shared `analytics.format_dollar_saved` formatter (see `docs/generated/analytics.md`).
 
 ## API Reference
 
@@ -106,6 +108,14 @@ Stage 2 (post-rebalance, 16:00 ET) additively stamps each already-written trigge
 
 ---
 
+### `build_sleeves_digest_section(sleeve_summaries) -> str` -- sign coherence (`DE-GAS-COHERENCE-001`, 2026-07-29)
+
+Each rule's `realized_pnl_usd` line now routes through `analytics.format_dollar_saved(realized_pnl, positive_word="gain", negative_word="loss")` instead of the prior `f"${realized_pnl:+,.2f}"`. The old format spec forced a literal `+`/`-` sign character regardless of magnitude; the new call renders the ABS magnitude with the word `"gain"`/`"loss"` conveying direction instead -- a losing rule now reads `"$37.50 loss"`, never a naked `"$-37.50"`. **Zero, not gain/loss:** zero uses the positive word (`"gain"`), matching the operator-locked zero-boundary convention. **`None`/non-numeric `realized_pnl_usd` still degrades to the pre-existing `"n/a"` marker unchanged** (audit finding #8: a fabricated `"$+0.00"` is itself a value claim) -- `format_dollar_saved` is only ever reached for a genuine `int`/`float` (excluding `bool`) value.
+
+This surface deliberately uses `"gain"`/`"loss"` rather than the guard-alpha web surfaces' `"saved"`/`"lost"` word pair (see `docs/generated/static_index_js.md`/`static_history_js.md`) -- `realized_pnl_usd` is a generic per-rule realized P&L figure for the Managed Sleeves digest, not a guard-alpha savings figure specifically. Same abs+no-sign+word shape either way, via the same shared `analytics.format_dollar_saved` (see `docs/generated/analytics.md`) with different keyword-only words.
+
+---
+
 ### `send_eod_discord_post(current_date_str, report_file, optimization_results, discord_webhook_url) -> None`
 
 Builds and sends the EOD Discord embed(s): the multi-timeframe (1d/7d/30d) performance-summary embed (with an optional QuickChart chart image, attaching `report_file` to the first message batch) plus, when an autotune run was passed in, a per-symphony optimization-changes embed or an aborted-run notice. `discord_webhook_url` falsy (`None`/empty) short-circuits with an early return before any work happens. Never raises -- webhook/parse/malformed-entry failures degrade to a logged error, never a crash of the whole EOD push.
@@ -128,10 +138,15 @@ Builds and sends the EOD Discord embed(s): the multi-timeframe (1d/7d/30d) perfo
 
 **Widened exception handling (`reporting.py:547`):** the surrounding `except` tuple now includes `KeyError` alongside `OSError, ValueError, requests.RequestException, TypeError` (AC-3) -- defense-in-depth for any malformed-entry failure mode the shape guard above does not anticipate. A single bad entry degrades to a logged error with the rest of the push still attempted, never a silent crash.
 
-**Regression tests:** `tests/reporting/test_eod_changes_dict_shape_guard.py` (9 tests, AC-1/AC-2/AC-3/AC-6) + `tests/autotuner/test_autotune_abort_paths_structured_marker.py` (8 tests, AC-4/AC-5, parametrized across all 3 `run_autotuner` abort trigger conditions, contract-locking the marker shape end-to-end through this function). See `DE-AUTOTUNE-REPORTING-001` in `DECISIONS.md`.
+**"Total:" line sign coherence (`DE-GAS-COHERENCE-001`, 2026-07-29):** the multi-timeframe performance-summary embed's dollar-total line was `f"• **Total Saved:** ${ws['total_saved']:+,.2f}"` -- the `:+` format spec forced a literal `+` on a winning window and Python's own `-` on a losing one, under the unconditional label "Total Saved:" (a losing window rendered `"Total Saved: $-50.00"`, the exact naked-minus-under-a-saved-label pattern the operator ruling forbids). Fixed to `f"• **Total:** {analytics.format_dollar_saved(ws['total_saved'])}"` (default `saved`/`lost` words) -- the label itself was shortened from "Total Saved:" to "Total:" since the rendered value already carries "saved"/"lost", avoiding a redundant or self-contradictory "Total Saved: $50.00 lost".
+
+**QuickChart "Daily Saved ($)" bar coloring by sign (`DE-GAS-COHERENCE-001`, 2026-07-29):** the "Daily Saved ($)" bar dataset's `backgroundColor` was a single hardcoded `rgba(245, 158, 11, 0.5)` (goldenrod/amber) string applied to every bar regardless of that day's sign -- a losing day's bar was visually identical to a winning day's. Fixed to a per-index list (Chart.js supports `backgroundColor` as an array parallel to `data`), computed once per chart build from the same `saved_list` the dataset's own `data` field uses -- emerald (`#10b981`) for `v >= 0`, rose (`#f43f5e`) for `v < 0`. A losing day's bar is now visually distinct from a winning day's; two winning (or two losing) days, even non-adjacent ones, share the identical color -- the coloring is genuinely sign-derived, not an alternating palette that would happen to look correct only at the boundary.
+
+**Regression tests:** `tests/reporting/test_eod_changes_dict_shape_guard.py` (9 tests, AC-1/AC-2/AC-3/AC-6) + `tests/autotuner/test_autotune_abort_paths_structured_marker.py` (8 tests, AC-4/AC-5, parametrized across all 3 `run_autotuner` abort trigger conditions, contract-locking the marker shape end-to-end through this function). `tests/reporting/test_reporting.py::TestDiscordTotalSavedSignCoherence` + `::TestQuickChartDailySavedBarColorBySign` (`DE-GAS-COHERENCE-001`). See `DE-AUTOTUNE-REPORTING-001` and `DE-GAS-COHERENCE-001` in `DECISIONS.md`.
 
 ## Internal Dependencies
 
+- `analytics` -- `format_dollar_saved` (new this cycle, `DE-GAS-COHERENCE-001` -- the first cross-import between these two files)
 - `database` -- `normalize_name`, `get_symphony_strategy`, `load_latest_shadow_row`, `load_earliest_shadow_row`
 - `requests` -- Discord webhook HTTP posts
 - External: Discord Webhooks, QuickChart API
