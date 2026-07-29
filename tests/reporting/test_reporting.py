@@ -27,6 +27,7 @@ No live network calls are made. No ``@pytest.mark.live`` tests in this file.
 """
 
 import json
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -787,6 +788,211 @@ def test_quickchart_post_payload_is_well_formed(tmp_path, monkeypatch):
     assert isinstance(data["datasets"], list) and len(data["datasets"]) > 0, (
         "chart.data.datasets must be a non-empty list"
     )
+
+
+# ===========================================================================
+# DE-GAS-COHERENCE-001 -- Discord "Total Saved" line: no forced sign character
+#
+# THE BUG: `f"• **Total Saved:** ${ws['total_saved']:+,.2f}"` -- the `:+`
+# format spec forces a literal '+' for a positive figure and Python's own
+# natural '-' for a negative one, under the UNCONDITIONAL label "Total
+# Saved:". A losing window renders "Total Saved: $-50.00" (naked minus under
+# a "Saved" label -- the exact pattern the operator ruling forbids); a
+# winning window renders a redundant "Total Saved: $+50.00" (no word needed
+# there, but the '+' is still a sign character the convention forbids).
+# FIX: route through analytics.format_dollar_saved (default saved/lost words)
+# -- ABS magnitude, no sign character, word conveys direction.
+# ===========================================================================
+
+
+def _post_mortem_with_saved_dollars(date_str: str, saved_dollars: float) -> dict:
+    return {
+        "summary": {"total_monitored": 1, "total_triggered": 1},
+        "triggers": [
+            {
+                "symphony_name": "Test",
+                "saved_pct_guard_alpha": 1.0 if saved_dollars >= 0 else -1.0,
+                "saved_dollars": saved_dollars,
+                "exit_reason": "Trailing Stop",
+                "symphony_value": 10000.0,
+            }
+        ],
+        "tomorrow_target_holdings": {},
+    }
+
+
+def _capture_discord_embed_description(tmp_path, monkeypatch, *, saved_dollars: float) -> str:
+    """Writes a single post_mortem file (dated current_date_str, so
+    delta_days=0 falls inside every stats window) with the given
+    saved_dollars, invokes send_eod_discord_post, and returns the main EOD
+    embed's description text (embeds[0], sent via the multipart
+    payload_json branch alongside the file attachment)."""
+    date_str = "2026-02-01"
+    report_file = tmp_path / f"post_mortem_{date_str}.json"
+    with open(report_file, "w", encoding="utf-8") as fh:
+        json.dump(_post_mortem_with_saved_dollars(date_str, saved_dollars), fh)
+
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
+
+    quickchart_response = MagicMock()
+    quickchart_response.json.return_value = {"url": _SENTINEL_CHART_URL}
+    discord_response = MagicMock()
+    discord_response.status_code = 200
+
+    def _capture_post(url, **kwargs):
+        if "quickchart" in url:
+            return quickchart_response
+        return discord_response
+
+    with (
+        patch.object(reporting.requests, "post", side_effect=_capture_post) as mock_post,
+        patch.object(reporting.time, "sleep"),
+    ):
+        reporting.send_eod_discord_post(
+            current_date_str=date_str,
+            report_file=str(report_file),
+            optimization_results=None,
+            discord_webhook_url=_SENTINEL_WEBHOOK,
+        )
+
+    # The main EOD embed is sent via the multipart `data=` branch
+    # (payload_data = {"payload_json": json.dumps({"embeds": first_batch})}).
+    discord_calls = [c for c in mock_post.call_args_list if "quickchart" not in c.args[0]]
+    assert discord_calls, "send_eod_discord_post never POSTed to the Discord webhook"
+    payload_json = discord_calls[0].kwargs.get("data", {}).get("payload_json")
+    assert payload_json, "the Discord POST must carry a payload_json field with the embeds"
+    embeds = json.loads(payload_json)["embeds"]
+    return embeds[0]["description"]
+
+
+class TestDiscordTotalSavedSignCoherence:
+    def test_negative_total_saved_has_no_naked_minus(self, tmp_path, monkeypatch):
+        description = _capture_discord_embed_description(tmp_path, monkeypatch, saved_dollars=-50.0)
+        assert "$-" not in description, (
+            f"a negative Total Saved figure must never render a naked minus under "
+            f"the 'Total Saved:' label; got description: {description!r}"
+        )
+
+    def test_negative_total_saved_says_lost(self, tmp_path, monkeypatch):
+        description = _capture_discord_embed_description(tmp_path, monkeypatch, saved_dollars=-50.0)
+        assert "lost" in description, (
+            f"a negative Total Saved figure must carry the word 'lost' somewhere in "
+            f"its line -- today there is no word at all, only a forced sign "
+            f"character; got description: {description!r}"
+        )
+        assert re.search(r"\$50\.00", description), (
+            f"the magnitude must still be present (ABS, ${{50.00}}); got: {description!r}"
+        )
+
+    def test_positive_total_saved_has_no_redundant_plus_sign(self, tmp_path, monkeypatch):
+        description = _capture_discord_embed_description(tmp_path, monkeypatch, saved_dollars=50.0)
+        assert "$+" not in description, (
+            f"a positive Total Saved figure must not carry a redundant leading '+' "
+            f"sign character -- ABS magnitude + word only; got: {description!r}"
+        )
+        assert "saved" in description
+
+
+# ===========================================================================
+# DE-GAS-COHERENCE-001 -- QuickChart "Daily Saved ($)" bar coloring by sign
+#
+# THE BUG: the "Daily Saved ($)" bar dataset's backgroundColor is a single
+# hardcoded amber string applied to every bar regardless of that day's sign
+# -- a losing day's bar renders identically to a winning day's bar.
+# FIX: backgroundColor becomes a per-index array (Chart.js supports this)
+# parallel to `data`, colored by each day's own sign.
+# ===========================================================================
+
+
+def _build_chart_config_with_mixed_sign_days(tmp_path, monkeypatch) -> dict:
+    """3 post_mortem files, chronologically ordered, saved_dollars signs
+    +/-/+ -- proves BOTH that a differing sign gets a differing color AND
+    that the SAME sign gets the SAME color across non-adjacent days (not
+    merely an alternating pattern that happens to look sign-correct for 2
+    days)."""
+    dates_and_amounts = [
+        ("2026-03-01", 50.0),
+        ("2026-03-02", -30.0),
+        ("2026-03-03", 20.0),
+    ]
+    for date_str, amount in dates_and_amounts:
+        report_file = tmp_path / f"post_mortem_{date_str}.json"
+        with open(report_file, "w", encoding="utf-8") as fh:
+            json.dump(_post_mortem_with_saved_dollars(date_str, amount), fh)
+
+    monkeypatch.setattr(reporting, "_POST_MORTEMS_DIR", str(tmp_path))
+
+    quickchart_response = MagicMock()
+    quickchart_response.json.return_value = {"url": _SENTINEL_CHART_URL}
+    discord_response = MagicMock()
+    discord_response.status_code = 200
+
+    captured_quickchart_kwargs = {}
+
+    def _capture_post(url, **kwargs):
+        if "quickchart" in url:
+            captured_quickchart_kwargs.update(kwargs)
+            return quickchart_response
+        return discord_response
+
+    with (
+        patch.object(reporting.requests, "post", side_effect=_capture_post),
+        patch.object(reporting.time, "sleep"),
+    ):
+        reporting.send_eod_discord_post(
+            current_date_str="2026-03-03",
+            report_file=str(tmp_path / "post_mortem_2026-03-03.json"),
+            optimization_results=None,
+            discord_webhook_url=_SENTINEL_WEBHOOK,
+        )
+
+    assert captured_quickchart_kwargs, "QuickChart POST was not captured"
+    return captured_quickchart_kwargs["json"]["chart"]
+
+
+class TestQuickChartDailySavedBarColorBySign:
+    def _daily_saved_dataset(self, chart_config: dict) -> dict:
+        datasets = chart_config["data"]["datasets"]
+        matches = [d for d in datasets if d.get("label") == "Daily Saved ($)"]
+        assert matches, (
+            f"no 'Daily Saved ($)' dataset found among: {[d.get('label') for d in datasets]}"
+        )
+        return matches[0]
+
+    def test_background_color_is_a_per_index_array_not_one_string(self, tmp_path, monkeypatch):
+        chart_config = _build_chart_config_with_mixed_sign_days(tmp_path, monkeypatch)
+        dataset = self._daily_saved_dataset(chart_config)
+        bg = dataset.get("backgroundColor")
+        assert isinstance(bg, list), (
+            f"backgroundColor must be a per-index list parallel to `data` so each bar "
+            f"can be colored by its own day's sign -- today it is a single hardcoded "
+            f"string applied to every bar; got: {bg!r}"
+        )
+        assert len(bg) == len(dataset["data"]), (
+            f"backgroundColor list must be the same length as the data array "
+            f"({len(dataset['data'])} days); got {len(bg)} colors"
+        )
+
+    def test_negative_day_bar_color_differs_from_positive_day_bars(self, tmp_path, monkeypatch):
+        chart_config = _build_chart_config_with_mixed_sign_days(tmp_path, monkeypatch)
+        dataset = self._daily_saved_dataset(chart_config)
+        bg = dataset["backgroundColor"]
+        # Fixture order: day0=+50 (win), day1=-30 (loss), day2=+20 (win).
+        assert bg[1] != bg[0], (
+            f"the losing day's bar color must differ from a winning day's bar color; "
+            f"got identical colors {bg[1]!r} for both"
+        )
+
+    def test_same_sign_days_share_the_same_bar_color(self, tmp_path, monkeypatch):
+        """Proves the coloring is genuinely sign-derived, not an arbitrary
+        per-bar palette cycle that would happen to differ at index 1 anyway."""
+        chart_config = _build_chart_config_with_mixed_sign_days(tmp_path, monkeypatch)
+        dataset = self._daily_saved_dataset(chart_config)
+        bg = dataset["backgroundColor"]
+        assert bg[0] == bg[2], (
+            f"day0 (+50) and day2 (+20) are both winning days and must share the SAME "
+            f"color; got {bg[0]!r} vs {bg[2]!r}"
+        )
 
 
 # ===========================================================================

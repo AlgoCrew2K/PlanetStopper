@@ -1055,9 +1055,13 @@
          Populated on page load by fetchGuardAlphaSummary() in static/index.js.
          Reuses .hero-section light card-UI CSS — no dark/foreign theme. -->
     <div data-testid="dollar-saved-panel" class="hero-section" style="text-align:center;">
-      <!-- Finding 9: no hardcoded color — fetchGuardAlphaSummary() sets pos/neg by sign. -->
+      <!-- Finding 9: no hardcoded color — fetchGuardAlphaSummary() sets pos/neg by sign.
+           DE-GAS-COHERENCE-001: the direction word ("saved"/"lost") lives in its own
+           span (dollar-saved-verb) so it can be swapped independently of the static
+           "across"/"exits" text — never a naked minus paired with an implicit "saved". -->
       <span data-testid="dollar-saved-headline" id="dollar-saved-headline" style="font-size:2em;font-weight:700;">&mdash;</span>
-      <span style="font-size:1.1em;color:var(--studio-ink);"> saved across </span>
+      <span id="dollar-saved-verb" style="font-size:1.1em;color:var(--studio-ink);"></span>
+      <span style="font-size:1.1em;color:var(--studio-ink);"> across </span>
       <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
       <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>
       <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label" style="font-size:11px;color:var(--studio-ink-dim);margin-top:6px;"></div>
@@ -1069,6 +1073,7 @@
            fill-level slippage. Populated by fetchGuardAlphaSummary() in static/index.js. -->
       <div style="font-size:0.95em;color:var(--studio-ink-dim);margin-top:8px;">
         <span data-testid="dollar-saved-realized-headline" id="dollar-saved-realized-headline" style="font-weight:600;">&mdash;</span>
+        <span id="dollar-saved-realized-verb"></span>
         <span> realized (marks basis), </span>
         <span id="dollar-saved-realized-coverage">&mdash;</span>
         <span> exits</span>

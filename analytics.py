@@ -1970,6 +1970,20 @@ def compute_windowed_portfolio_strip(
     }
 
 
+def format_dollar_saved(
+    value: float, *, positive_word: str = "saved", negative_word: str = "lost"
+) -> str:
+    """Render a $-figure using the operator-locked abs+word display convention
+    (DE-GAS-COHERENCE-001): ABS magnitude, NO sign character anywhere -- direction
+    is conveyed by a trailing word instead (positive_word for value >= 0,
+    negative_word for value < 0; zero is a positive_word case). Single source of
+    truth for every Python-side $-saved/P&L surface (reporting.py's Discord
+    "Total Saved" line and Managed Sleeves realized_pnl_usd -- gain/loss).
+    """
+    word = positive_word if value >= 0 else negative_word
+    return f"${abs(value):,.2f} {word}"
+
+
 def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     """Aggregate guard-alpha history for the History tab.
 

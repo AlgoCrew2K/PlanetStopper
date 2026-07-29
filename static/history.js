@@ -55,25 +55,29 @@
         if (isEmpty) return;
 
         var totalAlpha = typeof payload.total_alpha === 'number' ? payload.total_alpha.toFixed(2) + '%' : '--';
+        // DE-GAS-COHERENCE-001: ABS magnitude, no sign character -- direction is
+        // conveyed by color alone here (this hero stat has no accompanying word).
         var totalSaved = typeof payload.total_saved === 'number'
-            ? '$' + payload.total_saved.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            ? '$' + Math.abs(payload.total_saved).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
             : '--';
         var triggers = typeof payload.trigger_count === 'number' ? String(payload.trigger_count) : '--';
         var winRate = typeof payload.win_rate === 'number' ? payload.win_rate.toFixed(1) + '%' : '--';
 
         setId('val-total-alpha', totalAlpha);
         setId('val-total-saved', totalSaved);
+        // DE-GAS-COHERENCE-001: color by SIGN (payload.total_saved can be negative --
+        // a losing window must not render green like a winning one), same idiom as
+        // the total_alpha coloring below and renderReasonCards' alphaColor.
+        var savedEl = document.getElementById('val-total-saved');
+        if (savedEl && typeof payload.total_saved === 'number') {
+            savedEl.style.color = payload.total_saved >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg');
+        }
         setId('val-trigger-count', triggers);
         setId('val-win-rate', winRate);
 
         var alphaEl = document.getElementById('val-total-alpha');
         if (alphaEl && typeof payload.total_alpha === 'number') {
             alphaEl.style.color = payload.total_alpha >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg');
-        }
-
-        var savedEl = document.getElementById('val-total-saved');
-        if (savedEl) {
-            savedEl.style.color = cssVar('--studio-pos');
         }
 
         var winRateEl = document.getElementById('val-win-rate');
@@ -245,9 +249,12 @@
             var alphaColor = alphaNum !== null
                 ? (alphaNum >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg'))
                 : cssVar('--studio-ink');
+            // DE-GAS-COHERENCE-001: ABS magnitude + a sign-conditional word --
+            // never a naked minus under the unconditional literal 'saved'.
             var dollars = typeof s.dollars === 'number'
-                ? '$' + s.dollars.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                ? '$' + Math.abs(s.dollars).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 : '--';
+            var dollarsWord = typeof s.dollars === 'number' && s.dollars < 0 ? 'lost' : 'saved';
             var stripToken = reasonStripColor(reason);
             var badge = reasonBadge(reason);
             var winRateNum = s.count > 0 ? (s.wins / s.count) * 100 : 0;
@@ -276,7 +283,7 @@
                 '<div style="font-size:1.75rem;font-weight:800;color:' + alphaColor + ';line-height:1;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;">' +
                 escHtml(alphaStr) + '</div>' +
                 '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;margin-bottom:0.75rem;">' +
-                'cumulative α · ' + escHtml(dollars) + ' saved' +
+                'cumulative α · ' + escHtml(dollars) + ' ' + dollarsWord +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.375rem;padding-top:0.75rem;border-top:1px solid ' + cssVar('--studio-border') + ';">' +
                 '<div><div style="font-size:0.5625rem;color:' + cssVar('--studio-ink-dim') + ';text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Triggers</div>' +
@@ -328,12 +335,19 @@
             var reasonColor = canonicalReason
                 ? cssVar(REASON_STRIP_COLOR[canonicalReason] || '--studio-ink')
                 : cssVar('--studio-ink');
+            // DE-GAS-COHERENCE-001: the Detail % is a signed guard-alpha figure --
+            // color by sign (same convention as renderHero's alpha and
+            // renderReasonCards' alphaColor), not the flat --studio-ink-dim a
+            // losing exit previously shared with a winning one.
+            var detailColor = typeof rec.detail === 'number'
+                ? (rec.detail >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg'))
+                : cssVar('--studio-ink-dim');
             return (
                 '<tr style="border-bottom:1px solid ' + cssVar('--studio-border') + ';">' +
                 '<td style="padding:0.375rem 0.75rem;color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(rec.ts || '—')) + '</td>' +
                 '<td style="padding:0.375rem 0.75rem;color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(symDisplay)) + '</td>' +
                 '<td style="padding:0.375rem 0.75rem;font-weight:700;letter-spacing:0.04em;color:' + reasonColor + ';">' + escHtml(rawReason) + '</td>' +
-                '<td style="padding:0.375rem 0.75rem;color:' + cssVar('--studio-ink-dim') + ';">' + escHtml((function(d) {
+                '<td style="padding:0.375rem 0.75rem;color:' + detailColor + ';">' + escHtml((function(d) {
                     if (typeof d !== 'number') return String(d || '—');
                     return (d >= 0 ? '+' : '') + d.toFixed(2) + '%';
                 })(rec.detail)) + '</td>' +

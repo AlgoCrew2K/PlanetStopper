@@ -639,10 +639,16 @@ def test_history_js_render_hero_win_rate_threshold_coloring():
     )
 
 
-def test_history_js_render_hero_total_saved_always_pos():
-    """renderHero must always color val-total-saved with --studio-pos.
+def test_history_js_render_hero_total_saved_colored_by_sign():
+    """renderHero must color val-total-saved by SIGN, not unconditionally
+    --studio-pos.
 
-    $ saved is never negative — always use positive color token.
+    SUPERSEDES the prior "$ saved always positive-colored" design (that
+    design was itself the bug: DE-GAS-COHERENCE-001 -- guard alpha saved_dollars
+    is a genuinely signed figure; a losing window rendered green like a
+    winning one). Positive/zero -> --studio-pos; negative -> --studio-neg,
+    matching renderHero's own existing alpha-coloring idiom directly above
+    this block and renderReasonCards' alphaColor.
     """
     js_path = PROJECT_ROOT / "static" / "history.js"
     if not js_path.exists():
@@ -668,10 +674,169 @@ def test_history_js_render_hero_total_saved_always_pos():
     else:
         pytest.fail("Could not extract renderHero body")
 
-    # val-total-saved element must have its color set in renderHero
-    assert "total-saved" in body, (
-        "renderHero does not reference val-total-saved element — "
-        "must set style.color to --studio-pos unconditionally"
+    assert "total-saved" in body, "renderHero does not reference val-total-saved element"
+    # Scope narrowly to the total-saved block specifically -- renderHero also
+    # references --studio-pos/--studio-neg for total_alpha and win_rate
+    # elsewhere in this same body, which would false-pass a body-wide search.
+    saved_idx = body.find("total-saved")
+    saved_block = body[saved_idx : saved_idx + 400]
+    assert "--studio-pos" in saved_block and "--studio-neg" in saved_block, (
+        "the val-total-saved coloring block must reference BOTH --studio-pos and "
+        "--studio-neg -- today it hardcodes --studio-pos unconditionally "
+        f"(payload.total_saved can be negative). Block inspected: {saved_block!r}"
+    )
+    assert re.search(r"total_saved\s*(<|>=)\s*0", saved_block) or "Math.abs" in saved_block, (
+        "the total-saved coloring must branch on the SIGN of payload.total_saved"
+    )
+
+
+def test_history_js_render_hero_total_saved_value_has_no_naked_minus():
+    """setId('val-total-saved', totalSaved) formats the VALUE upstream of the
+    color fix above (history.js ~58-60) -- a negative total_saved must render
+    as an ABS magnitude, never a leading '-$'. Same operator-locked
+    abs+no-sign+word convention as the dashboard panel
+    (tests/app/test_dollar_saved_panel_sign_coherence.py)."""
+    js_path = PROJECT_ROOT / "static" / "history.js"
+    content = js_path.read_text(encoding="utf-8")
+    stripped = re.sub(r"//[^\n]*", "", content)
+
+    start = re.search(r"function\s+renderHero\s*\(", stripped)
+    assert start is not None
+    brace_start = stripped.index("{", start.end())
+    depth = 0
+    i = brace_start
+    while i < len(stripped):
+        if stripped[i] == "{":
+            depth += 1
+        elif stripped[i] == "}":
+            depth -= 1
+            if depth == 0:
+                body = stripped[brace_start + 1 : i]
+                break
+        i += 1
+    else:
+        pytest.fail("Could not extract renderHero body")
+
+    total_saved_fmt_idx = body.find("totalSaved")
+    assert total_saved_fmt_idx != -1, "renderHero must still build a totalSaved display string"
+    fmt_block = body[total_saved_fmt_idx : total_saved_fmt_idx + 300]
+    assert "Math.abs" in fmt_block, (
+        "the totalSaved format string must apply Math.abs to payload.total_saved -- "
+        f"a negative figure must not leak a naked minus. Block: {fmt_block!r}"
+    )
+
+
+# ===========================================================================
+# DE-GAS-COHERENCE-001 -- by-reason card dollar figure: abs magnitude + word
+#
+# renderReasonCards (history.js) formats s.dollars with '$' + toLocaleString
+# and no sign handling, then hardcodes the trailing literal word 'saved' --
+# a negative s.dollars renders as e.g. "$-50.00 saved" (a naked minus AND the
+# wrong word). Fix: Math.abs the magnitude, ternary the trailing word
+# saved/lost by sign -- same convention as the hero stat and the dashboard
+# panel, antonym word confirmed "lost" (team-lead copy ruling).
+# ===========================================================================
+
+
+def _extract_render_reason_cards_body(content: str) -> str:
+    stripped = re.sub(r"//[^\n]*", "", content)
+    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
+    assert start is not None, "renderReasonCards function not found in history.js"
+    brace_start = stripped.index("{", start.end())
+    depth = 0
+    i = brace_start
+    while i < len(stripped):
+        if stripped[i] == "{":
+            depth += 1
+        elif stripped[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return stripped[brace_start + 1 : i]
+        i += 1
+    pytest.fail("Could not extract renderReasonCards body")
+
+
+def test_history_js_reason_card_dollars_uses_abs_magnitude():
+    js_path = PROJECT_ROOT / "static" / "history.js"
+    body = _extract_render_reason_cards_body(js_path.read_text(encoding="utf-8"))
+    assert re.search(r"Math\.abs\(\s*s\.dollars", body), (
+        "renderReasonCards must apply Math.abs to s.dollars before formatting -- "
+        "today a negative by-reason dollar total renders with a naked leading minus "
+        f"(e.g. '$-50.00 saved'). Body: {body!r}"
+    )
+
+
+def test_history_js_reason_card_dollars_word_is_sign_conditional():
+    js_path = PROJECT_ROOT / "static" / "history.js"
+    body = _extract_render_reason_cards_body(js_path.read_text(encoding="utf-8"))
+    assert "'lost'" in body, (
+        "renderReasonCards must reference the antonym word 'lost' for a negative "
+        "by-reason dollar total -- today the trailing word is the unconditional "
+        "literal 'saved' regardless of sign"
+    )
+    # Guard against a false-pass where 'lost' is merely present as dead code --
+    # the word must actually gate on s.dollars' sign near the dollars caption.
+    dollars_idx = body.find("s.dollars")
+    assert dollars_idx != -1
+    nearby = body[dollars_idx : dollars_idx + 600]
+    assert "'lost'" in nearby, (
+        "the 'lost' word must live in the SAME rendering block as the dollars "
+        f"caption, not merely somewhere else in the function. Nearby: {nearby!r}"
+    )
+
+
+# ===========================================================================
+# DE-GAS-COHERENCE-001 -- History Detail column: signed-% color consistency
+#
+# renderTriggers (history.js) colors the Detail cell (rec.detail, a signed
+# guard-alpha percentage) unconditionally --studio-ink-dim -- inconsistent
+# with the daily-bar alpha coloring (renderHero, --studio-pos/--studio-neg by
+# sign) and the by-reason card's alphaColor (same convention). A losing exit's
+# Detail % renders in the SAME neutral gray as a winning one.
+# ===========================================================================
+
+
+def _extract_render_triggers_body(content: str) -> str:
+    stripped = re.sub(r"//[^\n]*", "", content)
+    start = re.search(r"function\s+renderTriggers\s*\(", stripped)
+    assert start is not None, "renderTriggers function not found in history.js"
+    brace_start = stripped.index("{", start.end())
+    depth = 0
+    i = brace_start
+    while i < len(stripped):
+        if stripped[i] == "{":
+            depth += 1
+        elif stripped[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return stripped[brace_start + 1 : i]
+        i += 1
+    pytest.fail("Could not extract renderTriggers body")
+
+
+def test_history_js_detail_column_colored_by_sign_not_hardcoded_dim():
+    """Scoped to the Detail <td> construction specifically (the literal string
+    that immediately precedes it) -- renderTriggers also references
+    --studio-ink-dim/reasonColor for OTHER cells in the same function, which
+    would false-pass a whole-body search."""
+    js_path = PROJECT_ROOT / "static" / "history.js"
+    body = _extract_render_triggers_body(js_path.read_text(encoding="utf-8"))
+
+    detail_td_anchor = "rec.detail"
+    detail_idx = body.find(detail_td_anchor)
+    assert detail_idx != -1, "renderTriggers must still reference rec.detail"
+    # The color expression for this cell is constructed BEFORE the <td> string
+    # that consumes rec.detail (same pattern as f_ret/live_ret color vars
+    # elsewhere in this codebase's Jinja tables) -- inspect a window
+    # surrounding the reference in both directions.
+    window_start = max(0, detail_idx - 400)
+    detail_block = body[window_start : detail_idx + 200]
+
+    assert "--studio-pos" in detail_block and "--studio-neg" in detail_block, (
+        "the Detail column's color must be sign-branched using --studio-pos/"
+        "--studio-neg (same convention as renderHero's alpha and "
+        "renderReasonCards' alphaColor) -- today it is hardcoded to "
+        f"--studio-ink-dim regardless of rec.detail's sign. Inspected: {detail_block!r}"
     )
 
 

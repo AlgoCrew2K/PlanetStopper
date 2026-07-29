@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 import requests
 
+import analytics
 import database
 
 # Canonical post-mortem directory — anchored to project root regardless of CWD.
@@ -250,8 +251,16 @@ def build_sleeves_digest_section(sleeve_summaries: list[dict]) -> str:
             # figure fabricated from a placeholder (audit finding #8: "$+0.00"
             # is a value claim).
             realized_pnl = rule.get("realized_pnl_usd", 0.0)
+            # DE-GAS-COHERENCE-001: ABS magnitude + word (gain/loss -- this is a
+            # generic per-rule P&L figure, not a guard-alpha savings figure, so it
+            # uses gain/loss rather than the guard-alpha surfaces' saved/lost),
+            # never a forced sign character. The None/non-numeric -> "n/a" degrade
+            # (audit finding #8) is unchanged -- format_dollar_saved is only
+            # reached for a genuine numeric value.
             realized_txt = (
-                f"${realized_pnl:+,.2f}"
+                analytics.format_dollar_saved(
+                    realized_pnl, positive_word="gain", negative_word="loss"
+                )
                 if isinstance(realized_pnl, (int, float)) and not isinstance(realized_pnl, bool)
                 else "n/a"
             )
@@ -417,6 +426,14 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
         # 2. QuickChart API POST Request
         chart_url = None
         if dates_list:
+            # DE-GAS-COHERENCE-001: per-index color array (Chart.js supports this
+            # for backgroundColor) so a losing day's bar is visually distinct from
+            # a winning day's -- the prior single hardcoded amber applied to every
+            # bar regardless of that day's sign.
+            saved_bar_colors = [
+                "#10b981" if v >= 0 else "#f43f5e"  # emerald (win) / rose (loss)
+                for v in saved_list
+            ]
             chart_config = {
                 "type": "line",
                 "data": {
@@ -440,7 +457,7 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                         {
                             "label": "Daily Saved ($)",
                             "type": "bar",
-                            "backgroundColor": "rgba(245, 158, 11, 0.5)",  # goldenrod/amber
+                            "backgroundColor": saved_bar_colors,
                             "data": saved_list,
                             "yAxisID": "y1",
                         },
@@ -578,7 +595,10 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
 
             desc_lines.append(f"**📅 {w}-Day Performance Summary**")
             desc_lines.append(f"• **Avg Guard Alpha:** {avg_alpha:+.2f}%")
-            desc_lines.append(f"• **Total Saved:** ${ws['total_saved']:+,.2f}")
+            # DE-GAS-COHERENCE-001: ABS magnitude + word (no forced sign character) --
+            # a losing window previously rendered "Total Saved: $-50.00" (naked minus
+            # under an unconditional "Saved" label).
+            desc_lines.append(f"• **Total:** {analytics.format_dollar_saved(ws['total_saved'])}")
             desc_lines.append(
                 f"• **Win Rate:** {win_rate:.0f}% ({ws['wins']}/{ws['trigger_count']})"
             )
