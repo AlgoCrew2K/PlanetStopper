@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -277,6 +278,41 @@ def test_two_calls_different_signal_context_share_an_identical_cached_prefix(frb
     assert content_a != content_b, (
         "the two calls produced byte-identical full content -- signal_context did not "
         "actually vary between them, so the stable-prefix check above proves nothing."
+    )
+
+
+# ===========================================================================
+# Seam-preservation regression guard.
+#
+# Caught mid-GREEN this cycle, not by any RED test above: a first
+# implementation draft bypassed _build_generation_prompt entirely (routing
+# the cache_control split through new private helpers directly), silently
+# breaking test_frontrunner_builder_signal_wiring.py's
+# test_generation_prompt_carries_positive_edge_signal_stat_lines, which spies
+# on _build_generation_prompt by name via patch.object(...). The tests above
+# only inspect the FINAL request shape -- they can't tell which internal
+# function produced it, so a future refactor that reaches the correct final
+# shape via a different seam would pass all of them while breaking that spy
+# again. This test closes that gap directly, inside the file whose whole
+# point is to touch this call site.
+# ===========================================================================
+
+
+def test_generate_candidate_overlay_calls_the_real_build_generation_prompt(frb, monkeypatch):
+    client = _RecordingMockClient(_deliberately_rejectable_overlay())
+    monkeypatch.setattr(frb, "_build_client", lambda: client)
+
+    spy = MagicMock(wraps=frb._build_generation_prompt)
+    monkeypatch.setattr(frb, "_build_generation_prompt", spy)
+
+    frb.generate_candidate_overlay(_SIGNAL_CONTEXT_A, n_attempts=1)
+
+    assert spy.called, (
+        "generate_candidate_overlay no longer calls the real _build_generation_prompt -- "
+        "test_frontrunner_builder_signal_wiring.py spies on this exact function by name. "
+        "Deriving the cache_control split via new private helpers is fine, but the call "
+        "site must still invoke _build_generation_prompt itself (e.g. via a byte-slice "
+        "against an independently-computed stable prefix), not bypass it."
     )
 
 
