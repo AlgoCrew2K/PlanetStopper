@@ -751,21 +751,16 @@ _EXAMPLE_COMPOUND_OVERLAY: dict = {
 }
 
 
-def _build_generation_prompt(signal_context: dict) -> str:
-    """Build the SDK prompt for candidate overlay generation.
-
-    Embeds the frontrunner-specific DSL grammar reminder + the AC-4 hard
-    constraints + the caller-supplied signal_context (watched tickers /
-    Atlas-derived patterns / AC-5 live edge signals) so Fable has concrete
-    grounding.
+def _build_stable_instructional_prefix() -> str:
+    """The genuinely invariant leading span of the overlay-generation prompt
+    (DE-ADVISOR-CACHE-001, site #7): the HARD REQUIREMENTS block, the
+    node-shape explanation, the tool-usage instructions, and both worked
+    JSON examples. Contains ZERO signal_context-derived content by
+    construction -- this is the portion the generate_candidate_overlay call
+    site wraps in a cache_control breakpoint. Byte-identical to the
+    pre-reorder producer's leading + trailing spans concatenated (see
+    tests/fixtures/frontrunner_builder/generation_prompt_stable_content_baseline.json).
     """
-    watched = signal_context.get("watched_tickers") or []
-    atlas_patterns = signal_context.get("atlas_patterns") or []
-    edge_signals = signal_context.get("edge_signals") or {}
-    watched_hint = ", ".join(str(t) for t in watched[:20]) or "(none supplied)"
-    atlas_hint = json.dumps(atlas_patterns[:5]) if atlas_patterns else "(none supplied)"
-    edge_signals_hint = json.dumps(edge_signals) if edge_signals else "(none supplied)"
-
     return (
         "You are designing a FRONTRUNNER overlay for a Composer trading symphony: "
         "a leading cascade of RSI-overbought if-nodes that, when triggered, fire a "
@@ -792,13 +787,6 @@ def _build_generation_prompt(signal_context: dict) -> str:
         "indicator over several watched tickers) whenever it captures the "
         "pattern better than a flat single-signal if — this is optional, a flat "
         "if is equally valid when that is what the pattern calls for.\n\n"
-        f"Watched core signal tickers to consider: {watched_hint}\n"
-        f"Atlas-derived frontrunner patterns for reference: {atlas_hint}\n"
-        f"Positive-edge frontrunner signals observed LIVE for this symphony "
-        f"(each key is TICKER:WINDOW:THRESHOLD; prefer watching one of these "
-        f"exact ticker/window/threshold combinations when it fits the pattern "
-        f"— these are proven, currently-'keep'-classified real edge stats, "
-        f"not hypothetical): {edge_signals_hint}\n\n"
         "Emit exactly ONE candidate overlay node using the emit_frontrunner_overlay "
         "tool. The node's 'kind' is 'if' or 'if_compound' — EITHER WAY the "
         "condition fields live under a nested 'condition' key: lhs_fn, "
@@ -814,6 +802,50 @@ def _build_generation_prompt(signal_context: dict) -> str:
         f"Conforming single-signal example (compiles clean): {json.dumps(_EXAMPLE_OVERLAY)}\n\n"
         f"Conforming compound/multi-signal example (compiles clean): "
         f"{json.dumps(_EXAMPLE_COMPOUND_OVERLAY)}"
+    )
+
+
+def _build_signal_context_hints_section(signal_context: dict) -> str:
+    """The volatile per-symphony trailing section (DE-ADVISOR-CACHE-001, site
+    #7): watched tickers / Atlas-derived patterns / live edge signals.
+    Relocated here (previously interpolated mid-prompt) so
+    ``_build_stable_instructional_prefix`` can form a genuinely invariant
+    cache_control prefix -- this section is always UNCACHED at the
+    generate_candidate_overlay call site.
+    """
+    watched = signal_context.get("watched_tickers") or []
+    atlas_patterns = signal_context.get("atlas_patterns") or []
+    edge_signals = signal_context.get("edge_signals") or {}
+    watched_hint = ", ".join(str(t) for t in watched[:20]) or "(none supplied)"
+    atlas_hint = json.dumps(atlas_patterns[:5]) if atlas_patterns else "(none supplied)"
+    edge_signals_hint = json.dumps(edge_signals) if edge_signals else "(none supplied)"
+
+    return (
+        "\n\n## LIVE SIGNAL CONTEXT\n\n"
+        f"Watched core signal tickers to consider: {watched_hint}\n"
+        f"Atlas-derived frontrunner patterns for reference: {atlas_hint}\n"
+        f"Positive-edge frontrunner signals observed LIVE for this symphony "
+        f"(each key is TICKER:WINDOW:THRESHOLD; prefer watching one of these "
+        f"exact ticker/window/threshold combinations when it fits the pattern "
+        f"— these are proven, currently-'keep'-classified real edge stats, "
+        f"not hypothetical): {edge_signals_hint}"
+    )
+
+
+def _build_generation_prompt(signal_context: dict) -> str:
+    """Build the SDK prompt for candidate overlay generation.
+
+    DE-ADVISOR-CACHE-001 (site #7) reorder: the invariant instructional span
+    (HARD REQUIREMENTS + node-shape + tool-usage + both worked examples) now
+    leads, with the volatile watched-tickers / Atlas-patterns / live-edge-
+    signals hints relocated to a trailing "## LIVE SIGNAL CONTEXT" section
+    (mirroring build_plan_generator's "## OPERATOR CONTEXT" pattern) --
+    producing a genuinely signal_context-independent leading span that
+    generate_candidate_overlay wraps in a cache_control breakpoint. See
+    _build_stable_instructional_prefix / _build_signal_context_hints_section.
+    """
+    return _build_stable_instructional_prefix() + _build_signal_context_hints_section(
+        signal_context
     )
 
 
@@ -851,7 +883,23 @@ def generate_candidate_overlay(
     """
     try:
         client = _build_client()
-        prompt = _build_generation_prompt(signal_context)
+        # _build_generation_prompt remains the seam other callers/tests observe
+        # (e.g. test_frontrunner_builder_signal_wiring.py spies on it directly) --
+        # call it here rather than bypassing it, then split its return value at
+        # the cache_control boundary via a byte slice against the independently
+        # -computed stable prefix (DE-ADVISOR-CACHE-001, site #7). The stable
+        # prefix is signal_context-independent by construction, so it is byte-
+        # identical across every call regardless of watched tickers/Atlas
+        # patterns/live edge signals -- reused across this function's own
+        # n_attempts retry loop below AND across separate builds for different
+        # symphonies. The hints section is genuinely volatile and stays UNCACHED.
+        full_prompt = _build_generation_prompt(signal_context)
+        stable_prompt = _build_stable_instructional_prefix()
+        hints_section = full_prompt[len(stable_prompt) :]
+        content_blocks = [
+            {"type": "text", "text": stable_prompt, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": hints_section},
+        ]
 
         last_reason = "no attempts made"
         for attempt in range(n_attempts):
@@ -860,7 +908,7 @@ def generate_candidate_overlay(
                 max_tokens=MAX_OUTPUT_TOKENS,
                 tools=[_EMIT_OVERLAY_TOOL],
                 tool_choice={"type": "tool", "name": "emit_frontrunner_overlay"},
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content_blocks}],
             )
 
             if getattr(response, "stop_reason", None) == "max_tokens":

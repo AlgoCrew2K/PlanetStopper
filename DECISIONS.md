@@ -9479,3 +9479,77 @@ The doc-writer's first feature-plan draft (`a2ab0805`) scoped the fix to the His
 
 **Test coverage:** `tests/analytics/test_format_dollar_saved.py` (AC-1), `tests/app/test_guard_alpha_summary_windowed.py` (AC-4/AC-5/AC-6), `tests/app/test_dollar_saved_panel_sign_coherence.py` (AC-10/AC-11, also `index.js`'s half of AC-13's parallel pair), `tests/ui/test_cycle_5_history.py` extensions (AC-7/AC-8/AC-9, also `history.js`'s half of AC-13's parallel pair — supersedes the deleted `test_history_js_render_hero_total_saved_always_pos`, which had encoded the bug itself as an assertion), `tests/app/test_sleeves_digest_extension.py` extensions (AC-2a), `tests/reporting/test_reporting.py` extensions (AC-2b/AC-3).
 
+
+## DE-ADVISOR-CACHE-001 -- Advisor Prompt Caching: ephemeral cache_control breakpoints on the 2 measured-viable SDK call sites (2026-07-29)
+
+Branch: `fix/advisor-prompt-caching` | Base: `origin/main` (post `DE-HYGIENE-R1-001`, #115) `30a869f8` | plan: `feature-plans/advisor-prompt-caching.md` (three revisions -- `fd61f0b0`/`03f394dc`/`5df55a90`) | RED: `1eefd625` | GREEN: `edaeabd0` | HEAD (this entry): `edaeabd0`.
+
+### Problem
+
+None of the 7 advisor Anthropic-SDK call sites (`build_plan_generator.py`, `frontrunner_builder.py`, `asset_swap_engine.py`, `logic_change_engine.py`, `advisor_chat.py`, `lens_pipeline.py`, and `ai_advisor.request_suggestions`) sent any `cache_control` marker -- every call paid full input-token price even when a large invariant portion of the prompt (DSL grammar, worked examples, hard-requirements text, tool schemas) repeated within a single call's own truncation-retry loop or across back-to-back calls in the same run (a weekly scheduler pass, an operator's Strategy Builder click). This was a pure cost-reduction opportunity, not a correctness defect.
+
+### Measurement (cache-impl, real `count_tokens`, no mocking of the prompt builders)
+
+Only 2 of the 7 sites measured above their model's minimum-cacheable-prefix floor:
+
+- `build_plan_generator.py` (`generate_build_plans`): 3,126 tokens (the reasoning_context-free base prompt) -- clears Fable-5's 2,048-token floor ~1.5x.
+- `frontrunner_builder.py` (`generate_candidate_overlay`): 1,730 tokens on the messages block alone (just under the 2,048 floor) -- combined with the static `_EMIT_OVERLAY_TOOL` schema (tools render before messages in the same cached prefix), approximately 2,650-2,750 tokens, clearing the floor via tools+messages together, not messages alone.
+
+The other 5 measured well under any floor and are documented-excluded, zero code diff:
+
+| Site | Measured | Note |
+|---|---|---|
+| `asset_swap_engine.py` (`generate_reasoned_swap_candidates`) | 393 tok | Short, mostly-volatile prompt |
+| `logic_change_engine.py` (`generate_reasoned_logic_candidates`) | ~98 tok | Same shape as asset_swap_engine, even smaller |
+| `advisor_chat.py` (`explain_artifact`, `system=_EXPLAIN_ONLY_SYSTEM_PROMPT`) | ~537 tok | Under Opus 4.8's measured 4,096-token floor -- the highest floor of any model this suite uses |
+| `ai_advisor.request_suggestions` (`client.messages.parse`) | ~79 tok | Static instructions only; also missed by the original `.messages.create`-only grep -- confirmed a genuine 7th call site, still nowhere near cacheable |
+| `lens_pipeline.py` (nightly sentiment synthesis) | not measured | Excluded on structural grounds from the start -- a single one-shot call, once/night, no repeat inside the 5-minute ephemeral TTL; a cache-write premium with no offsetting read |
+
+### Fix
+
+Both breakpoints use ephemeral (5-minute) TTL -- no case in the token math argued for Anthropic's separate 1-hour tier.
+
+**`build_plan_generator.py` -- a stable-base/`reasoning_context` SPLIT, not a whole-string wrap.** `generate_build_plans` now calls the UNCHANGED `_build_generation_prompt(objective, n_plans, membership, reasoning_context=None)` to obtain the reasoning_context-free base (byte-identical to the existing AC-8 golden fixture) and wraps it in one `cache_control:{"type":"ephemeral"}` content block. When `reasoning_context` is truthy, its `## OPERATOR CONTEXT` section is appended as a SEPARATE, uncached trailing block, derived via `full_prompt[len(base_prompt):]` (calling `_build_generation_prompt` a second time with the real `reasoning_context` value) -- never a hand-duplicated `"## OPERATOR CONTEXT"` literal at the call site. `_build_generation_prompt`'s own signature and return value are untouched; `_EMIT_BUILD_PLANS_TOOL` also gains `cache_control` on the tools array. A whole-string wrap (the initial approach) would have buried the per-symphony `reasoning_context` text inside the cached block, changing the cache key on every symphony and producing zero cross-symphony reuse (only the rare same-call retry would ever hit) -- the split instead caches the grammar/examples/objective-signature/universe-hint prefix, which DIFFERENT symphonies sharing the same objective genuinely share.
+
+**`frontrunner_builder.py` -- a minimal, content-preserving reorder + breakpoint.** `_build_generation_prompt(signal_context)` is split into two named helpers: `_build_stable_instructional_prefix()` (the HARD REQUIREMENTS block, the node-shape explanation, the tool-usage instructions, and both worked JSON examples -- zero `signal_context` dependency by construction) and `_build_signal_context_hints_section(signal_context)` (the volatile watched-tickers/Atlas-patterns/live-edge-signals hints, relocated from their prior mid-prompt position into a new trailing `"## LIVE SIGNAL CONTEXT"` section, mirroring `build_plan_generator`'s own `"## OPERATOR CONTEXT"` append pattern). `_build_generation_prompt` itself is now `_build_stable_instructional_prefix() + _build_signal_context_hints_section(signal_context)` -- a round-trip-verified concatenation, byte-identical to the pre-reorder producer's output (pinned by `tests/fixtures/frontrunner_builder/generation_prompt_stable_content_baseline.json`). `generate_candidate_overlay` still calls `_build_generation_prompt` (preserving the exact seam `test_frontrunner_builder_signal_wiring.py` spies on -- see the mid-cycle regression below) and derives the cache_control split via a byte slice of the full prompt against the independently-computed stable prefix, rather than bypassing the seam. `_EMIT_OVERLAY_TOOL` also gains `cache_control`. Only the hints block moved; the hard-requirements text, node-shape description, and both examples are NOT independently relocated relative to each other.
+
+**Retry-loop bonus.** Both sites resend the identical `cache_control`-marked block across their own bounded retry loops (`MAX_GENERATION_ATTEMPTS`/`n_attempts`) on truncation -- a same-call retry is a genuine cache read too, not just cross-call reuse.
+
+### Mid-cycle regression, caught and fixed
+
+The first GREEN draft's `generate_candidate_overlay` bypassed `_build_generation_prompt` entirely (calling the two new helpers directly), breaking `test_frontrunner_builder_signal_wiring.py`'s existing spy on that exact function. Fixed by keeping the call to `_build_generation_prompt` and deriving the cache_control split via slicing against the independently-computed stable prefix instead of bypassing the seam.
+
+### Decision: no-trade-boundary guard applies to the frontrunner_builder reorder
+
+`frontrunner_builder.py` is the one module with a structural no-auto-trade boundary (`tests/security/test_frontrunner_no_trade_boundary.py`, an adversarial source scan). This cycle's reorder touches only prompt-text ORDER -- never `composer_draft_client`/`approve_frontrunner_proposal`/anything on the write path -- and the reordered candidate still passes through all four existing downstream gates (backtest_gate_engine's BHY/FDR, PBO veto, Calmar acceptance, operator-approval gate) unmodified before an operator ever sees it. The security suite stays green, unmodified.
+
+### Decision: `ai_advisor.py`'s cross-symphony lens-data caching deferred
+
+`ai_advisor.py`'s `assemble_advisor_context`/`build_reasoning_context` serve the 5 market-wide lens blocks identically across every symphony processed in one scheduler run -- a plausible, distinct future cache opportunity from `request_suggestions`'s own (too-small) `client.messages.parse` call. Not measured or scoped this cycle; flagged as a follow-up candidate, not built.
+
+### Decision: model output is byte-unchanged; this is a cost-only change
+
+`cache_control` is a request-shape annotation, never a content edit -- every prompt/system/tool the model actually sees is identical to before this cycle (reordered-but-content-preserved for frontrunner_builder; split-but-concatenation-preserved for build_plan_generator). No change to generation logic, `MAX_OUTPUT_TOKENS`, `MAX_GENERATION_ATTEMPTS`/`n_attempts`, or which model is called.
+
+### The real proof is the PM's live probe, not tests-green
+
+Every test in this cycle mocks `_build_client`/`messages.create` -- none of them can prove Anthropic actually cached anything. Tests-green here means "the request shape is correct," not "a cache hit occurred." The PM's live probe (two real, non-mocked `generate_build_plans` calls in immediate succession, same objective/membership/`reasoning_context=None`, checking `response.usage.cache_creation_input_tokens > 0` then `cache_read_input_tokens > 0`) is the only verification that proves a genuine Anthropic-side cache hit, and per this project's Merge & PR Workflow (tests-green is necessary, never sufficient), that live probe is required before this cycle can be considered proven, not just shipped.
+
+### Tests
+
+Doc-writer independently re-verified at HEAD `edaeabd0` (not just relaying cache-impl's count): `tests/advisors/test_build_plan_generator_prompt_caching.py` + `test_frontrunner_builder_prompt_caching.py` + `test_prompt_caching_documented_exclusions.py` + the adjacent `test_build_plan_generator_reasoning_context.py`/`test_build_plan_generator_truncation.py`/`test_build_plan_generator_property.py`/`test_build_plan_generator.py`/`test_frontrunner_builder.py`/`test_frontrunner_gate_wiring.py`/`test_frontrunner_builder_signal_wiring.py`/`tests/security/test_frontrunner_no_trade_boundary.py`/`tests/ai_advisor/test_chat_engine.py` -- **163 passed, 0 failed, `-n0`**. Both `ruff format --check` and `ruff check` clean on both touched files (independently re-run). No live network in any test (`_build_client` mocked throughout); the golden-fixture byte-identical test for `build_plan_generator._build_generation_prompt` passes UNMODIFIED, confirming AC-5/AC-8 byte-preservation. Cache-impl's own commit reports a broader regression sweep (214 passed, -n0, zero regressions) across every adjacent test file including `asset_swap_engine.py`/`logic_change_engine.py`'s full suites -- not independently re-run in full by this doc pass, but consistent with the scoped 163/163 verified here.
+
+### Files changed
+
+- `advisors/build_plan_generator.py` -- `generate_build_plans`'s SDK-call construction (stable-base/reasoning_context content-block split); `_build_generation_prompt` itself carries zero diff.
+- `advisors/frontrunner_builder.py` -- `_build_generation_prompt` split into `_build_stable_instructional_prefix()` + `_build_signal_context_hints_section()`; `generate_candidate_overlay`'s SDK-call construction (cache_control breakpoint + byte-slice split).
+- `tests/advisors/_prompt_cache_test_helpers.py` (new, shared shape-agnostic content-extraction helper).
+- `tests/advisors/test_build_plan_generator_prompt_caching.py` (new).
+- `tests/advisors/test_frontrunner_builder_prompt_caching.py` (new).
+- `tests/advisors/test_prompt_caching_documented_exclusions.py` (new -- pins the 4 not-cacheable sites carry zero code diff).
+- `tests/fixtures/frontrunner_builder/generation_prompt_stable_content_baseline.json` (new -- round-trip byte-preservation fixture for the reorder).
+- `docs/generated/advisors_build_plan_generator.md`, `docs/generated/advisors_frontrunner_builder.md` (this doc pass).
+
+### Reference
+
+`DE-ADVISOR-CACHE-001`; branch `fix/advisor-prompt-caching`; worktree `.claude/worktrees/cache-fix`; plan `feature-plans/advisor-prompt-caching.md`; RED `1eefd625`; GREEN `edaeabd0`. **Open before this can be marked proven-in-production: the PM's live cache-hit probe against `build_plan_generator.generate_build_plans` (real Anthropic API, non-mocked) has not yet been run as of this doc pass** -- see the "real proof" section above. `ai_advisor.py`'s cross-symphony lens-data caching is a deferred follow-up, not tracked as a blocking gap.

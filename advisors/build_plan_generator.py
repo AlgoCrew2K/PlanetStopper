@@ -1085,9 +1085,26 @@ def generate_build_plans(
         # Build the SDK client (patched in tests via the _build_client seam).
         client = _build_client()
 
-        prompt = _build_generation_prompt(
-            objective, n_plans, membership, reasoning_context=reasoning_context
+        # Prompt-caching (DE-ADVISOR-CACHE-001): the reasoning_context=None base is
+        # invariant across every call sharing this (objective, n_plans, membership)
+        # triple -- membership is itself weekly-cache-stable, so this base is
+        # byte-identical across an entire scheduler run and reused across the
+        # MAX_GENERATION_ATTEMPTS retry loop below. Wrap it in a single
+        # cache_control breakpoint; reasoning_context (genuinely per-symphony
+        # volatile) is appended as an UNCACHED trailing block via a byte slice of
+        # the full prompt, never duplicating the "## OPERATOR CONTEXT" format
+        # string here.
+        base_prompt = _build_generation_prompt(
+            objective, n_plans, membership, reasoning_context=None
         )
+        content_blocks = [
+            {"type": "text", "text": base_prompt, "cache_control": {"type": "ephemeral"}}
+        ]
+        if reasoning_context:
+            full_prompt = _build_generation_prompt(
+                objective, n_plans, membership, reasoning_context=reasoning_context
+            )
+            content_blocks.append({"type": "text", "text": full_prompt[len(base_prompt) :]})
 
         # Bounded retry on truncation (stop_reason="max_tokens").  The old bare literal
         # max_tokens=4096 was too small for 12 full-grammar plans; MAX_OUTPUT_TOKENS fixes
@@ -1100,7 +1117,7 @@ def generate_build_plans(
                 max_tokens=MAX_OUTPUT_TOKENS,
                 tools=[_EMIT_BUILD_PLANS_TOOL],
                 tool_choice={"type": "tool", "name": "emit_build_plans"},
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": content_blocks}],
             )
             if getattr(response, "stop_reason", None) != "max_tokens":
                 # Non-truncated response — proceed to parse below.
