@@ -158,8 +158,7 @@ def test_request_content_is_block_list_with_one_cache_control_breakpoint(frb, mo
     )
     marked = find_cache_control_blocks(content)
     assert len(marked) == 1, (
-        f"Expected exactly one cache_control-marked block, found {len(marked)}. "
-        f"content={content!r}"
+        f"Expected exactly one cache_control-marked block, found {len(marked)}. content={content!r}"
     )
     assert marked[0]["cache_control"] == {"type": "ephemeral"}, (
         f"cache_control block must be {{'type': 'ephemeral'}}, got {marked[0]['cache_control']!r}."
@@ -172,7 +171,9 @@ def test_request_content_is_block_list_with_one_cache_control_breakpoint(frb, mo
 # ===========================================================================
 
 
-def test_cached_block_still_contains_the_full_invariant_instructional_text(frb, monkeypatch, golden):
+def test_cached_block_still_contains_the_full_invariant_instructional_text(
+    frb, monkeypatch, golden
+):
     client = _RecordingMockClient(_deliberately_rejectable_overlay())
     monkeypatch.setattr(frb, "_build_client", lambda: client)
 
@@ -321,7 +322,9 @@ def test_generate_candidate_overlay_calls_the_real_build_generation_prompt(frb, 
 # ===========================================================================
 
 _ISO_DATETIME_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
-_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
 
 
 def test_cached_block_contains_no_timestamp_or_uuid_markers(frb, monkeypatch):
@@ -356,4 +359,6 @@ def test_static_tool_schema_contains_no_timestamp_or_uuid_markers(frb, monkeypat
     assert not _ISO_DATETIME_RE.search(tools_json), (
         "the static tools=[...] schema contains an ISO-datetime-shaped substring."
     )
-    assert not _UUID_RE.search(tools_json), "the static tools=[...] schema contains a UUID-shaped substring."
+    assert not _UUID_RE.search(tools_json), (
+        "the static tools=[...] schema contains a UUID-shaped substring."
+    )
