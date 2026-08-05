@@ -3233,6 +3233,11 @@ def run_autotuner(
             d_spec=d_spec,
             gamma=_gamma,
             overfitting_verdict=_overfitting_verdict,
+            # migration 028: Phase-3 PBO acceptance-gate result — the SAME
+            # _pbo_value already consumed by the gate call above (line ~3075),
+            # never re-derived. None when PBO was never computed (persists as
+            # SQL NULL).
+            pbo=_pbo_value,
             # AC-E2: hoisted DoF-ledger S sum (see above) — feeds Indicator-3 drift
             # detection on later runs via the prior_runs query below.
             s_count=_s_count_for_persistence,
