@@ -60,6 +60,7 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 **T1 — [HIGH] Phase-3 PBO veto computed and used live, but never persisted** `[FACT]`
 - `_pbo_value` computed at `autotuner.py:2854/2870` (`math_engine.compute_pbo`), fed into the live gate at `autotuner.py:3075` and can veto (`3087-3098`, poisoning `oos_alpha`/`baseline_decision`). But `database.save_autotune_run(...)` at `autotuner.py:3218-3239` **omits `pbo=`** entirely, though the signature accepts it (`database.py:711`) and INSERTs it (index 15, `database.py:792`). Result: `autotune_runs.pbo` is NULL in **40/40** rows (re-verified from snapshot) — the value is discarded at persist, not un-computed. `tests/autotuner/test_pbo_migration_028.py` unit-tests the accessor round-trip but never calls `run_autotuner()`, so the integration gap slipped through.
 - Impact: the overfitting veto's behavior is un-auditable from the DB; a future PBO regression would be invisible.
+- **Fixed by `DE-AUDIT-BL1-001` (2026-08-05).** `run_autotuner`'s `save_autotune_run(...)` call now passes `pbo=_pbo_value`; forward-only (legacy NULL rows are not backfilled). See `DECISIONS.md` and `docs/generated/autotuner.md`'s "PBO Veto Persistence" section.
 
 **T2 — [HIGH] Per-symphony optimization loop has no exception isolation → silent partial batches** `[FACT]` + `[interp]` root cause
 - The `for normalized_name in symphony_names:` loop (`autotuner.py:2558-3288`) wraps `study.optimize` (`:2762`), CPCV/PBO, the OOS cascade, and `save_autotune_run` (`:3218`) with **no surrounding try/except** — only the two tail advisor-producer calls (Overfitting Conscience `:3259-3272`, Divergence Explainer `:3276-3288`) are isolated. An uncaught exception mid-loop aborts `run_autotuner()` for every not-yet-processed symphony, with the only symptom a missing `autotune_runs` row (no `aborted` marker — the `DE-AUTOTUNE-REPORTING-001` graceful aborts fire *before* the loop and would give 0/11, not 7/11).
@@ -150,6 +151,7 @@ Ordered by priority. Each item is scoped for a PM dispatch decision. "Scope" is 
 - *Evidence:* `autotuner.py:3075` (used) vs `:3218-3239` (omitted from `save_autotune_run`); `database.py:711/792` accepts+INSERTs it.
 - *Fix:* add `pbo=_pbo_value` to the `save_autotune_run(...)` call; add an **integration** test on `run_autotuner()` itself asserting the round-trip (the existing `test_pbo_migration_028.py` only exercises the accessor).
 - *Scope:* XS (one-line code + one test). TDD — new assertion on an existing path.
+- *Status:* **Shipped** — `DE-AUDIT-BL1-001` (2026-08-05).
 
 **BL-2 — Isolate the per-symphony optimization loop + surface attempted-vs-completed** (T2)
 - *What's wrong:* one symphony's uncaught exception silently drops all not-yet-processed siblings (the 07-24 7/11 partial batch), with no operator-visible marker.

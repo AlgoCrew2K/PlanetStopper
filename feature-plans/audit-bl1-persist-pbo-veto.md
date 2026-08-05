@@ -1,5 +1,5 @@
 # Feature: Persist the Phase-3 PBO Veto Value (BL-1)
-Status: ready
+Status: shipped (pending merge) — see `DE-AUDIT-BL1-001` in `DECISIONS.md`
 Created: 2026-08-04
 Source: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Finding T1, §6 Backlog BL-1 (commit `ca7f2beb`)
 
@@ -26,12 +26,12 @@ calls `run_autotuner()` itself, so the integration gap at the call site slipped
 through 40 consecutive live runs undetected.
 
 ## Acceptance Criteria
-- [ ] **AC-1 — thread `pbo=` into the persistence call.** The
+- [x] **AC-1 — thread `pbo=` into the persistence call.** The
       `database.save_autotune_run(...)` call at `autotuner.py:3218-3239` gains
       `pbo=_pbo_value` (the SAME variable already used for the veto decision at
       `autotuner.py:3075/3087-3088`, never a re-derived or re-computed value). No
       other kwarg in this call changes.
-- [ ] **AC-2 — integration test on `run_autotuner()` itself, not just the accessor.**
+- [x] **AC-2 — integration test on `run_autotuner()` itself, not just the accessor.**
       A new test drives `run_autotuner()` (or the smallest realistic slice of it that
       reaches the `save_autotune_run` call — e.g. via existing `run_autotuner`
       integration-test fixtures already used elsewhere in `tests/autotuner/`) with a
@@ -41,13 +41,13 @@ through 40 consecutive live runs undetected.
       matches the value the gate itself consumed for the veto decision — closing the
       exact gap `test_pbo_migration_028.py` structurally cannot close (it never
       calls `run_autotuner`).
-- [ ] **AC-3 — `pbo=None` still persists correctly when PBO is not computed.** When
+- [x] **AC-3 — `pbo=None` still persists correctly when PBO is not computed.** When
       `haircut_trials` is empty or fewer than 2 CSCV-eligible configs exist
       (`autotuner.py:2855/2869` — `_pbo_value` stays its initialized `None`), the
       persisted row's `pbo` column is `NULL` (matches the accessor's existing
       `test_pbo_none_persists_as_null` contract) — this AC pins the NEGATIVE case so
       AC-1's fix cannot regress into "PBO always fabricated as some non-null value."
-- [ ] **AC-4 — zero change to gate/veto logic.** The PBO computation
+- [x] **AC-4 — zero change to gate/veto logic.** The PBO computation
       (`math_engine.compute_pbo`), the veto decision (`_pbo_veto_fired`,
       `autotuner.py:3084-3100`), and the acceptance-gate call
       (`autotuner.py:3060-3076`) are byte-unchanged — this is a persistence-only fix.
@@ -126,3 +126,6 @@ through 40 consecutive live runs undetected.
   signature or INSERT (already correct), or any schema migration. BL-2's loop
   isolation (a separate, independently-scoped fix) — this plan does not touch the
   surrounding per-symphony loop's exception handling.
+
+## Shipped
+All 4 ACs implemented and reviewed. Commits: `332ddf83` (RED — `tests/autotuner/test_pbo_run_autotuner_persistence.py`, 3 tests) → `b28f070e` (GREEN — `autotuner.py`, `+5` lines). `quant-code-reviewer` APPROVE, zero findings. Test-writer sufficiency verdict: SUFFICIENT (one documented residual — the fixture is single-symphony; cross-symphony carryover/isolation is BL-2's separate scope, not this fix's). Full record: `DE-AUDIT-BL1-001` in `DECISIONS.md`.

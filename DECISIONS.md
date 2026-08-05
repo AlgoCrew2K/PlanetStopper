@@ -9553,3 +9553,47 @@ Doc-writer independently re-verified at HEAD `edaeabd0` (not just relaying cache
 ### Reference
 
 `DE-ADVISOR-CACHE-001`; branch `fix/advisor-prompt-caching`; worktree `.claude/worktrees/cache-fix`; plan `feature-plans/advisor-prompt-caching.md`; RED `1eefd625`; GREEN `edaeabd0`. **Open before this can be marked proven-in-production: the PM's live cache-hit probe against `build_plan_generator.generate_build_plans` (real Anthropic API, non-mocked) has not yet been run as of this doc pass** -- see the "real proof" section above. `ai_advisor.py`'s cross-symphony lens-data caching is a deferred follow-up, not tracked as a blocking gap.
+
+
+## DE-AUDIT-BL1-001 — Persist the Phase-3 PBO Veto Value to `autotune_runs.pbo` (2026-08-05)
+
+**Defect (audit #118, `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Finding T1 / §6 Backlog BL-1):** the Phase-3 PBO (Probability of Backtest Overfitting) overfitting veto is computed live and genuinely consumed by the acceptance gate — `_pbo_value` (`autotuner.py:2854/2870`, via `math_engine.compute_pbo`) is passed into `acceptance_gate.evaluate_acceptance_gate` (`autotuner.py:3075`) and can trigger `_pbo_veto_fired` (`autotuner.py:3084-3100`), poisoning `oos_alpha`/`baseline_decision` for that run. But the `database.save_autotune_run(...)` call (`autotuner.py:3218-3239`) omitted `pbo=` entirely — even though the accessor's signature has accepted a `pbo=None` keyword since migration 028 (`database.py:711`) and its INSERT already wires the column (`database.py:766-796`). Result: `autotune_runs.pbo` was NULL in **40/40** live rows (re-verified from the audit snapshot) — the value was discarded at the persistence boundary, not un-computed. This made the overfitting veto's live behavior un-auditable from the DB, and would have made a future PBO regression (e.g. a unit-scale bug of the same shape as `DE-MATH-R0-001` AC-1/AC-2) invisible to any post-hoc row inspection.
+
+**Why it shipped undetected:** `tests/autotuner/test_pbo_migration_028.py::TestSaveAutotuneRunPboRoundTrip` proves the *accessor* round-trips `pbo` correctly when called directly, but never calls `run_autotuner()` itself — the integration gap at the real call site was structurally outside that test's reach across 40 consecutive live runs.
+
+### The fix
+
+One-line addition at the existing `database.save_autotune_run(...)` call site inside `run_autotuner()`'s per-symphony loop:
+
+```python
+pbo=_pbo_value,
+```
+
+`_pbo_value` is the SAME local variable already in scope from the gate call a few lines above (`autotuner.py:3075`) and the veto-decision check (`autotuner.py:3087-3088`) — a raw passthrough, never re-derived or re-computed. Zero change to `math_engine.compute_pbo`, the veto decision (`_pbo_veto_fired`), the acceptance-gate call, `acceptance_gate.py`, or `database.py` (the accessor and its INSERT wiring were already correct — this was purely a caller bug). A run that would have vetoed before this fix still vetoes identically after it; the only observable difference is that `autotune_runs.pbo` now reflects what the gate actually evaluated.
+
+**Forward-only, no backfill (explicit scope decision):** legacy rows written before this fix remain `NULL` — `pbo` was already a NULLable column from migration 028, and retroactively reconstructing a PBO value for historical runs (which would require re-running each historical walk-forward against its original trial population) was ruled out of scope. This mirrors the same forward-only posture the codebase already takes for `s_count` (`autotuner.md`'s "s_count Wiring" section, Workstream E, 2026-07-12) — a persistence-gap fix populates the column going forward, it does not retroactively repair prior rows.
+
+### Tests
+
+New `tests/autotuner/test_pbo_run_autotuner_persistence.py` (3 tests, `run_autotuner()`-level integration — not another accessor-level test, since the accessor was already proven correct):
+
+- `test_run_autotuner_persists_pbo_matching_gate_consumed_value` (AC-1/AC-2) — drives a real `run_autotuner()` call via a 2-trial fixture (both trials carrying `cscv_date_returns`, satisfying `autotuner.py`'s `len(_top_k_configs) >= 2` PBO-eligibility gate), spies on `acceptance_gate.evaluate_acceptance_gate` to capture the gate-consumed `pbo` kwarg, then asserts `autotune_runs.pbo` is non-NULL, float, in `compute_pbo`'s documented `[0.0, 1.0]` range, AND byte-identical (`pytest.approx(..., abs=1e-12)`, an identity/passthrough tolerance for SQLite `REAL` round-trip only — not a producer-math tolerance) to the value the gate itself consumed. A non-vacuity guard asserts the gate-consumed value is genuinely non-`None` before trusting the persistence assertions, protecting against a future fixture edit silently collapsing back to the untested `None` branch.
+- `test_run_autotuner_pbo_none_persists_as_null_when_not_computed` (AC-3, negative-case pin) — when `haircut_trials` is empty (zero CSCV-eligible configs), `_pbo_value` stays its initialized `None`, and the persisted row's `pbo` column must be SQL `NULL` — pins the case that stops AC-1's fix from regressing into "pbo always fabricated as some non-null value."
+- `test_autotuner_save_autotune_run_call_site_passes_pbo_kwarg` — bounded source-scan pin directly on the call-site text, guarding against a future edit silently re-dropping the kwarg without any fixture-level test noticing.
+
+**Adversarial fixture note:** the identity-check fixture's gate-consumed `pbo` happens to be `0.0` (via `compute_pbo`'s real `n_dates==0` early-return path for the given trial-return alignment). Combined with the AC-3 negative pin (`None` must persist as `NULL`, never `0.0`), this jointly excludes two plausible false-green implementations a less adversarial fixture would have missed: a hardcoded `pbo=0.0` literal, and a falsy-coercion bug (`pbo=_pbo_value or 0.0`) — both would pass a naive "pbo is not NULL" assertion but fail either the identity check (hardcoded 0.0 would coincidentally match here but not on a nonzero PBO) or the AC-3 negative pin (falsy-coercion would corrupt the `None` case into `0.0`).
+
+**Review:** `quant-code-reviewer` — APPROVE, zero findings. Test-writer sufficiency verdict — SUFFICIENT, with one residual explicitly documented (not a gap): the fixture is single-symphony; cross-symphony carryover/isolation is BL-2's separate scope (the per-symphony loop exception-isolation backlog item), not this fix's.
+
+**Fresh authoritative count, HEAD `b28f070e`:** `python -m pytest tests/autotuner/test_pbo_run_autotuner_persistence.py tests/autotuner/test_pbo_migration_028.py -n0` — all green (this doc-writer's own run; regression guard on the accessor-level suite this fix does not touch).
+
+### Files changed
+
+- `autotuner.py` — `+5` lines (`pbo=_pbo_value,` plus a 4-line source comment at the `save_autotune_run(...)` call site, `:3218-3239`).
+- `tests/autotuner/test_pbo_run_autotuner_persistence.py` (new, 493 lines).
+- `docs/generated/autotuner.md` (this doc pass — new "PBO Veto Persistence" section).
+- `feature-plans/audit-bl1-persist-pbo-veto.md` (this doc pass — AC checkboxes ticked, `Status: shipped (pending merge)`).
+
+### Reference
+
+`DE-AUDIT-BL1-001`; branch `fix/audit-bl1-persist-pbo-veto`; worktree `.claude/worktrees/audit-bl1`; plan `feature-plans/audit-bl1-persist-pbo-veto.md`; base `origin/main` @ `3e314fef` (#118, clean fork — verified no drift at this entry). Commit chain: `332ddf83` (RED) → `b28f070e` (GREEN). Source finding: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 T1 (annotated with a pointer to this entry in the same doc pass).
