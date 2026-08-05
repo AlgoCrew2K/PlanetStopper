@@ -3311,6 +3311,13 @@ def run_autotuner(
                 e,
                 exc_info=True,
             )
+            # bl2review: a mid-window exception (after
+            # optimization_results[normalized_name] = {} but before the real
+            # delta keys / "_baseline_chosen" land) leaves a stale partial
+            # entry that reporting.py's shape guard would silently render as
+            # "Optimal parameters retained." -- a false success. Drop it so a
+            # failed symphony has NO key, matching the early-failure case.
+            optimization_results.pop(normalized_name, None)
             continue
         else:
             _batch_completed += 1
