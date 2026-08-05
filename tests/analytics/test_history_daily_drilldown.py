@@ -32,13 +32,33 @@ keys) are ALREADY computed, then discarded on flatten. This file pins:
 This is a pure analytics.py unit test (no Flask route, no DB — the
 multi-day get_history_summary loop reads only post_mortem_*.json files).
 -n0 only.
+
+Date-fixture time-bomb fix (2026-08-05): this file originally hardcoded
+2026-07-01..03 fixture dates while `get_history_summary(days=30, ...)`
+windows by CALENDAR DAYS FROM TODAY (`end_date - timedelta(days=days)`,
+real `datetime.now()`). Those literals aged out of the 30-day window
+around 2026-08-01, silently turning every test's assertions vacuous (empty
+`daily_dates`/`daily_exits` rather than a genuine pass). All fixture dates
+below are derived from `_d(days_ago)` — always comfortably inside the
+30-day window regardless of the date this suite is run on.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 
 import analytics
+
+
+def _d(days_ago: int) -> str:
+    """A YYYY-MM-DD date string `days_ago` days before today.
+
+    Always comfortably inside get_history_summary's 30-day calendar window
+    (every call site below uses days_ago <= 5) regardless of what day this
+    suite runs on — the fix for the 2026-07-01..03 hardcoded-date time bomb.
+    """
+    return (date.today() - timedelta(days=days_ago)).isoformat()
 
 
 def _write_post_mortem(tmp_path, date_str: str, triggers: list[dict]) -> None:
@@ -75,9 +95,9 @@ def _valid_trigger(
 
 
 def test_daily_dates_key_present_and_same_length_as_daily_alpha(tmp_path):
-    _write_post_mortem(tmp_path, "2026-07-01", [_valid_trigger(symphony_id="S1")])
-    _write_post_mortem(tmp_path, "2026-07-02", [_valid_trigger(symphony_id="S2")])
-    _write_post_mortem(tmp_path, "2026-07-03", [_valid_trigger(symphony_id="S3")])
+    _write_post_mortem(tmp_path, _d(3), [_valid_trigger(symphony_id="S1")])
+    _write_post_mortem(tmp_path, _d(2), [_valid_trigger(symphony_id="S2")])
+    _write_post_mortem(tmp_path, _d(1), [_valid_trigger(symphony_id="S3")])
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
@@ -95,7 +115,7 @@ def test_daily_dates_values_match_fixture_dates_in_sorted_order(tmp_path):
     (my own test input, not a producer-computed value), in the SAME sorted
     order the existing daily_alpha flatten already uses (sorted(daily_map)).
     """
-    fixture_dates = ["2026-07-03", "2026-07-01", "2026-07-02"]  # written out of order
+    fixture_dates = [_d(1), _d(3), _d(2)]  # written out of chronological order
     for i, d in enumerate(fixture_dates):
         _write_post_mortem(tmp_path, d, [_valid_trigger(symphony_id=f"S{i}")])
 
@@ -112,18 +132,15 @@ def test_daily_dates_index_aligns_with_daily_alpha_index(tmp_path):
     entry — proven by writing distinguishable alpha values per day and
     checking the date at each alpha's index matches that day's fixture date.
     """
-    _write_post_mortem(
-        tmp_path, "2026-07-01", [_valid_trigger(symphony_id="S1", alpha=1.0, dollars=10.0)]
-    )
-    _write_post_mortem(
-        tmp_path, "2026-07-02", [_valid_trigger(symphony_id="S2", alpha=2.0, dollars=20.0)]
-    )
+    day1, day2 = _d(2), _d(1)
+    _write_post_mortem(tmp_path, day1, [_valid_trigger(symphony_id="S1", alpha=1.0, dollars=10.0)])
+    _write_post_mortem(tmp_path, day2, [_valid_trigger(symphony_id="S2", alpha=2.0, dollars=20.0)])
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
     alpha_by_date = dict(zip(stats["daily_dates"], stats["daily_alpha"]))
-    assert alpha_by_date.get("2026-07-01") == 1.0, f"got alpha_by_date={alpha_by_date!r}"
-    assert alpha_by_date.get("2026-07-02") == 2.0, f"got alpha_by_date={alpha_by_date!r}"
+    assert alpha_by_date.get(day1) == 1.0, f"got alpha_by_date={alpha_by_date!r}"
+    assert alpha_by_date.get(day2) == 2.0, f"got alpha_by_date={alpha_by_date!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +149,7 @@ def test_daily_dates_index_aligns_with_daily_alpha_index(tmp_path):
 
 
 def test_daily_exits_key_present_and_is_a_dict(tmp_path):
-    _write_post_mortem(tmp_path, "2026-07-01", [_valid_trigger(symphony_id="S1")])
+    _write_post_mortem(tmp_path, _d(1), [_valid_trigger(symphony_id="S1")])
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
@@ -145,28 +162,30 @@ def test_daily_exits_key_present_and_is_a_dict(tmp_path):
 
 
 def test_daily_exits_grouped_under_the_correct_date_key(tmp_path):
-    _write_post_mortem(
-        tmp_path, "2026-07-01", [_valid_trigger(symphony_id="S1", reason="Trailing Stop")]
-    )
-    _write_post_mortem(
-        tmp_path, "2026-07-02", [_valid_trigger(symphony_id="S2", reason="VWAP Breakdown")]
-    )
+    day1, day2 = _d(2), _d(1)
+    _write_post_mortem(tmp_path, day1, [_valid_trigger(symphony_id="S1", reason="Trailing Stop")])
+    _write_post_mortem(tmp_path, day2, [_valid_trigger(symphony_id="S2", reason="VWAP Breakdown")])
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
-    day1 = stats["daily_exits"].get("2026-07-01")
-    assert day1 is not None and len(day1) == 1, f"expected 1 exit under 2026-07-01, got {day1!r}"
-    assert day1[0].get("reason") == "Trailing Stop", f"got {day1[0]!r}"
+    entries1 = stats["daily_exits"].get(day1)
+    assert entries1 is not None and len(entries1) == 1, (
+        f"expected 1 exit under {day1!r}, got {entries1!r}"
+    )
+    assert entries1[0].get("reason") == "Trailing Stop", f"got {entries1[0]!r}"
 
-    day2 = stats["daily_exits"].get("2026-07-02")
-    assert day2 is not None and len(day2) == 1, f"expected 1 exit under 2026-07-02, got {day2!r}"
-    assert day2[0].get("reason") == "VWAP Breakdown", f"got {day2[0]!r}"
+    entries2 = stats["daily_exits"].get(day2)
+    assert entries2 is not None and len(entries2) == 1, (
+        f"expected 1 exit under {day2!r}, got {entries2!r}"
+    )
+    assert entries2[0].get("reason") == "VWAP Breakdown", f"got {entries2[0]!r}"
 
 
 def test_daily_exits_multiple_triggers_same_day_all_present(tmp_path):
+    day = _d(1)
     _write_post_mortem(
         tmp_path,
-        "2026-07-01",
+        day,
         [
             _valid_trigger(symphony_id="S1", reason="Take-Profit"),
             _valid_trigger(symphony_id="S2", reason="VWAP Bleed Cut"),
@@ -175,11 +194,11 @@ def test_daily_exits_multiple_triggers_same_day_all_present(tmp_path):
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
-    day1 = stats["daily_exits"].get("2026-07-01")
-    assert day1 is not None and len(day1) == 2, (
-        f"a day with 2 triggers must expose both in daily_exits — got {day1!r}"
+    entries = stats["daily_exits"].get(day)
+    assert entries is not None and len(entries) == 2, (
+        f"a day with 2 triggers must expose both in daily_exits — got {entries!r}"
     )
-    reasons = {e.get("reason") for e in day1}
+    reasons = {e.get("reason") for e in entries}
     assert reasons == {"Take-Profit", "VWAP Bleed Cut"}, f"got reasons={reasons!r}"
 
 
@@ -196,15 +215,16 @@ def test_daily_exits_entries_carry_a_ts_field_sourced_like_todays_exits(tmp_path
     renderDayDrilldown already reads `e.time_triggered || e.ts || ''`
     expecting exactly this).
     """
+    day = _d(1)
     _write_post_mortem(
         tmp_path,
-        "2026-07-01",
+        day,
         [_valid_trigger(symphony_id="S-known", reason="Take-Profit")],  # time_triggered="14:00:00"
     )
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
-    entry = stats["daily_exits"]["2026-07-01"][0]
+    entry = stats["daily_exits"][day][0]
     ts_value = entry.get("time_triggered") or entry.get("ts")
     assert ts_value == "14:00:00", (
         f"daily_exits entry must carry the trigger's time_triggered/ts value (fixture "
@@ -218,13 +238,12 @@ def test_daily_exits_entries_carry_symphony_id_reason_and_detail(tmp_path):
     new computation, just re-exposing fields already present on the parsed
     trigger dict (symphony_id/exit_reason/detail-equivalent).
     """
-    _write_post_mortem(
-        tmp_path, "2026-07-01", [_valid_trigger(symphony_id="S-known", reason="Take-Profit")]
-    )
+    day = _d(1)
+    _write_post_mortem(tmp_path, day, [_valid_trigger(symphony_id="S-known", reason="Take-Profit")])
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
-    entry = stats["daily_exits"]["2026-07-01"][0]
+    entry = stats["daily_exits"][day][0]
     assert entry.get("symphony_id") == "S-known", f"got {entry!r}"
     assert entry.get("reason") == "Take-Profit", f"got {entry!r}"
     assert "detail" in entry, f"entry must carry a 'detail' field (guard-alpha), got {entry!r}"
@@ -240,17 +259,18 @@ def test_daily_exits_day_with_zero_valid_triggers_does_not_crash(tmp_path):
     if_held_source) must not crash get_history_summary, and must not
     fabricate a daily_exits entry for that day.
     """
-    (tmp_path / "post_mortem_2026-07-01.json").write_text(
+    day = _d(1)
+    (tmp_path / f"post_mortem_{day}.json").write_text(
         json.dumps({"triggers": [{"exit_reason": "Take-Profit"}]}),  # no if_held_source
         encoding="utf-8",
     )
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))  # must not raise
 
-    day1 = stats["daily_exits"].get("2026-07-01")
-    assert day1 in (None, []), (
+    entries = stats["daily_exits"].get(day)
+    assert entries in (None, []), (
         f"a day with zero VALID triggers must degrade to omitted or an empty list, "
-        f"never a fabricated entry — got {day1!r}"
+        f"never a fabricated entry — got {entries!r}"
     )
 
 
@@ -271,7 +291,7 @@ def test_daily_exits_empty_history_is_an_empty_dict(tmp_path):
 
 
 def test_existing_keys_still_present_alongside_new_fields(tmp_path):
-    _write_post_mortem(tmp_path, "2026-07-01", [_valid_trigger(symphony_id="S1")])
+    _write_post_mortem(tmp_path, _d(1), [_valid_trigger(symphony_id="S1")])
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
 
