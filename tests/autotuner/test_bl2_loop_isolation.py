@@ -366,6 +366,65 @@ def _run_autotuner_multi_with_oc_failure(names, *, broken_symphony, broken_exc, 
     return result, buf.getvalue()
 
 
+def _run_autotuner_multi_with_mid_window_failure(
+    names, *, broken_symphony_sym_id, broken_exc, n_days=5
+):
+    """MID-WINDOW injection point (bl2review CONFIRMED finding): raises on
+    the SECOND autotuner.run_simulation call for the target symphony's
+    sym_id -- landing after optimization_results[normalized_name] = {}
+    (autotuner.py:2952) and its eval_window_days stamp (:2960), but before
+    the fallback_oos_alpha assignment (:2970-2976) completes. That is
+    squarely inside the ~200-line window where a PARTIAL
+    optimization_results entry exists (only eval_window_days, no delta keys,
+    no _baseline_chosen) -- distinct from both the EARLY injection point
+    (before the dict entry is created at all) and the LATE one (after it is
+    fully populated).
+
+    Per-target-sym_id call count: call #1 is the pre-window oos_alpha
+    computation (autotuner.py:2938) -- allowed through to the REAL
+    run_simulation so the per-symphony body actually reaches the window.
+    Call #2 is fallback_oos_alpha, the FIRST run_simulation call INSIDE the
+    window -- this is the one that raises. Sibling symphonies (a different
+    sym_id on every call) always route to the real function, unaffected.
+    """
+    import inspect
+
+    import autotuner  # lazy import
+
+    ai = _ai_best_params()
+    fallback = _fallback_params()
+    bot_state = _build_multi_symphony_bot_state(names)
+    sym_ids = list(bot_state.keys())
+    spec_bundle_id = _make_phase1_spec_bundle()
+    buf = io.StringIO()
+
+    sig = inspect.signature(autotuner.run_autotuner)
+    extra = {"spec_bundle_id": spec_bundle_id} if "spec_bundle_id" in sig.parameters else {}
+
+    real_run_simulation = autotuner.run_simulation
+    _call_counts: dict[str, int] = {}
+
+    def _mid_window_run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict):
+        if acc_sym_ids == [broken_symphony_sym_id]:
+            _call_counts[broken_symphony_sym_id] = _call_counts.get(broken_symphony_sym_id, 0) + 1
+            if _call_counts[broken_symphony_sym_id] == 2:
+                raise broken_exc
+        return real_run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dict)
+
+    with (
+        _autotuner_patches_multi(ai, fallback, sym_ids=sym_ids, n_days=n_days),
+        patch("autotuner.run_simulation", side_effect=_mid_window_run_simulation),
+    ):
+        with contextlib.redirect_stdout(buf):
+            result = autotuner.run_autotuner(
+                bot_state,
+                "2026-05-10",
+                [f"acc-{i}" for i in range(1, len(names) + 1)],
+                **extra,
+            )
+    return result, buf.getvalue()
+
+
 # ===========================================================================
 # AC-1: isolation -- no propagation.
 # ===========================================================================
@@ -737,3 +796,79 @@ def test_oc_de_internal_failure_still_counts_symphony_as_completed(isolated_db, 
         "unchanged -- BL-2's new outer guard must not swallow or alter the "
         "existing OC isolation behavior."
     )
+
+
+# ===========================================================================
+# bl2review CONFIRMED finding: MID-WINDOW failure must leave NO stale entry.
+# ===========================================================================
+
+
+def test_mid_window_exception_leaves_no_stale_partial_entry(isolated_db):
+    """Adversarial pin (bl2review CONFIRMED finding): an uncaught exception
+    raised INSIDE the ~200-line window between
+    optimization_results[normalized_name] = {} (autotuner.py:2952) and the
+    real delta keys / "_baseline_chosen" landing (autotuner.py:3157-3162) is
+    correctly caught by AC-1's outer guard -- but the STALE PARTIAL entry
+    (e.g. only "eval_window_days", no delta keys, no "_baseline_chosen")
+    remains in optimization_results. reporting.py's per-symphony shape guard
+    then skips that non-{old,new} entry and renders "Optimal parameters
+    retained." for that symphony -- an ACTIVE FALSE SUCCESS for a symphony
+    whose optimization actually failed.
+
+    This file's EARLY (study.optimize) and LATE (database.save_autotune_run)
+    injection points bracket this window from OUTSIDE but never hit inside
+    it -- this test is the missing MID-WINDOW case.
+
+    Required property: the failed symphony must have NO key at all in the
+    returned optimization_results -- matching the EARLY-failure case's
+    correct behavior (an exception raised before
+    optimization_results[normalized_name] is even created never leaves an
+    entry). This also structurally prevents the fake-success embed
+    downstream in reporting.py, since its per-symphony loop only ever
+    iterates keys actually present in the dict.
+
+    MUST FAIL on current HEAD (825b9878): the outer except catches the
+    exception and continues, but nothing removes the stale
+    {"eval_window_days": {...}} entry already written at :2952/:2960.
+
+    Intended GREEN (per team-lead's ruling, NOT implemented by this test):
+    optimization_results.pop(normalized_name, None) inside the except block.
+    """
+    import database
+
+    broken_name = _NAMES[1]
+    broken_normalized = database.normalize_name(broken_name)
+    # sym_id convention from _build_multi_symphony_bot_state: "sym-<i>",
+    # 1-indexed -- _NAMES[1] ("Symphony Beta") is the 2nd entry -> "sym-2".
+    broken_sym_id = "sym-2"
+
+    result, _stdout = _run_autotuner_multi_with_mid_window_failure(
+        _NAMES,
+        broken_symphony_sym_id=broken_sym_id,
+        broken_exc=RuntimeError("boom - injected mid-window failure"),
+    )
+
+    assert result is not None, (
+        "run_autotuner() must not crash on a mid-window failure -- AC-1's "
+        "outer guard must catch it, same as the early/late injection points."
+    )
+    assert broken_normalized not in result, (
+        f"the failed symphony ({broken_normalized!r}) must have NO key at "
+        f"all in optimization_results -- a stale partial entry "
+        f"({result.get(broken_normalized)!r}) would render as a FALSE "
+        f"SUCCESS downstream in reporting.py (the shape guard skips the "
+        f"non-{{old,new}} eval_window_days entry, leaving 'Optimal "
+        f"parameters retained.' for a symphony that actually failed)."
+    )
+
+    # Companion sanity (cheap, same test): the two healthy siblings must be
+    # genuinely, fully populated (real _baseline_chosen present) -- proving
+    # the eventual fix doesn't accidentally strip healthy entries too.
+    healthy_normalized = {database.normalize_name(n) for n in _NAMES} - {broken_normalized}
+    for sym_key in healthy_normalized:
+        assert sym_key in result, f"healthy sibling {sym_key!r} must still be present in result"
+        assert "_baseline_chosen" in result[sym_key], (
+            f"healthy sibling {sym_key!r} must be FULLY populated (carry "
+            f"'_baseline_chosen'), not left as a partial eval_window_days "
+            f"stub; got keys: {list(result[sym_key].keys())!r}"
+        )
