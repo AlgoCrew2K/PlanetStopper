@@ -174,14 +174,28 @@ def test_unexpected_exception_keeps_full_traceback(monkeypatch, caplog):
 
 
 def test_account_totals_timeout_constant_unchanged():
-    """AC-8/plan: 'retry/timeout VALUES unchanged' — this cycle is
-    logging-only. Pins the existing constant (app.py:554) so a future PR
-    can't quietly fold a retry/timeout value change into this observability
-    fix.
+    """AC-8/plan (F-010 CYCLE): 'retry/timeout VALUES unchanged' — F-010
+    itself was logging-only, so this test originally pinned the constant at
+    its then-value of 10 (app.py:554) to stop a future PR from quietly
+    folding a retry/timeout value change into that observability fix.
+
+    Updated (DE-AUDIT-BL4-001, 2026-08-05): AC-6 of the account-basis
+    honesty render cycle DELIBERATELY bumps this same constant 10 -> 30
+    ([PM-ASSUMED] ruled in-scope under the project's full-autonomy
+    directive — reduces stale-flicker frequency on the background
+    scheduler thread's Composer fetch). F-010's own no-behavior-change
+    invariant is still honored: the value pin here now tracks the CURRENT
+    deliberately-changed contract rather than freezing F-010's original
+    snapshot forever. See app.py's own comment above the constant and
+    tests/dashboard/test_account_basis_honesty_render.py's
+    TestTimeoutConstantBump for the AC-6 RED/GREEN pair that drove this
+    bump (value + still-named-constant + call-site-by-name coverage lives
+    there; this file only re-pins the value so a future PR can't silently
+    regress AC-6's own bump either).
     """
-    assert app_module._ACCOUNT_TOTALS_HTTP_TIMEOUT_S == 10, (
-        "F-010 is a logging-only fix — the Composer read timeout value must "
-        f"stay 10, got {app_module._ACCOUNT_TOTALS_HTTP_TIMEOUT_S!r}"
+    assert app_module._ACCOUNT_TOTALS_HTTP_TIMEOUT_S == 30, (
+        "DE-AUDIT-BL4-001 AC-6 deliberately bumped the Composer read "
+        f"timeout from 10 to 30 — got {app_module._ACCOUNT_TOTALS_HTTP_TIMEOUT_S!r}"
     )
 
 

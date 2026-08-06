@@ -1,6 +1,7 @@
 # Feature: Render Account-Basis Honesty Markers + Fix Freshness Stamp (BL-4)
-Status: ready
+Status: shipped (pending merge)
 Created: 2026-08-04
+Shipped: 2026-08-05 (`DE-AUDIT-BL4-001`, HEAD `b82de309`, branch `fix/audit-bl4-account-basis-render`)
 Source: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Findings D1/D2/D4, §6 Backlog BL-4 (commit `ca7f2beb`)
 
 ## Summary
@@ -40,7 +41,7 @@ from a live account figure — compounding the D1 confusion when a stale-but-unm
 account figure sits next to it.
 
 ## Acceptance Criteria
-- [ ] **AC-1 — render the stale/VW chip on the account-basis comparison rows.**
+- [x] **AC-1 — render the stale/VW chip on the account-basis comparison rows.**
       `updateComparisonRows(data)` (`static/index.js:932-...`) reads
       `ps.basis`/`ps.account_basis_stale`/`ps.account_basis_as_of` (currently ZERO
       references — confirmed by grep) and, when `ps.account_basis_stale` is truthy
@@ -49,31 +50,31 @@ account figure sits next to it.
       account-basis fields (`ps.today_change`/`ps.cumulative_return`). The Max DD
       row (`ps.max_drawdown`) is NOT account-basis-derived and must never render
       this chip.
-- [ ] **AC-2 — two distinct honest labels, never conflated.** The chip's
+- [x] **AC-2 — two distinct honest labels, never conflated.** The chip's
       text/tooltip distinguishes: (a) STALE — `ps.account_basis_stale` true,
       discloses the as-of time from `ps.account_basis_as_of`; from (b)
       VALUE-WEIGHTED FLOOR — `ps.basis === "value_weighted"` with
       `account_basis_stale` NOT set (the narrow daemon-restart-window case per D2),
       which has no as-of timestamp to disclose and must not fabricate one.
-- [ ] **AC-3 — dedicated account-fetch freshness indicator.** A NEW element
+- [x] **AC-3 — dedicated account-fetch freshness indicator.** A NEW element
       (distinct from `#hero-data-as-of`, which stays anchored to the engine-cycle
       timestamp per its existing, unrelated contract) reflects
       `ps.account_basis_as_of` when the account basis is stale, so an operator can
       see "account data as of HH:MM" separately from "engine cycle as of HH:MM"
       when the two diverge.
-- [ ] **AC-4 — "Bot" simulation qualifier.** The "Bot" label
+- [x] **AC-4 — "Bot" simulation qualifier.** The "Bot" label
       (`templates/index.html:921/947`'s literal `"Bot "` prefix, rendered
       server-side; also referenced in `static/index.js`'s comparison-row builder)
       gains a qualifier disclosing it is a simulated/dry-run figure (a `title=`
       tooltip attribute or an adjacent small-text qualifier — implementer's choice
       of exact presentation) — text/attribute change only, zero change to which
       underlying value (`dry_run`) is displayed.
-- [ ] **AC-5 — zero backend computation change.** `_compute_portfolio_strip()`'s and
+- [x] **AC-5 — zero backend computation change.** `_compute_portfolio_strip()`'s and
       the frozen `get_state()` closed-branch's computation of `basis` /
       `account_basis_stale` / `account_basis_as_of` (`app.py:1749-1758` live,
       `:2382-2387` frozen) are byte-unchanged — per D2, this mechanism is ALREADY
       correct; this fix is render-only.
-- [ ] **AC-6 (optional, operator-gated) — reduce stale-flicker frequency.**
+- [x] **AC-6 (optional, operator-gated) — reduce stale-flicker frequency.**
       `_ACCOUNT_TOTALS_HTTP_TIMEOUT_S` (`app.py:579`, currently `10`) MAY be raised
       toward `30` to reduce the frequency of transient timeout-driven staleness
       (observed ~21 timeouts/day, ~1.5% of per-minute fetch attempts, 0 in the most
@@ -172,3 +173,19 @@ account figure sits next to it.
   clock staleness gap and fetch-error-silent-catch gap documented separately in
   `.claude/live-dashboard-reality-audit.md` (a different, already-tracked defect
   class per that document, not conflated with this cycle).
+
+## Shipped
+
+Shipped 2026-08-05 as `DE-AUDIT-BL4-001` (branch `fix/audit-bl4-account-basis-render`, worktree `.claude/worktrees/audit-bl4`, base `origin/main` @ `f2c1ebfe` / #122). Commit chain: `8d89f421` (RED, 32 tests) -> `d91caf0b` (GREEN) -> `b82de309` (sufficiency-review pin, +2 tests). 34/34 tests green (`-n0`, this file only), both ruff gates green, per `b82de309`'s own commit message.
+
+**AC-1 through AC-4** shipped exactly as specified: `renderAccountBasisChip()`/`renderAccountBasisFreshness()` in `static/index.js`, called from `updateComparisonRows()` on every poll; two new hidden `data-testid="comp-{today,cumulative}-basis-chip"` spans plus a hidden `#account-basis-as-of` element in `templates/index.html`; a `title=` qualifier on both "Bot" spans. Priority rule for the both-flags-true edge case (STALE wins) was approved by the team lead during RED-plan review, not left to implementer discretion.
+
+**AC-5** — the plan's own architecture section anticipated no backend change would be needed; confirmed true. `TestBackendComputationByteUnchanged` (6 tests) pins the 6 known assignment lines (live + frozen) as a regression guard.
+
+**AC-6 — [PM-ASSUMED] ruling:** the plan explicitly framed this as optional/operator-gated ("MAY be raised... not required for AC-1 through AC-5 to close the finding"). Under the project's full-autonomy directive, the PM ruled it in-scope for this cycle (a one-line constant-value change, no new codepath) rather than deferring it to a separate operator-gated cycle. `quant-code-reviewer` flagged a tradeoff during review — the timeout gates the background scheduler thread (`_refresh_account_totals()`), not the 1-minute engine dispatch path, but a slow Composer call can now block that thread up to 30s instead of 10s. This tradeoff is recorded, not disputed; the audit's own observed timeout frequency (~21/day, 0/24h at audit time) motivated the change.
+
+**Sufficiency-review addition beyond the plan:** `TestStaleToHealthyTransitionResetsChipsAndFreshness` (2 tests, `b82de309`) — not in the original A/C list, added because `bl4test`'s post-GREEN adversarial pass identified that every RED-phase test called `updateComparisonRows` exactly once per scenario, which could not distinguish "renders correctly" from "renders correctly but never resets on a later healthy poll" (the DOM persists across polls in production, unlike a fresh per-test render). Authorized directly by the team lead per the same precedent BL-3 set (`97b900ff`).
+
+**Verdicts:** `quant-code-reviewer` — APPROVE (as reported to the team lead; see `DECISIONS.md` for the full record and the caveat that this doc-writer did not independently re-run the review). Test-writer sufficiency verdict not yet formally relayed to this doc-writer as of this doc pass.
+
+See `DE-AUDIT-BL4-001` in `DECISIONS.md` for the full record.
