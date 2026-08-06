@@ -48,10 +48,11 @@ file at test time, never hardcoded to a producer-computed value
 
 from __future__ import annotations
 
+import datetime as _datetime_module
 import json
 import pathlib
 import re
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 
 import pytest
 
@@ -231,6 +232,99 @@ class TestByteParityWithHistorySummary:
             f"dashboard window=1y ({route_sum}) must equal get_history_summary(days=365) "
             f"({history_sum}) -- both sides must resolve the shared '1Y' token to the "
             "SAME 365-day-count"
+        )
+
+
+# ---------------------------------------------------------------------------
+# BL-5 (audit #118 D3): byte-parity extended to the exact boundary day.
+#
+# The proofs above (test_30d_matches_get_history_summary_days_30 etc.) use
+# fixture offsets far from any cutoff boundary (20/200/400 days-ago) — they
+# hold both before and after BL-5's fix and don't exercise the specific gap
+# BL-5 closes. This class pins a file dated EXACTLY at the N-day cutoff under
+# a frozen clock with a non-midnight time-of-day, the one condition where the
+# two surfaces' pre-fix arithmetic disagrees. See
+# tests/analytics/test_bl5_window_cutoff_unification.py for the full bug
+# writeup and the direct analytics-level (non-Flask) reproduction.
+# ---------------------------------------------------------------------------
+
+
+class _FrozenDatetime(_datetime_module.datetime):
+    _frozen: _datetime_module.datetime
+
+    @classmethod
+    def now(cls, tz=None):
+        if tz is not None:
+            return cls._frozen.astimezone(tz)
+        return cls._frozen.replace(tzinfo=None)
+
+
+@pytest.fixture
+def frozen_noon_utc(monkeypatch):
+    """Freezes datetime.now()/datetime.now(UTC) to the same instant (noon UTC
+    on a fixed date) for both the route's UTC-aware _window_cutoff_date call
+    and get_history_summary's naive-local `datetime.now()` call — the
+    standard no-freezegun technique (this repo has no freezegun dependency):
+    both functions do a function-LOCAL `from datetime import datetime as
+    _dt`, which is a fresh attribute lookup on the datetime module at call
+    time, so patching datetime.datetime itself is picked up by both.
+    """
+    frozen = _datetime_module.datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
+    _FrozenDatetime._frozen = frozen
+    monkeypatch.setattr(_datetime_module, "datetime", _FrozenDatetime)
+    return frozen
+
+
+@pytest.fixture
+def boundary_pm_dir(tmp_path, monkeypatch):
+    """A single post_mortem file dated exactly at the 30-day cutoff boundary
+    (computed from analytics._window_cutoff_date(30) under the frozen clock
+    the frozen_noon_utc fixture installs — this fixture assumes it already
+    ran, per pytest's declared-first-wins ordering when both are requested).
+    """
+    pm_dir = tmp_path / "post_mortems"
+    pm_dir.mkdir()
+
+    cutoff = analytics_module._window_cutoff_date(30)
+    boundary_date = cutoff.isoformat()
+
+    _write_pm(pm_dir, boundary_date, 55.55, "Sym-Boundary")
+
+    monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(pm_dir))
+    return {"dir": pm_dir, "date": boundary_date}
+
+
+class TestBoundaryDatedFileByteParity:
+    def test_30d_boundary_file_included_identically_on_both_surfaces(
+        self, client, frozen_noon_utc, boundary_pm_dir
+    ):
+        """AC-2's boundary proof: a file dated exactly at the 30-day cutoff
+        must be included/excluded IDENTICALLY by /api/guard-alpha-summary?
+        window=30d and /api/history/30 — closing the exact gap the
+        non-boundary byte-parity tests above don't exercise.
+
+        RED today: get_history_summary's naive-local full-datetime compare
+        excludes the boundary file at this frozen (non-midnight) clock, while
+        /api/guard-alpha-summary already includes it via _window_cutoff_date
+        — the two surfaces disagree on the identical file.
+        """
+        route_resp = client.get("/api/guard-alpha-summary?window=30d")
+        assert route_resp.status_code == 200
+        route_sum = route_resp.get_json()["cumulative_saved_dollars"]
+
+        history_sum = analytics_module.get_history_summary(
+            days=30, base_dir=str(boundary_pm_dir["dir"])
+        )["total_saved"]
+
+        assert route_sum == pytest.approx(55.55, abs=0.01), (
+            f"fixture integrity: /api/guard-alpha-summary?window=30d must include "
+            f"the boundary-dated file ({boundary_pm_dir['date']}); got {route_sum}"
+        )
+        assert history_sum == pytest.approx(route_sum, abs=0.01), (
+            f"/api/history/30 (get_history_summary, {history_sum}) disagrees with "
+            f"/api/guard-alpha-summary?window=30d ({route_sum}) on whether the "
+            f"boundary-dated file ({boundary_pm_dir['date']}) is in-window — both "
+            "surfaces must resolve the SAME cutoff for the SAME day-count"
         )
 
 
