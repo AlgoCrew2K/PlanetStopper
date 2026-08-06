@@ -976,9 +976,24 @@
 
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
-        renderAccountBasisChip('comp-today-basis-chip', ps);
-        renderAccountBasisChip('comp-cumulative-basis-chip', ps);
-        renderAccountBasisFreshness(ps);
+        // BL-4 live-gate fix: updateComparisonRows has TWO production callers --
+        // the /api/state poll (loadState()) AND fetchWindowedStrip (wraps
+        // /api/strip/<token>'s response, fires after every state poll). The
+        // windowed-strip shape (analytics.compute_windowed_portfolio_strip)
+        // NEVER carries basis/account_basis_stale/account_basis_as_of, so the
+        // account-basis helpers must only run on a genuine state-poll payload
+        // -- otherwise every windowed-strip tick wipes a real stale chip the
+        // state poll just set. 'data_as_of' is unconditionally set by
+        // _compute_portfolio_strip on every /api/state poll (app.py) and never
+        // set by the windowed-strip producer -- a real structural discriminator,
+        // unlike presence of the account-basis keys themselves (a healthy
+        // state poll also lacks those, so that alone can't distinguish the
+        // two payload shapes).
+        if ('data_as_of' in ps) {
+            renderAccountBasisChip('comp-today-basis-chip', ps);
+            renderAccountBasisChip('comp-cumulative-basis-chip', ps);
+            renderAccountBasisFreshness(ps);
+        }
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
