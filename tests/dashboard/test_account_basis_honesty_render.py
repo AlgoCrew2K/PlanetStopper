@@ -848,3 +848,172 @@ class TestChipRenderNonVacuity:
         assert vw_text != empty_text, (
             "non-vacuity FAIL: value-weighted-floor and empty-state chip text must differ"
         )
+
+
+# ---------------------------------------------------------------------------
+# LIVE-GATE-FOUND BUG: updateComparisonRows has TWO production callers --
+# the /api/state poll (loadState()) AND fetchWindowedStrip (index.js:1457-1470),
+# which wraps /api/strip/<token>'s response as {portfolio_strip: strip} and
+# follows every state poll. The windowed strip's real key set (verified against
+# analytics.compute_windowed_portfolio_strip's own docstring, analytics.py:1868-1876,
+# and PM's live render-gate capture) is EXACTLY: today_change, cumulative_return,
+# max_drawdown, vol_bot, vol_held, guard_alpha, insufficient_history, window --
+# it NEVER carries basis/account_basis_stale/account_basis_as_of. Since the
+# chip/freshness helpers reset-to-hidden whenever those 2 flags are absent,
+# every windowed-strip poll wipes a genuinely-stale chip the very next tick.
+# Live-verified on the render gate: injected stale state -> chips stayed hidden.
+# ---------------------------------------------------------------------------
+
+
+def _windowed_strip_shaped_payload() -> dict:
+    """Exact real /api/strip/<token> response shape (analytics.py:1868-1876) --
+    the 8 keys that function returns, nothing more, nothing account-basis-related.
+    Deliberately does NOT reuse today_change/cumulative_return/max_drawdown's
+    empty-dict shorthand from earlier fixtures -- these carry real dry_run/if_held
+    numbers here, matching what the route genuinely returns."""
+    return {
+        "today_change": {"dry_run": 5.0, "if_held": 3.0},
+        "cumulative_return": {"dry_run": 10.0, "if_held": 8.0},
+        "max_drawdown": {"dry_run": -2.0, "if_held": -3.0},
+        "vol_bot": 0.15,
+        "vol_held": 0.18,
+        "guard_alpha": 1.5,
+        "insufficient_history": False,
+        "window": "30d",
+    }
+
+
+def _genuine_state_poll_shaped_payload(*, extra: dict | None = None) -> dict:
+    """The REAL /api/state portfolio_strip shape on a HEALTHY poll -- mirrors
+    _compute_portfolio_strip's own `_strip = {...}` dict literal verbatim
+    (app.py:1720-1736): today_change/cumulative_return/max_drawdown/account_value/
+    vol_bot/vol_held/hist_dates/hist_bot/hist_held/hist_source/data_as_of are
+    UNCONDITIONAL keys on every /api/state poll (state-poll and windowed-strip
+    payloads never overlap on this superset). `basis`/`account_basis_stale`/
+    `account_basis_as_of` are the ONLY conditionally-added keys (app.py:1749-1758)
+    -- omitted here for the genuinely-healthy case; `extra` merges in any of those
+    3 keys a specific test wants to add on top (e.g. an explicit `basis` value)."""
+    payload = {
+        "today_change": {"dry_run": 1.0, "if_held": 0.5},
+        "cumulative_return": {"dry_run": 5.0, "if_held": 4.0},
+        "max_drawdown": {"dry_run": -1.0, "if_held": -1.5},
+        "account_value": 100000.0,
+        "vol_bot": 0.12,
+        "vol_held": 0.14,
+        "hist_dates": ["2026-08-01", "2026-08-02"],
+        "hist_bot": [0.0, 0.5],
+        "hist_held": [0.0, 0.3],
+        "hist_source": "shadow_history",
+        "data_as_of": "15:45 ET",
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+class TestWindowedStripPollNeverWipesAStaleChip:
+    """PRIMARY bug pin: a stale state-poll followed by a windowed-strip-shaped
+    poll (the real, always-following-every-state-poll second caller) must NOT
+    clear the chip/freshness the first poll set -- the windowed strip carries
+    no account-basis truth at all, so it must never be treated as "healthy"."""
+
+    def test_stale_chip_survives_a_subsequent_windowed_strip_poll(self):
+        as_of = "2026-08-05 11:00:00 ET"
+        out = _run_update_comparison_rows_sequence(
+            [
+                _genuine_state_poll_shaped_payload(
+                    extra={"account_basis_stale": True, "account_basis_as_of": as_of}
+                ),
+                _windowed_strip_shaped_payload(),
+            ]
+        )
+        for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
+            assert out[testid]["hidden"] is False, (
+                f"LIVE-GATE-BUG FAIL: {testid} was wiped by the windowed-strip "
+                f"poll that structurally never carries account-basis fields -- "
+                f"a genuinely stale account was silently un-flagged. "
+                f"hidden={out[testid]['hidden']!r}"
+            )
+            assert re.search(r"stale", out[testid]["textContent"], re.IGNORECASE), (
+                f"LIVE-GATE-BUG FAIL: {testid} must still show the STALE "
+                f"wording set by the first (state-poll) call -- got "
+                f"{out[testid]['textContent']!r}"
+            )
+            assert as_of in out[testid]["textContent"], (
+                f"LIVE-GATE-BUG FAIL: {testid} must still disclose the original "
+                f"as-of timestamp from the state poll, not be reset by the "
+                f"windowed-strip poll -- got {out[testid]['textContent']!r}"
+            )
+        assert out[_FRESHNESS_ID]["hidden"] is False, (
+            "LIVE-GATE-BUG FAIL: the freshness element must survive a "
+            "subsequent windowed-strip poll"
+        )
+        assert as_of in out[_FRESHNESS_ID]["textContent"]
+
+    def test_vw_floor_chip_also_survives_a_subsequent_windowed_strip_poll(self):
+        """Same bug, the other honesty-tier: a VW-floor chip must also survive
+        a windowed-strip poll immediately after it (not just the stale tier)."""
+        out = _run_update_comparison_rows_sequence(
+            [
+                _genuine_state_poll_shaped_payload(extra={"basis": "value_weighted"}),
+                _windowed_strip_shaped_payload(),
+            ]
+        )
+        for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
+            assert out[testid]["hidden"] is False, (
+                f"LIVE-GATE-BUG FAIL: {testid} (value-weighted-floor tier) was "
+                f"wiped by the subsequent windowed-strip poll"
+            )
+            assert re.search(r"value.?weighted", out[testid]["textContent"], re.IGNORECASE)
+
+
+class TestGenuineHealthyStatePollStillResetsChip:
+    """Inverse pin: whatever mechanism closes the bug above must NOT regress
+    the real stale-to-healthy reset -- a genuinely healthy /api/state poll
+    (the FULL real state-poll key shape, not the windowed-strip shape) must
+    still clear a stale chip. Two variants: the common real case (no basis-
+    related keys at all on a healthy poll -- app.py never sets them outside
+    the VW-floor branch) and an explicit-value variant pinned per the PM's
+    fix-design brief (a `basis` key present with a non-VW value)."""
+
+    def test_healthy_full_shape_state_poll_with_no_basis_keys_still_resets(self):
+        as_of = "2026-08-05 09:00:00 ET"
+        out = _run_update_comparison_rows_sequence(
+            [
+                _genuine_state_poll_shaped_payload(
+                    extra={"account_basis_stale": True, "account_basis_as_of": as_of}
+                ),
+                _genuine_state_poll_shaped_payload(),  # no basis-related keys -- real healthy shape
+            ]
+        )
+        for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
+            assert out[testid]["hidden"] is True, (
+                f"REGRESSION FAIL: {testid} must still reset on a genuinely "
+                f"healthy full-shape /api/state poll (the real common case: "
+                f"no basis-related keys at all) -- the fix for the "
+                f"windowed-strip-wipe bug must not break this"
+            )
+            assert out[testid]["textContent"] == ""
+        assert out[_FRESHNESS_ID]["hidden"] is True
+
+    def test_healthy_state_poll_with_explicit_basis_account_value_resets(self):
+        """PM fix-design brief's literal fixture: a clean state-poll payload
+        that explicitly carries `basis: "account"` (present, non-VW value)."""
+        out = _run_update_comparison_rows_sequence(
+            [
+                _genuine_state_poll_shaped_payload(
+                    extra={
+                        "account_basis_stale": True,
+                        "account_basis_as_of": "2026-08-05 08:00:00 ET",
+                    }
+                ),
+                _genuine_state_poll_shaped_payload(extra={"basis": "account"}),
+            ]
+        )
+        for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
+            assert out[testid]["hidden"] is True, (
+                f"REGRESSION FAIL: {testid} must reset when the second poll "
+                f"is a healthy state-poll payload explicitly carrying "
+                f"basis='account'"
+            )
+        assert out[_FRESHNESS_ID]["hidden"] is True
