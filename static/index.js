@@ -1439,14 +1439,18 @@
                 var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
                 var labelEl = document.getElementById('dollar-saved-basis-label');
+                // BL-3: net elements gated on the SAME guard_event_count branch
+                // as the gross ones -- an empty state must never show $0.00.
+                var netHeadlineEl = document.getElementById('dollar-saved-net-of-friction-headline');
+                var netVerbEl = document.getElementById('dollar-saved-net-of-friction-verb');
                 if (data.guard_event_count === 0) {
                     if (headlineEl) headlineEl.textContent = 'No guard events yet';
                     if (countEl) countEl.textContent = '0';
                     if (labelEl) labelEl.textContent = data.basis_label || '';
+                    if (netHeadlineEl) netHeadlineEl.textContent = 'No guard events yet';
+                    if (netVerbEl) netVerbEl.textContent = '';
                 } else {
-                    // DE-GAS-COHERENCE-001: ABS magnitude, no sign character -- the
-                    // dedicated verb element (below) carries 'saved'/'lost' by sign,
-                    // color follows the same sign. Never hardcoded green.
+                    // ABS magnitude, no sign char -- verb carries saved/lost (DE-GAS-COHERENCE-001).
                     var saved = data.cumulative_saved_dollars;
                     if (headlineEl) {
                         headlineEl.textContent = '$' + Math.abs(saved).toFixed(2);
@@ -1455,21 +1459,30 @@
                     if (verbEl) verbEl.textContent = saved >= 0 ? 'saved' : 'lost';
                     if (countEl) countEl.textContent = data.guard_event_count;
                     if (labelEl) labelEl.textContent = data.basis_label || '';
+
+                    // BL-3 net-of-friction snapshot line, own elements/sign.
+                    var netSaved = data.cumulative_saved_dollars_net_of_friction;
+                    if (netHeadlineEl) {
+                        netHeadlineEl.textContent = '$' + Math.abs(netSaved).toFixed(2);
+                        netHeadlineEl.style.color = netSaved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                    }
+                    if (netVerbEl) netVerbEl.textContent = netSaved >= 0 ? 'saved' : 'lost';
                 }
 
-                // AC-6 (exit-friction-realized-savings): realized-basis (EOD-marks)
-                // headline — additive sibling render, independent of the
-                // snapshot-basis guard_event_count branch above.
+                // Realized-basis (EOD-marks) headline -- additive sibling.
                 var realizedHeadlineEl = document.getElementById('dollar-saved-realized-headline');
                 var realizedVerbEl = document.getElementById('dollar-saved-realized-verb');
                 var realizedCoverageEl = document.getElementById('dollar-saved-realized-coverage');
+                // BL-3: realized-net elements, gated on the SAME with_data branch.
+                var realizedNetHeadlineEl = document.getElementById('dollar-saved-realized-net-of-friction-headline');
+                var realizedNetVerbEl = document.getElementById('dollar-saved-realized-net-of-friction-verb');
                 var coverage = data.realized_coverage || { with_data: 0, total: 0 };
                 if (coverage.with_data === 0) {
-                    // AC-7 honesty requirement: a real-looking "$0.00" would
-                    // misrepresent "we have no data" as "we measured zero" —
-                    // never render a bare zero for no realized coverage.
+                    // Never render a bare zero for no realized coverage (DE-GAS-COHERENCE-001).
                     if (realizedHeadlineEl) realizedHeadlineEl.textContent = 'no realized data yet';
                     if (realizedCoverageEl) realizedCoverageEl.textContent = '0 of ' + coverage.total;
+                    if (realizedNetHeadlineEl) realizedNetHeadlineEl.textContent = 'no realized data yet';
+                    if (realizedNetVerbEl) realizedNetVerbEl.textContent = '';
                 } else {
                     var realizedSaved = data.saved_dollars_realized;
                     if (realizedHeadlineEl) {
@@ -1478,6 +1491,14 @@
                     }
                     if (realizedVerbEl) realizedVerbEl.textContent = realizedSaved >= 0 ? 'saved' : 'lost';
                     if (realizedCoverageEl) realizedCoverageEl.textContent = coverage.with_data + ' of ' + coverage.total;
+
+                    // BL-3 net-of-friction realized line, own elements/sign.
+                    var realizedNetSaved = data.saved_dollars_realized_net_of_friction;
+                    if (realizedNetHeadlineEl) {
+                        realizedNetHeadlineEl.textContent = '$' + Math.abs(realizedNetSaved).toFixed(2);
+                        realizedNetHeadlineEl.style.color = realizedNetSaved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                    }
+                    if (realizedNetVerbEl) realizedNetVerbEl.textContent = realizedNetSaved >= 0 ? 'saved' : 'lost';
                 }
             })
             .catch(function (err) { console.error('guard-alpha-summary load failed', err); });

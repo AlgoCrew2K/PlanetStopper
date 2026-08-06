@@ -1065,6 +1065,21 @@
       <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
       <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>
       <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label" style="font-size:11px;color:var(--studio-ink-dim);margin-top:6px;"></div>
+      <!-- BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): static
+           caveat qualifying the gross headline(s) above — never JS-injected,
+           so a JS bug (or a future refactor) can never silently drop this
+           disclosure. Mirrors the "(marks basis)" static caption pattern
+           already used by the realized-basis block below. -->
+      <div style="font-size:11px;color:var(--studio-ink-dim);margin-top:2px;">gross of trading costs</div>
+      <!-- BL-3: net-of-friction snapshot-basis figure, additive sibling to the
+           gross headline above. Populated by fetchGuardAlphaSummary() in
+           static/index.js — its OWN dedicated elements, never overwriting the
+           gross dollar-saved-headline/-verb elements above. -->
+      <div style="font-size:0.95em;color:var(--studio-ink-dim);margin-top:6px;">
+        <span id="dollar-saved-net-of-friction-headline" style="font-weight:600;">&mdash;</span>
+        <span id="dollar-saved-net-of-friction-verb"></span>
+        <span> net of trading costs</span>
+      </div>
       <!-- AC-6 (exit-friction-realized-savings): realized-basis (EOD-marks) figure,
            additive sibling to the snapshot-basis headline above. The "marks basis"
            qualifier is a STATIC caption (never JS-injected) so it can never be
@@ -1077,6 +1092,14 @@
         <span> realized (marks basis), </span>
         <span id="dollar-saved-realized-coverage">&mdash;</span>
         <span> exits</span>
+      </div>
+      <!-- BL-3: net-of-friction realized-basis figure, additive sibling to the
+           realized headline above. Reuses the existing
+           dollar-saved-realized-coverage counter — no new coverage element. -->
+      <div style="font-size:0.85em;color:var(--studio-ink-dim);margin-top:4px;">
+        <span id="dollar-saved-realized-net-of-friction-headline" style="font-weight:600;">&mdash;</span>
+        <span id="dollar-saved-realized-net-of-friction-verb"></span>
+        <span> realized net of trading costs</span>
       </div>
     </div>
 

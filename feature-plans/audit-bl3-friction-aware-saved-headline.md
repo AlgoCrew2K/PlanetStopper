@@ -1,5 +1,5 @@
 # Feature: Friction-Aware $-Saved Headline Disclosure (BL-3)
-Status: ready
+Status: shipped (pending merge)
 Created: 2026-08-04
 Source: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Finding M1, §6 Backlog BL-3 (commit `ca7f2beb`)
 
@@ -31,7 +31,7 @@ blast-radius test, which already allows `app.py` as a reference surface alongsid
 `saved_dollars`/`saved_dollars_realized` VALUE computations in `reporting.py`.
 
 ## Acceptance Criteria
-- [ ] **AC-1 — snapshot-basis net-of-friction figure.** `GET /api/guard-alpha-summary`
+- [x] **AC-1 — snapshot-basis net-of-friction figure.** `GET /api/guard-alpha-summary`
       gains `cumulative_saved_dollars_net_of_friction` — for each valid in-window
       trigger entry, computed as
       `symphony_value * (saved_pct_guard_alpha - SIM_EXIT_FRICTION_PCT) / 100.0`
@@ -42,7 +42,7 @@ blast-radius test, which already allows `app.py` as a reference surface alongsid
       `cumulative_saved_dollars` already sums (`app.py:3361-3376`). Additive to,
       never replacing, `cumulative_saved_dollars`. `0.0` in the honest empty state
       (`guard_event_count == 0`).
-- [ ] **AC-2 — realized-basis net-of-friction sibling.** The same friction
+- [x] **AC-2 — realized-basis net-of-friction sibling.** The same friction
       subtraction applied to the realized/marks basis:
       `saved_dollars_realized_net_of_friction`, using each entry's
       `saved_pct_guard_alpha`-equivalent realized percentage (derive from the
@@ -54,19 +54,19 @@ blast-radius test, which already allows `app.py` as a reference surface alongsid
       for entries with no realized coverage (mirrors the EXISTING
       `realized_coverage` honesty contract at `app.py:3294-3297`/AC-7 in
       `DE-EXIT-FRICTION-REALIZED-001`).
-- [ ] **AC-3 — day-1 intraday-fallback path nets out friction too.** The
+- [x] **AC-3 — day-1 intraday-fallback path nets out friction too.** The
       `exit_triggers`-sourced intraday estimate branch (`app.py:3400-3467`, active
       only before the first post-mortem file exists) applies the SAME friction
       subtraction to its per-row dollar estimate (`(at_return - current_return) -
       SIM_EXIT_FRICTION_PCT) / 100 * position_value`) — consistency across all
       three bases this route can report, never silently friction-free just because
       it's the fallback path.
-- [ ] **AC-4 — persistent gross-of-cost disclosure.** The dashboard's dollar-saved
+- [x] **AC-4 — persistent gross-of-cost disclosure.** The dashboard's dollar-saved
       panel (`templates/index.html:1057-1081`) gains a STATIC (never JS-injected,
       so it can never be silently dropped by a JS bug) caveat qualifying the
       existing gross headline(s) as "gross of trading costs" — mirroring the
       existing static "(marks basis)" caption pattern at `:1069-1073`/`:1077`.
-- [ ] **AC-5 — net-of-friction figure rendered as a third line.**
+- [x] **AC-5 — net-of-friction figure rendered as a third line.**
       `fetchGuardAlphaSummary()` (`static/index.js:1429-1484`) renders
       `cumulative_saved_dollars_net_of_friction` (and its realized sibling) as an
       ADDITIONAL line on the dollar-saved panel — new dedicated DOM elements, never
@@ -74,20 +74,20 @@ blast-radius test, which already allows `app.py` as a reference surface alongsid
       `DE-GAS-COHERENCE-001` display contract already established for every
       dollar figure on this panel: ABS magnitude, no naked sign character,
       sign-conditional color + word ("saved"/"lost"), never hardcoded green.
-- [ ] **AC-6 — single source of truth for the friction constant.** `app.py`
+- [x] **AC-6 — single source of truth for the friction constant.** `app.py`
       imports `SIM_EXIT_FRICTION_PCT` from `autotuner` (module already an
       authorized reference surface per `tests/autotuner/test_exit_friction_blast_radius.py`'s
       `_ALLOWED_FILES`, which already includes `app.py`) — never redefines a second
       local constant. A future change to the optimizer's modeled friction value
       must automatically propagate to this display, not silently diverge.
-- [ ] **AC-7 — zero engine/value-computation touch.** `alpha_bot_execution.py` and
+- [x] **AC-7 — zero engine/value-computation touch.** `alpha_bot_execution.py` and
       `math_engine.py` carry zero diff (already enforced by the existing
       blast-radius test's forbidden-files check — no test change needed there
       since `app.py` is already an allowed surface). The actual
       `saved_dollars`/`saved_dollars_realized` VALUE computations
       (`reporting.py:92-95`/`:190-197`) are byte-unchanged — this fix only adds a
       NEW additional aggregate field alongside them.
-- [ ] **AC-8 — no regression.** `cumulative_saved_dollars`, `saved_dollars_realized`,
+- [x] **AC-8 — no regression.** `cumulative_saved_dollars`, `saved_dollars_realized`,
       `realized_coverage`, `guard_event_count`, `basis_label`, `date_range`, and the
       `window=` query-param behavior (`DE-GAS-COHERENCE-001`) are all byte-unchanged
       for existing callers; the new net-of-friction fields respect the SAME
@@ -174,3 +174,8 @@ blast-radius test, which already allows `app.py` as a reference surface alongsid
   (`static/history.js`/`analytics.get_history_summary`) or Discord embed
   (`reporting.py`'s EOD post) friction disclosure — not cited by this backlog
   item's evidence, a candidate follow-up only.
+
+
+## Shipped
+
+Shipped 2026-08-05 as `DE-AUDIT-BL3-001` (see `DECISIONS.md`). Commit chain: `0e001f5b` (RED) -> `ed4eebee` (GREEN) -> `97b900ff` (sufficiency-review RED pin) -> `48f5f149` (bl3review-found empty-state RED, the plan's own "Zero guard events" edge case) -> `40b130e3` (fix) -> `fdcb07e1` (bl3review APPROVE-nit: restored a `DE-GAS-COHERENCE-001` traceability comment tag dropped by the `40b130e3` refold, comment-only). 57 tests green at HEAD `fdcb07e1` across `tests/app/test_guard_alpha_summary_friction_aware.py`, `tests/app/test_dollar_saved_panel_friction_disclosure.py`, and the unmodified `tests/autotuner/test_exit_friction_blast_radius.py`. `quant-code-reviewer` BLOCK on the initial GREEN (the empty-state gap) -> fix landed -> **APPROVE** (one non-blocking nit, fixed at `fdcb07e1`). Test-writer sufficiency verdict: SUFFICIENT. Status here means the Toxic Pair TDD cycle is complete, reviewed, and green, not that the PR has merged to origin (see the project's Merge & PR Workflow hard rule).

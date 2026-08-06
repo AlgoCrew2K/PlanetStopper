@@ -3299,6 +3299,21 @@ def guard_alpha_summary():
             /api/strip/<window>'s own echo-back pattern). Omitted or unrecognized
             `?window=` query values resolve to "all" (lifetime, today's original
             behavior) — never a 404/500, this is a read-only advisory route.
+        cumulative_saved_dollars_net_of_friction (float): BL-3 (friction-aware
+            $-saved headline, DE-AUDIT-BL3-001) — snapshot-basis sibling of
+            cumulative_saved_dollars, net of autotuner.SIM_EXIT_FRICTION_PCT
+            (the same friction floor the optimizer's own replay accounting
+            already assumes). Friction subtracted at the PERCENTAGE level per
+            entry before dollar conversion (reporting.py:92-95's own
+            saved_dollars formula shape). An entry missing symphony_value or
+            saved_pct_guard_alpha is excluded from this sum (presence-guarded,
+            never a fabricated 0.0). Respects the same `?window=` filtering as
+            the gross field. 0.0 in the empty state.
+        saved_dollars_realized_net_of_friction (float): realized-basis sibling
+            of saved_dollars_realized, same friction-net contract — only
+            entries carrying BOTH saved_dollars_realized and symphony_value
+            contribute; never substitutes the snapshot-basis value for a
+            missing realized entry.
 
     AC-2 (DE-GAS-COHERENCE-001): an optional `?window=<token>` query param, using
     the SAME token vocabulary as /api/strip/<window> (_STRIP_WINDOW_TOKENS) and
@@ -3309,6 +3324,8 @@ def guard_alpha_summary():
     """
     import glob as _glob
     import json as _json  # noqa: PLC0415 — stdlib, lazy for locality
+
+    import autotuner  # noqa: PLC0415 — lazy per CC-2 precedent (app.py:3625), sole owner of SIM_EXIT_FRICTION_PCT
 
     raw_window = (request.args.get("window") or "").lower()
     resolved_window = raw_window if raw_window in _STRIP_WINDOW_TOKENS else "all"
@@ -3331,6 +3348,14 @@ def guard_alpha_summary():
     saved_dollars_realized = 0.0
     realized_with_data = 0
     realized_total = 0
+    # BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): net-of-friction
+    # siblings to cumulative_saved_dollars/saved_dollars_realized above — same
+    # additive-only, zero-init-on-empty-state contract. Friction is subtracted
+    # at the PERCENTAGE level before dollar conversion (reporting.py:92-95's
+    # own saved_dollars formula shape), never a post-hoc subtraction on the
+    # aggregate dollar sum.
+    cumulative_saved_dollars_net_of_friction = 0.0
+    saved_dollars_realized_net_of_friction = 0.0
 
     for fpath in files:
         try:
@@ -3372,6 +3397,23 @@ def guard_alpha_summary():
                 if "saved_dollars_realized" in t:
                     saved_dollars_realized += float(t["saved_dollars_realized"])
                     realized_with_data += 1
+
+                # BL-3: net-of-friction accumulation — presence-guarded (both
+                # fields must be present AND numeric) so a legacy entry that
+                # predates symphony_value/saved_pct_guard_alpha is EXCLUDED
+                # from the net sum rather than KeyError-ing the whole route or
+                # being coerced to a fabricated 0.0.
+                _sv = t.get("symphony_value")
+                _spg = t.get("saved_pct_guard_alpha")
+                if isinstance(_sv, (int, float)) and isinstance(_spg, (int, float)):
+                    cumulative_saved_dollars_net_of_friction += (
+                        _sv * (_spg - autotuner.SIM_EXIT_FRICTION_PCT) / 100.0
+                    )
+                if "saved_dollars_realized" in t and isinstance(_sv, (int, float)):
+                    saved_dollars_realized_net_of_friction += (
+                        float(t["saved_dollars_realized"])
+                        - _sv * autotuner.SIM_EXIT_FRICTION_PCT / 100.0
+                    )
             else:
                 excluded_invalid_count += 1
 
@@ -3455,6 +3497,14 @@ def guard_alpha_summary():
                     cumulative_saved_dollars += (
                         (float(_at_ret) - float(_cur_ret)) / 100.0 * float(_pos_val)
                     )
+                    # AC-3: day-1 intraday fallback also nets friction — same
+                    # shape as the gross estimate above, friction subtracted
+                    # at the percentage level before the dollar conversion.
+                    cumulative_saved_dollars_net_of_friction += (
+                        ((float(_at_ret) - float(_cur_ret)) - autotuner.SIM_EXIT_FRICTION_PCT)
+                        / 100.0
+                        * float(_pos_val)
+                    )
                 except (TypeError, ValueError):
                     pass
 
@@ -3480,6 +3530,11 @@ def guard_alpha_summary():
             "saved_dollars_realized": saved_dollars_realized,
             "realized_coverage": {"with_data": realized_with_data, "total": realized_total},
             "window": resolved_window,
+            # BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): net-of-
+            # friction siblings to the gross fields above, additive-only — see
+            # docstring formula notes.
+            "cumulative_saved_dollars_net_of_friction": cumulative_saved_dollars_net_of_friction,
+            "saved_dollars_realized_net_of_friction": saved_dollars_realized_net_of_friction,
         }
     )
 
