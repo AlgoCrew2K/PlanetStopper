@@ -503,6 +503,188 @@ def _run_update_comparison_rows(portfolio_strip: dict) -> dict:
     return json.loads(result.stdout.strip())
 
 
+def _run_update_comparison_rows_sequence(portfolio_strip_sequence: list) -> dict:
+    """Sufficiency-review addition (post-GREEN, team-lead-authorized direct
+    pin -- same precedent as BL-3's legacy pin): identical harness to
+    `_run_update_comparison_rows`, but drives updateComparisonRows through
+    MULTIPLE sequential calls against the SAME DOM stub (never re-created
+    between calls) before capturing final state. This is the real per-poll
+    shape of production (loadState()/EventSource call updateComparisonRows
+    repeatedly against the live DOM) -- a worse implementation that renders
+    a chip on a stale poll but has no reset branch for a SUBSEQUENT healthy
+    poll would pass every single-call scenario test above undetected, since
+    those all start from a pristine, never-before-touched element.
+    """
+    if shutil.which("node") is None:
+        pytest.skip("node not installed -- skipping updateComparisonRows execution check")
+
+    js_src = _js()
+    is_sentinel_src = _extract_function_with_signature(js_src, "isSentinel")
+    sentinel_to_null_src = _extract_function_with_signature(js_src, "sentinelToNull")
+    fmt_pct_src = _extract_function_with_signature(js_src, "fmtPct")
+    main_block_src = _extract_contiguous_block(js_src, "setPosNeg", "updateComparisonRows")
+
+    testids_js = json.dumps(_CHIP_TESTIDS)
+    freshness_id_js = json.dumps(_FRESHNESS_ID)
+    sequence_js = json.dumps([{"portfolio_strip": ps} for ps in portfolio_strip_sequence])
+
+    harness = f"""
+    function cs(varName) {{ return 'STUB(' + varName + ')'; }}
+
+    var __byTestid = {{}};
+    {testids_js}.forEach(function (t) {{
+        __byTestid[t] = {{ hidden: true, textContent: '', title: '' }};
+    }});
+    var __byId = {{}};
+    __byId[{freshness_id_js}] = {{ hidden: true, textContent: '', title: '' }};
+
+    function __parseTestid(sel) {{
+        var m = sel.match(/data-testid="([^"]+)"/);
+        return m ? m[1] : null;
+    }}
+    function __parseId(sel) {{
+        var m = sel.match(/^#([\\w-]+)$/);
+        return m ? m[1] : null;
+    }}
+
+    var document = {{
+        documentElement: {{ dataset: {{}} }},
+        getElementById: function (id) {{
+            return Object.prototype.hasOwnProperty.call(__byId, id) ? __byId[id] : null;
+        }},
+        querySelector: function (sel) {{
+            var idKey = __parseId(sel);
+            if (idKey) {{
+                return Object.prototype.hasOwnProperty.call(__byId, idKey) ? __byId[idKey] : null;
+            }}
+            var t = __parseTestid(sel);
+            if (t && Object.prototype.hasOwnProperty.call(__byTestid, t)) return __byTestid[t];
+            return null;
+        }},
+        querySelectorAll: function (sel) {{
+            var el = this.querySelector(sel);
+            return el ? [el] : [];
+        }}
+    }};
+
+    {is_sentinel_src}
+    {sentinel_to_null_src}
+    {fmt_pct_src}
+    {main_block_src}
+
+    // Drive the SAME DOM stub through every payload in sequence -- exactly
+    // how loadState()/EventSource re-invoke updateComparisonRows against
+    // one persistent live DOM on every poll.
+    var SEQUENCE = {sequence_js};
+    SEQUENCE.forEach(function (DATA) {{ updateComparisonRows(DATA); }});
+
+    var out = {{}};
+    Object.keys(__byTestid).forEach(function (t) {{ out[t] = __byTestid[t]; }});
+    out[{freshness_id_js}] = __byId[{freshness_id_js}];
+    console.log(JSON.stringify(out));
+    """
+
+    result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, (
+        f"updateComparisonRows sequential harness crashed:\n{result.stderr}"
+    )
+    return json.loads(result.stdout.strip())
+
+
+class TestStaleToHealthyTransitionResetsChipsAndFreshness:
+    """Sufficiency-review addition (post-GREEN review, probe 1): every
+    scenario in TestChipRenderNonVacuity below calls updateComparisonRows
+    exactly ONCE against a pristine DOM element. Since this function runs on
+    every poll cycle (loadState()/EventSource -> updateComparisonRows) against
+    the SAME persistent live DOM, a worse implementation that renders the
+    chip/freshness content on a stale poll but omits (or mis-orders) the
+    reset branch for a later healthy poll would pass every single-call test
+    undetected -- a chip left permanently STUCK after real recovery. This
+    class proves the reset genuinely fires on a stale-to-healthy transition,
+    and separately on a stale-to-VW-floor transition (a different non-stale
+    outcome, not just the fully-clean case)."""
+
+    def test_chip_and_freshness_reset_after_stale_then_healthy_poll(self):
+        as_of = "2026-08-05 14:32:00 ET"
+        out = _run_update_comparison_rows_sequence(
+            [
+                {
+                    "today_change": {},
+                    "cumulative_return": {},
+                    "max_drawdown": {},
+                    "account_basis_stale": True,
+                    "account_basis_as_of": as_of,
+                },
+                {
+                    "today_change": {},
+                    "cumulative_return": {},
+                    "max_drawdown": {},
+                },
+            ]
+        )
+        for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
+            assert out[testid]["hidden"] is True, (
+                f"TRANSITION FAIL: {testid} must be re-hidden once account "
+                f"recovers on a subsequent poll -- a chip left visible after "
+                f"real recovery is a stuck-stale false alarm. Got hidden="
+                f"{out[testid]['hidden']!r}"
+            )
+            assert out[testid]["textContent"] == "", (
+                f"TRANSITION FAIL: {testid}'s textContent must be cleared on "
+                f"recovery, not left showing the prior poll's 'Stale account "
+                f"data (as of {as_of})' text. Got {out[testid]['textContent']!r}"
+            )
+        assert out[_FRESHNESS_ID]["hidden"] is True, (
+            "TRANSITION FAIL: the freshness element must be re-hidden once "
+            "account recovers -- a stale timestamp must not linger after "
+            "the account basis is healthy again"
+        )
+        assert out[_FRESHNESS_ID]["textContent"] == "", (
+            "TRANSITION FAIL: the freshness element's textContent must be cleared on recovery"
+        )
+
+    def test_chip_reflects_only_the_latest_poll_when_transitioning_stale_to_vw_floor(self):
+        """A second, distinct transition: stale (with a real as-of) directly
+        to value-weighted-floor (no as-of at all) on the very next poll --
+        proves the chip doesn't retain the prior poll's as-of timestamp text
+        inside the new VW-floor wording."""
+        stale_as_of = "2026-08-05 09:00:00 ET"
+        out = _run_update_comparison_rows_sequence(
+            [
+                {
+                    "today_change": {},
+                    "cumulative_return": {},
+                    "max_drawdown": {},
+                    "account_basis_stale": True,
+                    "account_basis_as_of": stale_as_of,
+                },
+                {
+                    "today_change": {},
+                    "cumulative_return": {},
+                    "max_drawdown": {},
+                    "basis": "value_weighted",
+                },
+            ]
+        )
+        for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
+            assert stale_as_of not in out[testid]["textContent"], (
+                f"TRANSITION FAIL: {testid} must not carry the PRIOR poll's "
+                f"stale as-of timestamp ({stale_as_of!r}) once the account "
+                f"basis has moved to the value-weighted floor -- got "
+                f"{out[testid]['textContent']!r}"
+            )
+            assert re.search(r"value.?weighted", out[testid]["textContent"], re.IGNORECASE), (
+                f"TRANSITION FAIL: {testid} must show the CURRENT poll's "
+                f"value-weighted-floor wording -- got "
+                f"{out[testid]['textContent']!r}"
+            )
+        # No as-of timestamp exists in the VW-floor tier -- the freshness
+        # element from the prior stale poll must be cleared, not left
+        # showing an as-of time that no longer describes reality.
+        assert out[_FRESHNESS_ID]["hidden"] is True
+        assert stale_as_of not in out[_FRESHNESS_ID]["textContent"]
+
+
 class TestChipRenderNonVacuity:
     """Real execution: proves the implementation genuinely distinguishes the
     4 scenarios, not merely that the field names appear in the source."""
