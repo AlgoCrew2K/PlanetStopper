@@ -1450,7 +1450,7 @@
                     if (netHeadlineEl) netHeadlineEl.textContent = 'No guard events yet';
                     if (netVerbEl) netVerbEl.textContent = '';
                 } else {
-                    // ABS magnitude, no sign char -- verb carries saved/lost.
+                    // ABS magnitude, no sign char -- verb carries saved/lost (DE-GAS-COHERENCE-001).
                     var saved = data.cumulative_saved_dollars;
                     if (headlineEl) {
                         headlineEl.textContent = '$' + Math.abs(saved).toFixed(2);
@@ -1478,7 +1478,7 @@
                 var realizedNetVerbEl = document.getElementById('dollar-saved-realized-net-of-friction-verb');
                 var coverage = data.realized_coverage || { with_data: 0, total: 0 };
                 if (coverage.with_data === 0) {
-                    // Never render a bare zero for no realized coverage.
+                    // Never render a bare zero for no realized coverage (DE-GAS-COHERENCE-001).
                     if (realizedHeadlineEl) realizedHeadlineEl.textContent = 'no realized data yet';
                     if (realizedCoverageEl) realizedCoverageEl.textContent = '0 of ' + coverage.total;
                     if (realizedNetHeadlineEl) realizedNetHeadlineEl.textContent = 'no realized data yet';
