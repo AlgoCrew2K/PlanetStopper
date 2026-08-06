@@ -946,8 +946,22 @@ def test_autotuner_calls_run_overfitting_conscience_after_save_autotune_run():
     # Assert call-site ordering: run_overfitting_conscience appears AFTER
     # save_autotune_run in the source text. This is a proxy for correct
     # sequencing; a precise structural check.
-    save_idx = source.rfind("save_autotune_run")
-    conscience_idx = source.rfind("run_overfitting_conscience")
+    #
+    # Anchored on the CALL PATTERN (module/attribute-qualified name + open
+    # paren), not a bare textual mention of either function name (BL-2
+    # regression, DE-AUDIT-BL2-001: a prose comment naming
+    # "database.save_autotune_run" without ever calling it shifted
+    # source.rfind("save_autotune_run")'s bare-substring match past the real
+    # call site, false-failing this test even though the actual call-site
+    # ordering was correct). "database.save_autotune_run(" matches only the
+    # real call (autotuner.py's module-level `database` import + the literal
+    # invocation); ".run_overfitting_conscience(" matches any
+    # `<alias>.run_overfitting_conscience(` invocation without hardcoding the
+    # producer's import alias (currently `_oc`) — both anchors require an
+    # open paren immediately after the name, which a descriptive comment
+    # would only reproduce by accident.
+    save_idx = source.rfind("database.save_autotune_run(")
+    conscience_idx = source.rfind(".run_overfitting_conscience(")
     assert conscience_idx > save_idx, (
         "run_overfitting_conscience must appear AFTER the last save_autotune_run call "
         "in autotuner.py — the producer fires post-save, not before"
