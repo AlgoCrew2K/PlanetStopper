@@ -1479,6 +1479,27 @@
                     if (realizedVerbEl) realizedVerbEl.textContent = realizedSaved >= 0 ? 'saved' : 'lost';
                     if (realizedCoverageEl) realizedCoverageEl.textContent = coverage.with_data + ' of ' + coverage.total;
                 }
+
+                // BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): net-of-
+                // friction lines — own dedicated elements, own sign, never touch
+                // headlineEl/verbEl/realizedHeadlineEl/realizedVerbEl above.
+                var netHeadlineEl = document.getElementById('dollar-saved-net-of-friction-headline');
+                var netVerbEl = document.getElementById('dollar-saved-net-of-friction-verb');
+                var netSaved = data.cumulative_saved_dollars_net_of_friction;
+                if (netHeadlineEl) {
+                    netHeadlineEl.textContent = '$' + Math.abs(netSaved).toFixed(2);
+                    netHeadlineEl.style.color = netSaved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                }
+                if (netVerbEl) netVerbEl.textContent = netSaved >= 0 ? 'saved' : 'lost';
+
+                var realizedNetHeadlineEl = document.getElementById('dollar-saved-realized-net-of-friction-headline');
+                var realizedNetVerbEl = document.getElementById('dollar-saved-realized-net-of-friction-verb');
+                var realizedNetSaved = data.saved_dollars_realized_net_of_friction;
+                if (realizedNetHeadlineEl) {
+                    realizedNetHeadlineEl.textContent = '$' + Math.abs(realizedNetSaved).toFixed(2);
+                    realizedNetHeadlineEl.style.color = realizedNetSaved >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+                }
+                if (realizedNetVerbEl) realizedNetVerbEl.textContent = realizedNetSaved >= 0 ? 'saved' : 'lost';
             })
             .catch(function (err) { console.error('guard-alpha-summary load failed', err); });
     }
