@@ -657,12 +657,20 @@ class TestStaleToHealthyTransitionResetsChipsAndFreshness:
                     "max_drawdown": {},
                     "account_basis_stale": True,
                     "account_basis_as_of": stale_as_of,
+                    # DE-AUDIT-BL4-001 live-gate fix (6d3e8226): the chip
+                    # helpers now only act on payloads that carry
+                    # data_as_of -- production _compute_portfolio_strip
+                    # ALWAYS sets it on every /api/state poll, so this
+                    # marks the fixture as genuinely state-poll-shaped
+                    # (not windowed-strip-shaped, which never carries it).
+                    "data_as_of": "15:45 ET",
                 },
                 {
                     "today_change": {},
                     "cumulative_return": {},
                     "max_drawdown": {},
                     "basis": "value_weighted",
+                    "data_as_of": "15:46 ET",
                 },
             ]
         )
@@ -698,6 +706,10 @@ class TestChipRenderNonVacuity:
                 "max_drawdown": {},
                 "account_basis_stale": True,
                 "account_basis_as_of": as_of,
+                # DE-AUDIT-BL4-001 live-gate fix (6d3e8226): marks this
+                # fixture as genuinely state-poll-shaped -- see the
+                # matching comment in TestStaleToHealthyTransitionResetsChipsAndFreshness.
+                "data_as_of": "15:45 ET",
             }
         )
         for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
@@ -725,6 +737,9 @@ class TestChipRenderNonVacuity:
                 "cumulative_return": {},
                 "max_drawdown": {},
                 "basis": "value_weighted",
+                # DE-AUDIT-BL4-001 live-gate fix (6d3e8226): marks this
+                # fixture as genuinely state-poll-shaped.
+                "data_as_of": "15:45 ET",
             }
         )
         for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
@@ -778,6 +793,9 @@ class TestChipRenderNonVacuity:
                 "basis": "value_weighted",
                 "account_basis_stale": True,
                 "account_basis_as_of": as_of,
+                # DE-AUDIT-BL4-001 live-gate fix (6d3e8226): marks this
+                # fixture as genuinely state-poll-shaped.
+                "data_as_of": "15:45 ET",
             }
         )
         for testid in ("comp-today-basis-chip", "comp-cumulative-basis-chip"):
@@ -823,6 +841,9 @@ class TestChipRenderNonVacuity:
                 "max_drawdown": {},
                 "account_basis_stale": True,
                 "account_basis_as_of": "2026-08-05 14:32:00 ET",
+                # DE-AUDIT-BL4-001 live-gate fix (6d3e8226): marks this
+                # fixture as genuinely state-poll-shaped.
+                "data_as_of": "15:45 ET",
             }
         )
         vw_floor = _run_update_comparison_rows(
@@ -831,8 +852,12 @@ class TestChipRenderNonVacuity:
                 "cumulative_return": {},
                 "max_drawdown": {},
                 "basis": "value_weighted",
+                "data_as_of": "15:45 ET",
             }
         )
+        # "empty" deliberately stays data_as_of-FREE -- it represents the
+        # genuinely-neither-flag case, which must produce the same
+        # no-chip outcome whether or not the payload is state-poll-shaped.
         empty = _run_update_comparison_rows(
             {"today_change": {}, "cumulative_return": {}, "max_drawdown": {}}
         )
