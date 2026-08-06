@@ -670,3 +670,174 @@ class TestNetOfFrictionRespectsWindowFiltering:
         assert data["cumulative_saved_dollars_net_of_friction"] == pytest.approx(
             expected_net_both, abs=0.01
         )
+
+
+# ---------------------------------------------------------------------------
+# Sufficiency-review pin (post-GREEN): a legacy entry that is a VALID
+# post-mortem entry (recognized if_held_source) but predates
+# symphony_value/saved_pct_guard_alpha must be EXCLUDED from both
+# net-of-friction sums (presence + isinstance guarded) -- never a KeyError/500
+# on the route, and never a fabricated non-zero contribution from a defaulted
+# missing field. GREEN (ed4eebee) already added this guard; this pin makes it
+# a structural, non-vacuity-proven contract rather than an unpinned incidental
+# correctness property.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def legacy_field_gap_pm_dir(tmp_path, monkeypatch):
+    """One post_mortem file, four triggers:
+    - Legacy-NoSymphonyValue: saved_pct_guard_alpha present, symphony_value
+      MISSING entirely -- must not KeyError, must be excluded from the
+      snapshot net-of-friction sum.
+    - Legacy-NoSavedPct: symphony_value present, saved_pct_guard_alpha
+      MISSING entirely -- the sharper discriminator: a naive `.get(key, 0.0)`
+      default-to-zero-percentage implementation would FABRICATE a non-zero
+      negative net contribution (symphony_value * (0.0 - FRICTION) / 100)
+      instead of genuinely excluding the entry.
+    - Legacy-RealizedNoSymphonyValue: saved_dollars_realized present,
+      symphony_value MISSING -- a naive fabrication would treat friction as
+      zero cost and pass the full realized gross through as if it were net
+      (symphony_value defaulted to 0.0 zeroes the friction subtraction
+      term), silently overstating the realized net figure.
+    - Modern-Control / Modern-Realized-Control: fully valid anchors so the
+      route's total sum proves the legacy entries contributed EXACTLY
+      zero, not just "the route didn't crash".
+    """
+    pm_dir = tmp_path / "post_mortems"
+    pm_dir.mkdir()
+    triggers = [
+        {
+            "symphony_name": "Legacy-NoSymphonyValue",
+            "saved_pct_guard_alpha": 2.0,
+            "saved_dollars": 100.0,
+            "exit_reason": "Trailing Stop",
+            "if_held_source": "shadow_history",
+        },
+        {
+            "symphony_name": "Legacy-NoSavedPct",
+            "symphony_value": 10000.0,
+            "saved_dollars": 50.0,
+            "exit_reason": "Trailing Stop",
+            "if_held_source": "shadow_history",
+        },
+        {
+            "symphony_name": "Legacy-RealizedNoSymphonyValue",
+            "saved_pct_guard_alpha": 1.0,
+            "saved_dollars": 30.0,
+            "saved_dollars_realized": 80.0,
+            "exit_reason": "Trailing Stop",
+            "if_held_source": "shadow_history",
+            # NOTE: symphony_value is deliberately ABSENT (not 3000.0) --
+            # this entry has saved_dollars_realized present but NO
+            # symphony_value at all, which must exclude it from BOTH the
+            # snapshot net sum (already excluded by the missing symphony_value
+            # regardless of saved_pct_guard_alpha's presence) AND the realized
+            # net sum (the isinstance(_sv,...) guard). An earlier revision of
+            # this fixture accidentally included symphony_value here, which
+            # silently defeated this test's own non-vacuity intent -- caught
+            # by running it against GREEN and seeing an unexpected 115.0
+            # instead of the two entries' correct 0-contribution.
+        },
+        {
+            "symphony_name": "Modern-Control",
+            "symphony_value": 20000.0,
+            "saved_pct_guard_alpha": 1.0,
+            "saved_dollars": 200.0,
+            "exit_reason": "Trailing Stop",
+            "if_held_source": "shadow_history",
+        },
+        {
+            "symphony_name": "Modern-Realized-Control",
+            "symphony_value": 8000.0,
+            "saved_dollars": 60.0,
+            "saved_dollars_realized": 90.0,
+            "exit_reason": "Trailing Stop",
+            "if_held_source": "shadow_history",
+        },
+    ]
+    # Deliberately delete "symphony_value" from the first entry and
+    # "saved_pct_guard_alpha" from the second and third-context entries via
+    # omission above (not `None`, not `0.0` -- genuinely ABSENT, matching a
+    # true legacy pre-BL-3-era record) -- del-based mutation would be
+    # unnecessary since the dicts above already omit the keys entirely.
+    payload = {"triggers": triggers}
+    (pm_dir / f"post_mortem_{_recent_date_str(0)}.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    monkeypatch.setattr(analytics_module, "_POST_MORTEMS_DIR", str(pm_dir))
+    return {"dir": pm_dir, "triggers": triggers}
+
+
+class TestLegacyEntryMissingRequiredFieldsExcludedFromNetSums:
+    def test_route_returns_200_not_500_with_legacy_gap_entries(
+        self, client, legacy_field_gap_pm_dir
+    ):
+        resp = client.get("/api/guard-alpha-summary")
+        assert resp.status_code == 200, (
+            "a legacy entry missing symphony_value/saved_pct_guard_alpha must never "
+            f"500 the route -- got {resp.status_code}"
+        )
+
+    def test_guard_event_count_still_counts_the_legacy_entries(
+        self, client, legacy_field_gap_pm_dir
+    ):
+        """The legacy entries are still valid post-mortem entries (recognized
+        if_held_source) -- they must be excluded from the NET sums, not from
+        guard_event_count/cumulative_saved_dollars (which don't require
+        symphony_value/saved_pct_guard_alpha at all)."""
+        resp = client.get("/api/guard-alpha-summary")
+        data = resp.get_json()
+        assert data["guard_event_count"] == len(legacy_field_gap_pm_dir["triggers"])
+
+    def test_gross_cumulative_saved_dollars_includes_all_five_entries(
+        self, client, legacy_field_gap_pm_dir
+    ):
+        expected_gross = sum(t["saved_dollars"] for t in legacy_field_gap_pm_dir["triggers"])
+        resp = client.get("/api/guard-alpha-summary")
+        data = resp.get_json()
+        assert data["cumulative_saved_dollars"] == pytest.approx(expected_gross, abs=0.01), (
+            "the gross field never required symphony_value/saved_pct_guard_alpha -- "
+            "all 5 entries (including both legacy-gap ones) must still sum via "
+            "saved_dollars alone"
+        )
+
+    def test_snapshot_net_of_friction_excludes_both_legacy_entries(
+        self, client, legacy_field_gap_pm_dir
+    ):
+        """Only Modern-Control (the sole entry with BOTH symphony_value and
+        saved_pct_guard_alpha present) may contribute to the snapshot net sum.
+        A naive .get(key, 0.0) fabrication would instead add a spurious
+        -50.0 for Legacy-NoSavedPct (10000*(0.0-FRICTION)/100) -- this test
+        would fail under that implementation."""
+        expected_net = _net_of_friction_dollars(1.0, 20000.0)  # Modern-Control only
+        resp = client.get("/api/guard-alpha-summary")
+        data = resp.get_json()
+        assert data["cumulative_saved_dollars_net_of_friction"] == pytest.approx(
+            expected_net, abs=0.01
+        ), (
+            f"cumulative_saved_dollars_net_of_friction must equal ONLY "
+            f"Modern-Control's contribution ({expected_net}) -- both legacy-gap "
+            f"entries must be excluded, not fabricated. Got "
+            f"{data['cumulative_saved_dollars_net_of_friction']}"
+        )
+
+    def test_realized_net_of_friction_excludes_the_legacy_realized_entry(
+        self, client, legacy_field_gap_pm_dir
+    ):
+        """Only Modern-Realized-Control (saved_dollars_realized present AND
+        symphony_value present) may contribute. A naive fabrication would
+        instead pass Legacy-RealizedNoSymphonyValue's full 80.0 through
+        untouched (treating a defaulted symphony_value=0.0 as zero friction
+        cost) -- this test would fail under that implementation."""
+        expected_realized_net = 90.0 - 8000.0 * FRICTION / 100.0  # Modern-Realized-Control only
+        resp = client.get("/api/guard-alpha-summary")
+        data = resp.get_json()
+        assert data["saved_dollars_realized_net_of_friction"] == pytest.approx(
+            expected_realized_net, abs=0.01
+        ), (
+            f"saved_dollars_realized_net_of_friction must equal ONLY "
+            f"Modern-Realized-Control's contribution ({expected_realized_net}) -- "
+            f"Legacy-RealizedNoSymphonyValue must be excluded, not fabricated. Got "
+            f"{data['saved_dollars_realized_net_of_friction']}"
+        )
