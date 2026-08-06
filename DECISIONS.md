@@ -9778,3 +9778,154 @@ Frontend-only, plus one operator-gated backend constant — `_compute_portfolio_
 ### Reference
 
 `DE-AUDIT-BL4-001`; branch `fix/audit-bl4-account-basis-render`; worktree `.claude/worktrees/audit-bl4`; plan `feature-plans/audit-bl4-account-basis-honesty-render.md`; base `origin/main` @ `f2c1ebfe` (#122, the BL-3 merge PR -- clean fork, `git merge-base HEAD origin/main` confirms no drift at this doc pass). Commit chain: `8d89f421` (RED, 32 tests) -> `d91caf0b` (GREEN) -> `b82de309` (sufficiency-review pin, +2 tests, team-lead-authorized) -> `3b7febfc` (live-render-gate-found RED, 4 tests) -> `6d3e8226` (fix: gate on `'data_as_of' in ps`) -> `d7b5a47c` (F-010 timeout-pin re-pin, CI catch) -> `5e03e9b3` (5 legacy fixtures gain `data_as_of`, `bl4review` delta-APPROVE). Source finding: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 D1/D2/D4 / §6 BL-4 (annotated with a pointer to this entry in the same doc pass).
+
+## DE-AUDIT-BL9-001 — Basket-Reconstruction Footgun Structural Marker (2026-08-05)
+
+**Defect (audit #118, `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Finding M4 / §6 Backlog BL-9):** the "TRUE SHADOW RETURN OVERRIDE" block (`alpha_bot_execution.py:1262-1276` at this doc pass) reconstructs a basket-based `current_return` for TRIGGERED symphonies from frozen `trigger_prices` + live VWAPs and writes it, indistinguishably from a live per-tick figure, into `bot_state[symphony_id]["current_return"]` at `:1671` — the THIRD of three write sites, distinct from the two CLEAN per-tick writes at `:897`/`:1057` (both `sym.get("last_percent_change", 0.0) * 100`, untriggered-safe). The read path was already clean — `reporting.py`/`analytics.py` source $-saved exclusively from `shadow_history`, never `bot_state["current_return"]` for a triggered symphony — but the reconstructed-value footgun remained live code with no structural fence preventing a FUTURE reader from silently picking it up.
+
+### The fix
+
+An additive `bot_state[symphony_id]["current_return_is_reconstructed"]` boolean, co-stamped at ALL THREE `current_return` write sites in `alpha_bot_execution.py`:
+- `:897` (DATA-PHASE update block) — unconditionally `False`; no basket reconstruction ever happens in this loop.
+- `:1057` (EOD post-mortem pass) — unconditionally `False`.
+- `:1671` (the TRUE SHADOW RETURN OVERRIDE's main write site) — stamped `is_triggered_now`, reusing the already-computed guard variable from the `DE-MATH-F7-001` MC-suppression guard rather than re-deriving a second read of `bot_state[symphony_id].get("triggered")`.
+
+**Refined from the plan's single-site proposal.** The feature plan's AC-12 specified hardening only at the override's own write site (`:1671`). `risk-engine-specialist` (bl5risk) traced the full write graph before implementing and found a fourth relevant fact: the EOD post-mortem pass (`:1057`) ALSO writes `current_return` for a symphony that is STILL triggered — with the always-clean per-tick figure, silently overwriting that day's reconstructed value. A single-site marker (only at `:1671`) would have gone STALE after that EOD write: it would keep describing that day's (now-clean) value as "reconstructed." The 3-site design is self-healing by construction — every write site to `current_return` re-stamps its own truth about that specific write, so the marker can never lag behind the value it describes, regardless of write order within a cycle.
+
+**Team-lead ratification, then ship-ahead-of-RED.** bl5risk proposed this refined mechanism to the team lead for ratification BEFORE implementing — required per the plan's Security Considerations mandate, since this touches the live 1-minute execution path — and shipped directly at commit `eca71013`, ahead of a RED test landing first for this specific item (an accepted deviation from strict RED-then-GREEN sequencing, matching this project's exception class for defensive/discoverability-only hardening with zero decision-path impact). The test-writer independently added 3 retroactive regression tests AFTER the marker shipped (`201425c4` + `ede1d3d7`) rather than accepting the implementer's own commit-message claim, and independently re-ran `tests/execution -n0` to confirm the zero-behavioral-diff claim rather than re-quoting it.
+
+### AC-12/AC-13/AC-14 coverage
+
+- **AC-12** (structural distinguisher) — satisfied by the dedicated `current_return_is_reconstructed` key, co-located with each write, unambiguous to a future reader.
+- **AC-13** (override not deleted/functionally altered) — the override's own trigger condition (`bot_state[symphony_id].get("triggered")`) and its holdings/HWM/MC feed are byte-unchanged; only the additive marker line was added at each of the 3 sites. A source-scan confirmed the key has ZERO read sites anywhere in the repo — it feeds no exit-decision math, structurally verified via grep.
+- **AC-14** (read path unaffected) — no new test needed; pre-existing coverage (`tests/reporting/test_postmortem_if_held_shadow_history_source.py`, 12/12) already proves `reporting.py`/`analytics.py` never trust `bot_state["current_return"]` for a triggered symphony, independently re-confirmed green before this cycle started.
+
+### Tests
+
+3 tests in `tests/execution/test_bl9_shadow_return_override_marker.py`, added across two commits:
+- `201425c4` (2 tests): a triggered cycle stamps `True` at the override's main write site; an untriggered cycle stamps `False`.
+- `ede1d3d7` (1 test): `TestEODPassClearsStaleReconstructedFlag` — proves the specific 3-site-refinement bug fix: a symphony `reconstructed=True` during an earlier intraday cycle, still triggered, reads `False` after the EOD post-mortem pass (a separate code path, returns before the action phase can re-run this cycle) overwrites `current_return` with its always-clean figure. Without this site's stamp, the flag would stay stale-`True` describing a now-clean value as reconstructed.
+
+Non-vacuity demonstrated per the team lead's request (not committed): the action-phase site's `current_return_is_reconstructed = is_triggered_now` assignment was temporarily commented out — `test_triggered_cycle_marks_current_return_as_reconstructed` failed for the right reason (fell back to the stale `False` the data-phase write left earlier in the same cycle) while the other two tests correctly stayed green; `git checkout -- alpha_bot_execution.py` confirmed zero diff; full suite re-run confirmed all 3 green again.
+
+**Fresh authoritative count, HEAD `b616d424` (this doc-writer's own run, independently verified rather than parroted):** `python -m pytest tests/execution -n0` — 426 passed (matches the implementer's own reported count exactly). Both ruff gates clean on `alpha_bot_execution.py` (`ruff format --check` / `ruff check`, this doc-writer's own run).
+
+### Files changed
+
+- `alpha_bot_execution.py` — 3 additive `current_return_is_reconstructed` write-site stamps + explanatory comments (`+31` lines, commit `eca71013`).
+- `tests/execution/test_bl9_shadow_return_override_marker.py` (new, `201425c4` + `ede1d3d7`, 3 tests, 286 lines).
+- `docs/generated/alpha_bot_execution.md` (this doc pass — new "Basket-Reconstruction Marker" section).
+- `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` (this doc pass — "Fixed by" annotation on Finding M4 / Backlog BL-9).
+- `feature-plans/audit-bl5-12-hygiene-cleanup.md` (this doc pass — AC-12/13/14 checkboxes ticked, BL-9 marked shipped).
+
+### Reference
+
+`DE-AUDIT-BL9-001`; branch `fix/audit-bl5-12-hygiene`; worktree `.claude/worktrees/audit-bl5`; plan `feature-plans/audit-bl5-12-hygiene-cleanup.md` (shared bundle plan covering BL-5..BL-12); base `origin/main` @ `ac80b466` (#123, the BL-4 merge PR -- clean fork, `git merge-base HEAD origin/main` confirms no drift at this doc pass). Commit chain: `eca71013` (BL-9 marker, shipped ahead of RED per team-lead ratification) → `201425c4` (retroactive RED regression, 2 tests) → `ede1d3d7` (EOD-pass staleness pin, 1 test, non-vacuity demonstrated). Source finding: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 M4 / §6 BL-9 (annotated with a pointer to this entry in the same doc pass). Related: `DE-AUDIT-BL5-12-001` (the sibling consolidated entry for BL-5/6/7/8/10/11/12, shipped in the same cycle on the same branch).
+
+---
+
+## DE-AUDIT-BL5-12-001 — Hygiene Cleanup Bundle: BL-5, BL-6, BL-7, BL-8, BL-10, BL-11, BL-12 (2026-08-05)
+
+Seven independently-scoped P3 (hygiene/defensive) and P4 (info-cleanup) findings from the two-week audit (`docs/audit/TWO-WEEK-REVIEW-2026-08-04.md`), bundled into one plan and one PR per the PM's explicit dispatch — each is independently XS-S effort and none depends on another shipping first. All are display/documentation/defensive fixes; none touches trade-execution math. **BL-9 (the eighth item in the source plan) ships as its own dedicated entry, `DE-AUDIT-BL9-001`, above** — it touches the live 1-minute execution path (`alpha_bot_execution.py`) and was shipped by `risk-engine-specialist` under a distinct team-lead-ratification process, warranting its own record; this entry covers the other seven.
+
+### BL-5 — Window-Cutoff Unification (audit #118 Finding D3)
+
+**Defect:** `/api/guard-alpha-summary?window=` resolved its cutoff via `analytics._window_cutoff_date` — a UTC-DATE cutoff, INCLUSIVE of the boundary day. `analytics.get_history_summary` (backing `/api/history/<days>`) instead used naive LOCAL `_dt.now()` (no UTC, carrying time-of-day) compared via a full-datetime `start_date <= file_date <= end_date` range. At a boundary-dated post-mortem file, the two surfaces could disagree about whether that file was "in window" — a gap the `DE-GAS-COHERENCE-001` live-parity verification did not exercise.
+
+**Fix:** `get_history_summary` now calls `analytics._window_cutoff_date(days)` directly (a literal module-level call, spy-tested — not an inlined reimplementation) and compares via the SAME `date_str < cutoff_iso` exclusion `app.py:3377`'s route uses. `_window_cutoff_date` itself is unchanged (AC-1). Non-boundary day-count arithmetic is unchanged (AC-3) — this is a boundary-condition fix, not a rewrite of the aggregation logic.
+
+**Tests:** `tests/analytics/test_bl5_window_cutoff_unification.py` (new) + a new `TestBoundaryDatedFileByteParity` class in `tests/app/test_guard_alpha_summary_windowed.py` proving byte-parity between the two routes AT the boundary specifically (AC-2). Sufficiency-review non-vacuity (not committed): the shipped `<` was flipped to `<=` — both boundary tests failed for the right reason, restored, confirmed zero diff.
+
+### BL-6 — ET Fallback (audit #118 Finding M3)
+
+**Defect:** `analytics.get_symphony_today_change`'s `trading_day`-omitted fallback computed `datetime.now(UTC)` rather than the ET calendar date. All 3 real production call sites (`app.py:1274/2169/2675`) already pass `trading_day` explicitly, so this branch was dead code today — but a future forgetful caller after ~20:00 ET would query TOMORROW's UTC date against ET-stamped `shadow_history` rows and silently return empty results.
+
+**Fix:** the fallback now computes `datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")`, matching the write-side convention already used in `alpha_bot_execution.py` (AC-4). The 3 real call sites are confirmed byte-unchanged (AC-5) — an AST test asserts they still pass `trading_day` explicitly.
+
+**Tests:** `tests/analytics/test_bl6_today_change_et_fallback.py` (new) — exercises the fallback branch DIRECTLY (calls the function without `trading_day`) at a monkeypatched clock time where UTC/ET diverge, proving ET-correct behavior (AC-6).
+
+### BL-7 — Stale Comment Correction (audit #118 Finding D6)
+
+**Defect:** `app.py:7406-7410`'s comment (above `api_advisor_observations()`'s `symphony_id`-branch AC-14 filter) claimed DIVERGENCE_EXPLAINER "is permanently rejected but still writes one per autotune run" — false since AC-14. `advisors/divergence_explainer.py:150-181`'s `run_divergence_explainer` is explicit: when `SECOND_WINDOW_CVAR_ENABLED` is off, it writes NOTHING and returns `None`.
+
+**Fix:** the comment is corrected to describe the CURRENT contract accurately, and clarifies the filter below exists as legacy-row defense for the 22 pre-AC-14 `NOT_APPLICABLE` rows still in the DB, not as ongoing-write suppression (AC-7). Zero functional change — the filter logic itself is untouched (AC-8).
+
+**Tests:** `tests/app/test_bl7_divergence_explainer_comment_accuracy.py` (new) — a string-presence/absence pin on the corrected wording, plus a check the explanatory context (DIVERGENCE_EXPLAINER named) isn't deleted wholesale.
+
+### BL-8 — "Never Adopted" Operator Signal (audit #118 Finding T3)
+
+**Defect:** `fallback_oos_alpha == default_oos_alpha` byte-exact in 40/40 observed `autotune_runs` rows, `0/40` "Adopted AI," `oos_alpha = -inf` in 40/40 rows — Planet Stopper has run on 100% stock-default risk parameters for its entire visible history. The gate is correctly implemented (an honest statistical null, per the audit's own T3 finding) — but the operator had NO signal distinguishing "tuning tried this week and reverted" from "tuning has never once engaged."
+
+**Fix:** new pure `analytics.compute_never_adopted_streak(rows)` (AC-9) — sorts one symphony's `autotune_runs` rows by `run_timestamp` descending, counts consecutive non-"Adopted AI" rows from the most recent backward until the first "Adopted AI" row (or the whole list). Distinct from the existing per-run `baseline_decision` string — this communicates the ACCUMULATED pattern across runs, not the latest single run's outcome (AC-10). `len(rows) < 2` renders `{"status": "insufficient_history", "streak_weeks": None}` — never a fabricated streak for a symphony too new to establish a pattern (AC-11).
+
+**Render surface:** `GET /api/autotune-runs` additively stamps each row with `never_adopted_streak`, grouped from the same already-fetched rows (zero extra DB round-trip), computed from the RAW pre-normalization rows so the `"Adopted AI"` comparison always matches `autotuner.py`'s real persisted literal, independent of `_normalize_autotune_row`'s short-token remap. Response stays a bare JSON array (the existing `/api/autotune-runs` consumer contract). `static/ai_advisor.js`'s `loadRecentRuns()` renders it as a dim one-liner per autotune-run card.
+
+**The render-completion gap (the exact defect class this audit program exists to close).** The initial GREEN commit (`9b1f349b`) computed and stamped `never_adopted_streak` on the route response but never rendered it anywhere — the team lead flagged the AC-9/AC-10 gap explicitly: "computed-but-not-rendered is the audit's original sin." A dedicated follow-up commit (`f846bca1`) closed it: `loadRecentRuns()` now renders `status === 'streak' && streak_weeks >= 2` as `"<N> consecutive runs without adopting a tuned config"` (threshold mirrors `_NEVER_ADOPTED_MIN_ROWS = 2` — a single non-adopted run isn't a pattern worth flagging), `status === 'insufficient_history'` as `"adoption streak: insufficient history (<2 runs)"` (AC-11's informative degrade, team-lead-ruled visible per the operator's affirmative reading of AC-11's letter), and `streak_weeks < 2` with `status === 'streak'` as nothing.
+
+**Tests:** `tests/analytics/test_bl8_never_adopted_streak_signal.py` (new — a fixture with N consecutive non-adopted runs produces the correct count; a fixture with an "Adopted AI" run breaking the streak resets it; the `<2`-rows insufficient-history degrade) + `tests/app/test_bl8_streak_render_and_raw_baseline.py` (sufficiency-review pin, `b616d424`, 2 test classes):
+- `TestRawBaselineDecisionIndependence` — seeds 3 real `autotune_runs` rows (one genuine "Adopted AI" streak-breaker + 2 non-adopted), monkeypatches `_BASELINE_DECISION_TOKENS` to ALSO remap "Adopted AI" (a future-table-change scenario that doesn't exist today), proves the streak still reads `2` — the computation reads the RAW persisted `baseline_decision` via `database.get_all_autotune_runs`, never the row AFTER `_normalize_autotune_row`'s remap. Same "defensive-code correctness, unreachable today, second-layer defense" class as this codebase's `_resolve_admission_mdd_baseline` precedent (`advisors/strategy_builder_engine.py`).
+- `TestStreakRenderTextContract` — source-scans `static/ai_advisor.js` for both rendered variants, confirms `escHtml` wraps the dynamic (`streak_weeks`) variant specifically, and confirms the `streak_weeks < 2` case renders nothing (no bare else-fallback). Non-vacuity independently demonstrated on the `escHtml` assertion (temporarily stripped the `escHtml()` call → test failed for the right reason → `git checkout` confirmed zero diff → re-ran green) — not committed.
+
+### BL-10 — Dead Column Documentation (audit #118 Finding T5)
+
+**Defect:** `autotune_runs.deflated_sharpe` is intentionally, already-documented dead. Six OTHER columns — `ce_metric`/`cvar_feasible`/`lambda_budget`/`sortino_sentinel_pct`/`fold_role`/`account_id` — exist in the schema but have NO parameter in `save_autotune_run`'s signature at all.
+
+**Fix — a 3-tier correction of the feature plan's own mischaracterization.** The plan lumped all 6 non-`deflated_sharpe` columns together as "actively-used on a different table's accessor family (`port_state`)." Grepping the whole tree before writing the schema comments falsified this for 5 of the 6:
+1. `ce_metric`/`cvar_feasible`/`lambda_budget` — truly never wired: no writer or reader anywhere beyond the bare schema column.
+2. `account_id`/`sortino_sentinel_pct` — have an ORPHANED writer: `database.record_autotune_run` inserts both, but that function has ZERO callers repo-wide. The production `save_autotune_run` path never touches them.
+3. `fold_role` (migration `019_fold_role_columns.sql`) — has a real intended semantic (train/validation/frozen_eval/NULL) and IS actively READ by `advisor_ro_query`'s defensive wall guard — but has NO WRITER anywhere, not even the orphaned `record_autotune_run`.
+
+Schema-comment (near `CREATE TABLE ... autotune_runs`) and `save_autotune_run`-docstring notes use "never wired"/"not populated"/"never implemented" language for each column — deliberately never "always NULL" (a legacy row could theoretically be non-NULL from a historical accessor no longer in use, so a blanket every-row-is-NULL claim would be a guarded overclaim). No schema migration, no column drop — documentation-only, per the project's "additive-first, never destructive in one step" standard (AC-15/AC-16).
+
+**Tests:** `tests/database/test_bl10_dead_autotune_columns_documented.py` (new) — asserts the signal phrases are present near each of the 6 column names and that "always NULL" never appears near them.
+
+### BL-11 — `oos_alpha`-Sum Annotation (audit #118 Finding T6)
+
+**Defect:** `autotuner.py`'s `total_guard_alpha` (accumulation begins inside `run_simulation`) SUMS guard-alpha across every triggered OOS day; `avg_oos_alpha = oos_alpha / test_days_count` exists specifically to un-inflate it for human reading. This convention is why raw `oos_alpha` values like -743%/-581% appear in the DB/logs — a sum artifact, not corruption — but it was easy to misread without a comment at the point of definition.
+
+**Fix:** a one-line comment at the `total_guard_alpha = 0.0` accumulation start (AC-17) + the SAME annotation as a genuine prose sentence in `database.py`'s `save_autotune_run` docstring (AC-18, distinct from the docstring's pre-existing UNRELATED "SUM" mention in the `s_count` paragraph — a vague "somewhere in the docstring" placement would not have satisfied the test).
+
+**AC-19 (best-effort surface disclosure, team-lead-ruled deviation from the plan's literal wording).** The plan's AC-19 called for surfacing `avg_oos_alpha` "alongside" any operator-facing surface displaying the raw `oos_alpha` sum, or ruling the AC vacuously satisfied if no such surface exists (verified via grep, not assumed). A grep found exactly ONE such surface — `static/ai_advisor.js`'s per-symphony assessment block, `'OOS alpha: <code>'` — but confirmed NO `avg_oos_alpha` companion is persisted anywhere to surface alongside it (it is a local print-statement variable in `autotuner.py`, never written to any table). Rather than inventing a new persistence path or display surface out of scope (which AC-19's own letter explicitly forbids — "do not invent a new display surface to satisfy it"), the letter's INTENT (disclose the convention where the raw number is shown) is satisfied by disclosure-relabeling: the JS literal changed to `'OOS alpha (cumulative sum across triggered days): <code>'`. Zero schema/route change.
+
+**Tests:** `tests/autotuner/test_bl11_oos_alpha_sum_convention.py` (new — comment presence at the accumulation site, cross-reference to `avg_oos_alpha` by name) + `tests/app/test_bl11_ai_advisor_oos_alpha_label_disclosure.py` (new — the JS relabel, "cumulative"/"sum" language near the "OOS alpha" text).
+
+### BL-12 — CR-Basis Disclosure (audit #118 Finding D7)
+
+**Defect:** `_account_totals_cache["portfolio_cr"] = data["simple_return"] * 100.0` (`app.py:844`) deliberately matches Composer's own displayed "Total return" — cash-flow-sensitive, diverges from time-weighted-return by ~5pp when cash flows exist (an existing code comment already discloses this basis choice). The dashboard's "Cumulative · lifetime" label (`templates/index.html:946`) did not disclose this basis, so an operator benchmarking against a TWR figure elsewhere could be misled.
+
+**Fix:** a sibling info-icon span (`data-testid="cumulative-cashflow-footnote-marker"`, following the file's existing `today-held-footnote-marker` info-icon-with-title pattern) added AFTER the `.vs-row-label` span, NOT nested inside it — nesting would have broken `tests/app/test_dollar_saved_display_contract.py`'s pre-existing `TestCumulativeRowNamesItsBasis` regex, which requires the bare "Cumulative · lifetime" text as `.vs-row-label`'s only content. The `title=` text discloses Composer's own cash-flow-sensitive Total-return convention, matching the existing code comment's language (AC-20). Zero change to the underlying `portfolio_cr` value computation — display-only (AC-21).
+
+**Tests:** `tests/app/test_bl12_cumulative_lifetime_cr_disclosure.py` (new) — confirms the disclosure text is present, associated with the label, and that the pre-existing `TestCumulativeRowNamesItsBasis` regex still passes (a sibling span, not a nested one).
+
+### Consumer-suite discovery caught two collisions before commit
+
+Per the house lesson (`feedback_consumer_suite_discovery_before_sufficiency`), `bl5impl` grepped the whole tree for tests asserting the pre-fix shapes before going GREEN and caught two real collisions:
+1. `tests/reporting/test_dsr_surfacing.py::TestAutotuneRunsApiRoute` pinned `/api/autotune-runs`'s response as a bare JSON array — informed BL-8's design decision to stamp `never_adopted_streak` onto each row rather than wrap the response in a new envelope object (AC-3 preserved).
+2. `tests/app/test_dollar_saved_display_contract.py::TestCumulativeRowNamesItsBasis` regex-pinned the `.vs-row-label` span's content as the bare "Cumulative · lifetime" text with no nested tags — informed BL-12's sibling-span-not-nested design decision.
+
+Both collisions were caught PRE-COMMIT via the discovery grep, not found later by CI — direct evidence the consumer-discovery habit works as intended.
+
+### Full-bundle re-verification
+
+**Fresh authoritative count, HEAD `b616d424` (this doc-writer's own run, independently verified rather than parroted):**
+```
+python -m pytest tests/analytics/test_bl5_window_cutoff_unification.py tests/app/test_guard_alpha_summary_windowed.py tests/analytics/test_bl6_today_change_et_fallback.py tests/app/test_bl7_divergence_explainer_comment_accuracy.py tests/app/test_bl12_cumulative_lifetime_cr_disclosure.py tests/autotuner/test_bl11_oos_alpha_sum_convention.py tests/app/test_bl11_ai_advisor_oos_alpha_label_disclosure.py tests/database/test_bl10_dead_autotune_columns_documented.py tests/analytics/test_bl8_never_adopted_streak_signal.py tests/app/test_bl8_streak_render_and_raw_baseline.py tests/execution/test_bl9_shadow_return_override_marker.py tests/js_syntax/test_js_syntax.py -n0
+```
+— **62 passed** (BL-9's 3 execution tests included; the implementer's own GREEN commit separately reported "3182 passed, 0 failed" across the full `tests/app/` + `tests/analytics/` + `tests/autotuner/` + `tests/database/` suites, and the sufficiency-review commit reported "71 passed" on a slightly wider bundle — this doc-writer's 62-test count is the narrower, exactly-reproduced per-item file list above, run fresh rather than re-quoted). Both ruff gates clean on all touched Python files (`analytics.py`, `app.py`, `autotuner.py`, `database.py`) — this doc-writer's own `ruff format --check`/`ruff check` run.
+
+### Files changed
+
+- `analytics.py` — `get_history_summary` re-routed through `_window_cutoff_date` (BL-5); `get_symphony_today_change`'s fallback swapped to ET (BL-6); new `compute_never_adopted_streak` (BL-8).
+- `app.py` — comment fix at `api_advisor_observations()` (BL-7); `GET /api/autotune-runs` gains `never_adopted_streak` per-row stamping (BL-8).
+- `autotuner.py` — one-line sum-convention comment near `total_guard_alpha`'s accumulation (BL-11).
+- `database.py` — schema-comment + docstring notes for 6 dead columns (BL-10) + `oos_alpha` sum-convention docstring note (BL-11).
+- `static/ai_advisor.js` — `loadRecentRuns()` renders the streak signal (BL-8, follow-up commit `f846bca1`); OOS alpha label relabeled (BL-11, AC-19).
+- `templates/index.html` — CR-basis disclosure sibling span (BL-12).
+- `tests/analytics/test_bl5_window_cutoff_unification.py`, `tests/analytics/test_bl6_today_change_et_fallback.py`, `tests/analytics/test_bl8_never_adopted_streak_signal.py`, `tests/app/test_bl7_divergence_explainer_comment_accuracy.py`, `tests/app/test_bl8_streak_render_and_raw_baseline.py`, `tests/app/test_bl11_ai_advisor_oos_alpha_label_disclosure.py`, `tests/app/test_bl12_cumulative_lifetime_cr_disclosure.py`, `tests/autotuner/test_bl11_oos_alpha_sum_convention.py`, `tests/database/test_bl10_dead_autotune_columns_documented.py` (all new) + an extended `tests/app/test_guard_alpha_summary_windowed.py` (new `TestBoundaryDatedFileByteParity` class).
+- `docs/generated/analytics.md`, `docs/generated/app.md`, `docs/generated/database.md`, `docs/generated/autotuner.md`, `docs/generated/static_ai_advisor_js.md`, `docs/generated/INDEX.md` (this doc pass).
+- `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` (this doc pass — "Fixed by" annotations on Findings D3/M3/D6/T3/M4/T5/T6/D7 and Backlog BL-5..BL-12).
+- `feature-plans/audit-bl5-12-hygiene-cleanup.md` (this doc pass — all 21 AC checkboxes ticked, `Status: shipped (pending merge)`).
+
+### Reference
+
+`DE-AUDIT-BL5-12-001`; branch `fix/audit-bl5-12-hygiene`; worktree `.claude/worktrees/audit-bl5`; plan `feature-plans/audit-bl5-12-hygiene-cleanup.md`; base `origin/main` @ `ac80b466` (#123, the BL-4 merge PR -- clean fork, `git merge-base HEAD origin/main` confirms no drift at this doc pass). Commit chain: `72e4cc0b` (RED, 7 items — BL-9 already shipped separately) → `9b1f349b` (GREEN, 7 items) → `f846bca1` (BL-8 render-completion follow-up, closing the team-lead-flagged AC-9/AC-10 gap) → `b616d424` (sufficiency-review pin, BL-8's raw-baseline invariant + rendered-text-contract tests). Reviewer verdict: `quant-code-reviewer` APPROVE. Test-writer sufficiency verdict: all-SUFFICIENT. Source finding: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 D3/M3/D6/T3/M4/T5/T6/D7 / §6 BL-5..BL-8/BL-10..BL-12 (annotated with a pointer to this entry in the same doc pass). Related: `DE-AUDIT-BL9-001` (the sibling entry for BL-9, shipped in the same cycle on the same branch).

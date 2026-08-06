@@ -125,7 +125,7 @@
                     ? fmtSharpe(assessment.fallback_oos_alpha)
                     : 'N/A';
                 oosHtml = '<div style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                    'OOS alpha: <code>' + escHtml(oosVal) + '</code>' +
+                    'OOS alpha (cumulative sum across triggered days): <code>' + escHtml(oosVal) + '</code>' +
                     ' &nbsp;|&nbsp; Fallback OOS: <code>' + escHtml(fallbackVal) + '</code>' +
                     '</div>';
             }
@@ -530,6 +530,23 @@
                     // V-23: timestamp muted, Sortino / selection t-stat bold mono.
                     // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
                     var selTstat = r.selection_tstat;
+                    // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
+                    // dim one-liner, same idiom as the timestamp span above. status ==
+                    // 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
+                    // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
+                    // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
+                    // renders nothing — a single non-adopted run isn't a pattern worth flagging.
+                    var streak = r.never_adopted_streak;
+                    var streakHtml = '';
+                    if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
+                        streakHtml =
+                            '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                            escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config') + '</div>';
+                    } else if (streak && streak.status === 'insufficient_history') {
+                        streakHtml =
+                            '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                            'adoption streak: insufficient history (&lt;2 runs)</div>';
+                    }
                     return (
                         '<div class="autotune-run-card" data-testid="autotune-run-row">' +
                         '<div class="autotune-run-top">' +
@@ -547,6 +564,7 @@
                         '<div class="autotune-run-verdict">Frozen-eval ' +
                         '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
                         escHtml(frozenVerdict) + '</span></div>' +
+                        streakHtml +
                         '</div>'
                     );
                 }).join('');

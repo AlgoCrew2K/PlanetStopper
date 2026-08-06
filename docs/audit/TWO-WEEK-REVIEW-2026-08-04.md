@@ -71,6 +71,7 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 **T3 — [INFO / PRODUCT FACT] Never once adopted a tuned parameter set** `[FACT]`
 - `fallback_oos_alpha == default_oos_alpha` byte-exact in **40/40** rows (re-verified) → every symphony's `current_params` == `database.DEFAULT_STRATEGY` in every run. Combined with 0/40 `Adopted AI` and 40/40 `oos_alpha=-inf`, Planet Stopper has run on **100% un-tuned stock-default risk parameters for the entire visible history (≥2026-07-10).**
 - The gate is correctly implemented (honest null): reject site `autotuner.py:2836-2844` (`_haircut_select` returns `winner_trial=None`), genuine ~500-trial searches (`n_effective=500`, only reachable inside `if haircut_trials:` at `:2798`), noise-level `train_alpha` (~0.0001–0.012) never clears the BHY-corrected bar. This is design working as intended — but the operator has no signal that tuning has *never* engaged, and "Reverted to Fallback" is numerically identical to "Reset to Global Default" the whole time.
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** New pure `analytics.compute_never_adopted_streak(rows)` computes a symphony's consecutive non-"Adopted AI" run streak from existing `autotune_runs` rows (no schema change); `GET /api/autotune-runs` additively stamps each row with `never_adopted_streak`; `static/ai_advisor.js`'s `loadRecentRuns()` renders it as a dim one-liner per card, distinguishing the accumulated pattern from the per-run `baseline_decision` string already shown. See `DECISIONS.md` and `docs/generated/analytics.md`.
 
 **T4 — [MED, needs live verification] Intermittent zero-triad (`train_alpha==fallback==default==0.0`), 11/40 rows** `[FACT]` data, `[interp]` mechanism
 - 11/40 rows (6 in the 07-31 batch; re-verified). Two code mechanisms produce byte-identical output and cannot be disambiguated from the DB: (a) account-id-not-resolvable early-return (`autotuner.py:2637-2638`, `2925-2979`) — the symphony's Composer account id can't be matched in `bot_state` for that run; (b) a genuine zero-Guard-Alpha-trigger week (`run_simulation` returns 0.0 on zero trigger days).
@@ -78,9 +79,11 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 
 **T5 — [LOW] Dead/unwired diagnostic columns** `[FACT]`
 - `deflated_sharpe`/`ce_metric`/`cvar_feasible`/`lambda_budget`/`sortino_sentinel_pct`/`fold_role`/`account_id` are permanently NULL (0/40). `deflated_sharpe` is intentionally dead (`tests/autotuner/test_c4_dsr_machinery_removed.py`, Decision D3); the other 6 have no parameter in `save_autotune_run`'s signature at all (`database.py:692-715`) — never-implemented schema, not a caller bug. (Distinct from T1: `selection_tstat`/`naive_sharpe`/`validation_sharpe`/`frozen_eval_sharpe` are correctly-nulled-on-this-path — never reached because no proposal was adopted, not dropped.)
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** The 6 never-wired columns gain schema-comment + `save_autotune_run`-docstring notes distinguishing 3 provenance tiers (truly never wired / orphaned-writer `record_autotune_run` with zero callers / `fold_role`'s real-but-writerless semantic, correcting the plan's own initial mischaracterization); documentation-only, no migration, never "always NULL" wording (a legacy row could theoretically be non-NULL from a historical accessor). See `DECISIONS.md`.
 
 **T6 — [LOW] `oos_alpha` legs are raw multi-day SUMS, unannotated** `[FACT]`
 - `total_guard_alpha` accumulates across every triggered OOS day (`autotuner.py:1928-2047`); `avg_oos_alpha = oos_alpha / test_days_count` (`:3036`) exists to un-inflate it. This is why values like −743%/−581% appear — a sum convention, not corruption (all 3 cascade legs use it, so comparisons are uncorrupted). Easy to misread on the surface.
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** A one-line comment at `total_guard_alpha`'s accumulation start (`autotuner.py`) documents the sum convention, cross-referencing `avg_oos_alpha`; the SAME annotation lands in `database.py`'s `save_autotune_run` docstring; `static/ai_advisor.js`'s `'OOS alpha: <code>'` label is relabeled to `'OOS alpha (cumulative sum across triggered days): <code>'` (AC-19 disclosure-relabeling, since no `avg_oos_alpha` companion is persisted anywhere to display alongside it). See `DECISIONS.md` and `docs/generated/autotuner.md`.
 
 ### GUARD-ALPHA FIDELITY (MATH)
 
@@ -95,9 +98,11 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 
 **M3 — [LOW-latent] `analytics.py:543` UTC trading-day fallback** `[FACT]` (independently found by BOTH math + data auditors)
 - `analytics.get_symphony_today_change` falls back to `datetime.now(UTC)` only when a caller omits `trading_day`. Both production call sites pass an explicit ET `trading_day` (`app.py:1502/2676`, write path ET at `alpha_bot_execution.py:711`), so it is dead code today. After ~20:00 ET a future forgetful caller would query tomorrow's UTC date against ET-stamped rows → empty result. Cheap defensive fix (swap to ET).
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** The fallback now resolves `datetime.now(ZoneInfo("America/New_York"))`, matching the write-side ET convention. Dead-code-today defensive fix only — all 3 real call sites confirmed byte-unchanged (AST-pinned). See `DECISIONS.md`.
 
 **M4 — [LOW-advisory, hardening] Basket-reconstruction defect mechanism still live in-engine, fenced off** `[FACT]` (+ synthesizer correction)
 - The read path is clean: `reporting.py`/`analytics.py` source $-saved exclusively from `shadow_history` (written in the data phase), never trusting `bot_state["current_return"]` (only the explicitly-labeled `bot_state_fallback` tier reads it). But the `DE-GUARD-ALPHA-SAVED-001` defect *mechanism* — the "TRUE SHADOW RETURN OVERRIDE" that reconstructs a basket-based `current_return` (`alpha_bot_execution.py:1246-1260`) and writes it back into `bot_state["current_return"]` (`:1635`) for triggered symphonies — is still live code. **Synthesizer correction to the math auditor's report:** there are **three** write sites to `bot_state[...]["current_return"]` (`:886` clean, `:1037` clean, `:1635` override), not two; the extra clean site (`:1037`) does not change the finding — all three plus the shadow write (`:942`) precede/avoid the read path, so shadow_history stays clean. Latent footgun: any future code reading `bot_state[...]["current_return"]` for a triggered symphony silently gets the reconstructed-basket value. **Do NOT naively delete the override** — it also feeds live exit-decision inputs (holdings/HWM/MC) for already-triggered symphonies.
+- **Fixed by `DE-AUDIT-BL9-001` (2026-08-05).** All 3 write sites (confirmed 3, matching the synthesizer's own correction above) now co-stamp an additive `bot_state[symphony_id]["current_return_is_reconstructed"]` boolean (`True` only at the override site, reusing the already-computed `is_triggered_now`) — refined from a single-site proposal after tracing that the EOD post-mortem pass also writes a clean `current_return` even for a still-triggered symphony (a single-site stamp would have gone stale after that write). Override NOT deleted or functionally altered (AC-13); zero consumers, zero decision-path impact. See `DECISIONS.md` and `docs/generated/alpha_bot_execution.md`.
 
 **Two-sidedness — [CLEAN]** `[FACT]` — `#117` (`DE-GAS-COHERENCE-001`) fixed sign display end-to-end: aggregation is raw/signed (`app.py:3363/3373`, `analytics.py:2033-2034`, no abs/clip), display formatters do abs+word (`analytics.py:1973-1984`, `static/index.js:1450-1480`, `static/history.js`). A real loss day (Gpaw 07-29, guard −0.34 vs held +5.79 = −6.13pp) renders red/"lost", not clamped. Live-verified on the real render during the #117 ship.
 
@@ -113,6 +118,7 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 
 **D3 — [LOW] `$-saved` dashboard vs History window-edge asymmetry** `[FACT]`
 - `/api/guard-alpha-summary?window=` uses a UTC-date cutoff *inclusive* of the boundary day (`app.py:3352` + `analytics._window_cutoff_date:1733`); `/api/history/<days>` uses naive-local `now()` carrying time-of-day (`analytics.py:2000-2022`), which *excludes* a post-mortem dated exactly on the cutoff day. Contradicts the CLAUDE.md "byte-comparable at any shared token" guarantee — but only at a boundary-dated post-mortem (the #117 live parity-verification didn't exercise that edge, so it is not contradicted, just narrowed). Fix: one cutoff fn + one timezone.
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** `get_history_summary` now calls `analytics._window_cutoff_date(days)` directly and compares via the SAME inclusive-of-boundary string compare `/api/guard-alpha-summary` uses; a new `TestBoundaryDatedFileByteParity` test class proves byte-parity between the two routes AT the boundary. Non-boundary day-count arithmetic unchanged. See `DECISIONS.md` and `docs/generated/analytics.md`.
 
 **D4 — [MED display-honesty] The "Bot" comparison number is an unlabeled dry-run simulation** `[interp]` (surfaced by PM; overlaps D1)
 - The dashboard's "Bot" today-change/return is a shadow/dry-run simulation, not labeled as such. Combined with D1's unrendered stale-basis, this is the compounding root of the operator's confusion (a simulated "Bot" number sitting next to a stale-but-unmarked "Account" number). Label it as simulated.
@@ -123,9 +129,11 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 
 **D6 — [LOW] Stale comment on DIVERGENCE_EXPLAINER** `[FACT]`
 - The role is deferred-by-design (flag `SECOND_WINDOW_CVAR_ENABLED` off; `advisors/divergence_explainer.py:150-181`), correctly writing nothing; the 22 rows (`last_id=99`) are pre-AC-14 legacy. But `app.py:7406-7409` still says the producer "is permanently rejected but still writes one per autotune run" — false since AC-14. Correct the comment (the suppression filter can stay as legacy-row defense).
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** Comment corrected to state the producer writes nothing today, and the filter below is legacy-row defense for the 22 pre-AC-14 rows, not ongoing-write suppression. Comment-only — zero change to the filter logic. See `DECISIONS.md`.
 
 **D7 — [INFO] Cumulative Return is `simple_return`, basis undisclosed in label** `[FACT]`
 - `portfolio_cr = simple_return*100` (`app.py:844`), deliberately matching Composer's displayed "Total return" (cash-flow-sensitive, ~5pp off TWR). Coherent with Composer, but the label ("Cumulative · lifetime") doesn't disclose it, so a TWR benchmark comparison misleads. Add a tooltip.
+- **Fixed by `DE-AUDIT-BL5-12-001` (2026-08-05).** A sibling info-icon span (never nested inside `.vs-row-label`, preserving the pre-existing `TestCumulativeRowNamesItsBasis` no-nested-tags regex) discloses the cash-flow-sensitive basis via a `title=` tooltip. Zero change to the underlying `portfolio_cr` value. See `DECISIONS.md`.
 
 **D8 — [INFO] MDD bot-vs-held mismatched lookbacks (guarded)** `[FACT]`
 - Bot MDD = shadow (≤31 retained days) vs held MDD = Composer lifetime (`app.py:1640-1651`); mitigated by the `<30d` winner-suppression (`templates/index.html:887-889`) which, given ≤31-day retention, is effectively always-on. Not a defect; the operator just gets little MDD signal.
@@ -184,16 +192,24 @@ Ordered by priority. Each item is scoped for a PM dispatch decision. "Scope" is 
 ### P3 — LOW (hygiene / defensive)
 
 **BL-5 — Unify the two $-saved window cutoffs** (D3) — route `get_history_summary` through `_window_cutoff_date` + one timezone so the boundary-dated day matches. Scope: S.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). `get_history_summary` now calls `_window_cutoff_date(days)` directly; a `TestBoundaryDatedFileByteParity` test proves byte-parity at the boundary. See `DECISIONS.md`.
 **BL-6 — Swap the `analytics.py:543` UTC fallback to ET** (M3, = data F-LD-10) — defensive; dead code today. Scope: XS.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). Fallback now resolves the ET calendar date; all 3 real call sites confirmed byte-unchanged. See `DECISIONS.md`.
 **BL-7 — Correct the stale DIVERGENCE_EXPLAINER comment** (D6) at `app.py:7406-7409`. Scope: XS.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). Comment-only correction. See `DECISIONS.md`.
 **BL-8 — "N weeks at default params" operator signal** (T3) — surface that tuning has never adopted, distinct from a per-week revert. Scope: S dashboard/reporting.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). New `analytics.compute_never_adopted_streak`, surfaced on `GET /api/autotune-runs` and rendered by `static/ai_advisor.js`'s `loadRecentRuns()` -- the render step landed as a dedicated follow-up commit after the team lead flagged an initial computed-but-not-rendered gap. See `DECISIONS.md`.
 **BL-9 — Harden the basket-reconstruction footgun** (M4) — structurally fence or rename `bot_state["current_return"]` for triggered symphonies so a future reader can't get the reconstructed value; do NOT delete the override (feeds live exit inputs). Scope: investigation + S.
+- *Status:* **Shipped** -- `DE-AUDIT-BL9-001` (2026-08-05, own dedicated entry -- touches the live execution path). Additive `current_return_is_reconstructed` marker at all 3 write sites; override untouched. See `DECISIONS.md`.
 
 ### P4 — INFO / cleanup (schedule opportunistically)
 
 **BL-10 — Drop/document dead autotune columns** (T5): `deflated_sharpe`/`ce_metric`/`cvar_feasible`/`lambda_budget`/`sortino_sentinel_pct`/`fold_role`/`account_id`. Scope: XS.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). 3-tier schema-comment + docstring documentation, no migration. See `DECISIONS.md`.
 **BL-11 — Annotate the `oos_alpha`-is-a-sum convention** (T6): one-line comment near the schema/reporting surface. Scope: XS.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). Comments at `autotuner.py`'s accumulation site + `database.py`'s docstring; `static/ai_advisor.js`'s OOS alpha label relabeled (AC-19 disclosure-relabeling deviation). See `DECISIONS.md`.
 **BL-12 — Disclose CR=`simple_return` basis** (D7): tooltip/label. Scope: XS.
+- *Status:* **Shipped** -- `DE-AUDIT-BL5-12-001` (2026-08-05). Sibling info-icon tooltip on the "Cumulative · lifetime" label; zero change to the underlying value. See `DECISIONS.md`.
 
 ### Open investigations (not code changes — droplet access required)
 

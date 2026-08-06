@@ -1955,6 +1955,12 @@ def run_simulation(p, history_data, acc_sym_ids, current_date_str, deviation_dic
     RUN_SIM_DRAWDOWN_MIN_GAIN_PCT = SORTINO_OBJ_DRAWDOWN_MIN_GAIN  # _PCT suffix: T6 contract
     RUN_SIM_NEGATIVE_GUARD_ALPHA_MULT = SORTINO_OBJ_NEGATIVE_GUARD_ALPHA_MULT
 
+    # BL-11 (DE-AUDIT-BL11-001, audit #118 T6): total_guard_alpha ACCUMULATES a
+    # multi-day SUM of guard-alpha across every triggered OOS day — never a
+    # per-day or annualized figure. This is why raw oos_alpha values persisted
+    # to autotune_runs can read like -743%/-581%: a cumulative-sum artifact,
+    # not corruption. See avg_oos_alpha (below, :3043) for the un-inflated
+    # per-day companion computed from this same accumulation.
     total_guard_alpha = 0.0
     grace_minutes = _replay_grace_minutes()  # shared with production; resolved once per run
     execution_start_hhmm = _replay_execution_start_time()  # AC-5

@@ -189,6 +189,12 @@ def init_db():
             spec_bundle_id            TEXT    DEFAULT NULL,
             d_spec                    INTEGER DEFAULT NULL,
             n_effective               INTEGER DEFAULT NULL,
+            -- BL-10 (DE-AUDIT-BL10-001): ce_metric/cvar_feasible/lambda_budget
+            -- are never wired anywhere in the repo -- no writer, no reader
+            -- beyond this bare schema column. Never populated by the current
+            -- save_autotune_run path -- a legacy row could theoretically be
+            -- non-NULL from a historical accessor no longer in use, so this
+            -- is not a blanket every-row-is-NULL guarantee.
             ce_metric                 REAL    DEFAULT NULL,
             cvar_feasible             INTEGER DEFAULT NULL,
             gamma                     REAL    DEFAULT NULL,
@@ -200,6 +206,19 @@ def init_db():
             pbo                       REAL    DEFAULT NULL
         )
     """)
+
+    # BL-10 (DE-AUDIT-BL10-001): account_id/sortino_sentinel_pct/fold_role are
+    # added to autotune_runs via later ALTER TABLE migrations, not the CREATE
+    # TABLE above.
+    #   account_id / sortino_sentinel_pct: have an ORPHANED writer --
+    #     database.record_autotune_run inserts both, but that function has
+    #     zero callers repo-wide -- never populated by the current
+    #     save_autotune_run path.
+    #   fold_role (migration 019_fold_role_columns.sql): has a real intended
+    #     semantic (train/validation/frozen_eval/None) and IS actively read
+    #     by advisor_ro_query's defensive wall guard -- but has no writer
+    #     anywhere, not even the orphaned record_autotune_run. Not populated
+    #     by any current write path.
 
     # P3: Immutable append-only audit trail for Claude AI Config Advisor suggestions
     cursor.execute("""
@@ -759,6 +778,18 @@ def save_autotune_run(
                use `s_count=0`, not an omitted kwarg, to record that case.
                Feeds overfitting_conscience Indicator-3 (operator drift) via
                each run's prior_runs query.
+
+    oos_alpha column convention (BL-11, DE-AUDIT-BL11-001): a multi-day
+      CUMULATIVE SUM of guard-alpha across every triggered OOS day
+      (autotuner.py's total_guard_alpha accumulation) — not a per-day or
+      annualized figure. This is why raw values like -743%/-581% appear in
+      the DB — a sum artifact, not corruption. See avg_oos_alpha
+      (autotuner.py:3043) for the un-inflated per-day companion (a local
+      print-statement variable, never persisted to this column).
+
+    Never-wired columns (BL-10, DE-AUDIT-BL10-001): see the schema comment
+      block above the `CREATE TABLE ... autotune_runs` definition — 6
+      columns this function's INSERT never touches.
     """
     conn = get_connection()
     cursor = conn.cursor()

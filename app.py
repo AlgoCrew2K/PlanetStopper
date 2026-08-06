@@ -7458,15 +7458,22 @@ def api_advisor_observations():
                 )
             )
 
-    # AC-14 (F8, Gap): the symphony_id branch above reads
-    # get_advisor_observations_for_symphony directly with no role filter, so
-    # a DIVERGENCE_EXPLAINER feature-off NOT_APPLICABLE row (the producer is
-    # permanently rejected but still writes one per autotune run — see
-    # _ADVISOR_ROLES's comment above) leaked through unlabeled. The
-    # no-symphony_id branch above already can't leak this (_ADVISOR_ROLES
-    # excludes DIVERGENCE_EXPLAINER) — this filter is a no-op there and only
-    # closes the gap on the symphony_id path. Same predicate as the Overview
-    # panel's own suppression (ai_advisor_tab(), feature-off stub filter).
+    # AC-14 (F8, Gap; comment corrected DE-AUDIT-BL7-001): the symphony_id
+    # branch above reads get_advisor_observations_for_symphony directly with
+    # no role filter, so a DIVERGENCE_EXPLAINER feature-off NOT_APPLICABLE row
+    # could leak through unlabeled. As of AC-14
+    # (advisors/divergence_explainer.py's run_divergence_explainer),
+    # DIVERGENCE_EXPLAINER writes NOTHING (returns None) per autotune run
+    # while SECOND_WINDOW_CVAR_ENABLED is off — it no longer produces new
+    # NOT_APPLICABLE rows at all. This filter is legacy-row DEFENSE, not
+    # ongoing-write suppression: it exists solely to keep the 22 pre-AC-14
+    # NOT_APPLICABLE rows already in the DB from leaking through this
+    # unfiltered symphony_id path (see _ADVISOR_ROLES's comment above — the
+    # no-symphony_id branch above already can't leak them, since
+    # _ADVISOR_ROLES excludes DIVERGENCE_EXPLAINER; this filter is a no-op
+    # there and only closes the gap on the symphony_id path). Same predicate
+    # as the Overview panel's own suppression (ai_advisor_tab(), feature-off
+    # stub filter).
     rows = [
         row
         for row in rows
@@ -7512,11 +7519,36 @@ def _normalize_autotune_row(row: dict) -> dict:
 
 @app.route("/api/autotune-runs", methods=["GET"])
 def api_autotune_runs():
-    """Return recent autotune run rows including all three Sharpe metrics."""
+    """Return recent autotune run rows including all three Sharpe metrics.
+
+    BL-8 (DE-AUDIT-BL8-001, audit #118 T3): each row additively gains a
+    `never_adopted_streak` field — the "silent-never-tuned" signal
+    (analytics.compute_never_adopted_streak) computed by grouping the SAME
+    already-fetched rows by symphony_id (zero extra DB round-trip). This
+    communicates the ACCUMULATED pattern across a symphony's runs, distinct
+    from the row's own single-run baseline_decision. The response stays a
+    bare JSON ARRAY (AC-3, existing consumer contract — tests/reporting/
+    test_dsr_surfacing.py's TestAutotuneRunsApiRoute pins `isinstance(data,
+    list)`); the streak is computed from the RAW (pre-normalization) rows so
+    its "Adopted AI" comparison always matches autotuner.py's real persisted
+    literal, independent of _normalize_autotune_row's short-token remap.
+    """
     _ro_conn = database.get_ro_connection()
     try:
         rows = database.get_all_autotune_runs(limit=50)
-        return jsonify([_normalize_autotune_row(r) for r in rows])
+        by_symphony: dict[str, list[dict]] = {}
+        for r in rows:
+            by_symphony.setdefault(r["symphony_id"], []).append(r)
+        never_adopted_streaks = {
+            sym_id: analytics.compute_never_adopted_streak(sym_rows)
+            for sym_id, sym_rows in by_symphony.items()
+        }
+        normalized = []
+        for r in rows:
+            n = _normalize_autotune_row(r)
+            n["never_adopted_streak"] = never_adopted_streaks[r["symphony_id"]]
+            normalized.append(n)
+        return jsonify(normalized)
     finally:
         _ro_conn.close()
 
