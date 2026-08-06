@@ -1,0 +1,60 @@
+{
+  "_comment": "Golden fixture for BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): net-of-friction saved dollars = symphony_value * (saved_pct_guard_alpha - autotuner.SIM_EXIT_FRICTION_PCT) / 100.0 -- friction subtracted at the PERCENTAGE level BEFORE dollar conversion, mirroring reporting.py:92-95's own saved_dollars formula shape. The friction constant itself is intentionally NOT baked into this file as a literal -- the consuming test reads the LIVE autotuner.SIM_EXIT_FRICTION_PCT value and combines it with these fixture inputs, so this fixture stays correct if the constant is ever retuned. gross_saved_dollars below is fixture-declared (saved_pct_guard_alpha * symphony_value / 100), matching reporting.py's own saved_dollars formula -- it is NOT a friction-derived value.",
+  "cases": [
+    {
+      "name": "gross_positive_above_friction_stays_positive",
+      "description": "Gross save 1.5pp on $10k ($150) comfortably exceeds the 0.5pp friction floor -- net stays positive, just smaller than gross.",
+      "inputs": {
+        "saved_pct_guard_alpha": 1.5,
+        "symphony_value": 10000.0
+      },
+      "gross_saved_dollars": 150.0,
+      "gross_sign": "positive",
+      "expected_net_sign": "positive"
+    },
+    {
+      "name": "gross_positive_below_friction_flips_negative",
+      "description": "NON-VACUITY CONTROL. Gross save 0.3pp on $20k ($60) is BELOW the 0.5pp friction floor -- net flips negative ($60 gross vs a friction cost of $100). Mirrors the audit's real +0.13pp-gross/-0.37pp-net window finding (docs/audit/TWO-WEEK-REVIEW-2026-08-04.md Finding M1). A friction-blind implementation (net == gross, or net clamped to gross's sign) fails this case.",
+      "inputs": {
+        "saved_pct_guard_alpha": 0.3,
+        "symphony_value": 20000.0
+      },
+      "gross_saved_dollars": 60.0,
+      "gross_sign": "positive",
+      "expected_net_sign": "negative"
+    },
+    {
+      "name": "gross_negative_stays_more_negative",
+      "description": "A losing exit (gross -1.0pp on $5k, -$50) becomes MORE negative net of the 0.5pp friction floor -- friction never helps a losing trade.",
+      "inputs": {
+        "saved_pct_guard_alpha": -1.0,
+        "symphony_value": 5000.0
+      },
+      "gross_saved_dollars": -50.0,
+      "gross_sign": "negative",
+      "expected_net_sign": "negative"
+    },
+    {
+      "name": "exact_zero_gross_flips_to_negative_friction_cost",
+      "description": "Zero gross alpha (bot exited exactly where held would be) still costs the friction floor net -- the guard event was a wash gross, a net loser after costs.",
+      "inputs": {
+        "saved_pct_guard_alpha": 0.0,
+        "symphony_value": 8000.0
+      },
+      "gross_saved_dollars": 0.0,
+      "gross_sign": "zero",
+      "expected_net_sign": "negative"
+    },
+    {
+      "name": "large_positive_divergence_survives_friction",
+      "description": "A large gross save (8pp on $50k, $4000) stays comfortably positive net of the friction floor -- confirms the fix does not over-subtract on large-magnitude events.",
+      "inputs": {
+        "saved_pct_guard_alpha": 8.0,
+        "symphony_value": 50000.0
+      },
+      "gross_saved_dollars": 4000.0,
+      "gross_sign": "positive",
+      "expected_net_sign": "positive"
+    }
+  ]
+}
