@@ -846,15 +846,41 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
     """validate_search_space_nn1 must be invoked inside run_autotuner before
     optuna.create_study, so any leaked frozen facet is caught at runtime.
 
-    Reaching optuna.create_study requires three conditions:
+    Call-recording spy, NOT a raise-probe (bl2review CONFIRMED regression +
+    PM ROOT-CAUSE RULING, test-technique fix): create_study now returns a
+    WORKING stub study (matching the BL-2 multi-symphony harness's shape --
+    optimize() a no-op, best_params/best_value populated) instead of raising
+    StopIteration. BL-2's per-symphony loop isolation guard
+    (autotuner.py: except Exception as e: logging.error(...); continue) is
+    correctly, deliberately broad per the feature plan's AC-1 language ("an
+    uncaught exception raised ANYWHERE within one symphony's processing") --
+    it now swallows StopIteration too (StopIteration IS an Exception
+    subclass), so the old raise-and-catch-outside-run_autotuner probe
+    technique is invalidated: run_autotuner returns normally instead of
+    propagating the probe exception, and pytest.raises(...) never fires. This
+    is a stale TEST TECHNIQUE, not a code carve-out request -- a genuine NN1
+    violation post-BL-2 still surfaces operator-visibly (attempted=N,
+    completed=0, plus the distinct BL-2 partial-batch Discord embed), so no
+    exception-class carve-out is needed in autotuner.py itself.
+
+    Reaching optuna.create_study requires the same three conditions as
+    before:
     1. generate_synthetic_history returns >= 2 dates (avoids total_days < 2 guard).
     2. bot_state has a symphony whose normalize_name(data["name"]) appears as a
        history key — so the per-symphony loop body executes.
-    3. Supporting patches (get_symphony_strategy, RDBStorage, load_chart_history)
-       so the code between the loop entry and create_study does not fail first.
+    3. Supporting patches (get_symphony_strategy, RDBStorage, load_chart_history,
+       compute_vwap_breakdown_update) so the code between the loop entry and
+       create_study -- and now, since the probe no longer aborts early, ALL
+       the way through the OOS adoption cascade to the end of the per-symphony
+       body -- does not fail for reasons unrelated to this test's concern.
 
-    _abort_create_study raises StopIteration when create_study is reached;
-    pytest.raises catches it; the call_log ordering assertion then runs.
+    Non-vacuity: this assertion is NOT tautological -- it fails when the
+    recorded order is reversed. Verified via a standalone hand-constructed
+    check (call_log = ["create_study", "validate_search_space_nn1"] ->
+    nn1_idx=1, study_idx=0 -> `1 < 0` is False -> AssertionError), described
+    in this commit's accompanying report rather than committed here (per
+    instruction) -- committing a deliberately-broken demonstration would
+    itself be a broken/misleading test artifact.
     """
     at = _import_autotuner()
 
@@ -875,14 +901,34 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         call_log.append("validate_search_space_nn1")
         original_validate()
 
-    # Abort once create_study is reached, before real Optuna work.
-    def _abort_create_study(*args, **kwargs):
+    # Working stub study (same shape as the BL-2 multi-symphony harness's
+    # _make_create_study_side_effect) -- optimize() is a no-op; best_params/
+    # best_value are populated so the OOS adoption cascade downstream has
+    # something real to read. This lets run_autotuner run to completion
+    # instead of aborting, so ordering is proven by RECORDING both calls,
+    # never by racing an exception against the loop's isolation guard.
+    _ai_best_params = {
+        "TRIGGER_THRESHOLD_PCT": 15.0,
+        "TAKE_PROFIT_MC_PCT": 5.0,
+        "VWAP_CROSS_HWM_PCT": 0.51,
+        "VWAP_BLEED_MULTIPLIER": 1.5,
+        "VWAP_BLEED_TICKS": 10,
+        "PARABOLIC_VELOCITY_THRESHOLD": 2.0,
+        "MAX_PARABOLIC_SQUEEZE": 0.5,
+    }
+
+    def _recording_create_study(*args, **kwargs):
         call_log.append("create_study")
-        raise StopIteration("abort after guard check")
+        fake_study = MagicMock(name="fake_optuna_study")
+        fake_study.best_params = _ai_best_params
+        fake_study.best_value = 1.0
+        fake_study.optimize = MagicMock(return_value=None)
+        return fake_study
 
     # Stub history: key "stub_sym" = normalize_name("stub_sym") = "stub_sym".
     # Two dates so total_days=2 passes the "Need at least 2 days" guard.
-    # Tick shape matches the fields _collect_sim_returns reads.
+    # Tick shape matches the fields _collect_sim_returns/run_simulation read
+    # (identical to the BL-2 multi-symphony harness's fixture tick).
     _stub_tick = {
         "return": 0.0,
         "mc_prob": 50.0,
@@ -925,27 +971,36 @@ def test_run_autotuner_calls_validate_search_space_nn1_before_create_study():
         ),
         patch.object(at, "validate_search_space_nn1", _recording_validate),
         patch.object(
-            at.database, "get_symphony_strategy", return_value={"params": {}, "locked_vars": []}
+            at.database,
+            "get_symphony_strategy",
+            return_value={"params": at.database.DEFAULT_STRATEGY.copy(), "locked_vars": []},
         ),
         patch.object(at.database, "load_chart_history", return_value={}),
+        patch.object(
+            at.math_engine,
+            "compute_vwap_breakdown_update",
+            return_value=(0, 0, False, False),
+        ),
     ):
         with patch.object(_optuna.storages, "RDBStorage", return_value=MagicMock()):
-            with patch.object(_optuna, "create_study", side_effect=_abort_create_study):
-                with pytest.raises((StopIteration, RuntimeError, ValueError, TypeError)):
-                    at.run_autotuner(**call_kwargs)
+            with patch.object(_optuna, "create_study", side_effect=_recording_create_study):
+                # Must complete normally now -- no probe exception to catch.
+                at.run_autotuner(**call_kwargs)
 
     # validate_search_space_nn1 must have been called before create_study.
-    if "validate_search_space_nn1" in call_log and "create_study" in call_log:
-        nn1_idx = call_log.index("validate_search_space_nn1")
-        study_idx = call_log.index("create_study")
-        assert nn1_idx < study_idx, (
-            "validate_search_space_nn1 was called AFTER optuna.create_study; "
-            "it must run BEFORE create_study to enforce the NN1 search-space guard (D5)"
-        )
-    else:
-        assert "validate_search_space_nn1" in call_log, (
-            "validate_search_space_nn1 was never called during run_autotuner — D5 wiring is missing"
-        )
+    assert "validate_search_space_nn1" in call_log, (
+        "validate_search_space_nn1 was never called -- D5 wiring missing entirely"
+    )
+    assert "create_study" in call_log, (
+        "optuna.create_study was never reached -- the per-symphony loop did not "
+        "execute; check the stub_history/bot_state name-matching wiring"
+    )
+    nn1_idx = call_log.index("validate_search_space_nn1")
+    study_idx = call_log.index("create_study")
+    assert nn1_idx < study_idx, (
+        "validate_search_space_nn1 was called AFTER optuna.create_study; "
+        "it must run BEFORE create_study to enforce the NN1 search-space guard (D5)"
+    )
 
 
 # ---------------------------------------------------------------------------
