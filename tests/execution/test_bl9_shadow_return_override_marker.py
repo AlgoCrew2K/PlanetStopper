@@ -225,3 +225,62 @@ class TestReconstructedMarkerStampedOnTriggeredCycle:
             f"reconstructed=False, never True/absent; got "
             f"{sym_state.get('current_return_is_reconstructed')!r}"
         )
+
+
+class TestEODPassClearsStaleReconstructedFlag:
+    def test_eod_pass_overwrites_stale_true_on_still_triggered_symphony(
+        self, patched_environment, tmp_path, monkeypatch
+    ):
+        """THE REFINEMENT's reason (team-lead ratification, message
+        6bba550e): the single-site design (stamp only at the action-phase
+        reconstruction write, ~:1658) would leave a STALE True flag after
+        the SEPARATE EOD post-mortem pass (~:1048) later overwrites
+        current_return with the clean per-tick figure for the SAME
+        still-triggered symphony — that write was always clean (pre-existing
+        behavior, unchanged), but pre-refinement nothing corrected the
+        marker to match. This test seeds a symphony as if an EARLIER
+        intraday cycle already reconstructed it (current_return_is_
+        reconstructed=True in bot_state) and STILL triggered, then runs
+        main() at a frozen clock inside the EOD post-mortem window
+        (market_close <= current_time <= post_mortem_cutoff, 16:00-16:05 ET)
+        — a code path that returns (alpha_bot_execution.py:1213) BEFORE ever
+        reaching the action-phase reconstruction block again this cycle, so
+        only the EOD-pass write site can be responsible for any change to
+        the flag.
+        """
+        import analytics
+
+        # The EOD pass writes real post-mortem files to analytics.
+        # _POST_MORTEMS_DIR (analytics.py:70) — redirect to tmp_path so this
+        # test never touches the real project's post_mortems/ directory.
+        monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", str(tmp_path))
+
+        env = patched_environment
+        env["fetch_symphony_stats"].return_value = [
+            _make_symphony_payload(last_percent_change=0.02)
+        ]
+        seeded_state = _seed_state(triggered=True)
+        # Simulate the leftover state from an earlier intraday action-phase
+        # cycle that DID reconstruct current_return (already ran once today,
+        # before this EOD cycle).
+        seeded_state[_SYMPHONY_ID]["current_return_is_reconstructed"] = True
+        env["db"].load_state.return_value = seeded_state
+
+        # _FIXED_ET is a Wednesday 11:30 ET; shift to 16:02 ET the SAME day —
+        # inside the EOD post-mortem window (session close 16:00 + 5min
+        # cutoff on a regular trading day), still weekday()==2 (Wed), so the
+        # Friday/weekend-only autotuner branch (:1180) is skipped and no
+        # extra autotuner mocking is needed.
+        eod_et = _FIXED_ET.replace(hour=16, minute=2, second=0, microsecond=0)
+        with patch.object(alpha_bot_execution, "get_current_et", return_value=eod_et):
+            alpha_bot_execution.main()
+
+        sym_state = _final_symphony_state(env)
+        assert sym_state.get("current_return_is_reconstructed") is False, (
+            f"the EOD post-mortem pass must clear a stale True flag left over "
+            f"from an earlier intraday reconstruction — the EOD write always "
+            f"produces a clean per-tick current_return, even for a still-"
+            f"triggered symphony, so the marker must read False afterward, "
+            f"not the stale True; got "
+            f"{sym_state.get('current_return_is_reconstructed')!r}"
+        )
