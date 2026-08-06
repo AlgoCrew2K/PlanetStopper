@@ -918,9 +918,15 @@
                    todays_percent_change) and includes uninvested cash, unlike the
                    per-card held figure which is symphony-scoped. #}
                 <span class="vs-row-label">Today <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
-                <span data-testid="comp-today-bot-text" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-today-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <!-- BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): discloses a
+                     degraded account fetch (stale-cache fallback or value-weighted
+                     floor) directly on the row that depends on it. Hidden by default
+                     -- zero visual change on a healthy fetch. Populated by
+                     renderAccountBasisChip() in static/index.js. -->
+                <span hidden data-testid="comp-today-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-warn);margin-left:6px;"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -944,9 +950,12 @@
                      return (only the guard alpha re-windows) — qualify the basis so it
                      cannot read as the windowed chart's cumulative beside it. -->
                 <span class="vs-row-label">Cumulative &middot; lifetime</span>
-                <span data-testid="comp-cumulative-bot-text" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <!-- BL-4: see the comp-today-basis-chip comment above -- identical
+                     honesty-disclosure chip for the Cumulative row. -->
+                <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-warn);margin-left:6px;"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -1029,6 +1038,15 @@
               </div>
             </div>
           </div>
+
+          <!-- BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): dedicated
+               account-fetch freshness stamp, distinct from #hero-data-as-of
+               (whose engine-cycle contract in the chart legend above is
+               untouched). Populated by renderAccountBasisFreshness() in
+               static/index.js only when the account basis is genuinely stale
+               -- never fabricated for the value-weighted-floor tier, which
+               has no honest timestamp to disclose. -->
+          <div id="account-basis-as-of" hidden style="font-size:10px;color:var(--studio-ink-faint);text-align:right;margin-top:2px;"></div>
 
           <!-- Mini-stats -->
           <div data-testid="mini-stats" class="mini-stats">

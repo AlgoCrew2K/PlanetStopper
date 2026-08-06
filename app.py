@@ -576,7 +576,7 @@ _account_totals_last_good: dict = {}
 # Surfaced as portfolio_strip["account_basis_as_of"] when the Tier-1 fallback fires.
 _account_totals_last_success_at: str | None = None
 # Named constant for the Composer HTTP timeout; promotes the bare literal at line 769.
-_ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 10
+_ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 30
 # F-010: cumulative count of known Composer read-timeouts hit by
 # _refresh_account_totals — surfaced as aggregation context in the compact
 # one-line log below instead of a full traceback per occurrence. _refresh_

@@ -929,8 +929,56 @@
         else el.classList.add('neg');
     }
 
+    // BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): the backend
+    // already computes portfolio_strip["basis"] (Tier-2 value-weighted
+    // floor) and portfolio_strip["account_basis_stale"]/["account_basis_as_of"]
+    // (Tier-1 stale-last-good stamp) -- see app.py -- but nothing on the
+    // dashboard surfaced them, so an operator saw a stale/floor account
+    // figure with no visible indicator. Renders a small disclosure chip on
+    // the Today/Cumulative comparison rows only (never Max DD, which is not
+    // account-basis-derived). Priority rule (approved team-lead ruling):
+    // when both flags are true simultaneously, STALE wins -- it is the more
+    // actionable disclosure and the only way to guarantee the two labels
+    // never render simultaneously on one chip. Called every poll cycle, so
+    // each branch explicitly resets the chip (a real stale-to-healthy
+    // transition must un-show a chip left over from a prior poll).
+    function renderAccountBasisChip(testid, ps) {
+        var chip = document.querySelector('[data-testid="' + testid + '"]');
+        if (!chip) return;
+        if (ps.account_basis_stale) {
+            chip.textContent = 'Stale account data (as of ' + ps.account_basis_as_of + ')';
+            chip.hidden = false;
+        } else if (ps.basis === 'value_weighted') {
+            chip.textContent = 'Value-weighted floor — degraded account fetch';
+            chip.hidden = false;
+        } else {
+            chip.textContent = '';
+            chip.hidden = true;
+        }
+    }
+
+    // Dedicated account-fetch freshness stamp -- distinct from the hero
+    // chart legend's own data-as-of element (engine-cycle contract,
+    // untouched). Only the STALE tier has an honest timestamp to disclose;
+    // the value-weighted-floor tier has no account_basis_as_of at all, and
+    // none may be fabricated.
+    function renderAccountBasisFreshness(ps) {
+        var el = document.getElementById('account-basis-as-of');
+        if (!el) return;
+        if (ps.account_basis_stale && ps.account_basis_as_of) {
+            el.textContent = 'account data as of ' + ps.account_basis_as_of;
+            el.hidden = false;
+        } else {
+            el.textContent = '';
+            el.hidden = true;
+        }
+    }
+
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
+        renderAccountBasisChip('comp-today-basis-chip', ps);
+        renderAccountBasisChip('comp-cumulative-basis-chip', ps);
+        renderAccountBasisFreshness(ps);
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
