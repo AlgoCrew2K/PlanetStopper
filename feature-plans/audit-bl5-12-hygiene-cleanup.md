@@ -1,5 +1,5 @@
 # Feature: Two-Week Audit Hygiene Cleanup Bundle (BL-5..BL-12)
-Status: ready
+Status: shipped (pending merge)
 Created: 2026-08-04
 Source: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Findings D3/M3/D6/T3/M4/T5/T6/D7, §6 Backlog BL-5..BL-12 (commit `ca7f2beb`)
 
@@ -78,48 +78,48 @@ All are display/documentation/defensive fixes; none touches trade-execution math
 ## Acceptance Criteria
 
 ### BL-5 — window-cutoff unification
-- [ ] **AC-1:** `analytics.get_history_summary` is re-routed to derive its
+- [x] **AC-1:** `analytics.get_history_summary` is re-routed to derive its
       window boundary from `analytics._window_cutoff_date` (the SAME function
       `/api/guard-alpha-summary`/`/api/strip/<window>` already use) instead of its
       own inline `end_date - timedelta(days=days)` / naive-local `_dt.now()`
       arithmetic — one cutoff function, one timezone (UTC, matching
       `_window_cutoff_date`'s existing convention) shared by both surfaces.
-- [ ] **AC-2:** a boundary-dated post-mortem file (dated exactly at the cutoff
+- [x] **AC-2:** a boundary-dated post-mortem file (dated exactly at the cutoff
       day) is now included/excluded IDENTICALLY by both
       `/api/guard-alpha-summary?window=<N>d` and `/api/history/<N>` for the same
       `N` — a new test proves byte-parity at the boundary, closing the exact gap
       the `#117`/`DE-GAS-COHERENCE-001` live-parity verification did not exercise.
-- [ ] **AC-3:** `get_history_summary`'s NON-boundary behavior (day counts already
+- [x] **AC-3:** `get_history_summary`'s NON-boundary behavior (day counts already
       proven byte-comparable by `DE-GAS-COHERENCE-001`'s AC-5) stays unchanged —
       this is a boundary-condition fix, not a rewrite of the aggregation logic.
 
 ### BL-6 — ET fallback
-- [ ] **AC-4:** `analytics.get_symphony_today_change`'s `trading_day`-omitted
+- [x] **AC-4:** `analytics.get_symphony_today_change`'s `trading_day`-omitted
       fallback (`analytics.py:543`) computes the ET calendar date (matching the
       write-side convention already used at `alpha_bot_execution.py:711` and the
       existing explicit-`trading_day` call sites) instead of `datetime.now(UTC)`.
-- [ ] **AC-5:** both existing production call sites (verify current line numbers
+- [x] **AC-5:** both existing production call sites (verify current line numbers
       at implementation time — cited historically as `app.py:1502`/`:2676`) are
       confirmed to still pass an explicit `trading_day` (this fix does not change
       their behavior — it only corrects the DEFENSIVE fallback branch neither
       currently reaches).
-- [ ] **AC-6:** a new unit test exercises the fallback branch directly (omitting
+- [x] **AC-6:** a new unit test exercises the fallback branch directly (omitting
       `trading_day`) at a time-of-day where UTC-vs-ET would diverge (e.g. a fixed
       `freezegun`/monkeypatched clock at 21:00 ET / 01:00 UTC-next-day), proving
       the function now returns the ET-correct date instead of tomorrow's UTC date.
 
 ### BL-7 — stale comment correction
-- [ ] **AC-7:** `app.py:7406-7410`'s comment is corrected to describe the CURRENT
+- [x] **AC-7:** `app.py:7406-7410`'s comment is corrected to describe the CURRENT
       `run_divergence_explainer` contract accurately — the producer, when
       `SECOND_WINDOW_CVAR_ENABLED` is off, writes NOTHING (returns `None`) — and
       clarifies that the filter immediately below the comment exists as legacy-row
       defense for the 22 pre-AC-14 `NOT_APPLICABLE` rows still in the DB, not as an
       ongoing per-run write it needs to suppress.
-- [ ] **AC-8:** zero functional change — the filter logic itself
+- [x] **AC-8:** zero functional change — the filter logic itself
       (`app.py:7415-...`) is untouched; this is a comment-only correction.
 
 ### BL-8 — "never adopted" operator signal
-- [ ] **AC-9:** a new computed signal (name/shape at implementer's discretion, but
+- [x] **AC-9:** a new computed signal (name/shape at implementer's discretion, but
       must be derivable from existing `autotune_runs` data with NO new schema) —
       e.g. "N consecutive weeks at default/fallback params" or "tuning has not
       adopted an AI proposal since <date|never>" — surfaced somewhere in the
@@ -128,16 +128,16 @@ All are display/documentation/defensive fixes; none touches trade-execution math
       existing surface), computed from `baseline_decision != "Adopted AI"` streaks
       per symphony (or portfolio-wide) across `autotune_runs` rows ordered by
       `run_timestamp`.
-- [ ] **AC-10:** the signal is DISTINCT from the existing per-week
+- [x] **AC-10:** the signal is DISTINCT from the existing per-week
       "Reverted to Fallback"/"Reset to Global Default" `baseline_decision` string
       already shown per run — it must communicate the ACCUMULATED pattern across
       runs, not merely repeat the latest single-run outcome.
-- [ ] **AC-11:** honest degrade — a symphony/portfolio with fewer than 2
+- [x] **AC-11:** honest degrade — a symphony/portfolio with fewer than 2
       `autotune_runs` rows (insufficient history to establish a streak) renders an
       informative "insufficient history" state, never a fabricated streak count.
 
 ### BL-9 — basket-reconstruction footgun hardening
-- [ ] **AC-12:** the reconstructed value written at `alpha_bot_execution.py:1635`
+- [x] **AC-12:** the reconstructed value written at `alpha_bot_execution.py:1635`
       for a triggered symphony is structurally distinguished from the two clean
       per-tick writes at `:886`/`:1037` — e.g. via a dedicated in-code marker,
       renamed intermediate variable, or an adjacent structural comment/docstring
@@ -147,18 +147,18 @@ All are display/documentation/defensive fixes; none touches trade-execution math
       (comment-only vs. a dedicated shadow key vs. a runtime assertion) is an
       implementer decision, made in consultation with `risk-engine-specialist`
       given this touches the live 1-minute execution path.
-- [ ] **AC-13:** the override is NOT deleted or functionally altered — it
+- [x] **AC-13:** the override is NOT deleted or functionally altered — it
       continues to feed live exit-decision inputs (holdings/HWM/MC) for
       already-triggered symphonies exactly as today; this is a discoverability/
       documentation hardening, not a behavior change.
-- [ ] **AC-14:** zero change to `reporting.py`/`analytics.py`'s existing clean
+- [x] **AC-14:** zero change to `reporting.py`/`analytics.py`'s existing clean
       read path (both already correctly source $-saved from `shadow_history`, never
       from `bot_state["current_return"]` for a triggered symphony) — this AC is a
       regression guard proving the read side stays unaffected by any hardening
       applied on the write side.
 
 ### BL-10 — dead column documentation
-- [ ] **AC-15:** each of the 6 never-wired `autotune_runs` columns
+- [x] **AC-15:** each of the 6 never-wired `autotune_runs` columns
       (`ce_metric`/`cvar_feasible`/`lambda_budget`/`sortino_sentinel_pct`/
       `fold_role`/`account_id`) gains an explicit schema-comment or
       `save_autotune_run` docstring note (in `database.py`, near the existing
@@ -166,23 +166,23 @@ All are display/documentation/defensive fixes; none touches trade-execution math
       table — distinct wording from `deflated_sharpe`'s already-documented
       intentionally-removed status, since these 6 were never wired in the first
       place rather than removed.
-- [ ] **AC-16:** no schema migration and no column drop — per the project's
+- [x] **AC-16:** no schema migration and no column drop — per the project's
       "additive-first, NULLable + DEFAULT, never destructive in one step" standard
       (project CLAUDE.md Coding Standards), this AC is documentation-only.
 
 ### BL-11 — `oos_alpha`-sum annotation
-- [ ] **AC-17:** a one-line comment is added at (or immediately near) the
+- [x] **AC-17:** a one-line comment is added at (or immediately near) the
       `total_guard_alpha` accumulation start in `run_simulation`
       (`autotuner.py:1928`+ region) explaining that the accumulated value is a
       multi-day SUM across triggered OOS days, not a per-day or annualized figure
       — and cross-references `avg_oos_alpha` (`autotuner.py:3036`) as the
       un-inflated per-day companion.
-- [ ] **AC-18:** the SAME annotation (or a cross-reference to it) is added near
+- [x] **AC-18:** the SAME annotation (or a cross-reference to it) is added near
       the `autotune_runs.oos_alpha` column definition/docstring in `database.py`
       (alongside `save_autotune_run`'s existing per-column docstring block,
       `database.py:716-762`), so a reader inspecting the DB schema directly (not
       just the computation site) also sees the sum-convention warning.
-- [ ] **AC-19 (best-effort, verify feasibility at implementation time):** if any
+- [x] **AC-19 (best-effort, verify feasibility at implementation time):** if any
       existing operator-facing surface (dashboard, Discord EOD digest) displays
       the RAW `oos_alpha` sum without its `avg_oos_alpha` companion, surface
       `avg_oos_alpha` alongside it there too. If no such surface exists today
@@ -191,13 +191,13 @@ All are display/documentation/defensive fixes; none touches trade-execution math
       display surface to satisfy it.
 
 ### BL-12 — CR-basis disclosure
-- [ ] **AC-20:** the "Cumulative · lifetime" label
+- [x] **AC-20:** the "Cumulative · lifetime" label
       (`templates/index.html:946`, `class="vs-row-label"`) gains a tooltip (or
       adjacent disclosure text) stating the figure is Composer's own cash-flow-
       sensitive "Total return" convention (`simple_return`), not a time-weighted
       return — matching the existing code comment's own language at `app.py:840-843`
       ("~5 pp when cash flows exist").
-- [ ] **AC-21:** zero change to the underlying `portfolio_cr` VALUE computation
+- [x] **AC-21:** zero change to the underlying `portfolio_cr` VALUE computation
       (`app.py:844`) — display/disclosure-only, matching the audit's own framing
       that the CURRENT basis choice is deliberate and coherent with Composer's own
       display, only its lack of disclosure is the gap.
@@ -302,3 +302,31 @@ All are display/documentation/defensive fixes; none touches trade-execution math
   discoverability of the write-side footgun, never touches the math); any change
   to `math_engine.py`, `alpha_bot_execution.py`'s exit-decision logic, or any
   other file outside the 6 files enumerated in Architecture above.
+
+## Shipped
+
+**Status: shipped (pending merge), 2026-08-05.** All 21 acceptance criteria met (AC-1..AC-21, AC-19 satisfied via a documented team-lead-ruled disclosure-relabeling deviation from its literal wording — see below).
+
+**Decision records:** BL-9 (AC-12/13/14, the live-execution-path item) ships as its own dedicated entry, `DE-AUDIT-BL9-001` — it touches `alpha_bot_execution.py` and was shipped under a distinct team-lead-ratification process (single-site proposal refined to a 3-site self-healing design after tracing the full write graph). The remaining 7 items (BL-5/6/7/8/10/11/12, AC-1..11 + AC-15..21) ship as one consolidated entry, `DE-AUDIT-BL5-12-001`, matching the bundle's own "one PR" framing.
+
+**Commit chain (branch `fix/audit-bl5-12-hygiene`, worktree `.claude/worktrees/audit-bl5`):**
+- `eca71013` — BL-9 marker shipped directly by `risk-engine-specialist` (bl5risk), ahead of a RED test landing first for this item, once the team lead ratified the refined 3-site mechanism (DE-AUDIT-BL9-001).
+- `72e4cc0b` — RED tests for the 7-item bundle (BL-9 excluded, already shipped).
+- `201425c4` / `ede1d3d7` — BL-9 retroactive regression tests (test-writer, independently re-verifying rather than accepting the implementer's own claim).
+- `9b1f349b` — GREEN for the 7-item bundle.
+- `f846bca1` — BL-8 render-completion follow-up, closing a team-lead-flagged AC-9/AC-10 gap (the streak signal was computed and stamped on the route response but not yet rendered anywhere — "the exact defect class this audit program exists to close").
+- `b616d424` — sufficiency-review pin (BL-8's raw-baseline invariant + rendered-text-contract tests).
+
+**Reviewer verdict:** `quant-code-reviewer` — APPROVE. **Test-writer sufficiency verdict:** all-SUFFICIENT (BL-5/BL-10/BL-11/BL-12 verified via non-vacuity demonstrations against the shipped GREEN rather than new tests; BL-8 tightened with 2 dedicated sufficiency-review test classes).
+
+**AC-19 deviation, recorded explicitly per the letter's own "verify feasibility at implementation time" framing.** The AC's literal wording called for surfacing `avg_oos_alpha` "alongside" any operator-facing surface displaying the raw `oos_alpha` sum. A grep before assuming found exactly one such surface (`static/ai_advisor.js`'s per-symphony assessment block) but confirmed no `avg_oos_alpha` companion is persisted anywhere to surface alongside it — it is a local `autotuner.py` print-statement variable, never written to any table. Per the AC's own instruction not to invent a new display surface to satisfy it, the letter's intent (disclose the convention where the raw number is shown) is satisfied instead by relabeling the JS literal in place (`'OOS alpha: <code>'` → `'OOS alpha (cumulative sum across triggered days): <code>'`). Team-lead-ruled acceptable; see `DE-AUDIT-BL5-12-001` in `DECISIONS.md` for the full record.
+
+**Consumer-suite discovery caught two pre-commit collisions** (house lesson, `feedback_consumer_suite_discovery_before_sufficiency`): `tests/reporting/test_dsr_surfacing.py::TestAutotuneRunsApiRoute`'s bare-JSON-array pin on `/api/autotune-runs` (informed BL-8's per-row-stamp design over a new envelope object) and `tests/app/test_dollar_saved_display_contract.py::TestCumulativeRowNamesItsBasis`'s no-nested-tags regex on `.vs-row-label` (informed BL-12's sibling-span design). Both caught by `bl5impl`'s pre-GREEN discovery grep, not later by CI.
+
+**Fresh authoritative test count, HEAD `b616d424` (independently re-run by the doc-writer, not re-quoted):**
+```
+python -m pytest tests/analytics/test_bl5_window_cutoff_unification.py tests/app/test_guard_alpha_summary_windowed.py tests/analytics/test_bl6_today_change_et_fallback.py tests/app/test_bl7_divergence_explainer_comment_accuracy.py tests/app/test_bl12_cumulative_lifetime_cr_disclosure.py tests/autotuner/test_bl11_oos_alpha_sum_convention.py tests/app/test_bl11_ai_advisor_oos_alpha_label_disclosure.py tests/database/test_bl10_dead_autotune_columns_documented.py tests/analytics/test_bl8_never_adopted_streak_signal.py tests/app/test_bl8_streak_render_and_raw_baseline.py tests/execution/test_bl9_shadow_return_override_marker.py tests/js_syntax/test_js_syntax.py -n0
+```
+— 62 passed. `tests/execution -n0` (BL-9's own broader suite): 426 passed. Both ruff gates clean on all touched Python files.
+
+**Reference:** `DE-AUDIT-BL9-001` and `DE-AUDIT-BL5-12-001` in `DECISIONS.md`; `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 D3/M3/D6/T3/M4/T5/T6/D7 and §6 BL-5..BL-12 (annotated with "Fixed by" pointers to both entries in the same doc pass).
