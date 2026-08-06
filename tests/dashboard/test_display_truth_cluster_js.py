@@ -34,16 +34,38 @@ def _read_index_js() -> str:
     return _INDEX_JS.read_text(encoding="utf-8")
 
 
-def _slice_function(content: str, signature: str, max_len: int = 3000) -> str:
-    """Return the text from the first occurrence of `signature` up to the START
-    of the NEXT top-level `    function ` declaration (this file's 4-space
-    indentation convention), capped at max_len. Mirrors
-    tests/dashboard/test_f7_ac2_render_surfaces_js.py's _slice_function."""
+def _slice_function(content: str, signature: str) -> str:
+    """Return the FULL function body starting at `signature`, via brace
+    counting -- growth-safe, no fixed-length window to silently overflow as
+    the function grows. Mirrors the technique in
+    tests/dashboard/test_account_basis_honesty_render.py's
+    _extract_function_with_signature.
+
+    Replaces the prior fixed-span slice (`up to the NEXT top-level function
+    declaration, capped at max_len=3000`). DE-AUDIT-BL4-001 CI round 2 root
+    cause: that fixed max_len=3000 window silently truncated
+    updateComparisonRows's body after bl4impl's live-gate fix (6d3e8226)
+    added ~18 lines to the top of the function, pushing the real, still-
+    present null-check (`if (bot !== null) setPosNeg(...)`) ~977 chars past
+    the cutoff -- producing a false "no null-check found" RED on a function
+    whose semantics never changed. Brace-counting eliminates this whole
+    failure class for every caller in this file, not just the one that
+    happened to overflow first.
+    """
     start = content.find(signature)
     assert start != -1, f"{signature!r} not found in static/index.js"
-    next_fn = content.find("\n    function ", start + len(signature))
-    end = min(next_fn, start + max_len) if next_fn != -1 else start + max_len
-    return content[start:end]
+    brace_start = content.index("{", start)
+    depth = 0
+    i = brace_start
+    while i < len(content):
+        if content[i] == "{":
+            depth += 1
+        elif content[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return content[start : i + 1]
+        i += 1
+    raise AssertionError(f"Could not find matching closing brace for {signature!r}")
 
 
 # ===========================================================================
