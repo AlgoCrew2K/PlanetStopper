@@ -538,9 +538,16 @@ def get_symphony_today_change(
     symphony_id = sym_dict.get("id")
     _trading_day = trading_day or sym_dict.get("trading_day")
     if not _trading_day:
+        # BL-6 (DE-AUDIT-BL6-001, audit #118 M3): ET calendar date, not UTC —
+        # matches the write-side convention (alpha_bot_execution.py's
+        # `current_et.strftime("%Y-%m-%d")`) every explicit-trading_day call
+        # site already relies on. A UTC fallback would, after ~20:00 ET,
+        # silently query TOMORROW's date against ET-stamped shadow_history
+        # rows and find no match.
         from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
 
-        _trading_day = _dt.now(UTC).strftime("%Y-%m-%d")
+        _trading_day = _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     dry_run: float | None = None
     if symphony_id:
@@ -1994,11 +2001,15 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     import glob as _glob
     import json as _json
     from datetime import date as _date
-    from datetime import datetime as _dt
-    from datetime import timedelta as _td
 
-    end_date = _dt.now()
-    start_date = end_date - _td(days=days)
+    # BL-5 (DE-AUDIT-BL5-001, audit #118 D3): window boundary derived via the
+    # SAME shared cutoff helper /api/guard-alpha-summary and /api/strip/<window>
+    # already use, instead of a naive-local full-datetime compare — closes a
+    # boundary-day asymmetry where the old `start_date <= file_date <= end_date`
+    # compare (start_date carrying "now"'s time-of-day, file_date always
+    # midnight) could wrongly exclude a file exactly at the N-days-ago cutoff.
+    cutoff = _window_cutoff_date(days)
+    cutoff_iso = cutoff.isoformat() if cutoff is not None else None
     files = _glob.glob(os.path.join(base_dir, "post_mortem_*.json"))
 
     stats: dict = {
@@ -2017,8 +2028,10 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     for f_path in files:
         try:
             date_part = os.path.basename(f_path).replace("post_mortem_", "").replace(".json", "")
-            file_date = _dt.strptime(date_part, "%Y-%m-%d")
-            if not (start_date <= file_date <= end_date):
+            # Same inclusive-of-boundary convention as app.py's
+            # guard_alpha_summary route (app.py:3377) — a date exactly at the
+            # cutoff is INCLUDED, only strictly-older dates are excluded.
+            if cutoff_iso is not None and (len(date_part) != 10 or date_part < cutoff_iso):
                 continue
             with open(f_path, encoding="utf-8") as fh:
                 data = _json.load(fh)
@@ -2132,3 +2145,42 @@ def compute_v1_bootstrap_state(sample_size: int, divergence_detected: bool) -> s
     if divergence_detected:
         return "overfit_confirmed"
     return "provisional_no_overfit"
+
+
+_NEVER_ADOPTED_ADOPTED_TOKEN = "Adopted AI"
+# BL-8 (DE-AUDIT-BL8-001, audit #118 T3): the "silent-never-tuned" operator
+# signal — fewer than this many autotune_runs rows can't establish a genuine
+# streak (a brand-new symphony's single run must not read as an alarming
+# multi-week pattern).
+_NEVER_ADOPTED_MIN_ROWS = 2
+
+
+def compute_never_adopted_streak(rows: list[dict]) -> dict:
+    """Compute the "N consecutive runs at default/fallback params" streak
+    for ONE symphony's autotune_runs rows (audit #118 T3).
+
+    Pure — no I/O. Callers pass one symphony's rows (any order; sorted
+    internally by run_timestamp). Distinct from the per-run baseline_decision
+    string already shown elsewhere: this communicates the ACCUMULATED
+    pattern across runs, not merely the latest single run's outcome.
+
+    Walks rows newest-to-oldest, counting consecutive rows whose
+    baseline_decision != "Adopted AI", stopping at the first "Adopted AI"
+    row (or counting every row if none exists).
+
+    Returns {"status": "insufficient_history", "streak_weeks": None} for
+    fewer than _NEVER_ADOPTED_MIN_ROWS rows — never a fabricated streak
+    count for a symphony with too little history to establish a pattern.
+    Otherwise {"status": "streak", "streak_weeks": <int>}.
+    """
+    if len(rows) < _NEVER_ADOPTED_MIN_ROWS:
+        return {"status": "insufficient_history", "streak_weeks": None}
+
+    ordered = sorted(rows, key=lambda r: r["run_timestamp"], reverse=True)
+    streak_weeks = 0
+    for row in ordered:
+        if row.get("baseline_decision") == _NEVER_ADOPTED_ADOPTED_TOKEN:
+            break
+        streak_weeks += 1
+
+    return {"status": "streak", "streak_weeks": streak_weeks}

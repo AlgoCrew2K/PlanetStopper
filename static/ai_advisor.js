@@ -125,7 +125,7 @@
                     ? fmtSharpe(assessment.fallback_oos_alpha)
                     : 'N/A';
                 oosHtml = '<div style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                    'OOS alpha: <code>' + escHtml(oosVal) + '</code>' +
+                    'OOS alpha (cumulative sum across triggered days): <code>' + escHtml(oosVal) + '</code>' +
                     ' &nbsp;|&nbsp; Fallback OOS: <code>' + escHtml(fallbackVal) + '</code>' +
                     '</div>';
             }

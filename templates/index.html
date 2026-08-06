@@ -949,7 +949,16 @@
                 <!-- Finding 5: the row's anchor is the Composer LIFETIME per-symphony
                      return (only the guard alpha re-windows) — qualify the basis so it
                      cannot read as the windowed chart's cumulative beside it. -->
-                <span class="vs-row-label">Cumulative &middot; lifetime</span>
+                <!-- BL-12 (DE-AUDIT-BL12-001): disclose the cash-flow-sensitive basis
+                     of this row's value (app.py:840-844's portfolio_cr = simple_return
+                     * 100.0, matching Composer's own displayed "Total return" — diverges
+                     from a time-weighted return by ~5pp when cash flows exist). A SIBLING
+                     span (not nested inside vs-row-label, unlike the today-held-footnote-
+                     marker above) — nesting would have broken test_dollar_saved_display_
+                     contract.py's TestCumulativeRowNamesItsBasis regex, which requires the
+                     bare "Cumulative · lifetime" text as vs-row-label's only content.
+                     Display-only; zero change to the underlying value computation. -->
+                <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5pp when cash flows exist.">&#9432;</span>
                 <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }}%{% else %}&mdash;{% endif %}</span>
