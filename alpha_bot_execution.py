@@ -39,6 +39,11 @@ def augment_optimization_results_with_selection_stats(optimization_results: dict
     than crashing on first-run symphonies.
     """
     for sym_id, sym_data in optimization_results.items():
+        # BL-2: "_batch_summary" is a structural summary key (run_autotuner's
+        # additive attempted/completed counters), never a real symphony id --
+        # querying get_latest_autotune_run for it would be a spurious lookup.
+        if sym_id == "_batch_summary":
+            continue
         run_row = database.get_latest_autotune_run(sym_id)
         if run_row:
             sym_data["_selection_stats"] = {

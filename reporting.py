@@ -652,7 +652,14 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                 }
             )
         elif optimization_results:
+            # BL-2 AC-2/AC-3: run_autotuner's additive "_batch_summary" key
+            # ({"attempted": N, "completed": M}) is a structural summary, never
+            # a real per-symphony entry -- it must never be iterated by this
+            # loop as if it were a symphony name.
+            _batch_summary = optimization_results.get("_batch_summary")
             for sym_name, changes in optimization_results.items():
+                if sym_name == "_batch_summary":
+                    continue
                 sym_changes_text = ""
                 baseline_text = ""
                 selection_stats = None
@@ -700,6 +707,25 @@ def send_eod_discord_post(current_date_str, report_file, optimization_results, d
                         "title": f"⚙️ {sym_name.title()} Optimization",
                         "color": 10181046,
                         "description": baseline_text + sym_changes_text,
+                    }
+                )
+
+            # BL-2 AC-3: a partial batch (isolated per-symphony exceptions
+            # mid-run, autotuner.py's per-symphony loop guard) must render
+            # visibly distinct from both the "Autotuner Aborted" state and a
+            # clean full batch -- never a silent under-report.
+            if _batch_summary and _batch_summary.get("attempted") != _batch_summary.get(
+                "completed"
+            ):
+                embeds.append(
+                    {
+                        "title": "⚠️ Autotuner Partial Batch",
+                        "color": 15105570,  # amber — some symphonies isolated/failed
+                        "description": (
+                            f"Partial batch: {_batch_summary.get('completed')} of "
+                            f"{_batch_summary.get('attempted')} symphonies optimized "
+                            f"— see logs for isolated per-symphony failures."
+                        ),
                     }
                 )
         else:

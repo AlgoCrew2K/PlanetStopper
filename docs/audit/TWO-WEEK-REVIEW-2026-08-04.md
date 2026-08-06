@@ -66,6 +66,7 @@ Severity key: **HIGH** = fix this cycle · **MED** = fix soon · **LOW** = hygie
 - The `for normalized_name in symphony_names:` loop (`autotuner.py:2558-3288`) wraps `study.optimize` (`:2762`), CPCV/PBO, the OOS cascade, and `save_autotune_run` (`:3218`) with **no surrounding try/except** — only the two tail advisor-producer calls (Overfitting Conscience `:3259-3272`, Divergence Explainer `:3276-3288`) are isolated. An uncaught exception mid-loop aborts `run_autotuner()` for every not-yet-processed symphony, with the only symptom a missing `autotune_runs` row (no `aborted` marker — the `DE-AUTOTUNE-REPORTING-001` graceful aborts fire *before* the loop and would give 0/11, not 7/11).
 - Observed: batch counts 07-10=11, 07-18=11, **07-24=7**, 07-31=11 (re-verified). The 4 missing on 07-24 (`corporate chaos 2060`, `corporate chaos 5 ways`, `planet lqd … waltanansi`, `planet of the paragons`) all return normally on 07-31.
 - `[interp]` **Root cause is likely environmental, not a per-symphony code bug:** 2026-07-24 is *also* the single night the nightly Prism council was skipped across all 4 roles (PM ferry). Two independent scheduled jobs degraded the same calendar day. Precision caveat (per the tuning auditor): the two ran ~14h apart (autotuner EOD ~21:48 UTC vs council overnight), and the missing try/except is consistent with EITHER an uncaught code exception OR an OS-level kill — the data alone cannot distinguish them, so the cross-track same-day correlation is the tie-breaker toward environmental, not a proof of one instant. The isolation fix is correct defense-in-depth regardless, but **pull 2026-07-24 droplet logs first.**
+- **Fixed by `DE-AUDIT-BL2-001` (2026-08-05).** Per-symphony loop isolation (try/except/continue) + `_batch_summary` attempted-vs-completed visibility + a distinct partial-batch EOD Discord embed. **INV-1 (below) root-caused the specific 07-24 incident to a deploy-restart SIGTERM, not an uncaught exception** -- this fix guards the uncaught-exception class as defense-in-depth and does not claim to prevent a 07-24-style recurrence. See `DECISIONS.md` and `docs/generated/autotuner.md`.
 
 **T3 — [INFO / PRODUCT FACT] Never once adopted a tuned parameter set** `[FACT]`
 - `fallback_oos_alpha == default_oos_alpha` byte-exact in **40/40** rows (re-verified) → every symphony's `current_params` == `database.DEFAULT_STRATEGY` in every run. Combined with 0/40 `Adopted AI` and 40/40 `oos_alpha=-inf`, Planet Stopper has run on **100% un-tuned stock-default risk parameters for the entire visible history (≥2026-07-10).**
@@ -158,6 +159,7 @@ Ordered by priority. Each item is scoped for a PM dispatch decision. "Scope" is 
 - *Evidence:* `autotuner.py:2558-3288` core body unguarded; only tail producers isolated (`:3259/:3276`).
 - *Fix:* wrap the per-symphony body in try/except (log-and-continue, mirroring `:3261/:3278`); add `symphonies_attempted` vs `symphonies_completed` to the EOD Discord/return value so a partial batch is never silent. **Pull 2026-07-24 droplet logs first** to root-cause (likely a droplet-health event — the council was also skipped that night).
 - *Scope:* S (loop isolation + regression test); +S if the attempted/completed count touches `reporting.py`.
+- *Status:* **Shipped** -- `DE-AUDIT-BL2-001` (2026-08-05). See `docs/audit/INV-FINDINGS-2026-08-05.md` for the INV-1 root-cause finding this fix's own honesty boundary is scoped against.
 
 **BL-3 — Disclose (or apply) trading-cost friction on the live $-saved headline** (M1)
 - *What's wrong:* both $-saved bases omit the `SIM_EXIT_FRICTION_PCT=0.5` the optimizer already models; this window's mean gross save (+0.13pp) is smaller than that friction, so the headline overstates net benefit.
@@ -189,8 +191,8 @@ Ordered by priority. Each item is scoped for a PM dispatch decision. "Scope" is 
 
 ### Open investigations (not code changes — droplet access required)
 
-- **INV-1:** pull 2026-07-24 droplet logs to root-cause the partial batch + skipped council (feeds BL-2).
-- **INV-2:** determine T4's mechanism (account-id-not-resolvable vs genuine zero-trigger) via `bot_state`/account-roster history for the affected symphonies.
+- **INV-1:** pull 2026-07-24 droplet logs to root-cause the partial batch + skipped council (feeds BL-2). **Resolved -- see `docs/audit/INV-FINDINGS-2026-08-05.md`.**
+- **INV-2:** determine T4's mechanism (account-id-not-resolvable vs genuine zero-trigger) via `bot_state`/account-roster history for the affected symphonies. **Resolved -- see `docs/audit/INV-FINDINGS-2026-08-05.md`.**
 
 ---
 

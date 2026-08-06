@@ -1,5 +1,5 @@
 # Feature: Per-Symphony Optimization Loop Exception Isolation + Batch Visibility (BL-2)
-Status: ready
+Status: shipped (pending merge)
 Created: 2026-08-04
 Source: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Finding T2, §6 Backlog BL-2 (commit `ca7f2beb`)
 
@@ -40,7 +40,7 @@ the audit's own framing, **the isolation fix below is correct defense-in-depth
 regardless of what INV-1 finds**, and is not blocked on it.
 
 ## Acceptance Criteria
-- [ ] **AC-1 — per-symphony exception isolation.** The per-symphony loop body
+- [x] **AC-1 — per-symphony exception isolation.** The per-symphony loop body
       (`autotuner.py:2558-3290`, everything from `strat_data = database.get_symphony_strategy(...)`
       through the existing OC/DE tail calls) is wrapped so that an uncaught exception
       raised ANYWHERE within one symphony's processing is caught, logged (mirroring
@@ -51,7 +51,7 @@ regardless of what INV-1 finds**, and is not blocked on it.
       still catch their own local failures first; the new outer guard is a safety
       net for everything else: Optuna, CPCV/PBO, the OOS cascade,
       `save_autotune_run` itself).
-- [ ] **AC-2 — attempted-vs-completed visibility.** `run_autotuner()`'s return value
+- [x] **AC-2 — attempted-vs-completed visibility.** `run_autotuner()`'s return value
       gains counts distinguishing symphonies ATTEMPTED (entered the loop iteration)
       from symphonies COMPLETED (reached the end of the iteration without an
       isolated exception) — e.g. `optimization_results["_batch_summary"] =
@@ -59,7 +59,7 @@ regardless of what INV-1 finds**, and is not blocked on it.
       shape is an implementer decision, but it MUST be consumable by
       `reporting.py`'s EOD Discord builder per AC-3). A batch with zero exceptions
       has `attempted == completed == len(symphony_names)`.
-- [ ] **AC-3 — partial-batch surfaced in the EOD Discord report.** `reporting.py`'s
+- [x] **AC-3 — partial-batch surfaced in the EOD Discord report.** `reporting.py`'s
       EOD Discord embed builder (the same function `DE-AUTOTUNE-REPORTING-001`
       extended for the aborted-vs-no-change distinction) renders a visibly different
       message when `attempted != completed` — e.g. "Optimization completed for M of
@@ -67,7 +67,7 @@ regardless of what INV-1 finds**, and is not blocked on it.
       "aborted" embed (0 symphonies, pre-loop abort) and the normal "N symphonies
       optimized" embed (full batch, no failures). A partial batch must never render
       identically to a full, healthy batch.
-- [ ] **AC-4 — no rollback of already-completed work.** A symphony's isolated
+- [x] **AC-4 — no rollback of already-completed work.** A symphony's isolated
       exception does NOT retroactively affect or re-run symphonies already
       processed earlier in the SAME loop iteration — their `autotune_runs` rows
       (already persisted via `save_autotune_run` inside their own iteration) and
@@ -75,7 +75,7 @@ regardless of what INV-1 finds**, and is not blocked on it.
       own characterization of the defect: siblings NOT YET processed are dropped;
       already-processed ones are unaffected today and must stay unaffected after
       this fix.
-- [ ] **AC-5 — zero-exception regression guard.** When no symphony's processing
+- [x] **AC-5 — zero-exception regression guard.** When no symphony's processing
       raises, `run_autotuner()`'s return shape, every `autotune_runs` row written,
       and every OC/DE call are byte-identical to today's behavior — the new
       `attempted`/`completed` counters are purely additive.
@@ -167,3 +167,15 @@ regardless of what INV-1 finds**, and is not blocked on it.
   computation, or the OOS adoption cascade math; in-run retry logic for a failed
   symphony; any change to the pre-loop graceful-abort paths `DE-AUTOTUNE-REPORTING-001`
   already covers.
+
+## Shipped
+
+**Commit chain:** `200d836a` (RED -- test-writer, 3 test files, +1281 lines: isolation/counters/embed/augment-guard) -> `825b9878` (GREEN -- implementer: `autotuner.py` loop-wrap try/except/else + `_batch_summary` counters; `reporting.py` partial-batch embed + `_batch_summary` skip guard; `alpha_bot_execution.py` one-line augment skip) -> `dd53a20a` (RED -- `quant-code-reviewer`-found BLOCK: mid-window stale-partial-entry false-success gap) -> `6a19a4c2` (fix -- `optimization_results.pop(normalized_name, None)` in the except block).
+
+**AC coverage:** AC-1 (isolation) through AC-5 (zero-exception regression) all covered by `tests/autotuner/test_bl2_loop_isolation.py` (10 tests), `tests/execution/test_bl2_batch_summary_augment_guard.py` (1 test), and `tests/reporting/test_bl2_partial_batch_eod_embed.py` (5 tests) -- 16 tests total, all green at HEAD `6a19a4c2` (`python -m pytest tests/autotuner/test_bl2_loop_isolation.py tests/execution/test_bl2_batch_summary_augment_guard.py tests/reporting/test_bl2_partial_batch_eod_embed.py -n0`, this doc-writer's own run).
+
+**Review-found gap (the gate working as intended):** `quant-code-reviewer`'s review of `825b9878` found a BLOCK-severity gap -- a mid-window exception left a stale, near-empty partial `optimization_results[normalized_name]` entry that `reporting.py`'s F-015 shape guard would render as a false "Optimal parameters retained." success. Fixed at `6a19a4c2`; re-review pending at this doc pass. Test-writer sufficiency verdict: SUFFICIENT.
+
+**INV-1 honesty boundary (root-cause note in the Summary above, resolved):** `docs/audit/INV-FINDINGS-2026-08-05.md`'s same-day droplet investigation root-caused the actual 2026-07-24 partial-batch incident to a deploy-restart SIGTERM at 22:34:39 UTC mid-batch, NOT an uncaught code exception. This fix guards the uncaught-exception class as defense-in-depth (per the "Decisions" table above, "correct regardless of what INV-1 finds") and neither claims nor could have prevented a SIGTERM-driven recurrence -- encoded in the isolation guard's own source comment (`autotuner.py:3302-3307`) and a dedicated test asserting `"sigterm"` never appears in the isolation log message.
+
+See `DE-AUDIT-BL2-001` in `DECISIONS.md` for the full record.

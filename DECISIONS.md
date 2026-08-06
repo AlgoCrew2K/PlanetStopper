@@ -9597,3 +9597,60 @@ New `tests/autotuner/test_pbo_run_autotuner_persistence.py` (3 tests, `run_autot
 ### Reference
 
 `DE-AUDIT-BL1-001`; branch `fix/audit-bl1-persist-pbo-veto`; worktree `.claude/worktrees/audit-bl1`; plan `feature-plans/audit-bl1-persist-pbo-veto.md`; base `origin/main` @ `3e314fef` (#118, clean fork — verified no drift at this entry). Commit chain: `332ddf83` (RED) → `b28f070e` (GREEN). Source finding: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 T1 (annotated with a pointer to this entry in the same doc pass).
+
+
+## DE-AUDIT-BL2-001 — Per-Symphony Optimization Loop Exception Isolation + Batch Visibility (2026-08-05)
+
+**Defect (audit #118, `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 Finding T2 / §6 Backlog BL-2):** `run_autotuner()`'s per-symphony optimization loop (`for normalized_name in symphony_names:`, `autotuner.py:2562` at this doc pass) had NO surrounding try/except around the loop body — Optuna `study.optimize`, CPCV-fold generation, PBO computation, the OOS adoption cascade, and `database.save_autotune_run` were entirely unguarded. Only the two tail advisor-producer calls (Overfitting Conscience, Divergence Explainer) were isolated in their own local try/excepts. An uncaught exception anywhere in one symphony's processing propagated out of the whole `for` loop, silently dropping every symphony not yet reached — with no `aborted` marker (the pre-existing `DE-AUTOTUNE-REPORTING-001` graceful-abort contract only covers conditions detected BEFORE the loop starts, e.g. history shortfall). The observed live symptom: 2026-07-24's autotune batch wrote only 7 of 11 symphonies, with no operator-visible signal that anything was wrong.
+
+**Root-cause honesty boundary (INV-1, `docs/audit/INV-FINDINGS-2026-08-05.md`, same-day droplet investigation):** the real 2026-07-24 incident was independently root-caused to a clean `systemctl restart` (a deploy-restart SIGTERM at 22:34:39 UTC, mid-batch) — NOT an uncaught code exception. A try/except cannot catch a process kill. This fix ships anyway as defense-in-depth against the uncaught-exception class (per the feature plan's own explicit framing, "correct regardless of what INV-1 finds") — but it does **not**, and could not have, prevented the specific 07-24 recurrence. The isolation guard's own source comment (`autotuner.py:3302-3307`) and a dedicated regression test (`test_exception_isolation_logs_via_logging_error_with_exc_info_naming_symphony`, asserts `"sigterm"` never appears in the isolation log message) both encode this boundary explicitly so no future reader mistakes this fix for SIGTERM coverage. The real preventive control for the 07-24 class is operational: don't deploy-restart while the weekly autotune batch is in flight (batch window approx. 21:48-23:00 UTC on autotune Fridays).
+
+### The fix
+
+Three additive changes, no existing logic altered:
+
+1. **`autotuner.py`** — the per-symphony loop body (`strat_data = database.get_symphony_strategy(...)` through the existing OC/DE tail calls) is wrapped in a top-level try/except. Two module-scope counters, `_batch_attempted`/`_batch_completed`, increment at loop-body entry and on the `else:` clause of a clean iteration (never on a caught exception). A caught exception is logged via `logging.error(..., exc_info=True)` naming the symphony and the isolation boundary, then `continue`s to the next symphony — never propagating out of `run_autotuner()`. The final counts are attached to the return value as `optimization_results["_batch_summary"] = {"attempted": N, "completed": M}` (`autotuner.py:3325-3329`) — a structural key, never a real symphony entry.
+2. **`reporting.py`** — `send_eod_discord_post`'s per-symphony changes loop (`reporting.py:659-661`) now skips the `_batch_summary` key (it would otherwise render as a fake symphony embed under the existing F-015 shape guard). A third Discord embed branch (`reporting.py:717-729`) renders "⚠️ Autotuner Partial Batch" (amber) when `attempted != completed`, distinct from both the existing "Autotuner Aborted" (pre-loop, 0 symphonies) embed and a normal full-batch embed.
+3. **`alpha_bot_execution.py`** — `augment_optimization_results_with_selection_stats` skips the `_batch_summary` key before its per-symphony `database.get_latest_autotune_run` lookup (which would otherwise perform a spurious, always-miss DB query keyed on a string that is never a real symphony id).
+
+### Review-found gap + fix (the gate working as intended)
+
+`quant-code-reviewer`'s review of the initial GREEN commit (`825b9878`) found a BLOCK-severity gap: a mid-window exception — one raised AFTER `optimization_results[normalized_name] = {}` (`autotuner.py:2952`) but BEFORE the real delta keys / `_baseline_chosen` land later in the same iteration — left a stale, near-empty partial entry in `optimization_results`. `reporting.py`'s shape guard (`DE-AUTOTUNE-REPORTING-001`, F-015) would then render that empty entry as "Optimal parameters retained." — a **false success** for a symphony whose optimization actually failed. A dedicated RED test (`test_mid_window_exception_leaves_no_stale_partial_entry`, commit `dd53a20a`) proved the gap; the fix (commit `6a19a4c2`) adds `optimization_results.pop(normalized_name, None)` inside the except block before `continue`, so a failed symphony has NO key in the return dict — matching the early-failure case and closing the false-success path.
+
+### Tests
+
+16 tests across 3 new files, all green at HEAD `6a19a4c2` (this doc-writer's own run, `-n0`):
+- `tests/autotuner/test_bl2_loop_isolation.py` (10 tests) — isolation (exception caught, not propagated), sibling-persistence (a later symphony still saves after an earlier one fails), the SIGTERM-non-claim log-message pin, attempted/completed counter correctness (one-failure and zero-failure cases), zero-diff-besides-`_batch_summary` shape regression, all-symphonies-failing (0 completed, no crash), a late-stage `save_autotune_run` exception leaves no partial row, OC/DE internal failures still count the symphony as completed, and the mid-window stale-entry fix (`dd53a20a`/`6a19a4c2`).
+- `tests/execution/test_bl2_batch_summary_augment_guard.py` (1 test) — `augment_optimization_results_with_selection_stats` skips `_batch_summary` rather than issuing a spurious DB lookup.
+- `tests/reporting/test_bl2_partial_batch_eod_embed.py` (5 tests) — partial batch renders distinct from both full-batch and aborted embeds; `_batch_summary` never renders as a fake symphony embed; a full zero-failure batch does not render the partial-batch notice; an all-failed (0 completed) batch still renders an honest message; a missing `_batch_summary` key (legacy/pre-fix shape) never crashes.
+
+**Review:** `quant-code-reviewer` — BLOCK on `825b9878` (mid-window stale-partial-entry gap, above) → fix landed at `6a19a4c2` → re-review pending at this doc pass (not independently re-confirmed by this doc-writer; PM to reconcile on landing). Test-writer sufficiency verdict — SUFFICIENT.
+
+**Fresh authoritative count, HEAD `6a19a4c2`:** `python -m pytest tests/autotuner/test_bl2_loop_isolation.py tests/execution/test_bl2_batch_summary_augment_guard.py tests/reporting/test_bl2_partial_batch_eod_embed.py -n0` — 16 passed (this doc-writer's own run).
+
+### Files changed
+
+- `autotuner.py` — per-symphony loop wrapped in try/except/else; `_batch_attempted`/`_batch_completed` counters; `optimization_results["_batch_summary"]` additive return key; except-block `optimization_results.pop(normalized_name, None)` (review-found fix).
+- `reporting.py` — `send_eod_discord_post`'s per-symphony loop skips `_batch_summary`; new "⚠️ Autotuner Partial Batch" embed branch.
+- `alpha_bot_execution.py` — `augment_optimization_results_with_selection_stats` skips `_batch_summary` (+5 lines).
+- `tests/autotuner/test_bl2_loop_isolation.py` (new, 10 tests).
+- `tests/execution/test_bl2_batch_summary_augment_guard.py` (new, 1 test).
+- `tests/reporting/test_bl2_partial_batch_eod_embed.py` (new, 5 tests).
+- `docs/generated/autotuner.md`, `docs/generated/reporting.md`, `docs/generated/alpha_bot_execution.md`, `docs/generated/INDEX.md` (this doc pass).
+- `docs/audit/INV-FINDINGS-2026-08-05.md` (this doc pass — lands the PM's INV-1/INV-2 diagnostic findings referenced above).
+- `feature-plans/audit-bl2-autotuner-loop-isolation.md` (this doc pass — AC checkboxes ticked, `Status: shipped (pending merge)`).
+- `tests/autotuner/test_nn1_spec_freeze_discipline.py` (addendum fix, `7b75dcbd`).
+
+### Addendum — NN1 Probe Test-Technique Fix (2026-08-05, commit `7b75dcbd`)
+
+**Finding source:** `bl2review`'s independent full-suite re-verify run during the fix re-review (not the original Toxic Pair cycle) surfaced a BL-2-caused regression in `test_run_autotuner_calls_validate_search_space_nn1_before_create_study` (`tests/autotuner/test_nn1_spec_freeze_discipline.py`). The test's probe technique — mock `create_study` to raise `StopIteration`, assert the exception propagates out of `run_autotuner` via `pytest.raises` — is invalidated by the now-approved `except Exception` isolation: `StopIteration` is a genuine `Exception` subclass, so it is now correctly caught and swallowed as an isolated per-symphony failure; `run_autotuner` returns normally and `pytest.raises` never fires.
+
+**PM root-cause ruling: a test-technique fix, NOT a code carve-out.** The plan's AC-1 language explicitly covers "an uncaught exception raised ANYWHERE within one symphony's processing" — narrowing the isolation guard to exclude a specific exception class (e.g. an NN1-violation severity carve-out) would be unrequested scope the feature plan never asked for. Post-BL-2, a genuine NN1 violation now surfaces honestly as `attempted=N`/`completed=0` plus the distinct partial-batch Discord embed — operator-visible, not silent — rather than an uncaught exception crashing the whole process. Root cause = the test's raise-and-catch PROBE TECHNIQUE going stale under the newly-approved isolation semantics, not a gap in the isolation guard itself.
+
+**The fix (technique invalidated, purpose and ordering assertion preserved at full strength):** the probe was rewritten as a call-recording spy — `create_study` now returns a WORKING stub study (same shape as the BL-2 multi-symphony test harness: `optimize()` a no-op, `best_params`/`best_value` populated) instead of raising, so `run_autotuner` runs to genuine completion; `validate_search_space_nn1` is wrapped to log to the same `call_log`. The final assertion — `validate_search_space_nn1` is called strictly before `create_study` — is unchanged in substance from before. Non-vacuity was verified via a standalone hand-constructed check (not committed): the identical assertion logic passes against the correct-order `call_log` and correctly raises `AssertionError` against the inverted order, proving the assertion genuinely discriminates correct from incorrect wiring order rather than being a tautology. The three sibling `run_autotuner` refusal tests (spec-bundle-id/hash-mismatch/NN1-facet guards) all raise from PRE-LOOP guards — structurally outside the per-symphony loop and its try/except, `bot_state={}` so the loop never executes — and are unaffected by BL-2, left untouched.
+
+**Verification:** full `tests/autotuner/` (`-n0`): 923 passed, 1 skipped (pre-existing, documented, unrelated — the `_aggregate_cpcv_paths` deletion pin), 1 deselected (standard live-test exclusion). Both ruff gates green.
+
+### Reference
+
+`DE-AUDIT-BL2-001`; branch `fix/audit-bl2-loop-isolation`; worktree `.claude/worktrees/audit-bl2`; plan `feature-plans/audit-bl2-autotuner-loop-isolation.md`; base `origin/main` @ `cbcea1be` (#119, clean fork — verified no drift at this entry). Commit chain: `200d836a` (RED) → `825b9878` (GREEN) → `dd53a20a` (review-found RED) → `6a19a4c2` (fix) → `7b75dcbd` (bl2review-found NN1-probe test-technique fix, addendum above). Source finding: `docs/audit/TWO-WEEK-REVIEW-2026-08-04.md` §4 T2 / §6 BL-2 (annotated with a pointer to this entry in the same doc pass). Related: `docs/audit/INV-FINDINGS-2026-08-05.md` (INV-1 root-cause, the SIGTERM honesty boundary this entry's second paragraph summarizes).

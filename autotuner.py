@@ -2555,78 +2555,378 @@ def run_autotuner(
     # per-symphony rows from one invocation into a logical "run" for Claude context-assembly.
     run_timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
+    # BL-2: attempted/completed batch-visibility counters (isolation guard below).
+    _batch_attempted = 0
+    _batch_completed = 0
+
     for normalized_name in symphony_names:
-        print(f"     Optimizing Symphony: {normalized_name}")
-        strat_data = database.get_symphony_strategy(normalized_name)
-        locked_vars = strat_data.get("locked_vars", [])
-        current_params = strat_data.get("params", {})
-        original_params = current_params.copy()
+        _batch_attempted += 1
+        try:
+            print(f"     Optimizing Symphony: {normalized_name}")
+            strat_data = database.get_symphony_strategy(normalized_name)
+            locked_vars = strat_data.get("locked_vars", [])
+            current_params = strat_data.get("params", {})
+            original_params = current_params.copy()
 
-        # CPCV Phase 2: pre-compute the C(N,k)=15 fold descriptors ONCE per symphony
-        # (not inside the trial callback) so the fold structure is stable across all
-        # trials. AC-1 (R2, team-lead RULED Option A / split-level scoring —
-        # DECISIONS.md DE-MATH-R2-001): CPCV scores each of the 15 real splits
-        # directly on its own test_dates; the old 5-path aggregation
-        # (_aggregate_cpcv_paths) is retired — canonical CPCV backtest-path
-        # reconstruction is a refit-world construct that always collapses to 5
-        # identical full-window scores in a no-refit codebase (see the retirement
-        # comment above _generate_cpcv_folds).
-        #
-        # AC-2 (MA-5): the CPCV-eligible window is TRAIN-ONLY — train_dates, the
-        # SAME purge/embargo-trimmed cutoff already computed above for
-        # history_train (effective_train_cutoff = val_start_idx - PURGE_DAYS -
-        # EMBARGO_DAYS) — NOT train+validation combined as before. This makes
-        # validation_dates_full (used below for the OOS adoption cascade) a
-        # genuine, never-seen holdout: CPCV selection never touches it.
-        _cpcv_eligible_dates = sorted(train_dates)
-        _cpcv_folds = _generate_cpcv_folds(
-            sorted_dates=_cpcv_eligible_dates,
-            n_groups=_CPCV_N_GROUPS,
-            k_test=_CPCV_K_TEST_GROUPS,
-            purge_days=PURGE_DAYS,
-            embargo_days=EMBARGO_DAYS,
-        )
-        # The per-symphony CPCV-eligible history — the SAME train-only,
-        # purge-trimmed slice as history_train (built once above, unused
-        # elsewhere). Every one of the 15 splits' calls below shares this ONE
-        # dict (never pre-filtered further to a single split's own dates) so
-        # _replay_resolve_regime_exit_ticks's trailing window sees the FULL
-        # train-only chronology, never a gappy per-split subset (AC-1-adjacent
-        # regime-lookback chronology purity, ADDENDUM 5/6) — the score_dates
-        # kwarg on _collect_sim_returns_dated restricts which dates actually
-        # undergo the expensive per-tick replay per split, decoupling "what
-        # informs the regime label" from "what gets scored".
-        _cpcv_history = history_train
+            # CPCV Phase 2: pre-compute the C(N,k)=15 fold descriptors ONCE per symphony
+            # (not inside the trial callback) so the fold structure is stable across all
+            # trials. AC-1 (R2, team-lead RULED Option A / split-level scoring —
+            # DECISIONS.md DE-MATH-R2-001): CPCV scores each of the 15 real splits
+            # directly on its own test_dates; the old 5-path aggregation
+            # (_aggregate_cpcv_paths) is retired — canonical CPCV backtest-path
+            # reconstruction is a refit-world construct that always collapses to 5
+            # identical full-window scores in a no-refit codebase (see the retirement
+            # comment above _generate_cpcv_folds).
+            #
+            # AC-2 (MA-5): the CPCV-eligible window is TRAIN-ONLY — train_dates, the
+            # SAME purge/embargo-trimmed cutoff already computed above for
+            # history_train (effective_train_cutoff = val_start_idx - PURGE_DAYS -
+            # EMBARGO_DAYS) — NOT train+validation combined as before. This makes
+            # validation_dates_full (used below for the OOS adoption cascade) a
+            # genuine, never-seen holdout: CPCV selection never touches it.
+            _cpcv_eligible_dates = sorted(train_dates)
+            _cpcv_folds = _generate_cpcv_folds(
+                sorted_dates=_cpcv_eligible_dates,
+                n_groups=_CPCV_N_GROUPS,
+                k_test=_CPCV_K_TEST_GROUPS,
+                purge_days=PURGE_DAYS,
+                embargo_days=EMBARGO_DAYS,
+            )
+            # The per-symphony CPCV-eligible history — the SAME train-only,
+            # purge-trimmed slice as history_train (built once above, unused
+            # elsewhere). Every one of the 15 splits' calls below shares this ONE
+            # dict (never pre-filtered further to a single split's own dates) so
+            # _replay_resolve_regime_exit_ticks's trailing window sees the FULL
+            # train-only chronology, never a gappy per-split subset (AC-1-adjacent
+            # regime-lookback chronology purity, ADDENDUM 5/6) — the score_dates
+            # kwarg on _collect_sim_returns_dated restricts which dates actually
+            # undergo the expensive per-tick replay per split, decoupling "what
+            # informs the regime label" from "what gets scored".
+            _cpcv_history = history_train
 
-        def objective(trial):
-            p = current_params.copy()
-            # Only call suggest_* for vars NOT in locked_vars. A locked var
-            # already has its pinned value in p (from current_params.copy()
-            # above) and must not be offered to Optuna for exploration.
-            if "TAKE_PROFIT_MC_PCT" not in locked_vars:
-                p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float(
-                    "TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX
+            def objective(trial):
+                p = current_params.copy()
+                # Only call suggest_* for vars NOT in locked_vars. A locked var
+                # already has its pinned value in p (from current_params.copy()
+                # above) and must not be offered to Optuna for exploration.
+                if "TAKE_PROFIT_MC_PCT" not in locked_vars:
+                    p["TAKE_PROFIT_MC_PCT"] = trial.suggest_float(
+                        "TAKE_PROFIT_MC_PCT", _SS_TAKE_PROFIT_MC_MIN, _SS_TAKE_PROFIT_MC_MAX
+                    )
+                if "VWAP_CROSS_HWM_PCT" not in locked_vars:
+                    p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float(
+                        "VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX
+                    )
+                if "VWAP_BLEED_MULTIPLIER" not in locked_vars:
+                    p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float(
+                        "VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX
+                    )
+                if "VWAP_BLEED_TICKS" not in locked_vars:
+                    p["VWAP_BLEED_TICKS"] = trial.suggest_int(
+                        "VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX
+                    )
+                if "PARABOLIC_VELOCITY_THRESHOLD" not in locked_vars:
+                    p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float(
+                        "PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX
+                    )
+                if "MAX_PARABOLIC_SQUEEZE" not in locked_vars:
+                    p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float(
+                        "MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX
+                    )
+
+                acc_sym_ids = [
+                    k
+                    for k, v in bot_state.items()
+                    if isinstance(v, dict)
+                    and database.normalize_name(v.get("name", "")) == normalized_name
+                ]
+                if not acc_sym_ids:
+                    return 0.0
+                target_sym_id = acc_sym_ids[0]
+
+                # CPCV: score this trial on the mean across the _CPCV_N_SPLITS=15 real
+                # splits (AC-1, R2: split-level scoring — team-lead RULED Option A).
+                # Each split is scored ONCE per trial (NOT 15 separate Optuna
+                # evaluations — n_optuna / compute_n_effective / BHY are UNTOUCHED;
+                # CPCV changes WHAT data each trial scores on, not HOW MANY tests
+                # exist). _cpcv_history is the SAME train-only per-symphony dict for
+                # every split's call (never pre-filtered to one split's own dates —
+                # see _cpcv_history's construction above); score_dates restricts
+                # which dates actually contribute to THIS split's returns, so the
+                # 15 splits produce genuinely distinct scores (unlike the old
+                # 5-path aggregation, which always collapsed to 5 identical
+                # full-window scores — MA-2).
+                #   - daily_date_returns: RAW PERCENT (daily_returns's T5 provenance contract;
+                #     _haircut_select divides by RETURN_PCT_TO_FRACTION before the U-transform).
+                #   - cscv_date_returns: DECIMAL (compute_pbo's contract; divided here — C1).
+                # Both are built as dicts (date -> guard_alpha) via union/update — a date
+                # can appear in multiple splits (each group is a test group in
+                # _CPCV_K_TEST_GROUPS-1 x (_CPCV_N_GROUPS-1 choose _CPCV_K_TEST_GROUPS-1)
+                # splits), and every appearance yields the SAME guard_alpha for that date
+                # (state-independent per-day sim, no per-fold refit) — the date-keyed
+                # dicts collapse the duplication to exactly one entry per distinct
+                # triggered date, so T == the true distinct-date count, never inflated
+                # by split multiplicity.
+                split_scores: list[float] = []
+                daily_date_returns: dict[str, float] = {}
+                cscv_date_returns: dict[str, float] = {}
+                for _fold in _cpcv_folds:
+                    _split_dates = set(_fold["test_dates"])
+                    # _collect_sim_returns_dated (not a separate _collect_sim_returns
+                    # call) is the single source of truth for this split's returns —
+                    # both the flat score input and the date-labeled union are
+                    # derived from the SAME replay pass, avoiding a redundant second
+                    # full replay over the split's dates.
+                    _dated_returns = _collect_sim_returns_dated(
+                        p,
+                        _cpcv_history,
+                        [target_sym_id],
+                        current_date_str,
+                        deviation_dict,
+                        score_dates=_split_dates,
+                    )
+                    _split_returns_pct = [_ga for _d, _ga in _dated_returns]
+                    split_scores.append(
+                        math_engine.compute_crra_eu_objective(
+                            [r / RETURN_PCT_TO_FRACTION for r in _split_returns_pct], _gamma
+                        )
+                        if _objective_kind == "crra_eu"
+                        else compute_sortino_ratio(_split_returns_pct)
+                    )
+                    for _date, _ga in _dated_returns:
+                        # daily_returns is RAW PERCENT (T5 provenance) — no divide here.
+                        daily_date_returns[_date] = _ga
+                        # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
+                        # DECIMAL, matching compute_pbo -> compute_crra_eu_objective's
+                        # contract (W = max(WEALTH_ARG_FLOOR, 1 + r)). Mirrors the inline
+                        # split-score divide above. Storing raw percent floored W on any
+                        # sub--1% day (U ~= -999), corrupting the PBO IS-best/OOS rank.
+                        cscv_date_returns[_date] = _ga / RETURN_PCT_TO_FRACTION
+
+                # Persist the per-date-aggregated return series (one entry per distinct
+                # triggered date — NOT _CPCV_N_SPLITS copies) so _haircut_select can source
+                # T = len(daily_returns) == the true distinct-date count and re-transform
+                # through the active gamma. Raw percent (T5 provenance contract — not U values).
+                trial.set_user_attr("daily_returns", list(daily_date_returns.values()))
+                # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
+                # Keys are date strings within the CPCV-eligible window (sorted(train_dates)).
+                # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
+                # applied at the store site above — C1 fix). This matches compute_pbo's
+                # decimal contract; it does NOT share daily_returns's raw-percent contract.
+                trial.set_user_attr("cscv_date_returns", cscv_date_returns)
+                # Persist the per-split CPCV scores so filter_sortino_sentinels can detect a
+                # sentinel split at the SPLIT-SCORE level. The trial value is the MEAN across
+                # splits; a single sentinel split (1e6) can be masked in the mean when the
+                # other splits are net-negative, so the aggregate value alone is insufficient
+                # to flag a degenerate zero-downside split (Sortino branch only — CRRA-EU
+                # never emits the sentinel).
+                trial.set_user_attr("split_scores", split_scores)
+
+                # Trial score: mean across the _CPCV_N_SPLITS split scores.
+                # An empty split-score list contributes 0.0 (same fallback as the
+                # pre-CPCV single-fold path).
+                if not split_scores:
+                    return 0.0
+                return sum(split_scores) / len(split_scores)
+
+            start_time = time.time()
+
+            # Parallel Bayesian Optimization
+            db_url = "sqlite:///optuna_studies.db"
+            storage = optuna.storages.RDBStorage(
+                url=db_url, engine_kwargs={"connect_args": {"timeout": 60}}
+            )
+            study_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+            # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
+            # Named constants _OPTUNA_SAMPLER_SEED_ENV / _OPTUNA_N_JOBS_ENV carry the
+            # canonical string values; the literals appear here so the env dependency
+            # is auditable at the call site without tracing the constant definitions.
+            _seed_raw = os.environ.get("OPTUNA_SAMPLER_SEED")
+            _sampler_seed = int(_seed_raw) if _seed_raw is not None and _seed_raw.strip() else None
+            # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6); default 1 for SQLite
+            # RDBStorage writer-lock safety — see _resolve_optuna_n_jobs_from_env docstring.
+            _n_jobs_raw = os.environ.get("OPTUNA_N_JOBS")
+            _n_jobs = _resolve_optuna_n_jobs_from_env()
+            # Pruner: NopPruner (OPTUNA-2 pin) — the objective is end-of-trial-scored
+            # (a single scalar after the full guard-alpha sim; the simulation runs
+            # to completion with no intermediate step reporting to Optuna). Any
+            # pruner is silently inactive today. Explicit NopPruner documents the
+            # intent: if a future PR adds intermediate step reporting it must
+            # consciously choose a pruner family — because activating MedianPruner
+            # would censor the BHY (Harvey & Liu) haircut's trial set (c(N)
+            # Yekutieli factor calibrated over the COMPLETE set) and break the
+            # N_effective additive accounting (sums across ALL completed trials).
+            # A pruner-family change is a methodology change — surface to PM first.
+            study = optuna.create_study(
+                study_name=f"{study_timestamp}__{normalized_name}",
+                storage=storage,
+                load_if_exists=False,
+                direction="maximize",
+                sampler=optuna.samplers.TPESampler(seed=_sampler_seed),
+                pruner=optuna.pruners.NopPruner(),
+            )
+            study.optimize(objective, n_trials=OPTUNA_N_TRIALS_PRODUCTION, n_jobs=_n_jobs)
+
+            naive_sharpe_value = study.best_value
+            best_alpha_train = naive_sharpe_value
+            best_params = study.best_params
+
+            # --- HARVEY & LIU SELECTION HAIRCUT (AI branch only) ---
+            # The best-of-N Optuna Sortino is upward-biased by selection across N
+            # trials. The Harvey & Liu 2015 BHY haircut corrects this: each completed
+            # trial gets a t-statistic Sortino·sqrt(T), a one-sided p-value, and a
+            # Benjamini-Hochberg-adjusted p-value over the whole trial set; the
+            # BHY-winning trial (argmin p_adj) is deployed only if it clears the FDR
+            # gate. If no trial clears the gate the trial set is statistically
+            # indistinguishable from noise and the AI proposal is rejected — the
+            # cascade then falls through to fallback/default (overfitting protection).
+            # The stored selection_tstat value is the winner's t-statistic — a
+            # higher-is-better significance scalar that keeps the persistence/Discord
+            # surface's orientation honest; the adjusted p-value is the internal
+            # selection key, surfaced only in logs.
+            selection_tstat_value: float | None = None
+            haircut_rejected_proposal = False
+            # ARCH-001: EUT audit values — initialized here so they are always defined
+            # for save_autotune_run even when the haircut_trials block is skipped.
+            n_eff: int = 0
+            d_spec: int = 0
+            try:
+                completed_trials = [t for t in study.trials if t.value is not None]
+            except TypeError:
+                completed_trials = []
+
+            # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
+            # zero-downside trials AND partial-sentinel CPCV means (one sentinel path,
+            # value ~= _SORTINO_SENTINEL/_CPCV_N_PATHS) — a sentinel's t-statistic would
+            # dominate the haircut and let a degenerate trial masquerade as a genuine signal.
+            haircut_trials = filter_sortino_sentinels(completed_trials)
+
+            if haircut_trials:
+                # Route tstat_fn based on objective_kind (sourced from spec_facets above).
+                # CRRA-EU branch: compute_crra_eu_tstat(U_series) = mean(U)/(sd(U)/sqrt(T)).
+                # Sortino branch: compute_sortino_tstat(sortino, T) = sortino*sqrt(T) (default).
+                # Using compute_sortino_tstat for a mean-valued objective is the H-6 category
+                # error (autotuner.py:266-271 precedent); the discriminator enforces the split.
+                if _objective_kind == "crra_eu":
+                    _tstat_fn = compute_crra_eu_tstat
+                else:
+                    _tstat_fn = compute_sortino_tstat
+                # NEFF-001 + ARCH-001 fix: wire compute_n_effective before _haircut_select
+                # and capture n_eff + d_spec for the EUT audit trail (save_autotune_run).
+                # In the NN1-honest case S=0 → n_eff == len(haircut_trials) → byte-identical
+                # to the pre-wiring behavior (plan D2 backward-compatibility contract).
+                _ledger_rows = database.get_researcher_dof_ledger_for_run(
+                    run_timestamp,
+                    winning_spec_bundle_id=stored_hash,
                 )
-            if "VWAP_CROSS_HWM_PCT" not in locked_vars:
-                p["VWAP_CROSS_HWM_PCT"] = trial.suggest_float(
-                    "VWAP_CROSS_HWM_PCT", _SS_VWAP_CROSS_HWM_MIN, _SS_VWAP_CROSS_HWM_MAX
+                n_eff = compute_n_effective(
+                    n_optuna=len(haircut_trials),
+                    ledger_query=lambda: _ledger_rows,
                 )
-            if "VWAP_BLEED_MULTIPLIER" not in locked_vars:
-                p["VWAP_BLEED_MULTIPLIER"] = trial.suggest_float(
-                    "VWAP_BLEED_MULTIPLIER", _SS_VWAP_BLEED_MULT_MIN, _SS_VWAP_BLEED_MULT_MAX
+                # d_spec: COUNT DISTINCT spec_bundle_ids from BACKTEST_SELECTION rows
+                # (council §5; differs from S which is SUM(n_configs_searched)).
+                d_spec = len(
+                    {
+                        row.get("spec_bundle_id")
+                        for row in _ledger_rows
+                        if row.get("spec_bundle_id") is not None
+                    }
                 )
-            if "VWAP_BLEED_TICKS" not in locked_vars:
-                p["VWAP_BLEED_TICKS"] = trial.suggest_int(
-                    "VWAP_BLEED_TICKS", _SS_VWAP_BLEED_TICKS_MIN, _SS_VWAP_BLEED_TICKS_MAX
+                winner_trial, winner_p_adj, winner_tstat = _haircut_select(
+                    haircut_trials, n_effective=n_eff, tstat_fn=_tstat_fn, gamma=_gamma
                 )
-            if "PARABOLIC_VELOCITY_THRESHOLD" not in locked_vars:
-                p["PARABOLIC_VELOCITY_THRESHOLD"] = trial.suggest_float(
-                    "PARABOLIC_VELOCITY_THRESHOLD", _SS_PARA_VEL_MIN, _SS_PARA_VEL_MAX
+                if winner_trial is not None:
+                    best_params = winner_trial.params
+                    best_alpha_train = winner_trial.value
+                    selection_tstat_value = winner_tstat
+                else:
+                    # No trial cleared the FDR gate — reject the AI proposal.
+                    haircut_rejected_proposal = True
+                    print(
+                        f"       Harvey & Liu haircut: no trial cleared the q="
+                        f"{HARVEY_LIU_FDR_Q} FDR gate for '{normalized_name}' "
+                        f"(best adjusted p-value {winner_p_adj}). Rejecting AI "
+                        f"proposal; cascading to Fallback/Default."
+                    )
+            # ----------------------------------------------------
+
+            # --- PHASE-3 PBO GATE: compute_pbo on top-K PRE-BHY configs ---
+            # PBO (Probability of Backtest Overfitting) is computed on the top-_CSCV_TOP_K
+            # trials by RAW Optuna value (pre-BHY). This measures SELECTION-PROCESS
+            # overfitting — does the IS-best config from the optimization generalize OOS
+            # across all CSCV date-partitions? It is the sample-robustness axis, ORTHOGONAL
+            # to the BHY multiplicity axis (n_effective / _haircut_select unchanged).
+            # Reference: Bailey & López de Prado 2014, DOI 10.21314/JCF.2014.005.
+            _pbo_value: float | None = None
+            if haircut_trials:
+                # Sort by raw Optuna value descending, take top _CSCV_TOP_K pre-BHY.
+                _top_k_trials = sorted(
+                    haircut_trials,
+                    key=lambda t: t.value if t.value is not None else float("-inf"),
+                    reverse=True,
+                )[: math_engine._CSCV_TOP_K]
+                # Build list[dict[str, float]]: one cscv_date_returns dict per config.
+                # Trials without cscv_date_returns (e.g. very old study rows) are skipped.
+                _top_k_configs: list[dict[str, float]] = [
+                    t.user_attrs["cscv_date_returns"]
+                    for t in _top_k_trials
+                    if "cscv_date_returns" in t.user_attrs
+                ]
+                if len(_top_k_configs) >= 2:
+                    _pbo_value = math_engine.compute_pbo(
+                        _top_k_configs,
+                        _cpcv_eligible_dates,
+                        _gamma,
+                    )
+            # -------------------------------------------------------
+
+            # --- BEST_PARAMS SCHEMA VALIDATION (B2-FU2) ---
+            # An empty best_params or one missing any required search-space key indicates
+            # a degenerate/aborted study. Reject the WHOLE AI proposal (no key-by-key
+            # merge -- partial merges produce Frankenstein params where some keys
+            # come from the AI and others from current/fallback). Force the cascade
+            # to fall through to fallback (or default if fallback also fails) by
+            # poisoning oos_alpha to -inf. Do NOT raise -- the daemon must keep ticking.
+            #
+            # Locked-vars injection: vars in both OPTUNA_SEARCH_SPACE_KEYS and
+            # locked_vars are excluded from suggest_* above, so they are absent
+            # from best_params (winner_trial.params). Inject them from current_params
+            # before the issubset check so (a) schema validation passes for locked
+            # keys and (b) OOS evaluation of the AI proposal uses the pinned value.
+            # This does NOT weaken the schema check — genuinely missing unlocked
+            # keys still trigger the invalid path.
+            # Copy first: best_params IS winner_trial.params on the haircut path
+            # (autotuner.py:2285). Mutating it in-place could corrupt Optuna's
+            # internal trial state under RDB storage. A shallow copy is sufficient
+            # (values are scalars). n_effective/DOF: locking reduces search
+            # dimensionality but NOT n_optuna (trial count); BHY counts independent
+            # tests, not search-space dims — orthogonal, no change needed.
+            best_params = dict(best_params)
+            _locked_search_space = OPTUNA_SEARCH_SPACE_KEYS & set(locked_vars)
+            for _lk in _locked_search_space:
+                if _lk not in best_params and _lk in current_params:
+                    best_params[_lk] = current_params[_lk]
+            ai_proposal_invalid = (
+                haircut_rejected_proposal
+                or not best_params
+                or not OPTUNA_SEARCH_SPACE_KEYS.issubset(best_params.keys())
+            )
+            if ai_proposal_invalid and not haircut_rejected_proposal:
+                missing = sorted(OPTUNA_SEARCH_SPACE_KEYS - set(best_params.keys()))
+                print(
+                    f"       Warning: best_params schema invalid for '{normalized_name}' "
+                    f"(missing keys: {missing or '<empty dict>'}). "
+                    f"Rejecting AI proposal; cascading to Fallback/Default."
                 )
-            if "MAX_PARABOLIC_SQUEEZE" not in locked_vars:
-                p["MAX_PARABOLIC_SQUEEZE"] = trial.suggest_float(
-                    "MAX_PARABOLIC_SQUEEZE", _SS_MAX_PARA_SQUEEZE_MIN, _SS_MAX_PARA_SQUEEZE_MAX
-                )
+            if ai_proposal_invalid:
+                selection_tstat_value = None
+                naive_sharpe_value = None
+            # ---------------------------------------------
+
+            # Evaluate OOS robustness
+            best_p = current_params.copy()
+            for name, val in best_params.items():
+                best_p[name] = round(val, 2)
 
             acc_sym_ids = [
                 k
@@ -2634,663 +2934,399 @@ def run_autotuner(
                 if isinstance(v, dict)
                 and database.normalize_name(v.get("name", "")) == normalized_name
             ]
-            if not acc_sym_ids:
-                return 0.0
-            target_sym_id = acc_sym_ids[0]
-
-            # CPCV: score this trial on the mean across the _CPCV_N_SPLITS=15 real
-            # splits (AC-1, R2: split-level scoring — team-lead RULED Option A).
-            # Each split is scored ONCE per trial (NOT 15 separate Optuna
-            # evaluations — n_optuna / compute_n_effective / BHY are UNTOUCHED;
-            # CPCV changes WHAT data each trial scores on, not HOW MANY tests
-            # exist). _cpcv_history is the SAME train-only per-symphony dict for
-            # every split's call (never pre-filtered to one split's own dates —
-            # see _cpcv_history's construction above); score_dates restricts
-            # which dates actually contribute to THIS split's returns, so the
-            # 15 splits produce genuinely distinct scores (unlike the old
-            # 5-path aggregation, which always collapsed to 5 identical
-            # full-window scores — MA-2).
-            #   - daily_date_returns: RAW PERCENT (daily_returns's T5 provenance contract;
-            #     _haircut_select divides by RETURN_PCT_TO_FRACTION before the U-transform).
-            #   - cscv_date_returns: DECIMAL (compute_pbo's contract; divided here — C1).
-            # Both are built as dicts (date -> guard_alpha) via union/update — a date
-            # can appear in multiple splits (each group is a test group in
-            # _CPCV_K_TEST_GROUPS-1 x (_CPCV_N_GROUPS-1 choose _CPCV_K_TEST_GROUPS-1)
-            # splits), and every appearance yields the SAME guard_alpha for that date
-            # (state-independent per-day sim, no per-fold refit) — the date-keyed
-            # dicts collapse the duplication to exactly one entry per distinct
-            # triggered date, so T == the true distinct-date count, never inflated
-            # by split multiplicity.
-            split_scores: list[float] = []
-            daily_date_returns: dict[str, float] = {}
-            cscv_date_returns: dict[str, float] = {}
-            for _fold in _cpcv_folds:
-                _split_dates = set(_fold["test_dates"])
-                # _collect_sim_returns_dated (not a separate _collect_sim_returns
-                # call) is the single source of truth for this split's returns —
-                # both the flat score input and the date-labeled union are
-                # derived from the SAME replay pass, avoiding a redundant second
-                # full replay over the split's dates.
-                _dated_returns = _collect_sim_returns_dated(
-                    p,
-                    _cpcv_history,
-                    [target_sym_id],
-                    current_date_str,
-                    deviation_dict,
-                    score_dates=_split_dates,
-                )
-                _split_returns_pct = [_ga for _d, _ga in _dated_returns]
-                split_scores.append(
-                    math_engine.compute_crra_eu_objective(
-                        [r / RETURN_PCT_TO_FRACTION for r in _split_returns_pct], _gamma
-                    )
-                    if _objective_kind == "crra_eu"
-                    else compute_sortino_ratio(_split_returns_pct)
-                )
-                for _date, _ga in _dated_returns:
-                    # daily_returns is RAW PERCENT (T5 provenance) — no divide here.
-                    daily_date_returns[_date] = _ga
-                    # C1 fix: divide by RETURN_PCT_TO_FRACTION so the stored value is
-                    # DECIMAL, matching compute_pbo -> compute_crra_eu_objective's
-                    # contract (W = max(WEALTH_ARG_FLOOR, 1 + r)). Mirrors the inline
-                    # split-score divide above. Storing raw percent floored W on any
-                    # sub--1% day (U ~= -999), corrupting the PBO IS-best/OOS rank.
-                    cscv_date_returns[_date] = _ga / RETURN_PCT_TO_FRACTION
-
-            # Persist the per-date-aggregated return series (one entry per distinct
-            # triggered date — NOT _CPCV_N_SPLITS copies) so _haircut_select can source
-            # T = len(daily_returns) == the true distinct-date count and re-transform
-            # through the active gamma. Raw percent (T5 provenance contract — not U values).
-            trial.set_user_attr("daily_returns", list(daily_date_returns.values()))
-            # Persist the date-labeled union for the Phase-3 CSCV PBO gate.
-            # Keys are date strings within the CPCV-eligible window (sorted(train_dates)).
-            # Values are DECIMAL guard_alpha returns (raw percent / RETURN_PCT_TO_FRACTION,
-            # applied at the store site above — C1 fix). This matches compute_pbo's
-            # decimal contract; it does NOT share daily_returns's raw-percent contract.
-            trial.set_user_attr("cscv_date_returns", cscv_date_returns)
-            # Persist the per-split CPCV scores so filter_sortino_sentinels can detect a
-            # sentinel split at the SPLIT-SCORE level. The trial value is the MEAN across
-            # splits; a single sentinel split (1e6) can be masked in the mean when the
-            # other splits are net-negative, so the aggregate value alone is insufficient
-            # to flag a degenerate zero-downside split (Sortino branch only — CRRA-EU
-            # never emits the sentinel).
-            trial.set_user_attr("split_scores", split_scores)
-
-            # Trial score: mean across the _CPCV_N_SPLITS split scores.
-            # An empty split-score list contributes 0.0 (same fallback as the
-            # pre-CPCV single-fold path).
-            if not split_scores:
-                return 0.0
-            return sum(split_scores) / len(split_scores)
-
-        start_time = time.time()
-
-        # Parallel Bayesian Optimization
-        db_url = "sqlite:///optuna_studies.db"
-        storage = optuna.storages.RDBStorage(
-            url=db_url, engine_kwargs={"connect_args": {"timeout": 60}}
-        )
-        study_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-        # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
-        # Named constants _OPTUNA_SAMPLER_SEED_ENV / _OPTUNA_N_JOBS_ENV carry the
-        # canonical string values; the literals appear here so the env dependency
-        # is auditable at the call site without tracing the constant definitions.
-        _seed_raw = os.environ.get("OPTUNA_SAMPLER_SEED")
-        _sampler_seed = int(_seed_raw) if _seed_raw is not None and _seed_raw.strip() else None
-        # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6); default 1 for SQLite
-        # RDBStorage writer-lock safety — see _resolve_optuna_n_jobs_from_env docstring.
-        _n_jobs_raw = os.environ.get("OPTUNA_N_JOBS")
-        _n_jobs = _resolve_optuna_n_jobs_from_env()
-        # Pruner: NopPruner (OPTUNA-2 pin) — the objective is end-of-trial-scored
-        # (a single scalar after the full guard-alpha sim; the simulation runs
-        # to completion with no intermediate step reporting to Optuna). Any
-        # pruner is silently inactive today. Explicit NopPruner documents the
-        # intent: if a future PR adds intermediate step reporting it must
-        # consciously choose a pruner family — because activating MedianPruner
-        # would censor the BHY (Harvey & Liu) haircut's trial set (c(N)
-        # Yekutieli factor calibrated over the COMPLETE set) and break the
-        # N_effective additive accounting (sums across ALL completed trials).
-        # A pruner-family change is a methodology change — surface to PM first.
-        study = optuna.create_study(
-            study_name=f"{study_timestamp}__{normalized_name}",
-            storage=storage,
-            load_if_exists=False,
-            direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=_sampler_seed),
-            pruner=optuna.pruners.NopPruner(),
-        )
-        study.optimize(objective, n_trials=OPTUNA_N_TRIALS_PRODUCTION, n_jobs=_n_jobs)
-
-        naive_sharpe_value = study.best_value
-        best_alpha_train = naive_sharpe_value
-        best_params = study.best_params
-
-        # --- HARVEY & LIU SELECTION HAIRCUT (AI branch only) ---
-        # The best-of-N Optuna Sortino is upward-biased by selection across N
-        # trials. The Harvey & Liu 2015 BHY haircut corrects this: each completed
-        # trial gets a t-statistic Sortino·sqrt(T), a one-sided p-value, and a
-        # Benjamini-Hochberg-adjusted p-value over the whole trial set; the
-        # BHY-winning trial (argmin p_adj) is deployed only if it clears the FDR
-        # gate. If no trial clears the gate the trial set is statistically
-        # indistinguishable from noise and the AI proposal is rejected — the
-        # cascade then falls through to fallback/default (overfitting protection).
-        # The stored selection_tstat value is the winner's t-statistic — a
-        # higher-is-better significance scalar that keeps the persistence/Discord
-        # surface's orientation honest; the adjusted p-value is the internal
-        # selection key, surfaced only in logs.
-        selection_tstat_value: float | None = None
-        haircut_rejected_proposal = False
-        # ARCH-001: EUT audit values — initialized here so they are always defined
-        # for save_autotune_run even when the haircut_trials block is skipped.
-        n_eff: int = 0
-        d_spec: int = 0
-        try:
-            completed_trials = [t for t in study.trials if t.value is not None]
-        except TypeError:
-            completed_trials = []
-
-        # filter_sortino_sentinels excludes math_engine._SORTINO_SENTINEL (1e6)
-        # zero-downside trials AND partial-sentinel CPCV means (one sentinel path,
-        # value ~= _SORTINO_SENTINEL/_CPCV_N_PATHS) — a sentinel's t-statistic would
-        # dominate the haircut and let a degenerate trial masquerade as a genuine signal.
-        haircut_trials = filter_sortino_sentinels(completed_trials)
-
-        if haircut_trials:
-            # Route tstat_fn based on objective_kind (sourced from spec_facets above).
-            # CRRA-EU branch: compute_crra_eu_tstat(U_series) = mean(U)/(sd(U)/sqrt(T)).
-            # Sortino branch: compute_sortino_tstat(sortino, T) = sortino*sqrt(T) (default).
-            # Using compute_sortino_tstat for a mean-valued objective is the H-6 category
-            # error (autotuner.py:266-271 precedent); the discriminator enforces the split.
-            if _objective_kind == "crra_eu":
-                _tstat_fn = compute_crra_eu_tstat
-            else:
-                _tstat_fn = compute_sortino_tstat
-            # NEFF-001 + ARCH-001 fix: wire compute_n_effective before _haircut_select
-            # and capture n_eff + d_spec for the EUT audit trail (save_autotune_run).
-            # In the NN1-honest case S=0 → n_eff == len(haircut_trials) → byte-identical
-            # to the pre-wiring behavior (plan D2 backward-compatibility contract).
-            _ledger_rows = database.get_researcher_dof_ledger_for_run(
-                run_timestamp,
-                winning_spec_bundle_id=stored_hash,
-            )
-            n_eff = compute_n_effective(
-                n_optuna=len(haircut_trials),
-                ledger_query=lambda: _ledger_rows,
-            )
-            # d_spec: COUNT DISTINCT spec_bundle_ids from BACKTEST_SELECTION rows
-            # (council §5; differs from S which is SUM(n_configs_searched)).
-            d_spec = len(
-                {
-                    row.get("spec_bundle_id")
-                    for row in _ledger_rows
-                    if row.get("spec_bundle_id") is not None
-                }
-            )
-            winner_trial, winner_p_adj, winner_tstat = _haircut_select(
-                haircut_trials, n_effective=n_eff, tstat_fn=_tstat_fn, gamma=_gamma
-            )
-            if winner_trial is not None:
-                best_params = winner_trial.params
-                best_alpha_train = winner_trial.value
-                selection_tstat_value = winner_tstat
-            else:
-                # No trial cleared the FDR gate — reject the AI proposal.
-                haircut_rejected_proposal = True
-                print(
-                    f"       Harvey & Liu haircut: no trial cleared the q="
-                    f"{HARVEY_LIU_FDR_Q} FDR gate for '{normalized_name}' "
-                    f"(best adjusted p-value {winner_p_adj}). Rejecting AI "
-                    f"proposal; cascading to Fallback/Default."
-                )
-        # ----------------------------------------------------
-
-        # --- PHASE-3 PBO GATE: compute_pbo on top-K PRE-BHY configs ---
-        # PBO (Probability of Backtest Overfitting) is computed on the top-_CSCV_TOP_K
-        # trials by RAW Optuna value (pre-BHY). This measures SELECTION-PROCESS
-        # overfitting — does the IS-best config from the optimization generalize OOS
-        # across all CSCV date-partitions? It is the sample-robustness axis, ORTHOGONAL
-        # to the BHY multiplicity axis (n_effective / _haircut_select unchanged).
-        # Reference: Bailey & López de Prado 2014, DOI 10.21314/JCF.2014.005.
-        _pbo_value: float | None = None
-        if haircut_trials:
-            # Sort by raw Optuna value descending, take top _CSCV_TOP_K pre-BHY.
-            _top_k_trials = sorted(
-                haircut_trials,
-                key=lambda t: t.value if t.value is not None else float("-inf"),
-                reverse=True,
-            )[: math_engine._CSCV_TOP_K]
-            # Build list[dict[str, float]]: one cscv_date_returns dict per config.
-            # Trials without cscv_date_returns (e.g. very old study rows) are skipped.
-            _top_k_configs: list[dict[str, float]] = [
-                t.user_attrs["cscv_date_returns"]
-                for t in _top_k_trials
-                if "cscv_date_returns" in t.user_attrs
-            ]
-            if len(_top_k_configs) >= 2:
-                _pbo_value = math_engine.compute_pbo(
-                    _top_k_configs,
-                    _cpcv_eligible_dates,
-                    _gamma,
-                )
-        # -------------------------------------------------------
-
-        # --- BEST_PARAMS SCHEMA VALIDATION (B2-FU2) ---
-        # An empty best_params or one missing any required search-space key indicates
-        # a degenerate/aborted study. Reject the WHOLE AI proposal (no key-by-key
-        # merge -- partial merges produce Frankenstein params where some keys
-        # come from the AI and others from current/fallback). Force the cascade
-        # to fall through to fallback (or default if fallback also fails) by
-        # poisoning oos_alpha to -inf. Do NOT raise -- the daemon must keep ticking.
-        #
-        # Locked-vars injection: vars in both OPTUNA_SEARCH_SPACE_KEYS and
-        # locked_vars are excluded from suggest_* above, so they are absent
-        # from best_params (winner_trial.params). Inject them from current_params
-        # before the issubset check so (a) schema validation passes for locked
-        # keys and (b) OOS evaluation of the AI proposal uses the pinned value.
-        # This does NOT weaken the schema check — genuinely missing unlocked
-        # keys still trigger the invalid path.
-        # Copy first: best_params IS winner_trial.params on the haircut path
-        # (autotuner.py:2285). Mutating it in-place could corrupt Optuna's
-        # internal trial state under RDB storage. A shallow copy is sufficient
-        # (values are scalars). n_effective/DOF: locking reduces search
-        # dimensionality but NOT n_optuna (trial count); BHY counts independent
-        # tests, not search-space dims — orthogonal, no change needed.
-        best_params = dict(best_params)
-        _locked_search_space = OPTUNA_SEARCH_SPACE_KEYS & set(locked_vars)
-        for _lk in _locked_search_space:
-            if _lk not in best_params and _lk in current_params:
-                best_params[_lk] = current_params[_lk]
-        ai_proposal_invalid = (
-            haircut_rejected_proposal
-            or not best_params
-            or not OPTUNA_SEARCH_SPACE_KEYS.issubset(best_params.keys())
-        )
-        if ai_proposal_invalid and not haircut_rejected_proposal:
-            missing = sorted(OPTUNA_SEARCH_SPACE_KEYS - set(best_params.keys()))
-            print(
-                f"       Warning: best_params schema invalid for '{normalized_name}' "
-                f"(missing keys: {missing or '<empty dict>'}). "
-                f"Rejecting AI proposal; cascading to Fallback/Default."
-            )
-        if ai_proposal_invalid:
-            selection_tstat_value = None
-            naive_sharpe_value = None
-        # ---------------------------------------------
-
-        # Evaluate OOS robustness
-        best_p = current_params.copy()
-        for name, val in best_params.items():
-            best_p[name] = round(val, 2)
-
-        acc_sym_ids = [
-            k
-            for k, v in bot_state.items()
-            if isinstance(v, dict) and database.normalize_name(v.get("name", "")) == normalized_name
-        ]
-        target_sym_id = acc_sym_ids[0] if acc_sym_ids else None
-        oos_alpha = -run_simulation(
-            best_p,
-            history_validation_full,
-            [target_sym_id] if target_sym_id else [],
-            current_date_str,
-            deviation_dict,
-        )
-
-        # If the AI proposal is schema-invalid, poison its OOS alpha so the
-        # cascade below naturally selects fallback (or default). Done AFTER
-        # the simulation runs so any side-effects/logging are preserved.
-        if ai_proposal_invalid:
-            oos_alpha = -math.inf
-
-        optimization_results[normalized_name] = {}
-
-        # OPTUNA-4 Path B operator-visibility emission. Derived from the live
-        # fold-construction variables (raw_val_dates, raw_frozen_dates, PURGE_DAYS,
-        # EMBARGO_DAYS) so any future drift in the inputs surfaces here automatically.
-        _raw_val_days = len(raw_val_dates)
-        _raw_frozen_days = len(raw_frozen_dates)
-        _usable_val_days = max(0, _raw_val_days - PURGE_DAYS - EMBARGO_DAYS)
-        optimization_results[normalized_name]["eval_window_days"] = {
-            "raw_validation_days": _raw_val_days,
-            "usable_validation_days": _usable_val_days,
-            "raw_frozen_eval_days": _raw_frozen_days,
-            "purge_days": PURGE_DAYS,
-            "embargo_days": EMBARGO_DAYS,
-        }
-
-        # Evaluate fallback parameters in OOS for comparison
-        fallback_params = current_params.copy()
-        fallback_oos_alpha = -run_simulation(
-            fallback_params,
-            history_validation_full,
-            [target_sym_id] if target_sym_id else [],
-            current_date_str,
-            deviation_dict,
-        )
-
-        # Evaluate global default parameters in OOS for comparison
-        default_params = database.DEFAULT_STRATEGY.copy()
-        default_oos_alpha = -run_simulation(
-            default_params,
-            history_validation_full,
-            [target_sym_id] if target_sym_id else [],
-            current_date_str,
-            deviation_dict,
-        )
-
-        # Validation-fold metric (selection truth — what Optuna actually optimized against).
-        # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
-        # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
-        validation_returns = _collect_sim_returns(
-            best_p,
-            history_validation,
-            [target_sym_id] if target_sym_id else [],
-            current_date_str,
-            deviation_dict,
-        )
-        if _objective_kind == "crra_eu":
-            validation_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
-        else:
-            validation_sharpe_value = (
-                compute_sortino_ratio(validation_returns) if validation_returns else None
+            target_sym_id = acc_sym_ids[0] if acc_sym_ids else None
+            oos_alpha = -run_simulation(
+                best_p,
+                history_validation_full,
+                [target_sym_id] if target_sym_id else [],
+                current_date_str,
+                deviation_dict,
             )
 
-        # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
-        # This is the honest performance metric — not seen by any Optuna trial callback.
-        # PURGE_DAYS referenced here confirms the boundary purge applies at validation|frozen-eval.
-        # Single read via _collect_sim_returns; no separate run_simulation call so the
-        # "consumed once" invariant holds across all frozen-fold access paths.
-        frozen_eval_returns = _collect_sim_returns(
-            best_p,
-            history_frozen,
-            [target_sym_id] if target_sym_id else [],
-            current_date_str,
-            deviation_dict,
-        )
-        if _objective_kind == "crra_eu":
-            # AC-3 (MA-9): the real CRRA-EU analog of the Sortino branch below —
-            # mirrors run_simulation_crra_eu's own pct->fraction conversion
-            # (RETURN_PCT_TO_FRACTION) + compute_crra_eu_objective call, applied
-            # to the frozen fold instead of a training/validation fold. Sortino
-            # is genuinely inapplicable to a CRRA-EU objective (different
-            # utility metric), but "inapplicable" no longer means "None" — the
-            # frozen fold's 20% data budget must buy a real measurement under
-            # whichever objective actually governs this symphony.
-            frozen_eval_sharpe_value = (
-                math_engine.compute_crra_eu_objective(
-                    [r / RETURN_PCT_TO_FRACTION for r in frozen_eval_returns], _gamma
-                )
-                if frozen_eval_returns
-                else None
-            )
-        else:
-            frozen_eval_sharpe_value = (
-                compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
-            )
+            # If the AI proposal is schema-invalid, poison its OOS alpha so the
+            # cascade below naturally selects fallback (or default). Done AFTER
+            # the simulation runs so any side-effects/logging are preserved.
+            if ai_proposal_invalid:
+                oos_alpha = -math.inf
 
-        # Calculate daily averages for better understanding
-        train_days_count = len(train_dates)
-        test_days_count = len(validation_dates_full)
+            optimization_results[normalized_name] = {}
 
-        avg_train_alpha = best_alpha_train / train_days_count if train_days_count > 0 else 0
-        avg_oos_alpha = oos_alpha / test_days_count if test_days_count > 0 else 0
-
-        baseline_decision = ""
-
-        # --- PHASE-3 ACCEPTANCE GATE (evaluate_acceptance_gate) ---
-        # Democratized offline gate: BHY haircut (winner_trial_is_none) + NN1
-        # spec-freeze + purge integrity vetoes → survivor panel → PBO veto.
-        # PBO veto (pbo > PBO_REJECT_THRESHOLD) is a STAGE-1 hard veto orthogonal
-        # to the BHY/n_effective multiplicity axis. pbo=None means not computed
-        # (fewer than 2 configs with cscv_date_returns) — no PBO veto fires.
-        # Stability and prior-anchor scores are computed as placeholder 1.0/1.0
-        # until the full advisor wiring is in place; the gate's load-bearing
-        # invariants (vetoes-dominant, one-directional brake) hold regardless.
-        #
-        # FORWARD-LOOKING FRICTION-MISMATCH RISK (incumbent_stability_score /
-        # incumbent_prior_anchor_score specifically): if a future cycle wires
-        # real DB-sourced values into these two INCUMBENT fields, confirm
-        # they were computed on a friction-consistent basis with the
-        # candidate score. A historical incumbent score computed by whatever
-        # replay code existed when that history was recorded (possibly
-        # gross-of-cost, pre-dating SIM_EXIT_FRICTION_PCT — see autotuner.py)
-        # compared against a candidate score from TODAY's friction-aware
-        # replay is a mismatched comparison — nothing currently catches that
-        # silently. See tests/autotuner/test_incumbent_score_friction_tripwire.py.
-        _gate_verdict = _acceptance_gate.evaluate_acceptance_gate(
-            winner_trial_is_none=(winner_trial is None if haircut_trials else True),
-            winner_p_adj=(winner_p_adj if haircut_trials else None),
-            nn1_compliant=(d_spec == 0),
-            # AC-2 (MA-5): genuinely computed above (val_start_idx -
-            # effective_train_cutoff >= PURGE_DAYS + EMBARGO_DAYS) — no
-            # hardcoded literal.
-            purge_integrity_ok=purge_integrity_ok,
-            oos_alpha=oos_alpha,
-            fallback_oos_alpha=fallback_oos_alpha,
-            default_oos_alpha=default_oos_alpha,
-            candidate_stability_score=1.0,
-            candidate_prior_anchor_score=1.0,
-            incumbent_stability_score=1.0,
-            incumbent_prior_anchor_score=1.0,
-            pbo=_pbo_value,
-        )
-        # PBO veto: only fire if the gate rejects AND the rejection is specifically
-        # caused by PBO exceeding the threshold (not BHY, which is already handled
-        # by the haircut block above, and not NN1/purge which have no current wiring).
-        # Guard: pbo_value is not None (veto only fires when PBO was actually computed)
-        # AND pbo > PBO_REJECT_THRESHOLD AND the BHY haircut DID produce a winner
-        # (haircut_rejected_proposal is False means BHY passed — the gate must have
-        # rejected on PBO specifically).
-        _pbo_veto_fired = (
-            _gate_verdict.decision == _acceptance_gate.DECISION_REJECT_VETO_FAILED
-            and not haircut_rejected_proposal
-            and _pbo_value is not None
-            and _pbo_value > math_engine.PBO_REJECT_THRESHOLD
-        )
-        if _pbo_veto_fired:
-            haircut_rejected_proposal = True
-            selection_tstat_value = None
-            naive_sharpe_value = None
-            ai_proposal_invalid = True
-            oos_alpha = -math.inf
-            print(
-                f"       Acceptance gate VETOED AI proposal for '{normalized_name}' "
-                f"(PBO={_pbo_value:.3f} > {math_engine.PBO_REJECT_THRESHOLD}). "
-                f"Cascading to Fallback/Default."
-            )
-        # ---------------------------------------------------
-
-        # B2-FU1: Asymmetric tie rule -- STRICT-POSITIVE on the AI branch
-        # (over-fit risk: an AI proposal that only TIES the validated fallback
-        # is not worth displacing the last-known-good params for), LENIENT
-        # (>=) on the fallback branch below (favors last-known-good on tie
-        # vs the global default).
-        if oos_alpha > fallback_oos_alpha and oos_alpha > default_oos_alpha:
-            if oos_alpha > 0:
-                print(
-                    f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)"  # noqa: E501  # un-wrappable long line
-                )
-            else:
-                print(
-                    f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%"  # noqa: E501  # un-wrappable long line
-                )
-            for name, val in best_params.items():
-                if name not in locked_vars:
-                    current_params[name] = round(val, 2)
-            baseline_decision = "Adopted AI"
-        elif fallback_oos_alpha >= default_oos_alpha:
-            print(
-                f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%)."  # noqa: E501  # un-wrappable long line
-            )
-            for k, v in fallback_params.items():
-                if k not in locked_vars:
-                    current_params[k] = v
-            baseline_decision = "Reverted to Fallback"
-        else:
-            print(
-                f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%)."  # noqa: E501  # un-wrappable long line
-            )
-            for k, v in default_params.items():
-                if k not in locked_vars:
-                    current_params[k] = v
-            baseline_decision = "Reset to Global Default"
-
-        # AC-3 / N-1: the frozen-eval Sortino was computed against the AI's
-        # best_p above. If the cascade demoted the AI proposal (Reverted to
-        # Fallback / Reset to Global Default) OR the proposal was rejected
-        # wholesale (haircut / schema-invalid), the DEPLOYED params are NOT
-        # the AI's — the operator-facing column must not carry a rejected
-        # proposal's frozen-eval metric as if it were the deployed set's.
-        # Null it here, symmetric with the selection_tstat + naive_sharpe
-        # reset above. The accepted "Adopted AI" branch preserves the value.
-        if baseline_decision != "Adopted AI":
-            frozen_eval_sharpe_value = None
-
-        # Build Discord logs ensuring all original variables are shown
-        optimization_results[normalized_name]["_baseline_chosen"] = baseline_decision
-        for k, original_val in original_params.items():
-            optimization_results[normalized_name][k] = {
-                "old": original_val,
-                "new": current_params.get(k, original_val),
+            # OPTUNA-4 Path B operator-visibility emission. Derived from the live
+            # fold-construction variables (raw_val_dates, raw_frozen_dates, PURGE_DAYS,
+            # EMBARGO_DAYS) so any future drift in the inputs surfaces here automatically.
+            _raw_val_days = len(raw_val_dates)
+            _raw_frozen_days = len(raw_frozen_dates)
+            _usable_val_days = max(0, _raw_val_days - PURGE_DAYS - EMBARGO_DAYS)
+            optimization_results[normalized_name]["eval_window_days"] = {
+                "raw_validation_days": _raw_val_days,
+                "usable_validation_days": _usable_val_days,
+                "raw_frozen_eval_days": _raw_frozen_days,
+                "purge_days": PURGE_DAYS,
+                "embargo_days": EMBARGO_DAYS,
             }
 
-        elapsed = time.time() - start_time
-        haircut_log = (
-            f" | Haircut t-stat: {selection_tstat_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"  # noqa: E501  # un-wrappable long line
-            if selection_tstat_value is not None and naive_sharpe_value is not None
-            else " | Haircut: N/A"
-        )
-        print(
-            f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}"  # noqa: E501  # log message string
-        )
+            # Evaluate fallback parameters in OOS for comparison
+            fallback_params = current_params.copy()
+            fallback_oos_alpha = -run_simulation(
+                fallback_params,
+                history_validation_full,
+                [target_sym_id] if target_sym_id else [],
+                current_date_str,
+                deviation_dict,
+            )
 
-        database.save_symphony_strategy(normalized_name, current_params, locked_vars)
+            # Evaluate global default parameters in OOS for comparison
+            default_params = database.DEFAULT_STRATEGY.copy()
+            default_oos_alpha = -run_simulation(
+                default_params,
+                history_validation_full,
+                [target_sym_id] if target_sym_id else [],
+                current_date_str,
+                deviation_dict,
+            )
 
-        # P1: Persist per-run validation metrics so Claude context-assembly can
-        # retrieve them via get_latest_autotune_run().  Called AFTER baseline_decision
-        # is finalized and save_symphony_strategy has written the chosen params,
-        # so the row captures the decision that was actually applied.
-        # selection_tstat carries the Harvey & Liu haircut winner's t-statistic (a
-        # higher-is-better significance scalar); naive_sharpe is the raw Optuna best.
-        # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
-        # metric, consumed once from the withheld final 20% fold).
-        # ARCH-001: assemble the overfitting_verdict string from EUT audit values.
-        # Format mirrors plan D5: "NN1_HONEST n_optuna=N d_spec=D n_effective=E"
-        # or "NN1_VIOLATION_TRIPWIRE ..." when d_spec > 0.
-        _n_optuna_for_verdict = len(haircut_trials) if haircut_trials else 0
-        _verdict_prefix = "NN1_HONEST" if d_spec == 0 else "NN1_VIOLATION_TRIPWIRE"
-        _overfitting_verdict = (
-            f"{_verdict_prefix} n_optuna={_n_optuna_for_verdict} "
-            f"D_spec={d_spec} n_effective={n_eff}"
-        )
+            # Validation-fold metric (selection truth — what Optuna actually optimized against).
+            # For CRRA-EU bundles, the Sortino ratio is not the selection metric — compute_crra_eu_objective  # noqa: E501  # inline comment cannot be wrapped without splitting the annotation
+            # was used. Sortino is suppressed (None) for CRRA-EU to avoid misleading reporting.
+            validation_returns = _collect_sim_returns(
+                best_p,
+                history_validation,
+                [target_sym_id] if target_sym_id else [],
+                current_date_str,
+                deviation_dict,
+            )
+            if _objective_kind == "crra_eu":
+                validation_sharpe_value = None  # Sortino not applicable to CRRA-EU objective
+            else:
+                validation_sharpe_value = (
+                    compute_sortino_ratio(validation_returns) if validation_returns else None
+                )
 
-        # AC-E2 (feature-plans/advisor-weekly-suggestions.md, Workstream E): hoisted
-        # ABOVE save_autotune_run so the accumulated S is persisted into THIS run's
-        # autotune_runs.s_count row.  Previously this query ran only AFTER the save
-        # (feeding solely the in-memory _oc_run dict below), so autotune_runs.s_count
-        # stayed NULL on every row forever — a later run's prior_runs query always
-        # saw None, so overfitting_conscience Indicator-3 (operator drift) could
-        # structurally never fire on live data.  Control-flow reorder only: the
-        # current-run I-1/I-2 S computation and verdict logic in
-        # overfitting_conscience.py are unchanged (it re-derives its own S from
-        # these same ledger rows).
-        # Reads ledger rows via advisor_ro_query (wall integrity contract).
-        _oc_ledger_rows = database.advisor_ro_query(
-            "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
-            "spec_bundle_id, facet_name FROM researcher_dof_ledger "
-            "WHERE spec_bundle_id = ?",
-            (stored_hash,),
-        )
-        # S = SUM(n_configs_searched) over BACKTEST_SELECTION rows for this run's
-        # bundle — same filter overfitting_conscience.compute_overfitting_conscience_
-        # observation applies to its own matching_rows (I-1/I-2 S accounting).
-        # n_configs_searched is NOT NULL DEFAULT 1 (migration 018) so no None guard
-        # is needed; int() cast mirrors compute_n_effective's defensive style.
-        _s_count_for_persistence = sum(
-            int(_row["n_configs_searched"])
-            for _row in _oc_ledger_rows
-            if _row["evidence_source"] == "BACKTEST_SELECTION"
-        )
+            # Frozen-eval: consumed exactly once post-selection on the held-out final 20% fold.
+            # This is the honest performance metric — not seen by any Optuna trial callback.
+            # PURGE_DAYS referenced here confirms the boundary purge applies at validation|frozen-eval.
+            # Single read via _collect_sim_returns; no separate run_simulation call so the
+            # "consumed once" invariant holds across all frozen-fold access paths.
+            frozen_eval_returns = _collect_sim_returns(
+                best_p,
+                history_frozen,
+                [target_sym_id] if target_sym_id else [],
+                current_date_str,
+                deviation_dict,
+            )
+            if _objective_kind == "crra_eu":
+                # AC-3 (MA-9): the real CRRA-EU analog of the Sortino branch below —
+                # mirrors run_simulation_crra_eu's own pct->fraction conversion
+                # (RETURN_PCT_TO_FRACTION) + compute_crra_eu_objective call, applied
+                # to the frozen fold instead of a training/validation fold. Sortino
+                # is genuinely inapplicable to a CRRA-EU objective (different
+                # utility metric), but "inapplicable" no longer means "None" — the
+                # frozen fold's 20% data budget must buy a real measurement under
+                # whichever objective actually governs this symphony.
+                frozen_eval_sharpe_value = (
+                    math_engine.compute_crra_eu_objective(
+                        [r / RETURN_PCT_TO_FRACTION for r in frozen_eval_returns], _gamma
+                    )
+                    if frozen_eval_returns
+                    else None
+                )
+            else:
+                frozen_eval_sharpe_value = (
+                    compute_sortino_ratio(frozen_eval_returns) if frozen_eval_returns else None
+                )
 
-        # S3-AUDIT-001: capture the inserted row id directly from save_autotune_run
-        # (which now returns cursor.lastrowid) — eliminates the read-after-write
-        # get_latest_autotune_run dance that raced and always fell back to id=0.
-        _inserted_id = database.save_autotune_run(
-            run_timestamp=run_timestamp,
-            symphony_id=normalized_name,
-            oos_alpha=oos_alpha,
-            train_alpha=best_alpha_train,
-            baseline_decision=baseline_decision,
-            fallback_oos_alpha=fallback_oos_alpha,
-            default_oos_alpha=default_oos_alpha,
-            selection_tstat=selection_tstat_value,
-            naive_sharpe=naive_sharpe_value,
-            validation_sharpe=validation_sharpe_value,
-            frozen_eval_sharpe=frozen_eval_sharpe_value,
-            # ARCH-001: EUT audit columns from migration 020.
-            spec_bundle_id=stored_hash,
-            n_effective=n_eff,
-            d_spec=d_spec,
-            gamma=_gamma,
-            overfitting_verdict=_overfitting_verdict,
-            # migration 028: Phase-3 PBO acceptance-gate result — the SAME
-            # _pbo_value already consumed by the gate call above (line ~3075),
-            # never re-derived. None when PBO was never computed (persists as
-            # SQL NULL).
-            pbo=_pbo_value,
-            # AC-E2: hoisted DoF-ledger S sum (see above) — feeds Indicator-3 drift
-            # detection on later runs via the prior_runs query below.
-            s_count=_s_count_for_persistence,
-        )
+            # Calculate daily averages for better understanding
+            train_days_count = len(train_dates)
+            test_days_count = len(validation_dates_full)
 
-        # Sprint 3: Overfitting Conscience — post-save observation.
-        _oc_run = {
-            "id": _inserted_id,
-            "symphony_id": normalized_name,
-            "run_timestamp": run_timestamp,
-            "spec_bundle_id": stored_hash,
-            "n_effective": n_eff,
-            "s_count": d_spec,
-        }
-        # S3-AUDIT-003: supply prior_runs (same symphony, excluding just-inserted row,
-        # ASC by run_timestamp) so OC Indicator-3 drift detection can fire.
-        _oc_prior_raw = database.advisor_ro_query(
-            "SELECT id, symphony_id, s_count FROM autotune_runs "
-            "WHERE symphony_id = ? AND id != ? ORDER BY run_timestamp ASC",
-            (normalized_name, _inserted_id),
-        )
-        # Normalise sqlite3.Row → dict for the producer.
-        _oc_prior_dicts = [dict(r) for r in _oc_prior_raw]
-        try:
-            _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows, prior_runs=_oc_prior_dicts)
+            avg_train_alpha = best_alpha_train / train_days_count if train_days_count > 0 else 0
+            avg_oos_alpha = oos_alpha / test_days_count if test_days_count > 0 else 0
+
+            baseline_decision = ""
+
+            # --- PHASE-3 ACCEPTANCE GATE (evaluate_acceptance_gate) ---
+            # Democratized offline gate: BHY haircut (winner_trial_is_none) + NN1
+            # spec-freeze + purge integrity vetoes → survivor panel → PBO veto.
+            # PBO veto (pbo > PBO_REJECT_THRESHOLD) is a STAGE-1 hard veto orthogonal
+            # to the BHY/n_effective multiplicity axis. pbo=None means not computed
+            # (fewer than 2 configs with cscv_date_returns) — no PBO veto fires.
+            # Stability and prior-anchor scores are computed as placeholder 1.0/1.0
+            # until the full advisor wiring is in place; the gate's load-bearing
+            # invariants (vetoes-dominant, one-directional brake) hold regardless.
+            #
+            # FORWARD-LOOKING FRICTION-MISMATCH RISK (incumbent_stability_score /
+            # incumbent_prior_anchor_score specifically): if a future cycle wires
+            # real DB-sourced values into these two INCUMBENT fields, confirm
+            # they were computed on a friction-consistent basis with the
+            # candidate score. A historical incumbent score computed by whatever
+            # replay code existed when that history was recorded (possibly
+            # gross-of-cost, pre-dating SIM_EXIT_FRICTION_PCT — see autotuner.py)
+            # compared against a candidate score from TODAY's friction-aware
+            # replay is a mismatched comparison — nothing currently catches that
+            # silently. See tests/autotuner/test_incumbent_score_friction_tripwire.py.
+            _gate_verdict = _acceptance_gate.evaluate_acceptance_gate(
+                winner_trial_is_none=(winner_trial is None if haircut_trials else True),
+                winner_p_adj=(winner_p_adj if haircut_trials else None),
+                nn1_compliant=(d_spec == 0),
+                # AC-2 (MA-5): genuinely computed above (val_start_idx -
+                # effective_train_cutoff >= PURGE_DAYS + EMBARGO_DAYS) — no
+                # hardcoded literal.
+                purge_integrity_ok=purge_integrity_ok,
+                oos_alpha=oos_alpha,
+                fallback_oos_alpha=fallback_oos_alpha,
+                default_oos_alpha=default_oos_alpha,
+                candidate_stability_score=1.0,
+                candidate_prior_anchor_score=1.0,
+                incumbent_stability_score=1.0,
+                incumbent_prior_anchor_score=1.0,
+                pbo=_pbo_value,
+            )
+            # PBO veto: only fire if the gate rejects AND the rejection is specifically
+            # caused by PBO exceeding the threshold (not BHY, which is already handled
+            # by the haircut block above, and not NN1/purge which have no current wiring).
+            # Guard: pbo_value is not None (veto only fires when PBO was actually computed)
+            # AND pbo > PBO_REJECT_THRESHOLD AND the BHY haircut DID produce a winner
+            # (haircut_rejected_proposal is False means BHY passed — the gate must have
+            # rejected on PBO specifically).
+            _pbo_veto_fired = (
+                _gate_verdict.decision == _acceptance_gate.DECISION_REJECT_VETO_FAILED
+                and not haircut_rejected_proposal
+                and _pbo_value is not None
+                and _pbo_value > math_engine.PBO_REJECT_THRESHOLD
+            )
+            if _pbo_veto_fired:
+                haircut_rejected_proposal = True
+                selection_tstat_value = None
+                naive_sharpe_value = None
+                ai_proposal_invalid = True
+                oos_alpha = -math.inf
+                print(
+                    f"       Acceptance gate VETOED AI proposal for '{normalized_name}' "
+                    f"(PBO={_pbo_value:.3f} > {math_engine.PBO_REJECT_THRESHOLD}). "
+                    f"Cascading to Fallback/Default."
+                )
+            # ---------------------------------------------------
+
+            # B2-FU1: Asymmetric tie rule -- STRICT-POSITIVE on the AI branch
+            # (over-fit risk: an AI proposal that only TIES the validated fallback
+            # is not worth displacing the last-known-good params for), LENIENT
+            # (>=) on the fallback branch below (favors last-known-good on tie
+            # vs the global default).
+            if oos_alpha > fallback_oos_alpha and oos_alpha > default_oos_alpha:
+                if oos_alpha > 0:
+                    print(
+                        f"       OOS validation passed! OOS Guard Alpha: +{oos_alpha:.2f}% (Average: {avg_oos_alpha:.2f}%)"  # noqa: E501  # un-wrappable long line
+                    )
+                else:
+                    print(
+                        f"       OOS validation passed (Beat Baselines)! OOS Guard Alpha: {oos_alpha:.2f}% (Avg: {avg_oos_alpha:.2f}%) vs Fallback: {fallback_oos_alpha:.2f}% / Default: {default_oos_alpha:.2f}%"  # noqa: E501  # un-wrappable long line
+                    )
+                for name, val in best_params.items():
+                    if name not in locked_vars:
+                        current_params[name] = round(val, 2)
+                baseline_decision = "Adopted AI"
+            elif fallback_oos_alpha >= default_oos_alpha:
+                print(
+                    f"       OOS validation failed (AI: {oos_alpha:.2f}%). Reverting to Fallback parameters (Fallback: {fallback_oos_alpha:.2f}% vs Default: {default_oos_alpha:.2f}%)."  # noqa: E501  # un-wrappable long line
+                )
+                for k, v in fallback_params.items():
+                    if k not in locked_vars:
+                        current_params[k] = v
+                baseline_decision = "Reverted to Fallback"
+            else:
+                print(
+                    f"       OOS validation & Fallback failed. Resetting to Global Default (Default: {default_oos_alpha:.2f}% vs AI: {oos_alpha:.2f}%, Fallback: {fallback_oos_alpha:.2f}%)."  # noqa: E501  # un-wrappable long line
+                )
+                for k, v in default_params.items():
+                    if k not in locked_vars:
+                        current_params[k] = v
+                baseline_decision = "Reset to Global Default"
+
+            # AC-3 / N-1: the frozen-eval Sortino was computed against the AI's
+            # best_p above. If the cascade demoted the AI proposal (Reverted to
+            # Fallback / Reset to Global Default) OR the proposal was rejected
+            # wholesale (haircut / schema-invalid), the DEPLOYED params are NOT
+            # the AI's — the operator-facing column must not carry a rejected
+            # proposal's frozen-eval metric as if it were the deployed set's.
+            # Null it here, symmetric with the selection_tstat + naive_sharpe
+            # reset above. The accepted "Adopted AI" branch preserves the value.
+            if baseline_decision != "Adopted AI":
+                frozen_eval_sharpe_value = None
+
+            # Build Discord logs ensuring all original variables are shown
+            optimization_results[normalized_name]["_baseline_chosen"] = baseline_decision
+            for k, original_val in original_params.items():
+                optimization_results[normalized_name][k] = {
+                    "old": original_val,
+                    "new": current_params.get(k, original_val),
+                }
+
+            elapsed = time.time() - start_time
+            haircut_log = (
+                f" | Haircut t-stat: {selection_tstat_value:.4f} (naive Sortino: {naive_sharpe_value:.4f})"  # noqa: E501  # un-wrappable long line
+                if selection_tstat_value is not None and naive_sharpe_value is not None
+                else " | Haircut: N/A"
+            )
+            print(
+                f"       Optimization completed in {elapsed:.2f}s. Train Sortino: {best_alpha_train:+.4f} (train days: {train_days_count}){haircut_log}"  # noqa: E501  # log message string
+            )
+
+            database.save_symphony_strategy(normalized_name, current_params, locked_vars)
+
+            # P1: Persist per-run validation metrics so Claude context-assembly can
+            # retrieve them via get_latest_autotune_run().  Called AFTER baseline_decision
+            # is finalized and save_symphony_strategy has written the chosen params,
+            # so the row captures the decision that was actually applied.
+            # selection_tstat carries the Harvey & Liu haircut winner's t-statistic (a
+            # higher-is-better significance scalar); naive_sharpe is the raw Optuna best.
+            # O6: validation_sharpe (selection metric) and frozen_eval_sharpe (honest post-selection
+            # metric, consumed once from the withheld final 20% fold).
+            # ARCH-001: assemble the overfitting_verdict string from EUT audit values.
+            # Format mirrors plan D5: "NN1_HONEST n_optuna=N d_spec=D n_effective=E"
+            # or "NN1_VIOLATION_TRIPWIRE ..." when d_spec > 0.
+            _n_optuna_for_verdict = len(haircut_trials) if haircut_trials else 0
+            _verdict_prefix = "NN1_HONEST" if d_spec == 0 else "NN1_VIOLATION_TRIPWIRE"
+            _overfitting_verdict = (
+                f"{_verdict_prefix} n_optuna={_n_optuna_for_verdict} "
+                f"D_spec={d_spec} n_effective={n_eff}"
+            )
+
+            # AC-E2 (feature-plans/advisor-weekly-suggestions.md, Workstream E): hoisted
+            # ABOVE save_autotune_run so the accumulated S is persisted into THIS run's
+            # autotune_runs.s_count row.  Previously this query ran only AFTER the save
+            # (feeding solely the in-memory _oc_run dict below), so autotune_runs.s_count
+            # stayed NULL on every row forever — a later run's prior_runs query always
+            # saw None, so overfitting_conscience Indicator-3 (operator drift) could
+            # structurally never fire on live data.  Control-flow reorder only: the
+            # current-run I-1/I-2 S computation and verdict logic in
+            # overfitting_conscience.py are unchanged (it re-derives its own S from
+            # these same ledger rows).
+            # Reads ledger rows via advisor_ro_query (wall integrity contract).
+            _oc_ledger_rows = database.advisor_ro_query(
+                "SELECT evidence_source, n_configs_searched, touched_frozen_eval, "
+                "spec_bundle_id, facet_name FROM researcher_dof_ledger "
+                "WHERE spec_bundle_id = ?",
+                (stored_hash,),
+            )
+            # S = SUM(n_configs_searched) over BACKTEST_SELECTION rows for this run's
+            # bundle — same filter overfitting_conscience.compute_overfitting_conscience_
+            # observation applies to its own matching_rows (I-1/I-2 S accounting).
+            # n_configs_searched is NOT NULL DEFAULT 1 (migration 018) so no None guard
+            # is needed; int() cast mirrors compute_n_effective's defensive style.
+            _s_count_for_persistence = sum(
+                int(_row["n_configs_searched"])
+                for _row in _oc_ledger_rows
+                if _row["evidence_source"] == "BACKTEST_SELECTION"
+            )
+
+            # S3-AUDIT-001: capture the inserted row id directly from save_autotune_run
+            # (which now returns cursor.lastrowid) — eliminates the read-after-write
+            # get_latest_autotune_run dance that raced and always fell back to id=0.
+            _inserted_id = database.save_autotune_run(
+                run_timestamp=run_timestamp,
+                symphony_id=normalized_name,
+                oos_alpha=oos_alpha,
+                train_alpha=best_alpha_train,
+                baseline_decision=baseline_decision,
+                fallback_oos_alpha=fallback_oos_alpha,
+                default_oos_alpha=default_oos_alpha,
+                selection_tstat=selection_tstat_value,
+                naive_sharpe=naive_sharpe_value,
+                validation_sharpe=validation_sharpe_value,
+                frozen_eval_sharpe=frozen_eval_sharpe_value,
+                # ARCH-001: EUT audit columns from migration 020.
+                spec_bundle_id=stored_hash,
+                n_effective=n_eff,
+                d_spec=d_spec,
+                gamma=_gamma,
+                overfitting_verdict=_overfitting_verdict,
+                # migration 028: Phase-3 PBO acceptance-gate result — the SAME
+                # _pbo_value already consumed by the gate call above (line ~3075),
+                # never re-derived. None when PBO was never computed (persists as
+                # SQL NULL).
+                pbo=_pbo_value,
+                # AC-E2: hoisted DoF-ledger S sum (see above) — feeds Indicator-3 drift
+                # detection on later runs via the prior_runs query below.
+                s_count=_s_count_for_persistence,
+            )
+
+            # Sprint 3: Overfitting Conscience — post-save observation.
+            _oc_run = {
+                "id": _inserted_id,
+                "symphony_id": normalized_name,
+                "run_timestamp": run_timestamp,
+                "spec_bundle_id": stored_hash,
+                "n_effective": n_eff,
+                "s_count": d_spec,
+            }
+            # S3-AUDIT-003: supply prior_runs (same symphony, excluding just-inserted row,
+            # ASC by run_timestamp) so OC Indicator-3 drift detection can fire.
+            _oc_prior_raw = database.advisor_ro_query(
+                "SELECT id, symphony_id, s_count FROM autotune_runs "
+                "WHERE symphony_id = ? AND id != ? ORDER BY run_timestamp ASC",
+                (normalized_name, _inserted_id),
+            )
+            # Normalise sqlite3.Row → dict for the producer.
+            _oc_prior_dicts = [dict(r) for r in _oc_prior_raw]
+            try:
+                _oc.run_overfitting_conscience(_oc_run, _oc_ledger_rows, prior_runs=_oc_prior_dicts)
+            except Exception as e:
+                # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
+                # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  This
+                # exact swallow (WARNING) hid a TypeError on every live row, so OC
+                # persisted ZERO observations across 1678 runs and nobody noticed.
+                # Per-producer isolation preserved (no re-raise, S3-AUDIT-006).
+                logging.error(
+                    "Overfitting Conscience observation PERSISTENCE FAILED — advisor "
+                    "outage (cycle continues): %s",
+                    e,
+                    exc_info=True,
+                )
+            # S3-AUDIT-002: Divergence Explainer call site, post-OC mirror.
+            # Consistent placement with OC; avoids the 1-minute alpha_bot_execution path
+            # (architecture constraint #1 — no blocking I/O on the execution path).
+            try:
+                _de.run_divergence_explainer(_oc_run, cvar_row=None)
+            except Exception as e:
+                # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
+                # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  Mirrors
+                # the OC/SC sites so no producer outage can rot silently again.
+                # Per-producer isolation preserved (no re-raise, S3-AUDIT-006).
+                logging.error(
+                    "Divergence Explainer observation PERSISTENCE FAILED — advisor "
+                    "outage (cycle continues): %s",
+                    e,
+                    exc_info=True,
+                )
         except Exception as e:
-            # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
-            # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  This
-            # exact swallow (WARNING) hid a TypeError on every live row, so OC
-            # persisted ZERO observations across 1678 runs and nobody noticed.
-            # Per-producer isolation preserved (no re-raise, S3-AUDIT-006).
+            # AC-1 / BL-2 isolation guard: an uncaught exception anywhere in this
+            # symphony processing body (Optuna optimize, CPCV/PBO, the OOS adoption
+            # cascade, or the run-row persistence call itself) is caught here,
+            # logged loudly, and the batch continues with the remaining
+            # symphonies. This guards the uncaught-exception class only -- it
+            # cannot catch a process kill (e.g. a deploy-restart SIGTERM).
             logging.error(
-                "Overfitting Conscience observation PERSISTENCE FAILED — advisor "
-                "outage (cycle continues): %s",
+                "Symphony %s optimization FAILED — isolated, batch continues: %s",
+                normalized_name,
                 e,
                 exc_info=True,
             )
-        # S3-AUDIT-002: Divergence Explainer call site, post-OC mirror.
-        # Consistent placement with OC; avoids the 1-minute alpha_bot_execution path
-        # (architecture constraint #1 — no blocking I/O on the execution path).
-        try:
-            _de.run_divergence_explainer(_oc_run, cvar_row=None)
-        except Exception as e:
-            # Surface loudly (ERROR + exc_info), do NOT abort the cycle: a producer
-            # PERSISTENCE failure is an advisor OUTAGE, not advisory noise.  Mirrors
-            # the OC/SC sites so no producer outage can rot silently again.
-            # Per-producer isolation preserved (no re-raise, S3-AUDIT-006).
-            logging.error(
-                "Divergence Explainer observation PERSISTENCE FAILED — advisor "
-                "outage (cycle continues): %s",
-                e,
-                exc_info=True,
-            )
+            # bl2review: a mid-window exception (after
+            # optimization_results[normalized_name] = {} but before the real
+            # delta keys / "_baseline_chosen" land) leaves a stale partial
+            # entry that reporting.py's shape guard would silently render as
+            # "Optimal parameters retained." -- a false success. Drop it so a
+            # failed symphony has NO key, matching the early-failure case.
+            optimization_results.pop(normalized_name, None)
+            continue
+        else:
+            _batch_completed += 1
+
+    # BL-2 AC-2: attempted/completed batch-visibility summary, additive.
+    optimization_results["_batch_summary"] = {
+        "attempted": _batch_attempted,
+        "completed": _batch_completed,
+    }
 
     print("  -> Autotuner finished all symphonies.")
     return optimization_results
