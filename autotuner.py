@@ -3301,10 +3301,10 @@ def run_autotuner(
         except Exception as e:
             # AC-1 / BL-2 isolation guard: an uncaught exception anywhere in this
             # symphony processing body (Optuna optimize, CPCV/PBO, the OOS adoption
-            # cascade, or database.save_autotune_run itself) is caught here, logged
-            # loudly, and the batch continues with the remaining symphonies. This
-            # guards the uncaught-exception class only -- it cannot catch a process
-            # kill (e.g. a deploy-restart SIGTERM).
+            # cascade, or the run-row persistence call itself) is caught here,
+            # logged loudly, and the batch continues with the remaining
+            # symphonies. This guards the uncaught-exception class only -- it
+            # cannot catch a process kill (e.g. a deploy-restart SIGTERM).
             logging.error(
                 "Symphony %s optimization FAILED — isolated, batch continues: %s",
                 normalized_name,
