@@ -889,6 +889,12 @@ def main():
                             entry["position_epoch"] = database.mint_position_epoch()
 
                     bot_state[s_id]["current_return"] = current_return
+                    # BL-9 (DE-AUDIT-BL9-001): data-phase write is always the raw
+                    # per-tick figure -- no basket reconstruction happens in this
+                    # loop -- so the marker is unconditionally False here. See the
+                    # TRUE SHADOW RETURN OVERRIDE block (~:1251) for the one write
+                    # site where this can be True.
+                    bot_state[s_id]["current_return_is_reconstructed"] = False
                     bot_state[s_id]["current_value"] = sym.get(
                         "current_value", sym.get("value", 0.0)
                     )
@@ -1042,6 +1048,13 @@ def main():
                         bot_state[s_id]["current_return"] = (
                             sym.get("last_percent_change", 0.0) * 100
                         )
+                        # BL-9 (DE-AUDIT-BL9-001): this EOD pass always writes the
+                        # raw per-tick figure -- even for a still-triggered
+                        # symphony it overwrites that day's reconstructed value
+                        # with the clean one (pre-existing behavior, unchanged) --
+                        # so the marker must be False here too, or it would
+                        # falsely describe THIS write as reconstructed.
+                        bot_state[s_id]["current_return_is_reconstructed"] = False
                         _persist_composer_fields_to_bot_state(bot_state, s_id, sym)
 
             # M1F: EOD divergence — observational only, no order calls (PA-M1F-9).
@@ -1249,6 +1262,13 @@ def main():
                 current_return = sym.get("last_percent_change", 0.0) * 100
 
                 # --- TRUE SHADOW RETURN OVERRIDE ---
+                # BL-9 (DE-AUDIT-BL9-001): current_return computed in this branch is
+                # a basket RECONSTRUCTION (frozen trigger_prices + live VWAPs), not a
+                # live per-tick figure. The write below (bot_state[symphony_id]
+                # ["current_return"]) is stamped with a co-located
+                # "current_return_is_reconstructed" marker so any future reader of
+                # bot_state can tell the two apart -- never deleted/altered by this
+                # hardening, only documented (AC-13).
                 if symphony_id in bot_state and bot_state[symphony_id].get("triggered"):
                     holdings = bot_state[symphony_id].get("current_holdings", [])
                     f_ret = bot_state[symphony_id].get("triggered_at_return", 0.0)
@@ -1638,6 +1658,17 @@ def main():
                 bot_state[symphony_id]["name"] = symphony_name
                 bot_state[symphony_id]["account"] = account
                 bot_state[symphony_id]["current_return"] = current_return
+                # BL-9 (DE-AUDIT-BL9-001): structurally marks whether the
+                # current_return just written above is the TRUE SHADOW RETURN
+                # OVERRIDE's basket-reconstructed value (see ~:1251-1266) rather
+                # than a live per-tick figure. Reuses `is_triggered_now`
+                # (computed above for the DE-MATH-F7-001 MC-suppression guard) --
+                # same underlying bot_state[symphony_id]["triggered"] read, proven
+                # stable between the override check at ~:1252 and this write (the
+                # only flip to True this cycle happens later, at the trigger-fire
+                # site). Discoverability/documentation only (AC-13) -- zero
+                # consumers read this key; it feeds no exit-decision math.
+                bot_state[symphony_id]["current_return_is_reconstructed"] = is_triggered_now
                 bot_state[symphony_id]["mc_prob"] = persisted_mc_prob
                 bot_state[symphony_id]["stop_trigger"] = stop_trigger_level
                 bot_state[symphony_id]["active_stop_distance"] = active_trailing_stop
