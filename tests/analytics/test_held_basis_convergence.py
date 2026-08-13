@@ -104,7 +104,9 @@ def _weighted_average(rows: list[dict], weight_key: str, value_key: str) -> floa
 _TRADING_DAY = "2026-08-13"
 
 
-def _create_shadow_schema(conn: sqlite3.Connection, *, current_return_nullable: bool = False) -> None:
+def _create_shadow_schema(
+    conn: sqlite3.Connection, *, current_return_nullable: bool = False
+) -> None:
     """F13 (PR #125 review): single source of truth for the test-only
     shadow_history DDL used throughout this file -- was pasted 3x with the
     3rd copy silently dropping NOT NULL on current_return (an intentional
@@ -113,7 +115,9 @@ def _create_shadow_schema(conn: sqlite3.Connection, *, current_return_nullable: 
     column from inception; current_return_nullable=True exists ONLY to
     construct the NULL-column degradation test below.
     """
-    current_return_decl = "current_return REAL" if current_return_nullable else "current_return REAL NOT NULL"
+    current_return_decl = (
+        "current_return REAL" if current_return_nullable else "current_return REAL NOT NULL"
+    )
     conn.execute(f"""
         CREATE TABLE shadow_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -685,7 +689,12 @@ class TestPairedGuardDeltaOptIn:
         exactly {"if_held", "dry_run"} -- 2 keys, nothing else.
         """
         symphonies_list = [
-            {"id": "optin-a", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
+            {
+                "id": "optin-a",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
         ]
         db_file = _make_shadow_db(tmp_path, [("optin-a", 1.0, 1.0)], suffix="_f6_default")
 
@@ -705,7 +714,12 @@ class TestPairedGuardDeltaOptIn:
         fallback per F5) via an explicit opt-in kwarg.
         """
         symphonies_list = [
-            {"id": "optin-b", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
+            {
+                "id": "optin-b",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
         ]
         db_file = _make_shadow_db(tmp_path, [("optin-b", 2.0, 1.0)], suffix="_f6_optin")
 
