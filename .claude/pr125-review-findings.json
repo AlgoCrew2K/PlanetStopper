@@ -1,0 +1,128 @@
+[
+  {
+    "id": "F1",
+    "file": "app.py",
+    "line": 3043,
+    "severity": "HIGH",
+    "pm_ruling": "IN — fix in this PR",
+    "summary": "GET /api/strip/<window> is a fifth, never-enumerated consumer of get_symphony_today_change — its sym_dict build threads no current_return_is_reconstructed and compute_windowed_portfolio_strip returns today_change raw, so the UI overwrites the fixed Today row with pre-fix values.",
+    "failure_scenario": "Triggered symphony intraday: /api/state renders the corrected Held (+0.530 per the audit capture); operator clicks any hero window button -> static/index.js fetchWindowedStrip -> updateComparisonRows rewrites the Today row from strip.today_change -> Held reverts to the reconstructed +0.396 and the ~2x-overstated delta, flipping back on the next poll (visible oscillation). On the frozen/off-hours path renderGuardAlpha auto-calls fetchWindowedStrip('30d') on every poll (frozen strip has no guard_alpha), making the unfixed /api/strip values the steady state. Neither the AC-1 marker override nor the AC-5 paired re-derivation applies on this path; the audit's caller enumeration and the DECISIONS '2 sites, not 4' analysis both missed it."
+  },
+  {
+    "id": "F2",
+    "file": "analytics.py",
+    "line": 1402,
+    "severity": "HIGH-MED",
+    "pm_ruling": "IN — fix in this PR",
+    "summary": "The paired-membership guard_delta_vw is scaled by FULL-membership invested_frac (and added unscaled to full-membership if_held at app.py:1641), extrapolating the covered symphonies' average divergence onto uncovered capital — overstating guard alpha by total_weight/paired_weight on coverage-gap divergence days.",
+    "failure_scenario": "Three $1,000 symphonies, account $3,000; two covered with +1.0pp divergence, one with no shadow row today. guard_delta_vw=+1.0pp (paired mean), invested_frac=1.0 -> rendered account guard effect +1.0pp; the honest value (uncovered divergence unknown, assume 0) is +0.667pp — 1.5x overstated, unbounded as coverage shrinks, always in the inflating direction. Exact only under full coverage (today's live 11/11). tests/analytics/test_held_basis_convergence.py:662 pins the biased value as the contract, and the docstring invariant 'dry_run and if_held share the same symphony-value denominator' (analytics.py:1337) is now false but unedited. Correct form: scale by paired_weight (e.g. delta * paired_weight/total_weight before invested_frac)."
+  },
+  {
+    "id": "F3",
+    "file": "app.py",
+    "line": 1232,
+    "severity": "MED",
+    "pm_ruling": "IN — fix in this PR (absorbed by F4 design)",
+    "summary": "dashboard() SSR per-card _tc build omits the marker, so one served HTML document renders the hero Today row on the fixed shadow basis and the triggered symphony's own card on the pre-fix reconstructed basis.",
+    "failure_scenario": "Page load during market hours on a trigger day: hero strip (via the threaded _compute_portfolio_strip) shows Held +0.530 while the same symphony's card tc-held cell (built at app.py:1229-1238, consumed at :1274) shows +0.396 — a same-page contradiction, repaired ~1s later when the JS poll rewrites the card. The marker is available at the site (_s IS the bot_state entry) — pure threading omission."
+  },
+  {
+    "id": "F4",
+    "file": "analytics.py",
+    "line": 583,
+    "severity": "DESIGN",
+    "pm_ruling": "IN — this is the implementation vehicle for F1/F3/F5",
+    "summary": "Altitude: the override reads the marker from sym_dict only while bot_state_entry — already a parameter at every call site and already carrying BL-9's marker — is deliberately ignored, forcing per-caller opt-in threading across 6 hand-built sym_dict sites of which only 2 were threaded.",
+    "failure_scenario": "Findings 1 and 3 (and the frozen per-symphony loop) exist because each caller must remember to copy the marker; sym_dict.get() is silently falsy on omission — no log, no test failure. Reading bot_state_entry.get('current_return_is_reconstructed') with a sym_dict fallback covers the SSR route, /api/strip, and the frozen loop with zero app.py diff (only the hand-built 4-key _snap_bot_state at app.py:2277 would need work), and every future sym_dict builder inherits the fix by construction."
+  },
+  {
+    "id": "F5",
+    "file": "app.py",
+    "line": 2362,
+    "severity": "MED",
+    "pm_ruling": "IN — fix in this PR (render-layer only; engine files stay zero-diff)",
+    "summary": "Frozen/closed-market branch keeps both pre-fix behaviors: the Tier-2 fallback surfaces _snap_vw_tc raw (no AC-5 paired re-derivation, unlike its live twin at :1637-1644), and the frozen sym_dict builds (:2177-2186, :2265-2275) thread no marker — with a real hole in the documented 'structurally immune' claim.",
+    "failure_scenario": "(a) Off-hours after a daemon restart (account caches cold) with a coverage-gap symphony: the frozen Today row renders the mismatched-membership phantom delta on a zero-divergence day while the live path renders exactly 0.0. (b) The EOD marker-reset loop (alpha_bot_execution.py:1044-1057) iterates symphony_data_cache but the snapshot builder (:1066/:1120) iterates ALL of bot_state — a symphony whose Composer fetch failed at the EOD run enters the snapshot with marker=True and the reconstructed current_return, which the unthreaded frozen builders then render as Held all evening; DECISIONS.md's 'can structurally never carry a live mid-day reconstruction' is falsifiable as written."
+  },
+  {
+    "id": "F6",
+    "file": "analytics.py",
+    "line": 1198,
+    "severity": "MED",
+    "pm_ruling": "IN — contract-hygiene regression introduced by this PR",
+    "summary": "include_paired_guard_delta=True is hardcoded in get_portfolio_today_change, leaking the internal guard_delta_vw key asymmetrically into public JSON (every /api/strip response; /api/state Tier-2 zero-coverage and frozen fallback branches) and persisting it into the state DB via the engine's EOD snapshot writer (alpha_bot_execution.py:1136) — with the return-shape docs left stale.",
+    "failure_scenario": "portfolio_strip.today_change is a 2-key dict on account-basis tiers and a 3-key dict on Tier-2/frozen//api/strip responses — a payload shape that varies with cache warmth; an internal VW-basis intermediate becomes durable persisted state with zero consumers; compute_windowed_portfolio_strip's docstring (analytics.py:1955) still documents today_change as {dry_run, if_held}. Fix: default False and opt in only at the app.py sites that consume it, or strip the key at serialization."
+  },
+  {
+    "id": "F7",
+    "file": "analytics.py",
+    "line": 1169,
+    "severity": "LOW",
+    "pm_ruling": "IN — simplification in the same function",
+    "summary": "paired_weight (and its two-division formula) is a redundant twin of dry_run_weight — both incremented in the same branch — recreating the exact desync hazard class this PR fixes, with no assertion guarding the invariant.",
+    "failure_scenario": "Any future condition added inside the include_paired_guard_delta block silently desyncs the counters and guard_delta_vw becomes a mismatched-denominator number again. Simpler: guard_delta_vw = (dry_run_wsum - paired_if_held_wsum) / dry_run_weight; delete paired_weight (the explicit result['guard_delta_vw']=None in the total_weight==0 branch is also redundant)."
+  },
+  {
+    "id": "F8",
+    "file": "tests/app/test_held_basis_route_convergence.py",
+    "line": 341,
+    "severity": "MED (test integrity)",
+    "pm_ruling": "IN — make the aggregate assertion genuinely RED-pinning",
+    "summary": "The AC-3 route-level aggregate assertion is vacuous — it passes identically against the OLD code, so the headline end-to-end portfolio convergence claim is untested at the aggregate level.",
+    "failure_scenario": "The only aggregate assertion is `if_held is not None`; both the pre-fix (+0.192476) and post-fix (+0.209465) aggregates are non-None, so reverting the analytics override leaves this test green. Only the per-card tc_held assertion at :326 is genuinely RED-pinning."
+  },
+  {
+    "id": "F9",
+    "file": "tests/analytics/test_account_basis_tc.py",
+    "line": 646,
+    "severity": "MED (test integrity)",
+    "pm_ruling": "IN — AC-9 letter requires it",
+    "summary": "Two existing seam mocks (also :703) patch analytics.get_portfolio_today_change with 2-key dicts, so the pre-existing phantom-alpha regression guards now exercise only the legacy fallback branch that production no longer reaches.",
+    "failure_scenario": "Production always supplies guard_delta_vw, taking the new paired branch of get_portfolio_today_change_account_basis; these tests permanently exercise the legacy `dry_run - if_held` branch instead. The operator-reported 'bot +0.54 vs held +0.46' regression guard can no longer catch a paired-branch bug. NOTE: interacts with F6 — if the kwarg defaults back to False, re-examine which branch production takes per site and pin BOTH branches."
+  },
+  {
+    "id": "F10",
+    "file": "analytics.py",
+    "line": 582,
+    "severity": "MED (design gap)",
+    "pm_ruling": "TRACKED — future cycle (needs a basis-disclosure design decision, not a patch)",
+    "summary": "Under partial shadow coverage on a multi-trigger day, the portfolio VW if_held silently mixes shadow-basis and reconstructed-basis contributions in one weighted mean with no basis disclosure.",
+    "failure_scenario": "Symphony A triggered WITH a same-day shadow row contributes shadow current_return; symphony B triggered WITHOUT one (AC-4 fallback) contributes the reconstructed value to the same average. The rendered Held is neither basis and carries no marker."
+  },
+  {
+    "id": "F11",
+    "file": "analytics.py",
+    "line": 586,
+    "severity": "LOW-MED (design gap)",
+    "pm_ruling": "TRACKED — future cycle (staleness signaling is new scope; mitigated: Bot/Held share the row)",
+    "summary": "The override checks only same-day row existence and non-NULL, never recency — it can replace a current-cycle value with a stale row several cycles old.",
+    "failure_scenario": "During a DB-lock storm the day's latest shadow row can be ~20 minutes old; the dashboard renders that stale current_return as Held against fresher account-basis figures, presenting staleness as divergence with no signal."
+  },
+  {
+    "id": "F12",
+    "file": "app.py",
+    "line": 1514,
+    "severity": "LOW (refactor)",
+    "pm_ruling": "TRACKED — future refactor; PARTIALLY absorbed now (F4 makes the 2 threaded additions removable)",
+    "summary": "The same 8-key analytics sym_dict literal is hand-built at six sites (1232, 1514, 2180, 2269, 2649, 3043); a _build_analytics_sym_dict helper would deliver any future field everywhere by construction.",
+    "failure_scenario": "Every future field added to the per-symphony analytics contract must be copied six times; this PR demonstrates the miss cost. Also the guard-delta 'is not None else legacy' policy is written out twice (analytics.py:1394-1400 and app.py:1637-1644)."
+  },
+  {
+    "id": "F13",
+    "file": "tests/analytics/test_held_basis_convergence.py",
+    "line": 95,
+    "severity": "LOW (test hygiene)",
+    "pm_ruling": "IN — test-file-only, held-tw already editing this file",
+    "summary": "The 11-column shadow_history CREATE TABLE DDL is pasted three times in one file (:95, :148, :199) with the third copy silently dropping NOT NULL on current_return — an intentional relaxation indistinguishable from a typo.",
+    "failure_scenario": "A future migration drifts each copy independently, and the deliberate nullable variant reads as an error and gets 'fixed', silently killing the NULL-degradation test's premise. One _create_shadow_schema(conn, *, current_return_nullable=False) helper names the relaxation."
+  },
+  {
+    "id": "F14",
+    "file": "tests/analytics/test_held_basis_convergence.py",
+    "line": 909,
+    "severity": "LOW (test integrity)",
+    "pm_ruling": "IN — trivial while in the file",
+    "summary": "test_golden_fixture_weighted_average_helper_is_self_consistent is a tautology — it compares _weighted_average() against the identical expression re-typed inline.",
+    "failure_scenario": "Any defect in the helper is reproduced verbatim on the 'manual' side. Assert against independently hand-computed literals from the fixture (or drop the test)."
+  }
+]

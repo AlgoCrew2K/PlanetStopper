@@ -291,12 +291,27 @@ class TestAC3RouteLevelConvergence:
         """Seeds the golden fixture's 11 symphonies into a real bot_state +
         shadow_history (the triggered symphony carries BL-9's real marker
         key), hits the real /api/state live branch, and asserts BOTH:
-          - the aggregate portfolio_strip.today_change converges towards the
-            shadow-basis Held (not the reconstructed bot_state basis)
+          - the aggregate portfolio_strip.today_change converges to the
+            EXACT weighted-average shadow-basis Held (F8 fix -- was a
+            vacuous `is not None` check that passed identically against the
+            pre-fix code; now genuinely RED-pinning)
           - the triggered symphony's own live-poll card (tc_held) equals the
             raw shadow current_return, not the reconstructed value
         proving marker-threading reaches the seam through the real route.
+
+        F8 fix: account-totals caches are explicitly cleared (established
+        pattern, tests/dashboard/test_eod_account_basis.py) to force the
+        deterministic Tier-2 "no cached account totals" floor branch, so
+        today_change.if_held is the plain full-membership VW weighted
+        average (same basis + tolerance rationale as tests/analytics/
+        test_held_basis_convergence.py's TestPortfolioAggregateGoldenFixture)
+        -- without this, the test's expected value would depend on
+        cross-test global cache state left over from other tests in the
+        same pytest session.
         """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
         rows = golden_fixture["symphonies"]
         for s in rows:
             _seed_live_bot_state_symphony(
@@ -334,12 +349,25 @@ class TestAC3RouteLevelConvergence:
 
         portfolio_strip = data.get("portfolio_strip") or {}
         today_change = portfolio_strip.get("today_change") or {}
-        # Cross-surface invariant (AC-3): the rendered VW-basis if_held (pre-account-basis)
-        # must have moved TOWARD the shadow-current_return-weighted average and AWAY from the
-        # bot_state-weighted average, for the same reason the unit-level golden-fixture test
-        # in tests/analytics/test_held_basis_convergence.py proves precisely.
-        assert today_change.get("if_held") is not None, (
-            f"expected a real today_change.if_held in the response; got {today_change}"
+        # F8 FIX (PR #125 review): the prior assertion here was `if_held is not None`,
+        # which is vacuous -- it passes IDENTICALLY against the pre-fix code (both the
+        # reconstructed-basis +0.192476pp and the shadow-basis +0.209465pp aggregates are
+        # non-None). Pin the EXACT converged value, derived from the fixture the same way
+        # tests/analytics/test_held_basis_convergence.py's TestPortfolioAggregateGoldenFixture
+        # does (never a hardcoded literal the fixture can't itself reproduce). Because
+        # both account-totals caches were cleared above, this is the Tier-2 floor branch --
+        # if_held is the plain full-membership VW weighted average of shadow_history.
+        # current_return (AC-6 contract: full membership even post the F2 coverage-scaling
+        # fix, which affects only dry_run).
+        expected_if_held = sum(s["value"] * s["shadow_history_current_return"] for s in rows) / sum(
+            s["value"] for s in rows
+        )
+        assert today_change.get("if_held") == pytest.approx(expected_if_held, abs=1e-6), (
+            f"AC-3/F8 FAIL: the route-level aggregate today_change.if_held must converge to "
+            f"the exact weighted-average shadow basis ({expected_if_held}), not just be "
+            f"non-None; got {today_change.get('if_held')} -- a value near +0.1959 (the "
+            f"unmarked bot_state basis) means the marker never reached this seam through the "
+            f"real route despite AC-1's unit-level proof that the seam itself is correct"
         )
 
 
@@ -394,4 +422,454 @@ class TestAC5RouteLevelCoverageGap:
             f"render an exact-zero (or account-basis-scaled-exact-zero) Today-row delta; got "
             f"delta={delta} (today_change={today_change}) -- the gap symphony's 9.0% if_held "
             f"must not leak into the delta via a mismatched denominator"
+        )
+
+    def test_coverage_gap_with_real_divergence_renders_coverage_scaled_delta_not_paired_mean(
+        self, client
+    ):
+        """F2 route-level proof. Same 2-of-3 coverage shape as tests/analytics/
+        test_held_basis_convergence.py's unit-level F2 fix, but through the
+        real /api/state seam -- specifically targeting the trap _compute_
+        portfolio_strip's Tier-2 "no cached account totals" floor branch
+        creates: THREE separate get_portfolio_today_change call sites inside
+        _compute_portfolio_strip (the Tier-0 warm-cache branch, Tier-1
+        last-good branch, and this Tier-2 floor branch) each independently
+        need include_paired_guard_delta=True after F6 makes the function's
+        own default False -- missing even ONE of the three silently
+        reintroduces FINDING-2's bug in exactly that branch. Caches are
+        cleared to deterministically exercise the Tier-2 branch (app.py:
+        1626-1644), which ALSO does its own guard_delta_vw presence check
+        (:1637) -- a second place F6's default-False change could silently
+        break F2's fix if the call site isn't updated to opt in.
+
+        Two covered symphonies at +1.0pp divergence each (dry_run=2.0,
+        if_held=1.0), one coverage-gap symphony with a 5.0pp if_held outlier
+        and no shadow row today -> honest coverage-scaled delta = 1.0 *
+        (2000/3000) = 0.6667pp (not the paired-mean 1.0pp, not the OLD
+        mismatched-denominator ~-0.333pp).
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        _seed_live_bot_state_symphony(
+            "route-f2-a", name="Route F2 A", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], "route-f2-a", shadow_return=2.0, current_return=2.0)
+
+        _seed_live_bot_state_symphony(
+            "route-f2-b", name="Route F2 B", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], "route-f2-b", shadow_return=2.0, current_return=2.0)
+
+        # Coverage-gap symphony: real bot_state entry, deliberately NO shadow_history row today.
+        _seed_live_bot_state_symphony(
+            "route-f2-c",
+            name="Route F2 C (no shadow row today, 5.0pp outlier)",
+            value=1000.0,
+            current_return=5.0,
+        )
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        portfolio_strip = data.get("portfolio_strip") or {}
+        today_change = portfolio_strip.get("today_change") or {}
+
+        assert (
+            today_change.get("if_held") is not None and today_change.get("dry_run") is not None
+        ), f"expected a real non-degraded today_change; got {today_change}"
+        delta = float(today_change["dry_run"]) - float(today_change["if_held"])
+        assert delta == pytest.approx(2.0 / 3.0, abs=1e-4), (
+            f"F2 FAIL: coverage-scaled Today-row delta over 2-of-3 coverage with +1.0pp "
+            f"paired-mean divergence must be exactly +0.6667pp; got delta={delta} "
+            f"(today_change={today_change}). A value near +1.0 means the paired MEAN leaked "
+            f"through unscaled (F2's exact bug); a value near -0.333 means the pre-this-PR "
+            f"mismatched-denominator formula is in effect (guard_delta_vw wasn't opted into "
+            f"at this call site at all -- F6's default-False regressed F2's fix here)."
+        )
+
+
+# ---------------------------------------------------------------------------
+# F6 -- guard_delta_vw must never leak into a public JSON response shape.
+# ---------------------------------------------------------------------------
+
+
+class TestF6NoInternalKeyLeakage:
+    def test_api_strip_today_change_is_exactly_two_keys(self, client):
+        """GET /api/strip/<window> is F1's fifth consumer -- it must never
+        surface the internal guard_delta_vw intermediate. Response shape
+        must stay {"if_held", "dry_run"} regardless of coverage state.
+        """
+        _seed_live_bot_state_symphony(
+            "f6-strip-a", name="F6 Strip A", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], "f6-strip-a", shadow_return=1.0, current_return=1.0)
+
+        resp = client.get("/api/strip/30d")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        today_change = data.get("today_change") or {}
+        assert set(today_change.keys()) == {"if_held", "dry_run"}, (
+            f"F6 FAIL: /api/strip/<window>'s today_change must be exactly "
+            f"{{'if_held', 'dry_run'}} -- got keys {sorted(today_change.keys())}. A leaked "
+            f"'guard_delta_vw' key here means include_paired_guard_delta wasn't defaulted "
+            f"to False, or the route-level compute_windowed_portfolio_strip caller opted in "
+            f"without stripping it before jsonify."
+        )
+
+    def test_api_state_tier2_floor_today_change_is_exactly_two_keys(self, client):
+        """The live Tier-2 "no cached account totals" floor branch (app.py:
+        1626-1644) internally NEEDS guard_delta_vw for its own paired
+        re-derivation (F2) -- but the FINAL today_change dict it constructs
+        and returns must still be the public 2-key shape, never leaking the
+        internal key through to the JSON response.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        _seed_live_bot_state_symphony(
+            "f6-state-a", name="F6 State A", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], "f6-state-a", shadow_return=2.0, current_return=1.0)
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        today_change = (data.get("portfolio_strip") or {}).get("today_change") or {}
+        assert set(today_change.keys()) == {"if_held", "dry_run"}, (
+            f"F6 FAIL: /api/state's Tier-2-floor today_change must be exactly "
+            f"{{'if_held', 'dry_run'}} -- got keys {sorted(today_change.keys())}. The Tier-2 "
+            f"branch's own internal re-derivation (F2/F5) must construct a fresh 2-key dict, "
+            f"never return the raw guard_delta_vw-carrying dict it computed from."
+        )
+
+
+# ---------------------------------------------------------------------------
+# F1 -- GET /api/strip/<window> is a fifth, never-enumerated consumer of
+# get_symphony_today_change; its sym_dict build must thread the marker (via
+# the F4 pivot, this requires zero app.py diff since it already passes the
+# real bot_state through).
+# ---------------------------------------------------------------------------
+
+
+class TestF1ApiStripConsumer:
+    def test_windowed_strip_today_change_converges_for_triggered_marked_symphony(self, client):
+        """Reviewer's failure scenario: /api/state renders the corrected
+        Held; the operator clicks a hero window button -> /api/strip/<window>
+        -> the UI overwrites the Today row with PRE-FIX values (oscillation).
+        Seeds ONE triggered+marked symphony with a shadow row (raw if-held
+        DIFFERENT from the reconstructed bot_state value), hits BOTH /api/
+        state and /api/strip/30d, and asserts they render the IDENTICAL
+        if_held -- proving no oscillation across the two endpoints.
+        """
+        sym_id = "f1-strip-triggered"
+        _seed_live_bot_state_symphony(
+            sym_id,
+            name="F1 Strip Triggered Symphony",
+            value=10000.0,
+            current_return=2.5,  # the reconstructed bot_state value
+            is_reconstructed=True,
+            triggered=True,
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], sym_id, shadow_return=4.0, current_return=6.0
+        )  # raw shadow if-held (6.0) DIFFERENT from reconstructed (2.5)
+
+        state_resp = client.get("/api/state")
+        assert state_resp.status_code == 200
+        state_data = state_resp.get_json()
+        state_symphonies = {s.get("id"): s for s in (state_data.get("symphonies") or [])}
+        assert sym_id in state_symphonies
+
+        strip_resp = client.get("/api/strip/30d")
+        assert strip_resp.status_code == 200, (
+            f"unexpected status: {strip_resp.status_code} {strip_resp.get_data()!r}"
+        )
+        strip_data = strip_resp.get_json()
+        strip_today_change = strip_data.get("today_change") or {}
+
+        assert strip_today_change.get("if_held") == pytest.approx(6.0, abs=1e-6), (
+            f"F1 FAIL: /api/strip/30d's today_change.if_held must render the raw shadow "
+            f"basis (6.0) for the triggered+marked symphony, not the reconstructed bot_state "
+            f"value (2.5); got {strip_today_change.get('if_held')} -- this is the fifth, "
+            f"never-enumerated consumer of get_symphony_today_change (app.py:3043 sym_dict "
+            f"build -> compute_windowed_portfolio_strip), missed by the audit's original "
+            f"caller enumeration and the DECISIONS.md '2 sites, not 4' analysis"
+        )
+
+        # Anti-oscillation: /api/strip's single-symphony VW if_held must match /api/state's
+        # per-symphony card, since they're both single-symphony 100%-weight aggregates here.
+        assert strip_today_change.get("if_held") == pytest.approx(
+            state_symphonies[sym_id].get("tc_held"), abs=1e-6
+        ), (
+            f"F1 FAIL (oscillation): /api/strip's if_held ({strip_today_change.get('if_held')}) "
+            f"must match /api/state's per-symphony tc_held "
+            f"({state_symphonies[sym_id].get('tc_held')}) -- a mismatch here is exactly the "
+            f"operator-visible oscillation the reviewer's failure scenario describes: /api/"
+            f"state shows the corrected value, then a hero window-picker click flips it back."
+        )
+
+
+# ---------------------------------------------------------------------------
+# F3 (via F4 pivot) -- dashboard() SSR route's per-card build must now
+# converge for a triggered+marked symphony (zero app.py diff needed: _s IS
+# the real bot_state entry, already carrying BL-9's marker).
+# ---------------------------------------------------------------------------
+
+
+class TestF3DashboardSSRTriggeredCard:
+    def test_ssr_card_converges_to_shadow_basis_for_triggered_marked_symphony(self, client):
+        """Reviewer's failure scenario: page load during market hours on a
+        trigger day -- the hero strip (already threaded) shows the corrected
+        Held while the SAME symphony's own card shows the reconstructed
+        value -- a same-page contradiction. Post-F4, both must agree.
+        """
+        sym_id = "f3-ssr-triggered"
+        _seed_live_bot_state_symphony(
+            sym_id,
+            name="F3 SSR Triggered Symphony",
+            value=10000.0,
+            current_return=2.5,  # reconstructed bot_state value
+            is_reconstructed=True,
+            triggered=True,
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], sym_id, shadow_return=4.0, current_return=6.0
+        )  # raw shadow if-held (6.0), different from reconstructed (2.5)
+
+        resp = client.get("/")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code}"
+        html = resp.get_data(as_text=True)
+
+        assert ">+6.0%<" in html, (
+            "F3 FAIL: dashboard() SSR route's per-card tc-held cell must render the raw shadow "
+            "basis (+6.0%) for a triggered+marked symphony, not the reconstructed bot_state "
+            "value (+2.5%) -- app.py:1229-1238 builds _sym_dict without the marker key, but "
+            "_s (passed as bot_state_entry) IS the real bot_state entry and already carries "
+            "BL-9's marker; F4's pivot must read from it. Full response follows for triage:\n"
+            + html[:4000]
+        )
+        assert ">+2.5%<" not in html, (
+            "F3 FAIL: the reconstructed bot_state value (+2.5%) must not appear on the "
+            "SSR-rendered card for this triggered+marked symphony -- that would reproduce "
+            "the reviewer's same-page contradiction (hero strip shadow-basis vs. card "
+            "reconstructed-basis)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# F5 -- frozen/closed-market branch: (a) Tier-2 floor needs the same paired
+# re-derivation as its live twin, (b) the hand-built _snap_bot_state needs
+# the marker key added, (c) a per-symphony frozen card converges via F4 with
+# zero additional threading, (d) the frozen AC-4-equivalent fallback.
+# ---------------------------------------------------------------------------
+
+
+def _seed_frozen_snapshot_symphony_with_marker(
+    sym_id: str,
+    *,
+    name: str,
+    value: float,
+    current_return: float,
+    is_reconstructed: bool,
+) -> None:
+    """F5(b)/(d) fixture: unlike _seed_frozen_snapshot_symphony (which
+    deliberately never sets the marker, documenting that the EOD capture
+    site's OWN reset loop always zeroes it first), this variant explicitly
+    sets current_return_is_reconstructed -- reproducing the reviewer's F5
+    EOD-fetch-failure gap: alpha_bot_execution.py's marker-reset loop
+    (:1044-1057) iterates symphony_data_cache, but the snapshot builder
+    (:1066/:1120) iterates ALL of bot_state -- a symphony whose Composer
+    fetch failed at the EOD run is skipped by the reset loop but still
+    captured by the snapshot builder with its LEFTOVER marker value from
+    earlier in the day. This is therefore a real, reachable production
+    shape for a frozen snapshot entry, not a synthetic/unreachable one.
+    """
+    state = database_module.load_state() or {}
+    snapshot = state.get("last_market_close_snapshot") or {
+        "captured_at_et": "16:00:00 ET",
+        "data_as_of": "16:00 ET",
+        "trading_day": _TRADING_DAY,
+        "accounts_map": {"ACC1": []},
+    }
+    snapshot["trading_day"] = _TRADING_DAY
+    snapshot["accounts_map"].setdefault("ACC1", []).append(
+        {
+            "id": sym_id,
+            "name": name,
+            "account": "ACC1",
+            "armed": False,
+            "tp_armed": False,
+            "para_armed": False,
+            "triggered": True,
+            "current_return": current_return,
+            "current_return_is_reconstructed": is_reconstructed,
+            "current_value": value,
+            "simple_return": 0.02,
+            "net_deposits": 100.0,
+            "time_weighted_return": 0.021,
+            "max_drawdown": 0.05,
+        }
+    )
+    state["last_market_close_snapshot"] = snapshot
+    database_module.save_state(state)
+
+
+class TestF5FrozenBranchConvergence:
+    def test_frozen_per_symphony_card_converges_for_triggered_marked_snapshot_entry(
+        self, frozen_client
+    ):
+        """F5(c). The per-symphony frozen loop (app.py:2170-2213) passes
+        _sym (the real snapshot entry) as bot_state_entry -- F4's pivot means
+        this converges with ZERO additional app.py threading at this specific
+        loop, since _sym already carries whatever marker the snapshot
+        captured (see _seed_frozen_snapshot_symphony_with_marker's docstring
+        for why marker=True is a real, reachable snapshot shape).
+        """
+        sym_id = "f5-frozen-card-triggered"
+        _seed_frozen_snapshot_symphony_with_marker(
+            sym_id,
+            name="F5 Frozen Card Triggered",
+            value=10000.0,
+            current_return=2.5,
+            is_reconstructed=True,
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], sym_id, shadow_return=4.0, current_return=6.0)
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        assert data.get("market_state") == "closed_frozen"
+        state = data.get("state") or {}
+        assert sym_id in state
+        tc = (state[sym_id] or {}).get("_tc") or {}
+
+        assert tc.get("if_held") == pytest.approx(6.0, abs=1e-6), (
+            f"F5(c) FAIL: the frozen per-symphony card for a triggered+marked snapshot entry "
+            f"must render the raw shadow basis (6.0), not the reconstructed value (2.5); "
+            f"got if_held={tc.get('if_held')}"
+        )
+
+    def test_frozen_per_symphony_card_marker_true_no_shadow_row_falls_back(self, frozen_client):
+        """F5(d): the frozen AC-4 equivalent. Marker True on the snapshot
+        entry, but no same-day shadow row exists -> falls back to the
+        snapshot's own bot_state-derived value, never crashes.
+        """
+        sym_id = "f5-frozen-card-fallback"
+        _seed_frozen_snapshot_symphony_with_marker(
+            sym_id,
+            name="F5 Frozen Card Fallback",
+            value=10000.0,
+            current_return=2.5,
+            is_reconstructed=True,
+        )
+        # Deliberately NO shadow row inserted for sym_id today.
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        state = data.get("state") or {}
+        assert sym_id in state
+        tc = (state[sym_id] or {}).get("_tc") or {}
+
+        assert tc.get("if_held") == pytest.approx(2.5, abs=1e-6), (
+            f"F5(d) FAIL: marker True + no shadow row on the frozen per-symphony card must "
+            f"fall back to the snapshot's own current_return (2.5), never crash or fabricate; "
+            f"got if_held={tc.get('if_held')}"
+        )
+
+    def test_frozen_aggregate_converges_for_triggered_marked_snapshot_entry(self, frozen_client):
+        """F5(b): the frozen PORTFOLIO-LEVEL aggregate (_snap_vw_tc, built
+        from the hand-built 4-key _snap_bot_state at app.py:2277) needs the
+        marker key explicitly added -- unlike the per-symphony loop, this
+        aggregate does NOT get F4's fix for free, since _snap_bot_state is
+        NOT the real bot_state entry.
+        """
+        sym_id = "f5-frozen-agg-triggered"
+        _seed_frozen_snapshot_symphony_with_marker(
+            sym_id,
+            name="F5 Frozen Aggregate Triggered",
+            value=10000.0,
+            current_return=2.5,
+            is_reconstructed=True,
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], sym_id, shadow_return=4.0, current_return=6.0)
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        assert data.get("market_state") == "closed_frozen"
+        today_change = (data.get("portfolio_strip") or {}).get("today_change") or {}
+
+        assert today_change.get("if_held") == pytest.approx(6.0, abs=1e-6), (
+            f"F5(b) FAIL: the frozen portfolio-level aggregate today_change.if_held (single "
+            f"100%-weight symphony) must render the raw shadow basis (6.0), not the "
+            f"reconstructed value (2.5); got {today_change.get('if_held')} -- this requires "
+            f"adding current_return_is_reconstructed to _snap_bot_state (app.py:2277), the "
+            f"ONE hand-built bot_state shape F4's pivot does not cover for free"
+        )
+
+    def test_frozen_tier2_floor_uses_coverage_scaled_delta_not_raw_vw_passthrough(
+        self, frozen_client
+    ):
+        """F5(a). The frozen Tier-2 fallback (app.py:2358-2362, `_snap_tc_
+        final = _snap_vw_tc`) currently surfaces the RAW VW dict directly --
+        no account-basis conversion, no paired re-derivation at all -- unlike
+        its live twin (app.py:1626-1644) which DOES re-derive dry_run from
+        the paired guard_delta_vw. Two covered symphonies at +1.0pp
+        divergence each, one coverage-gap symphony with a 5.0pp if_held
+        outlier and no shadow row -> honest coverage-scaled delta = 1.0 *
+        (2000/3000) = 0.6667pp, matching F2's live-branch fix exactly.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        state = database_module.load_state() or {}
+        snapshot = {
+            "captured_at_et": "16:00:00 ET",
+            "data_as_of": "16:00 ET",
+            "trading_day": _TRADING_DAY,
+            "accounts_map": {"ACC1": []},
+        }
+        for sym_id, cr in (("f5a-cov-a", 1.0), ("f5a-cov-b", 1.0), ("f5a-gap-c", 5.0)):
+            snapshot["accounts_map"]["ACC1"].append(
+                {
+                    "id": sym_id,
+                    "name": sym_id,
+                    "account": "ACC1",
+                    "armed": False,
+                    "tp_armed": False,
+                    "para_armed": False,
+                    "triggered": False,
+                    "current_return": cr,
+                    "current_return_is_reconstructed": False,
+                    "current_value": 1000.0,
+                    "simple_return": 0.02,
+                    "net_deposits": 100.0,
+                    "time_weighted_return": 0.021,
+                    "max_drawdown": 0.05,
+                }
+            )
+        state["last_market_close_snapshot"] = snapshot
+        database_module.save_state(state)
+
+        _insert_shadow_row(os.environ["DB_PATH"], "f5a-cov-a", shadow_return=2.0, current_return=1.0)
+        _insert_shadow_row(os.environ["DB_PATH"], "f5a-cov-b", shadow_return=2.0, current_return=1.0)
+        # f5a-gap-c deliberately has NO shadow row.
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        assert data.get("market_state") == "closed_frozen"
+        today_change = (data.get("portfolio_strip") or {}).get("today_change") or {}
+
+        assert (
+            today_change.get("if_held") is not None and today_change.get("dry_run") is not None
+        ), f"expected a real non-degraded frozen today_change; got {today_change}"
+        delta = float(today_change["dry_run"]) - float(today_change["if_held"])
+        assert delta == pytest.approx(2.0 / 3.0, abs=1e-4), (
+            f"F5(a) FAIL: the frozen Tier-2 floor's Today-row delta over 2-of-3 coverage with "
+            f"+1.0pp paired-mean divergence must be exactly +0.6667pp (matching the live "
+            f"branch's F2 fix), not the raw unscaled/mismatched-denominator VW passthrough; "
+            f"got delta={delta} (today_change={today_change})"
         )

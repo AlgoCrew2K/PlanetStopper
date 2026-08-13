@@ -612,8 +612,18 @@ class TestComputePortfolioStripTodayChange:
         # (same dollar change / smaller denominator = larger %-change in magnitude).
         # Using the fixture's VW value from the untriggered scenario.
         vw_if_held = fix["scenario_untriggered"]["vw_tc"]["if_held"]
-        # Untriggered: VW dry_run == VW if_held (no guard has fired)
-        mocked_vw_tc = {"if_held": vw_if_held, "dry_run": vw_if_held}
+        # Untriggered: VW dry_run == VW if_held (no guard has fired). F9 (PR #125 review,
+        # DE-HELD-BASIS-001 revise cycle): production's analytics.get_portfolio_today_change
+        # is called from _compute_portfolio_strip's Tier-0/Tier-1 branches with
+        # include_paired_guard_delta=True (F2's coverage-scaling fix applies at every
+        # account-totals tier, not just the Tier-2 floor) -- so it ALWAYS supplies a
+        # "guard_delta_vw" key in production. Mocking a bare 2-key dict here (as this test
+        # did pre-F9) would only exercise get_portfolio_today_change_account_basis's LEGACY
+        # dry_run-if_held fallback branch, which production no longer reaches through this
+        # call site -- the paired branch (analytics.py:1394-1400) would go permanently
+        # untested by this regression guard. guard_delta_vw=0.0 mirrors the untriggered
+        # zero-divergence scenario this test is about (dry_run==if_held on the VW side too).
+        mocked_vw_tc = {"if_held": vw_if_held, "dry_run": vw_if_held, "guard_delta_vw": 0.0}
 
         # Confirm precondition: VW value differs from account-level value (cash present)
         assert abs(vw_if_held - portfolio_tc) > 1e-6, (
@@ -680,7 +690,12 @@ class TestComputePortfolioStripTodayChange:
         fix = basis_fixture
         portfolio_tc = fix["portfolio_tc"]
         vw_if_held = fix["scenario_untriggered"]["vw_tc"]["if_held"]
-        mocked_vw_tc = {"if_held": vw_if_held, "dry_run": vw_if_held}
+        # F9 (PR #125 review, DE-HELD-BASIS-001 revise cycle): see the identical comment on
+        # test_strip_today_change_no_phantom_alpha_when_untriggered above -- production's
+        # _compute_portfolio_strip Tier-0 call site now opts into include_paired_guard_delta,
+        # so a 2-key mock no longer represents what analytics.get_portfolio_today_change
+        # actually returns to this call site.
+        mocked_vw_tc = {"if_held": vw_if_held, "dry_run": vw_if_held, "guard_delta_vw": 0.0}
 
         bot_state: dict = {}
         for s in symphony_stats_fixture:
