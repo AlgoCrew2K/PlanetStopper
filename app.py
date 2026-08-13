@@ -1519,6 +1519,12 @@ def _compute_portfolio_strip(
                 "trading_day": trading_day,
             }
         )
+        # DE-HELD-BASIS-001 F4 (PR #125 review): no current_return_is_reconstructed
+        # key threaded into the sym_dict above — analytics.get_symphony_today_change
+        # now reads the marker from bot_state_entry (the real bot_state[k] dict
+        # passed below, already carrying BL-9's marker) as the PRIMARY source, so
+        # this per-symphony threading is redundant by construction (removed, was
+        # added in the original cycle before the F4 design pivot).
 
     # Use cached Composer account-level value when available; per-symphony sum as fallback.
     # Use .get() (single call) rather than __contains__ + __getitem__ to eliminate the
@@ -1596,10 +1602,20 @@ def _compute_portfolio_strip(
         # Previously: if_held = _cached_tc (account basis, cash-inclusive) but
         # dry_run = VW symphony sum (cash-excluded) — different denominators produced
         # phantom alpha even when all symphonies were bot == held.
+        # DE-HELD-BASIS-001 F6 CRITICAL INTERACTION TRAP (PR #125 review): all THREE
+        # get_portfolio_today_change call sites below (Tier-0/Tier-1/Tier-2) must pass
+        # include_paired_guard_delta=True explicitly now that the function's own
+        # default is False (F6) — the Tier-2 floor's paired re-derivation further
+        # below reads vw_tc.get("guard_delta_vw") and silently falls back to a raw
+        # passthrough if any one of the three omits the opt-in.
         _cached_tc = _account_totals_cache.get("portfolio_tc")
         if _cached_tc is not None:
             _vw_tc = analytics.get_portfolio_today_change(
-                symphonies_list, bot_state, trading_day=trading_day, conn=conn
+                symphonies_list,
+                bot_state,
+                trading_day=trading_day,
+                conn=conn,
+                include_paired_guard_delta=True,
             )
             today_change: dict = analytics.get_portfolio_today_change_account_basis(
                 _vw_tc,
@@ -1612,7 +1628,11 @@ def _compute_portfolio_strip(
             _lg_tc = _account_totals_last_good.get("portfolio_tc")
             if _lg_tc is not None:
                 _vw_tc = analytics.get_portfolio_today_change(
-                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
+                    symphonies_list,
+                    bot_state,
+                    trading_day=trading_day,
+                    conn=conn,
+                    include_paired_guard_delta=True,
                 )
                 today_change = analytics.get_portfolio_today_change_account_basis(
                     _vw_tc, _lg_tc, account_value, _symphony_value_sum
@@ -1620,9 +1640,28 @@ def _compute_portfolio_strip(
                 _live_basis_stale = True
             else:
                 # Tier 2 — no last-good: fall back to VW (label applied below).
-                today_change = analytics.get_portfolio_today_change(
-                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
+                _vw_tc_floor = analytics.get_portfolio_today_change(
+                    symphonies_list,
+                    bot_state,
+                    trading_day=trading_day,
+                    conn=conn,
+                    include_paired_guard_delta=True,
                 )
+                # DE-HELD-BASIS-001 (FINDING-2/AC-5): the floor's rendered dry_run must
+                # be re-derived from the same paired-membership guard_delta_vw the
+                # account-basis path above uses — the raw dry-run-only-membership
+                # average (vw_tc["dry_run"]) mismatches vw_tc["if_held"]'s full
+                # membership, producing a phantom delta on a genuine zero-divergence
+                # coverage-gap day. if_held stays full-membership (AC-6, the Tier-2
+                # floor's own contract) — only dry_run is re-derived.
+                _floor_guard_delta = _vw_tc_floor.get("guard_delta_vw")
+                if _floor_guard_delta is not None and _vw_tc_floor.get("if_held") is not None:
+                    today_change = {
+                        "if_held": _vw_tc_floor["if_held"],
+                        "dry_run": _vw_tc_floor["if_held"] + _floor_guard_delta,
+                    }
+                else:
+                    today_change = _vw_tc_floor
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
         # curve) when available. The value-weighted average of per-symphony MDDs is
@@ -2260,6 +2299,13 @@ def get_state():
                             "current_return": _cr_r,
                             "name": _sym_r.get("name"),
                             "account": _sym_r.get("account"),
+                            # DE-HELD-BASIS-001 F5(b) (PR #125 review): _snap_bot_state is
+                            # hand-built, NOT the real bot_state entry — the ONE shape F4's
+                            # marker-precedence pivot does not cover for free, so the marker
+                            # must be added explicitly here.
+                            "current_return_is_reconstructed": _sym_r.get(
+                                "current_return_is_reconstructed", False
+                            ),
                         }
                 # Derive data_as_of from the snapshot's own capture time.
                 # captured_at_et is written as "%H:%M:%S ET" (e.g. "16:00:01 ET");
@@ -2312,12 +2358,16 @@ def get_state():
                         else None
                     )
 
-                    # VW intermediates (same calls as live path).
+                    # VW intermediates (same calls as live path). include_paired_guard_delta=
+                    # True (DE-HELD-BASIS-001 F5(a)/F6, PR #125 review): the Tier-2 floor
+                    # branch below needs the coverage-scaled guard_delta_vw for its own
+                    # paired re-derivation, same as the live path's three call sites.
                     _snap_vw_tc = analytics.get_portfolio_today_change(
                         _snap_symphonies_list,
                         _snap_bot_state,
                         trading_day=_snap_trading_day,
                         conn=_frozen_shadow_conn,
+                        include_paired_guard_delta=True,
                     )
                     _snap_vw_cr = analytics.get_portfolio_cumulative_return(
                         _snap_symphonies_list,
@@ -2337,10 +2387,26 @@ def get_state():
                             _snap_symphony_value_sum,
                         )
                     else:
-                        # No TC basis at all (no cache, no last-good): surface raw VW
+                        # No TC basis at all (no cache, no last-good): fall back to VW
                         # (honesty signalled below via the Tier-2 basis marker), matching
-                        # the CR branch + the live path + the plan's documented default.
-                        _snap_tc_final = _snap_vw_tc
+                        # the CR branch + the plan's documented default. DE-HELD-BASIS-001
+                        # F5(a) (PR #125 review): unlike the CR branch, TC must re-derive
+                        # dry_run from if_held + the paired guard_delta_vw the SAME way the
+                        # live path's own Tier-2 floor does (app.py, above) — the raw VW
+                        # dict's dry_run/if_held use mismatched membership (dry-run-only vs
+                        # full), producing a phantom delta on a genuine zero-divergence
+                        # coverage-gap day. if_held stays full-membership (AC-6).
+                        _snap_floor_guard_delta = _snap_vw_tc.get("guard_delta_vw")
+                        if (
+                            _snap_floor_guard_delta is not None
+                            and _snap_vw_tc.get("if_held") is not None
+                        ):
+                            _snap_tc_final = {
+                                "if_held": _snap_vw_tc["if_held"],
+                                "dry_run": _snap_vw_tc["if_held"] + _snap_floor_guard_delta,
+                            }
+                        else:
+                            _snap_tc_final = _snap_vw_tc
 
                     if _snap_account_cr is not None:
                         _snap_cr_final = analytics.get_portfolio_cumulative_return_account_basis(
@@ -2635,6 +2701,12 @@ def get_state():
                     "trading_day": today_str,
                 }
             )
+            # DE-HELD-BASIS-001 F4 (PR #125 review): no current_return_is_reconstructed
+            # key threaded above — analytics.get_symphony_today_change reads the marker
+            # from bot_state_entry (the real `s`/state_data[k] dict passed at each call
+            # site below, already carrying BL-9's marker) as the PRIMARY source, so this
+            # per-symphony sym_dict threading is redundant by construction (removed, was
+            # added in the original cycle before the F4 design pivot).
 
         # Attach last_trigger (today's most-recent) to each symphony for the Status sub-line.
         today_start = datetime.now().strftime("%Y-%m-%d") + "T00:00:00Z"

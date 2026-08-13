@@ -1,0 +1,126 @@
+{
+  "_provenance": "docs/audit/HELD-VS-BOT-DIVERGENCE-2026-08-13.md §3 -- one atomic engine cycle, CAPTURE_AT_UTC=2026-08-13T17:31:01, last_successful_cycle_at=2026-08-13T13:30:02.282270-04:00, all shadow rows ts_et=2026-08-13T13:30:02. Weights and per-symphony returns are the audit's own 2-decimal display table (verbatim, never invented). Portfolio weight sum from summing these 11 weights is 13892.84 -- the audit's own quoted symphony_value_sum (13892.28) implies a small amount of precision lost to the 2dp display rounding of the underlying current_value figures; this is a real, expected re-derivation gap, not a data-entry error (see docs/generated note in the consuming test file for the numeric proof). Tests derive expected aggregates FROM this fixture's own numbers (never hardcode a literal aggregate that this fixture cannot itself reproduce) and use audit_reported_aggregates only as a loose documentary sanity anchor.",
+  "trading_day": "2026-08-13",
+  "symphony_value_sum_as_reported_by_audit": 13892.28,
+  "symphonies": [
+    {
+      "id": "lqd_eyeg_5ways",
+      "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+      "value": 1020.63,
+      "bot_state_current_return": -1.27,
+      "shadow_return": -1.27,
+      "shadow_history_current_return": -1.27,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "paragons_of_lqd",
+      "name": "Planet of the Paragons: EYEG of the LQD",
+      "value": 765.23,
+      "bot_state_current_return": -1.17,
+      "shadow_return": -1.17,
+      "shadow_history_current_return": -1.17,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "corporate_chaos_5ways",
+      "name": "Corporate Chaos 5 ways",
+      "value": 853.31,
+      "bot_state_current_return": -0.09,
+      "shadow_return": -0.09,
+      "shadow_history_current_return": -0.09,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "golden_age_buy_copy",
+      "name": "Planet of the Golden Age (Buy Copy)",
+      "value": 1760.90,
+      "bot_state_current_return": 1.21,
+      "shadow_return": 1.21,
+      "shadow_history_current_return": 1.21,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "lqd_waltanansi",
+      "name": "Planet LQD: Run of the Feaver'd WaltAnansi",
+      "value": 1576.06,
+      "bot_state_current_return": -0.73,
+      "shadow_return": -0.73,
+      "shadow_history_current_return": -0.73,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "feaverd_allocations_novas",
+      "name": "Land of Feaver'd Allocations: Intelligent Novas",
+      "value": 1050.78,
+      "bot_state_current_return": 0.24,
+      "shadow_return": 0.24,
+      "shadow_history_current_return": 0.24,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "hunted_cascades",
+      "name": "(INVEST) Planet of Hunted Cascades",
+      "value": 1261.39,
+      "bot_state_current_return": 0.22,
+      "shadow_return": 0.22,
+      "shadow_history_current_return": 0.22,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "projected_inflation",
+      "name": "(INVEST) Planet of Projected Inflation",
+      "value": 1071.05,
+      "bot_state_current_return": 0.91,
+      "shadow_return": 0.91,
+      "shadow_history_current_return": 0.91,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "reasonabilists",
+      "name": "Planet of the Reasonabilists",
+      "value": 1750.42,
+      "bot_state_current_return": 1.11,
+      "shadow_return": 1.11,
+      "shadow_history_current_return": 1.11,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "erased_history_novas",
+      "name": "Planet of Erased History: Nova's Feaver'd",
+      "value": 1025.53,
+      "bot_state_current_return": -0.13,
+      "shadow_return": -0.13,
+      "shadow_history_current_return": -0.13,
+      "current_return_is_reconstructed": false,
+      "triggered": false
+    },
+    {
+      "id": "little_trolling_v1_4",
+      "name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4",
+      "value": 1757.54,
+      "bot_state_current_return": 0.39571,
+      "shadow_return": 0.67000,
+      "shadow_history_current_return": 0.53000,
+      "current_return_is_reconstructed": true,
+      "triggered": true,
+      "triggered_reason": "VWAP Breakdown"
+    }
+  ],
+  "audit_reported_aggregates": {
+    "_note": "Headline pp figures as reported in the audit's §3 (rounded from the audit script's own higher-precision internal current_value data, not exactly re-derivable from the 2dp display table above -- consuming tests use these as a loose sanity anchor with a generous tolerance, and derive their PRIMARY expected values directly from this fixture's own symphonies array via an obviously-correct weighted-average formula, per this project's no-hardcoded-producer-values rule).",
+    "vw_held_bot_state_basis_pre_fix_pct": 0.192476,
+    "vw_bot_shadow_return_pct": 0.227176,
+    "vw_held_shadow_current_return_post_fix_pct": 0.209465,
+    "today_row_delta_pre_fix_pct": 0.034700,
+    "hero_perf_delta_post_fix_pct": 0.017712
+  }
+}

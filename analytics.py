@@ -520,13 +520,31 @@ def get_symphony_today_change(
     """
     Per-symphony Today's Change.
 
-    if_held: last_percent_change * 100 (Composer decimal -> percent).
-    dry_run: sourced in priority order:
-      1. Triggered symphony: bot_state_entry["current_return"] (engine-stored pct).
-      2. Shadow history row for (symphony_id, trading_day) when trading_day is explicit
-         (kwarg or sym_dict["trading_day"]) — M1F live path; None when no row (AC-M1F.3.5).
-      3. Fallback to if_held when trading_day was not explicitly provided and no shadow
-         row exists — preserves pre-M1F semantics for callers that don't inject trading_day.
+    if_held: sym_dict["last_percent_change"] * 100 (Composer decimal -> percent) by
+        default. DE-HELD-BASIS-001 (AC-1/AC-2/AC-4, F4 design pivot, PR #125 review):
+        overridden to the same-day shadow_history row's raw current_return (already
+        percent-scale, no further *100) when BOTH (a) the reconstruction marker
+        resolves truthy — see "marker resolution" below — and (b) a same-trading-day
+        shadow_history row exists with a non-None current_return column. Marker
+        false/absent, no shadow row, or a NULL current_return column all fall back to
+        the pre-override formula above — never a crash, never a fabricated value.
+
+        Marker resolution (F4): bot_state_entry is PRIMARY. If bot_state_entry is a
+        dict AND "current_return_is_reconstructed" is PRESENT in it (a key-presence
+        check, not a truthiness check — an explicit False is authoritative and wins
+        over a stale/absent sym_dict value), that value is used. Only when
+        bot_state_entry is None, not a dict, or lacks the key entirely does the
+        override fall back to sym_dict.get("current_return_is_reconstructed"). Every
+        real production caller already passes the true bot_state sub-dict as
+        bot_state_entry (which BL-9 stamps with this marker), so this makes the
+        override reachable at every real call site without per-caller sym_dict
+        threading — the one exception is the frozen branch's hand-built
+        _snap_bot_state (app.py), which needs the key added explicitly since it is
+        not the real bot_state entry.
+    dry_run: the same-trading-day shadow_history row's shadow_return (the frozen exit
+        value, distinct from current_return above); None when no row exists for
+        (symphony_id, trading_day) (AC-M1F.3.5). Unaffected by bot_state_entry/marker
+        resolution above — dry_run derives exclusively from the shadow_history row.
     trading_day: override for today; defaults to sym_dict["trading_day"] then today.
     db_path: override DB file path (for tests).
     conn: F-1 — optional pre-opened read-only connection; reused instead of
@@ -550,11 +568,36 @@ def get_symphony_today_change(
         _trading_day = _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     dry_run: float | None = None
+    row = None
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
         row = _load_latest_shadow_row_for_analytics(symphony_id, _trading_day, _db_file, conn=conn)
         if row is not None:
             dry_run = float(row["shadow_return"])
+
+    # DE-HELD-BASIS-001 F4 (PR #125 review): marker resolution, bot_state_entry
+    # PRIMARY / sym_dict fallback. Key-PRESENCE check (not truthiness) — an explicit
+    # False on bot_state_entry is authoritative and must win over a stale/absent
+    # sym_dict marker, so this deliberately does NOT use `bot_state_entry.get(...) or
+    # sym_dict.get(...)` (which would silently fall through on a real False).
+    if isinstance(bot_state_entry, dict) and "current_return_is_reconstructed" in bot_state_entry:
+        _is_reconstructed = bot_state_entry["current_return_is_reconstructed"]
+    else:
+        _is_reconstructed = sym_dict.get("current_return_is_reconstructed")
+
+    # A triggered symphony's bot_state.current_return is the TRUE SHADOW RETURN
+    # OVERRIDE's VWAP-based basket reconstruction, not the raw if-held trajectory.
+    # When the marker above resolves truthy AND a same-day shadow_history row is
+    # already on hand (reused from the dry_run fetch above -- no extra DB
+    # round-trip), prefer the row's raw current_return for if_held. No further *100
+    # scaling: the DB column is already percent-scale, same convention shadow_return
+    # already uses unscaled above. `row.get("current_return") is not None` guard:
+    # the engine writes both columns in one INSERT so a NULL current_return needs
+    # legacy/tampered data, but float(None) is a TypeError crash on this
+    # operator-facing honesty surface -- fail safe to the pre-fix bot_state-derived
+    # value rather than crash.
+    if _is_reconstructed and row is not None and row.get("current_return") is not None:
+        if_held = float(row["current_return"])
 
     return {"if_held": if_held, "dry_run": dry_run}
 
@@ -1045,6 +1088,7 @@ def _value_weighted_portfolio(
     per_sym_fn,
     *,
     none_on_empty: bool = False,
+    include_paired_guard_delta: bool = False,
     **kwargs,
 ) -> dict:
     """
@@ -1060,6 +1104,27 @@ def _value_weighted_portfolio(
     When none_on_empty=False (default): returns {"if_held": 0.0, "dry_run": 0.0}
     — used by TC where 0.0 is semantically correct for no-data.
 
+    include_paired_guard_delta (DE-HELD-BASIS-001, FINDING-2/F2/F7, PR #125 review):
+    when True, the returned dict additionally carries "guard_delta_vw" — the
+    COVERAGE-SCALED value-weighted divergence: the paired-membership subset's
+    (dry_run - if_held) divergence SUM, divided by TOTAL weight (not paired weight).
+    This is deliberately NOT the paired-subset MEAN divergence — an earlier version
+    of this function computed the mean and let the caller multiply it by
+    full-membership invested_frac, which extrapolates the covered subset's average
+    divergence onto uncovered capital (reviewer's worked example: 2-of-3 coverage,
+    +1.0pp paired-mean divergence overstates to +1.0pp applied portfolio-wide,
+    instead of the honest +0.667pp = 1.0 * 2000/3000). Dividing the paired SUM by
+    TOTAL weight computes the coverage-scaled value directly in one division,
+    implicitly treating an uncovered symphony's unknown divergence as 0 — F7 folds
+    into this same formula (a single dry_run_weight-gated division, no separate
+    paired-weight counter to desync from it). This is distinct from the "if_held"
+    key above, which always stays full-membership (preserves the Tier-2
+    "basis=value_weighted" floor consumer, AC-6) — a coverage-gap symphony with no
+    shadow row today is included in "if_held" but excluded from the paired
+    divergence sum, so a mismatched-denominator phantom delta can't leak through.
+    None when no symphony has paired coverage (mirrors dry_run's own
+    None-on-zero-coverage contract).
+
     **kwargs (trading_day/db_path/conn) pass straight through to per_sym_fn on
     every iteration below — F-1: a caller-supplied conn is forwarded to EVERY
     symphony in this loop, so the whole portfolio aggregate shares ONE
@@ -1069,6 +1134,7 @@ def _value_weighted_portfolio(
     if_held_wsum = 0.0
     dry_run_wsum = 0.0
     dry_run_weight = 0.0
+    paired_if_held_wsum = 0.0
 
     for sym in symphonies:
         w = sym.get("value")
@@ -1098,6 +1164,11 @@ def _value_weighted_portfolio(
         if per["dry_run"] is not None:
             dry_run_wsum += per["dry_run"] * w
             dry_run_weight += w
+            if include_paired_guard_delta:
+                # Paired membership: same symphonies as the dry_run accumulation
+                # above (dry_run_weight doubles as the paired-coverage gate below —
+                # F7: no separate paired-weight counter to desync from it).
+                paired_if_held_wsum += per["if_held"] * w
 
     if total_weight == 0.0:
         if none_on_empty:
@@ -1105,10 +1176,19 @@ def _value_weighted_portfolio(
         return {"if_held": 0.0, "dry_run": 0.0}
 
     dry_run_result: float | None = dry_run_wsum / dry_run_weight if dry_run_weight > 0.0 else None
-    return {
+    result = {
         "if_held": if_held_wsum / total_weight,
         "dry_run": dry_run_result,
     }
+    if include_paired_guard_delta:
+        # F2/F7: paired divergence SUM over TOTAL weight — coverage-scaled in one
+        # division (see the docstring above for the worked example this formula
+        # fixes). Gated on dry_run_weight (not total_weight, already known nonzero
+        # here) so zero paired coverage yields None, not a fabricated 0.0.
+        result["guard_delta_vw"] = (
+            (dry_run_wsum - paired_if_held_wsum) / total_weight if dry_run_weight > 0.0 else None
+        )
+    return result
 
 
 def get_portfolio_today_change(
@@ -1118,17 +1198,26 @@ def get_portfolio_today_change(
     trading_day: str | None = None,
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
+    include_paired_guard_delta: bool = False,
 ) -> dict:
     """Value-weighted portfolio Today's Change across all symphonies.
 
     conn: F-1 — optional pre-opened read-only connection, forwarded to the
     per-symphony get_symphony_today_change call inside _value_weighted_portfolio's
     loop so all symphonies share ONE connection instead of one each.
+
+    include_paired_guard_delta (DE-HELD-BASIS-001, F2/F6, PR #125 review): default
+    False. The internal coverage-scaled "guard_delta_vw" intermediate (see
+    _value_weighted_portfolio's docstring) must NOT leak into public JSON responses
+    or the engine's persisted EOD snapshot by default — callers that genuinely need
+    it (app.py's account-basis TC sites, the frozen Tier-2 floor's own paired
+    re-derivation) opt in explicitly with include_paired_guard_delta=True.
     """
     return _value_weighted_portfolio(
         symphonies,
         bot_state,
         get_symphony_today_change,
+        include_paired_guard_delta=include_paired_guard_delta,
         trading_day=trading_day,
         db_path=db_path,
         conn=conn,
@@ -1263,13 +1352,25 @@ def get_portfolio_today_change_account_basis(
     This function translates the bot's guard-alpha DIVERGENCE from VW symphony-basis
     to account-basis so that Bot and Held share a common denominator:
 
-        guard_delta_vw = vw_tc["dry_run"] - vw_tc["if_held"]   # pure guard effect, VW basis
+        guard_delta_vw = ...                                     # see below — 2 sources
         invested_frac  = symphony_value_sum / account_value     # fraction of account deployed
         dry_run_account = account_if_held_tc + guard_delta_vw * invested_frac
 
-    The guard effect is measured against the VW if_held (same denominator as dry_run),
-    then scaled by invested_frac so it is expressed as a fraction of account value,
-    then applied to the account-level Held today-change.
+    guard_delta_vw source (DE-HELD-BASIS-001 F2, PR #125 review — two branches):
+        - PREFERRED: vw_tc["guard_delta_vw"], when present and not None — the
+          coverage-scaled paired divergence _value_weighted_portfolio computes when
+          its caller opts in via include_paired_guard_delta=True (e.g.
+          get_portfolio_today_change). This is already scaled for any coverage gap
+          (see that function's docstring), so it is used AS-IS here, not re-derived
+          from vw_tc["dry_run"] - vw_tc["if_held"].
+        - LEGACY FALLBACK: vw_tc["dry_run"] - vw_tc["if_held"] (pure guard effect on
+          the shared VW denominator), for any caller passing a plain
+          {"if_held", "dry_run"} dict without the key — e.g. hand-built test
+          fixtures, or a full-coverage day where the two formulas are numerically
+          identical anyway.
+    Either way, the resulting guard_delta_vw is then scaled by invested_frac so it is
+    expressed as a fraction of account value, then applied to the account-level Held
+    today-change.
 
     Args:
         vw_tc:               {"if_held": float, "dry_run": float | None} — VW portfolio TC
@@ -1316,9 +1417,21 @@ def get_portfolio_today_change_account_basis(
     # negative) but a stale snapshot could produce it; clamping prevents amplification
     # of the guard delta beyond its VW-basis magnitude (operational policy).
     invested_frac = min(symphony_value_sum / account_value, 1.0)
-    # Guard delta measured on VW basis (dry_run and if_held share the same
-    # symphony-value denominator, so this is a clean pure-guard-effect measure).
-    guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
+    # Guard delta: prefer FINDING-2/AC-5's paired-membership "guard_delta_vw" when the
+    # caller supplied it (get_portfolio_today_change's include_paired_guard_delta=True
+    # path) — this avoids a coverage-gap symphony (real if_held, no shadow row today)
+    # diluting/mismatching the denominator against dry_run's dry-run-only membership.
+    # `is not None` (not a truthiness check): a genuine 0.0 guard delta must not fall
+    # through to the legacy formula. Falls back to the pre-existing mismatched-membership
+    # formula for any caller passing a plain {"if_held":..., "dry_run":...} dict without
+    # the key (e.g. hand-built test fixtures, or vw_cr from the CR path) — byte-preserved.
+    _paired_guard_delta_vw = vw_tc.get("guard_delta_vw")
+    if _paired_guard_delta_vw is not None:
+        guard_delta_vw = float(_paired_guard_delta_vw)
+    else:
+        # Guard delta measured on VW basis (dry_run and if_held share the same
+        # symphony-value denominator, so this is a clean pure-guard-effect measure).
+        guard_delta_vw = float(vw_tc["dry_run"]) - float(vw_tc["if_held"])
     # Scale to account basis and apply to the account-level Held today-change.
     dry_run_account = account_if_held_tc + guard_delta_vw * invested_frac
     return {"if_held": account_if_held_tc, "dry_run": dry_run_account}
