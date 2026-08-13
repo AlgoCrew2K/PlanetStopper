@@ -33,3 +33,31 @@ Proposal only — the doc-writer does not edit the project CLAUDE.md directly (p
 ## Not proposed: a new standalone row
 
 This cycle's changes are additive clauses on 3 existing rows (`analytics.py`, `app.py`, `alpha_bot_execution.py` correction) — no new file was created, so no new table row is proposed.
+
+---
+
+## Revise 1 (PR #125 review findings F1-F9/F13/F14, 2026-08-13) — corrections to the ALREADY-APPLIED blocks above
+
+The original 3 blocks above were applied verbatim to `.claude/CLAUDE.md` at commit `e1e7496e`. The mandatory `/review` skill gate on PR #125 then returned 14 findings requiring a revise cycle (commits `1c7fe310`/`f35b3de7`/`50742343`) that changes some of what those blocks describe. This section gives find-and-replace instructions against the text as it now literally stands in `.claude/CLAUDE.md` — not a fresh append, since two of the original claims are now factually wrong and should not stand uncorrected in a living reference doc. The "Find" block below was extracted byte-for-byte from the live file at this doc pass (verified via `content.find(...)`, not hand-retyped) to avoid a mismatched-quote-character failure on application.
+
+### `analytics.py` row — APPEND after the existing "held-basis convergence" clause's final sentence ("...See `DE-HELD-BASIS-001` in `DECISIONS.md` and `docs/generated/analytics.md`.")
+
+Insert this sentence immediately after that sentence, same clause, no new bold header needed:
+
+> **Revise 1 (PR #125 review, 2026-08-13):** the marker-resolution mechanism above is superseded — `get_symphony_today_change` now reads `current_return_is_reconstructed` from `bot_state_entry` PRIMARY (a key-presence check, not truthiness), falling back to `sym_dict` only when `bot_state_entry` lacks the key (F4) — fixing 3 previously-unthreaded consumers (`/api/strip`, the dashboard SSR card, the frozen per-symphony loop) with zero `app.py` diff at those sites. `_value_weighted_portfolio`'s `guard_delta_vw` formula is corrected from a paired-mean-times-full-invested-frac extrapolation to a coverage-scaled paired-sum-over-total-weight formula (F2/F7 — the original formula could overstate guard alpha up to 1.5x under partial coverage); `include_paired_guard_delta` now defaults `False` (was hardcoded `True`), requiring 4 explicit opt-in sites in `app.py` (F6). See `DE-HELD-BASIS-001`'s "Revise 1" section in `DECISIONS.md`.
+
+### `app.py` row — FIND AND REPLACE within the existing "held-basis convergence" clause
+
+**Find** (extracted byte-for-byte from the live `.claude/CLAUDE.md` at this doc pass):
+
+> `dashboard()`'s SSR sym_dict builder (`app.py:1274`) and the frozen/closed-market snapshot branch (`app.py:2169`) are deliberately NOT threaded — the latter is structurally immune (its snapshot is built from the EOD pass's already-cleaned, marker-`False` `bot_state` entries, `alpha_bot_execution.py:1037-1058`/`:1119-1127`/`:1153`, one synchronous call, so it can never carry a live mid-day reconstruction). `_compute_portfolio_strip`'s Tier-2 (no cached/last-good account totals) floor path re-derives its rendered `today_change.dry_run` from `if_held + guard_delta_vw` (the new paired-membership delta) instead of the raw dry-run-only-membership average; `if_held` stays full-membership.
+
+**Replace with:**
+
+> **[SUPERSEDED, Revise 1, PR #125 review F1/F3/F4/F5/F6]** the 2-site threading design above (`_compute_portfolio_strip`/`get_state()` only) and the "structurally immune" claim about `app.py:2169` are both corrected. `analytics.get_symphony_today_change` now reads the marker from its `bot_state_entry` parameter as PRIMARY (F4) — `dashboard()`'s SSR card build, `/api/strip/<window>`, and the frozen per-symphony card loop all get the fix with zero additional `app.py` diff, since every real caller already passes the true `bot_state` sub-dict as `bot_state_entry`; the original 2 threaded sites had their marker-threading REMOVED as redundant. The frozen Tier-2 aggregate's hand-built `_snap_bot_state` gains the marker key explicitly (F5(b) — the ONE site F4 doesn't cover for free) and its own Tier-2 floor now gets the same `if_held + guard_delta_vw` re-derivation the live floor does (F5(a)), all 3 of `_compute_portfolio_strip`'s `get_portfolio_today_change` call sites plus the frozen branch's now pass `include_paired_guard_delta=True` explicitly (F6, `guard_delta_vw` no longer leaks by default). The "structurally immune" claim was FALSE as stated (F5(d)) — the EOD marker-reset loop (`alpha_bot_execution.py:1037`, scoped to `symphony_data_cache`) and the snapshot builder (`:1066`/`:1120`, scoped to ALL of `bot_state`) can disagree on symphony membership when a Composer fetch fails at the EOD run; the fix is render-layer-only (`alpha_bot_execution.py` carries zero diff, AC-7 held) — the frozen render path now honestly reads whatever marker the snapshot actually carries. See `DE-HELD-BASIS-001`'s "Revise 1" section in `DECISIONS.md` and `docs/generated/app.md`.
+
+### `alpha_bot_execution.py` row — no correction needed, one addition
+
+The BL-9 clause correction from the original proposal (already applied — confirmed live in `.claude/CLAUDE.md` at this doc pass) remains accurate: this module carries zero diff in the revise cycle too. One append to the SAME clause, documenting a genuinely new architectural fact about this file found by the PR #125 review:
+
+> **Append, after the existing "gained its first real consumer..." sentence:** a PR #125 review finding (F5(d), 2026-08-13) additionally documents a read-scope mismatch in this module between the EOD marker-reset loop (`:1037`, scoped to `symphony_data_cache`) and the snapshot builder (`:1066`/`:1120`, scoped to ALL of `bot_state`) — a symphony whose Composer fetch fails at the EOD run can retain a stale `current_return_is_reconstructed=True` marker into the frozen snapshot; documented for architectural completeness, zero diff to this file (AC-7 held), fix is render-layer-only in `app.py`. See `docs/generated/alpha_bot_execution.md`'s "Known architectural gap" note.
