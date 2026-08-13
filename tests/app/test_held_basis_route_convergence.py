@@ -454,12 +454,16 @@ class TestAC5RouteLevelCoverageGap:
         _seed_live_bot_state_symphony(
             "route-f2-a", name="Route F2 A", value=1000.0, current_return=1.0
         )
-        _insert_shadow_row(os.environ["DB_PATH"], "route-f2-a", shadow_return=2.0, current_return=2.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-f2-a", shadow_return=2.0, current_return=2.0
+        )
 
         _seed_live_bot_state_symphony(
             "route-f2-b", name="Route F2 B", value=1000.0, current_return=1.0
         )
-        _insert_shadow_row(os.environ["DB_PATH"], "route-f2-b", shadow_return=2.0, current_return=2.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-f2-b", shadow_return=2.0, current_return=2.0
+        )
 
         # Coverage-gap symphony: real bot_state entry, deliberately NO shadow_history row today.
         _seed_live_bot_state_symphony(
@@ -488,6 +492,130 @@ class TestAC5RouteLevelCoverageGap:
             f"at this call site at all -- F6's default-False regressed F2's fix here)."
         )
 
+    def test_tier0_warm_cache_branch_applies_coverage_scaled_delta_not_paired_mean(self, client):
+        """Revise-cycle addition (post-GREEN, held-imp mutation-check finding
+        2026-08-13): the same F2 coverage-scaled-delta proof as the test
+        above, but forcing the Tier-0 WARM-CACHE branch (app.py:~1611-1619)
+        instead of the Tier-2 floor. This is the branch
+        test_account_basis_tc.py's F9-updated seam mocks structurally
+        CANNOT exercise for this specific regression class -- those tests
+        `patch("analytics.get_portfolio_today_change", return_value=...)`,
+        which replaces the real function entirely, so whether the call site
+        actually passes include_paired_guard_delta=True is never tested end
+        to end. held-imp's mutation-check (disabling this one call site's
+        opt-in, one at a time, full 3-file suite re-run) confirmed this
+        produced 52/52 STILL GREEN -- this test closes that gap.
+
+        account_value is seeded equal to symphony_value_sum (no cash) so
+        invested_frac == 1.0 by construction, making the account-basis
+        delta numerically identical to the Tier-2 floor's +0.6667pp
+        expectation (see get_portfolio_today_change_account_basis's
+        docstring: dry_run_account = account_if_held_tc + guard_delta_vw *
+        invested_frac).
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+        app_module._account_totals_cache["portfolio_value"] = 3000.0
+        app_module._account_totals_cache["portfolio_tc"] = 5.0
+
+        _seed_live_bot_state_symphony(
+            "route-t0-a", name="Route Tier0 A", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-t0-a", shadow_return=2.0, current_return=2.0
+        )
+
+        _seed_live_bot_state_symphony(
+            "route-t0-b", name="Route Tier0 B", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-t0-b", shadow_return=2.0, current_return=2.0
+        )
+
+        # Coverage-gap symphony: real bot_state entry, deliberately NO shadow_history row today.
+        _seed_live_bot_state_symphony(
+            "route-t0-c",
+            name="Route Tier0 C (no shadow row today, 5.0pp outlier)",
+            value=1000.0,
+            current_return=5.0,
+        )
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        portfolio_strip = data.get("portfolio_strip") or {}
+        today_change = portfolio_strip.get("today_change") or {}
+
+        assert (
+            today_change.get("if_held") is not None and today_change.get("dry_run") is not None
+        ), f"expected a real non-degraded today_change; got {today_change}"
+        assert today_change["if_held"] == pytest.approx(5.0, abs=1e-6), (
+            f"sanity: if_held must pass through the cached account_if_held_tc (5.0) "
+            f"unchanged; got {today_change['if_held']}"
+        )
+        delta = float(today_change["dry_run"]) - float(today_change["if_held"])
+        assert delta == pytest.approx(2.0 / 3.0, abs=1e-4), (
+            f"F2/Tier-0 FAIL: the Tier-0 warm-cache branch's Today-row delta over 2-of-3 "
+            f"coverage with +1.0pp paired-mean divergence must be exactly +0.6667pp "
+            f"(invested_frac=1.0 by construction); got delta={delta} "
+            f"(today_change={today_change}). A value near +1.0 means "
+            f"include_paired_guard_delta=True was not passed to get_portfolio_today_change "
+            f"at the Tier-0 call site (app.py:~1611-1619) -- the legacy "
+            f"vw_tc['dry_run']-vw_tc['if_held'] fallback leaked the raw unscaled paired mean "
+            f"through instead."
+        )
+
+    def test_tier1_last_good_branch_applies_coverage_scaled_delta_not_paired_mean(self, client):
+        """Same F2 coverage-scaled-delta proof as the two tests above, forcing
+        the Tier-1 LAST-GOOD fallback branch (app.py:~1628-1636) -- the
+        SECOND branch with no dedicated end-to-end coverage until now.
+        held-imp's mutation-check confirmed disabling this call site's
+        opt-in also produced 52/52 STILL GREEN.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+        app_module._account_totals_last_good["portfolio_value"] = 3000.0
+        app_module._account_totals_last_good["portfolio_tc"] = 5.0
+
+        _seed_live_bot_state_symphony(
+            "route-t1-a", name="Route Tier1 A", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-t1-a", shadow_return=2.0, current_return=2.0
+        )
+
+        _seed_live_bot_state_symphony(
+            "route-t1-b", name="Route Tier1 B", value=1000.0, current_return=1.0
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-t1-b", shadow_return=2.0, current_return=2.0
+        )
+
+        _seed_live_bot_state_symphony(
+            "route-t1-c",
+            name="Route Tier1 C (no shadow row today, 5.0pp outlier)",
+            value=1000.0,
+            current_return=5.0,
+        )
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        portfolio_strip = data.get("portfolio_strip") or {}
+        today_change = portfolio_strip.get("today_change") or {}
+
+        assert (
+            today_change.get("if_held") is not None and today_change.get("dry_run") is not None
+        ), f"expected a real non-degraded today_change; got {today_change}"
+        delta = float(today_change["dry_run"]) - float(today_change["if_held"])
+        assert delta == pytest.approx(2.0 / 3.0, abs=1e-4), (
+            f"F2/Tier-1 FAIL: the Tier-1 last-good branch's Today-row delta over 2-of-3 "
+            f"coverage with +1.0pp paired-mean divergence must be exactly +0.6667pp; got "
+            f"delta={delta} (today_change={today_change}). A value near +1.0 means "
+            f"include_paired_guard_delta=True was not passed to get_portfolio_today_change "
+            f"at the Tier-1 call site (app.py:~1628-1636)."
+        )
+
 
 # ---------------------------------------------------------------------------
 # F6 -- guard_delta_vw must never leak into a public JSON response shape.
@@ -503,7 +631,9 @@ class TestF6NoInternalKeyLeakage:
         _seed_live_bot_state_symphony(
             "f6-strip-a", name="F6 Strip A", value=1000.0, current_return=1.0
         )
-        _insert_shadow_row(os.environ["DB_PATH"], "f6-strip-a", shadow_return=1.0, current_return=1.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "f6-strip-a", shadow_return=1.0, current_return=1.0
+        )
 
         resp = client.get("/api/strip/30d")
         assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
@@ -530,7 +660,9 @@ class TestF6NoInternalKeyLeakage:
         _seed_live_bot_state_symphony(
             "f6-state-a", name="F6 State A", value=1000.0, current_return=1.0
         )
-        _insert_shadow_row(os.environ["DB_PATH"], "f6-state-a", shadow_return=2.0, current_return=1.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "f6-state-a", shadow_return=2.0, current_return=1.0
+        )
 
         resp = client.get("/api/state")
         assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
@@ -853,8 +985,12 @@ class TestF5FrozenBranchConvergence:
         state["last_market_close_snapshot"] = snapshot
         database_module.save_state(state)
 
-        _insert_shadow_row(os.environ["DB_PATH"], "f5a-cov-a", shadow_return=2.0, current_return=1.0)
-        _insert_shadow_row(os.environ["DB_PATH"], "f5a-cov-b", shadow_return=2.0, current_return=1.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "f5a-cov-a", shadow_return=2.0, current_return=1.0
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "f5a-cov-b", shadow_return=2.0, current_return=1.0
+        )
         # f5a-gap-c deliberately has NO shadow row.
 
         resp = frozen_client.get("/api/state")
