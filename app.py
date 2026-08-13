@@ -1517,6 +1517,10 @@ def _compute_portfolio_strip(
                 "time_weighted_return": s.get("time_weighted_return"),
                 "max_drawdown": s.get("max_drawdown"),
                 "trading_day": trading_day,
+                # DE-HELD-BASIS-001: threads BL-9's basket-reconstruction marker so
+                # analytics.get_symphony_today_change can prefer the shadow_history
+                # if-held trajectory over the reconstructed bot_state value.
+                "current_return_is_reconstructed": s.get("current_return_is_reconstructed", False),
             }
         )
 
@@ -1620,9 +1624,24 @@ def _compute_portfolio_strip(
                 _live_basis_stale = True
             else:
                 # Tier 2 — no last-good: fall back to VW (label applied below).
-                today_change = analytics.get_portfolio_today_change(
+                _vw_tc_floor = analytics.get_portfolio_today_change(
                     symphonies_list, bot_state, trading_day=trading_day, conn=conn
                 )
+                # DE-HELD-BASIS-001 (FINDING-2/AC-5): the floor's rendered dry_run must
+                # be re-derived from the same paired-membership guard_delta_vw the
+                # account-basis path above uses — the raw dry-run-only-membership
+                # average (vw_tc["dry_run"]) mismatches vw_tc["if_held"]'s full
+                # membership, producing a phantom delta on a genuine zero-divergence
+                # coverage-gap day. if_held stays full-membership (AC-6, the Tier-2
+                # floor's own contract) — only dry_run is re-derived.
+                _floor_guard_delta = _vw_tc_floor.get("guard_delta_vw")
+                if _floor_guard_delta is not None and _vw_tc_floor.get("if_held") is not None:
+                    today_change = {
+                        "if_held": _vw_tc_floor["if_held"],
+                        "dry_run": _vw_tc_floor["if_held"] + _floor_guard_delta,
+                    }
+                else:
+                    today_change = _vw_tc_floor
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
         # curve) when available. The value-weighted average of per-symphony MDDs is
@@ -2633,6 +2652,10 @@ def get_state():
                     "time_weighted_return": s.get("time_weighted_return"),
                     "max_drawdown": s.get("max_drawdown"),
                     "trading_day": today_str,
+                    # DE-HELD-BASIS-001: threads BL-9's basket-reconstruction marker so
+                    # analytics.get_symphony_today_change can prefer the shadow_history
+                    # if-held trajectory over the reconstructed bot_state value.
+                    "current_return_is_reconstructed": s.get("current_return_is_reconstructed", False),
                 }
             )
 
