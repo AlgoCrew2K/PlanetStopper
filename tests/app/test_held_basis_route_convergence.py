@@ -57,7 +57,9 @@ def golden_fixture() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _insert_shadow_row(db_path: str, symphony_id: str, shadow_return: float, current_return: float) -> None:
+def _insert_shadow_row(
+    db_path: str, symphony_id: str, shadow_return: float, current_return: float
+) -> None:
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO shadow_history "
@@ -188,7 +190,9 @@ class TestAC2CallerShapeParity:
         assert resp.status_code == 200, f"unexpected status: {resp.status_code}"
         html = resp.get_data(as_text=True)
 
-        assert 'data-field="tc-held"' in html, "expected at least one tc-held card field in the SSR HTML"
+        assert 'data-field="tc-held"' in html, (
+            "expected at least one tc-held card field in the SSR HTML"
+        )
         assert ">+2.0%<" in html, (
             "AC-2 FAIL: dashboard() SSR route card if_held must render the bot_state-derived "
             "+2.0% (untouched caller shape), not the shadow row's differing current_return "
@@ -220,7 +224,9 @@ class TestAC2CallerShapeParity:
             f"expected the frozen branch to be exercised; got market_state={data.get('market_state')!r}"
         )
         state = data.get("state") or {}
-        assert sym_id in state, f"expected {sym_id!r} in the frozen response's 'state' key; got {sorted(state.keys())!r}"
+        assert sym_id in state, (
+            f"expected {sym_id!r} in the frozen response's 'state' key; got {sorted(state.keys())!r}"
+        )
         tc = (state[sym_id] or {}).get("_tc") or {}
 
         assert tc.get("if_held") == pytest.approx(3.0, abs=1e-6), (
@@ -252,7 +258,9 @@ class TestAC2CallerShapeParity:
         symphonies_list = data.get("symphonies")
         assert isinstance(symphonies_list, list) and symphonies_list
         by_id = {s.get("id"): s for s in symphonies_list if isinstance(s, dict)}
-        assert sym_id in by_id, f"expected {sym_id!r} among symphonies; got {sorted(by_id.keys())!r}"
+        assert sym_id in by_id, (
+            f"expected {sym_id!r} among symphonies; got {sorted(by_id.keys())!r}"
+        )
 
         assert by_id[sym_id].get("tc_held") == pytest.approx(4.0, abs=1e-6), (
             f"AC-2 FAIL: live poll card (app.py:2675) if_held must remain the bot_state value "
@@ -263,7 +271,9 @@ class TestAC2CallerShapeParity:
         portfolio_strip = data.get("portfolio_strip") or {}
         today_change = portfolio_strip.get("today_change") or {}
         # Untriggered/marker-False -> guard_delta_vw must be exactly 0 -> aggregate dry_run == if_held.
-        assert today_change.get("dry_run") == pytest.approx(today_change.get("if_held"), abs=1e-6), (
+        assert today_change.get("dry_run") == pytest.approx(
+            today_change.get("if_held"), abs=1e-6
+        ), (
             f"AC-2 sanity: with a single untriggered symphony and no divergence, the aggregate "
             f"today_change dry_run/if_held must agree; got {today_change}"
         )
@@ -298,7 +308,10 @@ class TestAC3RouteLevelConvergence:
                 triggered=s.get("triggered", False),
             )
             _insert_shadow_row(
-                os.environ["DB_PATH"], s["id"], s["shadow_return"], s["shadow_history_current_return"]
+                os.environ["DB_PATH"],
+                s["id"],
+                s["shadow_return"],
+                s["shadow_history_current_return"],
             )
 
         resp = client.get("/api/state")
@@ -347,16 +360,23 @@ class TestAC5RouteLevelCoverageGap:
         _seed_live_bot_state_symphony(
             "route-gap-a", name="Route Gap A", value=1000.0, current_return=1.0
         )
-        _insert_shadow_row(os.environ["DB_PATH"], "route-gap-a", shadow_return=1.0, current_return=1.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-gap-a", shadow_return=1.0, current_return=1.0
+        )
 
         _seed_live_bot_state_symphony(
             "route-gap-b", name="Route Gap B", value=1000.0, current_return=1.0
         )
-        _insert_shadow_row(os.environ["DB_PATH"], "route-gap-b", shadow_return=1.0, current_return=1.0)
+        _insert_shadow_row(
+            os.environ["DB_PATH"], "route-gap-b", shadow_return=1.0, current_return=1.0
+        )
 
         # Coverage-gap symphony: real bot_state entry, deliberately NO shadow_history row today.
         _seed_live_bot_state_symphony(
-            "route-gap-c", name="Route Gap C (no shadow row today)", value=1000.0, current_return=9.0
+            "route-gap-c",
+            name="Route Gap C (no shadow row today)",
+            value=1000.0,
+            current_return=9.0,
         )
 
         resp = client.get("/api/state")
@@ -365,9 +385,9 @@ class TestAC5RouteLevelCoverageGap:
         portfolio_strip = data.get("portfolio_strip") or {}
         today_change = portfolio_strip.get("today_change") or {}
 
-        assert today_change.get("if_held") is not None and today_change.get("dry_run") is not None, (
-            f"expected a real non-degraded today_change; got {today_change}"
-        )
+        assert (
+            today_change.get("if_held") is not None and today_change.get("dry_run") is not None
+        ), f"expected a real non-degraded today_change; got {today_change}"
         delta = float(today_change["dry_run"]) - float(today_change["if_held"])
         assert delta == pytest.approx(0.0, abs=1e-4), (
             f"AC-5 FAIL: a coverage-gap day with zero divergence on the covered subset must "

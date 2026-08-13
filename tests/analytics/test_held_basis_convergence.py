@@ -249,9 +249,7 @@ class TestPerSymphonyMarkerGatedIfHeld:
         this assertion would also fail a *100-double-scaled implementation
         (which would render 53.0, not 0.53), catching that specific defect.
         """
-        sym = next(
-            s for s in golden_fixture["symphonies"] if s["id"] == "little_trolling_v1_4"
-        )
+        sym = next(s for s in golden_fixture["symphonies"] if s["id"] == "little_trolling_v1_4")
         assert sym["current_return_is_reconstructed"] is True  # sanity on the fixture itself
 
         db_file = _make_shadow_db(
@@ -280,14 +278,18 @@ class TestPerSymphonyMarkerGatedIfHeld:
             "once the marker-gated fix is in place"
         )
 
-    def test_untriggered_symphony_marker_false_if_held_unchanged(self, normal_symphony_dict, tmp_path):
+    def test_untriggered_symphony_marker_false_if_held_unchanged(
+        self, normal_symphony_dict, tmp_path
+    ):
         """AC-2 (unit pin). marker explicitly False -> if_held is byte-identical
         to the pre-fix formula (last_percent_change*100), regardless of what
         the shadow row's current_return column says.
         """
         db_file = _make_shadow_db(
             tmp_path,
-            [(normal_symphony_dict["id"], -3.33, 99.0)],  # 99.0 sentinel: must NOT leak into if_held
+            [
+                (normal_symphony_dict["id"], -3.33, 99.0)
+            ],  # 99.0 sentinel: must NOT leak into if_held
         )
         sym_dict = dict(normal_symphony_dict, current_return_is_reconstructed=False)
 
@@ -392,9 +394,7 @@ class TestPerSymphonyMarkerGatedIfHeld:
         reading shadow_history.shadow_return (the frozen exit value), never
         accidentally swapped to shadow_history.current_return.
         """
-        sym = next(
-            s for s in golden_fixture["symphonies"] if s["id"] == "little_trolling_v1_4"
-        )
+        sym = next(s for s in golden_fixture["symphonies"] if s["id"] == "little_trolling_v1_4")
         db_file = _make_shadow_db(
             tmp_path,
             [(sym["id"], sym["shadow_return"], sym["shadow_history_current_return"])],
@@ -462,7 +462,9 @@ class TestPortfolioAggregateGoldenFixture:
         claim (+0.209465pp, sanity-checked below).
         """
         rows = golden_fixture["symphonies"]
-        shadow_rows = [(s["id"], s["shadow_return"], s["shadow_history_current_return"]) for s in rows]
+        shadow_rows = [
+            (s["id"], s["shadow_return"], s["shadow_history_current_return"]) for s in rows
+        ]
         db_file = _make_shadow_db(tmp_path, shadow_rows, suffix="_ac3_marked")
 
         symphonies_list = [
@@ -514,7 +516,9 @@ class TestPortfolioAggregateGoldenFixture:
         back to always-override behavior.
         """
         rows = golden_fixture["symphonies"]
-        shadow_rows = [(s["id"], s["shadow_return"], s["shadow_history_current_return"]) for s in rows]
+        shadow_rows = [
+            (s["id"], s["shadow_return"], s["shadow_history_current_return"]) for s in rows
+        ]
         db_file = _make_shadow_db(tmp_path, shadow_rows, suffix="_ac3_unmarked")
 
         symphonies_list = [
@@ -565,8 +569,18 @@ class TestGuardDeltaVWMembershipParity:
         (dry_run-only-membership) denominators.
         """
         covered = [
-            {"id": "gap-a", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
-            {"id": "gap-b", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
+            {
+                "id": "gap-a",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
+            {
+                "id": "gap-b",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
         ]
         # gap-c has real Composer data (if_held is real) but NO shadow row today.
         gap_symphony = {
@@ -579,7 +593,10 @@ class TestGuardDeltaVWMembershipParity:
 
         db_file = _make_shadow_db(
             tmp_path,
-            [(s["id"], s["last_percent_change"] * 100.0, s["last_percent_change"] * 100.0) for s in covered],
+            [
+                (s["id"], s["last_percent_change"] * 100.0, s["last_percent_change"] * 100.0)
+                for s in covered
+            ],
             suffix="_ac5_zero",
         )
 
@@ -607,8 +624,18 @@ class TestGuardDeltaVWMembershipParity:
         produce roughly -0.333pp (wrong SIGN); the fix must produce +1.0pp.
         """
         covered = [
-            {"id": "gapdiv-a", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
-            {"id": "gapdiv-b", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
+            {
+                "id": "gapdiv-a",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
+            {
+                "id": "gapdiv-b",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
         ]
         gap_symphony = {
             "id": "gapdiv-c",
@@ -699,7 +726,9 @@ class TestGuardDeltaVWMembershipParityCRPath:
 
         db_file = _make_cr_trajectory_shadow_db(
             tmp_path,
-            {s["id"]: [(0.0, 0.0), (0.0, 0.0)] for s in covered},  # flat 2-day trajectory, zero divergence
+            {
+                s["id"]: [(0.0, 0.0), (0.0, 0.0)] for s in covered
+            },  # flat 2-day trajectory, zero divergence
             suffix="_cr_ac5_zero",
         )
 
@@ -715,9 +744,7 @@ class TestGuardDeltaVWMembershipParityCRPath:
             f"either side, and its own dry_run==if_held); got delta={delta} (vw_cr={vw_cr})"
         )
 
-    def test_cr_coverage_gap_with_real_divergence_gap_symphony_contributes_zero_net(
-        self, tmp_path
-    ):
+    def test_cr_coverage_gap_with_real_divergence_gap_symphony_contributes_zero_net(self, tmp_path):
         """Covered symphonies have a real, exactly-known +1.0pp lifetime
         divergence (day1 flat, day2: shadow=+2.0 vs current=+1.0 ->
         (1.02*1.0 - 1.01*1.0)*100 = 1.0pp on top of if_held=1.0 -> dry_run=2.0).
@@ -793,7 +820,12 @@ class TestFloorPathFullMembership:
         not silently shrink the floor's membership.
         """
         covered = [
-            {"id": "floor-a", "value": 1000.0, "last_percent_change": 0.01, "trading_day": _TRADING_DAY},
+            {
+                "id": "floor-a",
+                "value": 1000.0,
+                "last_percent_change": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
         ]
         gap_symphony = {
             "id": "floor-gap",
@@ -835,8 +867,18 @@ class TestAllDegradedContract:
         unchanged by the AC-5 pairwise-membership fix.
         """
         symphonies_list = [
-            {"id": "deg-a", "value": 1000.0, "last_percent_change": 0.02, "trading_day": _TRADING_DAY},
-            {"id": "deg-b", "value": 1000.0, "last_percent_change": -0.01, "trading_day": _TRADING_DAY},
+            {
+                "id": "deg-a",
+                "value": 1000.0,
+                "last_percent_change": 0.02,
+                "trading_day": _TRADING_DAY,
+            },
+            {
+                "id": "deg-b",
+                "value": 1000.0,
+                "last_percent_change": -0.01,
+                "trading_day": _TRADING_DAY,
+            },
         ]
         db_file = _make_empty_shadow_db(tmp_path, suffix="_ac8")
 

@@ -2655,7 +2655,9 @@ def get_state():
                     # DE-HELD-BASIS-001: threads BL-9's basket-reconstruction marker so
                     # analytics.get_symphony_today_change can prefer the shadow_history
                     # if-held trajectory over the reconstructed bot_state value.
-                    "current_return_is_reconstructed": s.get("current_return_is_reconstructed", False),
+                    "current_return_is_reconstructed": s.get(
+                        "current_return_is_reconstructed", False
+                    ),
                 }
             )
 
