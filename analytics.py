@@ -520,13 +520,23 @@ def get_symphony_today_change(
     """
     Per-symphony Today's Change.
 
-    if_held: last_percent_change * 100 (Composer decimal -> percent).
-    dry_run: sourced in priority order:
-      1. Triggered symphony: bot_state_entry["current_return"] (engine-stored pct).
-      2. Shadow history row for (symphony_id, trading_day) when trading_day is explicit
-         (kwarg or sym_dict["trading_day"]) — M1F live path; None when no row (AC-M1F.3.5).
-      3. Fallback to if_held when trading_day was not explicitly provided and no shadow
-         row exists — preserves pre-M1F semantics for callers that don't inject trading_day.
+    if_held: sym_dict["last_percent_change"] * 100 (Composer decimal -> percent) by
+        default. DE-HELD-BASIS-001 (AC-1/AC-2/AC-4): overridden to the same-day
+        shadow_history row's raw current_return (already percent-scale, no further
+        *100) when BOTH (a) sym_dict["current_return_is_reconstructed"] is truthy —
+        the engine's BL-9 marker for a triggered symphony whose bot_state.current_return
+        is the TRUE SHADOW RETURN OVERRIDE's VWAP-based basket reconstruction, not the
+        raw if-held trajectory — and (b) a same-trading-day shadow_history row exists
+        with a non-None current_return column. Marker false/absent, no shadow row, or a
+        NULL current_return column all fall back to the pre-override formula above —
+        never a crash, never a fabricated value.
+    dry_run: the same-trading-day shadow_history row's shadow_return (the frozen exit
+        value, distinct from current_return above); None when no row exists for
+        (symphony_id, trading_day) (AC-M1F.3.5). bot_state_entry is accepted for call-site
+        parity with sibling per-symphony helpers (get_symphony_cumulative_return,
+        get_symphony_max_drawdown) but is NOT read anywhere in this function's body —
+        dry_run and the if_held override both derive exclusively from the shadow_history
+        row above, never from bot_state_entry.
     trading_day: override for today; defaults to sym_dict["trading_day"] then today.
     db_path: override DB file path (for tests).
     conn: F-1 — optional pre-opened read-only connection; reused instead of
