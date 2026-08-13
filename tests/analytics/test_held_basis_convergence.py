@@ -130,6 +130,104 @@ def _make_empty_shadow_db(tmp_path: Path, suffix: str = "") -> str:
     return _make_shadow_db(tmp_path, [], suffix=suffix)
 
 
+def _make_cr_trajectory_shadow_db(
+    tmp_path: Path, trajectories: dict[str, list[tuple[float, float]]], suffix: str = ""
+) -> str:
+    """Multi-day shadow_history rows keyed by symphony_id, each value a list
+    of (shadow_return, current_return) pairs for consecutive trading days
+    starting 2026-08-12 (the day before _TRADING_DAY). Symphony ids NOT
+    present in `trajectories` get zero rows (the CR-path coverage-gap
+    case). No position_epoch column -- _get_shadow_divergence_trajectory's
+    fallback path treats the whole per-symphony history as one legacy
+    epoch, which is exactly what these tests want (a clean 2-day trajectory,
+    no epoch-boundary complexity).
+    """
+    db_file = str(tmp_path / f"shadow_held_basis_cr_traj{suffix}.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE shadow_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symphony_id TEXT NOT NULL,
+            account_id TEXT,
+            cycle_id TEXT,
+            ts_utc TEXT NOT NULL,
+            ts_et TEXT,
+            trading_day TEXT NOT NULL,
+            current_return REAL NOT NULL,
+            shadow_return REAL NOT NULL,
+            is_post_trigger INTEGER NOT NULL DEFAULT 0,
+            trigger_id INTEGER
+        )
+    """)
+    conn.execute("CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)")
+    _days = ["2026-08-12", _TRADING_DAY]
+    for sym_id, pairs in trajectories.items():
+        for day, (shadow_r, current_r) in zip(_days[: len(pairs)], pairs):
+            conn.execute(
+                """INSERT INTO shadow_history
+                   (symphony_id, ts_utc, ts_et, trading_day, current_return, shadow_return)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    sym_id,
+                    f"{day}T13:30:02Z",
+                    f"{day}T13:30:02",
+                    day,
+                    current_r,
+                    shadow_r,
+                ),
+            )
+    conn.commit()
+    conn.close()
+    return db_file
+
+
+def _make_shadow_db_with_null_current_return(
+    tmp_path: Path, symphony_id: str, shadow_return: float, suffix: str = ""
+) -> str:
+    """A row exists for (symphony_id, _TRADING_DAY) but its current_return
+    column is NULL -- a legacy/tampered-row degradation mode distinct from
+    "no row at all" (_make_empty_shadow_db). Production's schema declares
+    current_return REAL NOT NULL from inception (migrations/008_shadow_
+    history.sql) -- this test-only schema deliberately omits that
+    constraint so a NULL can be written at all; the point is proving the
+    READ path degrades safely, not reproducing how a real NULL could get
+    there in production.
+    """
+    db_file = str(tmp_path / f"shadow_held_basis_null_cr{suffix}.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute("""
+        CREATE TABLE shadow_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symphony_id TEXT NOT NULL,
+            account_id TEXT,
+            cycle_id TEXT,
+            ts_utc TEXT NOT NULL,
+            ts_et TEXT,
+            trading_day TEXT NOT NULL,
+            current_return REAL,
+            shadow_return REAL NOT NULL,
+            is_post_trigger INTEGER NOT NULL DEFAULT 0,
+            trigger_id INTEGER
+        )
+    """)
+    conn.execute("CREATE INDEX idx_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)")
+    conn.execute(
+        """INSERT INTO shadow_history
+           (symphony_id, ts_utc, ts_et, trading_day, current_return, shadow_return)
+           VALUES (?, ?, ?, ?, NULL, ?)""",
+        (
+            symphony_id,
+            f"{_TRADING_DAY}T13:30:02Z",
+            f"{_TRADING_DAY}T13:30:02",
+            _TRADING_DAY,
+            shadow_return,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return db_file
+
+
 # ---------------------------------------------------------------------------
 # AC-1 / AC-2 (unit) / AC-4 -- per-symphony marker-gated if_held
 # ---------------------------------------------------------------------------
@@ -253,6 +351,38 @@ class TestPerSymphonyMarkerGatedIfHeld:
         assert result["dry_run"] is None, (
             "AC-4 FAIL: dry_run must remain the honest None sentinel when no shadow row exists "
             "-- unaffected by the if_held fallback"
+        )
+
+    def test_marker_true_shadow_row_present_but_current_return_column_null_falls_back_to_bot_state_value(
+        self, normal_symphony_dict, tmp_path
+    ):
+        """AC-4 extension (PM-requested, 2026-08-13): marker True + a same-day
+        shadow_history row EXISTS but its current_return column is NULL (a
+        legacy/tampered row -- production's schema is NOT NULL on this
+        column from inception, but a pre-migration or manually-edited row
+        could still carry a NULL). if_held must fall back to the bot_state-
+        derived value, never crash with a `float(None)` TypeError. Distinct
+        from the prior test (no row at all vs. a row with a null column) --
+        both are real-world degradation modes the implementation must guard.
+        """
+        db_file = _make_shadow_db_with_null_current_return(
+            tmp_path, normal_symphony_dict["id"], shadow_return=-3.33
+        )
+        sym_dict = dict(normal_symphony_dict, current_return_is_reconstructed=True)
+
+        result = analytics.get_symphony_today_change(
+            sym_dict, bot_state_entry=None, trading_day=_TRADING_DAY, db_path=db_file
+        )
+
+        expected = sym_dict["last_percent_change"] * 100.0
+        assert result["if_held"] == pytest.approx(expected, abs=1e-9), (
+            f"AC-4-EXT FAIL: marker True + a shadow row whose current_return column is NULL "
+            f"must fall back to the bot_state-derived if_held ({expected}), never crash on "
+            f"float(None) and never fabricate a value; got if_held={result['if_held']}"
+        )
+        assert result["dry_run"] == pytest.approx(-3.33, abs=1e-6), (
+            f"AC-4-EXT FAIL: dry_run must be unaffected -- it still reads the row's "
+            f"(non-null) shadow_return column normally; got dry_run={result['dry_run']}"
         )
 
     def test_dry_run_untouched_by_marker_still_reads_shadow_return_not_current_return(
@@ -507,6 +637,142 @@ class TestGuardDeltaVWMembershipParity:
             f"+1.0pp (2.0-1.0); got dry_run={result['dry_run']} -- a mismatched-denominator "
             f"implementation would produce approximately -0.333pp (wrong sign) by diluting "
             f"if_held with the gap symphony's 5.0pp outlier while excluding it from dry_run"
+        )
+
+
+class TestGuardDeltaVWMembershipParityCRPath:
+    """AC-5's CR-path coverage-gap tests (PM-requested confirmation,
+    2026-08-13 — the feature plan's AC-5 text says "guard_delta_vw (TC and
+    CR paths)").
+
+    INVESTIGATION FINDING (reported to PM/held-imp): unlike get_symphony_
+    today_change's dry_run (which reads a SPECIFIC same-day shadow_history
+    row and is genuinely None when that row is missing — the exact
+    mechanism FINDING-2 exploits), get_symphony_cumulative_return's dry_run
+    (analytics.py:899-974) is initialised to `if_held` BEFORE the shadow-
+    trajectory lookup and is ONLY ever reassigned to a real float
+    (if_held + lifetime_divergence) when >=2 distinct shadow trading days
+    exist (analytics.py:953/972) -- it is NEVER None when if_held is not
+    None. Consequently _value_weighted_portfolio's `per["dry_run"] is not
+    None` membership-exclusion check (the exact line FINDING-2 is about)
+    can never fire for a CR-path symphony: a coverage-gap symphony (real
+    Composer data, insufficient/no shadow trajectory) has dry_run == if_held
+    for ITSELF and is counted identically on both sides of the VW average --
+    contributing ZERO net divergence, not a phantom nonzero delta, and never
+    excluded from either side. The specific FINDING-2 defect class is
+    therefore NOT reachable via the CR path under the current code -- these
+    two tests EMPIRICALLY PROVE that (not merely assert it by inspection),
+    so both pass green today and act as a regression guard against a future
+    change to get_symphony_cumulative_return that introduces a None dry_run.
+    """
+
+    def test_cr_coverage_gap_zero_real_divergence_yields_exact_zero_delta(self, tmp_path):
+        covered = [
+            {
+                "id": "cr-gap-a",
+                "value": 1000.0,
+                "simple_return": 0.01,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
+            {
+                "id": "cr-gap-b",
+                "value": 1000.0,
+                "simple_return": 0.01,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
+        ]
+        # Coverage-gap symphony: real Composer data (if_held is real), but NO
+        # shadow_history rows at all -- insufficient trajectory (< 2 days).
+        gap_symphony = {
+            "id": "cr-gap-c",
+            "value": 1000.0,
+            "simple_return": 0.09,  # 9.0pp if_held outlier
+            "net_deposits": 100.0,
+            "time_weighted_return": 0.09,
+            "trading_day": _TRADING_DAY,
+        }
+        symphonies_list = [*covered, gap_symphony]
+
+        db_file = _make_cr_trajectory_shadow_db(
+            tmp_path,
+            {s["id"]: [(0.0, 0.0), (0.0, 0.0)] for s in covered},  # flat 2-day trajectory, zero divergence
+            suffix="_cr_ac5_zero",
+        )
+
+        vw_cr = analytics.get_portfolio_cumulative_return(
+            symphonies_list, {}, trading_day=_TRADING_DAY, db_path=db_file
+        )
+
+        assert vw_cr["if_held"] is not None and vw_cr["dry_run"] is not None
+        delta = float(vw_cr["dry_run"]) - float(vw_cr["if_held"])
+        assert delta == pytest.approx(0.0, abs=1e-6), (
+            f"AC-5 (CR path) FAIL: a coverage-gap symphony with zero real divergence on the "
+            f"covered subset must contribute an exact-zero delta (it is never excluded from "
+            f"either side, and its own dry_run==if_held); got delta={delta} (vw_cr={vw_cr})"
+        )
+
+    def test_cr_coverage_gap_with_real_divergence_gap_symphony_contributes_zero_net(
+        self, tmp_path
+    ):
+        """Covered symphonies have a real, exactly-known +1.0pp lifetime
+        divergence (day1 flat, day2: shadow=+2.0 vs current=+1.0 ->
+        (1.02*1.0 - 1.01*1.0)*100 = 1.0pp on top of if_held=1.0 -> dry_run=2.0).
+        The gap symphony's 5.0pp if_held outlier must contribute EQUALLY to
+        both sides (never excluded, never diluting only one side) -- the
+        portfolio delta must equal the AVERAGE of the covered symphonies'
+        own divergence diluted by the gap symphony's zero contribution:
+        (1.0 + 1.0 + 0.0) / 3 = 0.6667pp, not some mismatched-denominator
+        distortion.
+        """
+        covered = [
+            {
+                "id": "cr-gapdiv-a",
+                "value": 1000.0,
+                "simple_return": 0.01,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
+            {
+                "id": "cr-gapdiv-b",
+                "value": 1000.0,
+                "simple_return": 0.01,
+                "net_deposits": 100.0,
+                "time_weighted_return": 0.01,
+                "trading_day": _TRADING_DAY,
+            },
+        ]
+        gap_symphony = {
+            "id": "cr-gapdiv-c",
+            "value": 1000.0,
+            "simple_return": 0.05,  # 5.0pp if_held outlier
+            "net_deposits": 100.0,
+            "time_weighted_return": 0.05,
+            "trading_day": _TRADING_DAY,
+        }
+        symphonies_list = [*covered, gap_symphony]
+
+        db_file = _make_cr_trajectory_shadow_db(
+            tmp_path,
+            {s["id"]: [(0.0, 0.0), (2.0, 1.0)] for s in covered},
+            suffix="_cr_ac5_real_div",
+        )
+
+        vw_cr = analytics.get_portfolio_cumulative_return(
+            symphonies_list, {}, trading_day=_TRADING_DAY, db_path=db_file
+        )
+
+        assert vw_cr["if_held"] is not None and vw_cr["dry_run"] is not None
+        delta = float(vw_cr["dry_run"]) - float(vw_cr["if_held"])
+        assert delta == pytest.approx(2.0 / 3.0, abs=1e-6), (
+            f"AC-5 (CR path) FAIL: expected the gap symphony to contribute exactly zero net "
+            f"divergence (dry_run==if_held for itself, counted on both sides), yielding a "
+            f"portfolio delta of 2/3 (the covered symphonies' average +1.0pp divergence "
+            f"diluted by the gap symphony's 0.0pp); got delta={delta} (vw_cr={vw_cr})"
         )
 
 
