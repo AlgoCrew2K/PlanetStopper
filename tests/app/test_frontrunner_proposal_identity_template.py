@@ -247,9 +247,7 @@ def _render_advisor_page(
     ):
         resp = client.get("/ai-advisor")
 
-    assert resp.status_code == 200, (
-        f"GET /ai-advisor returned {resp.status_code}; expected 200."
-    )
+    assert resp.status_code == 200, f"GET /ai-advisor returned {resp.status_code}; expected 200."
     return resp.data.decode("utf-8", errors="replace")
 
 
@@ -308,7 +306,9 @@ class TestIncumbentDisplayNameResolution:
 class TestFrontrunnerSourceCardOverlayIdentity:
     @pytest.fixture
     def card(self, client, monkeypatch):
-        row = _make_pending_row(row_id=10, symphony_id="hash-1", proposal_source="frontrunner_builder")
+        row = _make_pending_row(
+            row_id=10, symphony_id="hash-1", proposal_source="frontrunner_builder"
+        )
         bot_state = {"hash-1": {"name": "My Symphony"}}
         html = _render_advisor_page(client, monkeypatch, pending_rows=[row], bot_state=bot_state)
         return _card_source(html, 10)
@@ -345,8 +345,7 @@ class TestFrontrunnerSourceCardOverlayIdentity:
             "from the existing fr-raw-preview block (AC-5)."
         )
         assert 'data-testid="fr-raw-preview"' in card, (
-            "the EXISTING raw-candidate preview must still be present (relabeled, "
-            "not removed)."
+            "the EXISTING raw-candidate preview must still be present (relabeled, not removed)."
         )
 
     def test_overlay_preview_details_not_open_by_default(self, card):
@@ -362,8 +361,7 @@ class TestFrontrunnerSourceCardOverlayIdentity:
         opening_tag_end = card.find(">", idx)
         opening_tag = card[max(0, idx - 300) + details_open : opening_tag_end + 1]
         assert not re.search(r"\bopen\b", opening_tag), (
-            f"the fr-overlay-preview <details> must be collapsed by default — got "
-            f"{opening_tag!r}"
+            f"the fr-overlay-preview <details> must be collapsed by default — got {opening_tag!r}"
         )
 
     def test_raw_preview_relabeled_full_spliced_symphony(self, card):
@@ -574,8 +572,7 @@ class TestLoadStateFailureIsolation:
             resp = client.get("/ai-advisor")
 
         assert resp.status_code == 200, (
-            f"a load_state() failure must never 500 the whole route — got "
-            f"{resp.status_code}"
+            f"a load_state() failure must never 500 the whole route — got {resp.status_code}"
         )
         html = resp.data.decode("utf-8", errors="replace")
         assert 'id="fr-card-50"' in html, (
@@ -656,9 +653,7 @@ class TestBoundedJsonPreviewHelperAndZeroProposalsGuard:
         fake_corr.CRISIS_CAVEAT = "Test caveat"
 
         with (
-            patch.object(
-                app_module.database, "get_pending_frontrunner_proposals", return_value=[]
-            ),
+            patch.object(app_module.database, "get_pending_frontrunner_proposals", return_value=[]),
             patch.object(app_module.database, "load_state") as mock_load_state,
             patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
         ):

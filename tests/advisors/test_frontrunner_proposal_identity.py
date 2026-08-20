@@ -216,9 +216,7 @@ class TestBuildProposalSymphonyName:
         """The retrofit format embeds display_name in the MIDDLE of the string
         (not just appended at the end) — the truncation contract must still hold."""
         long_display_name = "Y" * 200
-        name = fbld.build_proposal_symphony_name(
-            long_display_name, 42, "strategy_builder_retrofit"
-        )
+        name = fbld.build_proposal_symphony_name(long_display_name, 42, "strategy_builder_retrofit")
         assert len(name) <= 100
         assert name.endswith("#42)")
         assert long_display_name not in name
@@ -269,8 +267,7 @@ class TestBuildProposalSymphonyDescription:
             "RSI(SPY,10) > 80 hedges into UVXY",
         ):
             assert expected in description, (
-                f"description is missing provenance field {expected!r} — full text: "
-                f"{description!r}"
+                f"description is missing provenance field {expected!r} — full text: {description!r}"
             )
 
     def test_frontrunner_source_contains_locked_full_copy_sentence(self, fbld):
@@ -463,8 +460,7 @@ class TestBuildProposalSymphonyDescription:
             overlay_summary="summary",
         )
         assert "for  (" not in description and "for (" not in description, (
-            f"a blank identity slot leaked into the description — full text: "
-            f"{description!r}"
+            f"a blank identity slot leaked into the description — full text: {description!r}"
         )
         assert "hash-1" in description
 
@@ -838,9 +834,7 @@ def _mocked_overlay_client(
             "rhs": {"fixed": threshold},
         },
         "then": [{"kind": "weight", "scheme": "equal", "children": [_dsl_asset(vix_ticker)]}],
-        "else": [
-            {"kind": "weight", "scheme": "equal", "children": [_dsl_asset(core_placeholder)]}
-        ],
+        "else": [{"kind": "weight", "scheme": "equal", "children": [_dsl_asset(core_placeholder)]}],
     }
     block = MagicMock()
     block.type = "tool_use"
@@ -885,7 +879,9 @@ class TestPersistedOverlayIdentityFields:
         # object _run_build_for_symphony will operate on (via the mocked
         # fetch_symphony_score below) — never a hardcoded/guessed id.
         detection = frontrunner_detector.detect_frontrunner_cascades(incumbent_symphony)
-        assert detection.cascades, "fixture setup: incumbent_symphony must have a detectable cascade"
+        assert detection.cascades, (
+            "fixture setup: incumbent_symphony must have a detectable cascade"
+        )
         expected_replaced_node_id = detection.cascades[0].overlay_tree.get("id")
         assert expected_replaced_node_id, "fixture setup: cascade overlay_tree must carry an id"
 
@@ -903,7 +899,9 @@ class TestPersistedOverlayIdentityFields:
 
         with (
             patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
-            patch("advisors.frontrunner_signals.load_frontrunner_signals", return_value=fake_signals),
+            patch(
+                "advisors.frontrunner_signals.load_frontrunner_signals", return_value=fake_signals
+            ),
             patch.object(fbld, "_build_client", return_value=_mocked_overlay_client()),
             patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
             patch("database.insert_frontrunner_proposal") as mock_insert,
@@ -1108,8 +1106,7 @@ class TestApproveNameAndDescriptionWiring:
 
         _, kwargs = mock_save.call_args
         assert "Frontrunner Candidate — " not in kwargs.get("name", ""), (
-            f"the legacy bare-hash name format leaked through — got "
-            f"name={kwargs.get('name')!r}"
+            f"the legacy bare-hash name format leaked through — got name={kwargs.get('name')!r}"
         )
 
     def test_retrofit_source_uses_strategy_builder_candidate_wording_not_fr_overlay(self, fbld):
@@ -1133,7 +1130,9 @@ class TestApproveNameAndDescriptionWiring:
             fbld.approve_frontrunner_proposal(9)
 
         _, kwargs = mock_save.call_args
-        assert kwargs["name"] == "Strategy Builder candidate for My Real Symphony (from scratch, #9)"
+        assert (
+            kwargs["name"] == "Strategy Builder candidate for My Real Symphony (from scratch, #9)"
+        )
         assert "FR overlay" not in kwargs["name"]
 
     def test_two_proposals_same_run_get_unique_names_on_approve(self, fbld):
