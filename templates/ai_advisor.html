@@ -2298,7 +2298,7 @@
                     </table>
                     {% if is_fr %}
                     <div class="objective-strip" data-testid="fr-node-count-delta">
-                        Node count &Delta;: {{ m.node_count_delta if m.node_count_delta is not none else '—' }}
+                        Node count &Delta;: {{ m.node_count_delta if m.node_count_delta is defined and m.node_count_delta is not none else '—' }}
                     </div>
                     <div class="fr-identity-line" data-testid="fr-incumbent-name">
                         Full standalone copy of {{ p._incumbent_display_name | e }} with one new frontrunner overlay
