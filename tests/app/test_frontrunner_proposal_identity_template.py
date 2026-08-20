@@ -528,3 +528,177 @@ class TestNoSafeFilterOnNewFields:
             "reached the template at all (a wiring gap, not an escaping pass); expected "
             "Jinja's default autoescape to render the escaped form."
         )
+
+
+# ===========================================================================
+# Group F: F5 (Revise 2) — a database.load_state() failure must not abort the
+# whole per-row loop or leave a raw un-popped candidate_tree in render context
+# ===========================================================================
+
+
+class TestLoadStateFailureIsolation:
+    def test_load_state_failure_does_not_prevent_card_render_or_candidate_tree_pop(
+        self, client, monkeypatch
+    ):
+        """F5 (Revise 2): database.load_state() sat inside the SAME whole-loop
+        try/except as the per-row candidate_tree pop/preview transform. A
+        transient DB error on load_state() (called ONCE, before the loop
+        starts) skipped the loop body entirely for EVERY row — no
+        candidate_tree_preview ever gets built, so the raw (potentially
+        multi-thousand-node) candidate_tree dict rides unpopped into render
+        context, violating the block's own documented invariant ("candidate_
+        tree ... is popped and replaced with a bounded truncated preview
+        string before it ever reaches the template — never rendered as a
+        live dict in context"). Fix: a DEDICATED inner try around JUST the
+        load_state() call, defaulting to {} on failure — the per-row loop
+        must still run (still pop candidate_tree, still build previews),
+        with identity honestly falling back to the raw hash for every row."""
+        _stub_analytics(monkeypatch)
+        _stub_db_observations(monkeypatch)
+
+        row = _make_pending_row(row_id=50, symphony_id="hash-loadstate-fail")
+
+        fake_corr = MagicMock()
+        fake_corr.compute_pairwise_correlations.return_value = []
+        fake_corr.CRISIS_CAVEAT = "Test caveat"
+
+        with (
+            patch.object(
+                app_module.database, "get_pending_frontrunner_proposals", return_value=[row]
+            ),
+            patch.object(
+                app_module.database, "load_state", side_effect=RuntimeError("db unavailable")
+            ),
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
+        ):
+            resp = client.get("/ai-advisor")
+
+        assert resp.status_code == 200, (
+            f"a load_state() failure must never 500 the whole route — got "
+            f"{resp.status_code}"
+        )
+        html = resp.data.decode("utf-8", errors="replace")
+        assert 'id="fr-card-50"' in html, (
+            "the pending row's card must still render despite load_state() failing"
+        )
+        card = _card_source(html, 50)
+        assert "hash-loadstate-fail" in card, (
+            "identity must honestly fall back to the raw hash when load_state() fails "
+            "(bot_state degrades to {}) — never a blank/crashed identity line"
+        )
+        idx = card.find('data-testid="fr-raw-preview"')
+        assert idx != -1, 'data-testid="fr-raw-preview" not found.'
+        preview_block = card[idx : idx + 500]
+        assert "(unavailable)" not in preview_block, (
+            f"the raw-candidate preview rendered '(unavailable)', meaning "
+            f"candidate_tree_preview was never built — proving the per-row loop body "
+            f"never ran at all when load_state() failed (the whole-loop try/except "
+            f"swallowed everything, not just the load_state() call). Found: "
+            f"{preview_block!r}"
+        )
+
+
+# ===========================================================================
+# Group G: F9 (Revise 2) — shared bounded-JSON-preview helper + zero-proposals
+# load_state() skip
+# ===========================================================================
+
+
+class TestBoundedJsonPreviewHelperAndZeroProposalsGuard:
+    def test_bounded_json_preview_helper_exists_at_module_level(self):
+        """F9(a) (Revise 2): the near-identical 12-line JSON-preview transform
+        was duplicated twice in the per-row loop (candidate_tree_preview /
+        overlay_tree_preview) with a fragile shared-import-across-two-try-
+        blocks structure. Fix: ONE module-level helper,
+        app._bounded_json_preview(value, max_chars) -> str, doing its own
+        local `import json` (matching this file's established lazy-import-
+        for-locality convention — see the ~10 other `import json as _json`
+        sites in app.py) — hoisted to module level specifically so it's
+        directly unit-testable here, not buried as a per-request closure."""
+        assert hasattr(app_module, "_bounded_json_preview"), (
+            "app.py must expose a module-level _bounded_json_preview(value, max_chars) "
+            "helper (F9(a))"
+        )
+
+    def test_bounded_json_preview_serializes_and_truncates(self):
+        result = app_module._bounded_json_preview({"a": 1, "b": [1, 2, 3]}, max_chars=4000)
+        assert isinstance(result, str) and result, "must return a non-empty string"
+        assert '"a": 1' in result or '"a":1' in result, (
+            f"expected the value to actually be JSON-serialized — got {result!r}"
+        )
+
+    def test_bounded_json_preview_truncates_over_the_bound(self):
+        big_value = {"k": "x" * 10000}
+        result = app_module._bounded_json_preview(big_value, max_chars=100)
+        assert len(result) < 10100, (
+            f"result was not meaningfully truncated against a 100-char bound — got "
+            f"{len(result)} chars"
+        )
+        assert "truncated" in result.lower(), (
+            f"a truncated preview should say so (matches the existing "
+            f"candidate_tree_preview convention) — got {result[:200]!r}"
+        )
+
+    def test_bounded_json_preview_handles_none_without_raising(self):
+        result = app_module._bounded_json_preview(None, max_chars=4000)
+        assert isinstance(result, str)  # must not raise; empty string is fine
+
+    def test_load_state_not_called_when_zero_pending_proposals(self, client, monkeypatch):
+        """F9(c) (Revise 2): database.load_state() ran unconditionally after
+        fetching frontrunner_proposals, even when the list is empty — wasted
+        I/O with zero benefit since the for-loop never iterates. Fix: guard
+        with `if frontrunner_proposals:` before calling load_state()."""
+        _stub_analytics(monkeypatch)
+        _stub_db_observations(monkeypatch)
+
+        fake_corr = MagicMock()
+        fake_corr.compute_pairwise_correlations.return_value = []
+        fake_corr.CRISIS_CAVEAT = "Test caveat"
+
+        with (
+            patch.object(
+                app_module.database, "get_pending_frontrunner_proposals", return_value=[]
+            ),
+            patch.object(app_module.database, "load_state") as mock_load_state,
+            patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}),
+        ):
+            resp = client.get("/ai-advisor")
+
+        assert resp.status_code == 200
+        assert not mock_load_state.called, (
+            "database.load_state() was called even though there are zero pending "
+            "frontrunner proposals — wasted I/O with no possible benefit (F9(c))"
+        )
+
+
+# ===========================================================================
+# Group H: F10 (Revise 2) — the AC-6 overlay-not-recorded fallback copy must
+# be ONE shared constant, not independently duplicated Python/Jinja strings
+# that can (and already did) drift.
+# ===========================================================================
+
+
+class TestOverlayNotRecordedTextSharedConstant:
+    def test_template_fallback_matches_the_shared_python_constant(self, client, monkeypatch):
+        import advisors.frontrunner_builder as fbld
+
+        row = _make_pending_row(
+            row_id=60,
+            symphony_id="hash-legacy2",
+            proposal_source="frontrunner_builder",
+            metrics_json=dict(_FR_METRICS_LEGACY_NO_OVERLAY),
+        )
+        html = _render_advisor_page(
+            client, monkeypatch, pending_rows=[row], bot_state={"hash-legacy2": {"name": "L"}}
+        )
+        card = _card_source(html, 60)
+        idx = card.find('data-testid="fr-overlay-summary"')
+        assert idx != -1, 'data-testid="fr-overlay-summary" not found.'
+        nearby = card[idx : idx + 300]
+        assert fbld.OVERLAY_NOT_RECORDED_TEXT in nearby, (
+            f"the template's AC-6 fallback text must be sourced from the SAME shared "
+            f"constant advisors.frontrunner_builder.OVERLAY_NOT_RECORDED_TEXT that "
+            f"build_proposal_symphony_description uses — a locally-duplicated copy in "
+            f"the template can (and already did — trailing-period drift) silently "
+            f"diverge from the Python-side copy. Found nearby: {nearby!r}"
+        )

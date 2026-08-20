@@ -223,6 +223,26 @@ class TestBuildProposalSymphonyName:
         assert name.endswith("#42)")
         assert long_display_name not in name
 
+    def test_empty_display_name_omits_blank_identity_slot_frontrunner_source(self, fbld):
+        """F2 (Revise 2): a weekly-scheduler retrofit row can carry
+        symphony_id='' (unresolvable), which flows through as an empty-string
+        display_name. The frontrunner_builder format ("{name} + FR overlay...")
+        must NEVER render as " + FR overlay (full copy, #N)" (leading space,
+        blank identity slot) — the "{name} + " segment must be omitted
+        entirely when display_name is empty."""
+        name = fbld.build_proposal_symphony_name("", 5, "frontrunner_builder")
+        assert name == "FR overlay (full copy, #5)", f"got {name!r}"
+        assert not name.startswith(" "), f"leading space from a blank identity slot: {name!r}"
+
+    def test_empty_display_name_omits_blank_identity_slot_retrofit_source(self, fbld):
+        """F2 (Revise 2): the retrofit format ('Strategy Builder candidate for
+        {name} ...') must NEVER render 'Strategy Builder candidate for  (from
+        scratch, #N)' (double space, blank identity slot) — the ' for {name}'
+        clause must be omitted entirely when display_name is empty."""
+        name = fbld.build_proposal_symphony_name("", 5, "strategy_builder_retrofit")
+        assert name == "Strategy Builder candidate (from scratch, #5)", f"got {name!r}"
+        assert "  " not in name, f"double space from a blank identity slot: {name!r}"
+
 
 # ---------------------------------------------------------------------------
 # Group B: build_proposal_symphony_description (AC-2, AC-6, AC-7-description)
@@ -289,9 +309,11 @@ class TestBuildProposalSymphonyDescription:
             replaced_node_id=None,
             overlay_summary=None,
         )
-        assert "overlay not recorded for this proposal" in description, (
-            f"AC-6 legacy-row degrade must render an honest fallback phrase, not silently "
-            f"omit or fabricate — full text: {description!r}"
+        assert fbld.OVERLAY_NOT_RECORDED_TEXT in description, (
+            f"AC-6 legacy-row degrade must render the SHARED fallback constant "
+            f"(fbld.OVERLAY_NOT_RECORDED_TEXT), not silently omit/fabricate, and not a "
+            f"locally-duplicated copy that can drift from the template's own copy of the "
+            f"same text (F10) — full text: {description!r}"
         )
         assert "None" not in description, (
             f"a bare Python 'None' leaked into the description via naive f-string "
@@ -365,6 +387,162 @@ class TestBuildProposalSymphonyDescription:
             f"text: {description!r}"
         )
         assert "Undeployed candidate — review before investing." in description
+
+    def test_retrofit_first_sentence_never_says_frontrunner_builder_or_incumbent(self, fbld):
+        """F4 (Revise 2): the description's FIRST sentence was previously
+        UNCONDITIONAL — "Frontrunner Builder candidate for X (incumbent
+        <hash>)..." — even for source="strategy_builder_retrofit", directly
+        contradicting the from-scratch/does-not-contain-the-incumbent's-logic
+        sentence appended right after it. The first sentence itself must be
+        source-branched: never claim "Frontrunner Builder candidate" and
+        never claim an "incumbent" relationship for a retrofit row."""
+        description = fbld.build_proposal_symphony_description(
+            display_name="My Symphony",
+            incumbent_hash="hash-1",
+            proposal_id=1,
+            created_at="2026-08-20T00:00:00Z",
+            source="strategy_builder_retrofit",
+        )
+        assert "Frontrunner Builder candidate" not in description, (
+            f"retrofit description's first sentence still claims 'Frontrunner Builder "
+            f"candidate' — full text: {description!r}"
+        )
+        assert "incumbent" not in description.lower(), (
+            f"retrofit description must never reference an 'incumbent' relationship — "
+            f"a from-scratch candidate has none — full text: {description!r}"
+        )
+        # Provenance fields the retrofit description SHOULD still carry.
+        for expected in ("My Symphony", "1", "2026-08-20T00:00:00Z"):
+            assert expected in description, (
+                f"retrofit description is missing provenance field {expected!r} even "
+                f"after removing the frontrunner-specific first sentence — full text: "
+                f"{description!r}"
+            )
+
+    def test_frontrunner_first_sentence_still_says_frontrunner_builder_candidate(self, fbld):
+        """The inverse of the above — confirms the F4 fix source-BRANCHES rather
+        than simply deleting the frontrunner-specific first sentence for both
+        sources."""
+        description = fbld.build_proposal_symphony_description(
+            display_name="My Symphony",
+            incumbent_hash="hash-1",
+            proposal_id=1,
+            created_at="2026-08-20T00:00:00Z",
+            source="frontrunner_builder",
+            replaced_node_id="node-1",
+            overlay_summary="summary",
+        )
+        assert "Frontrunner Builder candidate" in description
+        assert "incumbent" in description.lower()
+
+    def test_empty_display_name_description_omits_blank_slot_frontrunner_source(self, fbld):
+        """F2 (Revise 2): an empty-string display_name (weekly-scheduler retrofit
+        row's symphony_id='' flowing through) must never render 'candidate for
+        (incumbent hash-1)' (blank slot before the parenthetical) for the
+        frontrunner_builder source either."""
+        description = fbld.build_proposal_symphony_description(
+            display_name="",
+            incumbent_hash="hash-1",
+            proposal_id=1,
+            created_at="2026-08-20T00:00:00Z",
+            source="frontrunner_builder",
+            replaced_node_id="node-1",
+            overlay_summary="summary",
+        )
+        assert "for  (" not in description and "for (" not in description, (
+            f"a blank identity slot leaked into the description — full text: "
+            f"{description!r}"
+        )
+        assert "hash-1" in description
+
+    def test_empty_display_name_description_omits_blank_slot_retrofit_source(self, fbld):
+        """F2 (Revise 2): same, for the retrofit source's own first-sentence
+        wording (post-F4-fix, whatever that ends up being) — no blank
+        identity slot regardless of the exact template chosen."""
+        description = fbld.build_proposal_symphony_description(
+            display_name="",
+            incumbent_hash="hash-1",
+            proposal_id=1,
+            created_at="2026-08-20T00:00:00Z",
+            source="strategy_builder_retrofit",
+        )
+        assert "for  " not in description, (
+            f"a blank identity slot (double space after 'for') leaked into the "
+            f"retrofit description — full text: {description!r}"
+        )
+        assert "1" in description  # proposal_id still present
+
+    def test_description_bounded_and_safety_sentence_survives_truncation(self, fbld):
+        """F7 (Revise 2): the previous implementation (a) left display_name
+        completely UNBOUNDED in the description path (unlike the name
+        builder, which bounds it), and (b) truncated the ASSEMBLED string
+        from the tail — which can chop off the universal "Undeployed
+        candidate — review before investing." safety sentence (appended
+        LAST) when a long display_name pushes the total past the 1000-char
+        bound. Both must be fixed: the description stays <= 1000 chars AND
+        the safety sentence survives intact at the end regardless of how
+        long display_name is."""
+        description = fbld.build_proposal_symphony_description(
+            display_name="X" * 5000,
+            incumbent_hash="hash-1",
+            proposal_id=1,
+            created_at="2026-08-20T00:00:00Z",
+            source="frontrunner_builder",
+            replaced_node_id="node-1",
+            overlay_summary="summary",
+        )
+        assert len(description) <= 1000, (
+            f"description with a pathological 5000-char display_name exceeded the "
+            f"1000-char bound: {len(description)} chars"
+        )
+        assert description.endswith("Undeployed candidate — review before investing."), (
+            f"the universal safety sentence must survive ANY truncation — got a "
+            f"description ending: {description[-120:]!r}"
+        )
+
+
+class TestResolveIncumbentDisplayName:
+    """F8 (Revise 2): the display-name resolution logic (hash->name lookup
+    against bot_state, honest hash fallback) was independently duplicated
+    between approve_frontrunner_proposal (advisors/frontrunner_builder.py)
+    and app.py's ai_advisor_tab() prefetch loop — an honesty-drift risk
+    between the Composer upload name and the dashboard card identity line.
+    Extracted here as ONE shared, pure, unit-testable function:
+    resolve_incumbent_display_name(bot_state: dict, symphony_id: str) -> str.
+    Both call sites must route through it (app.py via an import — CC-2 lazy
+    or top-level, implementer's call; the existing approve-flow and
+    route/template tests already prove BOTH call sites still resolve names
+    correctly post-refactor, so this class covers the pure function directly
+    rather than re-proving call-site behavior already covered elsewhere)."""
+
+    def test_resolves_display_name_when_present_in_bot_state(self, fbld):
+        bot_state = {"hash-abc": {"name": "My Real Symphony"}}
+        result = fbld.resolve_incumbent_display_name(bot_state, "hash-abc")
+        assert result == "My Real Symphony"
+
+    def test_falls_back_to_the_raw_hash_when_unresolvable(self, fbld):
+        result = fbld.resolve_incumbent_display_name({}, "unresolvable-hash-999")
+        assert result == "unresolvable-hash-999"
+
+    def test_falls_back_to_the_raw_hash_when_bot_state_entry_is_not_a_dict(self, fbld):
+        bot_state = {"hash-weird": "not-a-dict"}
+        result = fbld.resolve_incumbent_display_name(bot_state, "hash-weird")
+        assert result == "hash-weird"
+
+    def test_falls_back_to_the_raw_hash_when_name_key_missing(self, fbld):
+        bot_state = {"hash-noname": {"other_field": 1}}
+        result = fbld.resolve_incumbent_display_name(bot_state, "hash-noname")
+        assert result == "hash-noname"
+
+    def test_empty_symphony_id_resolves_to_empty_string_not_a_crash(self, fbld):
+        """F2's root fixture condition: a weekly-scheduler retrofit row's
+        symphony_id=''. The resolver itself must not raise or fabricate a
+        non-empty value — it honestly returns '' (empty), which
+        build_proposal_symphony_name/_description are separately responsible
+        for rendering without a blank slot (see the dedicated F2 tests on
+        those two builders)."""
+        result = fbld.resolve_incumbent_display_name({}, "")
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +622,55 @@ class TestSummarizeOverlay:
             f"fallback — got {summary!r}"
         )
 
+    def test_two_tier_scale_in_overlay_yields_specific_summary_not_fallback(self, fbld):
+        """F1 (Revise 2): _find_first_asset_ticker only ever walked a bare
+        node list for a direct {"kind":"asset",...} leaf (possibly wrapped in
+        a weight/group node) — it never descended into a NESTED if-node's own
+        "then"/"else" lists. The 2-tier scale-in structure is the generation
+        prompt's OWN flagship worked example (a lower-threshold if-node whose
+        "then" branch is ANOTHER nested if-node, per HARD REQUIREMENT #4:
+        "preserve it as TIERED nested if-nodes, nested inside the OUTER
+        node's 'then' branch") — so this shape reaching the fallback string
+        is a real, common-case regression, not an edge case. The OUTER
+        condition here is genuinely FLAT (has lhs_fn) — degrading to
+        "compound condition overlay" doesn't just lose detail, it MISLABELS
+        a flat condition as compound."""
+        inner_if = {
+            "kind": "if",
+            "condition": {
+                "lhs_fn": "relative-strength-index",
+                "lhs_ticker": "QQQ",
+                "window": 10,
+                "comparator": "gt",
+                "rhs": {"fixed": 82.5},
+            },
+            "then": [_dsl_weight_equal([_dsl_asset("UVXY")])],
+            "else": [_dsl_weight_equal([_dsl_asset("VIXM")])],
+        }
+        outer = {
+            "kind": "if",
+            "condition": {
+                "lhs_fn": "relative-strength-index",
+                "lhs_ticker": "QQQ",
+                "window": 10,
+                "comparator": "gt",
+                "rhs": {"fixed": 80},
+            },
+            "then": [inner_if],
+            "else": [_dsl_weight_equal([_dsl_asset("CORE_ASSET_0001")])],
+        }
+        summary = fbld.summarize_overlay(outer)
+        assert summary != "compound condition overlay", (
+            f"a genuinely FLAT outer condition (has lhs_fn) with a nested if-node in "
+            f"its then-branch must never be mislabeled as 'compound condition overlay' "
+            f"— got {summary!r}"
+        )
+        assert "QQQ" in summary, f"summary must name the outer signal ticker: {summary!r}"
+        assert "UVXY" in summary, (
+            f"summary must find the fire ticker by descending the nested if-node's own "
+            f"then-branch (UVXY, the inner if's then-branch asset) — got {summary!r}"
+        )
+
     def test_compound_condition_degrades_to_generic_literal(self, fbld):
         summary = fbld.summarize_overlay(_dsl_compound_overlay())
         assert summary == "compound condition overlay", (
@@ -467,6 +694,54 @@ class TestSummarizeOverlay:
         assert isinstance(summary, str) and summary, (
             f"summarize_overlay must never raise and always return a non-empty string "
             f"for malformed input {malformed!r} — got {summary!r}"
+        )
+
+    def test_missing_window_never_produces_a_none_substring(self, fbld):
+        """F6 (Revise 2): condition.get("window") had no default and was
+        interpolated raw into the f-string — a missing "window" key produced
+        a literal "None" in the summary (e.g. "...(SPY,None) gt 80..."),
+        which is then persisted, rendered on the dashboard, AND sent to
+        Composer as part of the description. window must be REQUIRED for the
+        specific summary; its absence degrades to the fallback."""
+        overlay = {
+            "kind": "if",
+            "condition": {
+                "lhs_fn": "relative-strength-index",
+                "lhs_ticker": "SPY",
+                # "window" key deliberately omitted
+                "comparator": "gt",
+                "rhs": {"fixed": 80},
+            },
+            "then": [_dsl_weight_equal([_dsl_asset("UVXY")])],
+            "else": [_dsl_weight_equal([_dsl_asset("CORE_ASSET_0001")])],
+        }
+        summary = fbld.summarize_overlay(overlay)
+        assert "None" not in summary, (
+            f"a missing 'window' field must never surface as a literal 'None' "
+            f"substring — got {summary!r}"
+        )
+
+    def test_missing_rhs_fixed_never_produces_a_none_substring(self, fbld):
+        """F6 (Revise 2): the same class of defect via rhs.get("fixed") on an
+        rhs dict lacking the "fixed" key (or rhs itself being None/malformed)
+        — rhs_val must be REQUIRED (non-None) for the specific summary; its
+        absence degrades to the fallback."""
+        overlay = {
+            "kind": "if",
+            "condition": {
+                "lhs_fn": "relative-strength-index",
+                "lhs_ticker": "SPY",
+                "window": 10,
+                "comparator": "gt",
+                "rhs": {},  # "fixed" key deliberately omitted
+            },
+            "then": [_dsl_weight_equal([_dsl_asset("UVXY")])],
+            "else": [_dsl_weight_equal([_dsl_asset("CORE_ASSET_0001")])],
+        }
+        summary = fbld.summarize_overlay(overlay)
+        assert "None" not in summary, (
+            f"a missing rhs['fixed'] field must never surface as a literal 'None' "
+            f"substring — got {summary!r}"
         )
 
 
@@ -911,3 +1186,66 @@ class TestApproveNameAndDescriptionWiring:
             f"description={description!r}"
         )
         assert "Undeployed candidate — review before investing." in description
+
+    def test_truthy_non_dict_metrics_json_approves_cleanly_no_crash(self, fbld):
+        """F3 (Revise 2): the approve path guarded metrics_json with
+        `proposal.get("metrics_json") or {}` — a TRUTHY non-dict (a stored
+        JSON array, e.g. [1, 2, 3]) is not falsy, so `or {}` never kicks in,
+        and the subsequent `.get("replaced_node_id")` call raises
+        AttributeError. The function's own outer except catches it (so it
+        doesn't crash the CALLER), but save_symphony is never reached and no
+        error_message is persisted to the DB — unlike every OTHER failure
+        branch in this same function, which explicitly persists a reason
+        before returning failure. Fix: an isinstance-dict guard (mirroring
+        app.py's own AC-6 guard) so this path never raises at all — approval
+        proceeds normally with a degraded (no-overlay-detail) description."""
+        proposal = _make_proposal(
+            proposal_id=8, symphony_id="hash-listmetrics", metrics_json=[1, 2, 3]
+        )
+        with (
+            patch("database.get_frontrunner_proposal", return_value=proposal),
+            patch("database.load_state", return_value={"hash-listmetrics": {"name": "Sym"}}),
+            patch(
+                "advisors.composer_draft_client.save_symphony", return_value=_draft_success()
+            ) as mock_save,
+            patch("advisors.composer_draft_client.verify_undeployed", return_value=True),
+            patch("database.update_frontrunner_proposal_status"),
+            patch("database.insert_advisor_observation"),
+        ):
+            result = fbld.approve_frontrunner_proposal(8)
+
+        assert mock_save.called, (
+            "save_symphony was never called — the approve path crashed on the "
+            "truthy-non-dict metrics_json before reaching the Composer create call"
+        )
+        assert result.success is True, (
+            f"a truthy-non-dict metrics_json must not prevent a successful approve — "
+            f"got success={result.success!r} error={result.error!r}"
+        )
+
+    def test_empty_symphony_id_name_omits_blank_identity_slot_on_approve(self, fbld):
+        """F2 (Revise 2), approve-path integration: a weekly-scheduler
+        retrofit proposal's symphony_id='' (real production condition —
+        those rows are keyed to symphony_id="" per
+        advisors/strategy_builder_scheduler.py's all-observations-keyed-to-
+        symphony_id="" convention) must not produce a blank-slot Composer
+        name like 'Strategy Builder candidate for  (from scratch, #N)'."""
+        proposal = _make_proposal(
+            proposal_id=11, symphony_id="", proposal_source="strategy_builder_retrofit"
+        )
+        with (
+            patch("database.get_frontrunner_proposal", return_value=proposal),
+            patch("database.load_state", return_value={}),
+            patch(
+                "advisors.composer_draft_client.save_symphony", return_value=_draft_success()
+            ) as mock_save,
+            patch("advisors.composer_draft_client.verify_undeployed", return_value=True),
+            patch("database.update_frontrunner_proposal_status"),
+            patch("database.insert_advisor_observation"),
+        ):
+            fbld.approve_frontrunner_proposal(11)
+
+        _, kwargs = mock_save.call_args
+        name = kwargs.get("name", "")
+        assert "  " not in name, f"a blank identity slot (double space) leaked: {name!r}"
+        assert name == "Strategy Builder candidate (from scratch, #11)", f"got {name!r}"
