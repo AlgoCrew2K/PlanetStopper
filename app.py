@@ -5547,6 +5547,25 @@ def _build_verdict_display(verdict: "str | None") -> "tuple[str, str]":
     return label, css_class
 
 
+def _bounded_json_preview(value, max_chars: int) -> str:
+    """Serialize `value` to indented JSON and truncate to max_chars with a
+    '... truncated (N total chars)' marker when it exceeds the bound. Never
+    raises — falls back to str(value) on a serialization error. Empty
+    string for a None value.
+    """
+    if value is None:
+        return ""
+    try:
+        import json as _json  # noqa: PLC0415
+
+        text = _json.dumps(value, indent=2)
+    except Exception:
+        text = str(value)
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n... truncated ({len(text)} total chars)"
+    return text
+
+
 @app.route("/ai-advisor", methods=["GET"])
 def ai_advisor_tab():
     """Render the single unified AI Advisor page with all 5 in-place tab panels.
@@ -5913,22 +5932,23 @@ def ai_advisor_tab():
         frontrunner_proposals = database.get_pending_frontrunner_proposals()
         # Resolved ONCE outside the per-row loop (not once per row) — mirrors
         # advisors.frontrunner_builder.approve_frontrunner_proposal's own
-        # NAME<-hash lookup pattern.
-        _fr_bot_state = database.load_state()
+        # NAME<-hash lookup pattern. Guarded to a DEDICATED inner try (F5,
+        # Revise 2) — a load_state() failure must degrade identity resolution
+        # to the raw-hash fallback for every row, never skip the per-row loop
+        # body entirely (which would leave candidate_tree un-popped).  Also
+        # skipped outright when there are zero pending proposals (F9(c)) —
+        # wasted I/O with no possible benefit since the loop never iterates.
+        _fr_bot_state: dict = {}
+        if frontrunner_proposals:
+            try:
+                _fr_bot_state = database.load_state()
+            except Exception:
+                _fr_bot_state = {}
         for _fr_p in frontrunner_proposals:
             _fr_tree = _fr_p.pop("candidate_tree", None)
-            try:
-                import json as _fr_json  # noqa: PLC0415
-
-                _fr_tree_str = _fr_json.dumps(_fr_tree, indent=2) if _fr_tree is not None else ""
-            except Exception:
-                _fr_tree_str = str(_fr_tree)
-            if len(_fr_tree_str) > _FR_TREE_PREVIEW_MAX_CHARS:
-                _fr_tree_str = (
-                    _fr_tree_str[:_FR_TREE_PREVIEW_MAX_CHARS]
-                    + f"\n... truncated ({len(_fr_tree_str)} total chars)"
-                )
-            _fr_p["candidate_tree_preview"] = _fr_tree_str
+            _fr_p["candidate_tree_preview"] = _bounded_json_preview(
+                _fr_tree, _FR_TREE_PREVIEW_MAX_CHARS
+            )
 
             # Incumbent display-name resolution — honest hash fallback,
             # never a blank identity line.
@@ -5948,20 +5968,9 @@ def ai_advisor_tab():
             # above, but never popped: the template still needs
             # m.replaced_node_id / m.overlay_summary reachable via metrics_json.
             _fr_overlay_tree = _fr_p["metrics_json"].get("overlay_tree")
-            try:
-                _fr_overlay_str = (
-                    _fr_json.dumps(_fr_overlay_tree, indent=2)
-                    if _fr_overlay_tree is not None
-                    else ""
-                )
-            except Exception:
-                _fr_overlay_str = str(_fr_overlay_tree)
-            if len(_fr_overlay_str) > _FR_OVERLAY_PREVIEW_MAX_CHARS:
-                _fr_overlay_str = (
-                    _fr_overlay_str[:_FR_OVERLAY_PREVIEW_MAX_CHARS]
-                    + f"\n... truncated ({len(_fr_overlay_str)} total chars)"
-                )
-            _fr_p["overlay_tree_preview"] = _fr_overlay_str
+            _fr_p["overlay_tree_preview"] = _bounded_json_preview(
+                _fr_overlay_tree, _FR_OVERLAY_PREVIEW_MAX_CHARS
+            )
     except Exception:
         pass  # Empty-state rendered by template on [].
 
