@@ -2307,7 +2307,7 @@
                         Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.
                     </p>
                     <div class="fr-overlay-summary-line" data-testid="fr-overlay-summary">
-                        {% if m.overlay_summary %}{{ m.overlay_summary | e }}{% else %}overlay not recorded for this proposal{% endif %}
+                        {% if m.overlay_summary %}{{ m.overlay_summary | e }}{% else %}{{ overlay_not_recorded_text | e }}{% endif %}
                     </div>
                     {% else %}
                     <p class="fr-retrofit-identity-line">

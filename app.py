@@ -5928,8 +5928,30 @@ def ai_advisor_tab():
     _FR_TREE_PREVIEW_MAX_CHARS = 4000
     _FR_OVERLAY_PREVIEW_MAX_CHARS = 4000
     frontrunner_proposals: list[dict] = []
+    # F10 (Revise 2): default mirrors advisors.frontrunner_builder.
+    # OVERLAY_NOT_RECORDED_TEXT verbatim — bound here so a builder-import
+    # failure below can never leave this name unbound at render_template().
+    overlay_not_recorded_text = "overlay not recorded for this proposal"
     try:
         frontrunner_proposals = database.get_pending_frontrunner_proposals()
+        # F8/F10 (Revise 2): shared cross-section helpers from
+        # advisors.frontrunner_builder — CC-2 lazy import, isolated in its
+        # OWN dedicated try (same F5 rationale as load_state() below): an
+        # import failure must never skip the per-row loop body (which is
+        # what actually pops candidate_tree out of template context).
+        _fr_resolve_display_name = None
+        try:
+            from advisors.frontrunner_builder import (  # noqa: PLC0415
+                OVERLAY_NOT_RECORDED_TEXT as _fr_overlay_not_recorded_text_const,
+            )
+            from advisors.frontrunner_builder import (
+                resolve_incumbent_display_name as _fr_resolve_display_name,
+            )
+
+            overlay_not_recorded_text = _fr_overlay_not_recorded_text_const
+        except Exception:
+            _fr_resolve_display_name = None
+
         # Resolved ONCE outside the per-row loop (not once per row) — mirrors
         # advisors.frontrunner_builder.approve_frontrunner_proposal's own
         # NAME<-hash lookup pattern. Guarded to a DEDICATED inner try (F5,
@@ -5950,11 +5972,14 @@ def ai_advisor_tab():
                 _fr_tree, _FR_TREE_PREVIEW_MAX_CHARS
             )
 
-            # Incumbent display-name resolution — honest hash fallback,
-            # never a blank identity line.
-            _fr_incumbent = _fr_bot_state.get(_fr_p.get("symphony_id"))
-            if isinstance(_fr_incumbent, dict) and "name" in _fr_incumbent:
-                _fr_p["_incumbent_display_name"] = _fr_incumbent["name"]
+            # Incumbent display-name resolution (F8, Revise 2) — shared
+            # source of truth with advisors.frontrunner_builder.
+            # approve_frontrunner_proposal; honest raw-hash fallback both
+            # when unresolvable AND when the import above failed.
+            if _fr_resolve_display_name is not None:
+                _fr_p["_incumbent_display_name"] = _fr_resolve_display_name(
+                    _fr_bot_state, _fr_p.get("symphony_id")
+                )
             else:
                 _fr_p["_incumbent_display_name"] = _fr_p.get("symphony_id")
 
@@ -6002,6 +6027,7 @@ def ai_advisor_tab():
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
         frontrunner_proposals=frontrunner_proposals,
+        overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,
         advisor_synthesis_model=advisor_synthesis_model,
     )
