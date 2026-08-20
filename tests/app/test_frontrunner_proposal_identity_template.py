@@ -702,3 +702,75 @@ class TestOverlayNotRecordedTextSharedConstant:
             f"the template can (and already did — trailing-period drift) silently "
             f"diverge from the Python-side copy. Found nearby: {nearby!r}"
         )
+
+    def test_template_fallback_reflects_a_mutated_constant_not_a_hardcoded_copy(
+        self, client, monkeypatch
+    ):
+        """Mutation-based proof of REAL wiring, not coincidental value equality.
+        The test above alone is a trap: it would pass EVEN IF the template
+        still used its own hardcoded literal, as long as that literal's
+        current text happens to equal the constant's current value (exactly
+        the situation before this fix — both copies read 'overlay not
+        recorded for this proposal' at the time the drift was 'discovered').
+        Monkeypatching the constant to a distinctive marker and confirming
+        the RENDERED page reflects the mutation is the only way to prove the
+        template is actually SOURCING from advisors.frontrunner_builder.
+        OVERLAY_NOT_RECORDED_TEXT at render time, not carrying its own copy."""
+        import advisors.frontrunner_builder as fbld
+
+        marker = "MUTATION-PROOF-MARKER-xyz123"
+        monkeypatch.setattr(fbld, "OVERLAY_NOT_RECORDED_TEXT", marker)
+
+        row = _make_pending_row(
+            row_id=61,
+            symphony_id="hash-legacy3",
+            proposal_source="frontrunner_builder",
+            metrics_json=dict(_FR_METRICS_LEGACY_NO_OVERLAY),
+        )
+        html = _render_advisor_page(
+            client, monkeypatch, pending_rows=[row], bot_state={"hash-legacy3": {"name": "L"}}
+        )
+        card = _card_source(html, 61)
+        assert marker in card, (
+            f"the rendered page did NOT reflect a monkeypatched "
+            f"OVERLAY_NOT_RECORDED_TEXT value — the template/route is still using a "
+            f"hardcoded literal copy of the fallback text, not actually reading the "
+            f"shared constant at render time. card slice: {card[:2000]!r}"
+        )
+
+
+class TestResolveIncumbentDisplayNameMutationProof:
+    def test_identity_line_reflects_a_mutated_resolver_not_a_local_duplicate(
+        self, client, monkeypatch
+    ):
+        """F8 (Revise 2), mutation-based proof: monkeypatching
+        advisors.frontrunner_builder.resolve_incumbent_display_name to return
+        a distinctive marker and confirming the rendered card reflects it
+        proves app.py's identity resolution actually routes through the
+        SHARED function — not its own duplicated inline logic (which would
+        silently ignore this patch and keep resolving names the old way).
+        The pre-existing TestIncumbentDisplayNameResolution tests alone
+        cannot distinguish 'uses the shared function' from 'still has its own
+        identical copy of the same algorithm' — both produce the same
+        observable output on ordinary input."""
+        import advisors.frontrunner_builder as fbld
+
+        marker = "MUTATION-PROOF-NAME-xyz789"
+        monkeypatch.setattr(
+            fbld, "resolve_incumbent_display_name", lambda bot_state, symphony_id: marker
+        )
+
+        row = _make_pending_row(row_id=62, symphony_id="hash-mutation-test")
+        html = _render_advisor_page(
+            client,
+            monkeypatch,
+            pending_rows=[row],
+            bot_state={"hash-mutation-test": {"name": "Real Resolved Name"}},
+        )
+        card = _card_source(html, 62)
+        assert marker in card, (
+            f"the card's identity line did not reflect a monkeypatched "
+            f"resolve_incumbent_display_name return value — app.py is still using its "
+            f"own duplicated inline resolution logic instead of the shared F8 "
+            f"function. card slice: {card[:2000]!r}"
+        )

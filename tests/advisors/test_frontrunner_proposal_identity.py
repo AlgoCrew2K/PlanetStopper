@@ -407,9 +407,22 @@ class TestBuildProposalSymphonyDescription:
             f"retrofit description's first sentence still claims 'Frontrunner Builder "
             f"candidate' — full text: {description!r}"
         )
-        assert "incumbent" not in description.lower(), (
-            f"retrofit description must never reference an 'incumbent' relationship — "
-            f"a from-scratch candidate has none — full text: {description!r}"
+        # Scoped to the FIRST SENTENCE only — the existing, locked
+        # test_retrofit_source_states_from_scratch_and_omits_full_copy_claim
+        # (Revise 1) legitimately requires "does not contain the incumbent's
+        # logic" as the retrofit branch's SECOND sentence, which necessarily
+        # contains the word "incumbent". This test's own claim (docstring:
+        # "The first sentence itself must be source-branched") is about the
+        # FIRST sentence specifically, not a whole-description ban on the
+        # word — split on the known second-sentence marker and check only
+        # the segment before it (bug in this test, caught by fpi-impl-builder
+        # during Revise-2 GREEN — the two tests were genuinely mutually
+        # exclusive on identical input before this fix).
+        first_sentence = description.split("From-scratch")[0]
+        assert "incumbent" not in first_sentence.lower(), (
+            f"retrofit description's FIRST sentence must never reference an "
+            f"'incumbent' relationship — a from-scratch candidate has none — first "
+            f"sentence segment: {first_sentence!r} (full text: {description!r})"
         )
         # Provenance fields the retrofit description SHOULD still carry.
         for expected in ("My Symphony", "1", "2026-08-20T00:00:00Z"):
