@@ -2273,26 +2273,26 @@
                             <tr>
                                 <td>Calmar</td>
                                 {% if is_fr %}
-                                <td data-testid="fr-incumbent-calmar">{% if m.incumbent_calmar is not none %}{{ "%.3f" | format(m.incumbent_calmar) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-incumbent-calmar">{% if m.incumbent_calmar is defined and m.incumbent_calmar is not none %}{{ "%.3f" | format(m.incumbent_calmar) }}{% else %}—{% endif %}</td>
                                 {% endif %}
                                 {% set _cand_calmar = m.candidate_calmar if is_fr else m.calmar %}
-                                <td data-testid="fr-candidate-calmar">{% if _cand_calmar is not none %}{{ "%.3f" | format(_cand_calmar) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-candidate-calmar">{% if _cand_calmar is defined and _cand_calmar is not none %}{{ "%.3f" | format(_cand_calmar) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
                                 <td>CAGR</td>
                                 {% if is_fr %}
-                                <td data-testid="fr-incumbent-cagr">{% if m.incumbent_cagr is not none %}{{ "%.2f%%" | format(m.incumbent_cagr * 100) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-incumbent-cagr">{% if m.incumbent_cagr is defined and m.incumbent_cagr is not none %}{{ "%.2f%%" | format(m.incumbent_cagr * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
                                 {% set _cand_cagr = m.candidate_cagr if is_fr else m.cagr %}
-                                <td data-testid="fr-candidate-cagr">{% if _cand_cagr is not none %}{{ "%.2f%%" | format(_cand_cagr * 100) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-candidate-cagr">{% if _cand_cagr is defined and _cand_cagr is not none %}{{ "%.2f%%" | format(_cand_cagr * 100) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
                                 <td>Max Drawdown</td>
                                 {% if is_fr %}
-                                <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format(m.incumbent_max_drawdown * 100) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is defined and m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format(m.incumbent_max_drawdown * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
                                 {% set _cand_mdd = m.candidate_max_drawdown if is_fr else m.max_drawdown %}
-                                <td data-testid="fr-candidate-mdd">{% if _cand_mdd is not none %}{{ "%.2f%%" | format(_cand_mdd * 100) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-candidate-mdd">{% if _cand_mdd is defined and _cand_mdd is not none %}{{ "%.2f%%" | format(_cand_mdd * 100) }}{% else %}—{% endif %}</td>
                             </tr>
                         </tbody>
                     </table>
@@ -2300,14 +2300,33 @@
                     <div class="objective-strip" data-testid="fr-node-count-delta">
                         Node count &Delta;: {{ m.node_count_delta if m.node_count_delta is not none else '—' }}
                     </div>
+                    <div class="fr-identity-line" data-testid="fr-incumbent-name">
+                        Full standalone copy of {{ p._incumbent_display_name | e }} with one new frontrunner overlay
+                    </div>
+                    <p class="fr-explainer-line">
+                        Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.
+                    </p>
+                    <div class="fr-overlay-summary-line" data-testid="fr-overlay-summary">
+                        {% if m.overlay_summary %}{{ m.overlay_summary | e }}{% else %}overlay not recorded for this proposal{% endif %}
+                    </div>
+                    {% else %}
+                    <p class="fr-retrofit-identity-line">
+                        From-scratch symphony proposed by Strategy Builder &mdash; does not contain the incumbent's logic.
+                    </p>
                     {% endif %}
                     {% if p.error_message %}
                     <p class="backtest-error">Previous attempt failed: {{ p.error_message }}</p>
                     {% endif %}
                     <details class="rules-collapsible" data-testid="fr-raw-preview">
-                        <summary>View raw candidate data</summary>
+                        <summary>{% if is_fr %}Full spliced symphony (preview){% else %}Proposed symphony (preview){% endif %}</summary>
                         <pre>{{ p.candidate_tree_preview or '(unavailable)' }}</pre>
                     </details>
+                    {% if is_fr %}
+                    <details class="rules-collapsible" data-testid="fr-overlay-preview">
+                        <summary>View overlay delta</summary>
+                        <pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre>
+                    </details>
+                    {% endif %}
                     <div class="proposal-actions" style="display:flex;gap:0.5rem;margin-top:0.75rem;">
                         <button type="button"
                                 class="run-trigger-btn"

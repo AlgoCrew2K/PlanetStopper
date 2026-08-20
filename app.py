@@ -5907,9 +5907,14 @@ def ai_advisor_tab():
     # reaches the template — never rendered as a live dict in context.     #
     # ------------------------------------------------------------------ #
     _FR_TREE_PREVIEW_MAX_CHARS = 4000
+    _FR_OVERLAY_PREVIEW_MAX_CHARS = 4000
     frontrunner_proposals: list[dict] = []
     try:
         frontrunner_proposals = database.get_pending_frontrunner_proposals()
+        # Resolved ONCE outside the per-row loop (not once per row) — mirrors
+        # advisors.frontrunner_builder.approve_frontrunner_proposal's own
+        # NAME<-hash lookup pattern.
+        _fr_bot_state = database.load_state()
         for _fr_p in frontrunner_proposals:
             _fr_tree = _fr_p.pop("candidate_tree", None)
             try:
@@ -5924,6 +5929,39 @@ def ai_advisor_tab():
                     + f"\n... truncated ({len(_fr_tree_str)} total chars)"
                 )
             _fr_p["candidate_tree_preview"] = _fr_tree_str
+
+            # Incumbent display-name resolution — honest hash fallback,
+            # never a blank identity line.
+            _fr_incumbent = _fr_bot_state.get(_fr_p.get("symphony_id"))
+            if isinstance(_fr_incumbent, dict) and "name" in _fr_incumbent:
+                _fr_p["_incumbent_display_name"] = _fr_incumbent["name"]
+            else:
+                _fr_p["_incumbent_display_name"] = _fr_p.get("symphony_id")
+
+            # AC-6: a non-dict metrics_json (e.g. a parsed JSON list) must
+            # degrade to {} before the template ever touches `m.xxx` — the
+            # route must always return 200, never a 500.
+            if not isinstance(_fr_p.get("metrics_json"), dict):
+                _fr_p["metrics_json"] = {}
+
+            # Overlay-tree preview — same transform as candidate_tree_preview
+            # above, but never popped: the template still needs
+            # m.replaced_node_id / m.overlay_summary reachable via metrics_json.
+            _fr_overlay_tree = _fr_p["metrics_json"].get("overlay_tree")
+            try:
+                _fr_overlay_str = (
+                    _fr_json.dumps(_fr_overlay_tree, indent=2)
+                    if _fr_overlay_tree is not None
+                    else ""
+                )
+            except Exception:
+                _fr_overlay_str = str(_fr_overlay_tree)
+            if len(_fr_overlay_str) > _FR_OVERLAY_PREVIEW_MAX_CHARS:
+                _fr_overlay_str = (
+                    _fr_overlay_str[:_FR_OVERLAY_PREVIEW_MAX_CHARS]
+                    + f"\n... truncated ({len(_fr_overlay_str)} total chars)"
+                )
+            _fr_p["overlay_tree_preview"] = _fr_overlay_str
     except Exception:
         pass  # Empty-state rendered by template on [].
 
