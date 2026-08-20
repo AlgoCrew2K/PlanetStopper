@@ -68,8 +68,17 @@ HANDOFF CONTRACT (Section B, fpi-impl-dashboard — app.py + templates/ai_adviso
         `<details>` (AC-5 — "rendered DISTINCT from the existing full-
         candidate preview").
 
-     e. The EXISTING `fr-raw-preview` `<details><summary>` text is relabeled
-        to contain "Full spliced symphony (preview)" (AC-5).
+     e. The EXISTING `fr-raw-preview` `<details><summary>` LABEL TEXT (not
+        the testid — that stays `fr-raw-preview` on BOTH source branches)
+        must BRANCH by `proposal_source` (team-lead finding, mid-cycle):
+          - `is_fr` (frontrunner_builder-source): "Full spliced symphony
+            (preview)"
+          - non-`is_fr` (strategy_builder_retrofit-source): "Proposed
+            symphony (preview)" — and the word "spliced" must NEVER appear
+            anywhere on a retrofit card. A retrofit candidate is FROM-SCRATCH,
+            not spliced from the incumbent — labeling its preview "spliced"
+            would be the same category of dishonesty this feature exists to
+            fix.
 
   3. templates/ai_advisor.html, strategy_builder_retrofit-source card body
      (the `{% else %}`/non-`is_fr` branch):
@@ -78,6 +87,10 @@ HANDOFF CONTRACT (Section B, fpi-impl-dashboard — app.py + templates/ai_adviso
         does not contain the incumbent's logic." (AC-7). Must NEVER render
         the frontrunner "Full standalone copy of" wording inside a retrofit
         card.
+
+     b. The `fr-raw-preview` `<details>` on THIS branch uses the "Proposed
+        symphony (preview)" label per 2(e) above — do not reuse the
+        `is_fr`-branch's "Full spliced symphony (preview)" text here.
 
   4. All new fields (`_incumbent_display_name`, `overlay_tree_preview`,
      `overlay_summary` via `m.overlay_summary`) render through Jinja's
@@ -318,9 +331,12 @@ class TestFrontrunnerSourceCardOverlayIdentity:
         idx = card.find('data-testid="fr-overlay-summary"')
         assert idx != -1, 'data-testid="fr-overlay-summary" not found (AC-5).'
         nearby = card[idx : idx + 300]
-        assert "RSI(SPY,10) > 80 hedges into UVXY" in nearby, (
-            f"overlay_summary value from metrics_json did not render nearby its "
-            f"testid — found: {nearby!r}"
+        # The fixture text contains a raw '>' — Jinja's default autoescape (AC-9)
+        # correctly renders it as '&gt;'; assert the ESCAPED form, matching real
+        # rendered behavior, not the pre-escape Python string.
+        assert "RSI(SPY,10) &gt; 80 hedges into UVXY" in nearby, (
+            f"overlay_summary value from metrics_json did not render (escaped) nearby "
+            f"its testid — found: {nearby!r}"
         )
 
     def test_overlay_preview_details_present_distinct_from_raw_preview(self, card):
@@ -419,6 +435,27 @@ class TestRetrofitSourceCardIdentity:
         assert "Full standalone copy of" not in card, (
             "a strategy_builder_retrofit-source card must NEVER render the frontrunner "
             "full-copy identity wording (AC-7)."
+        )
+
+    def test_preview_label_reads_proposed_symphony_not_full_spliced_symphony(self, card):
+        """The existing raw-candidate preview label must BRANCH by proposal_source
+        (team-lead finding, mid-cycle): a strategy_builder_retrofit candidate is
+        FROM-SCRATCH, not spliced from the incumbent — labeling its preview 'Full
+        spliced symphony (preview)' (the frontrunner_builder-source label) would be
+        the same category of dishonesty this feature exists to fix."""
+        assert "Proposed symphony (preview)" in card, (
+            f"a strategy_builder_retrofit-source card's raw-candidate preview must be "
+            f"labeled 'Proposed symphony (preview)', not the frontrunner-source label — "
+            f"card slice: {card[:2500]!r}"
+        )
+
+    def test_word_spliced_absent_from_retrofit_card(self, card):
+        assert "spliced" not in card.lower(), (
+            "the word 'spliced' must never appear anywhere on a strategy_builder_retrofit "
+            "-source card — a retrofit candidate is a from-scratch proposal, not a splice "
+            "of the incumbent, and the frontrunner-source-only 'Full spliced symphony "
+            f"(preview)' label leaking onto a retrofit card is exactly the dishonesty this "
+            f"feature exists to fix. card slice: {card[:2500]!r}"
         )
 
 

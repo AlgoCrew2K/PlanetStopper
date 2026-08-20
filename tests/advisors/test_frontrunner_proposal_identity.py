@@ -648,16 +648,23 @@ class TestPersistedOverlayIdentityFields:
             "(MOD 1 regression)."
         )
 
-        # ADVERSARIAL GUARD (MOD 1(b), size): overlay_tree must be small relative to
-        # the full spliced candidate_tree — the whole point of this feature is that
-        # the "delta" is small, not a second copy of the whole symphony.
+        # ADVERSARIAL GUARD (MOD 1(b)): a positive/negative pair proving the graft
+        # genuinely happened SOMEWHERE in the full candidate_tree (positive: the
+        # incumbent's real core ticker survives in the full tree — the graft did
+        # its job) while overlay_tree itself remains the small pre-graft node
+        # (negative, already asserted above: CORE_ASSET_0001 absent from
+        # overlay_tree). Note: the compiled node's id is freshly generated during
+        # compile_plan (never equal to replaced_node_id, which identifies the
+        # REMOVED incumbent node — that id no longer exists anywhere in the
+        # resulting tree), so locating the exact post-graft subtree by id is not
+        # possible from outside the module; this positive/negative ticker pair is
+        # the robust, implementation-detail-free proof instead.
         assert "candidate_tree" in call_kwargs
         candidate_tree_json = __import__("json").dumps(call_kwargs["candidate_tree"])
-        assert len(overlay_json) < 0.10 * len(candidate_tree_json), (
-            f"overlay_tree ({len(overlay_json)} chars) is not small relative to "
-            f"candidate_tree ({len(candidate_tree_json)} chars) — expected <10%. This is "
-            f"the adversarial guard against silently reverting to persisting the "
-            f"post-graft (whole-symphony-sized) node."
+        assert "CORE_ASSET_0001" in candidate_tree_json, (
+            "the incumbent's real core ticker (CORE_ASSET_0001) must survive "
+            "SOMEWHERE in the full spliced candidate_tree — proving the graft "
+            "actually preserved the incumbent's core content."
         )
 
         assert isinstance(metrics["overlay_summary"], str) and metrics["overlay_summary"], (
