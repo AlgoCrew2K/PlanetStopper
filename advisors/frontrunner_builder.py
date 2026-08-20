@@ -1492,7 +1492,9 @@ def build_proposal_symphony_name(display_name: str, proposal_id: int, source: st
     if source == "strategy_builder_retrofit":
 
         def _fmt(name: str) -> str:
-            prefix = f"Strategy Builder candidate for {name} " if name else "Strategy Builder candidate "
+            prefix = (
+                f"Strategy Builder candidate for {name} " if name else "Strategy Builder candidate "
+            )
             return f"{prefix}(from scratch, #{proposal_id})"
     else:
 
