@@ -1539,9 +1539,7 @@ def build_proposal_symphony_description(
     MAX_PROPOSAL_DESCRIPTION_CHARS."""
     bounded_display_name = display_name
     if len(bounded_display_name) > _MAX_DISPLAY_NAME_CHARS_IN_DESCRIPTION:
-        bounded_display_name = (
-            bounded_display_name[:_MAX_DISPLAY_NAME_CHARS_IN_DESCRIPTION] + "…"
-        )
+        bounded_display_name = bounded_display_name[:_MAX_DISPLAY_NAME_CHARS_IN_DESCRIPTION] + "…"
 
     if source == "strategy_builder_retrofit":
         first_sentence = (
@@ -1552,8 +1550,7 @@ def build_proposal_symphony_description(
         )
         parts: list[str] = [
             first_sentence,
-            "From-scratch Strategy Builder candidate — does not contain the "
-            "incumbent's logic.",
+            "From-scratch Strategy Builder candidate — does not contain the incumbent's logic.",
         ]
     else:
         first_sentence = (
@@ -1567,9 +1564,7 @@ def build_proposal_symphony_description(
         if replaced_node_id is not None and overlay_summary is not None:
             bounded_summary = overlay_summary
             if len(bounded_summary) > _MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION:
-                bounded_summary = (
-                    bounded_summary[:_MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION] + "…"
-                )
+                bounded_summary = bounded_summary[:_MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION] + "…"
             parts.append(f"Replaces node {replaced_node_id}: {bounded_summary}.")
         else:
             parts.append(f"{OVERLAY_NOT_RECORDED_TEXT}.")
@@ -1675,10 +1670,7 @@ def summarize_overlay(overlay_tree: dict | None) -> str:
 
         fn = condition.get("lhs_fn", "")
         comparator = condition.get("comparator", "")
-        return (
-            f"{fn}({signal_ticker},{window}) {comparator} {rhs_val} "
-            f"rotates into {fire_ticker}"
-        )
+        return f"{fn}({signal_ticker},{window}) {comparator} {rhs_val} rotates into {fire_ticker}"
     except Exception:
         logger.debug("summarize_overlay: unexpected error — degrading to fallback", exc_info=True)
         return _OVERLAY_SUMMARY_FALLBACK
