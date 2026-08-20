@@ -124,7 +124,11 @@ MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW: int = 25
 # symphony name/description strings build_proposal_symphony_name /
 # build_proposal_symphony_description construct for a proposal's approve-path
 # upload. The trailing "#{proposal_id})" token always survives truncation
-# intact — only display_name is ever shortened.
+# intact — only display_name is ever shortened. Self-imposed bounds ONLY
+# (mirrors MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW's own "ours alone" framing
+# above) — NOT verified against Composer's real field limits; verifying that
+# needs a live Composer create, which stays under the existing operator-gated
+# task-zero live-create test (F11).
 MAX_PROPOSAL_NAME_CHARS: int = 100
 MAX_PROPOSAL_DESCRIPTION_CHARS: int = 1000
 
@@ -1415,12 +1419,47 @@ def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]
 # non-dict input) degrades to this exact literal — never a fabricated guess.
 _OVERLAY_SUMMARY_FALLBACK: str = "compound condition overlay"
 
+# F10 (Revise 2): shared AC-6 fallback text -- the SINGLE source of truth for
+# both this module's own description builder (below) and app.py's template
+# context (threaded in as a Jinja variable), closing a drift risk between the
+# Python copy and the template's own copy of the same honest-degrade phrase.
+# Public (no leading underscore) -- app.py imports it directly. No trailing
+# period: callers append their own sentence-ending punctuation as needed.
+OVERLAY_NOT_RECORDED_TEXT: str = "overlay not recorded for this proposal"
+
 # Defensive bound on the overlay_summary snippet embedded in a proposal
 # description -- keeps the assembled description well under
 # MAX_PROPOSAL_DESCRIPTION_CHARS even for a pathological (e.g. very long)
 # summarize_overlay output; the final assembly is also hard-capped as
 # belt-and-suspenders.
 _MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION: int = 300
+
+# F7 (Revise 2): bounds display_name itself before embedding it in the
+# description (the name builder already bounded display_name; the
+# description builder previously did not) -- independent of the overall
+# MAX_PROPOSAL_DESCRIPTION_CHARS truncation-with-safety-sentence-preserved
+# restructure below, which is the second, structural half of the F7 fix.
+_MAX_DISPLAY_NAME_CHARS_IN_DESCRIPTION: int = 200
+
+# The universal safety sentence every description carries, regardless of
+# source. F7: built and appended LAST (after any needed truncation of
+# everything else) so it always survives intact, instead of risking
+# truncation-from-the-tail chopping it off a sufficiently long description.
+_SAFETY_SENTENCE: str = "Undeployed candidate — review before investing."
+
+
+def resolve_incumbent_display_name(bot_state: dict, symphony_id: str) -> str:
+    """F8 (Revise 2): hash->name lookup against ``bot_state``; honest
+    fallback to ``symphony_id`` itself (never fabricates, never raises) when
+    unresolvable -- the single shared source of truth for BOTH the Composer
+    upload name/description (``approve_frontrunner_proposal``, below) and the
+    dashboard card identity line (``app.py``'s ``ai_advisor_tab()`` prefetch
+    loop), closing an honesty-drift risk between the two surfaces. Public (no
+    leading underscore) -- app.py imports it directly."""
+    entry = bot_state.get(symphony_id) if isinstance(bot_state, dict) else None
+    if isinstance(entry, dict) and "name" in entry:
+        return entry["name"]
+    return symphony_id
 
 
 def _truncate_display_name_to_fit(display_name: str, formatter, max_chars: int) -> str:
@@ -1445,15 +1484,21 @@ def build_proposal_symphony_name(display_name: str, proposal_id: int, source: st
     resolves hash-vs-name itself -- that's the caller's job, see
     approve_frontrunner_proposal); bounded to MAX_PROPOSAL_NAME_CHARS by
     truncating display_name (never the "#{proposal_id})" suffix, which
-    always survives intact)."""
+    always survives intact). F2 (Revise 2): a falsy (empty-string)
+    display_name -- a real production condition, since
+    strategy_builder_scheduler keys every observation to symphony_id="" --
+    OMITS the name-slot segment entirely rather than rendering a blank
+    identity slot (leading/double space)."""
     if source == "strategy_builder_retrofit":
 
         def _fmt(name: str) -> str:
-            return f"Strategy Builder candidate for {name} (from scratch, #{proposal_id})"
+            prefix = f"Strategy Builder candidate for {name} " if name else "Strategy Builder candidate "
+            return f"{prefix}(from scratch, #{proposal_id})"
     else:
 
         def _fmt(name: str) -> str:
-            return f"{name} + FR overlay (full copy, #{proposal_id})"
+            prefix = f"{name} + " if name else ""
+            return f"{prefix}FR overlay (full copy, #{proposal_id})"
 
     fitted_name = _truncate_display_name_to_fit(display_name, _fmt, MAX_PROPOSAL_NAME_CHARS)
     return _fmt(fitted_name)
@@ -1476,24 +1521,47 @@ def build_proposal_symphony_description(
     the original symphony is not modified." sentence is UNCONDITIONAL -- a
     property of the splice itself, not of whether the overlay-identity
     metrics were recorded; only the specific replaced-node/overlay-summary
-    detail degrades to an honest "overlay not recorded for this proposal"
-    fallback when either is None (AC-6 legacy row -- never a bare Python
-    "None" leaking via naive f-string formatting). For
-    source="strategy_builder_retrofit" the full-copy sentence never appears
-    (false for a from-scratch candidate) -- a from-scratch/does-not-contain-
-    the-incumbent's-logic sentence is used instead. Bounded to
+    detail degrades to the shared OVERLAY_NOT_RECORDED_TEXT fallback when
+    either is None (AC-6 legacy row -- never a bare Python "None" leaking via
+    naive f-string formatting). For source="strategy_builder_retrofit" the
+    full-copy sentence never appears (false for a from-scratch candidate) --
+    a from-scratch/does-not-contain-the-incumbent's-logic sentence is used
+    instead. F4 (Revise 2): the FIRST sentence is itself source-branched --
+    the retrofit branch's first sentence never claims "Frontrunner Builder
+    candidate" or an "incumbent" relationship. F2 (Revise 2): a falsy
+    (empty-string) display_name omits the blank "for {name}" identity slot
+    from whichever first sentence applies. F7 (Revise 2): display_name is
+    independently bounded before embedding, AND the universal safety
+    sentence is built and appended LAST so it always survives intact
+    regardless of how long any other field is. Bounded to
     MAX_PROPOSAL_DESCRIPTION_CHARS."""
-    parts: list[str] = [
-        f"Frontrunner Builder candidate for {display_name} "
-        f"(incumbent {incumbent_hash}), proposal #{proposal_id}, created {created_at}."
-    ]
+    bounded_display_name = display_name
+    if len(bounded_display_name) > _MAX_DISPLAY_NAME_CHARS_IN_DESCRIPTION:
+        bounded_display_name = (
+            bounded_display_name[:_MAX_DISPLAY_NAME_CHARS_IN_DESCRIPTION] + "…"
+        )
 
     if source == "strategy_builder_retrofit":
-        parts.append(
-            "From-scratch Strategy Builder candidate — does not contain the "
-            "incumbent's logic."
+        first_sentence = (
+            f"Strategy Builder candidate for {bounded_display_name}, "
+            f"proposal #{proposal_id}, created {created_at}."
+            if bounded_display_name
+            else f"Strategy Builder candidate, proposal #{proposal_id}, created {created_at}."
         )
+        parts: list[str] = [
+            first_sentence,
+            "From-scratch Strategy Builder candidate — does not contain the "
+            "incumbent's logic.",
+        ]
     else:
+        first_sentence = (
+            f"Frontrunner Builder candidate for {bounded_display_name} "
+            f"(incumbent {incumbent_hash}), proposal #{proposal_id}, created {created_at}."
+            if bounded_display_name
+            else f"Frontrunner Builder candidate (incumbent {incumbent_hash}), "
+            f"proposal #{proposal_id}, created {created_at}."
+        )
+        parts = [first_sentence]
         if replaced_node_id is not None and overlay_summary is not None:
             bounded_summary = overlay_summary
             if len(bounded_summary) > _MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION:
@@ -1502,30 +1570,42 @@ def build_proposal_symphony_description(
                 )
             parts.append(f"Replaces node {replaced_node_id}: {bounded_summary}.")
         else:
-            parts.append("overlay not recorded for this proposal.")
+            parts.append(f"{OVERLAY_NOT_RECORDED_TEXT}.")
         # Unconditional for frontrunner_builder source (team-lead ruling,
         # plan-approval correction): the full-copy property belongs to the
         # SPLICE, not to whether the overlay-identity metrics were recorded
         # -- a legacy row is still a full spliced copy.
         parts.append("Full standalone copy — the original symphony is not modified.")
 
-    parts.append("Undeployed candidate — review before investing.")
-
-    description = " ".join(parts)
-    if len(description) > MAX_PROPOSAL_DESCRIPTION_CHARS:
-        description = description[:MAX_PROPOSAL_DESCRIPTION_CHARS]
-    return description
+    body = " ".join(parts)
+    # F7(b): bound everything ELSE to fit, then append the safety sentence
+    # last -- guarantees description.endswith(_SAFETY_SENTENCE) regardless of
+    # how long display_name/overlay_summary are, instead of truncating the
+    # fully-assembled string from the tail (which could chop the safety
+    # sentence off).
+    max_body_chars = max(0, MAX_PROPOSAL_DESCRIPTION_CHARS - len(_SAFETY_SENTENCE) - 1)
+    if len(body) > max_body_chars:
+        body = body[:max_body_chars]
+    return f"{body} {_SAFETY_SENTENCE}"
 
 
 def _find_first_asset_ticker(nodes) -> str | None:
     """Recursively walk a build-plan-DSL then/else node list for the FIRST
     ``{"kind": "asset", "ticker": ...}`` leaf, however nested inside
-    weight/group wrapper nodes. Grounded directly in this module's own
+    weight/group wrapper nodes OR a nested if/if_compound node's OWN
+    then/else branches. Grounded directly in this module's own
     _EXAMPLE_OVERLAY shapes: a scheme='equal' weight node's "children" is a
     bare list of asset nodes; a scheme='specified' weight node's "children"
     is a list of {"node": ASSET_NODE, "pct": N} wrappers; either shape may
     also appear as a bare asset node directly in the list (no weight
-    wrapper). Never raises; returns None if nothing derivable is found."""
+    wrapper). F1 (Revise 2): a 2-tier scale-in overlay -- the generation
+    prompt's own flagship worked example (HARD REQUIREMENT #4: nested
+    if-nodes inside the OUTER node's "then" branch) -- nests ANOTHER
+    {"kind":"if"/"if_compound", "then":[...], "else":[...]} node inside a
+    then/else list; that nested node has neither "children" nor "node", so
+    it is descended into explicitly (its own "then" first, then "else") --
+    same "the first asset leaf found by walking, however nested" contract.
+    Never raises; returns None if nothing derivable is found."""
     if not isinstance(nodes, list):
         return None
     for node in nodes:
@@ -1533,6 +1613,14 @@ def _find_first_asset_ticker(nodes) -> str | None:
             continue
         if node.get("kind") == "asset" and node.get("ticker"):
             return node.get("ticker")
+        if node.get("kind") in ("if", "if_compound"):
+            found = _find_first_asset_ticker(node.get("then"))
+            if found:
+                return found
+            found = _find_first_asset_ticker(node.get("else"))
+            if found:
+                return found
+            continue
         wrapped = node.get("node")
         if isinstance(wrapped, dict):
             found = _find_first_asset_ticker([wrapped])
@@ -1554,11 +1642,15 @@ def summarize_overlay(overlay_tree: dict | None) -> str:
     "else" lists of DSL nodes) -- the same shape generate_candidate_overlay
     returns, NEVER the compiled Composer step-shape.
 
-    A flat condition (``condition`` carries an "lhs_fn" key) yields a
-    specific summary naming both the signal ticker (condition["lhs_ticker"])
-    and the fire-branch ticker (the first asset leaf found by walking
-    "then"). Any other shape -- compound condition, missing/malformed
-    "condition", non-dict input, None -- degrades to the exact literal
+    A flat condition (``condition`` carries an "lhs_fn" key, a non-None
+    "window", and a non-None ``rhs["fixed"]``) yields a specific summary
+    naming both the signal ticker (condition["lhs_ticker"]) and the
+    fire-branch ticker (the first asset leaf found by walking "then", now
+    genuinely recursive through nested if-structure via
+    _find_first_asset_ticker -- F1, Revise 2). Any other shape -- compound
+    condition, missing/malformed "condition", missing "window"/rhs["fixed"]
+    (F6, Revise 2: required, never interpolated as a literal "None"),
+    non-dict input, None -- degrades to the exact literal
     _OVERLAY_SUMMARY_FALLBACK. Never raises for any input.
     """
     try:
@@ -1570,15 +1662,17 @@ def summarize_overlay(overlay_tree: dict | None) -> str:
         signal_ticker = condition.get("lhs_ticker")
         if not signal_ticker:
             return _OVERLAY_SUMMARY_FALLBACK
+        window = condition.get("window")
+        rhs = condition.get("rhs")
+        rhs_val = rhs.get("fixed") if isinstance(rhs, dict) else None
+        if window is None or rhs_val is None:
+            return _OVERLAY_SUMMARY_FALLBACK
         fire_ticker = _find_first_asset_ticker(overlay_tree.get("then"))
         if not fire_ticker:
             return _OVERLAY_SUMMARY_FALLBACK
 
         fn = condition.get("lhs_fn", "")
-        window = condition.get("window")
         comparator = condition.get("comparator", "")
-        rhs = condition.get("rhs")
-        rhs_val = rhs.get("fixed") if isinstance(rhs, dict) else rhs
         return (
             f"{fn}({signal_ticker},{window}) {comparator} {rhs_val} "
             f"rotates into {fire_ticker}"
@@ -2144,15 +2238,20 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
         # "Frontrunner Candidate — <hash>" label. `database` is already
         # lazy-imported above; reused here, never a second import. Any
         # failure in this block is caught by this function's own outer
-        # try/except (D-1).
+        # try/except (D-1). F8 (Revise 2): display-name resolution now routes
+        # through the shared resolve_incumbent_display_name -- the SAME
+        # function app.py's ai_advisor_tab() prefetch loop uses -- instead of
+        # this function's own previously-duplicated inline logic.
         bot_state = database.load_state() or {}
-        sym_entry = bot_state.get(proposal["symphony_id"])
-        display_name = (
-            sym_entry["name"]
-            if isinstance(sym_entry, dict) and "name" in sym_entry
-            else proposal["symphony_id"]
-        )
-        proposal_metrics = proposal.get("metrics_json") or {}
+        display_name = resolve_incumbent_display_name(bot_state, proposal["symphony_id"])
+        # F3 (Revise 2): a TRUTHY non-dict metrics_json (a stored JSON array)
+        # is not falsy, so the old `proposal.get("metrics_json") or {}` guard
+        # never fired and the subsequent .get() calls raised AttributeError
+        # (caught by this function's outer except, but no error_message was
+        # persisted first, unlike every other failure branch). isinstance
+        # guard mirrors app.py's own equivalent AC-6 guard -- never raises.
+        raw_metrics = proposal.get("metrics_json")
+        proposal_metrics = raw_metrics if isinstance(raw_metrics, dict) else {}
         name = build_proposal_symphony_name(
             display_name, proposal["id"], proposal["proposal_source"]
         )
