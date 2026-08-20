@@ -298,6 +298,33 @@ class TestBuildProposalSymphonyDescription:
             f"formatting — full text: {description!r}"
         )
 
+    def test_ac6_legacy_row_still_states_full_standalone_copy(self, fbld):
+        """Regression lock (sufficiency-review finding, fpi-test-writer):
+        implementation correctly makes the "Full standalone copy" sentence
+        UNCONDITIONAL for source="frontrunner_builder", regardless of whether
+        the AC-3 overlay-identity metrics (replaced_node_id/overlay_summary)
+        happen to be recorded — the full-copy property belongs to the SPLICE
+        itself, not to whether those two metrics fields were captured. A
+        legacy row predating AC-3 is STILL a genuine full spliced copy; only
+        the specific replaced-node/overlay-summary DETAIL is what's honestly
+        unrecorded. Locks this correct, more-honest-than-originally-specified
+        behavior against a future "fix" that wrongly makes it conditional."""
+        description = fbld.build_proposal_symphony_description(
+            display_name="My Symphony",
+            incumbent_hash="hash-1",
+            proposal_id=1,
+            created_at="2026-08-20T00:00:00Z",
+            source="frontrunner_builder",
+            replaced_node_id=None,
+            overlay_summary=None,
+        )
+        assert "Full standalone copy — the original symphony is not modified." in description, (
+            f"a legacy frontrunner_builder-source row (no AC-3 overlay metrics) is "
+            f"STILL a genuine full spliced copy — the full-copy sentence must remain "
+            f"present even when replaced_node_id/overlay_summary are None. Full text: "
+            f"{description!r}"
+        )
+
     def test_description_bounded_by_max_chars_under_pathological_overlay_summary(self, fbld):
         description = fbld.build_proposal_symphony_description(
             display_name="My Symphony",
