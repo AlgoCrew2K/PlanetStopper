@@ -120,6 +120,14 @@ MAX_CASCADES_PER_SYMPHONY_RUN: int = 40
 # blast-radius cap either way. NOT a Composer limit — ours alone.
 MAX_FRONTRUNNER_UPLOADS_PENDING_REVIEW: int = 25
 
+# frontrunner-proposal-identity feature (2026-08-20): bounds on the Composer
+# symphony name/description strings build_proposal_symphony_name /
+# build_proposal_symphony_description construct for a proposal's approve-path
+# upload. The trailing "#{proposal_id})" token always survives truncation
+# intact — only display_name is ever shortened.
+MAX_PROPOSAL_NAME_CHARS: int = 100
+MAX_PROPOSAL_DESCRIPTION_CHARS: int = 1000
+
 # VIX-family tickers recognized as hedge/fire-basket instruments — same
 # vocabulary as frontrunner_detector.VIX_FAMILY_TICKERS (imported, not
 # duplicated, so the two modules can never drift on this list). AC-8:
@@ -1392,6 +1400,194 @@ def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]
         return []
 
 
+# ---------------------------------------------------------------------------
+# frontrunner-proposal-identity (2026-08-20): honest proposal-identity
+# construction. A frontrunner proposal's candidate_tree is a FULL standalone
+# copy of the incumbent symphony with one cascade replaced by a generated
+# overlay -- these helpers make every Composer-facing name/description say
+# so explicitly, instead of the old generic "Frontrunner Candidate — <hash>"
+# label. Consumed by _run_build_for_symphony's persist site (below) and by
+# approve_frontrunner_proposal's save_symphony call.
+# ---------------------------------------------------------------------------
+
+# AC-3 fallback: any overlay shape that doesn't yield a specific, derivable
+# flat-condition summary (compound conditions, malformed/missing condition,
+# non-dict input) degrades to this exact literal — never a fabricated guess.
+_OVERLAY_SUMMARY_FALLBACK: str = "compound condition overlay"
+
+# Defensive bound on the overlay_summary snippet embedded in a proposal
+# description -- keeps the assembled description well under
+# MAX_PROPOSAL_DESCRIPTION_CHARS even for a pathological (e.g. very long)
+# summarize_overlay output; the final assembly is also hard-capped as
+# belt-and-suspenders.
+_MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION: int = 300
+
+
+def _truncate_display_name_to_fit(display_name: str, formatter, max_chars: int) -> str:
+    """Return a (possibly truncated + ellipsis-marked) display_name such that
+    ``formatter(display_name)`` fits within ``max_chars``. ``formatter`` is a
+    callable that embeds ``display_name`` exactly once into a larger fixed
+    template -- only the display_name portion is ever shortened, so any fixed
+    suffix in the template (e.g. a trailing "#{proposal_id})" token) always
+    survives intact."""
+    full = formatter(display_name)
+    if len(full) <= max_chars:
+        return display_name
+    fixed_len = len(full) - len(display_name)
+    # Reserve 1 char for the "…" ellipsis marker appended below.
+    available = max(0, max_chars - fixed_len - 1)
+    return display_name[:available] + "…"
+
+
+def build_proposal_symphony_name(display_name: str, proposal_id: int, source: str) -> str:
+    """AC-1/AC-7: the Composer-facing symphony name for an approved
+    frontrunner proposal. Two locked formats depending on ``source`` (never
+    resolves hash-vs-name itself -- that's the caller's job, see
+    approve_frontrunner_proposal); bounded to MAX_PROPOSAL_NAME_CHARS by
+    truncating display_name (never the "#{proposal_id})" suffix, which
+    always survives intact)."""
+    if source == "strategy_builder_retrofit":
+
+        def _fmt(name: str) -> str:
+            return f"Strategy Builder candidate for {name} (from scratch, #{proposal_id})"
+    else:
+
+        def _fmt(name: str) -> str:
+            return f"{name} + FR overlay (full copy, #{proposal_id})"
+
+    fitted_name = _truncate_display_name_to_fit(display_name, _fmt, MAX_PROPOSAL_NAME_CHARS)
+    return _fmt(fitted_name)
+
+
+def build_proposal_symphony_description(
+    *,
+    display_name: str,
+    incumbent_hash: str,
+    proposal_id: int,
+    created_at: str,
+    source: str,
+    replaced_node_id: str | None = None,
+    overlay_summary: str | None = None,
+) -> str:
+    """AC-2/AC-6/AC-7: the Composer-facing symphony description for an
+    approved proposal. Always carries display_name/incumbent_hash/
+    proposal_id/created_at plus the universal review-before-investing
+    sentence. For source="frontrunner_builder" the "Full standalone copy —
+    the original symphony is not modified." sentence is UNCONDITIONAL -- a
+    property of the splice itself, not of whether the overlay-identity
+    metrics were recorded; only the specific replaced-node/overlay-summary
+    detail degrades to an honest "overlay not recorded for this proposal"
+    fallback when either is None (AC-6 legacy row -- never a bare Python
+    "None" leaking via naive f-string formatting). For
+    source="strategy_builder_retrofit" the full-copy sentence never appears
+    (false for a from-scratch candidate) -- a from-scratch/does-not-contain-
+    the-incumbent's-logic sentence is used instead. Bounded to
+    MAX_PROPOSAL_DESCRIPTION_CHARS."""
+    parts: list[str] = [
+        f"Frontrunner Builder candidate for {display_name} "
+        f"(incumbent {incumbent_hash}), proposal #{proposal_id}, created {created_at}."
+    ]
+
+    if source == "strategy_builder_retrofit":
+        parts.append(
+            "From-scratch Strategy Builder candidate — does not contain the "
+            "incumbent's logic."
+        )
+    else:
+        if replaced_node_id is not None and overlay_summary is not None:
+            bounded_summary = overlay_summary
+            if len(bounded_summary) > _MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION:
+                bounded_summary = (
+                    bounded_summary[:_MAX_OVERLAY_SUMMARY_CHARS_IN_DESCRIPTION] + "…"
+                )
+            parts.append(f"Replaces node {replaced_node_id}: {bounded_summary}.")
+        else:
+            parts.append("overlay not recorded for this proposal.")
+        # Unconditional for frontrunner_builder source (team-lead ruling,
+        # plan-approval correction): the full-copy property belongs to the
+        # SPLICE, not to whether the overlay-identity metrics were recorded
+        # -- a legacy row is still a full spliced copy.
+        parts.append("Full standalone copy — the original symphony is not modified.")
+
+    parts.append("Undeployed candidate — review before investing.")
+
+    description = " ".join(parts)
+    if len(description) > MAX_PROPOSAL_DESCRIPTION_CHARS:
+        description = description[:MAX_PROPOSAL_DESCRIPTION_CHARS]
+    return description
+
+
+def _find_first_asset_ticker(nodes) -> str | None:
+    """Recursively walk a build-plan-DSL then/else node list for the FIRST
+    ``{"kind": "asset", "ticker": ...}`` leaf, however nested inside
+    weight/group wrapper nodes. Grounded directly in this module's own
+    _EXAMPLE_OVERLAY shapes: a scheme='equal' weight node's "children" is a
+    bare list of asset nodes; a scheme='specified' weight node's "children"
+    is a list of {"node": ASSET_NODE, "pct": N} wrappers; either shape may
+    also appear as a bare asset node directly in the list (no weight
+    wrapper). Never raises; returns None if nothing derivable is found."""
+    if not isinstance(nodes, list):
+        return None
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        if node.get("kind") == "asset" and node.get("ticker"):
+            return node.get("ticker")
+        wrapped = node.get("node")
+        if isinstance(wrapped, dict):
+            found = _find_first_asset_ticker([wrapped])
+            if found:
+                return found
+        children = node.get("children")
+        if isinstance(children, list):
+            found = _find_first_asset_ticker(children)
+            if found:
+                return found
+    return None
+
+
+def summarize_overlay(overlay_tree: dict | None) -> str:
+    """AC-3: a short, specific, human-readable one-liner describing what a
+    generated frontrunner overlay DOES -- persisted into metrics_json and
+    rendered on proposal cards. Operates on the raw pre-compile build-plan-
+    DSL overlay node (kind="if"/"if_compound", a "condition" dict, "then"/
+    "else" lists of DSL nodes) -- the same shape generate_candidate_overlay
+    returns, NEVER the compiled Composer step-shape.
+
+    A flat condition (``condition`` carries an "lhs_fn" key) yields a
+    specific summary naming both the signal ticker (condition["lhs_ticker"])
+    and the fire-branch ticker (the first asset leaf found by walking
+    "then"). Any other shape -- compound condition, missing/malformed
+    "condition", non-dict input, None -- degrades to the exact literal
+    _OVERLAY_SUMMARY_FALLBACK. Never raises for any input.
+    """
+    try:
+        if not isinstance(overlay_tree, dict):
+            return _OVERLAY_SUMMARY_FALLBACK
+        condition = overlay_tree.get("condition")
+        if not isinstance(condition, dict) or "lhs_fn" not in condition:
+            return _OVERLAY_SUMMARY_FALLBACK
+        signal_ticker = condition.get("lhs_ticker")
+        if not signal_ticker:
+            return _OVERLAY_SUMMARY_FALLBACK
+        fire_ticker = _find_first_asset_ticker(overlay_tree.get("then"))
+        if not fire_ticker:
+            return _OVERLAY_SUMMARY_FALLBACK
+
+        fn = condition.get("lhs_fn", "")
+        window = condition.get("window")
+        comparator = condition.get("comparator", "")
+        rhs = condition.get("rhs")
+        rhs_val = rhs.get("fixed") if isinstance(rhs, dict) else rhs
+        return (
+            f"{fn}({signal_ticker},{window}) {comparator} {rhs_val} "
+            f"rotates into {fire_ticker}"
+        )
+    except Exception:
+        logger.debug("summarize_overlay: unexpected error — degrading to fallback", exc_info=True)
+        return _OVERLAY_SUMMARY_FALLBACK
+
+
 def _run_build_for_symphony(symphony_id: str) -> None:
     """Detect -> generate -> splice -> INDEPENDENTLY re-backtest BOTH incumbent
     and candidate -> gate (evaluate_candidate_batch, mandatory) -> Calmar
@@ -1584,6 +1780,17 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             if candidate_fr_key
             else {}
         )
+
+        # frontrunner-proposal-identity (AC-3): persist the SMALL pre-compile/
+        # pre-graft DSL candidate node (result.candidate) exactly -- never
+        # `spliced`, whose else-branch contains the ENTIRE incumbent core.
+        # cascade/result are already in scope from this same loop iteration --
+        # zero change to splice_candidate_into_symphony's signature/return.
+        metrics["overlay_tree"] = result.candidate
+        metrics["replaced_node_id"] = (
+            cascade.overlay_tree.get("id") if isinstance(cascade.overlay_tree, dict) else None
+        )
+        metrics["overlay_summary"] = summarize_overlay(result.candidate)
 
         try:
             import database  # noqa: PLC0415 - CC-2 lazy
@@ -1929,9 +2136,39 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
             return ApprovalResult(success=False, error="upload_cap_reached")
 
         candidate_tree = proposal["candidate_tree"]
+
+        # frontrunner-proposal-identity (AC-1/AC-2/AC-6/AC-7): resolve an
+        # honest display name (falls back to the raw Composer hash when the
+        # incumbent isn't found in bot_state) and build the locked name/
+        # description formats -- replaces the old generic
+        # "Frontrunner Candidate — <hash>" label. `database` is already
+        # lazy-imported above; reused here, never a second import. Any
+        # failure in this block is caught by this function's own outer
+        # try/except (D-1).
+        bot_state = database.load_state() or {}
+        sym_entry = bot_state.get(proposal["symphony_id"])
+        display_name = (
+            sym_entry["name"]
+            if isinstance(sym_entry, dict) and "name" in sym_entry
+            else proposal["symphony_id"]
+        )
+        proposal_metrics = proposal.get("metrics_json") or {}
+        name = build_proposal_symphony_name(
+            display_name, proposal["id"], proposal["proposal_source"]
+        )
+        description = build_proposal_symphony_description(
+            display_name=display_name,
+            incumbent_hash=proposal["symphony_id"],
+            proposal_id=proposal["id"],
+            created_at=proposal["created_at"],
+            source=proposal["proposal_source"],
+            replaced_node_id=proposal_metrics.get("replaced_node_id"),
+            overlay_summary=proposal_metrics.get("overlay_summary"),
+        )
+
         draft_result = composer_draft_client.save_symphony(
-            name=f"Frontrunner Candidate — {proposal['symphony_id']}",
-            description="Frontrunner Builder candidate (operator-approved)",
+            name=name,
+            description=description,
             color="#4287f5",
             hashtag="#frontrunner",
             raw_value=candidate_tree,
