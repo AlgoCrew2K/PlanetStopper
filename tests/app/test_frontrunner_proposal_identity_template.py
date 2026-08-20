@@ -410,6 +410,36 @@ class TestLegacyRowHonestEmptyState:
             "a non-dict metrics_json must still render the card (degraded, never a 500)"
         )
 
+    def test_non_dict_metrics_json_node_count_delta_renders_honest_dash(self, client, monkeypatch):
+        """Sufficiency-review finding (fpi-test-writer, Red/Green/Revise):
+        m.incumbent_calmar / m.candidate_calmar / m.incumbent_cagr /
+        m.candidate_cagr / m.incumbent_max_drawdown / m.candidate_max_drawdown
+        all gained an `is defined and` guard (6 cells) protecting against Jinja
+        Undefined (not literal None) once metrics_json degrades to {} — but the
+        7th same-shaped cell, fr-node-count-delta (`m.node_count_delta if
+        m.node_count_delta is not none else '—'`), did not. It doesn't crash
+        (Jinja silently stringifies Undefined to '' in a bare {{ }} expression,
+        unlike the format()-filtered cells, which raise) — but it silently
+        renders BLANK instead of the same honest '—' the other 6 cells show on
+        missing data. Consistency: every numeric cell on a degraded row should
+        degrade the same honest way."""
+        row = _make_pending_row(
+            row_id=22,
+            symphony_id="hash-weird2",
+            proposal_source="frontrunner_builder",
+            metrics_json=[1, 2, 3],  # non-dict — normalizes to {}
+        )
+        html = _render_advisor_page(client, monkeypatch, pending_rows=[row], bot_state={})
+        card = _card_source(html, 22)
+        idx = card.find('data-testid="fr-node-count-delta"')
+        assert idx != -1, 'data-testid="fr-node-count-delta" not found.'
+        nearby = card[idx : idx + 200]
+        assert "—" in nearby, (
+            f"a degraded row (metrics_json normalized to {{}}) must render the honest "
+            f"'—' placeholder for node_count_delta, matching the other 6 numeric "
+            f"cells' degrade behavior on this same card — found nearby: {nearby!r}"
+        )
+
 
 # ===========================================================================
 # Group D: strategy_builder_retrofit-source card identity (AC-7)
