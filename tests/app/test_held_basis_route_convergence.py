@@ -39,7 +39,12 @@ import app as app_module
 import database as database_module
 
 _ET = ZoneInfo("America/New_York")
-_TRADING_DAY = "2026-08-13"
+# Must be the LIVE ET calendar date, not a fixed literal: the routes under
+# test resolve "today" internally from the ET wall clock (see
+# analytics.get_symphony_today_change's fallback, analytics.py:568), so a
+# hardcoded date detonates the day after it's written -- same date-bomb class
+# as commit 8b6fc8480 (PR #120, test_history_daily_drilldown.py).
+_TRADING_DAY = datetime.now(_ET).strftime("%Y-%m-%d")
 
 _FIXTURE_PATH = (
     Path(__file__).parent.parent / "fixtures" / "math" / "held_basis_convergence_live_capture.json"
