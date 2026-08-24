@@ -1313,26 +1313,52 @@ def _count_tree_nodes(node) -> int:
     return count
 
 
-def _count_overlay_node_count(candidate) -> int | None:
-    """Return the compiled node count of a raw build-plan-DSL overlay
-    candidate (DE-FR-SIMPLIFY-001, AC-2's ``overlay_node_count`` operand), or
-    None if it cannot be honestly determined.
+def _unwrap_single_compiled_child(compiled_root) -> dict | None:
+    """Return the sole top-level child of a compiled ``plan_tree_compiler``
+    root (the raw compiled if/if_compound node), or None if the root isn't
+    shaped as exactly one child. The same unwrap ``splice_candidate_into_
+    symphony`` performs on its own ``compile_plan`` result — factored out so
+    ``_count_overlay_node_count`` can apply it identically to either an
+    already-compiled tree it was HANDED or one it compiled itself.
+    """
+    if not isinstance(compiled_root, dict):
+        return None
+    children = compiled_root.get("children") or []
+    if len(children) != 1:
+        return None
+    return children[0]
 
-    ``candidate`` (``result.candidate`` from ``generate_candidate_overlay``)
-    is build-plan-DSL-shaped (``kind``/``then``/``else``), not the compiled
-    Composer raw_value shape (``step``/``children``) ``_count_tree_nodes``
-    walks. This performs a SECOND, independent compile of the candidate
-    alone — the identical plan-envelope shape ``splice_candidate_into_
-    symphony`` already builds internally, cheap and pure-Python, no I/O —
-    purely to obtain a countable node, so ``splice_candidate_into_symphony``'s
-    own signature/return stays untouched (zero diff to splice mechanics).
+
+def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> int | None:
+    """Return the compiled node count of a build-plan-DSL overlay candidate
+    (DE-FR-SIMPLIFY-001, AC-2's ``overlay_node_count`` operand), or None if
+    it cannot be honestly determined.
+
+    Parameters
+    ----------
+    candidate : dict | None
+        The build-plan-DSL overlay node (``GenerationResult.candidate``) —
+        build-plan-DSL-shaped (``kind``/``then``/``else``), not the compiled
+        Composer raw_value shape (``step``/``children``) ``_count_tree_nodes``
+        walks. Used only as the fresh-compile fallback INPUT when
+        ``compiled_tree`` is unavailable.
+    compiled_tree : dict | None
+        The ALREADY-compiled Composer tree for ``candidate``
+        (``GenerationResult.compiled_tree``), when available — the PREFERRED
+        input. ``generate_candidate_overlay`` already compiled ``candidate``
+        once via ``plan_tree_compiler.compile_plan``; reusing that result
+        here avoids a REDUNDANT second compile-plus-validate pass on the
+        successful-generation happy path (frreview INFO finding, folded in).
+        Falls back to compiling ``candidate`` fresh ONLY when
+        ``compiled_tree`` is None — a genuine upstream compile failure or
+        absence, not the normal path.
 
     Deliberately calls ``plan_tree_compiler.compile_plan`` WITHOUT
-    ``backtest_fn`` — a pure compile, counting only, never network. Passing
-    ``backtest_fn`` would let the compiler's tradeability-repair loop fire
-    live Composer calls and nondeterministically prune tickers, corrupting
-    the count with network I/O and bill spend this counting-only helper must
-    never incur.
+    ``backtest_fn`` on the fallback path — a pure compile, counting only,
+    never network. Passing ``backtest_fn`` would let the compiler's
+    tradeability-repair loop fire live Composer calls and
+    nondeterministically prune tickers, corrupting the count with network
+    I/O and bill spend this counting-only helper must never incur.
 
     Never raises (D-1) — returns None (never a fabricated 0) on any compile
     failure, unexpected shape, or a genuine zero-node result: a real compiled
@@ -1344,11 +1370,19 @@ def _count_overlay_node_count(candidate) -> int | None:
     fail-closed guards decline SIMPLIFY on a None operand.
     """
     try:
+        if isinstance(compiled_tree, dict):
+            node = _unwrap_single_compiled_child(compiled_tree)
+            if node is None:
+                return None
+            count = _count_tree_nodes(node)
+            return count or None
+
         if isinstance(candidate, dict) and "step" in candidate:
             # Already compiled (rare — splice_candidate_into_symphony accepts
             # this shape too) — count directly, no re-compile needed.
             count = _count_tree_nodes(candidate)
             return count or None
+
         plan_envelope = {
             "plan_id": "frontrunner-overlay-node-count",
             "objective": "cut_drawdown",
@@ -1360,10 +1394,10 @@ def _count_overlay_node_count(candidate) -> int | None:
         compile_result = plan_tree_compiler.compile_plan(plan_envelope)
         if compile_result.tree is None:
             return None
-        compiled_children = compile_result.tree.get("children") or []
-        if len(compiled_children) != 1:
+        node = _unwrap_single_compiled_child(compile_result.tree)
+        if node is None:
             return None
-        count = _count_tree_nodes(compiled_children[0])
+        count = _count_tree_nodes(node)
         return count or None
     except Exception:
         logger.debug("_count_overlay_node_count: unexpected error", exc_info=True)
@@ -1877,14 +1911,16 @@ def _run_build_for_symphony(symphony_id: str) -> None:
 
         # DE-FR-SIMPLIFY-001 (AC-2): the real delta-scoped SIMPLIFY operands —
         # the detected incumbent cascade subtree (already raw_value-shaped,
-        # directly countable) and the small generated overlay (DSL-shaped,
-        # counted via a second lightweight compile) — both already in scope
-        # from this loop iteration, threaded through _gate_and_accept_
-        # candidate to the Calmar acceptance gate. Never the whole-tree
-        # incumbent/candidate counts, which stay ~98-100% of each other for
-        # any single-cascade splice.
+        # directly countable) and the small generated overlay — both already
+        # in scope from this loop iteration, threaded through _gate_and_
+        # accept_candidate to the Calmar acceptance gate. Never the
+        # whole-tree incumbent/candidate counts, which stay ~98-100% of each
+        # other for any single-cascade splice. result.compiled_tree (already
+        # compiled by generate_candidate_overlay) is passed so
+        # _count_overlay_node_count reuses it instead of redundantly
+        # re-compiling result.candidate from scratch.
         replaced_cascade_node_count = _count_tree_nodes(cascade.overlay_tree)
-        overlay_node_count = _count_overlay_node_count(result.candidate)
+        overlay_node_count = _count_overlay_node_count(result.candidate, result.compiled_tree)
 
         accepted, metrics = _gate_and_accept_candidate(
             symphony_id=symphony_id,
