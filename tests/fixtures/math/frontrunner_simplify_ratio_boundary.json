@@ -1,0 +1,45 @@
+{
+  "_comment": "Golden truth table for the SIMPLIFY clause's delta-scoped ratio boundary (DE-FR-SIMPLIFY-001, AC-1/AC-5). MATERIAL_SIMPLIFICATION_MAX_RATIO=0.50 is compared against overlay_node_count/replaced_cascade_node_count (NOT whole-tree counts). Calmar is held IDENTICAL between incumbent and candidate in every row (annualized_return/max_drawdown equal on both sides) so the SIMPLIFY tag's presence is driven purely by the ratio, isolating this clause from the IMPROVE path. incumbent_node_count/candidate_node_count (whole-tree) are deliberately set to a near-100%-of-incumbent value in every row to prove the OLD whole-tree comparison could never have produced these accept rows — only the new delta-scoped operands can.",
+  "annualized_return": 0.12,
+  "max_drawdown": -0.08,
+  "whole_tree_incumbent_node_count": 500,
+  "whole_tree_candidate_node_count": 495,
+  "rows": [
+    {
+      "name": "ratio_exactly_at_boundary_accepts",
+      "overlay_node_count": 50,
+      "replaced_cascade_node_count": 100,
+      "expected_accepted": true
+    },
+    {
+      "name": "ratio_epsilon_above_boundary_declines",
+      "overlay_node_count": 51,
+      "replaced_cascade_node_count": 100,
+      "expected_accepted": false
+    },
+    {
+      "name": "ratio_epsilon_below_boundary_accepts",
+      "overlay_node_count": 49,
+      "replaced_cascade_node_count": 100,
+      "expected_accepted": true
+    },
+    {
+      "name": "realistic_operator_scale_accepts",
+      "overlay_node_count": 20,
+      "replaced_cascade_node_count": 200,
+      "expected_accepted": true
+    },
+    {
+      "name": "small_but_insufficient_reduction_declines",
+      "overlay_node_count": 180,
+      "replaced_cascade_node_count": 200,
+      "expected_accepted": false
+    },
+    {
+      "name": "equal_size_no_simplification_declines",
+      "overlay_node_count": 100,
+      "replaced_cascade_node_count": 100,
+      "expected_accepted": false
+    }
+  ]
+}
