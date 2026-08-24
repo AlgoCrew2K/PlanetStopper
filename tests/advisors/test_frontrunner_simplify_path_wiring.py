@@ -131,7 +131,20 @@ def _expected_signal_logic_count(fbld_module, if_node: dict) -> int:
     """The CORRECT 'signal logic only' node count for a raw_value if-node —
     1 (the if-node) + the FULL subtree of whichever if-child is the real
     fire/then branch, EXCLUDING the other if-child (continuation/else)
-    entirely. Never presumes a fixed position (children[0] vs [1])."""
+    entirely. Never presumes a fixed position (children[0] vs [1]).
+
+    RIDER (team-lead ruling, post-Revise-3): when a well-formed 2-child
+    if-node matches NEITHER identification heuristic (no stub marker on
+    either side AND no ``is-else-condition?==True`` on either side), this
+    helper now asserts loudly rather than falling back to a positional
+    guess (``children[-1]``) — mirrors the production
+    ``_count_signal_logic_nodes`` rider that flips the same branch to
+    ``return None``. Dual-verified unreachable by every real fixture this
+    file builds (cascade side always carries the stub marker by
+    construction of ``_build_cascade_overlay``; overlay side always carries
+    ``is-else-condition?`` via the real ``symphony_schema`` constructors) —
+    if this ever fires, it means a fixture stopped being honest, not that
+    the helper should silently guess."""
     children = [c for c in (if_node.get("children") or []) if isinstance(c, dict)]
     if len(children) != 2:
         # Malformed/unexpected shape — fall back to the honest whole count
@@ -143,7 +156,15 @@ def _expected_signal_logic_count(fbld_module, if_node: dict) -> int:
         exclude = stub_children[0]
     else:
         else_children = [c for c in children if c.get("is-else-condition?") is True]
-        exclude = else_children[0] if else_children else children[-1]
+        if not else_children:
+            raise AssertionError(
+                "_expected_signal_logic_count: ambiguous 2-child if-node — "
+                "neither child carries a stub marker nor is-else-condition?==True. "
+                "This branch is dual-verified unreachable by every real fixture; "
+                "a fixture that hits it is no longer honest and must be fixed, "
+                "never a positional guess."
+            )
+        exclude = else_children[0]
 
     fire = next(c for c in children if c is not exclude)
     return 1 + fbld_module._count_tree_nodes(fire)
