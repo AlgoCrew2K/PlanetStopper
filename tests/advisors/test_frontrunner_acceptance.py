@@ -676,13 +676,11 @@ def test_simplify_ratio_boundary_matches_golden_fixture(facc):
         )
         if row["expected_accepted"]:
             assert "simplification" in result.tags, (
-                f"fixture row {row['name']!r} accepted but is not tagged "
-                f"'simplification'"
+                f"fixture row {row['name']!r} accepted but is not tagged 'simplification'"
             )
         else:
             assert "simplification" not in result.tags, (
-                f"fixture row {row['name']!r} declined but still carries "
-                f"a 'simplification' tag"
+                f"fixture row {row['name']!r} declined but still carries a 'simplification' tag"
             )
 
 
@@ -715,16 +713,12 @@ def test_simplify_accepts_a_real_if_compound_overlay_counted_via_the_real_counte
         "any",
         [
             symphony_schema.make_binary_condition(
-                symphony_schema.make_condition_operand(
-                    "relative-strength-index", "SPY", window=10
-                ),
+                symphony_schema.make_condition_operand("relative-strength-index", "SPY", window=10),
                 "gt",
                 symphony_schema.make_constant_rhs(80),
             ),
             symphony_schema.make_binary_condition(
-                symphony_schema.make_condition_operand(
-                    "relative-strength-index", "QQQ", window=10
-                ),
+                symphony_schema.make_condition_operand("relative-strength-index", "QQQ", window=10),
                 "gt",
                 symphony_schema.make_constant_rhs(80),
             ),

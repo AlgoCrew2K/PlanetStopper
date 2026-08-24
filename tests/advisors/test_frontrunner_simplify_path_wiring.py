@@ -70,7 +70,12 @@ def _no_live_atlas_calls():
     with (
         patch(
             "advisors.community_strats.load_community_strategies",
-            return_value={"available": False, "candidates": [], "stats": {}, "source": "captplanet"},
+            return_value={
+                "available": False,
+                "candidates": [],
+                "stats": {},
+                "source": "captplanet",
+            },
         ),
         patch(
             "advisors.frontrunner_signals.load_frontrunner_signals",
