@@ -11,26 +11,56 @@ detected cascade subtree the candidate replaces, and the small generated
 overlay) into that call, and that SIMPLIFY admission is reachable end-to-end
 through the real orchestration.
 
-REVISE 3 (PR #128 /code-review, CRITICAL F1, 2026-08-24): the PRIOR revision
-of this file certified an asymmetry it never actually tested for, and is the
-direct cause of a merge-blocking finding. It hand-built a synthetic
-``Cascade(overlay_tree=copy.deepcopy(if_node))`` bypassing the REAL
-``frontrunner_detector.detect_frontrunner_cascades``/``_build_cascade_overlay``
-path entirely -- so it never exercised ``_compact_if_node``'s real behavior:
-the continuation/large branch is padded with synthetic
-``_STUBBED_CORE_CONTINUATION`` leaves SIZED TO THE ORIGINAL CORE CONTENT
-(frontrunner_detector.py:678-705), specifically so downstream fire/
-continuation size comparisons stay correct. Counting the WHOLE
-``cascade.overlay_tree`` (what the prior revision's fixture made look
-correct) therefore counts core-sized stub padding, not real signal logic --
-inverting SIMPLIFY from "never fires" to "fires on the vast majority of real
-cascades, admitting overlays LARGER than the logic they replace." RULING 1
-(Revise 3): BOTH operands must count SIGNAL LOGIC ONLY -- condition + fire/
-then branch, EXCLUDING the else/continuation on both sides (cascade: no
-stub/core padding; overlay: no placeholder-else leaf). This file's fixture
-builder now drives the REAL detector, never a hand-built Cascade, and every
-expected value is independently derived (never a hand-typed literal) via a
-test-local helper that mirrors the CORRECT signal-logic-only semantics.
+REVISE 4 (PR #128 round-3 /code-review, 2026-08-24): Revise 3's own fix
+(RULING 1, marker-search-based cascade-side exclusion in
+frontrunner_builder._count_signal_logic_nodes) was ITSELF disproven by a
+runnable repro: on any cascade whose FIRE branch contains its own nested,
+already-compacted tier (a genuine multi-tier scale-in), BOTH if-children end
+up "containing a stub marker somewhere" (the continuation IS the stub; the
+fire branch contains ITS OWN nested stub buried inside it) -- the marker
+search cannot distinguish them and picks whichever comes first positionally.
+Revise 3's own test suite could not catch this because its "expected value"
+helper MIRRORED the same marker-search heuristic the production code used.
+
+RULING (team-lead, Revise 4): architectural, not another heuristic patch.
+The detector (advisors.frontrunner_detector) already knows, firsthand and
+unambiguously, which if-child is fire and which is continuation at every
+nesting level -- it decides this to build the overlay tree. No downstream
+reconstruction can ever be as reliable. So:
+  - Cascade side: frontrunner_detector.Cascade gains an additive
+    ``signal_logic_node_count: int | None`` field, computed AT DETECTION
+    TIME (see tests/advisors/test_frontrunner_detector_r4_signal_logic.py
+    for the detector-level correctness proofs, hand-derived oracles, and
+    the CRITICAL finding that the pre-existing local ``fire_node_count`` is
+    itself NOT honest -- it is padding-size-preserving, not exclusion-
+    based). THIS file's tests now read that field directly wherever the
+    cascade-side count is needed -- frontrunner_builder no longer computes
+    it at all; the old marker-search heuristic
+    (``_contains_stub_marker``/the cascade-side priority in
+    ``_count_signal_logic_nodes``) is DELETED from production, and
+    correspondingly deleted from this file's test-local oracle below.
+  - Overlay side: unification (B3, review round 3) -- the SAME dedicated
+    clause-aware node counter the detector uses to stamp
+    ``signal_logic_node_count`` is imported and reused by the builder for
+    the overlay operand (never two independently-implemented same-purpose
+    counters). Else-identification uses the EXISTING production
+    ``_find_terminal_else_child`` as PRIMARY (R4-3), killing what was a
+    third duplicate copy of the same "find the placeholder else" logic.
+  - RULING 3 (Revise 3's compound-condition-clause descent) is REVERTED out
+    of the shared, general-purpose ``_count_tree_nodes`` (restoring its
+    original children-only display-delta semantics -- AC-6's
+    ``node_count_delta`` display metric was never meant to change) and
+    reimplemented as a DEDICATED clause-aware counter used ONLY for the
+    overlay operand (see above).
+  - R4-6: ``_count_overlay_node_count``'s tiers 2 (already-``step``-shaped
+    candidate) and 3 (fresh-compile fallback when ``compiled_tree`` is
+    absent) are DELETED entirely -- both were "unreachable under the
+    current call graph, second-layer defense" by the project's own prior
+    ruling, and round-3 review found tier 2 additionally SKIPS the unwrap
+    step (would miscount if ever reached) -- project convention is unused/
+    broken code gets deleted, not kept-and-labeled. ``_count_overlay_node_
+    count`` now has exactly ONE path: reuse ``compiled_tree`` when present,
+    else return None (never a fallback compile).
 
 MOCKING STRATEGY (mirrors tests/advisors/test_frontrunner_gate_wiring.py and
 test_frontrunner_builder_signal_wiring.py's established idiom exactly): same
@@ -46,6 +76,23 @@ BHY/FDR/Gate#2 fold math test_frontrunner_gate_wiring.py's own docstrings
 describe extensively probing to tune. advisors.frontrunner_acceptance.
 evaluate_calmar_acceptance itself is NEVER mocked (wraps=real in AC-2, fully
 real elsewhere) -- it is exactly what this cycle changes.
+
+ORACLE METHODOLOGY (why this file's fixtures are genuinely independent, not
+a Revise-3-style mirror): this file's own fixtures are deliberately FLAT
+(no nested tiers -- multi-tier correctness lives entirely in
+test_frontrunner_detector_r4_signal_logic.py's dedicated fixtures), so the
+expected signal-logic count is PURE ARITHMETIC on the fixture's own
+construction parameters (empirically verified via probe against the real,
+unmodified detector/compiler before being hardcoded here, never re-derived
+via any selection code):
+  - cascade fire branch: 4 + fire_hedge_ticker_count (1 if-node + 1 if-child
+    wrapper + 1 weight-equal wrapper + len(fire_tickers) asset leaves).
+  - compiled overlay then-branch: 3 + n_assets (1 if-node + 1 if-child
+    wrapper + 1 weight-equal wrapper + n_assets asset leaves).
+Both formulas are held to a fixture-level sanity assertion against the REAL
+cascade.signal_logic_node_count wherever the fixture builder runs the real
+detector, so a formula/detector disagreement fails loud at the fixture
+itself, not silently propagating a wrong expected value downstream.
 """
 
 from __future__ import annotations
@@ -99,80 +146,30 @@ def _no_live_atlas_calls():
 
 
 # ---------------------------------------------------------------------------
-# RULING 1 test-local helpers: the CORRECT "signal logic only" semantics,
-# independently derived (never asserted to be identical CODE to whatever
-# fps-impl writes — only identical MATH). Applies uniformly to both operand
-# sides:
-#   - cascade side (detector-compacted): excludes whichever if-child contains
-#     a _STUBBED_CORE_CONTINUATION marker anywhere in its subtree (position
-#     and is-else-condition? are BOTH unreliable here — _compact_if_node's
-#     fire/continuation split is explicitly SIZE-based, not direction-based;
-#     see that function's own docstring in frontrunner_detector.py).
-#   - overlay side (freshly compiled, never detector-compacted, no stub
-#     marker exists): excludes whichever if-child has is-else-condition? is
-#     True — reliable here since it's NOT detector output (mirrors the
-#     EXISTING production _find_terminal_else_child in frontrunner_builder.py,
-#     used by _graft_incumbent_core for the identical "find the placeholder
-#     else slot" purpose).
+# Revise 4: pure-arithmetic expected-value derivation. Both formulas below
+# are empirically verified (probe, before being hardcoded) against the REAL
+# detector/compiler on the exact fixture shapes this file builds — never
+# re-derived by walking a compiled tree and asking "which child is fire",
+# the Revise-3 mistake this file no longer repeats.
 # ---------------------------------------------------------------------------
 
 
-def _contains_stub_marker(node) -> bool:
-    """True if node (or anything nested under it) is one of
-    _build_cascade_overlay's synthetic _STUBBED_CORE_CONTINUATION leaves."""
-    if not isinstance(node, dict):
-        return False
-    if node.get("ticker") == "_STUBBED_CORE_CONTINUATION":
-        return True
-    return any(_contains_stub_marker(c) for c in (node.get("children") or []))
+def _expected_flat_fire_signal_logic_count(fire_hedge_ticker_count: int) -> int:
+    """1 (if-node) + 1 (if-child wrapper) + 1 (weight-equal wrapper) +
+    (1 + fire_hedge_ticker_count) asset leaves (VIXY + the hedge tickers) —
+    verified: fire_hedge_ticker_count=0 -> 4, =45 -> 49."""
+    return 4 + fire_hedge_ticker_count
 
 
-def _expected_signal_logic_count(fbld_module, if_node: dict) -> int:
-    """The CORRECT 'signal logic only' node count for a raw_value if-node —
-    1 (the if-node) + the FULL subtree of whichever if-child is the real
-    fire/then branch, EXCLUDING the other if-child (continuation/else)
-    entirely. Never presumes a fixed position (children[0] vs [1]).
-
-    RIDER (team-lead ruling, post-Revise-3): when a well-formed 2-child
-    if-node matches NEITHER identification heuristic (no stub marker on
-    either side AND no ``is-else-condition?==True`` on either side), this
-    helper now asserts loudly rather than falling back to a positional
-    guess (``children[-1]``) — mirrors the production
-    ``_count_signal_logic_nodes`` rider that flips the same branch to
-    ``return None``. Dual-verified unreachable by every real fixture this
-    file builds (cascade side always carries the stub marker by
-    construction of ``_build_cascade_overlay``; overlay side always carries
-    ``is-else-condition?`` via the real ``symphony_schema`` constructors) —
-    if this ever fires, it means a fixture stopped being honest, not that
-    the helper should silently guess."""
-    children = [c for c in (if_node.get("children") or []) if isinstance(c, dict)]
-    if len(children) != 2:
-        # Malformed/unexpected shape — fall back to the honest whole count
-        # rather than guess which half to drop.
-        return fbld_module._count_tree_nodes(if_node)
-
-    stub_children = [c for c in children if _contains_stub_marker(c)]
-    if stub_children:
-        exclude = stub_children[0]
-    else:
-        else_children = [c for c in children if c.get("is-else-condition?") is True]
-        if not else_children:
-            raise AssertionError(
-                "_expected_signal_logic_count: ambiguous 2-child if-node — "
-                "neither child carries a stub marker nor is-else-condition?==True. "
-                "This branch is dual-verified unreachable by every real fixture; "
-                "a fixture that hits it is no longer honest and must be fixed, "
-                "never a positional guess."
-            )
-        exclude = else_children[0]
-
-    fire = next(c for c in children if c is not exclude)
-    return 1 + fbld_module._count_tree_nodes(fire)
+def _expected_overlay_signal_logic_count(n_assets: int) -> int:
+    """1 (if-node) + 1 (if-child wrapper) + 1 (weight-equal wrapper) +
+    n_assets asset leaves — verified: n_assets=1 -> 4, =12 -> 15."""
+    return 3 + n_assets
 
 
 def _dsl_overlay_candidate(n_assets: int, vix_ticker: str = "UVXY") -> dict:
     """The build-plan-DSL overlay shape used both by the mocked Fable client
-    AND by the independent expected-value derivation below — a SINGLE
+    AND by the pure-arithmetic expected-value formula above — a SINGLE
     source of truth for the candidate shape so the two never drift apart.
     then-branch holds vix_ticker plus (n_assets - 1) additional distinct
     filler assets; n_assets=1 reproduces the original single-VIX-ticker
@@ -204,33 +201,12 @@ def _dsl_overlay_candidate(n_assets: int, vix_ticker: str = "UVXY") -> dict:
     }
 
 
-def _expected_overlay_signal_logic_count(fbld_module, n_assets: int) -> int:
-    """Compiles the SAME DSL shape _mocked_fable_overlay_client produces
-    (via _dsl_overlay_candidate) and derives its signal-logic-only count via
-    _expected_signal_logic_count — the overlay side has no stub marker (it's
-    freshly generated, not detector output), so the helper falls through to
-    its is-else-condition?-based exclusion."""
-    from advisors import plan_tree_compiler
-
-    candidate = _dsl_overlay_candidate(n_assets)
-    plan_envelope = {
-        "plan_id": "test-independent-derivation",
-        "objective": "cut_drawdown",
-        "name": "Test",
-        "rebalance": "daily",
-        "root": candidate,
-    }
-    compile_result = plan_tree_compiler.compile_plan(plan_envelope)
-    assert compile_result.tree is not None, "sanity: fixture candidate must compile"
-    compiled_children = compile_result.tree.get("children") or []
-    assert len(compiled_children) == 1, "sanity: compiled root must have exactly one child"
-    return _expected_signal_logic_count(fbld_module, compiled_children[0])
-
-
 # ---------------------------------------------------------------------------
 # Fixture builder — a REAL incumbent symphony with a genuine frontrunner
 # cascade, run through the REAL frontrunner_detector.detect_frontrunner_
-# cascades (never a hand-built Cascade — the exact mistake Revise 3 fixes).
+# cascades (never a hand-built Cascade — the exact mistake Revise 3 fixed
+# for the reachability proof, and the exact mistake Revise 4's oracle
+# methodology fixes for the expected-VALUE derivation).
 # ---------------------------------------------------------------------------
 
 
@@ -248,20 +224,24 @@ def _build_real_cascade_via_detector(
     non-core-placeholder tickers — real signal content, honestly sized
     (fire_hedge_ticker_count=0 empirically produces a signal-logic count of
     4, matching the PM's own real-tree probe's cited "median 4 nodes";
-    fire_hedge_ticker_count=45 produces ~49, a genuinely sprawling cascade).
+    fire_hedge_ticker_count=45 produces 49, a genuinely sprawling cascade).
 
     The else/continuation branch is a large CORE_ASSET_-prefixed placeholder
     basket, deliberately larger (by node count) than the fire branch so the
-    detector's size-based fire/continuation split (frontrunner_detector.py:
-    669-670) picks the SAME side as fire — mirroring a real symphony's shape
-    (a small, genuine hedge overlay vs a much larger core allocation).
+    detector's size-based fire/continuation split (frontrunner_detector.py)
+    picks the SAME side as fire — mirroring a real symphony's shape (a
+    small, genuine hedge overlay vs a much larger core allocation).
 
     continuation_placeholder_count: explicit override (default None —
     auto-computed with generous headroom above the fire branch). Exposed so
     a caller can hold fire content IDENTICAL while varying ONLY the
-    continuation/stub padding size — the ADDENDUM A4 cross-module pin's
-    exact need (proving the signal-logic-only count is insensitive to
-    padding size).
+    continuation/stub padding size (the padding-insensitivity pin below).
+
+    expected_signal_logic_count is computed via the PURE-ARITHMETIC formula
+    (never by walking the detector's output), then cross-checked against
+    the real cascade.signal_logic_node_count as a fixture-level sanity
+    assertion — a formula/detector disagreement fails loud HERE, not
+    silently downstream in whichever test happens to use this fixture.
     """
     from advisors import frontrunner_detector, symphony_schema
 
@@ -292,7 +272,7 @@ def _build_real_cascade_via_detector(
         ],
     )
     incumbent_symphony = symphony_schema.make_root(
-        "Simplify-Path Revise-3 Test Symphony", "daily", [if_node]
+        "Simplify-Path Revise-4 Test Symphony", "daily", [if_node]
     )
 
     detection = frontrunner_detector.detect_frontrunner_cascades(incumbent_symphony)
@@ -303,7 +283,16 @@ def _build_real_cascade_via_detector(
     )
     cascade = detection.cascades[0]
 
-    expected_signal_logic_count = _expected_signal_logic_count(fbld_module, cascade.overlay_tree)
+    expected_signal_logic_count = _expected_flat_fire_signal_logic_count(fire_hedge_ticker_count)
+    assert cascade.signal_logic_node_count == expected_signal_logic_count, (
+        f"fixture sanity: cascade.signal_logic_node_count "
+        f"({cascade.signal_logic_node_count!r}) does not match the "
+        f"independently hand-derived expected value "
+        f"({expected_signal_logic_count!r}) for fire_hedge_ticker_count="
+        f"{fire_hedge_ticker_count} -- either the detector's field is wrong "
+        f"(the thing under test elsewhere) or this fixture's formula is "
+        f"wrong; this assertion exists so that disagreement fails loud HERE"
+    )
     return incumbent_symphony, cascade, expected_signal_logic_count
 
 
@@ -370,22 +359,19 @@ def _controlled_adopt_candidate_batch():
 
 
 # ---------------------------------------------------------------------------
-# AC-2 / RULING 1: the builder call site threads the REAL, SIGNAL-LOGIC-ONLY
-# delta-scoped counts (never the whole stub-padded/placeholder-else branch).
+# AC-2 / R4-1: the builder call site threads cascade.signal_logic_node_count
+# DIRECTLY (no re-derivation) as replaced_cascade_node_count.
 # ---------------------------------------------------------------------------
 
 
-def test_run_build_threads_the_real_signal_logic_only_counts_into_the_acceptance_call(fbld):
-    """Revise 3 (CRITICAL F1, RULING 1): evaluate_calmar_acceptance must
-    receive EXACT signal-logic-only counts, independently derived — not just
-    'some positive int smaller than the other one' (a directional bound the
-    pre-Revise-3 defect could ALSO satisfy, since a small overlay is still
-    smaller than a core-sized stub-padded cascade; that weaker assertion is
-    exactly what let this defect ship). replaced_cascade_node_count must
-    equal the cascade's fire-branch-only count (excluding the
-    _STUBBED_CORE_CONTINUATION-padded branch entirely); overlay_node_count
-    must equal the overlay's condition+then-branch-only count (excluding its
-    placeholder-else branch)."""
+def test_run_build_threads_the_detector_stamped_cascade_count_into_the_acceptance_call(fbld):
+    """R4-1: evaluate_calmar_acceptance must receive
+    cascade.signal_logic_node_count VERBATIM as replaced_cascade_node_count
+    — read directly off the Cascade object the (mocked) detector returned,
+    never re-derived by the builder via any marker-search/reconstruction.
+    Independently cross-checked against the pure-arithmetic expected value
+    too, so this test fails whether the builder mis-threads the field OR
+    the fixture's own formula disagrees with the real detector."""
     from advisors import frontrunner_detector
     from advisors.frontrunner_acceptance import evaluate_calmar_acceptance as _real_eval
 
@@ -393,7 +379,7 @@ def test_run_build_threads_the_real_signal_logic_only_counts_into_the_acceptance
         fbld, fire_hedge_ticker_count=45
     )
     n_overlay_assets = 12
-    expected_overlay_signal_count = _expected_overlay_signal_logic_count(fbld, n_overlay_assets)
+    expected_overlay_signal_count = _expected_overlay_signal_logic_count(n_overlay_assets)
 
     shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
     shared_result = _make_shaped_result(shape_pct, n_days=100)
@@ -426,13 +412,17 @@ def test_run_build_threads_the_real_signal_logic_only_counts_into_the_acceptance
     )
     _, call_kwargs = mock_acceptance.call_args
 
+    assert call_kwargs.get("replaced_cascade_node_count") == cascade.signal_logic_node_count, (
+        f"the builder passed replaced_cascade_node_count="
+        f"{call_kwargs.get('replaced_cascade_node_count')!r}, which does NOT "
+        f"match cascade.signal_logic_node_count={cascade.signal_logic_node_count!r} "
+        f"-- R4-1 requires the builder to read the detector-stamped field "
+        f"VERBATIM, never re-derive it"
+    )
     assert call_kwargs.get("replaced_cascade_node_count") == expected_cascade_signal_count, (
         f"expected replaced_cascade_node_count={expected_cascade_signal_count} "
-        f"(the SIGNAL-LOGIC-ONLY count of the detected cascade's fire branch, "
-        f"excluding the stub-padded continuation entirely), got "
-        f"{call_kwargs.get('replaced_cascade_node_count')!r} — a much larger "
-        f"value here means the builder is still counting core-sized stub "
-        f"padding (the exact CRITICAL defect Revise 3 fixes)"
+        f"(the independently hand-derived signal-logic-only count), got "
+        f"{call_kwargs.get('replaced_cascade_node_count')!r}"
     )
     assert call_kwargs.get("overlay_node_count") == expected_overlay_signal_count, (
         f"expected overlay_node_count={expected_overlay_signal_count} (the "
@@ -451,15 +441,14 @@ def test_run_build_threads_the_real_signal_logic_only_counts_into_the_acceptance
 def test_a_fixed_overlay_declines_against_a_tiny_cascade_but_accepts_against_a_sprawling_one(
     fbld,
 ):
-    """Revise 3, RULING 1 direct pin (PM directive: 'pin BOTH directions
-    with real-detector-derived fixtures'): the SAME overlay must DECLINE
-    against a small (honest, real-detector-derived) cascade signal-logic
-    count and ACCEPT against a large one — proving the fix is a genuine
-    ratio against the CORRECT operands, not merely 'this specific number
-    happened to be smaller'. Uses evaluate_calmar_acceptance directly (not
-    the full orchestration) with counts derived from REAL detector output +
-    a REAL compiled overlay, isolating this proof from the numerically
-    fragile BHY/FDR gate math (out of scope)."""
+    """RULING 1 direct pin: the SAME overlay must DECLINE against a small
+    (honest, real-detector-derived) cascade signal-logic count and ACCEPT
+    against a large one — proving the fix is a genuine ratio against the
+    CORRECT operands, not merely 'this specific number happened to be
+    smaller'. Uses evaluate_calmar_acceptance directly (not the full
+    orchestration) with counts derived from REAL detector output + a REAL
+    compiled overlay, isolating this proof from the numerically fragile
+    BHY/FDR gate math (out of scope)."""
     from advisors.frontrunner_acceptance import evaluate_calmar_acceptance
 
     _tiny_symphony, _tiny_cascade, tiny_signal_count = _build_real_cascade_via_detector(
@@ -472,7 +461,7 @@ def test_a_fixed_overlay_declines_against_a_tiny_cascade_but_accepts_against_a_s
         "fixture sanity: the 'tiny' cascade must genuinely be smaller than the 'large' one"
     )
 
-    overlay_signal_count = _expected_overlay_signal_logic_count(fbld, n_assets=12)
+    overlay_signal_count = _expected_overlay_signal_logic_count(n_assets=12)
 
     # incumbent_node_count == candidate_node_count (whole-tree delta == 0)
     # so this pin is independent of RULING 2's separate no-growth gate.
@@ -530,10 +519,11 @@ def test_a_calmar_preserved_small_overlay_over_a_large_cascade_is_accepted_via_s
 
     AC-6 (same test, same run): the whole-tree node_count_delta persisted in
     metrics_json must still equal
-    _count_tree_nodes(spliced) - _count_tree_nodes(incumbent_symphony) — the
-    SAME whole-tree formula as before this fix, proven against the REAL
-    spliced tree object — the display metric's semantics are untouched by
-    this cycle even though the acceptance clause's own semantics changed."""
+    _count_tree_nodes(spliced) - _count_tree_nodes(incumbent_symphony) —
+    the SAME whole-tree formula as before this fix, computed via the
+    REVERTED (R4-2), original children-only _count_tree_nodes — proven
+    against the REAL spliced tree object. The display metric's semantics
+    are untouched by RULING 1's/R4-1's signal-logic-only SIMPLIFY operands."""
     from advisors import frontrunner_detector
 
     incumbent_symphony, cascade, _expected_signal_count = _build_real_cascade_via_detector(
@@ -576,8 +566,9 @@ def test_a_calmar_preserved_small_overlay_over_a_large_cascade_is_accepted_via_s
         f"must not appear), got {tags!r}"
     )
 
-    # AC-6: whole-tree node_count_delta is UNCHANGED — same formula, derived
-    # from the REAL spliced tree this exact call actually persisted.
+    # AC-6: whole-tree node_count_delta is UNCHANGED — same (reverted,
+    # children-only) formula, derived from the REAL spliced tree this exact
+    # call actually persisted.
     spliced_tree = insert_kwargs.get("candidate_tree")
     assert isinstance(spliced_tree, dict), "insert_frontrunner_proposal missing candidate_tree"
     expected_node_count_delta = fbld._count_tree_nodes(spliced_tree) - fbld._count_tree_nodes(
@@ -588,20 +579,17 @@ def test_a_calmar_preserved_small_overlay_over_a_large_cascade_is_accepted_via_s
         f"does not match the real "
         f"_count_tree_nodes(spliced) - _count_tree_nodes(incumbent) "
         f"={expected_node_count_delta!r} — AC-6 requires this display metric "
-        f"to stay on the OLD whole-tree formula, untouched by RULING 1's "
-        f"signal-logic-only SIMPLIFY operands"
+        f"to stay on the OLD (R4-2-reverted) whole-tree formula, untouched "
+        f"by RULING 1's/R4-1's signal-logic-only SIMPLIFY operands"
     )
 
 
 # ---------------------------------------------------------------------------
-# fps-reviewer INFO finding, folded in per team-lead's preference (2026-08-24):
-# _count_overlay_node_count must reuse GenerationResult.compiled_tree.
-# Revise 3, F7: the SAME invariant must hold for splice_candidate_into_
-# symphony too — on the successful-generation happy path, compile_plan
-# should be called EXACTLY ONCE for the candidate (inside
-# generate_candidate_overlay itself), never a second time inside
-# _count_overlay_node_count NOR a third time inside
-# splice_candidate_into_symphony.
+# Redundant-compile guard (fps-reviewer INFO finding, folded in per
+# team-lead's preference, then reconfirmed unaffected by Revise 4's R4-1
+# deletion — this test never depended on the cascade-side heuristic that
+# was deleted, only on GenerationResult.compiled_tree reuse for the OVERLAY
+# side).
 # ---------------------------------------------------------------------------
 
 
@@ -658,60 +646,59 @@ def test_no_redundant_compile_anywhere_in_the_flow_including_splice(fbld):
     )
     assert "frontrunner-splice-candidate" not in seen_plan_ids, (
         f"compile_plan was called with splice_candidate_into_symphony's own "
-        f"plan_id marker on a successful generation path -- F7 (Revise 3) "
-        f"requires splice to ALSO reuse the already-compiled tree instead of "
+        f"plan_id marker on a successful generation path -- F7 requires "
+        f"splice to ALSO reuse the already-compiled tree instead of "
         f"independently re-compiling result.candidate a third time; "
         f"observed plan_ids: {seen_plan_ids!r}"
     )
 
 
 # ---------------------------------------------------------------------------
-# Fallback-path coverage (team-lead contract preservation, post-fold-in):
-# compiled_tree=None must NOT silently degrade to a missing operand -- it
-# must fall back to the ORIGINAL pure-compile-of-candidate path and still
-# produce a real (or honestly-None-on-failure) count. Revise 3: expected
-# values below are now SIGNAL-LOGIC-ONLY (RULING 1 applies to the fallback
-# path too — _count_overlay_node_count must exclude the placeholder-else
-# branch regardless of which tier produced its input).
+# R4-6: _count_overlay_node_count's tiers 2/3 are DELETED — only tier 1
+# (compiled_tree reuse) survives. compiled_tree absent now means an
+# unconditional None, never a fallback compile.
 # ---------------------------------------------------------------------------
 
 
-def test_count_overlay_node_count_falls_back_to_fresh_compile_when_compiled_tree_is_none(
+def test_count_overlay_node_count_returns_none_unconditionally_when_compiled_tree_is_absent(
     fbld,
 ):
-    """When compiled_tree is None/absent, _count_overlay_node_count must
-    fall back to the ORIGINAL pure-compile-of-candidate path and return the
-    real SIGNAL-LOGIC-ONLY count (RULING 1 applies uniformly across all
-    three tiers) — not silently degrade to None, and not the whole compiled
-    tree including its placeholder-else branch."""
-    candidate = _dsl_overlay_candidate(n_assets=1)
-    expected_count = _expected_overlay_signal_logic_count(fbld, n_assets=1)
-    assert expected_count > 0, "sanity: a real compiled overlay must have >0 signal-logic nodes"
+    """R4-6: tiers 2 (already-step-shaped candidate) and 3 (fresh-compile
+    fallback) are DELETED — both were unreachable under the real call graph
+    (_run_build_for_symphony always has compiled_tree populated alongside a
+    non-None candidate on the only real call path) and round-3 review found
+    tier 2 additionally skips the unwrap step (a genuine miscount risk if
+    ever reached). _count_overlay_node_count(candidate, compiled_tree=None)
+    must now degrade to None UNCONDITIONALLY, regardless of what shape
+    candidate is — no compile is ever attempted when compiled_tree is
+    absent."""
+    # A perfectly valid, compilable DSL candidate — proves the None result
+    # is NOT because this specific candidate happens to be malformed.
+    valid_candidate = _dsl_overlay_candidate(n_assets=1)
+    result = fbld._count_overlay_node_count(valid_candidate, compiled_tree=None)
+    assert result is None, (
+        f"expected an unconditional None when compiled_tree is absent (R4-6 "
+        f"deletes the fallback-compile tier entirely), got {result!r} -- "
+        f"this candidate is genuinely valid/compilable, so a non-None "
+        f"result here means a fallback compile path still exists and "
+        f"should have been deleted"
+    )
 
-    result = fbld._count_overlay_node_count(candidate, compiled_tree=None)
-    assert result == expected_count, (
-        f"expected the fallback pure-compile path to produce the "
-        f"SIGNAL-LOGIC-ONLY count {expected_count} (excluding the "
-        f"placeholder-else branch, derived independently), got {result!r} "
-        f"-- compiled_tree=None must still fall back to compiling candidate "
-        f"fresh and applying the SAME exclusion the other tiers use"
+    # Also true for an already-step-shaped candidate (the old tier-2 input
+    # shape) — that tier is gone too, not just tier 3.
+    already_compiled_shape = {"step": "if", "children": [{"step": "if-child"}]}
+    result2 = fbld._count_overlay_node_count(already_compiled_shape, compiled_tree=None)
+    assert result2 is None, (
+        f"expected None for an already-step-shaped candidate with "
+        f"compiled_tree=None too — R4-6 deletes BOTH tier 2 and tier 3, "
+        f"got {result2!r}"
     )
 
 
-def test_count_overlay_node_count_returns_none_when_fallback_compile_fails(fbld):
-    """D-1: when compiled_tree is None AND candidate is malformed/
-    uncompileable, the fallback path must degrade to None, never raise,
-    never fabricate a count."""
-    malformed_candidate = {"kind": "not-a-real-kind"}
-    result = fbld._count_overlay_node_count(malformed_candidate, compiled_tree=None)
-    assert result is None
-
-
 # ---------------------------------------------------------------------------
-# Revise 3, F8 (PR #128 /code-review): harden _unwrap_single_compiled_child
-# -- never raise, always dict-or-None -- and confirm it is a SHARED
-# implementation (not a duplicated inline copy in splice_candidate_into_
-# symphony).
+# F8 (kept from Revise 3, unaffected by Revise 4): harden
+# _unwrap_single_compiled_child -- never raise, always dict-or-None -- and
+# confirm it is a SHARED implementation reachable from a real build run.
 # ---------------------------------------------------------------------------
 
 
@@ -745,7 +732,7 @@ def test_unwrap_single_compiled_child_never_raises_and_returns_dict_or_none(fbld
 
 
 def test_unwrap_single_compiled_child_is_reachable_from_a_real_build_run(fbld):
-    """F8: confirms the SHARED helper (not a private duplicate) is genuinely
+    """Confirms the SHARED helper (not a private duplicate) is genuinely
     wired into the real orchestration -- patched with a counting wraps=real
     spy and confirmed to fire during a real _run_build_for_symphony flow."""
     from advisors import frontrunner_detector
@@ -789,33 +776,30 @@ def test_unwrap_single_compiled_child_is_reachable_from_a_real_build_run(fbld):
 
 
 # ---------------------------------------------------------------------------
-# Revise 3 ADDENDUM A1: every None-degradation path in
-# _count_overlay_node_count is currently SILENT (debug-only logging on the
-# outer except; no logging at all on the explicit `if x is None: return
-# None` branches) while the surrounding _run_build_for_symphony loop logs
-# every OTHER skip -- a future counting failure recreates "SIMPLIFY silently
-# unreachable" with zero operator-visible signal, the ORIGINAL CRITICAL
-# defect's exact survival mode. At least one None-degradation path must log
-# at WARNING with the reason.
+# A1 (kept from Revise 3, retargeted to a TIER-1 path since R4-6 deletes the
+# tier-3 fallback-compile-failure path this test originally exercised): a
+# None-degradation path in _count_overlay_node_count must log at WARNING.
 # ---------------------------------------------------------------------------
 
 
 def test_count_overlay_node_count_logs_a_warning_on_a_none_degradation_path(fbld, caplog):
-    """A compile failure on the fallback path (compiled_tree=None, a
-    malformed candidate) must emit a WARNING-level log record, not just the
-    outer except's DEBUG-level catch-all -- silent degradation here is
-    exactly how the CRITICAL finding's class of defect goes undetected in
-    production."""
+    """A compiled_tree present but shaped so it fails to unwrap to a single
+    node (tier 1's own None-degradation path — the only tier left after
+    R4-6) must emit a WARNING-level log record, not just DEBUG-level
+    catch-all logging -- silent degradation here is exactly how the
+    CRITICAL finding's class of defect goes undetected in production."""
     import logging
 
-    malformed_candidate = {"kind": "not-a-real-kind"}
+    malformed_compiled_tree = {"children": []}  # zero children -- fails to unwrap
     with caplog.at_level(logging.WARNING):
-        result = fbld._count_overlay_node_count(malformed_candidate, compiled_tree=None)
+        result = fbld._count_overlay_node_count(
+            _dsl_overlay_candidate(n_assets=1), compiled_tree=malformed_compiled_tree
+        )
 
-    assert result is None, "sanity: the malformed candidate must still degrade to None"
+    assert result is None, "sanity: an unwrap-failing compiled_tree must still degrade to None"
     warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert warning_records, (
-        "_count_overlay_node_count degraded to None on a compile failure "
+        "_count_overlay_node_count degraded to None on an unwrap failure "
         "but emitted NO warning-level log record -- a future counting "
         "failure would silently recreate the CRITICAL defect's exact "
         "survival mode (SIMPLIFY unreachable, zero operator-visible signal)"
@@ -823,12 +807,9 @@ def test_count_overlay_node_count_logs_a_warning_on_a_none_degradation_path(fbld
 
 
 # ---------------------------------------------------------------------------
-# Revise 3 ADDENDUM A2: an accepted OR rejected SIMPLIFY proposal's metrics
-# dict must carry BOTH overlay_node_count and replaced_cascade_node_count --
-# the evidence of its admission/rejection basis (same audit-trail-loss class
-# as audit #118 Findings D1/D2). Tests call _gate_and_accept_candidate
-# directly (mirroring test_frontrunner_gate_wiring.py's own AC-G2 pattern)
-# to isolate this from the full orchestration.
+# A2 (kept from Revise 3, unaffected by Revise 4): an accepted OR rejected
+# SIMPLIFY proposal's metrics dict must carry BOTH overlay_node_count and
+# replaced_cascade_node_count.
 # ---------------------------------------------------------------------------
 
 
@@ -962,21 +943,20 @@ def test_gate_and_accept_candidate_persists_operands_in_metrics_on_calmar_reject
 
 
 # ---------------------------------------------------------------------------
-# Revise 3 ADDENDUM A4: cross-module pin on the detector seam -- after
-# RULING 1's fix, replaced_cascade_node_count must derive from the
-# cascade's condition+fire subtree and be INSENSITIVE to
-# _STUBBED_CORE_CONTINUATION padding SIZE. Without this pin, the metric is
-# load-bearing on an unpinned detector internal (the padding-size formula
-# in _build_cascade_overlay could change and this test would be the only
-# thing to notice a regression back toward size-sensitivity).
+# Padding-insensitivity pin (kept from Revise 3, RETARGETED for Revise 4):
+# after R4-1, replaced_cascade_node_count is read DIRECTLY off
+# cascade.signal_logic_node_count -- this pin now proves that field itself
+# is insensitive to continuation padding size, and that the builder
+# threading is exact (no re-derivation, no drift).
 # ---------------------------------------------------------------------------
 
 
 def test_replaced_cascade_signal_logic_count_is_insensitive_to_stub_padding_size(fbld):
     """The SAME fire-branch content, detected with two DRAMATICALLY
     different continuation/core padding sizes, must produce the SAME
-    signal-logic-only replaced_cascade_node_count through the REAL
-    orchestration wiring."""
+    cascade.signal_logic_node_count -- and the builder must thread that
+    SAME value through the real orchestration wiring regardless of padding
+    size."""
     from advisors import frontrunner_detector
     from advisors.frontrunner_acceptance import evaluate_calmar_acceptance as _real_eval
 
@@ -989,9 +969,19 @@ def test_replaced_cascade_signal_logic_count_is_insensitive_to_stub_padding_size
         )
     )
     assert expected == expected_large, (
-        "fixture sanity: the test-local expected-value helper itself must "
-        "be insensitive to padding size (identical fire content) -- if not, "
-        "the fixture is broken, not the production code"
+        "fixture sanity: the pure-arithmetic expected-value formula itself "
+        "must be insensitive to padding size (identical fire content) -- if "
+        "not, the fixture is broken, not the production code"
+    )
+    assert (
+        small_padding_cascade.signal_logic_node_count
+        == large_padding_cascade.signal_logic_node_count
+    ), (
+        f"cascade.signal_logic_node_count differs by padding size alone -- "
+        f"small padding (500 leaves) gave "
+        f"{small_padding_cascade.signal_logic_node_count!r}, large padding "
+        f"(5000 leaves) gave {large_padding_cascade.signal_logic_node_count!r} "
+        f"-- the field itself must be padding-size-insensitive"
     )
 
     shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
@@ -1030,10 +1020,140 @@ def test_replaced_cascade_signal_logic_count_is_insensitive_to_stub_padding_size
 
     small_padding_result, large_padding_result = captured
     assert small_padding_result == large_padding_result == expected, (
-        f"replaced_cascade_node_count differs by padding size alone -- "
-        f"small padding (500 leaves) produced {small_padding_result!r}, "
-        f"large padding (5000 leaves) produced {large_padding_result!r}, "
-        f"expected BOTH to equal {expected!r} (the fire-branch-only count, "
-        f"identical between the two fixtures) -- the denominator must be "
-        f"load-bearing on the fire branch alone, never on stub padding size"
+        f"replaced_cascade_node_count differs by padding size alone through "
+        f"the real orchestration -- small padding (500 leaves) produced "
+        f"{small_padding_result!r}, large padding (5000 leaves) produced "
+        f"{large_padding_result!r}, expected BOTH to equal {expected!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B3 (review round 3): the overlay-side clause-aware node counter must be
+# ONE implementation, imported by the builder from wherever the detector's
+# own signal_logic_node_count-stamping code lives -- never two
+# independently-written same-purpose counters. A function-identity check
+# (not a behavioral proxy) so a future edit to one can never silently drift
+# from the other.
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_side_clause_aware_counter_is_the_same_function_the_detector_uses(fbld):
+    """R4-2/B3: whatever dedicated clause-aware counter the builder consumes
+    for the overlay operand must be the LITERAL SAME function object
+    frontrunner_detector uses to stamp Cascade.signal_logic_node_count --
+    an identity (`is`) check, not merely "produces the same numbers on this
+    test's inputs" (which a parallel reimplementation could also satisfy
+    today, then silently drift tomorrow). Mirrors this project's existing
+    STUBBED_CORE_CONTINUATION_TICKER import-not-duplicate pattern.
+
+    This test intentionally does NOT presuppose which module actually owns
+    the shared function (team-lead's ruling allows either detector-side or
+    a small shared module) -- it imports frontrunner_builder and
+    frontrunner_detector fresh and asserts whatever counter object each
+    module's own overlay-signal-logic-counting code path resolves to is the
+    identical object, wherever it lives."""
+    from advisors import frontrunner_builder as fb
+    from advisors import frontrunner_detector as fdet
+
+    # The exact attribute names are an implementation choice for fps-impl;
+    # this test asserts the STRUCTURAL invariant (one shared object) via
+    # whichever names exist post-implementation. Pre-implementation, this
+    # fails loudly on AttributeError -- a legitimate RED signal that the
+    # unification hasn't landed yet, not a false pass.
+    detector_counter = getattr(fdet, "_count_clause_aware_signal_logic", None) or getattr(
+        fdet, "count_clause_aware_signal_logic", None
+    )
+    builder_counter = getattr(fb, "_count_clause_aware_signal_logic", None) or getattr(
+        fb, "count_clause_aware_signal_logic", None
+    )
+    assert detector_counter is not None, (
+        "expected frontrunner_detector to expose the dedicated clause-aware "
+        "signal-logic counter (name TBD by fps-impl) -- not found under "
+        "either candidate name; this is the R4-2/B3 single-source-of-truth "
+        "counter the detector uses to stamp Cascade.signal_logic_node_count"
+    )
+    assert builder_counter is not None, (
+        "expected frontrunner_builder to IMPORT (not reimplement) the same "
+        "counter for the overlay operand -- not found under either "
+        "candidate name"
+    )
+    assert builder_counter is detector_counter, (
+        f"frontrunner_builder's overlay-side clause-aware counter "
+        f"({builder_counter!r}) is NOT the same function object as "
+        f"frontrunner_detector's ({detector_counter!r}) -- B3 requires "
+        f"exactly ONE implementation per purpose, imported not duplicated; "
+        f"two independently-written same-purpose counters WILL drift"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B1 (review round 3): every next(...) selection call without a default
+# must decline honestly on an aliased-duplicate children list, never let
+# StopIteration escape through the documented never-raises contract.
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_selection_declines_with_warning_on_aliased_duplicate_children(fbld, caplog):
+    """B1: a compiled overlay if-node whose two 'children' list entries are
+    the LITERAL SAME object (an aliased duplicate -- `children[0] is
+    children[1]`, not merely structurally identical copies) must decline
+    honestly via an EXPLICIT `next(..., None)` + WARNING log (team-lead's
+    exact B1 pattern ruling) -- through whichever overlay-side selection
+    code survives R4-3's consolidation onto _find_terminal_else_child.
+
+    IMPORTANT test-design note: _count_overlay_node_count's whole body is
+    already wrapped in a blanket `except Exception: logger.debug(...);
+    return None` -- so merely asserting "returns None, never raises" is
+    VACUOUSLY true today regardless of whether B1's specific fix (an
+    explicit default on the inner next(...) call) exists, since ANY
+    unhandled StopIteration would already be silently swallowed by that
+    outer catch-all before ever reaching the caller. That is not a
+    meaningful RED signal (confirmed empirically -- an earlier draft of
+    this exact test passed against CURRENT, unfixed code for exactly this
+    reason). The genuine, load-bearing distinguisher B1's own ruling
+    specifies is the LOG LEVEL: the outer blanket catch-all logs at DEBUG
+    (`_count_overlay_node_count: unexpected error`); B1's explicit fix
+    must log at WARNING (matching the A1 convention). This test asserts
+    the WARNING specifically -- it fails today (DEBUG-only, if anything)
+    and will only pass once the explicit next(..., None)+WARNING pattern
+    genuinely lands, not once an incidental safety net happens to catch
+    the exception."""
+    import logging
+
+    # The aliasing must sit at the level _count_signal_logic_nodes (or
+    # whatever it's renamed to) actually reads children from -- i.e. the
+    # node _unwrap_single_compiled_child hands back, ONE level under
+    # compiled_tree's own single wrapping child (verified empirically: an
+    # earlier draft put the aliased pair a level too deep, inside a nested
+    # if-node the outer selection code never descends into on this shape,
+    # which made the test pass vacuously for the wrong reason).
+    #
+    # is-else-condition? MUST be True on the aliased child (verified
+    # empirically -- False produced a DIFFERENT, already-fixed decline
+    # path: the "ambiguous 2-child, neither side identifiable" rider,
+    # which already logs WARNING for an unrelated reason and made an
+    # earlier draft of this test pass vacuously again). B1's actual bug
+    # needs BOTH list entries to satisfy the SAME selection predicate
+    # (since they're the literal same object) so `else_children[0]` picks
+    # one as `exclude`, and `next(c for c in children if c is not
+    # exclude)` then finds NO match at all -- neither list entry `is not
+    # exclude`, since both ARE exclude.
+    aliased_child = {"step": "if-child", "is-else-condition?": True, "children": []}
+    unwrapped_if_node = {"step": "if", "children": [aliased_child, aliased_child]}
+    malformed_compiled_root = {"step": "if", "children": [unwrapped_if_node]}
+    with caplog.at_level(logging.WARNING):
+        result = fbld._count_overlay_node_count(
+            _dsl_overlay_candidate(n_assets=1), compiled_tree=malformed_compiled_root
+        )
+
+    assert result is None or isinstance(result, int), (
+        f"expected an honest None or a real int, got {result!r} -- no "
+        f"exception should escape this call regardless (D-1)"
+    )
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "the aliased-duplicate case degraded without ANY warning-level log "
+        "record -- B1's ruling requires next(..., None) + an EXPLICIT "
+        "WARNING here (matching the A1 convention), never silent reliance "
+        "on the outer blanket except's DEBUG-only catch-all"
     )
