@@ -760,3 +760,275 @@ def test_simplify_accepts_a_real_if_compound_overlay_counted_via_the_real_counte
         f"count like any other node subtree"
     )
     assert "simplification" in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 (PR #128 /code-review, RULING 3 / F3+F10): _count_tree_nodes must
+# descend into a compound condition's clause list, not just the
+# "children"-shaped structural nodes -- otherwise a 2-clause and a 12-clause
+# compound condition (identical then/else allocation content) count as the
+# SAME size, which is dishonest (a 12-rung OR collapse is a materially
+# bigger piece of logic than a 2-rung one) and made the ">1" sanity check
+# above vacuous -- any nonzero compound condition trivially clears ">1"
+# regardless of clause count.
+# ---------------------------------------------------------------------------
+
+
+def test_count_tree_nodes_descends_compound_condition_clauses_so_more_clauses_count_more():
+    """A 12-clause compound condition must count MORE nodes than a 2-clause
+    one when then/else allocation content is otherwise IDENTICAL -- proving
+    _count_tree_nodes genuinely descends into the compound condition's
+    clause list, not just the surrounding if/weight/asset structural
+    shape."""
+    from advisors import frontrunner_builder, symphony_schema
+
+    def _make_if_compound_with_n_clauses(n: int) -> dict:
+        conditions = [
+            symphony_schema.make_binary_condition(
+                symphony_schema.make_condition_operand(
+                    "relative-strength-index", f"TICKER_{i:02d}", window=10
+                ),
+                "gt",
+                symphony_schema.make_constant_rhs(80),
+            )
+            for i in range(n)
+        ]
+        compound_condition = symphony_schema.make_compound_condition("any", conditions)
+        return symphony_schema.make_if_compound(
+            compound_condition,
+            then_children=[symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])],
+            else_children=[
+                symphony_schema.make_weight_equal([symphony_schema.make_asset("CORE_ASSET_0001")])
+            ],
+        )
+
+    tree_2 = _make_if_compound_with_n_clauses(2)
+    tree_12 = _make_if_compound_with_n_clauses(12)
+
+    count_2 = frontrunner_builder._count_tree_nodes(tree_2)
+    count_12 = frontrunner_builder._count_tree_nodes(tree_12)
+
+    assert count_12 > count_2, (
+        f"a 12-clause compound condition counted {count_12} nodes, a "
+        f"2-clause one counted {count_2} -- _count_tree_nodes is not "
+        f"descending into the compound condition's clause list at all "
+        f"(both trees have IDENTICAL then/else allocation content, so any "
+        f"difference must come from the clause count itself)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 3, RULING 2 (F2, PR #128 /code-review): SIMPLIFY additionally
+# requires whole-tree no-growth (node_count_delta <= 0) -- restores the
+# deleted invariant. A candidate whose delta-scoped ratio passes but whose
+# WHOLE SYMPHONY actually grew (e.g. _graft_incumbent_core re-inserting the
+# full core into the else branch makes the overall spliced tree bigger even
+# though the signal logic shrank) must decline -- "simplification" tagged
+# on a bigger tree is an absurdity the ratio alone cannot catch.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_whole_tree_grew_even_though_ratio_passes(facc):
+    """A candidate with a genuinely small overlay vs a large replaced
+    cascade (ratio easily passes) must still DECLINE if the whole-tree node
+    count GREW (candidate_node_count > incumbent_node_count) -- the
+    delta-scoped ratio alone cannot see this; RULING 2 adds it as a THIRD,
+    independent gate."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=100,
+        candidate_node_count=150,  # whole tree GREW (+50)
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,  # ratio 0.05 -- easily passes
+    )
+    assert result.accepted is False, (
+        "a candidate was accepted via SIMPLIFY despite the whole symphony "
+        "growing (candidate_node_count=150 > incumbent_node_count=100) -- "
+        "RULING 2's no-growth gate did not fire"
+    )
+    assert "simplification" not in result.tags
+
+
+def test_simplify_accepts_when_whole_tree_node_count_delta_is_exactly_zero(facc):
+    """Boundary: node_count_delta == 0 (whole tree exactly unchanged) must
+    still ACCEPT -- RULING 2's gate is <=0, not a strict <0."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=100,
+        candidate_node_count=100,  # delta == 0
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is True
+    assert "simplification" in result.tags
+
+
+def test_simplify_accepts_when_whole_tree_shrank_and_ratio_passes(facc):
+    """Regression pin: the ordinary, expected case -- whole tree shrank AND
+    the delta-scoped ratio passes -- must accept (RULING 2's gate is
+    additive, never a NEW way to block a genuinely good candidate)."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=500,
+        candidate_node_count=495,  # whole tree shrank
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is True
+    assert "simplification" in result.tags
+
+
+def test_simplify_still_declines_on_growth_even_with_a_dramatic_ratio(facc):
+    """Adversarial: an extremely favorable delta-scoped ratio (overlay
+    massively smaller than the cascade) must NOT override the no-growth
+    gate -- RULING 2 is independent of, not traded off against, the
+    ratio."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=100,
+        candidate_node_count=101,  # grew by just 1 node
+        overlay_node_count=1,
+        replaced_cascade_node_count=1000,  # ratio 0.001 -- as favorable as it gets
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 3, F9 (PR #128 /code-review): _safe_float at the SIMPLIFY gate
+# boundary must accept real finite numbers only -- bool/numeric-string/inf/
+# nan must DECLINE, per the existing docstring's own promise ("either
+# operand is non-numeric" -> decline). A bool is technically an int subtype
+# in Python (float(True) == 1.0) and would otherwise silently coerce into a
+# passing ratio; a numeric string would silently coerce too; inf/nan pass a
+# bare isinstance(float) check but are never genuine node counts.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_overlay_node_count_is_a_bool(facc):
+    """bool is an int subtype in Python -- float(True) == 1.0 would silently
+    coerce and could satisfy a favorable ratio. Must decline: a boolean is
+    never a genuine node count."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=True,  # float(True) == 1.0, would trivially pass any ratio
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_a_bool(facc):
+    """Symmetric to the overlay-side bool guard -- the cascade side must be
+    equally protected."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=10,
+        replaced_cascade_node_count=True,  # float(True) == 1.0
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_a_numeric_string(facc):
+    """A numeric string (a plausible caller bug -- e.g. a value that
+    round-tripped through JSON as a string) must decline, never silently
+    coerce via float("20")."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count="20",
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_infinite(facc):
+    """float('inf') passes a naive isinstance(float) check and is not
+    caught by a bare '<=0' guard, but is never a genuine node count -- must
+    decline."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=float("inf"),
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_infinite(facc):
+    """Symmetric inf guard on the cascade side -- inf trivially satisfies
+    'overlay <= cascade * 0.5' for ANY positive overlay, which would
+    fabricate an acceptance for literally any candidate."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=10,
+        replaced_cascade_node_count=float("inf"),
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_nan(facc):
+    """NaN comparisons are always False in Python (nan <= x is False, nan >
+    x is False) -- must be explicitly caught and declined, not silently
+    fall through a comparison chain to an ambiguous result."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=float("nan"),
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
