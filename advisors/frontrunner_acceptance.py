@@ -39,9 +39,20 @@ compute_calmar(cagr, max_drawdown) -> float | None
     inf) when max_drawdown is exactly 0.
 
 evaluate_calmar_acceptance(incumbent_metrics, candidate_metrics, *,
-                            incumbent_node_count, candidate_node_count) -> AcceptanceResult
+                            incumbent_node_count, candidate_node_count,
+                            overlay_node_count=None,
+                            replaced_cascade_node_count=None) -> AcceptanceResult
     The AC-7 acceptance gate. Never raises (D-1) — malformed/missing metrics
-    degrade to a rejected result.
+    degrade to a rejected result. The SIMPLIFY path (DE-FR-SIMPLIFY-001)
+    compares ``overlay_node_count`` (the small generated overlay) against
+    ``replaced_cascade_node_count`` (the incumbent subtree it replaces) —
+    NOT the whole-symphony ``incumbent_node_count``/``candidate_node_count``,
+    which stay ~98-100% of each other for any single-cascade splice and can
+    never signal a genuine simplification. Those two whole-tree params are
+    retained only for the unrelated ``node_count_delta`` display metric.
+    Omitting the new keyword-only params (a legacy call site) makes SIMPLIFY
+    structurally unreachable rather than falling back to the old, broken
+    whole-tree comparison.
 """
 
 from __future__ import annotations
@@ -173,12 +184,46 @@ def _safe_float(value) -> float | None:
         return None
 
 
+def _is_delta_scoped_material_simplification(
+    overlay_node_count, replaced_cascade_node_count
+) -> bool:
+    """Fail-closed SIMPLIFY-clause check (DE-FR-SIMPLIFY-001, AC-1/AC-5).
+
+    Compares the candidate's OWN OVERLAY (the small generated subtree) against
+    the REPLACED CASCADE (the incumbent subtree it swaps out) — never the
+    whole-symphony node counts, which stay ~98-100% of each other for any
+    single-cascade splice and can never signal a genuine simplification.
+
+    Declines (returns False, never raises) when: either operand is missing/
+    None, either operand is non-numeric, either operand is zero or negative
+    (a real compiled overlay always has >=1 node and a real replaced cascade
+    always has >=1 node, so 0 can only mean "count unavailable" upstream —
+    treated identically to None/absent, never as a legitimately tiny value
+    that would trivially satisfy the ratio), or the overlay is literally
+    bigger than the cascade it replaces. A caller omitting both operands (the
+    legacy invocation shape) always declines here — SIMPLIFY becomes
+    structurally unreachable for an un-migrated call site rather than
+    silently keeping the old whole-tree comparison's behavior.
+    """
+    overlay = _safe_float(overlay_node_count)
+    cascade = _safe_float(replaced_cascade_node_count)
+    if overlay is None or cascade is None:
+        return False
+    if overlay <= 0 or cascade <= 0:
+        return False
+    if overlay > cascade:
+        return False
+    return overlay <= cascade * MATERIAL_SIMPLIFICATION_MAX_RATIO
+
+
 def evaluate_calmar_acceptance(
     incumbent_metrics: dict,
     candidate_metrics: dict,
     *,
     incumbent_node_count: int,
     candidate_node_count: int,
+    overlay_node_count: int | None = None,
+    replaced_cascade_node_count: int | None = None,
 ) -> AcceptanceResult:
     """Evaluate whether a candidate frontrunner overlay is accepted (AC-7).
 
@@ -189,8 +234,16 @@ def evaluate_calmar_acceptance(
         output: ``annualized_return`` (CAGR), ``max_drawdown`` (<= 0),
         optionally ``sharpe`` / ``volatility``.
     incumbent_node_count, candidate_node_count : int
-        Total node counts of the incumbent and candidate symphony trees —
-        the AC-7 "materially simplifying" signal.
+        Total node counts of the incumbent and candidate SYMPHONY trees —
+        used ONLY for the ``node_count_delta`` display metric (AC-6, unrelated
+        to acceptance).
+    overlay_node_count, replaced_cascade_node_count : int | None
+        Delta-scoped node counts (DE-FR-SIMPLIFY-001) driving the SIMPLIFY
+        acceptance path — the candidate's own small generated overlay vs. the
+        incumbent cascade subtree it replaces. Keyword-only and additive
+        (default None); omitting them makes SIMPLIFY structurally
+        unreachable (fail-closed), never a silent fallback to the whole-tree
+        comparison.
 
     Returns
     -------
@@ -247,15 +300,17 @@ def evaluate_calmar_acceptance(
         if candidate_calmar > incumbent_calmar:
             tags.add("performance")
 
-        # Path 2 — SIMPLIFY: the candidate tree is materially smaller AND its
-        # Calmar is not WORSE than the incumbent's (either genuinely improved,
-        # covered by "performance" above too, or preserved within tolerance —
-        # both are acceptable grounds for "this simplification didn't cost
-        # anything"). A candidate that is simpler but has a strictly WORSE
-        # Calmar outside tolerance does not qualify — AC-7's "preserve within
-        # tolerance while materially simplifying" phrasing sets a floor, not a
-        # requirement that Calmar be UNCHANGED when it also happens to be
-        # better.
+        # Path 2 — SIMPLIFY: the candidate's OVERLAY is materially smaller than
+        # the REPLACED CASCADE it swaps out (DE-FR-SIMPLIFY-001 — delta-scoped,
+        # never the whole-symphony node counts, which stay ~98-100% of each
+        # other for any single-cascade splice) AND its Calmar is not WORSE
+        # than the incumbent's (either genuinely improved, covered by
+        # "performance" above too, or preserved within tolerance — both are
+        # acceptable grounds for "this simplification didn't cost anything").
+        # A candidate that is simpler but has a strictly WORSE Calmar outside
+        # tolerance does not qualify — AC-7's "preserve within tolerance while
+        # materially simplifying" phrasing sets a floor, not a requirement
+        # that Calmar be UNCHANGED when it also happens to be better.
         calmar_not_worse = (
             candidate_calmar >= incumbent_calmar
             or abs(candidate_calmar - incumbent_calmar)
@@ -263,9 +318,8 @@ def evaluate_calmar_acceptance(
             if incumbent_calmar != 0
             else candidate_calmar >= incumbent_calmar
         )
-        is_materially_simpler = (
-            incumbent_node_count > 0
-            and candidate_node_count <= incumbent_node_count * MATERIAL_SIMPLIFICATION_MAX_RATIO
+        is_materially_simpler = _is_delta_scoped_material_simplification(
+            overlay_node_count, replaced_cascade_node_count
         )
         if calmar_not_worse and is_materially_simpler:
             tags.add("simplification")

@@ -1313,6 +1313,63 @@ def _count_tree_nodes(node) -> int:
     return count
 
 
+def _count_overlay_node_count(candidate) -> int | None:
+    """Return the compiled node count of a raw build-plan-DSL overlay
+    candidate (DE-FR-SIMPLIFY-001, AC-2's ``overlay_node_count`` operand), or
+    None if it cannot be honestly determined.
+
+    ``candidate`` (``result.candidate`` from ``generate_candidate_overlay``)
+    is build-plan-DSL-shaped (``kind``/``then``/``else``), not the compiled
+    Composer raw_value shape (``step``/``children``) ``_count_tree_nodes``
+    walks. This performs a SECOND, independent compile of the candidate
+    alone — the identical plan-envelope shape ``splice_candidate_into_
+    symphony`` already builds internally, cheap and pure-Python, no I/O —
+    purely to obtain a countable node, so ``splice_candidate_into_symphony``'s
+    own signature/return stays untouched (zero diff to splice mechanics).
+
+    Deliberately calls ``plan_tree_compiler.compile_plan`` WITHOUT
+    ``backtest_fn`` — a pure compile, counting only, never network. Passing
+    ``backtest_fn`` would let the compiler's tradeability-repair loop fire
+    live Composer calls and nondeterministically prune tickers, corrupting
+    the count with network I/O and bill spend this counting-only helper must
+    never incur.
+
+    Never raises (D-1) — returns None (never a fabricated 0) on any compile
+    failure, unexpected shape, or a genuine zero-node result: a real compiled
+    overlay always has >=1 node, so a 0 count can only mean the compile
+    itself failed silently — treating it as a real 0 would let it sail
+    through the acceptance gate's `overlay <= cascade * ratio` check and
+    FABRICATE a material-simplification accept, exactly what AC-5 forbids.
+    The caller passes this straight through; the acceptance gate's own
+    fail-closed guards decline SIMPLIFY on a None operand.
+    """
+    try:
+        if isinstance(candidate, dict) and "step" in candidate:
+            # Already compiled (rare — splice_candidate_into_symphony accepts
+            # this shape too) — count directly, no re-compile needed.
+            count = _count_tree_nodes(candidate)
+            return count or None
+        plan_envelope = {
+            "plan_id": "frontrunner-overlay-node-count",
+            "objective": "cut_drawdown",
+            "name": "Frontrunner Overlay Node Count",
+            "rebalance": "daily",
+            "root": candidate,
+        }
+        # No backtest_fn — pure compile, counting only, never network.
+        compile_result = plan_tree_compiler.compile_plan(plan_envelope)
+        if compile_result.tree is None:
+            return None
+        compiled_children = compile_result.tree.get("children") or []
+        if len(compiled_children) != 1:
+            return None
+        count = _count_tree_nodes(compiled_children[0])
+        return count or None
+    except Exception:
+        logger.debug("_count_overlay_node_count: unexpected error", exc_info=True)
+        return None
+
+
 def _gather_atlas_frontrunner_patterns(watched_tickers: list[str]) -> list[dict]:
     """AC-3: load the Atlas frontrunner corpus through the shared 7-day cache,
     identify frontrunner-shaped strategies (structural detection, reusing the
@@ -1818,10 +1875,23 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             )
             continue
 
+        # DE-FR-SIMPLIFY-001 (AC-2): the real delta-scoped SIMPLIFY operands —
+        # the detected incumbent cascade subtree (already raw_value-shaped,
+        # directly countable) and the small generated overlay (DSL-shaped,
+        # counted via a second lightweight compile) — both already in scope
+        # from this loop iteration, threaded through _gate_and_accept_
+        # candidate to the Calmar acceptance gate. Never the whole-tree
+        # incumbent/candidate counts, which stay ~98-100% of each other for
+        # any single-cascade splice.
+        replaced_cascade_node_count = _count_tree_nodes(cascade.overlay_tree)
+        overlay_node_count = _count_overlay_node_count(result.candidate)
+
         accepted, metrics = _gate_and_accept_candidate(
             symphony_id=symphony_id,
             incumbent_tree=tree,
             candidate_tree=spliced,
+            overlay_node_count=overlay_node_count,
+            replaced_cascade_node_count=replaced_cascade_node_count,
         )
         if not accepted:
             logger.info(
@@ -1906,11 +1976,23 @@ def _gate_and_accept_candidate(
     symphony_id: str,
     incumbent_tree: dict,
     candidate_tree: dict,
+    overlay_node_count: int | None = None,
+    replaced_cascade_node_count: int | None = None,
 ) -> tuple[bool, dict]:
     """AC-6/AC-7: independently re-backtest BOTH incumbent and candidate,
     run them through evaluate_candidate_batch (mandatory, never bypassed),
     and — only for the candidate if it's the gate's ADOPT_CANDIDATE survivor
     — apply the Calmar acceptance gate.
+
+    Parameters
+    ----------
+    overlay_node_count, replaced_cascade_node_count : int | None
+        DE-FR-SIMPLIFY-001 (AC-2): the delta-scoped SIMPLIFY-path operands
+        (the real generated overlay vs. the real replaced cascade subtree),
+        threaded straight through to ``evaluate_calmar_acceptance``. Additive
+        keyword-only, default None — an omitted value makes the SIMPLIFY
+        path structurally unreachable in the acceptance gate (fail-closed),
+        never a silent fallback to the whole-tree node counts.
 
     Returns (accepted, metrics). On acceptance, metrics is a dict suitable
     for frontrunner_proposals.metrics_json (incumbent-vs-candidate Calmar/
@@ -2081,6 +2163,8 @@ def _gate_and_accept_candidate(
             candidate_metrics,
             incumbent_node_count=incumbent_node_count,
             candidate_node_count=candidate_node_count,
+            overlay_node_count=overlay_node_count,
+            replaced_cascade_node_count=replaced_cascade_node_count,
         )
         if not acceptance.accepted:
             # AC-11 "fails to improve Calmar → rejected item w/ reason+deltas".
