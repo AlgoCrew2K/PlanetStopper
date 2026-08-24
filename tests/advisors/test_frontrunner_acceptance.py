@@ -1091,3 +1091,266 @@ def test_simplify_declines_on_a_huge_int_overlay_without_losing_reporting_fields
         f"node_count_delta was lost (got {result.node_count_delta!r}, "
         f"expected {expected_node_count_delta!r})"
     )
+
+
+# ---------------------------------------------------------------------------
+# Revise 4, B2 (review round 3): _safe_node_count_float accepts non-integral
+# floats today -- overlay_node_count=0.4 trivially passes the ratio check
+# (0.4 <= 200*0.5) even though a real node count is never fractional. Fold
+# into the same F9 hardening class: an is_integer() requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_overlay_node_count_is_non_integral(facc):
+    """B2: a fractional node count (0.4) is never a genuine node count --
+    must decline, never silently pass the ratio check on a value that
+    happens to satisfy the arithmetic while being structurally nonsensical."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=0.4,  # 0.4 <= 200*0.5 -- would trivially pass the ratio
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_non_integral(facc):
+    """Symmetric non-integral guard on the cascade side. overlay_node_count
+    is deliberately chosen (1) so that IF the fractional value were silently
+    allowed through, the ratio would ACCIDENTALLY pass (1 <= 3.7*0.5=1.85) --
+    proving this test genuinely exercises the is_integer() guard, not some
+    unrelated ratio failure that would decline regardless (verified
+    empirically: an earlier draft with overlay_node_count=10 passed
+    vacuously, since 10 > 3.7*0.5 fails the ratio on its own, for reasons
+    unrelated to the is_integer() guard under test)."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=1,
+        replaced_cascade_node_count=3.7,  # non-integral -- never a genuine count
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_accepts_a_genuinely_whole_number_float_node_count(facc):
+    """Sanity/non-regression companion to the two declines above: a float
+    that IS a whole number (e.g. 20.0, the natural type a JSON round-trip
+    or an average-of-identical-values computation might produce) is a
+    legitimate node count and must NOT be rejected merely for being a
+    float -- only genuinely FRACTIONAL values are the adversarial target."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=20.0,  # whole-number float -- legitimate
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is True, (
+        f"a whole-number float (20.0) node count was rejected -- the "
+        f"is_integer() guard must accept whole-number floats, only reject "
+        f"genuinely fractional ones; got tags={result.tags!r}"
+    )
+    assert "simplification" in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 4, R4-5: RULING 2's own operands (incumbent_node_count/
+# candidate_node_count, feeding node_count_delta = int(candidate_node_count)
+# - int(incumbent_node_count), the FIRST statement inside the try block)
+# get the SAME hardening class as the ratio operands (F9/B2) -- bool/string/
+# None must decline SIMPLIFY without nulling the OTHER reporting fields
+# (Sharpe/volatility/both Calmar values), never fall through to the outer
+# except-all's bare _rejected() the way a bare int(None)/int("x") raise
+# would today.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_incumbent_node_count_is_none_without_losing_reporting_fields(
+    facc,
+):
+    """incumbent_node_count=None -- int(None) raises TypeError today,
+    escaping to the outer except-all and nulling every reporting field.
+    Calmar is exactly PRESERVED (never improved) so 'performance' cannot
+    mask this -- the only path to acceptance here is SIMPLIFY, which must
+    decline; Sharpe/volatility/Calmar must all survive as genuinely
+    computable values from valid incumbent/candidate metrics."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=None,
+        candidate_node_count=50,
+        overlay_node_count=10,  # would otherwise satisfy the ratio (10 <= 200*0.5)
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, "SIMPLIFY must decline with an undeterminable delta"
+    assert "simplification" not in result.tags
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- "
+        f"incumbent_node_count=None must not null unrelated reporting fields"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+def test_simplify_declines_when_candidate_node_count_is_a_numeric_string_without_losing_reporting_fields(
+    facc,
+):
+    """candidate_node_count='50' -- a plausible caller bug (e.g. a value
+    that round-tripped through JSON as a string) -- int('50') actually
+    succeeds in Python, so this specifically targets the malformed
+    NON-numeric-string case (e.g. a corrupted/truncated value) that would
+    raise ValueError and null everything today."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count="not-a-number",
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- a "
+        f"malformed candidate_node_count must not null unrelated reporting "
+        f"fields"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+def test_simplify_declines_when_incumbent_node_count_is_a_bool_without_losing_reporting_fields(
+    facc,
+):
+    """bool is an int subtype -- int(True)==1 silently coerces rather than
+    raising, so this specifically targets the SILENT-coercion risk class
+    (consistent with every other operand's bool guard in this file) rather
+    than an exception-escape risk: a bool sneaking through as a node count
+    is a genuine caller-bug class even when it doesn't crash. candidate_
+    node_count is deliberately chosen (1) so that IF the bool were silently
+    coerced to 1, node_count_delta=1-1=0 would ACCIDENTALLY satisfy RULING
+    2's <=0 gate -- proving this test genuinely exercises bool-rejection,
+    not an unrelated delta failure (verified empirically: an earlier draft
+    with candidate_node_count=50 passed vacuously, since 50-1=49 already
+    fails the <=0 gate for reasons unrelated to bool-rejection)."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=True,  # int(True) == 1 -- silent coercion risk
+        candidate_node_count=1,
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9)
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Revise 4, final pin: an inverted-polarity cascade (fire content genuinely
+# on the is-else-condition?==True side -- the real_tree_09/n2oo class) must
+# DECLINE SIMPLIFY fail-closed with a WARNING, regardless of what the
+# ratio/node_count_delta gates alone would say -- the PRE-EXISTING (not this
+# cycle's) _graft_incumbent_core always reads "the incumbent's real
+# is-else-condition?==True child" as "the real core to preserve"; for an
+# inverted-polarity cascade that child is actually the FIRE content, and the
+# genuine core silently gets dropped by the graft, making node_count_delta
+# go hugely negative and RULING 2's <=0 gate pass VACUOUSLY. This file does
+# NOT characterize or fix the graft itself (a tracked, separate backlog
+# item) -- only proves the acceptance layer fails closed on the polarity
+# signal.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_on_inverted_polarity_cascade_regardless_of_ratio_or_delta(facc, caplog):
+    """A cascade whose fire content sits on the is-else-condition?==True
+    side must DECLINE SIMPLIFY unconditionally -- even when the ratio and
+    node_count_delta gates would OTHERWISE both pass (constructed
+    deliberately here so this test isolates the polarity check itself, not
+    a side effect of some other gate already failing)."""
+    import logging
+
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    with caplog.at_level(logging.WARNING):
+        result = facc.evaluate_calmar_acceptance(
+            incumbent,
+            candidate,
+            incumbent_node_count=200,  # candidate << incumbent -- delta gate would pass
+            candidate_node_count=50,
+            overlay_node_count=10,  # 10 <= 200*0.5 -- ratio gate would pass
+            replaced_cascade_node_count=200,
+            fire_is_else_branch=True,  # the inverted-polarity signal
+        )
+
+    assert result.accepted is False, (
+        "an inverted-polarity cascade must decline SIMPLIFY even though the "
+        "ratio and node_count_delta gates would both otherwise pass -- the "
+        "graft's core-dropping defect on this exact polarity makes those "
+        "gates meaningless here"
+    )
+    assert "simplification" not in result.tags
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "an inverted-polarity decline must log a WARNING (team-lead ruling) "
+        "-- a silent decline here gives the operator zero signal that a "
+        "genuinely-materially-simpler-looking candidate was withheld for a "
+        "structural reason unrelated to its own Calmar/size profile"
+    )
+
+
+def test_simplify_reachable_on_normal_polarity_cascade_with_identical_otherwise_inputs(facc):
+    """Direct contrast to the inverted-polarity decline above: the SAME
+    otherwise-qualifying inputs, with fire_is_else_branch=False (or
+    omitted, matching every pre-existing call site's legacy shape), must
+    still admit via SIMPLIFY -- proving the new polarity check declines
+    ONLY the inverted case, never a blanket new restriction on SIMPLIFY
+    generally."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=200,
+        candidate_node_count=50,
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+        fire_is_else_branch=False,
+    )
+    assert result.accepted is True
+    assert "simplification" in result.tags
