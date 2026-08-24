@@ -393,3 +393,73 @@ def test_a_calmar_preserved_small_overlay_over_a_large_cascade_is_accepted_via_s
         f"to stay on the OLD whole-tree formula, untouched by the new "
         f"delta-scoped SIMPLIFY operands"
     )
+
+
+# ---------------------------------------------------------------------------
+# fps-reviewer INFO finding, folded in per team-lead's preference (2026-08-24):
+# _count_overlay_node_count must reuse GenerationResult.compiled_tree (already
+# populated by generate_candidate_overlay on a successful generation) instead
+# of independently re-compiling result.candidate from scratch. Not a
+# correctness bug pre-fix (both compiles are pure/deterministic, byte-identical
+# count either way) -- an avoidable redundant compile_plan call and a
+# duplicated-envelope-construction maintenance risk if the two construction
+# sites ever drift.
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_node_count_reuses_the_already_compiled_tree_no_redundant_compile(fbld):
+    """On the real, successful generation path (GenerationResult.compiled_tree
+    already populated by generate_candidate_overlay), _count_overlay_node_count
+    must NOT independently re-compile result.candidate from scratch -- it
+    should count the already-compiled tree directly. Proven by wrapping the
+    REAL plan_tree_compiler.compile_plan (patched at its origin module, per
+    this test file's established philosophy) and asserting no call carries
+    the overlay-counting helper's own redundant plan_id marker
+    ('frontrunner-overlay-node-count') -- the pure-compile path should only
+    remain as a fallback for when compiled_tree is unavailable (a genuine
+    compile failure upstream), not the normal happy path this test drives."""
+    from advisors import frontrunner_detector, plan_tree_compiler
+
+    incumbent_symphony, cascade, _replaced_cascade_node_count = _build_incumbent_with_large_cascade(
+        fbld
+    )
+    shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    shared_result = _make_shaped_result(shape_pct, n_days=100)
+
+    _real_compile = plan_tree_compiler.compile_plan
+    seen_plan_ids = []
+
+    def _counting_compile(plan_envelope, *args, **kwargs):
+        seen_plan_ids.append(
+            plan_envelope.get("plan_id") if isinstance(plan_envelope, dict) else None
+        )
+        return _real_compile(plan_envelope, *args, **kwargs)
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        patch(
+            "advisors.frontrunner_detector.detect_frontrunner_cascades",
+            return_value=frontrunner_detector.DetectionResult(cascades=[cascade]),
+        ),
+        _patched_fable(fbld),
+        patch("advisors.composer_backtest_client.run_backtest", return_value=shared_result),
+        patch(
+            "advisors.backtest_gate_engine.evaluate_candidate_batch",
+            return_value=_controlled_adopt_candidate_batch(),
+        ),
+        patch("database.insert_frontrunner_proposal"),
+        patch("database.insert_dof_ledger_row"),
+        patch("database.insert_advisor_observation"),
+        patch("advisors.plan_tree_compiler.compile_plan", side_effect=_counting_compile),
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")
+
+    assert "frontrunner-overlay-node-count" not in seen_plan_ids, (
+        f"compile_plan was called with the overlay-counting helper's own "
+        f"redundant plan_id marker on a successful generation path (where "
+        f"GenerationResult.compiled_tree was already available) -- "
+        f"_count_overlay_node_count is re-compiling result.candidate from "
+        f"scratch instead of reusing the tree generate_candidate_overlay "
+        f"already compiled; observed plan_ids across all compile_plan calls "
+        f"this run: {seen_plan_ids!r}"
+    )
