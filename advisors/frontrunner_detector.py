@@ -85,6 +85,18 @@ _RSI_FN_SUBSTRINGS: tuple[str, ...] = ("relative-strength-index", "rsi")
 # swallowed core logic across the size-cliff boundary — a hard bug signal.
 _CORE_PLACEHOLDER_PREFIX = "CORE_ASSET_"
 
+# The synthetic placeholder-leaf ticker _build_cascade_overlay stamps onto the
+# stubbed continuation/core branch it replaces (never real tree content).
+# PUBLIC (not underscore-prefixed): consumers outside this module (the
+# Frontrunner Builder's SIMPLIFY-path signal-logic-only counter,
+# DE-FR-SIMPLIFY-001 Revise 3 RULING 1) must identify this exact marker to
+# exclude the stub branch from a node count — importing this constant instead
+# of duplicating the literal means a future rename here can never silently
+# break that exclusion (the stub would stop matching, get counted again, and
+# the CRITICAL SIMPLIFY-inflation defect this constant's consumer fixes would
+# return with no warning).
+STUBBED_CORE_CONTINUATION_TICKER = "_STUBBED_CORE_CONTINUATION"
+
 # AC-6 REBUILD (2026-07-16): the size-cliff ratio/absolute checks below and
 # the overbought-range floor matched 0 real trees (44/456 recovery even after
 # fixing direction) — empirically falsified against the operator's own real
@@ -696,7 +708,7 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
             "children": [
                 {
                     "step": _STEP_ASSET,
-                    "ticker": "_STUBBED_CORE_CONTINUATION",
+                    "ticker": STUBBED_CORE_CONTINUATION_TICKER,
                     "id": f"{continuation_child.get('id')}-stub-{i}",
                     "children": [],
                 }
@@ -797,7 +809,7 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
                 ):
                     compacted_c = {
                         "step": _STEP_ASSET,
-                        "ticker": "_STUBBED_CORE_CONTINUATION",
+                        "ticker": STUBBED_CORE_CONTINUATION_TICKER,
                         "id": f"{compacted_c.get('id', 'unknown')}-unrelated-stub",
                         "children": [],
                     }

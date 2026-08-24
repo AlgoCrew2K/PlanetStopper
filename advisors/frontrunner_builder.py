@@ -137,17 +137,33 @@ MAX_PROPOSAL_DESCRIPTION_CHARS: int = 1000
 # duplicated, so the two modules can never drift on this list). AC-8:
 # _collect_tickers is imported alongside it — the step-aware asset-ticker
 # collector _collect_step_keyed_signal_tickers (below) builds on it.
-from advisors.frontrunner_detector import VIX_FAMILY_TICKERS, _collect_tickers  # noqa: E402
+# STUBBED_CORE_CONTINUATION_TICKER (DE-FR-SIMPLIFY-001 Revise 3 RULING 1):
+# frontrunner_detector's internal reporting-stub ticker for the collapsed
+# core-continuation branch (frontrunner_detector.py's _build_cascade_overlay)
+# — a synthetic placeholder for SIZE only, explicitly documented there as
+# "never a placeholder for scale that could be mistaken for a real ticker".
+# Imported (not duplicated as a second local literal) so a detector-side
+# rename can never silently break either this module's watched_tickers
+# exclusion or the SIMPLIFY-path signal-logic-only node counter's stub-branch
+# identification, both of which depend on matching this exact string.
+from advisors.frontrunner_detector import (  # noqa: E402
+    STUBBED_CORE_CONTINUATION_TICKER,
+    VIX_FAMILY_TICKERS,
+    _collect_tickers,
+)
 
 _PCT_PLACEHOLDER = "%"
 
-# frontrunner_detector's internal reporting-stub ticker for the collapsed
-# core-continuation branch (frontrunner_detector.py ~:548) — a synthetic
-# placeholder for SIZE only, explicitly documented there as "never a
-# placeholder for scale that could be mistaken for a real ticker". Excluded
-# from watched_tickers so it never leaks into a generation prompt as a fake
-# "core signal ticker".
-_STUBBED_CONTINUATION_TICKER = "_STUBBED_CORE_CONTINUATION"
+# F13 (PR #128 /code-review): the three distinct plan_id markers this module
+# stamps onto its own plan_tree_compiler.compile_plan calls — one per
+# consumer (generate_candidate_overlay's real generation compile, this
+# module's SIMPLIFY-path node-counting compile, splice_candidate_into_
+# symphony's own compile), previously three inline literals. Named here so
+# tests asserting against the literal strings keep working unchanged while
+# production code has a single source of truth per marker.
+_PLAN_ID_GENERATION = "frontrunner-candidate"
+_PLAN_ID_OVERLAY_NODE_COUNT = "frontrunner-overlay-node-count"
+_PLAN_ID_SPLICE_CANDIDATE = "frontrunner-splice-candidate"
 
 # AC-6: DoF-ledger isolation for frontrunner-builder search-breadth rows.
 #
@@ -373,7 +389,7 @@ def _collect_step_keyed_signal_tickers(node) -> set[str]:
     Iterative (explicit stack), never raises (D-1) — malformed input
     degrades to a partial/empty set.
     """
-    out: set[str] = {t for t in _collect_tickers(node) if t != _STUBBED_CONTINUATION_TICKER}
+    out: set[str] = {t for t in _collect_tickers(node) if t != STUBBED_CORE_CONTINUATION_TICKER}
     try:
         if not isinstance(node, dict):
             return out
@@ -968,7 +984,7 @@ def generate_candidate_overlay(
             # AC-5: compile via the real plan_tree_compiler (the only public
             # entry point).
             plan_envelope = {
-                "plan_id": "frontrunner-candidate",
+                "plan_id": _PLAN_ID_GENERATION,
                 "objective": "cut_drawdown",
                 "name": "Frontrunner Candidate",
                 "rebalance": "daily",
@@ -1133,6 +1149,8 @@ def splice_candidate_into_symphony(
     incumbent_symphony: dict,
     incumbent_cascade,
     candidate: dict,
+    *,
+    compiled_tree: dict | None = None,
 ) -> dict | None:
     """Replace the detected incumbent cascade with the compiled candidate.
 
@@ -1147,6 +1165,18 @@ def splice_candidate_into_symphony(
         The candidate overlay — either a raw build-plan-DSL node (compiled
         here via plan_tree_compiler) or an already-compiled Composer tree
         node (detected by the presence of a 'step' key rather than 'kind').
+        Used only as the fresh-compile fallback INPUT when ``compiled_tree``
+        is unavailable.
+    compiled_tree : dict | None
+        F7 (DE-FR-SIMPLIFY-001 Revise 3): the ALREADY-compiled Composer tree
+        for ``candidate`` (``GenerationResult.compiled_tree``), when
+        available — the PREFERRED input. Same invariant as
+        ``_count_overlay_node_count``'s own ``compiled_tree`` reuse (folded
+        in at f2611ee1): ``generate_candidate_overlay`` already compiled
+        ``candidate`` once, so reusing that result here avoids a THIRD
+        redundant compile-plus-validate pass on the successful-generation
+        happy path. Falls back to compiling ``candidate`` fresh ONLY when
+        ``compiled_tree`` is None.
 
     Returns
     -------
@@ -1171,11 +1201,21 @@ def splice_candidate_into_symphony(
         # continuation/core content can be grafted into the candidate.
         original_node = _find_node_by_id(incumbent_symphony, target_id)
 
-        # Compile the candidate if it's still a raw DSL node (kind=...);
-        # accept an already-compiled Composer node (step=...) as-is.
-        if isinstance(candidate, dict) and "kind" in candidate:
+        # F7: reuse the already-compiled tree when the caller supplied one —
+        # no compile_plan call at all. Falls back to compiling the raw DSL
+        # candidate (kind=...) fresh, or accepting an already-compiled
+        # Composer node (step=...) as-is, only when compiled_tree is absent.
+        if isinstance(compiled_tree, dict):
+            compiled_node = _unwrap_single_compiled_child(compiled_tree)
+            if compiled_node is None:
+                logger.warning(
+                    "splice_candidate_into_symphony: compiled_tree present but failed "
+                    "to unwrap to a single node"
+                )
+                return None
+        elif isinstance(candidate, dict) and "kind" in candidate:
             plan_envelope = {
-                "plan_id": "frontrunner-splice-candidate",
+                "plan_id": _PLAN_ID_SPLICE_CANDIDATE,
                 "objective": "cut_drawdown",
                 "name": "Frontrunner Splice Candidate",
                 "rebalance": "daily",
@@ -1191,12 +1231,10 @@ def splice_candidate_into_symphony(
             # compile_plan wraps the compiled node in a root; unwrap the
             # single top-level child to get the raw compiled if/if_compound
             # node suitable for splicing in place of the incumbent cascade.
-            compiled_root = compile_result.tree
-            compiled_children = compiled_root.get("children") or []
-            if len(compiled_children) != 1:
+            compiled_node = _unwrap_single_compiled_child(compile_result.tree)
+            if compiled_node is None:
                 logger.warning("splice_candidate_into_symphony: unexpected compiled root shape")
                 return None
-            compiled_node = compiled_children[0]
         elif isinstance(candidate, dict) and "step" in candidate:
             compiled_node = candidate
         else:
@@ -1298,6 +1336,16 @@ def _count_tree_nodes(node) -> int:
     Iterative (explicit stack) — mirrors symphony_schema.py's established
     pattern (P2-1, frreview finding) — so the operator's real 8,000+ node
     trees (which can be deep, not just wide) never trigger RecursionError.
+
+    RULING 3 (DE-FR-SIMPLIFY-001 Revise 3, F3+F10): also descends into a
+    compound condition's DATA substructure — an if-child's ``condition``
+    field (``make_if_compound``'s authoritative condition-block dict) and,
+    recursively, a compound condition's own ``conditions`` clause list
+    (``make_compound_condition``) — neither of which sits under ``children``
+    and so was previously invisible to this walk (a 2-clause and a 12-clause
+    compound condition, identical then/else content, both counted as the
+    SAME total — this fix makes clause count genuinely load-bearing on the
+    result).
     """
     if not isinstance(node, dict):
         return 0
@@ -1310,6 +1358,14 @@ def _count_tree_nodes(node) -> int:
         count += 1
         for child in current.get("children") or []:
             stack.append(child)
+        condition_block = current.get("condition")
+        if isinstance(condition_block, dict):
+            stack.append(condition_block)
+        conditions_list = current.get("conditions")
+        if isinstance(conditions_list, list):
+            for clause in conditions_list:
+                if isinstance(clause, dict):
+                    stack.append(clause)
     return count
 
 
@@ -1318,21 +1374,94 @@ def _unwrap_single_compiled_child(compiled_root) -> dict | None:
     root (the raw compiled if/if_compound node), or None if the root isn't
     shaped as exactly one child. The same unwrap ``splice_candidate_into_
     symphony`` performs on its own ``compile_plan`` result — factored out so
-    ``_count_overlay_node_count`` can apply it identically to either an
-    already-compiled tree it was HANDED or one it compiled itself.
+    both it and ``_count_overlay_node_count`` apply it identically to either
+    an already-compiled tree they were HANDED or one they compiled
+    themselves.
+
+    F8 (DE-FR-SIMPLIFY-001 Revise 3): a strict dict-or-None contract for ANY
+    input shape, never raises — ``children`` must genuinely be a list of
+    length 1, and the sole entry must itself be a dict, or this returns None.
+    Never coerces a non-list ``children`` via truthy fallback (a caller
+    passing a malformed shape gets an honest None, not an accidental
+    non-dict return value).
     """
     if not isinstance(compiled_root, dict):
         return None
-    children = compiled_root.get("children") or []
-    if len(children) != 1:
+    children = compiled_root.get("children")
+    if not isinstance(children, list) or len(children) != 1:
         return None
-    return children[0]
+    sole = children[0]
+    return sole if isinstance(sole, dict) else None
+
+
+def _contains_stub_marker(node) -> bool:
+    """True if ``node`` (or anything nested under it) is one of
+    ``frontrunner_detector._build_cascade_overlay``'s synthetic
+    ``STUBBED_CORE_CONTINUATION_TICKER`` placeholder leaves.
+
+    DE-FR-SIMPLIFY-001 Revise 3 RULING 1: the ONLY reliable way to identify
+    the stub-padded continuation branch from outside the detector — position
+    and ``is-else-condition?`` are both unreliable there (``_compact_if_node``
+    picks fire/continuation by SIZE, not direction; either original branch
+    can end up on either side). Recursive, never raises on a well-formed
+    dict tree (mirrors ``_collect_tickers``'s own shape assumptions).
+    """
+    if not isinstance(node, dict):
+        return False
+    if node.get("ticker") == STUBBED_CORE_CONTINUATION_TICKER:
+        return True
+    return any(_contains_stub_marker(c) for c in (node.get("children") or []))
+
+
+def _count_signal_logic_nodes(if_node: dict) -> int | None:
+    """1 + the node count of whichever if-child is the real fire/then
+    branch, EXCLUDING the other if-child (continuation/else) entirely —
+    never the whole stub-padded/placeholder-else branch (DE-FR-SIMPLIFY-001
+    Revise 3, RULING 1 — the CRITICAL fix: counting the whole compacted
+    cascade subtree counted core-sized stub padding as "replaced logic",
+    inverting SIMPLIFY from structurally unreachable to admitting overlays
+    LARGER than the signal logic they actually replace).
+
+    Identifies which if-child to exclude via (in priority order):
+      1. A ``_contains_stub_marker`` search — reliable on detector-compacted
+         cascade output (``cascade.overlay_tree``), where fire/continuation
+         is picked by SIZE not direction.
+      2. Falling back to ``is-else-condition? is True`` — reliable on a
+         freshly compiled overlay candidate (never detector-compacted, no
+         stub marker ever exists there), mirroring the existing production
+         ``_find_terminal_else_child``'s identical "find the placeholder
+         else slot" logic.
+
+    Returns None (never falls back to a whole-tree count) when ``if_node``
+    isn't shaped as exactly two dict if-children — RULING (team-lead,
+    Revise 3): an unidentifiable shape means the split cannot be honestly
+    performed, and a whole-tree fallback would be anti-conservative (it
+    INFLATES the cascade-side denominator, making SIMPLIFY easier to fire
+    on exactly the inputs this function understands least). Symmetric with
+    every other fail-closed guard in this module and in
+    frontrunner_acceptance.evaluate_calmar_acceptance.
+    """
+    if not isinstance(if_node, dict):
+        return None
+    children = [c for c in (if_node.get("children") or []) if isinstance(c, dict)]
+    if len(children) != 2:
+        return None
+
+    stub_children = [c for c in children if _contains_stub_marker(c)]
+    if stub_children:
+        exclude = stub_children[0]
+    else:
+        else_children = [c for c in children if c.get("is-else-condition?") is True]
+        exclude = else_children[0] if else_children else children[-1]
+
+    fire = next(c for c in children if c is not exclude)
+    return 1 + _count_tree_nodes(fire)
 
 
 def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> int | None:
-    """Return the compiled node count of a build-plan-DSL overlay candidate
-    (DE-FR-SIMPLIFY-001, AC-2's ``overlay_node_count`` operand), or None if
-    it cannot be honestly determined.
+    """Return the SIGNAL-LOGIC-ONLY node count of a build-plan-DSL overlay
+    candidate (DE-FR-SIMPLIFY-001, AC-2's ``overlay_node_count`` operand),
+    or None if it cannot be honestly determined.
 
     Parameters
     ----------
@@ -1353,6 +1482,11 @@ def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> i
         ``compiled_tree`` is None — a genuine upstream compile failure or
         absence, not the normal path.
 
+    RULING 1 (Revise 3): every tier applies ``_count_signal_logic_nodes`` to
+    its unwrapped node — the whole compiled overlay (condition + then +
+    placeholder-else) is NEVER what gets counted; only the condition + real
+    fire/then branch, excluding the placeholder else.
+
     Deliberately calls ``plan_tree_compiler.compile_plan`` WITHOUT
     ``backtest_fn`` on the fallback path — a pure compile, counting only,
     never network. Passing ``backtest_fn`` would let the compiler's
@@ -1361,30 +1495,53 @@ def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> i
     I/O and bill spend this counting-only helper must never incur.
 
     Never raises (D-1) — returns None (never a fabricated 0) on any compile
-    failure, unexpected shape, or a genuine zero-node result: a real compiled
-    overlay always has >=1 node, so a 0 count can only mean the compile
-    itself failed silently — treating it as a real 0 would let it sail
-    through the acceptance gate's `overlay <= cascade * ratio` check and
-    FABRICATE a material-simplification accept, exactly what AC-5 forbids.
-    The caller passes this straight through; the acceptance gate's own
-    fail-closed guards decline SIMPLIFY on a None operand.
+    failure, unwrap failure, or unidentifiable if-child shape. The caller
+    passes this straight through; the acceptance gate's own fail-closed
+    guards decline SIMPLIFY on a None operand. A1 (Revise 3 addendum): every
+    EXPECTED None-degradation path below logs a WARNING (not just this
+    function's outer except-all, which stays DEBUG for genuinely-unexpected
+    errors per this module's established convention) — a future counting
+    failure must never silently recreate "SIMPLIFY unreachable, zero
+    operator-visible signal", the ORIGINAL CRITICAL defect's exact survival
+    mode.
     """
     try:
         if isinstance(compiled_tree, dict):
             node = _unwrap_single_compiled_child(compiled_tree)
             if node is None:
+                logger.warning(
+                    "_count_overlay_node_count: compiled_tree present but failed to "
+                    "unwrap to a single node — SIMPLIFY's overlay operand degrading "
+                    "to None for this candidate"
+                )
                 return None
-            count = _count_tree_nodes(node)
-            return count or None
+            result = _count_signal_logic_nodes(node)
+            if result is None:
+                logger.warning(
+                    "_count_overlay_node_count: compiled overlay node is not shaped "
+                    "as exactly two if-children — cannot honestly identify the "
+                    "fire/continuation split; SIMPLIFY's overlay operand degrading "
+                    "to None for this candidate"
+                )
+            return result
 
         if isinstance(candidate, dict) and "step" in candidate:
-            # Already compiled (rare — splice_candidate_into_symphony accepts
-            # this shape too) — count directly, no re-compile needed.
-            count = _count_tree_nodes(candidate)
-            return count or None
+            # Unreachable under the current call graph (the sole production
+            # caller, _run_build_for_symphony, always has compiled_tree
+            # populated alongside a non-None candidate) — second-layer
+            # defense only, mirrors this project's established
+            # _resolve_admission_mdd_baseline convention.
+            result = _count_signal_logic_nodes(candidate)
+            if result is None:
+                logger.warning(
+                    "_count_overlay_node_count: already-compiled candidate is not "
+                    "shaped as exactly two if-children — SIMPLIFY's overlay operand "
+                    "degrading to None for this candidate"
+                )
+            return result
 
         plan_envelope = {
-            "plan_id": "frontrunner-overlay-node-count",
+            "plan_id": _PLAN_ID_OVERLAY_NODE_COUNT,
             "objective": "cut_drawdown",
             "name": "Frontrunner Overlay Node Count",
             "rebalance": "daily",
@@ -1393,12 +1550,30 @@ def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> i
         # No backtest_fn — pure compile, counting only, never network.
         compile_result = plan_tree_compiler.compile_plan(plan_envelope)
         if compile_result.tree is None:
+            logger.warning(
+                "_count_overlay_node_count: fallback compile of candidate failed "
+                "(%s) — SIMPLIFY's overlay operand degrading to None for this "
+                "candidate",
+                compile_result.reason,
+            )
             return None
         node = _unwrap_single_compiled_child(compile_result.tree)
         if node is None:
+            logger.warning(
+                "_count_overlay_node_count: fallback compile succeeded but failed "
+                "to unwrap to a single node — SIMPLIFY's overlay operand degrading "
+                "to None for this candidate"
+            )
             return None
-        count = _count_tree_nodes(node)
-        return count or None
+        result = _count_signal_logic_nodes(node)
+        if result is None:
+            logger.warning(
+                "_count_overlay_node_count: fallback-compiled overlay node is not "
+                "shaped as exactly two if-children — cannot honestly identify the "
+                "fire/continuation split; SIMPLIFY's overlay operand degrading to "
+                "None for this candidate"
+            )
+        return result
     except Exception:
         logger.debug("_count_overlay_node_count: unexpected error", exc_info=True)
         return None
@@ -1901,7 +2076,9 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             )
             continue
 
-        spliced = splice_candidate_into_symphony(tree, cascade, result.candidate)
+        spliced = splice_candidate_into_symphony(
+            tree, cascade, result.candidate, compiled_tree=result.compiled_tree
+        )
         if spliced is None:
             logger.info(
                 "_run_build_for_symphony: symphony_id=%s splice failed — skipping candidate",
@@ -1909,17 +2086,21 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             )
             continue
 
-        # DE-FR-SIMPLIFY-001 (AC-2): the real delta-scoped SIMPLIFY operands —
-        # the detected incumbent cascade subtree (already raw_value-shaped,
-        # directly countable) and the small generated overlay — both already
-        # in scope from this loop iteration, threaded through _gate_and_
-        # accept_candidate to the Calmar acceptance gate. Never the
-        # whole-tree incumbent/candidate counts, which stay ~98-100% of each
-        # other for any single-cascade splice. result.compiled_tree (already
-        # compiled by generate_candidate_overlay) is passed so
-        # _count_overlay_node_count reuses it instead of redundantly
-        # re-compiling result.candidate from scratch.
-        replaced_cascade_node_count = _count_tree_nodes(cascade.overlay_tree)
+        # DE-FR-SIMPLIFY-001 (AC-2, RULING 1 Revise 3): the real delta-scoped
+        # SIGNAL-LOGIC-ONLY SIMPLIFY operands — the detected incumbent
+        # cascade's fire branch (excluding its stub-padded continuation) and
+        # the small generated overlay's condition+fire branch (excluding its
+        # placeholder-else) — both already in scope from this loop
+        # iteration, threaded through _gate_and_accept_candidate to the
+        # Calmar acceptance gate. Never the whole-tree incumbent/candidate
+        # counts (stay ~98-100% of each other for any single-cascade splice)
+        # NOR the whole compacted/compiled subtree including its stub/
+        # placeholder branch (the CRITICAL defect this RULING fixes — see
+        # _count_signal_logic_nodes). result.compiled_tree (already compiled
+        # by generate_candidate_overlay) is passed so _count_overlay_node_
+        # count reuses it instead of redundantly re-compiling
+        # result.candidate from scratch.
+        replaced_cascade_node_count = _count_signal_logic_nodes(cascade.overlay_tree)
         overlay_node_count = _count_overlay_node_count(result.candidate, result.compiled_tree)
 
         accepted, metrics = _gate_and_accept_candidate(
@@ -2036,10 +2217,15 @@ def _gate_and_accept_candidate(
     carries 'reject_reason' PLUS the same incumbent-vs-candidate CAGR/MDD/
     node-count deltas (AC-11: "rejected item w/ reason+deltas") — the caller
     uses their presence (e.g. "candidate_cagr" in metrics) to decide whether
-    a rejected-candidate audit record is persistable. A pre-gate failure
-    (either backtest call erroring) has no valid comparison data yet, so its
-    metrics dict carries ONLY 'reject_reason' — same for the catch-all
-    unexpected-error path. Never raises (D-1).
+    a rejected-candidate audit record is persistable. A2 (Revise 3 addendum):
+    all three of these outcomes (accept/gate-reject/calmar-reject) ALSO carry
+    the raw ``overlay_node_count``/``replaced_cascade_node_count`` params
+    verbatim — the admission/rejection BASIS, so an accepted or rejected
+    proposal is never indistinguishable from one decided on stale/wrong
+    operands. A pre-gate failure (either backtest call erroring) has no
+    valid comparison data yet, so its metrics dict carries ONLY
+    'reject_reason' — same for the catch-all unexpected-error path. Never
+    raises (D-1).
     """
     try:
         from advisors.backtest_gate_engine import (
@@ -2190,6 +2376,11 @@ def _gate_and_accept_candidate(
                 "candidate_cagr": candidate_metrics.get("annualized_return"),
                 "candidate_max_drawdown": candidate_metrics.get("max_drawdown"),
                 "node_count_delta": candidate_node_count - incumbent_node_count,
+                # A2 (Revise 3 addendum): the delta-scoped SIMPLIFY operands
+                # themselves — the admission/rejection basis — persisted on
+                # every outcome, not just the acceptance path.
+                "overlay_node_count": overlay_node_count,
+                "replaced_cascade_node_count": replaced_cascade_node_count,
             }
 
         # AC-7: Calmar acceptance — gate survival is necessary but not
@@ -2213,6 +2404,9 @@ def _gate_and_accept_candidate(
                 "candidate_max_drawdown": candidate_metrics.get("max_drawdown"),
                 "candidate_calmar": acceptance.candidate_calmar,
                 "node_count_delta": acceptance.node_count_delta,
+                # A2: same rationale as the gate-reject branch above.
+                "overlay_node_count": overlay_node_count,
+                "replaced_cascade_node_count": replaced_cascade_node_count,
             }
 
         metrics = {
@@ -2226,6 +2420,9 @@ def _gate_and_accept_candidate(
             "candidate_volatility": acceptance.candidate_volatility,
             "node_count_delta": acceptance.node_count_delta,
             "tags": sorted(acceptance.tags),
+            # A2: the admission basis, persisted on the accepted path too.
+            "overlay_node_count": overlay_node_count,
+            "replaced_cascade_node_count": replaced_cascade_node_count,
         }
         return True, metrics
 
