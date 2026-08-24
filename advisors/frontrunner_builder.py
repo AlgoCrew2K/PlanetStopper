@@ -1432,14 +1432,25 @@ def _count_signal_logic_nodes(if_node: dict) -> int | None:
          ``_find_terminal_else_child``'s identical "find the placeholder
          else slot" logic.
 
-    Returns None (never falls back to a whole-tree count) when ``if_node``
-    isn't shaped as exactly two dict if-children — RULING (team-lead,
-    Revise 3): an unidentifiable shape means the split cannot be honestly
-    performed, and a whole-tree fallback would be anti-conservative (it
-    INFLATES the cascade-side denominator, making SIMPLIFY easier to fire
-    on exactly the inputs this function understands least). Symmetric with
-    every other fail-closed guard in this module and in
-    frontrunner_acceptance.evaluate_calmar_acceptance.
+    Returns None (never falls back to a whole-tree count, and never guesses
+    positionally) when ``if_node`` isn't shaped as exactly two dict
+    if-children, OR when neither of the two children satisfies either
+    identification rule above (an ambiguous 2-child shape — dual-verified
+    unreachable under the current call graph: a real cascade always carries
+    the stub marker on its continuation, a real compiled overlay always sets
+    ``is-else-condition?`` on its else branch — but a positional
+    ``children[-1]`` guess would be strictly less safe if a schema change
+    ever made this reachable, silently resurrecting the CRITICAL
+    denominator-inflation defect on a wrong guess). RULING (team-lead,
+    Revise 3, plus a same-cycle rider on this exact ambiguous-shape branch):
+    an unidentifiable shape means the split cannot be honestly performed,
+    and a whole-tree fallback would be anti-conservative (it INFLATES the
+    cascade-side denominator, making SIMPLIFY easier to fire on exactly the
+    inputs this function understands least). Symmetric with every other
+    fail-closed guard in this module and in
+    frontrunner_acceptance.evaluate_calmar_acceptance. Logs a WARNING on
+    this path (A1-style — a silent None-degradation here is exactly how the
+    original CRITICAL finding's class of defect goes undetected).
     """
     if not isinstance(if_node, dict):
         return None
@@ -1452,7 +1463,26 @@ def _count_signal_logic_nodes(if_node: dict) -> int | None:
         exclude = stub_children[0]
     else:
         else_children = [c for c in children if c.get("is-else-condition?") is True]
-        exclude = else_children[0] if else_children else children[-1]
+        if not else_children:
+            # Rider (PR #128 fps-reviewer, team-lead ruling): a 2-child
+            # if-node where neither child carries a stub marker nor
+            # is-else-condition?==True is genuinely ambiguous — dual-verified
+            # unreachable under the current call graph (a real cascade
+            # always carries the stub marker on its continuation; a real
+            # compiled overlay always sets is-else-condition? on its else
+            # branch), but a positional guess (children[-1]) is strictly
+            # less safe if a schema change ever makes this reachable: a
+            # wrong guess on the cascade side would silently resurrect the
+            # CRITICAL denominator-inflation defect this function exists to
+            # fix. Decline honestly instead.
+            logger.warning(
+                "_count_signal_logic_nodes: 2-child if-node is ambiguous — "
+                "neither child carries a stub marker nor "
+                "is-else-condition?==True; declining rather than guessing "
+                "which half is the fire branch"
+            )
+            return None
+        exclude = else_children[0]
 
     fire = next(c for c in children if c is not exclude)
     return 1 + _count_tree_nodes(fire)
