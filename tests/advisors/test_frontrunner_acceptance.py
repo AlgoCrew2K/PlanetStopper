@@ -504,6 +504,37 @@ def test_simplify_declines_when_replaced_cascade_node_count_is_zero(facc):
     assert "simplification" not in result.tags
 
 
+def test_simplify_declines_when_overlay_node_count_is_zero(facc):
+    """team-lead RED addition (post-plan-approval, reviewing fps-impl's
+    implementation plan): overlay_node_count=0 with a valid, positive
+    replaced_cascade_node_count must DECLINE -- even though the naive ratio
+    math trivially passes (0 <= cascade*0.5 is always true for any
+    positive cascade count, and 0 also passes a bare non-negative/
+    <=cascade guard). A genuine generated overlay can never be a literal
+    zero-node tree; 0 can ONLY arise from a counting-failure silently
+    degrading to a falsy default, and treating that as 'the smallest
+    possible simplification' would fabricate an acceptance from a defect,
+    not a real candidate. 0 must be handled exactly like None/absent."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=0,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, (
+        "overlay_node_count=0 was accepted via SIMPLIFY -- a zero-node "
+        "overlay is not a legitimate 'maximally simple' candidate, it is "
+        "indistinguishable from a counting failure and must fail closed "
+        "exactly like None/absent"
+    )
+    assert "simplification" not in result.tags
+
+
 def test_simplify_declines_when_replaced_cascade_node_count_is_none(facc):
     """replaced_cascade_node_count=None (explicit) must decline -- same
     fail-closed contract as the kwarg being omitted entirely."""

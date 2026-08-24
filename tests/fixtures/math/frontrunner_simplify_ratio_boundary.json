@@ -40,6 +40,13 @@
       "overlay_node_count": 100,
       "replaced_cascade_node_count": 100,
       "expected_accepted": false
+    },
+    {
+      "name": "zero_overlay_node_count_declines_never_fabricates",
+      "_comment": "0 trivially satisfies the naive ratio (0 <= cascade*0.5) but must decline -- a genuine overlay can never be 0 nodes; 0 signals a counting failure, not a real candidate, and must be treated like None/absent.",
+      "overlay_node_count": 0,
+      "replaced_cascade_node_count": 200,
+      "expected_accepted": false
     }
   ]
 }
