@@ -463,3 +463,86 @@ def test_overlay_node_count_reuses_the_already_compiled_tree_no_redundant_compil
         f"already compiled; observed plan_ids across all compile_plan calls "
         f"this run: {seen_plan_ids!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Fallback-path coverage (team-lead contract preservation, post-fold-in):
+# compiled_tree=None must NOT silently degrade to a missing operand -- it
+# must fall back to the ORIGINAL pure-compile-of-candidate path and still
+# produce a real (or honestly-None-on-failure) count. Direct unit tests on
+# _count_overlay_node_count itself (its concrete signature, confirmed against
+# fps-impl's f2611ee1 implementation), not the full orchestration -- these
+# were promised before fps-impl's signature was known and are added now that
+# it is.
+# ---------------------------------------------------------------------------
+
+
+def test_count_overlay_node_count_falls_back_to_fresh_compile_when_compiled_tree_is_none(
+    fbld,
+):
+    """Team-lead contract preservation: when compiled_tree is None/absent,
+    _count_overlay_node_count must fall back to the ORIGINAL pure-compile-of-
+    candidate path and return a real, correct count -- not silently degrade
+    to None just because the preferred input is unavailable. Expected count
+    is derived independently via the SAME plan_tree_compiler.compile_plan +
+    _count_tree_nodes chain the helper itself uses internally, never a
+    hand-typed literal."""
+    from advisors import plan_tree_compiler
+
+    candidate = {
+        "kind": "if",
+        "condition": {
+            "lhs_fn": "relative-strength-index",
+            "lhs_ticker": "SPY",
+            "window": 10,
+            "comparator": "gt",
+            "rhs": {"fixed": 81},
+        },
+        "then": [
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [{"kind": "asset", "ticker": "UVXY"}],
+            }
+        ],
+        "else": [
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [{"kind": "asset", "ticker": "CORE_ASSET_0001"}],
+            }
+        ],
+    }
+
+    # Derive the expected count independently via the SAME compile+count
+    # chain the helper uses -- never a hand-typed literal.
+    plan_envelope = {
+        "plan_id": "test-independent-derivation",
+        "objective": "cut_drawdown",
+        "name": "Test",
+        "rebalance": "daily",
+        "root": candidate,
+    }
+    compile_result = plan_tree_compiler.compile_plan(plan_envelope)
+    assert compile_result.tree is not None, "sanity: fixture candidate must compile"
+    compiled_children = compile_result.tree.get("children") or []
+    assert len(compiled_children) == 1
+    expected_count = fbld._count_tree_nodes(compiled_children[0])
+    assert expected_count > 0, "sanity: a real compiled overlay must have >0 nodes"
+
+    result = fbld._count_overlay_node_count(candidate, compiled_tree=None)
+    assert result == expected_count, (
+        f"expected the fallback pure-compile path to produce "
+        f"{expected_count} (derived independently from the same compile+"
+        f"count chain), got {result!r} -- compiled_tree=None must still "
+        f"fall back to compiling candidate fresh, not silently return None"
+    )
+
+
+def test_count_overlay_node_count_returns_none_when_fallback_compile_fails(fbld):
+    """D-1: when compiled_tree is None AND candidate is malformed/
+    uncompileable, the fallback path must degrade to None, never raise,
+    never fabricate a count."""
+    malformed_candidate = {"kind": "not-a-real-kind"}
+    result = fbld._count_overlay_node_count(malformed_candidate, compiled_tree=None)
+    assert result is None
