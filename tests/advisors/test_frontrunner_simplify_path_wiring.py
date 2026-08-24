@@ -213,7 +213,12 @@ def _expected_overlay_signal_logic_count(fbld_module, n_assets: int) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _build_real_cascade_via_detector(fbld_module, *, fire_hedge_ticker_count: int):
+def _build_real_cascade_via_detector(
+    fbld_module,
+    *,
+    fire_hedge_ticker_count: int,
+    continuation_placeholder_count: int | None = None,
+):
     """Returns (incumbent_symphony, cascade, expected_signal_logic_count).
 
     fire_hedge_ticker_count controls the SIGNAL LOGIC size: the fire/then
@@ -229,15 +234,23 @@ def _build_real_cascade_via_detector(fbld_module, *, fire_hedge_ticker_count: in
     detector's size-based fire/continuation split (frontrunner_detector.py:
     669-670) picks the SAME side as fire — mirroring a real symphony's shape
     (a small, genuine hedge overlay vs a much larger core allocation).
+
+    continuation_placeholder_count: explicit override (default None —
+    auto-computed with generous headroom above the fire branch). Exposed so
+    a caller can hold fire content IDENTICAL while varying ONLY the
+    continuation/stub padding size — the ADDENDUM A4 cross-module pin's
+    exact need (proving the signal-logic-only count is insensitive to
+    padding size).
     """
     from advisors import frontrunner_detector, symphony_schema
 
     fire_tickers = ["VIXY"] + [f"HEDGE_TICKER_{i:02d}" for i in range(fire_hedge_ticker_count)]
-    # Continuation must out-count the fire branch (by real node count) for
-    # the detector's size-based split to correctly identify fire as the
-    # smaller side — sized with generous headroom, never tuned to a
-    # knife-edge boundary.
-    continuation_placeholder_count = (len(fire_tickers) + 1) * 10
+    if continuation_placeholder_count is None:
+        # Continuation must out-count the fire branch (by real node count)
+        # for the detector's size-based split to correctly identify fire as
+        # the smaller side — sized with generous headroom, never tuned to a
+        # knife-edge boundary.
+        continuation_placeholder_count = (len(fire_tickers) + 1) * 10
 
     if_node = symphony_schema.make_if(
         symphony_schema.make_condition(
@@ -751,4 +764,255 @@ def test_unwrap_single_compiled_child_is_reachable_from_a_real_build_run(fbld):
     assert call_count["n"] >= 1, (
         "_unwrap_single_compiled_child was never called during a real build "
         "run -- the shared helper isn't wired into any consumer at all"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 ADDENDUM A1: every None-degradation path in
+# _count_overlay_node_count is currently SILENT (debug-only logging on the
+# outer except; no logging at all on the explicit `if x is None: return
+# None` branches) while the surrounding _run_build_for_symphony loop logs
+# every OTHER skip -- a future counting failure recreates "SIMPLIFY silently
+# unreachable" with zero operator-visible signal, the ORIGINAL CRITICAL
+# defect's exact survival mode. At least one None-degradation path must log
+# at WARNING with the reason.
+# ---------------------------------------------------------------------------
+
+
+def test_count_overlay_node_count_logs_a_warning_on_a_none_degradation_path(fbld, caplog):
+    """A compile failure on the fallback path (compiled_tree=None, a
+    malformed candidate) must emit a WARNING-level log record, not just the
+    outer except's DEBUG-level catch-all -- silent degradation here is
+    exactly how the CRITICAL finding's class of defect goes undetected in
+    production."""
+    import logging
+
+    malformed_candidate = {"kind": "not-a-real-kind"}
+    with caplog.at_level(logging.WARNING):
+        result = fbld._count_overlay_node_count(malformed_candidate, compiled_tree=None)
+
+    assert result is None, "sanity: the malformed candidate must still degrade to None"
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "_count_overlay_node_count degraded to None on a compile failure "
+        "but emitted NO warning-level log record -- a future counting "
+        "failure would silently recreate the CRITICAL defect's exact "
+        "survival mode (SIMPLIFY unreachable, zero operator-visible signal)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 ADDENDUM A2: an accepted OR rejected SIMPLIFY proposal's metrics
+# dict must carry BOTH overlay_node_count and replaced_cascade_node_count --
+# the evidence of its admission/rejection basis (same audit-trail-loss class
+# as audit #118 Findings D1/D2). Tests call _gate_and_accept_candidate
+# directly (mirroring test_frontrunner_gate_wiring.py's own AC-G2 pattern)
+# to isolate this from the full orchestration.
+# ---------------------------------------------------------------------------
+
+
+def test_gate_and_accept_candidate_persists_operands_in_metrics_on_accept(fbld):
+    """An ACCEPTED candidate's metrics dict must carry both delta-scoped
+    operands -- without this, an accepted proposal is indistinguishable
+    from one admitted on stale/wrong operands."""
+    shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    shared_result = _make_shaped_result(shape_pct, n_days=100)
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", return_value=shared_result),
+        patch(
+            "advisors.backtest_gate_engine.evaluate_candidate_batch",
+            return_value=_controlled_adopt_candidate_batch(),
+        ),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree={"step": "root", "children": []},
+            candidate_tree={"step": "root", "children": []},
+            overlay_node_count=15,
+            replaced_cascade_node_count=49,
+        )
+
+    assert accepted is True, f"fixture sanity: expected an accept, got metrics={metrics!r}"
+    assert metrics.get("overlay_node_count") == 15, (
+        f"accepted metrics is missing/wrong overlay_node_count: "
+        f"{metrics.get('overlay_node_count')!r} -- the admission basis is "
+        f"not recorded"
+    )
+    assert metrics.get("replaced_cascade_node_count") == 49, (
+        f"accepted metrics is missing/wrong replaced_cascade_node_count: "
+        f"{metrics.get('replaced_cascade_node_count')!r}"
+    )
+
+
+def test_gate_and_accept_candidate_persists_operands_in_metrics_on_gate_reject(fbld):
+    """A GATE-rejected candidate's metrics dict (AC-11's 'rejected item w/
+    reason+deltas') must ALSO carry both delta-scoped operands, not just
+    the pre-existing CAGR/MDD/node_count_delta deltas."""
+    from acceptance_gate import AcceptanceVerdict
+    from advisors.backtest_gate_engine import CandidateGateResult, GatedBatch
+
+    shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    shared_result = _make_shaped_result(shape_pct, n_days=100)
+
+    verdict = AcceptanceVerdict(
+        vetoes_passed=False, panel_score=None, panel_breakdown={}, decision="REJECT_VETO_FAILED"
+    )
+    rejected_gate_result = CandidateGateResult(
+        candidate_id="candidate",
+        verdict=verdict,
+        validation_days=20,
+        oos_alpha=-5.0,
+        caveats=[],
+        winner_p_adj=0.5,
+        rejection_reason="fdr_not_winner",
+    )
+    rejected_batch = GatedBatch(
+        results=[rejected_gate_result], survivors=[], n_candidates=1, fdr_q=0.05
+    )
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", return_value=shared_result),
+        patch(
+            "advisors.backtest_gate_engine.evaluate_candidate_batch",
+            return_value=rejected_batch,
+        ),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree={"step": "root", "children": []},
+            candidate_tree={"step": "root", "children": []},
+            overlay_node_count=15,
+            replaced_cascade_node_count=49,
+        )
+
+    assert accepted is False, f"fixture sanity: expected a gate reject, got {metrics!r}"
+    assert metrics.get("overlay_node_count") == 15, (
+        f"gate-rejected metrics is missing/wrong overlay_node_count: "
+        f"{metrics.get('overlay_node_count')!r}"
+    )
+    assert metrics.get("replaced_cascade_node_count") == 49, (
+        f"gate-rejected metrics is missing/wrong replaced_cascade_node_count: "
+        f"{metrics.get('replaced_cascade_node_count')!r}"
+    )
+
+
+def test_gate_and_accept_candidate_persists_operands_in_metrics_on_calmar_reject(fbld):
+    """A CALMAR-rejected candidate (gate survived, acceptance clause
+    declined) must ALSO carry both delta-scoped operands."""
+    incumbent_shape = [0.20, -0.05, 0.20, -0.10, 0.20, -0.03, 0.20, -0.08, 0.20, -0.02]
+    candidate_shape = [-0.20, -0.30, -0.25, -0.35, -0.15, -0.40, -0.20, -0.30, -0.25, -0.10]
+    incumbent_result = _make_shaped_result(incumbent_shape, n_days=100)
+    candidate_result = _make_shaped_result(candidate_shape, n_days=100)
+
+    call_count = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        return incumbent_result if call_count["n"] == 1 else candidate_result
+
+    with (
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_side_effect),
+        patch(
+            "advisors.backtest_gate_engine.evaluate_candidate_batch",
+            return_value=_controlled_adopt_candidate_batch(),
+        ),
+        patch("database.insert_dof_ledger_row"),
+    ):
+        accepted, metrics = fbld._gate_and_accept_candidate(
+            symphony_id="test-symphony-id",
+            incumbent_tree={"step": "root", "children": []},
+            candidate_tree={"step": "root", "children": []},
+            overlay_node_count=180,  # NOT materially smaller -- ratio fails
+            replaced_cascade_node_count=200,
+        )
+
+    assert accepted is False, f"fixture sanity: expected a Calmar reject, got {metrics!r}"
+    assert metrics.get("overlay_node_count") == 180, (
+        f"calmar-rejected metrics is missing/wrong overlay_node_count: "
+        f"{metrics.get('overlay_node_count')!r}"
+    )
+    assert metrics.get("replaced_cascade_node_count") == 200, (
+        f"calmar-rejected metrics is missing/wrong replaced_cascade_node_count: "
+        f"{metrics.get('replaced_cascade_node_count')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 ADDENDUM A4: cross-module pin on the detector seam -- after
+# RULING 1's fix, replaced_cascade_node_count must derive from the
+# cascade's condition+fire subtree and be INSENSITIVE to
+# _STUBBED_CORE_CONTINUATION padding SIZE. Without this pin, the metric is
+# load-bearing on an unpinned detector internal (the padding-size formula
+# in _build_cascade_overlay could change and this test would be the only
+# thing to notice a regression back toward size-sensitivity).
+# ---------------------------------------------------------------------------
+
+
+def test_replaced_cascade_signal_logic_count_is_insensitive_to_stub_padding_size(fbld):
+    """The SAME fire-branch content, detected with two DRAMATICALLY
+    different continuation/core padding sizes, must produce the SAME
+    signal-logic-only replaced_cascade_node_count through the REAL
+    orchestration wiring."""
+    from advisors import frontrunner_detector
+    from advisors.frontrunner_acceptance import evaluate_calmar_acceptance as _real_eval
+
+    small_padding_symphony, small_padding_cascade, expected = _build_real_cascade_via_detector(
+        fbld, fire_hedge_ticker_count=45, continuation_placeholder_count=500
+    )
+    large_padding_symphony, large_padding_cascade, expected_large = (
+        _build_real_cascade_via_detector(
+            fbld, fire_hedge_ticker_count=45, continuation_placeholder_count=5000
+        )
+    )
+    assert expected == expected_large, (
+        "fixture sanity: the test-local expected-value helper itself must "
+        "be insensitive to padding size (identical fire content) -- if not, "
+        "the fixture is broken, not the production code"
+    )
+
+    shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    shared_result = _make_shaped_result(shape_pct, n_days=100)
+
+    captured = []
+    for symphony, cascade in (
+        (small_padding_symphony, small_padding_cascade),
+        (large_padding_symphony, large_padding_cascade),
+    ):
+        with (
+            patch("symphony_logic.fetch_symphony_score", return_value=symphony),
+            patch(
+                "advisors.frontrunner_detector.detect_frontrunner_cascades",
+                return_value=frontrunner_detector.DetectionResult(cascades=[cascade]),
+            ),
+            _patched_fable(fbld, n_assets=12),
+            patch("advisors.composer_backtest_client.run_backtest", return_value=shared_result),
+            patch(
+                "advisors.backtest_gate_engine.evaluate_candidate_batch",
+                return_value=_controlled_adopt_candidate_batch(),
+            ),
+            patch(
+                "advisors.frontrunner_acceptance.evaluate_calmar_acceptance",
+                wraps=_real_eval,
+            ) as mock_acceptance,
+            patch("database.insert_frontrunner_proposal"),
+            patch("database.insert_dof_ledger_row"),
+            patch("database.insert_advisor_observation"),
+        ):
+            fbld._run_build_for_symphony("test-symphony-id")
+
+        assert mock_acceptance.called
+        _, call_kwargs = mock_acceptance.call_args
+        captured.append(call_kwargs.get("replaced_cascade_node_count"))
+
+    small_padding_result, large_padding_result = captured
+    assert small_padding_result == large_padding_result == expected, (
+        f"replaced_cascade_node_count differs by padding size alone -- "
+        f"small padding (500 leaves) produced {small_padding_result!r}, "
+        f"large padding (5000 leaves) produced {large_padding_result!r}, "
+        f"expected BOTH to equal {expected!r} (the fire-branch-only count, "
+        f"identical between the two fixtures) -- the denominator must be "
+        f"load-bearing on the fire branch alone, never on stub padding size"
     )

@@ -1032,3 +1032,62 @@ def test_simplify_declines_when_overlay_node_count_is_nan(facc):
     )
     assert result.accepted is False
     assert "simplification" not in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 ADDENDUM A3 (empirically verified, PR #128 review): _safe_float
+# catches only (TypeError, ValueError). overlay_node_count=10**400 raises
+# OverflowError (a real int too large to represent as a float) -- this
+# escapes _safe_float entirely, propagates up through evaluate_calmar_
+# acceptance's OWN outer except-all, and returns a BARE _rejected() with
+# candidate_sharpe/candidate_volatility/incumbent_calmar/candidate_calmar/
+# node_count_delta all NULLED -- even though incumbent/candidate metrics
+# were fully valid and these fields were genuinely computable. This is a
+# reporting-payload-loss bug, not just a wrong-accept-reject bug: a
+# legitimately-computed reject silently loses its audit trail.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_on_a_huge_int_overlay_without_losing_reporting_fields(facc):
+    """overlay_node_count=10**400 must still DECLINE (never accept), but the
+    reporting fields that were genuinely computable from valid incumbent/
+    candidate metrics (Sharpe, volatility, both Calmar figures, and
+    node_count_delta) must survive intact -- NOT fall through to the outer
+    except-all's bare _rejected() (which nulls everything). Expected values
+    are derived independently from the SAME fixture inputs, never
+    hardcoded."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+    expected_node_count_delta = 50 - 50
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=10**400,  # raises OverflowError inside float()
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, "a 10**400-node overlay must never be accepted"
+    assert "simplification" not in result.tags
+
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- the "
+        f"OverflowError escaped to the outer except-all's bare _rejected(), "
+        f"nulling reporting fields that were genuinely computable from valid "
+        f"metrics"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9), (
+        f"candidate_volatility was lost (got {result.candidate_volatility!r})"
+    )
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9), (
+        f"incumbent_calmar was lost (got {result.incumbent_calmar!r})"
+    )
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9), (
+        f"candidate_calmar was lost (got {result.candidate_calmar!r})"
+    )
+    assert result.node_count_delta == expected_node_count_delta, (
+        f"node_count_delta was lost (got {result.node_count_delta!r}, "
+        f"expected {expected_node_count_delta!r})"
+    )
