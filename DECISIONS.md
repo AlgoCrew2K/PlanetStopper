@@ -10534,3 +10534,42 @@ Independently re-run by this doc-writer at HEAD `8b0ad603` (not relaying the tea
 ### Reference (Revise round)
 
 `DE-CLOSED-BOUNCE-001` Revise round; same branch/worktree as the original cycle. Commit chain (continuing from `8b0ad603`): `d202f90e` (style, ruff-format fix on the original cycle's test file) -> `dfbcf032` (RED, generalized 3-row test + finding #4/#5 robustness fixes) -> `faebc986` (GREEN, findings #1/#2/#3) -> [this doc pass, bounce-doc]. Team: same as original cycle, code-review requested by team-lead via `/code-review` on PR #136.
+
+---
+
+## DE-CORR-DATE-ALIGN-001 — Correlations panel aligned per-symphony returns by list position, not calendar date (2026-08-25)
+
+Branch: `fix/correlation-date-alignment` | Base: `879218db` (#136, the closed-market cumulative-return bounce fix)
+
+### Root cause
+
+`app.py`'s `/ai-advisor` route assembly (`app.py:5711-5716`, pre-fix) called `analytics.compute_per_symphony_returns(_history, _sym_id)`, which returns `(dates_sorted, live_returns, shadow_returns)` — three parallel lists, chronologically sorted per symphony, with any day the symphony is absent simply omitted (`analytics.py:305-314`). The route kept only `live_returns`, discarding `dates_sorted`, and stored it as a plain `list[float]` in `_series_dict[_sym_id]`, then passed `_series_dict` straight to `correlation_diagnostic.compute_pairwise_correlations`.
+
+`compute_pairwise_correlations`'s `_extract_aligned_pairs` helper (`advisors/correlation_diagnostic.py:85-104`) has two alignment modes depending on input shape: a `dict[str, float]` aligns two series by shared date-key intersection; a plain `list[float]` aligns by raw index position instead. Because each symphony's return series is sparse and event-driven (only days that symphony recorded a `live_ret`/`f_ret` pair — an unrelated calendar per symphony), passing lists forced index-position alignment across calendars that don't correspond to each other: index 0 of symphony A's list and index 0 of symphony B's list are very often different real-world dates. For any book with more than one symphony, the Correlations panel was computing Pearson r across mismatched trading days rather than the same days — the estimate did not correspond to the systems' actual co-movement.
+
+`correlation_diagnostic.py` itself was correct in isolation — its dict-input path already implemented exactly the shared-date-key alignment this bug needed. The defect was entirely in `app.py`'s assembly, not the math module.
+
+### Why not caught
+
+`tests/app/test_correlations_tab.py` mocks `compute_pairwise_correlations` directly (`patch`es `advisors.correlation_diagnostic.compute_pairwise_correlations` with a `MagicMock`) rather than exercising the real function against the route's assembled input, so the positional-vs-date-keyed shape mismatch between `app.py`'s `_series_dict` construction and the function's actual alignment contract was never exercised end-to-end. Same failure class as this project's math audit finding ("formulas sound, wiring broken") — a correct producer module, an untested call-site assembly bug.
+
+### Fix
+
+`app.py:5711-5716` now builds `_series_dict[_sym_id] = dict(zip(_dates, _live_rets))` (type annotation updated to `dict[str, dict[str, float]]`, with a rationale comment), so `compute_pairwise_correlations` takes the dict-input branch of `_extract_aligned_pairs` and aligns each pair by shared calendar date. `correlation_diagnostic.py` is unchanged (0 diff) — the fix is purely the app.py call-site assembly.
+
+### Known follow-up (NOT fixed here)
+
+Even after date-keyed alignment, the correlation input remains each symphony's *exit-trigger-day* returns — a sparse, event-driven sample, not a daily-NAV series. Two symphonies only contribute an overlapping observation on a date where BOTH happened to record a trigger; days where one or both symphonies simply held are absent from either series entirely, not zero-filled. This is a materially different, selection-biased statistic from a true daily-NAV correlation and can understate or overstate real co-movement depending on which days each symphony's triggers cluster on. Whether to move to a daily-NAV-sourced series is a Phase-2 BASIS decision, out of scope for this bug fix — noted here so the record doesn't imply date-alignment alone makes the estimate a faithful daily-correlation number.
+
+### Files changed
+
+- `app.py` — `/ai-advisor` route's correlation-series assembly switched from positional `list[float]` to date-keyed `dict[str, float]` per symphony (+6/-2 lines).
+- `tests/app/test_correlations_date_alignment.py` (new, 2 tests: `test_correlations_route_aligns_pairs_by_calendar_date_not_position` — offset-5-day per-symphony trigger calendars, pins that positional alignment would pair unrelated dates; `test_correlations_route_fully_overlapping_dates_still_correlate_correctly` — regression pin for the fully-overlapping case).
+
+### Verification
+
+Independently re-run by this doc-writer at HEAD `6b164736` (not relaying the team's reported counts): `pytest tests/app/test_correlations_date_alignment.py tests/app/test_correlations_tab.py tests/ai_advisor/test_correlation_diagnostic_guards.py tests/ai_advisor/test_correlation_diagnostic_math.py -n0` — **46 passed, 1 skipped, 0 failed** (2 new alignment-fix tests + 9 route-context tests, unmodified and still green (still mocking `compute_pairwise_correlations`, so unaffected by this fix) + 35 correlation_diagnostic unit tests + 1 pre-existing documented skip, `test_alpha_bot_execution_does_not_import_correlation_diagnostic_at_runtime`, unrelated to this fix — "Full module import of alpha_bot_execution requires live environment"). `ruff check app.py tests/app/test_correlations_date_alignment.py` — all checks passed; `ruff format --check` on both — already formatted.
+
+### Reference
+
+Branch `fix/correlation-date-alignment`; worktree `.claude/worktrees/corr-align`; base `origin/main` @ `879218db` (#136). Commit chain: `c99bd845` (RED, `tests/app/test_correlations_date_alignment.py`) -> `6b164736` (GREEN, `app.py` assembly fix) -> [this doc pass, corr-doc]. Team: corr-test-writer (test-writer), corr-impl (implementer), corr-doc (this entry). Cross-links: math audit "formulas sound, wiring broken" finding (same class of bug — correct producer, untested call-site wiring).
