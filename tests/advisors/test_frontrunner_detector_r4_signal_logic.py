@@ -82,6 +82,8 @@ inequality true for ANY correct implementation, not a guessed number.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import pathlib
 
@@ -543,3 +545,199 @@ def test_dedicated_clause_aware_counter_genuinely_descends_compound_condition_cl
         f"condition clauses (both trees have IDENTICAL then/else "
         f"allocation content, so any equal-count result means it isn't)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Team-lead's refinement on option (a)/R4-1 (2026-08-24, after my padding-
+# preserving finding): "mirrors the selection logic" must not mean a SECOND
+# COPY of it. fps-impl must EXTRACT the fire-vs-continuation SELECTION
+# decision (same size-based split + qualification checks _compact_if_node
+# already performs) into ONE shared helper that BOTH _compact_if_node (for
+# compaction/padding) and the new signal_logic_node_count-computing
+# function (for exclusion) call -- each applies its OWN treatment to the
+# SAME selection result. This keeps _compact_if_node's tested padding
+# behavior untouched and kills the mirror-drift class (else-slot copies,
+# marker literals, oracle mirrors) this entire cycle has been eliminating.
+# ---------------------------------------------------------------------------
+
+
+def _find_shared_selection_helper(fd_module):
+    """Locate the shared fire/continuation selection helper under either
+    plausible name (fps-impl's naming choice) -- mirrors the same
+    getattr-fallback pattern the B3 counter-identity tests use elsewhere in
+    this cycle, so this test doesn't presuppose an exact name."""
+    return getattr(fd_module, "_select_fire_and_continuation", None) or getattr(
+        fd_module, "select_fire_and_continuation", None
+    )
+
+
+def test_shared_selection_helper_exists_and_is_a_real_callable(fd):
+    """The shared selection helper must exist as a real, callable, named
+    module-level function -- a prerequisite for the identity pin below (an
+    AttributeError here is the legitimate RED signal before it's added)."""
+    helper = _find_shared_selection_helper(fd)
+    assert helper is not None, (
+        "expected advisors.frontrunner_detector to expose the shared "
+        "fire/continuation SELECTION helper (name TBD by fps-impl, tried "
+        "_select_fire_and_continuation and select_fire_and_continuation) "
+        "-- team-lead's ruling: _compact_if_node's selection decision must "
+        "be extracted into ONE shared helper, not mirrored/duplicated by "
+        "the new signal_logic_node_count-computing function"
+    )
+    assert callable(helper), f"expected a callable, got {helper!r}"
+
+
+def test_compact_if_node_resolves_selection_through_the_shared_helper(fd):
+    """AST-based identity pin (team-lead: 'pin the identity where
+    practical'): _compact_if_node's own function body must contain a call
+    to the shared selection helper BY NAME (found via inspecting the
+    helper's real __name__ once located, never a guessed string) -- proving
+    _compact_if_node was refactored to CALL the shared helper, not that a
+    same-named-but-independently-implemented copy happens to exist
+    somewhere. Uses the exact same scoped-ast.walk-after-finding-the-
+    FunctionDef-by-name technique this project's own
+    tests/synthetic_history/test_bounded_replay_parallelism.py established
+    for an analogous single-source-of-truth call-site pin."""
+    helper = _find_shared_selection_helper(fd)
+    assert helper is not None, (
+        "the shared selection helper must exist before its call sites can "
+        "be verified -- see test_shared_selection_helper_exists_and_is_a_"
+        "real_callable"
+    )
+    helper_name = helper.__name__
+
+    module_path = inspect.getfile(fd)
+    tree = ast.parse(pathlib.Path(module_path).read_text(encoding="utf-8"))
+
+    compact_if_node_def = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_compact_if_node"
+        ),
+        None,
+    )
+    assert compact_if_node_def is not None, (
+        "_compact_if_node function definition not found in "
+        "frontrunner_detector.py's source -- ast.walk finds nested closures "
+        "too, so this should locate it regardless of whether it stays "
+        "nested inside _build_cascade_overlay"
+    )
+
+    calls_to_helper = [
+        node
+        for node in ast.walk(compact_if_node_def)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == helper_name)
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == helper_name)
+        )
+    ]
+    assert calls_to_helper, (
+        f"_compact_if_node's own body contains no call to "
+        f"{helper_name!r} (the shared selection helper) -- team-lead's "
+        f"ruling requires _compact_if_node to CALL the shared helper for "
+        f"its fire/continuation selection decision, never reimplement the "
+        f"same size-based split + qualification checks inline or in a "
+        f"second, independently-written copy"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Team-lead's iterative-convention ruling (2026-08-24, after I deprioritized
+# a deep-fixture stress test as impractical to construct): don't leave the
+# explicit-stack convention as prose-only -- an adversarial SOURCE-SCAN
+# pinning it structurally, mirroring this project's own established
+# blast-radius pattern (tests/synthetic_history/test_bounded_replay_
+# parallelism.py's no-bare-Parallel(-1) guard), is the enforceable form.
+# ---------------------------------------------------------------------------
+
+
+def _contains_self_recursive_call(func_def: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True if func_def's own body (excluding any NESTED function
+    definitions inside it, which have their own independent recursion
+    status) contains a Call node referencing func_def's own name."""
+    for node in ast.walk(func_def):
+        if node is not func_def and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            # A nested function's body is scanned by its OWN check, not
+            # folded into the outer function's self-recursion verdict.
+            continue
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = None
+            if isinstance(func, ast.Name):
+                name = func.id
+            elif isinstance(func, ast.Attribute):
+                name = func.attr
+            if name == func_def.name:
+                return True
+    return False
+
+
+def test_new_signal_logic_counter_and_shared_selection_helper_are_not_self_recursive(fd):
+    """Structural (AST-based) pin on the explicit-stack/iterative convention
+    this module already established for _count_nodes/_collect_tickers ("so
+    a very deep real tree never triggers RecursionError") -- the NEW
+    signal-logic-counting function (whichever tier-1-approved name fps-impl
+    picks: tried _count_clause_aware_signal_logic and
+    count_clause_aware_signal_logic, the same candidates the B3 identity
+    tests use) and the shared selection helper above must both be
+    implemented WITHOUT calling themselves by name (a genuine, naive Python
+    recursive call) -- an explicit-stack/worklist implementation is the
+    only pattern this checks passes; ordinary Python function recursion on
+    a self-referencing name does not.
+
+    Deliberately does NOT attempt to construct a fixture deep enough to
+    trigger an actual RecursionError (symphony_schema.make_if's own
+    copy.deepcopy hits Python's recursion ceiling around ~1000 levels
+    BEFORE such a fixture could even be built, and every real multi-tier
+    cascade across all 11 real fixtures tops out at 2 tiers of nesting) --
+    this is the STRUCTURAL, enforceable substitute team-lead's ruling asked
+    for instead."""
+    module_path = inspect.getfile(fd)
+    tree = ast.parse(pathlib.Path(module_path).read_text(encoding="utf-8"))
+
+    counter = getattr(fd, "_count_clause_aware_signal_logic", None) or getattr(
+        fd, "count_clause_aware_signal_logic", None
+    )
+    selection_helper = _find_shared_selection_helper(fd)
+
+    targets = {}
+    if counter is not None:
+        targets["the new signal-logic counter"] = counter.__name__
+    if selection_helper is not None:
+        targets["the shared selection helper"] = selection_helper.__name__
+
+    assert targets, (
+        "neither the new signal-logic counter nor the shared selection "
+        "helper exists yet under any of their candidate names -- this "
+        "test has nothing to check until at least one of them is "
+        "implemented (a legitimate RED-by-absence signal, matching this "
+        "cycle's other name-agnostic identity checks)"
+    )
+
+    for label, func_name in targets.items():
+        func_def = next(
+            (
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == func_name
+            ),
+            None,
+        )
+        assert func_def is not None, (
+            f"{label} ({func_name!r}) is importable from the module but its "
+            f"FunctionDef was not found by the SAME name in the module's own "
+            f"source AST -- unexpected mismatch between the runtime object "
+            f"and its source location"
+        )
+        assert not _contains_self_recursive_call(func_def), (
+            f"{label} ({func_name!r}, line {func_def.lineno}) calls itself "
+            f"by name -- this project's established convention "
+            f"(_count_nodes/_collect_tickers, both explicitly iterative "
+            f"'so a very deep real tree never triggers RecursionError') "
+            f"requires an explicit-stack/worklist walk here too, never "
+            f"ordinary Python recursion"
+        )
