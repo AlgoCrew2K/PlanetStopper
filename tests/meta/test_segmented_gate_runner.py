@@ -458,6 +458,105 @@ def test_aggregate_scoped_reason_defaults_to_none_for_a_full_run():
     assert report.scoped_reason is None
 
 
+def test_aggregate_no_tests_chunk_does_not_fail_the_grand_verdict():
+    # A chunk whose directories were entirely deselected by the default
+    # marker filter (-m 'not live and not slow and not perf') exits
+    # pytest's own "no tests ran" code (5). That is NOT a test failure and
+    # must not drag an otherwise clean tree down to a gate FAIL.
+    results = [
+        _chunk_result(0, "PASS", counts={"passed": 100}),
+        _chunk_result(1, "NO_TESTS", counts={"deselected": 12}),
+    ]
+    report = gate.aggregate(results)
+    assert report.verdict == "PASS"
+
+
+def test_aggregate_all_no_tests_is_still_pass():
+    results = [_chunk_result(0, "NO_TESTS", counts={"deselected": 3})]
+    report = gate.aggregate(results)
+    assert report.verdict == "PASS"
+
+
+def test_aggregate_no_tests_does_not_mask_a_real_failure_elsewhere():
+    results = [
+        _chunk_result(0, "NO_TESTS", counts={"deselected": 3}),
+        _chunk_result(1, "FAIL", counts={"failed": 1}, node_ids=["tests/a/test_x.py::test_1"]),
+    ]
+    report = gate.aggregate(results)
+    assert report.verdict == "FAIL"
+
+
+# ---------------------------------------------------------------------------
+# _classify_chunk_outcome -- pure verdict classification extracted from
+# run_chunk, so the exit-code-5 "no tests ran"/deselected-only case (and the
+# rest of the PASS/FAIL/ERROR branching) is unit-testable without a real
+# subprocess.
+# ---------------------------------------------------------------------------
+
+
+def test_classify_chunk_outcome_exit_5_is_no_tests_even_with_no_summary():
+    # Literally zero items collected: no parseable summary line at all.
+    assert gate._classify_chunk_outcome(5, None) == "NO_TESTS"
+
+
+def test_classify_chunk_outcome_exit_5_is_no_tests_with_deselected_only_summary():
+    # Every collected item deselected by the default marker filter: pytest
+    # DOES print a parseable "N deselected in Xs" summary line here.
+    assert gate._classify_chunk_outcome(5, {"deselected": 12}) == "NO_TESTS"
+
+
+def test_classify_chunk_outcome_clean_pass():
+    assert gate._classify_chunk_outcome(0, {"passed": 10}) == "PASS"
+
+
+def test_classify_chunk_outcome_attributable_failure():
+    assert gate._classify_chunk_outcome(1, {"failed": 2, "passed": 8}) == "FAIL"
+
+
+def test_classify_chunk_outcome_no_summary_is_error():
+    assert gate._classify_chunk_outcome(1, None) == "ERROR"
+
+
+def test_classify_chunk_outcome_anomalous_returncode_is_error():
+    # returncode 2 ("interrupted") with a summary present -- never PASS.
+    assert gate._classify_chunk_outcome(2, {"passed": 5}) == "ERROR"
+
+
+def test_classify_chunk_outcome_returncode_1_with_zero_failed_is_error():
+    # Should not normally happen, but never silently call it PASS or FAIL.
+    assert gate._classify_chunk_outcome(1, {"passed": 5}) == "ERROR"
+
+
+# ---------------------------------------------------------------------------
+# _attach_psutil_process -- must degrade to None, never propagate, so one
+# bad chunk (dead pid by the time this runs) can't abort the whole gate.
+# ---------------------------------------------------------------------------
+
+
+class _FakePsutilError(Exception):
+    pass
+
+
+def test_attach_psutil_process_returns_none_when_psutil_unavailable(monkeypatch):
+    monkeypatch.setattr(gate, "psutil", None)
+    assert gate._attach_psutil_process(1234, "chunk 0") is None
+
+
+def test_attach_psutil_process_degrades_when_process_raises(monkeypatch):
+    def raising_process(pid):
+        raise gate.psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr(gate.psutil, "Process", raising_process)
+    result = gate._attach_psutil_process(99999, "chunk 0")
+    assert result is None
+
+
+def test_attach_psutil_process_returns_handle_on_success(monkeypatch):
+    sentinel = object()
+    monkeypatch.setattr(gate.psutil, "Process", lambda pid: sentinel)
+    assert gate._attach_psutil_process(1234, "chunk 0") is sentinel
+
+
 # ---------------------------------------------------------------------------
 # render_report -- a scoped (--only) run must never read as a full-tree PASS
 # ---------------------------------------------------------------------------
@@ -732,3 +831,56 @@ def test_kill_process_tree_noop_when_psutil_unavailable(monkeypatch):
     gate._kill_process_tree(parent)  # must not raise
     assert not parent.terminated
     assert not parent.killed
+
+
+# ---------------------------------------------------------------------------
+# main() exit codes -- 0 is reserved for a genuine full-tree PASS, 1 for a
+# genuine full-tree FAIL, and a --only scoped run ALWAYS returns 3 (its own
+# outcome) regardless of PASS/FAIL, so a wrapper keying on exit code alone
+# can never mistake a subset smoke run for a full-tree merge-gate verdict.
+#
+# run_chunk itself is monkeypatched out in every test here -- these tests
+# exercise main()'s own wiring/exit-code logic, never a real subprocess.
+# ---------------------------------------------------------------------------
+
+
+def _patch_discovery_and_run_chunk(monkeypatch, unit_name, chunk_verdict, counts):
+    fake_unit = gate.Unit(name=unit_name, paths=(unit_name,), file_count=1)
+    monkeypatch.setattr(gate, "discover_units", lambda root: [fake_unit])
+    monkeypatch.setattr(
+        gate,
+        "run_chunk",
+        lambda chunk, test_timeout, chunk_timeout: _chunk_result(
+            chunk.index, chunk_verdict, counts=counts
+        ),
+    )
+
+
+def test_main_returns_0_for_full_tree_pass(monkeypatch):
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "PASS", {"passed": 1})
+    assert gate.main(["--chunks", "1"]) == 0
+
+
+def test_main_returns_1_for_full_tree_fail(monkeypatch):
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "FAIL", {"failed": 1})
+    assert gate.main(["--chunks", "1"]) == 1
+
+
+def test_main_returns_0_for_full_tree_all_no_tests(monkeypatch):
+    # NO_TESTS chunks are PASS-equivalent for the grand verdict (see
+    # aggregate()) -- a fully-deselected tree is not a gate FAIL.
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "NO_TESTS", {"deselected": 1})
+    assert gate.main(["--chunks", "1"]) == 0
+
+
+def test_main_returns_3_for_scoped_pass_never_0(monkeypatch):
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/engine", "PASS", {"passed": 1})
+    assert gate.main(["--only", "tests/engine"]) == 3
+
+
+def test_main_returns_3_for_scoped_fail_too_never_1(monkeypatch):
+    # Even a scoped FAIL returns 3, not 1 -- the distinguishing signal is
+    # "this was scoped", not "did it pass"; a wrapper must never see 0 or 1
+    # from a --only invocation and mistake it for a full-tree result.
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/engine", "FAIL", {"failed": 1})
+    assert gate.main(["--only", "tests/engine"]) == 3

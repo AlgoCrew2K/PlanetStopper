@@ -119,7 +119,7 @@ class ChunkResult:
     counts: dict[str, int] | None
     node_ids: list[str]
     duration_s: float
-    verdict: str  # "PASS" | "FAIL" | "ERROR" | "TIMEOUT"
+    verdict: str  # "PASS" | "FAIL" | "ERROR" | "TIMEOUT" | "NO_TESTS"
     diagnostic_tail: str = ""
 
 
@@ -377,6 +377,30 @@ def _kill_process_tree(proc: psutil.Process) -> None:
             target.kill()
 
 
+def _attach_psutil_process(pid: int, context: str) -> psutil.Process | None:
+    """Best-effort `psutil.Process(pid)` that degrades to None instead of
+    propagating an exception.
+
+    A chunk that dies near-instantly (bad argv, an immediate import crash,
+    instant OOM) can exit before this runs, so the pid may already be gone
+    -- psutil.Process() raises NoSuchProcess rather than returning a handle.
+    Without this guard that exception would propagate out of run_chunk and
+    abort the WHOLE sequential gate on one bad chunk; instead this chunk
+    simply loses its tree-kill safety net (logged) and the gate continues.
+    """
+    if psutil is None:
+        return None
+    try:
+        return psutil.Process(pid)
+    except psutil.Error as exc:
+        print(
+            f"[gate] WARNING: could not attach psutil to {context}'s pid {pid} "
+            f"({exc}) -- no tree-kill safety net for it.",
+            file=sys.stderr,
+        )
+        return None
+
+
 def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResult:
     found, desc = _other_pytest_running()
     if found:
@@ -418,7 +442,7 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
         encoding="utf-8",
         errors="replace",
     )
-    ps_proc = psutil.Process(proc.pid) if psutil is not None else None
+    ps_proc = _attach_psutil_process(proc.pid, f"chunk {chunk.index}")
 
     try:
         stdout, stderr = proc.communicate(timeout=chunk_timeout)
@@ -449,42 +473,33 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
         )
     duration = time.monotonic() - start
 
-    # Defensive: even on a NORMAL completion, mop up any descendant process
-    # the test body may have left behind (e.g. a joblib/optuna worker pool
-    # that outlived its parent test) before the NEXT chunk starts. A no-op
-    # in the common case where nothing survived the parent pytest process.
+    # Best-effort mop-up after a NORMAL completion. By the time
+    # communicate() returns, the parent pytest process has already exited,
+    # so _kill_process_tree's proc.children(recursive=True) lookup here can
+    # only catch descendants still discoverable via that (now-dead)
+    # parent's pid -- it is NOT a guarantee against every reparented
+    # orphan. The real orphan-prevention guarantee is the TIMEOUT path
+    # above, where the parent is still alive and its full descendant tree
+    # is reliably enumerable. A worker pool that outlives a chunk's NORMAL
+    # completion indicates a leaky test in the suite itself (out of this
+    # gate's scope to fully catch) -- this is cheap insurance for the
+    # common case, not a guarantee.
     if ps_proc is not None:
         _kill_process_tree(ps_proc)
 
     combined = stdout + "\n" + stderr
     counts = parse_summary(combined)
     node_ids = extract_node_ids(combined)
+    verdict = _classify_chunk_outcome(proc.returncode, counts)
 
-    if counts is None:
-        # No parseable summary at all -- e.g. a conftest ImportError before
-        # collection ever completed. This is an opaque infra failure: never
-        # treat it as a false zero. Surface a diagnostic tail for a human.
-        tail = "\n".join(combined.splitlines()[-30:])
-        return ChunkResult(
-            chunk=chunk,
-            returncode=proc.returncode,
-            counts=None,
-            node_ids=node_ids,
-            duration_s=duration,
-            verdict="ERROR",
-            diagnostic_tail=tail,
-        )
-
-    failed = counts.get("failed", 0) + counts.get("errors", 0)
-    if proc.returncode == 0 and failed == 0:
-        verdict = "PASS"
-    elif proc.returncode == 1 and failed > 0:
-        # Attributable failure(s) -- node ids were extracted above.
-        verdict = "FAIL"
-    else:
-        # Anomalous combination (e.g. returncode 2 "interrupted", or counts
-        # that don't match the returncode) -- never silently call this PASS.
-        verdict = "ERROR"
+    diagnostic_tail = ""
+    if verdict == "ERROR":
+        # Either no parseable summary at all (e.g. a conftest ImportError
+        # before collection ever completed -- never treat that as a false
+        # zero) or an anomalous returncode/counts combination (e.g.
+        # returncode 2 "interrupted"). Either way, never silently call this
+        # PASS; surface a diagnostic tail for a human.
+        diagnostic_tail = "\n".join(combined.splitlines()[-30:])
 
     return ChunkResult(
         chunk=chunk,
@@ -493,8 +508,41 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
         node_ids=node_ids,
         duration_s=duration,
         verdict=verdict,
-        diagnostic_tail="" if verdict != "ERROR" else "\n".join(combined.splitlines()[-30:]),
+        diagnostic_tail=diagnostic_tail,
     )
+
+
+def _classify_chunk_outcome(returncode: int, counts: dict[str, int] | None) -> str:
+    """Pure classification of a completed chunk subprocess into a verdict
+    string, given its pytest exit code and parsed summary counts (or None).
+    Extracted out of run_chunk so this branching is unit-testable without a
+    real subprocess. Never returns "TIMEOUT" -- that verdict is assigned by
+    run_chunk's own TimeoutExpired handler before this function is reached.
+
+    returncode 5 is pytest's own "no tests ran" exit code. It fires both
+    when literally zero items were collected AND when every collected item
+    was deselected by the project's default marker filter (addopts:
+    -m 'not live and not slow and not perf') -- e.g. a chunk directory made
+    up entirely of @pytest.mark.live tests legitimately runs nothing under
+    that filter. Neither case is a test FAILURE: without this branch, such
+    a chunk would fall through to the "matches neither PASS nor FAIL" ERROR
+    branch below and downgrade an otherwise completely clean tree to a gate
+    FAIL. NO_TESTS is distinct from PASS (nothing was actually verified),
+    but does not fail the grand verdict either -- see aggregate().
+    """
+    if returncode == 5:
+        return "NO_TESTS"
+    if counts is None:
+        return "ERROR"
+    failed = counts.get("failed", 0) + counts.get("errors", 0)
+    if returncode == 0 and failed == 0:
+        return "PASS"
+    if returncode == 1 and failed > 0:
+        # Attributable failure(s) -- node ids were extracted by the caller.
+        return "FAIL"
+    # Anomalous combination (e.g. returncode 2 "interrupted", or counts
+    # that don't match the returncode) -- never silently call this PASS.
+    return "ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +566,15 @@ _DURATION_TRAILER_RE = re.compile(r"\bin\s+[\d.]+s\b")
 # (pytest node ids essentially never contain the literal " - " substring
 # themselves), and falls back to the full remainder of the line when no
 # such reason suffix exists at all.
+#
+# ACCEPTED LIMITATION (not fixed): a parametrized id containing a literal
+# " - " INSIDE its own brackets (e.g. "test_z[a - b]") still mis-splits at
+# that point, truncating the captured id. This is essentially never seen
+# in practice, and it does NOT affect the verdict -- the chunk's own
+# failed/error COUNTS (from parse_summary) are unaffected either way, so a
+# real failure is never missed. Only the id string surfaced in the
+# FAILING/ERRORING NODE IDS list (e.g. for a targeted rerun) would be
+# truncated for that rare case.
 _NODEID_RE = re.compile(r"^(?:FAILED|ERROR)\s+(.+?)(?:\s+-\s+.*)?$", re.MULTILINE)
 
 
@@ -571,7 +628,13 @@ def aggregate(results: list[ChunkResult], scoped_reason: str | None = None) -> G
             if node_id not in seen:
                 seen.add(node_id)
                 failing_node_ids.append(node_id)
-    verdict = "PASS" if results and all(r.verdict == "PASS" for r in results) else "FAIL"
+    # NO_TESTS is PASS-equivalent for the grand verdict: a chunk whose
+    # directories were entirely deselected (or genuinely empty) collected
+    # nothing to fail, and must not drag down an otherwise clean tree. It
+    # still shows as its own distinct verdict in the per-chunk table.
+    verdict = (
+        "PASS" if results and all(r.verdict in ("PASS", "NO_TESTS") for r in results) else "FAIL"
+    )
     return GateReport(
         results=results,
         totals=totals,
@@ -640,7 +703,10 @@ def main(argv: list[str] | None = None) -> int:
         "--only",
         type=str,
         default=None,
-        help="debug: run only units whose name contains this substring, as one chunk",
+        help=(
+            "debug: run only units whose name contains this substring, as one chunk. "
+            "Always exits 3 (never 0/1) -- a scoped run is never a full-tree verdict."
+        ),
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="print the chunk plan and execute nothing"
@@ -680,6 +746,14 @@ def main(argv: list[str] | None = None) -> int:
     ]
     report = aggregate(results, scoped_reason=scoped_reason)
     print(render_report(report))
+    if report.scoped_reason:
+        # Exit 0 is reserved for a genuine FULL-TREE pass. A --only run is
+        # marked in the printed report (see render_report), but text alone
+        # is not enough for a wrapper keying off "$? == 0" -- it gets its
+        # own distinct exit code for ANY outcome (PASS, FAIL, ERROR, ...),
+        # so it can never be mistaken for a full-tree merge-gate pass by
+        # exit code either.
+        return 3
     return 0 if report.verdict == "PASS" else 1
 
 
