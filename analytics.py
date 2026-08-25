@@ -1467,10 +1467,20 @@ def get_portfolio_today_change_floor_basis(vw_tc: dict) -> dict:
         paired guard_delta_vw when both are present, else vw_tc's raw
         if_held/dry_run passthrough (honest degradation, e.g. zero paired
         coverage -> dry_run=None).
+
+    Note (byte-identical to the pre-extraction inline logic): deliberately
+    does NOT float()-cast guard_delta or if_held, unlike the
+    get_portfolio_today_change_account_basis sibling above -- the values
+    already come back as floats from get_portfolio_today_change, and adding
+    a cast here would be a behavior change, not a pure extraction.
     """
     # `is not None`, not a truthiness check -- a genuine 0.0 guard delta must
-    # still trigger the re-derivation (mirrors get_portfolio_today_change_
-    # account_basis's identical guard, analytics.py above).
+    # still trigger the re-derivation. This is the same not-None DISCIPLINE
+    # (not a truthiness check) that get_portfolio_today_change_account_basis
+    # applies to its own paired-delta guard above -- not an identical guard:
+    # that sibling guards on the delta alone (if_held is handled by an
+    # earlier return) and float()-casts + scales by invested_frac; this
+    # helper guards on guard_delta AND if_held together, with no cast/scale.
     guard_delta = vw_tc.get("guard_delta_vw")
     if guard_delta is not None and vw_tc.get("if_held") is not None:
         return {"if_held": vw_tc["if_held"], "dry_run": vw_tc["if_held"] + guard_delta}

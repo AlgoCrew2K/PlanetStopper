@@ -1176,6 +1176,11 @@ def _old_inline_floor_logic(vw_tc: dict) -> dict:
     were byte-identical modulo variable names) -- the differential-invariance
     pin below asserts the new helper reproduces this exactly, so the
     extraction cannot have silently changed behavior.
+
+    Contract-of-record: this function must stay a VERBATIM copy of the
+    pre-extraction inline blocks -- never "fix" or refactor it to match the
+    helper. The differential pin proves helper == this reference; if this
+    reference drifts, the pin stops proving anything.
     """
     _floor_guard_delta = vw_tc.get("guard_delta_vw")
     if _floor_guard_delta is not None and vw_tc.get("if_held") is not None:
