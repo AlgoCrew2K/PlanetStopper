@@ -287,13 +287,13 @@ def test_build_argv_refuses_an_oversized_chunk():
 def test_only_empty_substring_is_refused():
     units = _units_from_counts(_REALISTIC_COUNTS)
     with pytest.raises(gate.OnlyFilterRefused):
-        gate.resolve_only_selection(units, "", target_chunks=6)
+        gate.resolve_only_selection(units, "")
 
 
 def test_only_whitespace_substring_is_refused():
     units = _units_from_counts(_REALISTIC_COUNTS)
     with pytest.raises(gate.OnlyFilterRefused):
-        gate.resolve_only_selection(units, "   ", target_chunks=6)
+        gate.resolve_only_selection(units, "   ")
 
 
 def test_only_substring_matching_every_unit_is_refused():
@@ -301,13 +301,13 @@ def test_only_substring_matching_every_unit_is_refused():
     # Every synthetic unit name is "tests/<x>", so "tests" matches all of
     # them -- exactly the whole-tree-collapse hazard this guard stops.
     with pytest.raises(gate.OnlyFilterRefused):
-        gate.resolve_only_selection(units, "tests", target_chunks=6)
+        gate.resolve_only_selection(units, "tests")
 
 
 def test_only_no_match_is_refused():
     units = _units_from_counts(_REALISTIC_COUNTS)
     with pytest.raises(gate.OnlyFilterRefused):
-        gate.resolve_only_selection(units, "nonexistent_zzz", target_chunks=6)
+        gate.resolve_only_selection(units, "nonexistent_zzz")
 
 
 def test_only_substring_matches_all_units_containing_it_not_just_exact_name():
@@ -316,48 +316,57 @@ def test_only_substring_matches_all_units_containing_it_not_just_exact_name():
     # non-obvious behaviour: callers who want exactly one directory must
     # pass the fully-qualified name to avoid the collision.
     units = _units_from_counts(_REALISTIC_COUNTS)
-    chunk = gate.resolve_only_selection(units, "engine", target_chunks=6)
+    chunk = gate.resolve_only_selection(units, "engine")
     assert {u.name for u in chunk.units} == {"tests/engine", "tests/math_engine"}
 
 
 def test_only_fully_qualified_name_matches_exactly_one_unit():
     units = _units_from_counts(_REALISTIC_COUNTS)
-    chunk = gate.resolve_only_selection(units, "tests/engine", target_chunks=6)
+    chunk = gate.resolve_only_selection(units, "tests/engine")
     assert [u.name for u in chunk.units] == ["tests/engine"]
 
 
 def test_only_broad_but_specific_match_within_ceiling_is_accepted():
     # "database" + "dashboard" would not match, but a genuinely large single
-    # dir near-but-under the ceiling should still be accepted.
+    # dir under the flat MAX_FILES_PER_CHUNK ceiling should still be
+    # accepted.
     units = _units_from_counts(_REALISTIC_COUNTS)
-    chunk = gate.resolve_only_selection(units, "tests/database", target_chunks=6)
+    chunk = gate.resolve_only_selection(units, "tests/database")
     assert [u.name for u in chunk.units] == ["tests/database"]
 
 
-def test_only_ceiling_never_exceeds_max_files_per_chunk():
-    # Purpose-built scenario: with the OLD formula (no clamp), fair_share *
-    # 1.25 exceeds MAX_FILES_PER_CHUNK, so resolve_only_selection would
-    # ACCEPT a selection that build_argv's hard ceiling would then REFUSE
-    # -- an ungraceful crash, not a clean --only refusal. The two ceilings
-    # must agree: this must now be refused HERE, cleanly.
+def test_only_ceiling_is_flat_never_scales_down_with_chunks():
+    # THE #1 fix: the ceiling used to be round(fair_share * 1.25), which
+    # SHRINKS as target_chunks rises. A legit 99-file directory (e.g. real
+    # "tests/advisors") would be refused at a high enough --chunks under
+    # the OLD formula even though resolve_only_selection no longer takes
+    # target_chunks at all -- there is nothing left to shrink the ceiling.
+    # This pins the ceiling as the flat MAX_FILES_PER_CHUNK regardless of
+    # how large or small the rest of the tree is.
     units = [
-        gate.Unit(name="tests/target", paths=("tests/target",), file_count=170),
-        gate.Unit(name="tests/other", paths=("tests/other",), file_count=542),
+        gate.Unit(name="tests/advisors", paths=("tests/advisors",), file_count=99),
+        gate.Unit(name="tests/rest", paths=("tests/rest",), file_count=10_000),
     ]
-    # total_files=712, target_chunks=4 -> fair_share=178, the OLD (uncapped)
-    # ceiling = round(178*1.25) = 222 -- would have ACCEPTED 170 files. The
-    # new ceiling = min(222, MAX_FILES_PER_CHUNK=150) = 150 -- refuses it.
-    with pytest.raises(gate.OnlyFilterRefused):
-        gate.resolve_only_selection(units, "tests/target", target_chunks=4)
+    chunk = gate.resolve_only_selection(units, "tests/advisors")
+    assert [u.name for u in chunk.units] == ["tests/advisors"]
 
 
-def test_only_ceiling_clamp_still_accepts_a_selection_under_150():
+def test_only_selection_exceeding_max_files_per_chunk_is_refused():
     units = [
-        gate.Unit(name="tests/target", paths=("tests/target",), file_count=140),
-        gate.Unit(name="tests/other", paths=("tests/other",), file_count=572),
+        gate.Unit(name="tests/huge", paths=("tests/huge",), file_count=gate.MAX_FILES_PER_CHUNK + 1)
     ]
-    chunk = gate.resolve_only_selection(units, "tests/target", target_chunks=4)
-    assert [u.name for u in chunk.units] == ["tests/target"]
+    with pytest.raises(gate.OnlyFilterRefused, match="MAX_FILES_PER_CHUNK"):
+        gate.resolve_only_selection(units, "tests/huge")
+
+
+def test_only_selection_at_exactly_the_ceiling_is_accepted():
+    units = [
+        gate.Unit(
+            name="tests/atceiling", paths=("tests/atceiling",), file_count=gate.MAX_FILES_PER_CHUNK
+        )
+    ]
+    chunk = gate.resolve_only_selection(units, "tests/atceiling")
+    assert [u.name for u in chunk.units] == ["tests/atceiling"]
 
 
 # ---------------------------------------------------------------------------
@@ -587,10 +596,14 @@ def test_aggregate_no_tests_chunk_does_not_fail_the_grand_verdict():
     assert report.verdict == "PASS"
 
 
-def test_aggregate_all_no_tests_is_still_pass():
+def test_aggregate_all_no_tests_is_not_pass():
+    # THE #2 fix: nothing was actually verified (every chunk deselected) --
+    # this must NEVER read as a grand PASS. A wrapper merging on exit 0
+    # would otherwise have verified nothing at all.
     results = [_chunk_result(0, "NO_TESTS", counts={"deselected": 3})]
     report = gate.aggregate(results)
-    assert report.verdict == "PASS"
+    assert report.verdict == "NO_TESTS"
+    assert report.verdict != "PASS"
 
 
 def test_aggregate_no_tests_does_not_mask_a_real_failure_elsewhere():
@@ -743,6 +756,15 @@ def test_build_argv_includes_at_least_one_explicit_path():
 def test_build_argv_includes_explicit_test_timeout():
     argv = gate.build_argv(_engine_chunk(), test_timeout=42)
     assert "--timeout=42" in argv
+
+
+def test_build_argv_includes_explicit_r_flag():
+    # THE #4 fold-in: extract_node_ids needs pytest's FAILED/ERROR
+    # short-summary lines, which only print under -ra/-rfE -- pin it
+    # explicitly rather than silently depending on the project's ini
+    # addopts (which could change without this tool noticing).
+    argv = gate.build_argv(_engine_chunk())
+    assert any(a.startswith("-r") for a in argv)
 
 
 # ---------------------------------------------------------------------------
@@ -1001,11 +1023,13 @@ def test_main_returns_1_for_full_tree_fail(monkeypatch):
     assert gate.main(["--chunks", "1"]) == 1
 
 
-def test_main_returns_0_for_full_tree_all_no_tests(monkeypatch):
-    # NO_TESTS chunks are PASS-equivalent for the grand verdict (see
-    # aggregate()) -- a fully-deselected tree is not a gate FAIL.
+def test_main_returns_exit_no_tests_for_full_tree_all_no_tests_never_0(monkeypatch):
+    # THE #2 fix: a fully-deselected tree verified nothing -- must NEVER
+    # exit 0 (a wrapper merging on that would have verified nothing).
     _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "NO_TESTS", {"deselected": 1})
-    assert gate.main(["--chunks", "1"]) == 0
+    result = gate.main(["--chunks", "1"])
+    assert result == gate.EXIT_NO_TESTS
+    assert result not in (gate.EXIT_PASS, gate.EXIT_FAIL)
 
 
 def test_main_returns_3_for_scoped_pass_never_0(monkeypatch):
@@ -1019,6 +1043,29 @@ def test_main_returns_3_for_scoped_fail_too_never_1(monkeypatch):
     # from a --only invocation and mistake it for a full-tree result.
     _patch_discovery_and_run_chunk(monkeypatch, "tests/engine", "FAIL", {"failed": 1})
     assert gate.main(["--only", "tests/engine"]) == 3
+
+
+def test_main_only_high_chunks_still_accepts_a_legit_directory(monkeypatch):
+    # THE #1 fix, end-to-end via the real CLI: --chunks must have ZERO
+    # influence on whether --only accepts a selection. Under the OLD
+    # formula, "--chunks 12" against the real ~712-file tree gave
+    # fair_share~59, ceiling~74 -- refusing a perfectly legit 99-file
+    # "tests/advisors". The flat MAX_FILES_PER_CHUNK ceiling accepts it
+    # regardless of --chunks.
+    units = _units_from_counts(_REALISTIC_COUNTS)
+    monkeypatch.setattr(gate, "discover_units", lambda root: units)
+    monkeypatch.setattr(
+        gate,
+        "run_chunk",
+        lambda chunk, test_timeout, chunk_timeout: _chunk_result(
+            chunk.index, "PASS", counts={"passed": 1}
+        ),
+    )
+    for high_chunks in ("12", "20"):
+        result = gate.main(["--only", "tests/advisors", "--chunks", high_chunks])
+        # EXIT_SCOPED(3) means it was accepted and actually ran; a refusal
+        # would have returned EXIT_CONFIG_ERROR(2) instead.
+        assert result == gate.EXIT_SCOPED, f"--chunks {high_chunks} wrongly refused tests/advisors"
 
 
 def test_main_returns_4_for_declined_run_with_no_real_failure(monkeypatch):
@@ -1267,6 +1314,42 @@ def test_main_releases_the_lock_after_a_normal_run(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# run_chunk verdict source -- THE #3 fix: counts/node-ids must come from
+# STDOUT ONLY, never a combined stdout+stderr stream. pytest writes its own
+# authoritative summary to stdout; a test/plugin that prints a
+# summary-shaped line to stderr AFTER pytest's real summary must never
+# override a genuinely failing chunk into a false PASS.
+# ---------------------------------------------------------------------------
+
+
+def test_run_chunk_verdict_uses_stdout_summary_never_stderr(monkeypatch):
+    monkeypatch.setattr(gate, "psutil", None)
+
+    class _FakePopen:
+        def __init__(self, argv, **kwargs):
+            self.pid = 555555
+            self.returncode = 1
+
+        def communicate(self, timeout=None):
+            # pytest's OWN real (failing) summary, on stdout.
+            stdout = "FAILED tests/x/test_z.py::test_real_failure\n3 failed, 5 passed in 2.00s\n"
+            # A test/plugin prints a summary-SHAPED line to stderr, dated
+            # AFTER pytest's real stdout summary in wall-clock terms (the
+            # combined-stream bug would see this as the LAST match).
+            stderr = "0 failed, 999 passed in 1.0s\n"
+            return stdout, stderr
+
+    monkeypatch.setattr(gate.subprocess, "Popen", _FakePopen)
+
+    chunk = gate.Chunk(index=0, units=[gate.Unit(name="tests/x", paths=("tests/x",), file_count=1)])
+    result = gate.run_chunk(chunk, test_timeout=900, chunk_timeout=60)
+
+    assert result.verdict == "FAIL"
+    assert result.counts == {"failed": 3, "passed": 5}
+    assert result.node_ids == ["tests/x/test_z.py::test_real_failure"]
+
+
+# ---------------------------------------------------------------------------
 # run_chunk TIMEOUT path -- the diagnostic tail must include stderr, not
 # just stdout (a hung test's traceback / pytest-timeout dump usually lands
 # on stderr). subprocess.Popen is monkeypatched with a synthetic fake --
@@ -1301,6 +1384,24 @@ def test_run_chunk_timeout_diagnostic_tail_includes_stdout_and_stderr(monkeypatc
     assert result.verdict == "TIMEOUT"
     assert "stdout tail marker" in result.diagnostic_tail
     assert "stderr traceback marker" in result.diagnostic_tail
+
+
+# ---------------------------------------------------------------------------
+# _declined_result -- the shared "declined to start" ChunkResult builder
+# used by both of run_chunk's pre-spawn refusal paths.
+# ---------------------------------------------------------------------------
+
+
+def test_declined_result_shape():
+    chunk = gate.Chunk(index=2, units=[gate.Unit(name="tests/x", paths=("tests/x",), file_count=1)])
+    result = gate._declined_result(chunk, "some reason")
+    assert result.chunk is chunk
+    assert result.verdict == "ERROR"
+    assert result.returncode is None
+    assert result.counts is None
+    assert result.node_ids == []
+    assert result.duration_s == 0.0
+    assert result.diagnostic_tail == "some reason"
 
 
 # ---------------------------------------------------------------------------

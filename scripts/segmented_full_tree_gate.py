@@ -86,7 +86,12 @@ SAFETY MODEL
   alongside it, so a wrapper can tell "declined/undetermined" from "tests
   failed" (a genuine failure always wins when both appear in the same
   run), 5 = a PLAIN --dry-run: nothing executed, so it must not share
-  exit 0 with a genuine full-tree PASS either.
+  exit 0 with a genuine full-tree PASS either, 6 = every chunk collected
+  and ran NOTHING (the whole tree's tests were deselected, or genuinely
+  empty) -- zero FAIL/ERROR, but zero real "passed" anywhere either, so
+  this must not be a false PASS: nothing was actually verified. A single
+  legitimately-empty chunk alongside others that genuinely ran and passed
+  is still a real PASS (0); it is only the ALL-empty tree that gets 6.
 """
 
 from __future__ import annotations
@@ -173,7 +178,7 @@ class GateReport:
     results: list[ChunkResult]
     totals: dict[str, int]
     failing_node_ids: list[str]
-    verdict: str
+    verdict: str  # "PASS" | "FAIL" | "NO_TESTS" -- see aggregate()
     # Set (e.g. "--only 'tests/engine'") when this report covers only a
     # --only-selected subset, never the whole tree. render_report() uses this
     # to mark the report unmistakably -- a scoped PASS must never be
@@ -265,7 +270,7 @@ def plan_chunks(units: list[Unit], target_chunks: int = DEFAULT_TARGET_CHUNKS) -
     return chunks
 
 
-def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int) -> Chunk:
+def resolve_only_selection(units: list[Unit], substring: str) -> Chunk:
     """Resolve --only into a single Chunk, or raise OnlyFilterRefused.
 
     --only matches units by substring on their name and runs the match as
@@ -274,16 +279,18 @@ def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int
     the whole tree into one uncapped "-n0" process, which is exactly the
     ~11.6k-item MemoryError-class failure this tool exists to prevent. So
     this refuses (raises, runs nothing) when the substring is empty/blank,
-    matches nothing, or the matched units together exceed one chunk's fair
-    share of the tree (with a 25% margin, but never above
-    MAX_FILES_PER_CHUNK) for the requested chunk count.
+    matches nothing, or the matched units together exceed MAX_FILES_PER_CHUNK.
 
-    The ceiling is clamped to MAX_FILES_PER_CHUNK so this can NEVER accept
-    a selection that build_argv()'s _validate_chunk_size() would then
-    refuse: with a small --chunks (e.g. 4 against the real ~712-file
-    tree), fair_share*1.25 alone can exceed 150, which would otherwise let
-    a >150-file selection through here only to crash ungracefully deeper
-    in the call stack. The two ceilings must always agree.
+    The ceiling is a FLAT MAX_FILES_PER_CHUNK -- NOT scaled by --chunks (it
+    used to be round(fair_share * 1.25), which SHRINKS as --chunks rises:
+    e.g. "--only tests/advisors --chunks 12" refused a perfectly legit
+    99-file directory because fair_share*1.25 alone dropped to ~74). This
+    guard's only job is to stop --only from collapsing the WHOLE tree into
+    one uncapped process; it is not meant to also mimic a normal run's
+    average chunk size. A flat ceiling also guarantees this can NEVER
+    accept a selection that build_argv()'s _validate_chunk_size() would
+    then refuse -- the two ceilings are the same constant, so they can
+    never disagree.
     """
     substring = substring.strip()
     if not substring:
@@ -294,16 +301,11 @@ def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int
     if not matched:
         raise OnlyFilterRefused(f"--only {substring!r} matched no units.")
 
-    total_files = sum(u.file_count for u in units)
-    fair_share = total_files / max(target_chunks, 1)
-    ceiling = min(max(1, round(fair_share * 1.25)), MAX_FILES_PER_CHUNK)
     matched_files = sum(u.file_count for u in matched)
-    if matched_files > ceiling:
+    if matched_files > MAX_FILES_PER_CHUNK:
         raise OnlyFilterRefused(
             f"--only {substring!r} matched {len(matched)} unit(s) / {matched_files} files, "
-            f"exceeding the single-chunk ceiling ({ceiling} files -- min of 1.25x the "
-            f"{fair_share:.0f}-file fair share of {total_files} total files across "
-            f"{target_chunks} chunks, and the hard MAX_FILES_PER_CHUNK={MAX_FILES_PER_CHUNK}). "
+            f"exceeding the single-chunk ceiling (MAX_FILES_PER_CHUNK={MAX_FILES_PER_CHUNK}). "
             "This guard exists specifically to stop --only from collapsing the whole tree into "
             "one uncapped process. Pass a more specific (e.g. fully-qualified 'tests/<dir>') "
             "substring."
@@ -317,11 +319,23 @@ def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int
 
 
 def build_argv(chunk: Chunk, test_timeout: int = DEFAULT_TEST_TIMEOUT_S) -> list[str]:
+    """Build this chunk's exact pytest invocation argv.
+
+    Order: safe-invocation guardrails first (_validate_chunk_size, then
+    the argv-shape checks in _validate_safe_argv), then the chunk's unit
+    paths, "-n0" (single process -- overrides the ini "-n 2"), "-q", an
+    explicit "-ra", and the per-test "--timeout". "-ra" is pinned
+    explicitly (not left to the project's ini addopts) because
+    extract_node_ids needs pytest's FAILED/ERROR short-summary lines,
+    which only print under -ra/-rfE -- without this, the rerun-id list
+    would silently go empty if the ini addopts ever changed, with no
+    error to signal it.
+    """
     _validate_chunk_size(chunk)
     argv = [sys.executable, "-m", "pytest"]
     for unit in chunk.units:
         argv.extend(unit.paths)
-    argv += ["-n0", "-q", f"--timeout={test_timeout}"]
+    argv += ["-n0", "-q", "-ra", f"--timeout={test_timeout}"]
     _validate_safe_argv(argv)
     return argv
 
@@ -335,6 +349,16 @@ def _validate_chunk_size(chunk: Chunk) -> None:
     holds even if a caller bypasses plan_chunks entirely. Raises rather
     than silently spawning an oversized single-process pytest run: the
     exact single-process MemoryError class this tool exists to prevent.
+
+    ACCEPTED LIMITATION: a single tests/ subdirectory (an atomic Unit,
+    never split -- see discover_units) that alone exceeds
+    MAX_FILES_PER_CHUNK declines the WHOLE gate run rather than being
+    sub-split file-by-file. No real directory exceeds ~99 files today, so
+    this is not currently reachable in practice. The response is
+    deliberately the safe one either way: decline cleanly, never spawn an
+    oversized process. Per-file unit-splitting (so an oversized directory
+    could still run, just across multiple sub-chunks) is a genuine future
+    enhancement, not addressed this cycle.
     """
     if chunk.file_count > MAX_FILES_PER_CHUNK:
         raise RuntimeError(
@@ -563,19 +587,42 @@ def _attach_psutil_process(pid: int, context: str) -> psutil.Process | None:
         return None
 
 
+def _declined_result(chunk: Chunk, msg: str) -> ChunkResult:
+    """Build a clean "declined to start" ChunkResult (verdict ERROR, zero
+    duration, no pytest ever spawned) and log it. Shared by run_chunk's two
+    pre-spawn refusal paths (a concurrent pytest already running; build_argv
+    itself refusing the chunk) so both produce the identical shape."""
+    print(f"[gate] REFUSING TO START chunk {chunk.index}: {msg}", file=sys.stderr)
+    return ChunkResult(
+        chunk=chunk,
+        returncode=None,
+        counts=None,
+        node_ids=[],
+        duration_s=0.0,
+        verdict="ERROR",
+        diagnostic_tail=msg,
+    )
+
+
 def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResult:
+    """Run one chunk's pytest invocation to completion in a fresh
+    subprocess and classify the outcome into a ChunkResult.
+
+    Sequence: refuse to start if another pytest is already running or
+    build_argv refuses this chunk (both -> a clean declined ChunkResult,
+    never a crash); spawn via Popen (not subprocess.run -- see the inline
+    comment below for why) with the chunk's own fresh temp DB; on a
+    wall-clock TIMEOUT, kill the chunk's ENTIRE process tree (not just the
+    immediate pytest process -- a test body can fork its own worker pool
+    even under "-n0") and report TIMEOUT; on normal completion, do the
+    same tree-kill as best-effort insurance, then classify the verdict
+    from STDOUT ONLY (never stderr -- see the inline comment where counts
+    are parsed) via _classify_chunk_outcome.
+    """
     found, desc = _other_pytest_running()
     if found:
-        msg = f"Refused to start: another pytest process detected ({desc})."
-        print(f"[gate] REFUSING TO START chunk {chunk.index}: {msg}", file=sys.stderr)
-        return ChunkResult(
-            chunk=chunk,
-            returncode=None,
-            counts=None,
-            node_ids=[],
-            duration_s=0.0,
-            verdict="ERROR",
-            diagnostic_tail=msg,
+        return _declined_result(
+            chunk, f"Refused to start: another pytest process detected ({desc})."
         )
 
     try:
@@ -584,21 +631,11 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
         # Belt-and-suspenders: build_argv's own guards (_validate_chunk_size,
         # _validate_safe_argv) should already have been satisfied by the
         # caller (plan_chunks respects MAX_FILES_PER_CHUNK; --only's
-        # ceiling is clamped to agree with it) -- but if a FUTURE caller
-        # ever bypasses those, this must degrade to a clean declined
-        # verdict, never an unhandled traceback that crashes the whole
-        # sequential gate mid-run.
-        msg = f"Refused to start: {exc}"
-        print(f"[gate] REFUSING TO START chunk {chunk.index}: {msg}", file=sys.stderr)
-        return ChunkResult(
-            chunk=chunk,
-            returncode=None,
-            counts=None,
-            node_ids=[],
-            duration_s=0.0,
-            verdict="ERROR",
-            diagnostic_tail=msg,
-        )
+        # ceiling is the same flat constant) -- but if a FUTURE caller ever
+        # bypasses those, this must degrade to a clean declined verdict,
+        # never an unhandled traceback that crashes the whole sequential
+        # gate mid-run.
+        return _declined_result(chunk, f"Refused to start: {exc}")
     env = os.environ.copy()
     # Force each chunk's subprocess to get its OWN fresh temp DB via
     # conftest.py's pytest_configure(), rather than inheriting a value from
@@ -681,9 +718,17 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
     if ps_proc is not None:
         _kill_process_tree(ps_proc)
 
-    combined = stdout + "\n" + stderr
-    counts = parse_summary(combined)
-    node_ids = extract_node_ids(combined)
+    # Verdict-determining data (counts, node ids) comes from STDOUT ONLY --
+    # pytest writes its OWN authoritative summary/short-summary-info there.
+    # stderr is NEVER used for this: a test or plugin that prints a
+    # summary-shaped line to stderr (e.g. its own "0 failed, 999 passed in
+    # 1.0s") AFTER pytest's real stdout summary would otherwise become the
+    # LAST matching line parse_summary sees in a combined stream, silently
+    # overriding a genuinely failing chunk into a false PASS. stderr is
+    # display-only here -- folded into the diagnostic tail below, never
+    # the verdict.
+    counts = parse_summary(stdout)
+    node_ids = extract_node_ids(stdout)
     verdict = _classify_chunk_outcome(proc.returncode, counts)
 
     diagnostic_tail = ""
@@ -692,7 +737,9 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
         # before collection ever completed -- never treat that as a false
         # zero) or an anomalous returncode/counts combination (e.g.
         # returncode 2 "interrupted"). Either way, never silently call this
-        # PASS; surface a diagnostic tail for a human.
+        # PASS; surface a diagnostic tail for a human -- stdout+stderr here
+        # IS appropriate, this is display, not verdict.
+        combined = stdout + "\n" + stderr
         diagnostic_tail = "\n".join(combined.splitlines()[-30:])
 
     return ChunkResult(
@@ -841,6 +888,21 @@ def extract_node_ids(text: str) -> list[str]:
 
 
 def aggregate(results: list[ChunkResult], scoped_reason: str | None = None) -> GateReport:
+    """Fold every chunk's ChunkResult into one GateReport: summed counts
+    (only from chunks that actually parsed one -- an ERROR/TIMEOUT chunk's
+    missing counts are never silently treated as zero), the deduplicated
+    union of failing/erroring node ids in first-seen order, and the grand
+    verdict ("PASS" | "FAIL" | "NO_TESTS").
+
+    Grand PASS requires BOTH zero FAIL/ERROR/TIMEOUT chunks AND at least
+    one chunk that actually verified something (a real "passed" count > 0)
+    -- NOT merely "no chunk failed". A tree where every chunk's tests were
+    entirely deselected (marker filter mis-set, or the whole tree collects
+    zero items) verified NOTHING; that is a distinct "NO_TESTS" grand
+    verdict, never a false PASS. A single legitimately-empty chunk among
+    others that genuinely ran and passed does not trigger this -- only the
+    all-NO_TESTS-tree-wide case does. See main()'s EXIT_NO_TESTS.
+    """
     totals: dict[str, int] = {}
     failing_node_ids: list[str] = []
     seen: set[str] = set()
@@ -852,13 +914,22 @@ def aggregate(results: list[ChunkResult], scoped_reason: str | None = None) -> G
             if node_id not in seen:
                 seen.add(node_id)
                 failing_node_ids.append(node_id)
-    # NO_TESTS is PASS-equivalent for the grand verdict: a chunk whose
-    # directories were entirely deselected (or genuinely empty) collected
-    # nothing to fail, and must not drag down an otherwise clean tree. It
-    # still shows as its own distinct verdict in the per-chunk table.
-    verdict = (
-        "PASS" if results and all(r.verdict in ("PASS", "NO_TESTS") for r in results) else "FAIL"
+
+    has_fail_or_error = any(r.verdict in ("FAIL", "ERROR", "TIMEOUT") for r in results)
+    any_real_pass = any(
+        r.verdict == "PASS" and r.counts and r.counts.get("passed", 0) > 0 for r in results
     )
+    if not results or has_fail_or_error:
+        verdict = "FAIL"
+    elif any_real_pass:
+        verdict = "PASS"
+    else:
+        # No FAIL/ERROR/TIMEOUT anywhere, but nothing actually ran+passed
+        # either -- every chunk was NO_TESTS (or, more rarely, PASS with
+        # everything explicitly skipped rather than run). Never a false
+        # PASS: nothing was verified.
+        verdict = "NO_TESTS"
+
     return GateReport(
         results=results,
         totals=totals,
@@ -869,6 +940,12 @@ def aggregate(results: list[ChunkResult], scoped_reason: str | None = None) -> G
 
 
 def render_report(report: GateReport) -> str:
+    """Render a GateReport as the human-readable text this tool prints:
+    the scoped-run banner (if any), a per-chunk table, summed totals, the
+    deduplicated failing/erroring node-id rerun list, any ERROR/TIMEOUT
+    chunk's diagnostic tail, and the final VERDICT line -- unmistakably
+    marked as scoped when applicable, so it can never be read as a
+    full-tree merge-gate result."""
     lines: list[str] = []
     if report.scoped_reason:
         # A scoped (--only) run must never read as a full-tree verdict -- a
@@ -927,6 +1004,7 @@ EXIT_CONFIG_ERROR = 2
 EXIT_SCOPED = 3
 EXIT_DECLINED = 4
 EXIT_DRY_RUN = 5
+EXIT_NO_TESTS = 6
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -955,8 +1033,9 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "debug: run only units whose name contains this substring, as one chunk. "
-            "Always exits 3 (never 0/1), including with --dry-run -- a scoped run is "
-            "never a full-tree verdict."
+            "Exits 3 for a completed scoped run (including --dry-run) -- never 0/1, so it "
+            "can't be mistaken for a full-tree verdict -- except EXIT_DECLINED(4) if the "
+            "gate itself refuses to even start (e.g. a lockfile held by another instance)."
         ),
     )
     parser.add_argument(
@@ -976,7 +1055,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.only is not None:
         try:
-            chunks = [resolve_only_selection(units, args.only, target_chunks=args.chunks)]
+            chunks = [resolve_only_selection(units, args.only)]
         except OnlyFilterRefused as exc:
             print(f"[gate] REFUSED: {exc}", file=sys.stderr)
             return EXIT_CONFIG_ERROR
@@ -1029,6 +1108,13 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_SCOPED
     if report.verdict == "PASS":
         return EXIT_PASS
+    if report.verdict == "NO_TESTS":
+        # Every chunk verified NOTHING (tree-wide deselection, or the
+        # whole tree collects zero items) -- see aggregate(). Distinct
+        # from a genuine PASS so a wrapper never merges having verified
+        # nothing, and distinct from EXIT_DECLINED so it's clearly "the
+        # tree ran clean but empty," not "the gate itself refused to run."
+        return EXIT_NO_TESTS
     # FAIL: distinguish a genuine test/collection failure (a real reason to
     # BLOCK a merge) from the gate declining to run a chunk at all
     # (concurrent-pytest / oversized-chunk refusal -- pytest never even
