@@ -2387,6 +2387,9 @@ class ApprovalResult:
 # Composer's real asset-class enum for a symphony holdings/score tree, per
 # docs/research/composer/baseline__2026-05-12.md:86 ("asset_class":
 # "EQUITIES|CRYPTO|OPTIONS", verbatim from the holdings response schema).
+# Must stay consistent with composer_draft_client._DEFAULT_ASSET_CLASS /
+# the Composer create contract -- both currently hardcode "EQUITIES"
+# independently, with no shared source-of-truth reference between them.
 _COMPOSER_ASSET_CLASSES: tuple[str, ...] = ("EQUITIES", "CRYPTO", "OPTIONS")
 
 
@@ -2405,13 +2408,19 @@ def _resolve_draft_asset_class(candidate_tree: dict | None) -> str:
     Observability (Revise 2, /code-review round 1 F1/F2/F4): a WARNING is
     logged when a present, non-empty, in-shape value is discarded to the
     EQUITIES fallback (an out-of-enum top-level string, or a mixed/out-of-
-    enum asset_classes array), and again whenever the final derived result
-    is non-EQUITIES (CRYPTO/OPTIONS) -- live Composer acceptance of a
-    derived non-EQUITIES value is unverified pending an operator-gated
-    task-zero live-create test. The normal absent-key/empty-array/empty-
-    string cases and shape malformations (non-list asset_classes, non-
-    string top-level asset_class) stay silent -- those are absence, not a
-    discarded value.
+    enum asset_classes array OF STRINGS), and again whenever the final
+    derived result is non-EQUITIES (CRYPTO/OPTIONS) -- live Composer
+    acceptance of a derived non-EQUITIES value is unverified pending an
+    operator-gated task-zero live-create test. The normal absent-key/empty-
+    array/empty-string cases and shape malformations (non-list
+    asset_classes, an asset_classes array containing any non-string
+    element, non-string top-level asset_class) stay silent -- those are
+    absence/malformation, not a discarded value.
+
+    A present top-level `asset_class` string is DECISIVE once found, even
+    when out-of-enum (Revise 3, F1 real-bug fix) -- the `asset_classes`
+    array is never inspected once a present string exists, matching the
+    precedence rule above literally.
     """
     try:
         if not isinstance(candidate_tree, dict):
@@ -2433,13 +2442,26 @@ def _resolve_draft_asset_class(candidate_tree: dict | None) -> str:
                 "asset_class=%r, falling back to EQUITIES",
                 top_level,
             )
+            # F1 (Revise 3, real bug fix): a PRESENT top-level string is
+            # decisive even when out-of-enum -- the asset_classes array must
+            # NEVER be consulted once a present string was found (AC-4:
+            # "array consulted ONLY when top-level absent"). Must return
+            # here, not fall through.
+            return "EQUITIES"
 
         array = candidate_tree.get("asset_classes")
-        if isinstance(array, list) and array:
+        # F2 (Revise 3, semantics correction + robustness): a non-string
+        # element (unhashable or merely non-string) is a SHAPE MALFORMATION,
+        # same category as a non-list asset_classes or a non-string
+        # top-level asset_class -- silent EQUITIES fallback, no warning.
+        # `all(isinstance(x, str) ...)` is checked explicitly BEFORE dedup
+        # so this never relies on an uncaught TypeError from set(array) on
+        # an unhashable element falling through to the outer except.
+        if isinstance(array, list) and array and all(isinstance(x, str) for x in array):
             distinct = set(array)
             if len(distinct) == 1:
                 (only,) = distinct
-                if isinstance(only, str) and only in _COMPOSER_ASSET_CLASSES:
+                if only in _COMPOSER_ASSET_CLASSES:
                     if only != "EQUITIES":
                         logger.warning(
                             "_resolve_draft_asset_class: forwarding non-EQUITIES "
