@@ -2409,7 +2409,10 @@ def get_state():
                                 "dry_run": _snap_vw_tc["if_held"] + _snap_floor_guard_delta,
                             }
                         else:
-                            _snap_tc_final = _snap_vw_tc
+                            _snap_tc_final = {
+                                "if_held": _snap_vw_tc.get("if_held"),
+                                "dry_run": _snap_vw_tc.get("dry_run"),
+                            }
 
                     if _snap_account_cr is not None:
                         _snap_cr_final = analytics.get_portfolio_cumulative_return_account_basis(
