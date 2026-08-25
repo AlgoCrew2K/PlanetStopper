@@ -1437,6 +1437,46 @@ def get_portfolio_today_change_account_basis(
     return {"if_held": account_if_held_tc, "dry_run": dry_run_account}
 
 
+def get_portfolio_today_change_floor_basis(vw_tc: dict) -> dict:
+    """Tier-2 "no account totals" floor's Today's Change projection.
+
+    DE-HELD-BASIS-001 (FINDING-2/AC-5): when neither a warm account-totals
+    cache nor a last-good snapshot is available, app.py falls back to
+    rendering the value-weighted portfolio TC directly (get_portfolio_today_
+    change(..., include_paired_guard_delta=True)). Its raw dry_run is a
+    dry-run-ONLY-membership average, which mismatches if_held's full-
+    membership average on a coverage-gap day -- producing a phantom delta
+    even when true guard divergence is zero. This helper re-derives dry_run
+    from if_held + the paired guard_delta_vw (already coverage-scaled by
+    _value_weighted_portfolio) so both figures share full membership.
+    if_held is always passed through unchanged (the floor's own contract,
+    AC-6) -- only dry_run is re-derived.
+
+    Structural guarantee: the internal "guard_delta_vw" key must never leak
+    into a public JSON response (F6). This helper always constructs a FRESH
+    {"if_held", "dry_run"} dict -- it never returns vw_tc itself, so the
+    result is exactly 2 keys regardless of what vw_tc carries.
+
+    Args:
+        vw_tc: value-weighted portfolio TC dict, normally the output of
+               get_portfolio_today_change(..., include_paired_guard_delta=True).
+               May carry an internal "guard_delta_vw" key -- stripped here.
+
+    Returns:
+        {"if_held": vw_tc.get("if_held"), "dry_run": ...} -- if_held + the
+        paired guard_delta_vw when both are present, else vw_tc's raw
+        if_held/dry_run passthrough (honest degradation, e.g. zero paired
+        coverage -> dry_run=None).
+    """
+    # `is not None`, not a truthiness check -- a genuine 0.0 guard delta must
+    # still trigger the re-derivation (mirrors get_portfolio_today_change_
+    # account_basis's identical guard, analytics.py above).
+    guard_delta = vw_tc.get("guard_delta_vw")
+    if guard_delta is not None and vw_tc.get("if_held") is not None:
+        return {"if_held": vw_tc["if_held"], "dry_run": vw_tc["if_held"] + guard_delta}
+    return {"if_held": vw_tc.get("if_held"), "dry_run": vw_tc.get("dry_run")}
+
+
 # ---------------------------------------------------------------------------
 # get_history_with_cache_invalidation
 # ---------------------------------------------------------------------------

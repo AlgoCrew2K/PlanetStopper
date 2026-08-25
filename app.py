@@ -1647,24 +1647,10 @@ def _compute_portfolio_strip(
                     conn=conn,
                     include_paired_guard_delta=True,
                 )
-                # DE-HELD-BASIS-001 (FINDING-2/AC-5): the floor's rendered dry_run must
-                # be re-derived from the same paired-membership guard_delta_vw the
-                # account-basis path above uses — the raw dry-run-only-membership
-                # average (vw_tc["dry_run"]) mismatches vw_tc["if_held"]'s full
-                # membership, producing a phantom delta on a genuine zero-divergence
-                # coverage-gap day. if_held stays full-membership (AC-6, the Tier-2
-                # floor's own contract) — only dry_run is re-derived.
-                _floor_guard_delta = _vw_tc_floor.get("guard_delta_vw")
-                if _floor_guard_delta is not None and _vw_tc_floor.get("if_held") is not None:
-                    today_change = {
-                        "if_held": _vw_tc_floor["if_held"],
-                        "dry_run": _vw_tc_floor["if_held"] + _floor_guard_delta,
-                    }
-                else:
-                    today_change = {
-                        "if_held": _vw_tc_floor.get("if_held"),
-                        "dry_run": _vw_tc_floor.get("dry_run"),
-                    }
+                # DE-HELD-BASIS-001 (FINDING-2/AC-5): re-derive dry_run from the paired
+                # guard_delta_vw so it matches if_held's full membership (see
+                # analytics.get_portfolio_today_change_floor_basis docstring).
+                today_change = analytics.get_portfolio_today_change_floor_basis(_vw_tc_floor)
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
         # curve) when available. The value-weighted average of per-symphony MDDs is
@@ -2393,26 +2379,12 @@ def get_state():
                         # No TC basis at all (no cache, no last-good): fall back to VW
                         # (honesty signalled below via the Tier-2 basis marker), matching
                         # the CR branch + the plan's documented default. DE-HELD-BASIS-001
-                        # F5(a) (PR #125 review): unlike the CR branch, TC must re-derive
-                        # dry_run from if_held + the paired guard_delta_vw the SAME way the
-                        # live path's own Tier-2 floor does (app.py, above) — the raw VW
-                        # dict's dry_run/if_held use mismatched membership (dry-run-only vs
-                        # full), producing a phantom delta on a genuine zero-divergence
-                        # coverage-gap day. if_held stays full-membership (AC-6).
-                        _snap_floor_guard_delta = _snap_vw_tc.get("guard_delta_vw")
-                        if (
-                            _snap_floor_guard_delta is not None
-                            and _snap_vw_tc.get("if_held") is not None
-                        ):
-                            _snap_tc_final = {
-                                "if_held": _snap_vw_tc["if_held"],
-                                "dry_run": _snap_vw_tc["if_held"] + _snap_floor_guard_delta,
-                            }
-                        else:
-                            _snap_tc_final = {
-                                "if_held": _snap_vw_tc.get("if_held"),
-                                "dry_run": _snap_vw_tc.get("dry_run"),
-                            }
+                        # F5(a): mirror the live Tier-2 floor's paired guard_delta_vw
+                        # re-derivation (see
+                        # analytics.get_portfolio_today_change_floor_basis docstring).
+                        _snap_tc_final = analytics.get_portfolio_today_change_floor_basis(
+                            _snap_vw_tc
+                        )
 
                     if _snap_account_cr is not None:
                         _snap_cr_final = analytics.get_portfolio_cumulative_return_account_basis(
