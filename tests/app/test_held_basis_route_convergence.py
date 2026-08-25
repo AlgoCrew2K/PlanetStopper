@@ -878,7 +878,7 @@ class TestF6NoInternalKeyLeakage:
         )
 
     def test_api_state_tier2_floor_zero_paired_coverage_strips_guard_delta_vw_key(self, client):
-        """DE-FR-SIMPLIFY-002 (gdvw leak): the sibling test above only exercises
+        """DE-HELD-BASIS-001 F6 follow-up (guard_delta_vw /api/state leak): the sibling test above only exercises
         the Tier-2 floor's IF branch (app.py:1658 -- paired coverage present,
         `_floor_guard_delta is not None`), which already builds a clean fresh
         2-key dict. It never reaches the ELSE branch (app.py:1664), which does
@@ -925,7 +925,7 @@ class TestF6NoInternalKeyLeakage:
         )
 
     def test_frozen_tier2_floor_zero_paired_coverage_strips_guard_delta_vw_key(self, frozen_client):
-        """DE-FR-SIMPLIFY-002 follow-up (code-review finding): the frozen twin
+        """DE-HELD-BASIS-001 F6 follow-up (guard_delta_vw /api/state leak, code-review finding): the frozen twin
         of the live-branch else-branch leak above. TestF5FrozenBranchConvergence's
         own sibling test (test_frozen_tier2_floor_uses_coverage_scaled_delta_not_raw_vw_passthrough)
         only exercises the frozen Tier-2 floor's IF branch (app.py:2403-2410 --
