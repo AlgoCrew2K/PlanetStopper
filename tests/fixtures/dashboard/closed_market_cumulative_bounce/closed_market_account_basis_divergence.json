@@ -29,5 +29,17 @@
   "account_totals": {
     "portfolio_cr": 63.95,
     "portfolio_value": 10000.0
+  },
+  "shadow_history": {
+    "_provenance": "Schema-derived from database.py's shadow_history table (INSERT column set mirrors tests/app/test_held_basis_route_convergence.py's proven-working _insert_shadow_row helper: ts_utc/ts_et/trading_day/symphony_id/current_return/shadow_return; position_epoch/is_post_trigger left at their schema defaults). Needed because analytics.compute_windowed_symphony_guard_alpha (analytics.py:1939-1971) returns None -- not a bug, the documented AC-8b conservatism floor -- when a symphony has fewer than 2 in-window trading days of recorded shadow_history; the closed-market snapshot alone (accounts_map) carries no shadow_history rows. trading_day_offset_days is resolved to a REAL calendar date relative to datetime.now(UTC) AT TEST-RUN TIME (never a fixed calendar date) -- _window_cutoff_date (analytics.py:1840-1864) resolves its cutoff from the real wall clock, so a hardcoded date would silently age out of the 30d window as real time passes (the exact trap tests/analytics/test_windowed_strip.py's TestNeverTriggeredEveryWindow class documents).",
+    "_description": "bounce-sym-a diverges (shadow 3.5 vs current 3.0 on the more recent day) so its windowed guard alpha is a genuinely-nonzero real number; bounce-sym-b never diverges (shadow == current on both days) so its windowed guard alpha is a genuinely-computed 0.0 -- both are real floats, not None, so the portfolio-level VW guard_alpha resolves to a real number instead of the AC-8b insufficient-data None.",
+    "bounce-sym-a": [
+      {"trading_day_offset_days": 1, "shadow_return": 3.0, "current_return": 3.0},
+      {"trading_day_offset_days": 0, "shadow_return": 3.5, "current_return": 3.0}
+    ],
+    "bounce-sym-b": [
+      {"trading_day_offset_days": 1, "shadow_return": 1.0, "current_return": 1.0},
+      {"trading_day_offset_days": 0, "shadow_return": 1.0, "current_return": 1.0}
+    ]
   }
 }

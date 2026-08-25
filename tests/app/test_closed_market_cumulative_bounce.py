@@ -34,6 +34,8 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import sqlite3
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -86,6 +88,57 @@ def _seed_closed_market_snapshot(fixture: dict) -> None:
         "accounts_map": accounts_map,
     }
     database_module.save_state(state)
+
+
+def _seed_windowed_shadow_history(fixture: dict) -> None:
+    """Seeds shadow_history rows so analytics.compute_windowed_symphony_guard_alpha
+    (analytics.py:1939-1971, called via compute_windowed_portfolio_strip inside the
+    fix) resolves a REAL number instead of None -- the documented AC-8b
+    conservatism floor when a symphony has fewer than 2 in-window trading days
+    of recorded divergence (analytics.py:1953-1959). The closed-market snapshot
+    alone (accounts_map) carries no shadow_history rows, so without this seed
+    the portfolio-level guard_alpha is honestly None regardless of whether the
+    fix is correct -- a fixture gap, not a code defect (see fixture's own
+    "shadow_history" provenance note).
+
+    trading_day is resolved to a REAL calendar date relative to
+    datetime.now(UTC) AT TEST-RUN TIME, never a fixed calendar date --
+    analytics._window_cutoff_date (analytics.py:1840-1864) resolves its cutoff
+    from the real wall clock at call time, so a hardcoded date would silently
+    age out of the 30d window as real time passes (the exact trap
+    tests/analytics/test_windowed_strip.py's TestNeverTriggeredEveryWindow class
+    documents and works around).
+
+    Column set mirrors tests/app/test_held_basis_route_convergence.py's proven-
+    working _insert_shadow_row helper (ts_utc/ts_et/trading_day/symphony_id/
+    current_return/shadow_return; position_epoch/is_post_trigger left at their
+    schema defaults -- NULL groups every row into one contiguous epoch, which
+    is what this fixture's 2-row-per-symphony shape wants).
+    """
+    today = datetime.now(UTC).date()
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    try:
+        for sym_id, rows in fixture["shadow_history"].items():
+            if sym_id.startswith("_"):
+                continue  # skip the "_provenance"/"description" metadata keys
+            for row in rows:
+                trading_day = (today - timedelta(days=row["trading_day_offset_days"])).isoformat()
+                conn.execute(
+                    "INSERT INTO shadow_history "
+                    "(ts_utc, ts_et, trading_day, symphony_id, current_return, shadow_return) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        f"{trading_day}T20:00:00Z",
+                        f"{trading_day}T20:00:00",
+                        trading_day,
+                        sym_id,
+                        row["current_return"],
+                        row["shadow_return"],
+                    ),
+                )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _recompute_vw_if_held(fixture: dict) -> float:
@@ -146,9 +199,20 @@ class TestClosedFrozenGuardAlphaPresence:
         This is the exact server-side precondition that fires index.js's
         fetchWindowedStrip fallback (index.js:169-170) on EVERY closed-market
         poll -- fixing this alone makes the client-side bounce unreachable.
+
+        Seeds shadow_history (via _seed_windowed_shadow_history) so the
+        windowed guard-alpha computation has >=2 in-window trading days per
+        symphony to resolve a REAL number -- without it, a correct fix would
+        still legitimately return None (AC-8b's documented conservatism
+        floor, analytics.py:1953-1959), which this test deliberately treats
+        as insufficient: a bare "None or numeric" check (matching the
+        open-path regression test below) would also pass a SHALLOW fix that
+        stubs the key without wiring real computation, so this test demands
+        proof the real windowed-analytics path is reached end-to-end.
         """
         fixture = _load("closed_market_account_basis_divergence")
         _seed_closed_market_snapshot(fixture)
+        _seed_windowed_shadow_history(fixture)
 
         resp = frozen_client.get("/api/state")
         assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
