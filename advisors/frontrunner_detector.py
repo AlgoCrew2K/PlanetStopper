@@ -707,14 +707,16 @@ def _compute_signal_logic_node_count(
 
     ``selection`` : tuple[dict, dict] | None
         Optional pre-computed ``_select_fire_and_continuation(if_node)``
-        result for THIS root ``if_node``, keyword-only. When supplied, it is
-        reused instead of deriving it again from scratch, so a caller that
-        already needs the same root-level selection for another purpose
-        never pays for it twice. Defaults to None, in which case this
-        function derives it itself exactly as before. Applies ONLY to the
-        root-level derivation above — every nested if-node the walk below
-        encounters still computes its own selection independently and never
-        inherits this one.
+        result for THIS root ``if_node``, keyword-only. When supplied AND
+        non-None, it is reused directly instead of deriving it again from
+        scratch — avoiding the redundant second root-level derivation on
+        the well-formed path. Defaults to None, in which case (or when the
+        caller's own derivation was already None, e.g. a malformed root)
+        this function derives it itself exactly as before — same eventual
+        result either way, just without the efficiency gain on that
+        degenerate path. Applies ONLY to the root-level derivation above —
+        every nested if-node the walk below encounters still computes its
+        own selection independently and never inherits this one.
 
     Returns ``None`` when ``if_node`` isn't a valid 2-child if-node —
     never fabricates a count for an unidentifiable shape."""
@@ -771,12 +773,14 @@ def _compute_fire_is_else_branch(
 
     ``selection`` : tuple[dict, dict] | None
         Optional pre-computed ``_select_fire_and_continuation(if_node)``
-        result for this SAME root node, keyword-only. When supplied, reused
-        instead of deriving it again — letting a caller that already
-        computed the identical root-level selection for another purpose
-        (e.g. the node count above) hand it in rather than pay for a second,
-        redundant derivation. Defaults to None, in which case this function
-        derives it itself exactly as before."""
+        result for this SAME root node, keyword-only. When supplied AND
+        non-None, reused directly instead of deriving it again — avoiding
+        the redundant second root-level derivation on the well-formed path
+        (e.g. when the caller already computed it for the node count
+        above). Defaults to None, in which case (or when the caller's own
+        derivation was already None, e.g. a malformed root) this function
+        derives it itself exactly as before — same eventual result either
+        way, just without the efficiency gain on that degenerate path."""
     if selection is None:
         selection = _select_fire_and_continuation(if_node)
     if selection is None:
@@ -1091,8 +1095,11 @@ def detect_frontrunner_cascades(tree: dict) -> DetectionResult:
                 # cleanup behavior.
                 continue
             # Root-level fire/continuation selection, derived once here and
-            # handed to both fields below instead of letting each one
-            # re-derive it independently on the same root_node. Neither
+            # handed to both fields below so each one reuses it rather than
+            # re-deriving it independently on the same root_node. On a
+            # malformed root where this is itself None, both fields still
+            # fall back to their own internal derivation — same result,
+            # just without the efficiency gain in that edge case. Neither
             # function's own nested-tier walk ever sees or inherits this
             # value — it is consumed only for each function's root-level
             # derivation.
