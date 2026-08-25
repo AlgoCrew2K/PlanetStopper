@@ -1266,6 +1266,61 @@ class TestF5FrozenBranchConvergence:
             f"got delta={delta} (today_change={today_change})"
         )
 
+    def test_frozen_tier2_floor_zero_paired_coverage_strips_guard_delta_vw_key(
+        self, frozen_client
+    ):
+        """DE-FR-SIMPLIFY-002 follow-up (code-review finding): the frozen twin
+        of the live-branch else-branch leak. The sibling test above
+        (test_frozen_tier2_floor_uses_coverage_scaled_delta_not_raw_vw_passthrough)
+        only exercises the frozen Tier-2 floor's IF branch (app.py:2403-2410 --
+        partial paired coverage present, `_snap_floor_guard_delta is not None`).
+        It never reaches the ELSE branch (app.py:2412), which does
+        `_snap_tc_final = _snap_vw_tc` -- a verbatim passthrough of the raw
+        analytics dict, still carrying the internal `guard_delta_vw` key,
+        structurally identical to the now-fixed live-branch bug at app.py:1664.
+
+        Zero paired coverage (no symphony has a same-trading-day shadow_history
+        row) makes analytics.get_portfolio_today_change's dry_run_weight == 0.0
+        (analytics.py:1178/1188-1190), so guard_delta_vw resolves None and the
+        frozen route falls into the ELSE branch -- reproducing the leak via
+        market_state == "closed_frozen", a routine after-hours state.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        # ONE snapshot symphony, valid weight + if_held -- but deliberately NO
+        # _insert_shadow_row call for it, and no other symphony seeded, so the
+        # portfolio-wide dry_run_weight is exactly 0.0 (mirrors the live-branch
+        # RED test's fixture, against the frozen snapshot shape instead).
+        _seed_frozen_snapshot_symphony(
+            "gdvw-frozen-tier2-else-a", name="GDVW Frozen Tier2 Else A", value=1000.0,
+            current_return=1.5,
+        )
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        assert data.get("market_state") == "closed_frozen"
+        today_change = (data.get("portfolio_strip") or {}).get("today_change") or {}
+        assert set(today_change.keys()) == {"if_held", "dry_run"}, (
+            f"gdvw leak FAIL (frozen twin): /api/state's frozen Tier-2-floor today_change must "
+            f"be exactly {{'if_held', 'dry_run'}} on the ZERO-PAIRED-COVERAGE else branch too -- "
+            f"got keys {sorted(today_change.keys())}. app.py's frozen else branch "
+            f"(`_snap_tc_final = _snap_vw_tc`) is a raw passthrough of the analytics dict, which "
+            f"still carries the internal 'guard_delta_vw' key when paired coverage is zero."
+        )
+        assert today_change["dry_run"] is None, (
+            "gdvw leak FAIL (frozen twin): zero paired coverage must propagate dry_run=None "
+            f"honestly, never fabricate a value -- got {today_change['dry_run']!r}."
+        )
+        # 1.5 is this test's OWN seeded current_return input (not a producer-computed
+        # value) -- with a single symphony, the VW if_held average collapses to that
+        # one input exactly; approx is defensive float-division slop only.
+        assert today_change["if_held"] == pytest.approx(1.5, abs=1e-9), (
+            f"gdvw leak FAIL (frozen twin): if_held must be preserved honestly from the "
+            f"floor's real number -- got {today_change['if_held']!r}, expected ~1.5."
+        )
+
 
 # ---------------------------------------------------------------------------
 # HELD-BASIS HARDENING -- proves the _frozen_route_clock mechanism holds at
