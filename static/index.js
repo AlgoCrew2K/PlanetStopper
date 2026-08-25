@@ -1002,23 +1002,25 @@
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
-        var rows = [
-            { id: 'today', deltaTestid: 'comp-today-delta', values: ps.today_change || {}, higherIsBetter: true },
-            { id: 'mdd',   deltaTestid: 'comp-mdd-delta',   values: ps.max_drawdown || {}, higherIsBetter: false }
-        ];
-        // F-014 + DE-CLOSED-BOUNCE-001: this row's SSR label reads "Cumulative ·
-        // lifetime" (templates/index.html:920) -- it must source the lifetime
-        // cumulative_return, and ONLY from a genuine /api/state poll payload (which
-        // always carries data_as_of, BL-4/DE-AUDIT-BL4-001 above). A windowed-strip
-        // payload (fetchWindowedStrip's /api/strip/<window> response) never carries
-        // data_as_of -- omitting the row entirely on that payload (rather than
-        // writing an honest-empty {}) leaves the last-correct DOM value alone
-        // instead of bouncing it to '--' and back on the next real poll. Applies
-        // uniformly to EVERY caller, including the window-picker click handler --
-        // a windowed value is wrong under a "lifetime" label regardless of who
-        // asked for the window change.
+        // DE-CLOSED-BOUNCE-001 (revise round, PR #136 finding #1): ALL THREE rows
+        // are built only from a genuine /api/state poll payload (which always
+        // carries data_as_of, BL-4/DE-AUDIT-BL4-001 above) -- not just 'cumulative'.
+        // A windowed-strip payload (fetchWindowedStrip's /api/strip/<window>
+        // response) never carries data_as_of and is on a different basis/scope for
+        // every row, not only the "Cumulative · lifetime"-labeled one (Today can be
+        // account-basis on a real poll vs always-VW on the windowed strip; MDD can
+        // be scoped to the snapshot's trading_day vs the picker's window) -- leaving
+        // `rows` empty on that payload (rather than writing an honest-empty {} per
+        // row) leaves every row's last-correct DOM value alone instead of bouncing
+        // it and back. Applies uniformly to EVERY caller, including the
+        // window-picker click handler.
+        var rows = [];
         if ('data_as_of' in ps) {
-            rows.splice(1, 0, { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true });
+            rows = [
+                { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
+                { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
+                { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
+            ];
         }
         rows.forEach(function (row) {
             // F-016: sentinelToNull's null result must survive to fmtPct (which has
@@ -1477,9 +1479,13 @@
             });
     }
 
-    // Re-window the hero headline VALUE + the three vs-rows for a window token.
-    // The windowed strip dict shares portfolio_strip's shape, so we reuse
-    // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
+    // Re-window the hero headline VALUE for a window token. The windowed strip
+    // dict shares portfolio_strip's shape, so we reuse renderGuardAlpha by
+    // wrapping it as a poll-style payload. DE-CLOSED-BOUNCE-001 (revise round):
+    // this wrapped payload never carries data_as_of, so updateComparisonRows'
+    // rows array construction is gated to skip ALL THREE comparison rows on it
+    // (see updateComparisonRows) — none of the three vs-rows re-window from this
+    // call; only the headline does.
     // Defined at IIFE scope (not inside DOMContentLoaded) so renderGuardAlpha can call
     // it as a frozen-path fallback — renderGuardAlpha is also at IIFE scope and the
     // DOMContentLoaded callback would be invisible from there.
@@ -1626,8 +1632,9 @@
                 _heroWindow = token;
                 var winLabel = document.getElementById('guard-alpha-window-label');
                 if (winLabel) winLabel.textContent = winLabelMap[testid] || btn.textContent;
-                // The picker drives EVERY metric: re-window the chart lines (fetch +
-                // _cumChart update) AND the headline VALUE + vs-rows (windowed strip).
+                // The picker drives the chart lines (fetch + _cumChart update) and the
+                // headline VALUE (windowed strip) -- NOT the three vs-rows, which stay
+                // gated to genuine /api/state polls only (DE-CLOSED-BOUNCE-001).
                 fetch('/api/hero-chart/' + token)
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
@@ -1645,8 +1652,10 @@
                     .catch(function () {
                         applyHeroWindow(_heroWindow);
                     });
-                // Re-window the headline guard-alpha VALUE + the three vs-rows so the
-                // label always matches the actual window (kills the F1 mislabel).
+                // Re-window the headline guard-alpha VALUE so the label always matches
+                // the actual window (kills the F1 mislabel). Does NOT re-window the
+                // three vs-rows (DE-CLOSED-BOUNCE-001) -- fetchWindowedStrip's payload
+                // never carries data_as_of, so updateComparisonRows leaves them alone.
                 fetchWindowedStrip(token);
                 // AC-2: the $-saved panel re-windows in lockstep with the rest of
                 // the hero instead of always showing the all-time sum.
