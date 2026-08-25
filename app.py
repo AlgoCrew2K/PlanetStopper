@@ -5708,11 +5708,15 @@ def ai_advisor_tab():
             base_dir=analytics._POST_MORTEMS_DIR
         )
         _sym_ids = analytics.list_available_symphonies(_history)
-        _series_dict: dict[str, list[float]] = {}
+        # Date-keyed (not positional-list) so compute_pairwise_correlations
+        # aligns each pair by shared calendar date, not raw list index —
+        # per-symphony series are sparse trigger-day returns with unrelated
+        # calendars, so positional alignment pairs unrelated dates.
+        _series_dict: dict[str, dict[str, float]] = {}
         for _sym_id in _sym_ids:
             _dates, _live_rets, _shadow = analytics.compute_per_symphony_returns(_history, _sym_id)
             if _live_rets:
-                _series_dict[_sym_id] = _live_rets
+                _series_dict[_sym_id] = dict(zip(_dates, _live_rets))
         correlation_matrix = _corr_diag.compute_pairwise_correlations(_series_dict)
         crisis_caveat = _corr_diag.CRISIS_CAVEAT
     except Exception:
