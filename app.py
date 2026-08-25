@@ -2495,6 +2495,39 @@ def get_state():
                     _acct_cr = _account_totals_cache.get("portfolio_cr")
                     if isinstance(_acct_cr, (int, float)):
                         _portfolio_strip["account_all_time_cr"] = _acct_cr
+
+                    # DE-CLOSED-BOUNCE-001: mirror the open path's own independently-
+                    # guarded default-window strip (app.py:1863-1881) so the closed
+                    # branch's portfolio_strip carries guard_alpha/window too. A null
+                    # guard_alpha here is what makes index.js's renderGuardAlpha fall
+                    # back to fetchWindowedStrip on every closed-market poll — this
+                    # block removes that trigger in the normal case. Deliberately its
+                    # own try/except (not folded into the surrounding try) so a
+                    # failure here can't discard the today_change/cumulative_return/
+                    # max_drawdown already computed above.
+                    try:
+                        _snap_default = analytics.compute_windowed_portfolio_strip(
+                            _snap_symphonies_list,
+                            _snap_bot_state,
+                            window=_DEFAULT_HERO_WINDOW,
+                            conn=_frozen_shadow_conn,
+                        )
+                        if isinstance(_snap_default, dict):
+                            _snap_ga = _snap_default.get("guard_alpha")
+                            _portfolio_strip["guard_alpha"] = (
+                                _snap_ga if isinstance(_snap_ga, (int, float)) else None
+                            )
+                            _snap_win = _snap_default.get("window", _DEFAULT_HERO_WINDOW)
+                            _portfolio_strip["window"] = (
+                                _snap_win if isinstance(_snap_win, str) else _DEFAULT_HERO_WINDOW
+                            )
+                            _snap_wcr = _snap_default.get("cumulative_return")
+                            if isinstance(_snap_wcr, dict):
+                                _portfolio_strip["windowed_cumulative_return"] = _snap_wcr
+                    except Exception:
+                        _daemon_log.error(
+                            "closed_frozen default-window strip failed", exc_info=True
+                        )
                 except Exception:
                     _portfolio_strip = {
                         "today_change": None,

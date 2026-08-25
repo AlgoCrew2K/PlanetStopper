@@ -158,12 +158,17 @@
         // which produces a fabricated -36.18% instead of the correct ~+0.90%.
         var guard_alpha = typeof ps.guard_alpha === 'number' ? ps.guard_alpha : null;
 
-        // Frozen-path fallback: the closed_frozen /api/state portfolio_strip is built
-        // inline (app.py ~line 1262) and does not call _compute_portfolio_strip, so
-        // guard_alpha and windowed_cumulative_return are absent.  /api/strip/<window>
-        // works in all market states.  Fetching it here populates both the headline
-        // (via the renderGuardAlpha call inside fetchWindowedStrip) and the cumulative
-        // row (via updateComparisonRows) with correct windowed VW values.
+        // DE-CLOSED-BOUNCE-001 fallback: guard_alpha can still be null here (e.g. the
+        // frozen path's own default-window strip computation failed, or
+        // weight_sum==0 leaves guard_alpha genuinely null on any path). /api/strip/
+        // <window> works in all market states, so fetching it backfills the
+        // headline (via the renderGuardAlpha call inside fetchWindowedStrip).
+        // It does NOT backfill the "Cumulative · lifetime" comparison row --
+        // updateComparisonRows structurally excludes that row from any payload
+        // lacking data_as_of, which this wrapped strip payload never carries (see
+        // updateComparisonRows' rows-array construction). A windowed value under a
+        // "lifetime" label would be wrong, so the row is left untouched rather than
+        // populated.
         // _fromStrip guard: compute_windowed_portfolio_strip can return guard_alpha:null
         // when weight_sum==0 (no symphonies). Without the guard that would loop forever.
         if (guard_alpha === null) {
@@ -998,14 +1003,23 @@
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
         var rows = [
-            { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-            // F-014: this row's SSR label reads "Cumulative · lifetime"
-            // (templates/index.html:920) -- it must source the lifetime
-            // cumulative_return only. Do NOT prefer a windowed value here; that
-            // clobbers the lifetime-labeled figure with a windowed one on every poll.
-            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
-            { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
+            { id: 'today', deltaTestid: 'comp-today-delta', values: ps.today_change || {}, higherIsBetter: true },
+            { id: 'mdd',   deltaTestid: 'comp-mdd-delta',   values: ps.max_drawdown || {}, higherIsBetter: false }
         ];
+        // F-014 + DE-CLOSED-BOUNCE-001: this row's SSR label reads "Cumulative ·
+        // lifetime" (templates/index.html:920) -- it must source the lifetime
+        // cumulative_return, and ONLY from a genuine /api/state poll payload (which
+        // always carries data_as_of, BL-4/DE-AUDIT-BL4-001 above). A windowed-strip
+        // payload (fetchWindowedStrip's /api/strip/<window> response) never carries
+        // data_as_of -- omitting the row entirely on that payload (rather than
+        // writing an honest-empty {}) leaves the last-correct DOM value alone
+        // instead of bouncing it to '--' and back on the next real poll. Applies
+        // uniformly to EVERY caller, including the window-picker click handler --
+        // a windowed value is wrong under a "lifetime" label regardless of who
+        // asked for the window change.
+        if ('data_as_of' in ps) {
+            rows.splice(1, 0, { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true });
+        }
         rows.forEach(function (row) {
             // F-016: sentinelToNull's null result must survive to fmtPct (which has
             // its own honest '--' branch for null) -- do NOT coerce to 0 here, that
