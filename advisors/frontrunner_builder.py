@@ -35,7 +35,9 @@ generate_candidate_overlay(signal_context: dict, *, n_attempts=...) -> Generatio
     preserved), and compiles it. Never raises (D-1) — degrades to
     ``.candidate=None, .error=<reason>``.
 
-splice_candidate_into_symphony(incumbent_symphony, incumbent_cascade, candidate, *, compiled_tree=None) -> dict | None
+splice_candidate_into_symphony(
+    incumbent_symphony, incumbent_cascade, candidate, *, compiled_tree=None
+) -> dict | None
     Replace the detected incumbent cascade subtree with the compiled candidate
     overlay inside a full copy of the incumbent symphony, re-validating via
     ``symphony_schema.validate_tree``. ``compiled_tree``, when supplied, is
