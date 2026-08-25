@@ -1661,7 +1661,10 @@ def _compute_portfolio_strip(
                         "dry_run": _vw_tc_floor["if_held"] + _floor_guard_delta,
                     }
                 else:
-                    today_change = _vw_tc_floor
+                    today_change = {
+                        "if_held": _vw_tc_floor.get("if_held"),
+                        "dry_run": _vw_tc_floor.get("dry_run"),
+                    }
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
         # curve) when available. The value-weighted average of per-symphony MDDs is
