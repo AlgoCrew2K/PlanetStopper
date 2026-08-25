@@ -924,9 +924,7 @@ class TestF6NoInternalKeyLeakage:
             f"number -- got {today_change['if_held']!r}, expected ~1.5."
         )
 
-    def test_frozen_tier2_floor_zero_paired_coverage_strips_guard_delta_vw_key(
-        self, frozen_client
-    ):
+    def test_frozen_tier2_floor_zero_paired_coverage_strips_guard_delta_vw_key(self, frozen_client):
         """DE-FR-SIMPLIFY-002 follow-up (code-review finding): the frozen twin
         of the live-branch else-branch leak above. TestF5FrozenBranchConvergence's
         own sibling test (test_frozen_tier2_floor_uses_coverage_scaled_delta_not_raw_vw_passthrough)
@@ -957,7 +955,9 @@ class TestF6NoInternalKeyLeakage:
         # portfolio-wide dry_run_weight is exactly 0.0 (mirrors the live-branch
         # RED test's fixture, against the frozen snapshot shape instead).
         _seed_frozen_snapshot_symphony(
-            "gdvw-frozen-tier2-else-a", name="GDVW Frozen Tier2 Else A", value=1000.0,
+            "gdvw-frozen-tier2-else-a",
+            name="GDVW Frozen Tier2 Else A",
+            value=1000.0,
             current_return=1.5,
         )
 
