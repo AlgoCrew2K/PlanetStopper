@@ -174,7 +174,29 @@ def _recompute_vw_if_held(fixture: dict) -> float:
 
 
 @pytest.fixture()
-def frozen_client(monkeypatch):
+def _clean_account_totals_cache():
+    """Code-review fix (PR #136 revise round, finding #4): clear the
+    module-global app_module._account_totals_cache / _account_totals_last_good
+    dicts BEFORE and AFTER every test, not just inside the two tests that
+    explicitly set them. Without this, a test that sets the cache (e.g.
+    TestClosedFrozenCumulativeReturnBasis's warm-cache test) can leak state
+    into a LATER test in the same pytest session that never touches the
+    cache itself (e.g. the guard_alpha presence/null tests) -- an
+    order-dependent flake risk the reviewer flagged. Composed into
+    frozen_client/open_client below so every test using either fixture gets
+    this for free without needing its own explicit clear() calls (the
+    per-test clear() calls that already exist stay -- harmless redundancy,
+    and they still matter for setting deterministic values within a test).
+    """
+    app_module._account_totals_cache.clear()
+    app_module._account_totals_last_good.clear()
+    yield
+    app_module._account_totals_cache.clear()
+    app_module._account_totals_last_good.clear()
+
+
+@pytest.fixture()
+def frozen_client(monkeypatch, _clean_account_totals_cache):
     monkeypatch.setattr(analytics_module, "DB_FILE", os.environ["DB_PATH"])
     monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen")
     app_module.app.config["TESTING"] = True
@@ -183,7 +205,7 @@ def frozen_client(monkeypatch):
 
 
 @pytest.fixture()
-def open_client(monkeypatch):
+def open_client(monkeypatch, _clean_account_totals_cache):
     monkeypatch.setattr(analytics_module, "DB_FILE", os.environ["DB_PATH"])
     monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
     app_module.app.config["TESTING"] = True
