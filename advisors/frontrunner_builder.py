@@ -2384,6 +2384,45 @@ class ApprovalResult:
     error: str | None = None
 
 
+# Composer's real asset-class enum for a symphony holdings/score tree, per
+# docs/research/composer/baseline__2026-05-12.md:86 ("asset_class":
+# "EQUITIES|CRYPTO|OPTIONS", verbatim from the holdings response schema).
+_COMPOSER_ASSET_CLASSES: tuple[str, ...] = ("EQUITIES", "CRYPTO", "OPTIONS")
+
+
+def _resolve_draft_asset_class(candidate_tree: dict | None) -> str:
+    """Derive the Composer asset_class for a draft symphony from its
+    candidate_tree. D-1 never-raises -- any malformed/None/non-dict tree or
+    internal read error degrades to "EQUITIES" (composer_draft_client's own
+    default), never propagated as an exception.
+
+    Precedence: a valid top-level `asset_class` string (case-exact member of
+    `_COMPOSER_ASSET_CLASSES`) always wins. Only when that's absent/non-
+    string/empty is the `asset_classes` array consulted -- a non-empty list
+    whose elements are all the SAME in-enum string is used; a mixed, empty,
+    or out-of-enum array falls back to EQUITIES.
+    """
+    try:
+        if not isinstance(candidate_tree, dict):
+            return "EQUITIES"
+
+        top_level = candidate_tree.get("asset_class")
+        if isinstance(top_level, str) and top_level in _COMPOSER_ASSET_CLASSES:
+            return top_level
+
+        array = candidate_tree.get("asset_classes")
+        if isinstance(array, list) and array:
+            distinct = set(array)
+            if len(distinct) == 1:
+                (only,) = distinct
+                if isinstance(only, str) and only in _COMPOSER_ASSET_CLASSES:
+                    return only
+
+        return "EQUITIES"
+    except Exception:
+        return "EQUITIES"
+
+
 def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
     """Operator-approved: create the candidate symphony in Composer as a NEW
     UNDEPLOYED symphony, verify zero-allocation, and mark the proposal
@@ -2501,6 +2540,8 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
             overlay_summary=proposal_metrics.get("overlay_summary"),
         )
 
+        asset_class = _resolve_draft_asset_class(candidate_tree)
+
         draft_result = composer_draft_client.save_symphony(
             name=name,
             description=description,
@@ -2508,6 +2549,7 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
             hashtag="#frontrunner",
             raw_value=candidate_tree,
             already_uploaded_symphony_id=proposal.get("created_symphony_id"),
+            asset_class=asset_class,
         )
 
         if not draft_result.success or not draft_result.symphony_id:
