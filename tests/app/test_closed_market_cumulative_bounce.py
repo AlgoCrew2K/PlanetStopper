@@ -256,6 +256,60 @@ class TestClosedFrozenGuardAlphaPresence:
 
 
 # ---------------------------------------------------------------------------
+# Negative-space companion (team-lead ruling, post-fixture-gap trace): a
+# production-realistic None guard_alpha (sparse/no shadow_history -- new
+# symphony, early in its window) must not break anything else on the strip.
+# This is legitimate server-side behavior, not a bug -- the client-side
+# splice-guard (tests/dashboard/test_closed_market_bounce_js.py) is what
+# protects the DOM when renderGuardAlpha's fallback fires on a genuinely-
+# null guard_alpha; see bounce-ux's visual-gate scenario #3 for that half.
+# ---------------------------------------------------------------------------
+
+
+class TestClosedFrozenNullGuardAlphaIsLegitimate:
+    def test_closed_frozen_null_guard_alpha_does_not_break_portfolio_strip_contract(self, frozen_client):
+        """A real closed-market snapshot can legitimately have < 2 in-window
+        shadow_history rows per symphony -- compute_windowed_symphony_guard_
+        alpha's AC-8b conservatism floor (analytics.py:1953-1959) then returns
+        None, and the portfolio-level VW guard_alpha (analytics.py:2055) is
+        honestly None too. This is NOT the bug: guard_alpha=None is a state
+        the server contract must tolerate without degrading any sibling field
+        or crashing the route -- it mirrors the open path's own pre-existing
+        "None or numeric" contract (TestOpenMarketNoRegression above).
+        """
+        fixture = _load("closed_market_account_basis_divergence")
+        _seed_closed_market_snapshot(fixture)
+        # Deliberately NOT calling _seed_windowed_shadow_history -- zero
+        # shadow_history rows reproduces the legitimate sparse-history state.
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, (
+            f"a None guard_alpha (insufficient shadow_history) must not crash the "
+            f"route; got {resp.status_code} {resp.get_data()!r}"
+        )
+        data = resp.get_json()
+        ps = data.get("portfolio_strip") or {}
+        assert ps.get("guard_alpha") is None, (
+            f"sanity: this scenario is meant to reproduce the genuine AC-8b "
+            f"None-floor (0 shadow_history rows); got "
+            f"guard_alpha={ps.get('guard_alpha')!r} -- if this is no longer None, "
+            f"the fixture/seeding assumptions this test relies on have changed "
+            f"and the test needs revisiting, not the assertion loosened."
+        )
+        assert ps.get("window") == app_module._DEFAULT_HERO_WINDOW, (
+            f"window must still echo even when guard_alpha is None (the windowed "
+            f"strip call doesn't raise just because one internal value is None); "
+            f"got {ps.get('window')!r}"
+        )
+        cr = ps.get("cumulative_return") or {}
+        assert cr.get("if_held") is not None, (
+            f"cumulative_return.if_held must stay populated when only guard_alpha "
+            f"degrades -- a None guard_alpha must not collaterally null out an "
+            f"independently-computed sibling field; got cumulative_return={cr!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Regression-guard PINS: the closed branch's cumulative_return basis-selection
 # contract (app.py:2449-2459 already does this correctly pre-fix -- written
 # honestly as pins, not fabricated RED, per the approved plan).
