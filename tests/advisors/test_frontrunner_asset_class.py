@@ -400,3 +400,144 @@ class TestApproveFrontrunnerProposalAssetClassWiring:
             "a malformed candidate_tree must still default asset_class to "
             f"EQUITIES, got {kwargs.get('asset_class')!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Observability revise (team-lead ruling, /code-review round 1 F1/F2/F4):
+# _resolve_draft_asset_class must WARN when (a) a present-but-unrecognized
+# value is discarded to the EQUITIES fallback, or (b) a non-EQUITIES result
+# is being forwarded to the draft-create path — while staying SILENT on the
+# normal absent-key case (6/11 real trees) and on garbage-shaped input
+# (non-list asset_classes, non-string top-level asset_class — both ruled
+# shape malformations, not "a real discarded value"). Return values are
+# UNCHANGED by this revise; every test below re-asserts the return value
+# alongside the log expectation. Placement: logging lives INSIDE
+# _resolve_draft_asset_class's existing try/except (team-lead ruling) — the
+# call site never sees enough information (absent vs. discarded) to make
+# this distinction itself. Pattern mirrors
+# test_frontrunner_simplify_path_wiring.py's existing caplog convention
+# (caplog.at_level(logging.WARNING) + filter on record.levelno).
+# ---------------------------------------------------------------------------
+
+
+class TestResolveDraftAssetClassObservability:
+    @pytest.mark.parametrize("bad_value", ["FUTURES", "Crypto", " CRYPTO"])
+    def test_warns_on_discard_when_top_level_string_is_present_but_unrecognized(
+        self, fbld, caplog, bad_value
+    ):
+        """F4: a real, present, non-empty asset_class string that just isn't
+        in the enum is being silently downgraded to EQUITIES — that must be
+        surfaced, naming the discarded value."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class({"asset_class": bad_value})
+
+        assert result == "EQUITIES", "return value must be unchanged by this revise"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warning_records, (
+            f"a present-but-unrecognized asset_class={bad_value!r} was silently "
+            "discarded to EQUITIES with NO warning-level log record"
+        )
+        assert any(bad_value in r.getMessage() for r in warning_records), (
+            f"the warning message must name the discarded value {bad_value!r} — "
+            f"got messages: {[r.getMessage() for r in warning_records]!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "bad_array", [["EQUITIES", "CRYPTO"], ["FOREX"]], ids=["mixed", "out_of_enum"]
+    )
+    def test_warns_on_discard_when_asset_classes_array_is_present_but_unusable(
+        self, fbld, caplog, bad_array
+    ):
+        """F4: a present, non-empty asset_classes array that's mixed or
+        out-of-enum is a real value being discarded, not an absence."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class({"asset_classes": bad_array})
+
+        assert result == "EQUITIES", "return value must be unchanged by this revise"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warning_records, (
+            f"a present-but-unusable asset_classes={bad_array!r} was silently "
+            "discarded to EQUITIES with NO warning-level log record"
+        )
+
+    @pytest.mark.parametrize(
+        "tree,expected",
+        [
+            ({"asset_class": "CRYPTO"}, "CRYPTO"),
+            ({"asset_class": "OPTIONS"}, "OPTIONS"),
+            ({"asset_classes": ["CRYPTO"]}, "CRYPTO"),  # array-derived, no top-level string
+        ],
+        ids=["top_level_crypto", "top_level_options", "array_derived_crypto"],
+    )
+    def test_warns_when_derived_result_is_non_equities(self, fbld, caplog, tree, expected):
+        """F1/F2: forwarding a non-EQUITIES asset_class to the draft-create
+        path is unverified against live Composer acceptance (deferred
+        operator-gated task-zero) — must be surfaced regardless of WHICH
+        code path derived it (top-level string vs. array fallback)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class(tree)
+
+        assert result == expected, "return value must be unchanged by this revise"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert warning_records, (
+            f"a non-EQUITIES result ({expected!r}) was derived and forwarded with "
+            "NO warning-level log record"
+        )
+        assert any(expected in r.getMessage() for r in warning_records), (
+            f"the warning message must name the forwarded value {expected!r} — "
+            f"got messages: {[r.getMessage() for r in warning_records]!r}"
+        )
+
+    @pytest.mark.parametrize(
+        "tree",
+        [
+            {"asset_class": "EQUITIES"},
+            {},
+            {"asset_classes": []},
+            {"asset_class": ""},
+        ],
+        ids=["valid_equities", "absent_both_keys", "empty_array", "empty_string"],
+    )
+    def test_does_not_warn_for_the_normal_equities_cases(self, fbld, caplog, tree):
+        """No noise on the normal case — 6/11 real trees hit the absent-key
+        path today and must never produce a warning. An empty array/string
+        are treated the same as absence (no "real value" was discarded)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class(tree)
+
+        assert result == "EQUITIES"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warning_records, (
+            f"expected NO warning for the normal case tree={tree!r}, got: "
+            f"{[r.getMessage() for r in warning_records]!r}"
+        )
+
+    @pytest.mark.parametrize("bad_value", [123, None, {"x": 1}, ["EQUITIES"]])
+    def test_does_not_warn_for_a_present_non_string_top_level_value_with_no_array(
+        self, fbld, caplog, bad_value
+    ):
+        """Team-lead ruling: a present-but-non-string top-level asset_class
+        is a SHAPE issue, not "a real value silently downgraded" — rule 1
+        only fires for a present STRING that isn't in the enum. Kept
+        separate from the normal-cases test above so this specific ruling
+        can be flipped independently if it's ever revised."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class({"asset_class": bad_value})
+
+        assert result == "EQUITIES"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warning_records, (
+            f"expected NO warning for a non-string top-level asset_class="
+            f"{bad_value!r} with no array, got: "
+            f"{[r.getMessage() for r in warning_records]!r}"
+        )
