@@ -159,6 +159,7 @@ from advisors.frontrunner_detector import (  # noqa: E402
     VIX_FAMILY_TICKERS,
     _collect_tickers,
     _count_clause_aware_signal_logic,
+    _select_fire_and_continuation,
 )
 
 _PCT_PLACEHOLDER = "%"
@@ -1113,44 +1114,51 @@ def _find_terminal_else_child(node: dict) -> dict | None:
 
 def _graft_incumbent_core(original_node: dict, compiled_node: dict) -> dict:
     """Return a deep copy of ``compiled_node`` with its TERMINAL else
-    (continuation) branch replaced by ``original_node``'s real else branch.
+    (continuation) branch replaced by ``original_node``'s real core branch.
 
     ``_replace_node_by_id`` swaps the WHOLE incumbent if-node (condition +
     real fire branch + real continuation/core branch, potentially thousands
     of nodes) for the candidate's compiled node, whose own terminal else
     branch is only the placeholder Fable was told to emit there. Grafting
-    the incumbent's real else-branch children back in before the replace
-    preserves the incumbent's core strategy content (RC#3): the result is
-    IF (rsi cascade) THEN (frontrunner hedge) ELSE (incumbent's real core) —
-    never a structurally-present-but-semantically-broken graft that only
-    happens to satisfy a ticker-presence check.
+    the incumbent's real core content back in before the replace preserves
+    the incumbent's core strategy content (RC#3): the result is IF (rsi
+    cascade) THEN (frontrunner hedge) ELSE (incumbent's real core) — never a
+    structurally-present-but-semantically-broken graft that only happens to
+    satisfy a ticker-presence check.
+
+    The real core is sourced from ``frontrunner_detector._select_fire_and_
+    continuation(original_node)``'s ``continuation_child`` — the SAME
+    size-based selection the detector itself uses to identify fire vs.
+    continuation — never an independent ``is-else-condition?`` search (the
+    splice polarity defect: on a normal-polarity cascade the continuation
+    child IS the ``is-else-condition?==True`` child, so this is unchanged
+    there; on an inverted-polarity cascade, where fire content genuinely
+    lands on the ``is-else==True`` side because it's the smaller branch,
+    this now correctly preserves the larger, non-fire side instead of
+    grafting the fire content in as if it were core).
 
     ``original_node`` is the untouched incumbent if-node (the cascade's own
     top-level, which — like the compiled candidate — has exactly one real
     continuation, at its own top-level else; frontrunner_detector never
     recurses tiers into 'else'). Never raises — a node shaped unexpectedly
-    (on either side) degrades to returning ``compiled_node`` unchanged
-    (deep-copied); this is the rare-exception path, not the common case, for
-    every real if/if_compound node this module's own compiler produces.
+    (on either side), or one where ``_select_fire_and_continuation`` can't
+    identify a fire/continuation pair, degrades to returning
+    ``compiled_node`` unchanged (deep-copied); this is the rare-exception
+    path, not the common case, for every real if/if_compound node this
+    module's own compiler produces.
     """
     grafted = copy.deepcopy(compiled_node)
     try:
-        original_else = next(
-            (
-                c
-                for c in original_node.get("children") or []
-                if isinstance(c, dict) and c.get("is-else-condition?") is True
-            ),
-            None,
-        )
+        selection = _select_fire_and_continuation(original_node)
+        original_core = selection[1] if selection is not None else None
         terminal_else = _find_terminal_else_child(grafted)
-        if original_else is not None and terminal_else is not None:
-            terminal_else["children"] = copy.deepcopy(original_else.get("children") or [])
+        if original_core is not None and terminal_else is not None:
+            terminal_else["children"] = copy.deepcopy(original_core.get("children") or [])
         else:
             logger.warning(
                 "_graft_incumbent_core: could not locate a graftable else slot "
                 "on %s side — incumbent core NOT preserved",
-                "original_node" if original_else is None else "compiled_node",
+                "original_node" if original_core is None else "compiled_node",
             )
     except Exception:
         logger.debug("_graft_incumbent_core: unexpected error", exc_info=True)
