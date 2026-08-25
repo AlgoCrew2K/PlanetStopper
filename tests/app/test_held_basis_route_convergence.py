@@ -877,6 +877,53 @@ class TestF6NoInternalKeyLeakage:
             f"never return the raw guard_delta_vw-carrying dict it computed from."
         )
 
+    def test_api_state_tier2_floor_zero_paired_coverage_strips_guard_delta_vw_key(self, client):
+        """DE-FR-SIMPLIFY-002 (gdvw leak): the sibling test above only exercises
+        the Tier-2 floor's IF branch (app.py:1658 -- paired coverage present,
+        `_floor_guard_delta is not None`), which already builds a clean fresh
+        2-key dict. It never reaches the ELSE branch (app.py:1664), which does
+        `today_change = _vw_tc_floor` -- a verbatim passthrough of the raw
+        analytics dict, still carrying the internal `guard_delta_vw` key.
+
+        Zero paired coverage (no symphony has a same-trading-day shadow_history
+        row) makes analytics.get_portfolio_today_change's dry_run_weight == 0.0
+        (analytics.py:1178/1188-1190), so guard_delta_vw resolves None and the
+        route falls into the ELSE branch -- reproducing the leak.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        # ONE symphony, valid weight + if_held (bot_state alone is enough --
+        # app.py:1504-1521 builds symphonies_list straight from bot_state) --
+        # but deliberately NO _insert_shadow_row call for it, and no other
+        # symphony seeded, so the portfolio-wide dry_run_weight is exactly 0.0.
+        _seed_live_bot_state_symphony(
+            "gdvw-tier2-else-a", name="GDVW Tier2 Else A", value=1000.0, current_return=1.5
+        )
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        today_change = (data.get("portfolio_strip") or {}).get("today_change") or {}
+        assert set(today_change.keys()) == {"if_held", "dry_run"}, (
+            f"gdvw leak FAIL: /api/state's Tier-2-floor today_change must be exactly "
+            f"{{'if_held', 'dry_run'}} on the ZERO-PAIRED-COVERAGE else branch too -- got "
+            f"keys {sorted(today_change.keys())}. app.py's else branch (`today_change = "
+            f"_vw_tc_floor`) is a raw passthrough of the analytics dict, which still carries "
+            f"the internal 'guard_delta_vw' key when paired coverage is zero."
+        )
+        assert today_change["dry_run"] is None, (
+            "gdvw leak FAIL: zero paired coverage must propagate dry_run=None honestly, "
+            f"never fabricate a value -- got {today_change['dry_run']!r}."
+        )
+        # 1.5 is this test's OWN seeded current_return input (not a producer-computed
+        # value) -- with a single symphony, the VW if_held average collapses to that
+        # one input exactly; approx is defensive float-division slop only.
+        assert today_change["if_held"] == pytest.approx(1.5, abs=1e-9), (
+            f"gdvw leak FAIL: if_held must be preserved honestly from the floor's real "
+            f"number -- got {today_change['if_held']!r}, expected ~1.5."
+        )
+
 
 # ---------------------------------------------------------------------------
 # F1 -- GET /api/strip/<window> is a fifth, never-enumerated consumer of
