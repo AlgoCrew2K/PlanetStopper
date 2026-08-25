@@ -1,0 +1,33 @@
+{
+  "_provenance": "Schema-derived from app.py's closed_frozen branch snapshot-symphony shape (accounts_map entries consumed at app.py:2242-2258 / 2330-2348) and the _account_totals_cache keys it reads independently (app.py:2392-2400: portfolio_tc/portfolio_cr/portfolio_value). No producer-computed values captured live -- every number here is a test-authored input engineered to make account-basis and VW-basis cumulative_return.if_held diverge, mirroring the real closed-market bounce (~63.95% account-basis vs ~27.56% VW-basis) without asserting those exact production figures.",
+  "scenario": "closed_market_account_basis_divergence",
+  "description": "Two snapshot symphonies with cash present (symphony value sum 8000 < account value 10000, so invested_frac=0.8) and per-symphony simple_return values whose VW-weighted average (1.75%) is deliberately far from the Composer account-level cumulative_return (63.95%) seeded into _account_totals_cache -- proves the closed-market cumulative_return.if_held the route renders is genuinely distinguishable between the two bases, not a vacuous near-equal pair.",
+  "trading_day": "2026-08-20",
+  "account_id": "ACC1",
+  "symphonies": [
+    {
+      "id": "bounce-sym-a",
+      "name": "Bounce Test Symphony A",
+      "current_return": 3.0,
+      "current_value": 6000.0,
+      "simple_return": 0.02,
+      "net_deposits": 100.0,
+      "time_weighted_return": 0.021,
+      "max_drawdown": 0.05
+    },
+    {
+      "id": "bounce-sym-b",
+      "name": "Bounce Test Symphony B",
+      "current_return": 1.0,
+      "current_value": 2000.0,
+      "simple_return": 0.01,
+      "net_deposits": 100.0,
+      "time_weighted_return": 0.021,
+      "max_drawdown": 0.05
+    }
+  ],
+  "account_totals": {
+    "portfolio_cr": 63.95,
+    "portfolio_value": 10000.0
+  }
+}
