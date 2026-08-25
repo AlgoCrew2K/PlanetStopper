@@ -1396,33 +1396,33 @@ def _unwrap_single_compiled_child(compiled_root) -> dict | None:
     return sole if isinstance(sole, dict) else None
 
 
-def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> int | None:
+def _count_overlay_node_count(compiled_tree: dict | None = None) -> int | None:
     """Return the SIGNAL-LOGIC-ONLY node count of a build-plan-DSL overlay
     candidate (DE-FR-SIMPLIFY-001, AC-2's ``overlay_node_count`` operand),
     or None if it cannot be honestly determined.
 
     Parameters
     ----------
-    candidate : dict | None
-        Unused (DE-FR-SIMPLIFY-001 Revise 4, R4-6) — retained for call-site
-        signature compatibility only. Formerly the fresh-compile/already-
-        compiled fallback input; both fallback tiers below were deleted (see
-        Revise 4 note).
     compiled_tree : dict | None
-        The ALREADY-compiled Composer tree for ``candidate``
+        The ALREADY-compiled Composer tree for the candidate
         (``GenerationResult.compiled_tree``) — the SOLE input. ``generate_
-        candidate_overlay`` always compiles ``candidate`` once via
+        candidate_overlay`` always compiles the candidate once via
         ``plan_tree_compiler.compile_plan``; this function reuses that
         result rather than ever recompiling.
 
     REVISE 4 (R4-3/R4-6): the two fallback tiers (fresh-compile of a DSL
-    candidate; already-`step`-shaped candidate) are DELETED — they were
+    candidate; already-`step`-shaped candidate) were DELETED — they were
     unreachable under the real production call graph (the sole caller,
-    ``_run_build_for_symphony``, always has ``compiled_tree`` populated
-    alongside a non-None candidate) and their continued existence duplicated
-    a compile path this module's own no-redundant-compile invariant (F7)
-    exists to eliminate. ``compiled_tree`` absent now means an UNCONDITIONAL
-    None, never a fallback compile.
+    ``_run_build_for_symphony``, always has ``compiled_tree`` populated) and
+    their continued existence duplicated a compile path this module's own
+    no-redundant-compile invariant (F7) exists to eliminate. ``compiled_tree``
+    absent now means an UNCONDITIONAL None, never a fallback compile.
+
+    REVISE 5 (F6): the ``candidate`` parameter itself is DROPPED — it had
+    been unused since R4-6 deleted both fallback tiers that ever read it
+    (retained only for call-site signature compatibility until now). The
+    sole caller, ``_run_build_for_symphony``, now passes a single
+    ``compiled_tree`` argument.
 
     Overlay-side fire/continuation identification now reuses the existing
     production ``_find_terminal_else_child`` (R4-3) instead of a bespoke
@@ -1432,7 +1432,21 @@ def _count_overlay_node_count(candidate, compiled_tree: dict | None = None) -> i
     here (that ambiguity was specific to the CASCADE side, now resolved
     architecturally by reading ``cascade.signal_logic_node_count`` directly
     off the detector — see ``frontrunner_detector._compute_signal_logic_
-    node_count``). The fire child is the explicit sibling `next(..., None)`
+    node_count``).
+
+    Note (Revise 5): this function counts the fire branch's content
+    INCLUDING any nested tier's own else (never excluded here) — genuinely
+    DIFFERENT from frontrunner_detector._compute_signal_logic_node_count
+    (the cascade-side counterpart), which excludes a nested tier's own
+    continuation entirely at every level. This is intentional (trust
+    asymmetry: a self-generated candidate's nested-tier else is provably
+    never a placeholder by DSL/compiler construction, per
+    _find_terminal_else_child's own docstring; a detected incumbent's
+    nested continuation may genuinely be core-strategy bulk, per
+    _is_internal_hedge_subgate's docstring). Do not make these two
+    counters symmetric.
+
+    The fire child is the explicit sibling `next(..., None)`
     lookup below (B1) — never a bare ``next()`` that could raise
     ``StopIteration`` on an aliased-duplicate-children shape and fall
     through to this function's outer except-all at DEBUG level only.
@@ -1998,11 +2012,12 @@ def _run_build_for_symphony(symphony_id: str) -> None:
         # can make the marker search disprovable). Never the whole-tree
         # incumbent/candidate counts (stay ~98-100% of each other for any
         # single-cascade splice). result.compiled_tree (already compiled by
-        # generate_candidate_overlay) is passed so _count_overlay_node_count
-        # reuses it instead of redundantly re-compiling result.candidate
-        # from scratch.
+        # generate_candidate_overlay) is passed as the sole argument (F6,
+        # Revise 5: the unused ``candidate`` param was dropped) so
+        # _count_overlay_node_count reuses it instead of redundantly
+        # re-compiling from scratch.
         replaced_cascade_node_count = cascade.signal_logic_node_count
-        overlay_node_count = _count_overlay_node_count(result.candidate, result.compiled_tree)
+        overlay_node_count = _count_overlay_node_count(result.compiled_tree)
 
         accepted, metrics = _gate_and_accept_candidate(
             symphony_id=symphony_id,

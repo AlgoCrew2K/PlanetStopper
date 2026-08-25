@@ -613,7 +613,9 @@ def _find_cascade_roots(node, group_name: str | None, out: list[tuple[dict, str 
             stack.append((child, next_group_name))
 
 
-def _select_fire_and_continuation(node: dict) -> tuple[dict, dict] | None:
+def _select_fire_and_continuation(
+    node: dict, *, pair: tuple[dict, dict] | None = None
+) -> tuple[dict, dict] | None:
     """Shared fire/continuation selection helper (single source of truth,
     DE-FR-SIMPLIFY-001 Revise 4). Given a 2-child if-node, returns
     ``(fire_child, continuation_child)`` via the size-based rule this module
@@ -626,8 +628,20 @@ def _select_fire_and_continuation(node: dict) -> tuple[dict, dict] | None:
     Called by BOTH ``_compact_if_node`` (refactored to consume this rather
     than reimplementing the split inline) and the signal-logic node-count
     computation below — the selection algorithm itself must never be
-    duplicated between them (team-lead ruling, Revise 4)."""
-    pair = _get_condition_branch_pair(node)
+    duplicated between them (team-lead ruling, Revise 4).
+
+    ``pair`` : tuple[dict, dict] | None
+        F5 (DE-FR-SIMPLIFY-001 Revise 5): optional PRE-COMPUTED
+        ``_get_condition_branch_pair(node)`` result, keyword-only. When
+        provided (``_compact_if_node`` already computed its own pair for the
+        RSI-threshold parse), it is reused instead of calling
+        ``_get_condition_branch_pair`` a second time on the same node —
+        eliminating a redundant call, efficiency-only, no correctness
+        impact. Defaults to ``None``, in which case this function computes
+        the pair itself exactly as before (every OTHER caller, which has no
+        pre-computed pair to hand in, is unaffected)."""
+    if pair is None:
+        pair = _get_condition_branch_pair(node)
     if pair is None:
         return None
     cond_child, else_child = pair
@@ -799,9 +813,10 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
         # RSI-threshold parsing reads cond_child specifically (the side that
         # actually carries a comparator/threshold), regardless of which side
         # ends up being fire — a genuinely separate concern from fire/
-        # continuation SELECTION, so this one extra _get_condition_branch_
-        # pair lookup is kept here rather than folded into the shared
-        # selection helper below (DE-FR-SIMPLIFY-001 Revise 4).
+        # continuation SELECTION, so this _get_condition_branch_pair lookup
+        # is computed here (DE-FR-SIMPLIFY-001 Revise 4) and reused below via
+        # _select_fire_and_continuation's ``pair`` param (F5, Revise 5)
+        # rather than computed a second time.
         cond_child, _else_child = pair
         if _is_rsi_condition(cond_child) and cond_child.get("comparator") == "gt":
             threshold = _parse_rsi_threshold(cond_child)
@@ -820,8 +835,11 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
         # helper (team-lead ruling, Revise 4) — never reimplemented inline
         # here, so the signal-logic node-count computation elsewhere in this
         # module can never disagree with this function's own choice of fire
-        # branch.
-        selection = _select_fire_and_continuation(node)
+        # branch. F5 (Revise 5): the branch pair computed above (for the
+        # RSI-threshold parse) is reused here via the keyword-only ``pair``
+        # param, rather than letting the helper compute it again from
+        # scratch on the same node.
+        selection = _select_fire_and_continuation(node, pair=pair)
         if selection is None:
             # Unreachable in practice (pair already succeeded above), but
             # defensive rather than silently trusting a duplicated
