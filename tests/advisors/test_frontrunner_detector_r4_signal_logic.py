@@ -63,10 +63,19 @@ cascade it still numerically includes the nested tier's OWN (same-size,
 just relabeled) stub bulk. Simply threading that existing local variable
 onto ``Cascade`` would relocate the bug, not fix it -- confirmed empirically
 below (``test_multitier_dramatic_gap_between_padding_preserving_and_honest``
-pins BOTH numbers side by side on the SAME fixture). The correct
-implementation is a NEW recursive function that EXCLUDES every continuation
-entirely (never materializes or counts its padding), computed alongside
-(not instead of) the existing tree-construction pass.
+pins BOTH numbers side by side on the SAME fixture). The correct fix has
+RECURSIVELY-DEFINED semantics (exclude continuations at every nesting
+depth, never materialize or count their padding) but MUST be implemented
+as an ITERATIVE, explicit-stack walk per this module's own established
+convention (``_count_nodes``/``_collect_tickers``, both already iterative
+"so a very deep real tree never triggers RecursionError") -- see
+``test_new_signal_logic_counter_and_shared_selection_helper_are_not_self_recursive``
+below, which pins this structurally via a source-scan, not a deep fixture
+(``symphony_schema.make_if``'s own ``copy.deepcopy`` hits Python's
+recursion ceiling before a fixture deep enough to trigger this empirically
+could even be constructed -- a pre-existing, out-of-scope, suite-wide
+constraint). Computed alongside (not instead of) the existing
+tree-construction pass.
 
 ORACLE METHODOLOGY (why these fixtures are genuinely independent, not a
 Revise-3-style mirror): every expected value below is HAND-DERIVED from the
