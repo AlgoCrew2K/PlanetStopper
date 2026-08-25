@@ -44,7 +44,10 @@ import app as app_module
 import database as database_module
 
 _FIXTURE_DIR = (
-    pathlib.Path(__file__).parent.parent / "fixtures" / "dashboard" / "closed_market_cumulative_bounce"
+    pathlib.Path(__file__).parent.parent
+    / "fixtures"
+    / "dashboard"
+    / "closed_market_cumulative_bounce"
 )
 
 
@@ -267,7 +270,9 @@ class TestClosedFrozenGuardAlphaPresence:
 
 
 class TestClosedFrozenNullGuardAlphaIsLegitimate:
-    def test_closed_frozen_null_guard_alpha_does_not_break_portfolio_strip_contract(self, frozen_client):
+    def test_closed_frozen_null_guard_alpha_does_not_break_portfolio_strip_contract(
+        self, frozen_client
+    ):
         """A real closed-market snapshot can legitimately have < 2 in-window
         shadow_history rows per symphony -- compute_windowed_symphony_guard_
         alpha's AC-8b conservatism floor (analytics.py:1953-1959) then returns
@@ -317,7 +322,9 @@ class TestClosedFrozenNullGuardAlphaIsLegitimate:
 
 
 class TestClosedFrozenCumulativeReturnBasis:
-    def test_closed_frozen_cumulative_return_uses_account_basis_when_cache_warm(self, frozen_client):
+    def test_closed_frozen_cumulative_return_uses_account_basis_when_cache_warm(
+        self, frozen_client
+    ):
         fixture = _load("closed_market_account_basis_divergence")
         _seed_closed_market_snapshot(fixture)
         account_cr = fixture["account_totals"]["portfolio_cr"]
@@ -325,7 +332,9 @@ class TestClosedFrozenCumulativeReturnBasis:
         app_module._account_totals_cache.clear()
         app_module._account_totals_last_good.clear()
         app_module._account_totals_cache["portfolio_cr"] = account_cr
-        app_module._account_totals_cache["portfolio_value"] = fixture["account_totals"]["portfolio_value"]
+        app_module._account_totals_cache["portfolio_value"] = fixture["account_totals"][
+            "portfolio_value"
+        ]
 
         vw_if_held = _recompute_vw_if_held(fixture)
         # Non-vacuity guard: the two bases must actually be distinguishable in this
@@ -410,7 +419,9 @@ class TestOpenMarketNoRegression:
         # guard_alpha may legitimately be None (e.g. insufficient windowed history)
         # -- the regression this guards is the KEY existing at all with the right
         # shape, not a specific numeric value.
-        assert "guard_alpha" in ps, "open-path portfolio_strip must carry a guard_alpha key (no regression)"
+        assert "guard_alpha" in ps, (
+            "open-path portfolio_strip must carry a guard_alpha key (no regression)"
+        )
         assert ps.get("guard_alpha") is None or isinstance(ps.get("guard_alpha"), (int, float)), (
             f"guard_alpha must be None or numeric; got {ps.get('guard_alpha')!r}"
         )
