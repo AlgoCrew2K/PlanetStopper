@@ -77,9 +77,7 @@ def _build_inverted_polarity_incumbent() -> tuple[dict, frozenset[str]]:
     fire/continuation selection is purely size-based, fire lands on the
     is-else==True side here -- the polarity the pre-existing graft code
     doesn't expect."""
-    core_assets = [ss.make_asset("SVXY")] + [
-        ss.make_asset(f"HEDGEPAD{i:02d}") for i in range(20)
-    ]
+    core_assets = [ss.make_asset("SVXY")] + [ss.make_asset(f"HEDGEPAD{i:02d}") for i in range(20)]
     fire_assets = [ss.make_asset("VXX"), ss.make_asset("UVIX")]
     cond = ss.make_condition(
         ss.make_indicator("relative-strength-index", "SPY", window=10), "gt", 80
