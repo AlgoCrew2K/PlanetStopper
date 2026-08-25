@@ -445,13 +445,23 @@ class TestResolveDraftAssetClassObservability:
         )
 
     @pytest.mark.parametrize(
-        "bad_array", [["EQUITIES", "CRYPTO"], ["FOREX"]], ids=["mixed", "out_of_enum"]
+        "bad_array",
+        [["EQUITIES", "CRYPTO"], ["FOREX"], [1, 1]],
+        ids=["mixed", "out_of_enum", "non_string_homogeneous"],
     )
     def test_warns_on_discard_when_asset_classes_array_is_present_but_unusable(
         self, fbld, caplog, bad_array
     ):
-        """F4: a present, non-empty asset_classes array that's mixed or
-        out-of-enum is a real value being discarded, not an absence."""
+        """F4: a present, non-empty asset_classes array that's mixed,
+        out-of-enum, or non-string (e.g. a homogeneous [1, 1] — team-lead's
+        original spec explicitly named all three: 'mixed/out-of-enum/
+        non-string') is a real value being discarded, not an absence.
+
+        Sufficiency-review addition: the `non_string_homogeneous` case was
+        MISSING from the original RED plan (an omission by this reviewer,
+        not by team-lead's spec) — verified empirically that the GREEN
+        implementation already fires this warning correctly before adding
+        this pin, so it's a coverage gap, not a defect."""
         import logging
 
         with caplog.at_level(logging.WARNING):
