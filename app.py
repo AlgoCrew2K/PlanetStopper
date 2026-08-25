@@ -1477,6 +1477,69 @@ def _build_meta(
 _DEFAULT_HERO_WINDOW = "30d"
 
 
+def _project_today_change_floor(vw_tc: dict) -> dict:
+    """Tier-2 "no account totals" floor's Today's Change projection.
+
+    DE-HELD-BASIS-001 (FINDING-2/AC-5): when neither a warm account-totals
+    cache nor a last-good snapshot is available, the Tier-2 floor (both the
+    live branch in _compute_portfolio_strip and the frozen-snapshot branch in
+    get_state()) falls back to rendering the value-weighted portfolio TC
+    directly -- analytics's own portfolio-today-change aggregator, called
+    with include_paired_guard_delta=True. Its raw dry_run is a dry-run-ONLY-
+    membership average, which mismatches if_held's full-membership average
+    on a coverage-gap day -- producing a phantom delta even when true guard
+    divergence is zero. This helper re-derives dry_run from if_held + the
+    paired guard_delta_vw (already coverage-scaled by
+    analytics._value_weighted_portfolio) so both figures share full
+    membership. if_held is always passed through unchanged (the floor's own
+    contract, AC-6) -- only dry_run is re-derived.
+
+    Deliberately a module-level app.py helper, not an analytics.py function:
+    it is a pure view-projection with no account-scaling math (unlike
+    analytics.get_portfolio_today_change_account_basis, which genuinely
+    computes invested_frac and scales by it) — it belongs with its 2
+    call sites, not in the analytics module. Being an app.py-owned
+    function (not an `analytics.` attribute) also means tests that
+    `patch.object(app_module, "analytics", MagicMock())` never touch it —
+    unlike an analytics.py function, which would silently become an
+    unconfigured MagicMock under any such mock that reaches the floor path.
+
+    Structural guarantee: the internal "guard_delta_vw" key must never leak
+    into a public JSON response (F6). This helper always constructs a FRESH
+    {"if_held", "dry_run"} dict -- it never returns vw_tc itself, so the
+    result is exactly 2 keys regardless of what vw_tc carries.
+
+    Args:
+        vw_tc: value-weighted portfolio TC dict, normally the output of
+               analytics's portfolio-today-change aggregator called with
+               include_paired_guard_delta=True. May carry an internal
+               "guard_delta_vw" key -- stripped here.
+
+    Returns:
+        {"if_held": vw_tc.get("if_held"), "dry_run": ...} -- if_held + the
+        paired guard_delta_vw when both are present, else vw_tc's raw
+        if_held/dry_run passthrough (honest degradation, e.g. zero paired
+        coverage -> dry_run=None).
+
+    Note: deliberately does NOT float()-cast guard_delta or if_held, unlike
+    analytics.get_portfolio_today_change_account_basis -- the values already
+    come back as floats from analytics.get_portfolio_today_change, and
+    adding a cast here would be a behavior change, not a pure extraction.
+    """
+    # `is not None`, not a truthiness check -- a genuine 0.0 guard delta must
+    # still trigger the re-derivation. This is the same not-None DISCIPLINE
+    # (not a truthiness check) that
+    # analytics.get_portfolio_today_change_account_basis applies to its own
+    # paired-delta guard -- not an identical guard: that sibling guards on
+    # the delta alone (if_held is handled by an earlier return) and
+    # float()-casts + scales by invested_frac; this helper guards on
+    # guard_delta AND if_held together, with no cast/scale.
+    guard_delta = vw_tc.get("guard_delta_vw")
+    if guard_delta is not None and vw_tc.get("if_held") is not None:
+        return {"if_held": vw_tc["if_held"], "dry_run": vw_tc["if_held"] + guard_delta}
+    return {"if_held": vw_tc.get("if_held"), "dry_run": vw_tc.get("dry_run")}
+
+
 def _compute_portfolio_strip(
     bot_state: dict, trading_day: str | None = None, conn: sqlite3.Connection | None = None
 ) -> dict:
@@ -1649,8 +1712,8 @@ def _compute_portfolio_strip(
                 )
                 # DE-HELD-BASIS-001 (FINDING-2/AC-5): re-derive dry_run from the paired
                 # guard_delta_vw so it matches if_held's full membership (see
-                # analytics.get_portfolio_today_change_floor_basis docstring).
-                today_change = analytics.get_portfolio_today_change_floor_basis(_vw_tc_floor)
+                # _project_today_change_floor's docstring).
+                today_change = _project_today_change_floor(_vw_tc_floor)
 
         # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
         # curve) when available. The value-weighted average of per-symphony MDDs is
@@ -2380,11 +2443,8 @@ def get_state():
                         # (honesty signalled below via the Tier-2 basis marker), matching
                         # the CR branch + the plan's documented default. DE-HELD-BASIS-001
                         # F5(a): mirror the live Tier-2 floor's paired guard_delta_vw
-                        # re-derivation (see
-                        # analytics.get_portfolio_today_change_floor_basis docstring).
-                        _snap_tc_final = analytics.get_portfolio_today_change_floor_basis(
-                            _snap_vw_tc
-                        )
+                        # re-derivation (see _project_today_change_floor's docstring).
+                        _snap_tc_final = _project_today_change_floor(_snap_vw_tc)
 
                     if _snap_account_cr is not None:
                         _snap_cr_final = analytics.get_portfolio_cumulative_return_account_basis(
