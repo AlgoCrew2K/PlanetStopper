@@ -20,6 +20,8 @@ actually works against the real tree is a separate manual smoke step
 
 from __future__ import annotations
 
+import ast
+import inspect
 import random
 import sys
 from pathlib import Path
@@ -368,6 +370,20 @@ def test_extract_node_ids_empty_when_no_failures():
     assert gate.extract_node_ids("708 passed, 10 skipped, 4 warnings in 167.84s (0:02:47)") == []
 
 
+def test_extract_node_ids_preserves_spaces_in_parametrized_brackets_no_reason():
+    # A parametrized node id can contain a literal space inside its brackets
+    # (e.g. a string parameter "a b"). With no " - <reason>" suffix at all,
+    # the full id -- space included -- must be captured, not truncated at
+    # the first whitespace.
+    text = "FAILED tests/x/test_z.py::test_foo[a b]\n1 failed in 1.00s"
+    assert gate.extract_node_ids(text) == ["tests/x/test_z.py::test_foo[a b]"]
+
+
+def test_extract_node_ids_preserves_spaces_in_parametrized_brackets_with_reason():
+    text = "FAILED tests/x/test_z.py::test_foo[a b] - AssertionError: boom\n1 failed in 1.00s"
+    assert gate.extract_node_ids(text) == ["tests/x/test_z.py::test_foo[a b]"]
+
+
 # ---------------------------------------------------------------------------
 # aggregate / verdict
 # ---------------------------------------------------------------------------
@@ -432,6 +448,44 @@ def test_aggregate_empty_results_is_not_pass():
     assert report.verdict != "PASS"
 
 
+def test_aggregate_passes_through_scoped_reason():
+    report = gate.aggregate([], scoped_reason="--only 'tests/engine'")
+    assert report.scoped_reason == "--only 'tests/engine'"
+
+
+def test_aggregate_scoped_reason_defaults_to_none_for_a_full_run():
+    report = gate.aggregate([_chunk_result(0, "PASS", counts={"passed": 1})])
+    assert report.scoped_reason is None
+
+
+# ---------------------------------------------------------------------------
+# render_report -- a scoped (--only) run must never read as a full-tree PASS
+# ---------------------------------------------------------------------------
+
+
+def test_render_report_marks_scoped_run_with_banner_and_verdict_suffix():
+    report = gate.aggregate(
+        [_chunk_result(0, "PASS", counts={"passed": 5})],
+        scoped_reason="--only 'tests/engine'",
+    )
+    text = gate.render_report(report)
+    lines = text.splitlines()
+    assert lines[0].startswith("*** SCOPED RUN")
+    assert "NOT a full-tree verdict" in lines[0]
+    verdict_line = next(line for line in lines if line.startswith("VERDICT:"))
+    # A wrapper/human grepping for the bare "VERDICT: PASS" string used by a
+    # full-tree run must NOT get a false-positive match here.
+    assert verdict_line != "VERDICT: PASS"
+    assert "SCOPED" in verdict_line
+
+
+def test_render_report_full_tree_run_has_no_scoped_marking():
+    report = gate.aggregate([_chunk_result(0, "PASS", counts={"passed": 5})])
+    text = gate.render_report(report)
+    assert "SCOPED" not in text
+    assert text.splitlines()[-1] == "VERDICT: PASS"
+
+
 # ---------------------------------------------------------------------------
 # build_argv safety guardrails
 # ---------------------------------------------------------------------------
@@ -460,3 +514,221 @@ def test_build_argv_includes_at_least_one_explicit_path():
 def test_build_argv_includes_explicit_test_timeout():
     argv = gate.build_argv(_engine_chunk(), test_timeout=42)
     assert "--timeout=42" in argv
+
+
+# ---------------------------------------------------------------------------
+# _validate_safe_argv -- guardrails must be `raise`, never `assert`
+#
+# `assert` is compiled out entirely under `python -O` / PYTHONOPTIMIZE, which
+# would silently disable a safety check. These tests prove BOTH a structural
+# guarantee (no ast.Assert node exists in the function at all -- true
+# regardless of how Python is invoked) and the resulting behavior (each
+# violation raises RuntimeError, not AssertionError).
+# ---------------------------------------------------------------------------
+
+
+def test_validate_safe_argv_contains_no_assert_statements():
+    source = inspect.getsource(gate._validate_safe_argv)
+    tree = ast.parse(source)
+    assert not any(isinstance(node, ast.Assert) for node in ast.walk(tree))
+
+
+def test_validate_safe_argv_passes_for_a_safe_argv():
+    gate._validate_safe_argv(gate.build_argv(_engine_chunk()))  # must not raise
+
+
+def test_validate_safe_argv_raises_runtime_error_when_n0_missing():
+    argv = [sys.executable, "-m", "pytest", "tests/engine", "-q", "--timeout=900"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_raises_runtime_error_on_bare_tests_root():
+    argv = [sys.executable, "-m", "pytest", "tests", "-n0", "-q", "--timeout=900"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_raises_runtime_error_when_timeout_missing():
+    argv = [sys.executable, "-m", "pytest", "tests/engine", "-n0", "-q"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_raises_runtime_error_when_no_path_token():
+    argv = [sys.executable, "-m", "pytest", "-n0", "-q", "--timeout=900"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_never_raises_assertion_error():
+    # Even if some future edit reintroduces an `assert`, this pins the
+    # CONTRACT (RuntimeError, never AssertionError) independent of the
+    # structural AST check above.
+    argv = [sys.executable, "-m", "pytest", "-n0", "-q", "--timeout=900"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+    with pytest.raises(Exception) as exc_info:
+        gate._validate_safe_argv(argv)
+    assert not isinstance(exc_info.value, AssertionError)
+
+
+# ---------------------------------------------------------------------------
+# _other_pytest_running -- must match a console-script launch too, not only
+# a "python" process name with "pytest" in its cmdline.
+# ---------------------------------------------------------------------------
+
+
+class _FakeProcHandle:
+    """Minimal stand-in for a psutil.Process as returned by process_iter()."""
+
+    def __init__(self, pid: int, name: str, cmdline: list[str]):
+        self.pid = pid
+        self.info = {"pid": pid, "name": name, "cmdline": cmdline}
+
+
+def test_other_pytest_running_matches_console_script_name(monkeypatch):
+    # "pytest.exe" (or "py.test") has NO "python" in its process name at
+    # all -- a name-requires-"python" check would miss this entirely.
+    fake_procs = [_FakeProcHandle(pid=999, name="pytest.exe", cmdline=["pytest.exe", "tests/"])]
+    monkeypatch.setattr(gate.psutil, "process_iter", lambda attrs: iter(fake_procs))
+    found, desc = gate._other_pytest_running()
+    assert found is True
+    assert "999" in desc
+
+
+def test_other_pytest_running_still_matches_python_dash_m_pytest(monkeypatch):
+    fake_procs = [
+        _FakeProcHandle(
+            pid=888, name="python.exe", cmdline=["python.exe", "-m", "pytest", "tests/"]
+        )
+    ]
+    monkeypatch.setattr(gate.psutil, "process_iter", lambda attrs: iter(fake_procs))
+    found, _desc = gate._other_pytest_running()
+    assert found is True
+
+
+def test_other_pytest_running_false_when_no_match(monkeypatch):
+    fake_procs = [_FakeProcHandle(pid=777, name="notepad.exe", cmdline=["notepad.exe"])]
+    monkeypatch.setattr(gate.psutil, "process_iter", lambda attrs: iter(fake_procs))
+    found, desc = gate._other_pytest_running()
+    assert found is False
+    assert desc == ""
+
+
+def test_other_pytest_running_skips_its_own_pid(monkeypatch):
+    my_pid = gate.os.getpid()
+    fake_procs = [_FakeProcHandle(pid=my_pid, name="pytest.exe", cmdline=["pytest.exe"])]
+    monkeypatch.setattr(gate.psutil, "process_iter", lambda attrs: iter(fake_procs))
+    found, _desc = gate._other_pytest_running()
+    assert found is False
+
+
+def test_other_pytest_running_ignores_path_substring_false_positive(monkeypatch):
+    # Regression: this very worktree is named "pytest-gate". A wrapping
+    # shell (Git Bash's "bash.exe -c '<whole command>'") puts the ENTIRE
+    # invoked command line -- including that worktree path -- into ONE
+    # cmdline token. A blind "'pytest' in joined cmdline" substring search
+    # would false-positive on that path and refuse to ever run on this
+    # host. Token-precise matching must not.
+    fake_procs = [
+        _FakeProcHandle(
+            pid=555,
+            name="bash.exe",
+            cmdline=[
+                "bash.exe",
+                "-c",
+                "cd /c/Users/x/worktrees/pytest-gate && python scripts/segmented_full_tree_gate.py",
+            ],
+        )
+    ]
+    monkeypatch.setattr(gate.psutil, "process_iter", lambda attrs: iter(fake_procs))
+    found, _desc = gate._other_pytest_running()
+    assert found is False
+
+
+@pytest.mark.parametrize(
+    "name,cmdline,expected",
+    [
+        ("pytest.exe", ["pytest.exe", "tests/"], True),
+        ("py.test", ["py.test", "tests/"], True),
+        ("python.exe", ["python.exe", "-m", "pytest", "tests/"], True),
+        ("python.exe", ["python.exe", "-m", "pytest"], True),
+        ("python.exe", ["python.exe", "-m", "pip", "list"], False),
+        ("bash.exe", ["bash.exe", "-c", "cd /c/worktrees/pytest-gate && echo hi"], False),
+        ("notepad.exe", ["notepad.exe"], False),
+        ("python.exe", ["python.exe", "scripts/segmented_full_tree_gate.py"], False),
+    ],
+)
+def test_looks_like_pytest_invocation(name, cmdline, expected):
+    assert gate._looks_like_pytest_invocation(name, cmdline) is expected
+
+
+# ---------------------------------------------------------------------------
+# _kill_process_tree -- a TIMEOUT (and defensively a normal completion) must
+# kill the ENTIRE descendant tree, not just the immediate pytest process,
+# because test bodies fork their own worker pools (joblib/optuna) even
+# though the chunk's own pytest invocation is "-n0".
+# ---------------------------------------------------------------------------
+
+
+class _FakeTreeProc:
+    """Minimal stand-in for a psutil.Process, tracking terminate()/kill()."""
+
+    def __init__(self, label: str):
+        self.label = label
+        self.terminated = False
+        self.killed = False
+        self._children: list[_FakeTreeProc] = []
+
+    def children(self, recursive=True):
+        return self._children
+
+    def terminate(self):
+        self.terminated = True
+
+    def kill(self):
+        self.killed = True
+
+
+def test_kill_process_tree_terminates_parent_and_all_children(monkeypatch):
+    parent = _FakeTreeProc("parent")
+    child1 = _FakeTreeProc("child1")
+    child2 = _FakeTreeProc("child2")
+    parent._children = [child1, child2]
+
+    def fake_wait_procs(procs, timeout=None):
+        return list(procs), []  # everyone terminated cleanly within the timeout
+
+    monkeypatch.setattr(gate.psutil, "wait_procs", fake_wait_procs)
+
+    gate._kill_process_tree(parent)
+
+    assert parent.terminated and not parent.killed
+    assert child1.terminated and not child1.killed
+    assert child2.terminated and not child2.killed
+
+
+def test_kill_process_tree_kills_survivors_after_terminate_timeout(monkeypatch):
+    parent = _FakeTreeProc("parent")
+    child = _FakeTreeProc("child")
+    parent._children = [child]
+
+    def fake_wait_procs(procs, timeout=None):
+        # Nothing exited within the terminate() grace period.
+        return [], list(procs)
+
+    monkeypatch.setattr(gate.psutil, "wait_procs", fake_wait_procs)
+
+    gate._kill_process_tree(parent)
+
+    assert parent.terminated and parent.killed
+    assert child.terminated and child.killed
+
+
+def test_kill_process_tree_noop_when_psutil_unavailable(monkeypatch):
+    monkeypatch.setattr(gate, "psutil", None)
+    parent = _FakeTreeProc("parent")
+    gate._kill_process_tree(parent)  # must not raise
+    assert not parent.terminated
+    assert not parent.killed

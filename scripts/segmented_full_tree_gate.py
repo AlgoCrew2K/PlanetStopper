@@ -35,15 +35,28 @@ SAFETY MODEL
   unit is always placed atomically into exactly one chunk (never split),
   which keeps each subdirectory's own conftest scoping coherent and keeps
   failures legible (grouped by feature area).
-- Before every chunk, this script refuses to start if another "python -m
-  pytest" process is already running (best-effort via psutil) — running two
-  pytest invocations concurrently on this host is exactly the kind of
-  memory-pressure incident this tool exists to prevent.
+- Before every chunk, this script refuses to start if another pytest
+  process is already running (best-effort via psutil, matching the process
+  NAME or individual cmdline TOKENS against "pytest"/"pytest.exe"/"py.test"
+  or a "-m pytest" pair — never a blind substring search over the whole
+  joined cmdline, which would false-positive on any path merely containing
+  the text "pytest", e.g. this very worktree is named "pytest-gate") —
+  running two pytest invocations concurrently on this host is exactly the
+  kind of memory-pressure incident this tool exists to prevent.
+- On every chunk subprocess's end — normal completion OR timeout — this
+  script kills the ENTIRE process tree rooted at that chunk's pytest PID
+  (via psutil), not just the immediate pytest process. "-n0" only rules out
+  xdist's OWN worker pool; it does nothing to stop a TEST BODY from forking
+  its own worker pool (joblib n_jobs=-1, optuna study.optimize). A survivor
+  here would otherwise still be resident when the NEXT chunk starts,
+  re-creating the exact >90GB multi-process fan-out this tool exists to
+  prevent.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import os
 import re
@@ -116,6 +129,11 @@ class GateReport:
     totals: dict[str, int]
     failing_node_ids: list[str]
     verdict: str
+    # Set (e.g. "--only 'tests/engine'") when this report covers only a
+    # --only-selected subset, never the whole tree. render_report() uses this
+    # to mark the report unmistakably -- a scoped PASS must never be
+    # mistaken for (or silently substituted as) a full-tree gate verdict.
+    scoped_reason: str | None = None
 
 
 class OnlyFilterRefused(Exception):
@@ -234,17 +252,57 @@ def build_argv(chunk: Chunk, test_timeout: int = DEFAULT_TEST_TIMEOUT_S) -> list
     for unit in chunk.units:
         argv.extend(unit.paths)
     argv += ["-n0", "-q", f"--timeout={test_timeout}"]
-    _assert_safe_argv(argv)
+    _validate_safe_argv(argv)
     return argv
 
 
-def _assert_safe_argv(argv: list[str]) -> None:
-    """Hard guardrails, always re-checked immediately before every subprocess.run."""
-    assert "-n0" in argv, "SAFETY: -n0 must be explicit in every chunk invocation"
-    assert "tests" not in argv, "SAFETY: the bare 'tests' root must never be passed as an argument"
-    assert any(a.startswith("--timeout=") for a in argv), "SAFETY: --timeout must be explicit"
+def _validate_safe_argv(argv: list[str]) -> None:
+    """Hard guardrails, always re-checked immediately before every subprocess
+    invocation. These are explicit raises, NOT `assert` statements: `assert`
+    is compiled out entirely under `python -O` / PYTHONOPTIMIZE, which would
+    silently disable every one of these checks. A guard against a dangerous
+    pytest invocation must never be optimizable away.
+    """
+    if "-n0" not in argv:
+        raise RuntimeError("SAFETY: -n0 must be explicit in every chunk invocation")
+    if "tests" in argv:
+        raise RuntimeError("SAFETY: the bare 'tests' root must never be passed as an argument")
+    if not any(a.startswith("--timeout=") for a in argv):
+        raise RuntimeError("SAFETY: --timeout must be explicit")
     path_tokens = [a for a in argv[3:] if not a.startswith("-")]
-    assert path_tokens, "SAFETY: at least one explicit path must be passed"
+    if not path_tokens:
+        raise RuntimeError("SAFETY: at least one explicit path must be passed")
+
+
+def _basename(token: str) -> str:
+    return token.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _looks_like_pytest_invocation(name: str, cmdline: list[str]) -> bool:
+    """True if `name`/`cmdline` describe a process that is itself running
+    pytest -- checked against the process NAME and individual cmdline
+    TOKENS, never a blind substring search over the whole joined cmdline.
+
+    A blind "'pytest' in ' '.join(cmdline)" check false-positives on any
+    process whose cmdline merely CONTAINS the text "pytest" as part of an
+    unrelated path -- e.g. this very worktree is named "pytest-gate", so a
+    wrapping shell process re-quoting the full invoked command line (as
+    Windows Git Bash's "bash.exe -c '<whole command>'" does, in ONE cmdline
+    token) would otherwise trigger a false "pytest already running" refusal
+    on every single run. Matching exact/prefixed names and individual
+    argv tokens (never a path substring) avoids that.
+    """
+    name_lower = name.lower()
+    if name_lower == "pytest" or name_lower.startswith("pytest.") or name_lower == "py.test":
+        return True
+    tokens = [t.lower() for t in cmdline]
+    for i, token in enumerate(tokens):
+        base = _basename(token)
+        if base == "pytest" or base.startswith("pytest.") or base == "py.test":
+            return True
+        if token == "-m" and i + 1 < len(tokens) and tokens[i + 1] == "pytest":
+            return True
+    return False
 
 
 def _other_pytest_running() -> tuple[bool, str]:
@@ -266,13 +324,10 @@ def _other_pytest_running() -> tuple[bool, str]:
             try:
                 if proc.pid == my_pid:
                     continue
-                name = (proc.info.get("name") or "").lower()
-                cmdline_str = " ".join(proc.info.get("cmdline") or []).lower()
-                if "python" in name and "pytest" in cmdline_str:
-                    return (
-                        True,
-                        f"pid={proc.pid} cmdline={' '.join(proc.info.get('cmdline') or [])}",
-                    )
+                name = proc.info.get("name") or ""
+                cmdline = proc.info.get("cmdline") or []
+                if _looks_like_pytest_invocation(name, cmdline):
+                    return True, f"pid={proc.pid} cmdline={' '.join(cmdline)}"
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
     except Exception as exc:  # pragma: no cover - defensive degrade, never block the gate on this
@@ -282,6 +337,44 @@ def _other_pytest_running() -> tuple[bool, str]:
         )
         return False, ""
     return False, ""
+
+
+def _kill_process_tree(proc: psutil.Process) -> None:
+    """Best-effort recursive kill of `proc` and every descendant it has.
+
+    Needed because "-n0" only rules out xdist's OWN worker pool -- it does
+    nothing to stop a TEST BODY from forking its own worker pool (joblib
+    n_jobs=-1 in synthetic_history generation, optuna study.optimize in
+    autotuner tests). A plain kill of just the top-level pytest process
+    leaves those grandchildren running; the NEXT chunk then starts on top of
+    them, re-creating the >90GB multi-process fan-out this tool exists to
+    prevent. So every descendant is terminated (and killed if it survives
+    termination), not just the immediate child.
+
+    `proc` MUST be a psutil.Process captured at spawn time (not re-looked-up
+    by bare pid later) -- psutil binds a Process object to a (pid,
+    create_time) pair internally and raises NoSuchProcess on any call once
+    that SPECIFIC process has exited, even if the OS has since recycled the
+    pid for an unrelated process. Re-fetching by bare pid after the fact
+    would lose that protection and risk killing the wrong process.
+    """
+    if psutil is None:
+        return
+    try:
+        children = proc.children(recursive=True)
+    except psutil.Error:
+        children = []
+    targets = [*children, proc]
+    for target in targets:
+        with contextlib.suppress(psutil.Error):
+            target.terminate()
+    try:
+        _, alive = psutil.wait_procs(targets, timeout=5)
+    except psutil.Error:
+        alive = targets
+    for target in alive:
+        with contextlib.suppress(psutil.Error):
+            target.kill()
 
 
 def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResult:
@@ -309,24 +402,42 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
     env.pop("ATLAS_CACHE_DB_PATH", None)
 
     start = time.monotonic()
+    # subprocess.run(timeout=...) is deliberately NOT used here: its
+    # TimeoutExpired exception exposes no pid, so there would be no way to
+    # reach the child's own descendants for a tree-kill (see
+    # _kill_process_tree). Popen keeps `proc` (and the psutil.Process handle
+    # captured immediately below, before the pid could plausibly be reused)
+    # in scope for the whole call, timeout or not.
+    proc = subprocess.Popen(
+        argv,
+        cwd=str(REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    ps_proc = psutil.Process(proc.pid) if psutil is not None else None
+
     try:
-        proc = subprocess.run(
-            argv,
-            cwd=str(REPO_ROOT),
-            env=env,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=chunk_timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
+        stdout, stderr = proc.communicate(timeout=chunk_timeout)
+    except subprocess.TimeoutExpired:
         duration = time.monotonic() - start
-        # subprocess.run() already kills the immediate child before raising.
-        # No xdist workers exist under -n0, so there is no further process
-        # tree to clean up here.
-        stdout = exc.stdout or ""
-        tail = "\n".join(stdout.splitlines()[-30:])
+        if ps_proc is not None:
+            _kill_process_tree(ps_proc)
+        else:
+            print(
+                "[gate] WARNING: psutil unavailable -- killing only the top-level pytest "
+                "process, any worker pool it forked may survive into the next chunk.",
+                file=sys.stderr,
+            )
+            proc.kill()
+        try:
+            stdout, _stderr = proc.communicate(timeout=5)
+        except Exception:
+            stdout = ""
+        tail = "\n".join((stdout or "").splitlines()[-30:])
         return ChunkResult(
             chunk=chunk,
             returncode=None,
@@ -338,7 +449,14 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
         )
     duration = time.monotonic() - start
 
-    combined = proc.stdout + "\n" + proc.stderr
+    # Defensive: even on a NORMAL completion, mop up any descendant process
+    # the test body may have left behind (e.g. a joblib/optuna worker pool
+    # that outlived its parent test) before the NEXT chunk starts. A no-op
+    # in the common case where nothing survived the parent pytest process.
+    if ps_proc is not None:
+        _kill_process_tree(ps_proc)
+
+    combined = stdout + "\n" + stderr
     counts = parse_summary(combined)
     node_ids = extract_node_ids(combined)
 
@@ -393,7 +511,14 @@ _CATEGORY_RE = re.compile(
     r"(\d+)\s+(passed|failed|errors?|skipped|deselected|xfailed|xpassed|warnings?)\b"
 )
 _DURATION_TRAILER_RE = re.compile(r"\bin\s+[\d.]+s\b")
-_NODEID_RE = re.compile(r"^(?:FAILED|ERROR)\s+(\S+?)(?:\s+-\s+.*)?$", re.MULTILINE)
+# `.+?` (not `\S+?`) so a parametrized node id containing literal spaces
+# inside its brackets (e.g. "test_z[a b]") is captured whole rather than
+# truncated at the first space. Non-greedy + the optional trailing group
+# still finds the EARLIEST " - <reason>" split point when one is present
+# (pytest node ids essentially never contain the literal " - " substring
+# themselves), and falls back to the full remainder of the line when no
+# such reason suffix exists at all.
+_NODEID_RE = re.compile(r"^(?:FAILED|ERROR)\s+(.+?)(?:\s+-\s+.*)?$", re.MULTILINE)
 
 
 def parse_summary(text: str) -> dict[str, int] | None:
@@ -434,7 +559,7 @@ def extract_node_ids(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def aggregate(results: list[ChunkResult]) -> GateReport:
+def aggregate(results: list[ChunkResult], scoped_reason: str | None = None) -> GateReport:
     totals: dict[str, int] = {}
     failing_node_ids: list[str] = []
     seen: set[str] = set()
@@ -448,12 +573,24 @@ def aggregate(results: list[ChunkResult]) -> GateReport:
                 failing_node_ids.append(node_id)
     verdict = "PASS" if results and all(r.verdict == "PASS" for r in results) else "FAIL"
     return GateReport(
-        results=results, totals=totals, failing_node_ids=failing_node_ids, verdict=verdict
+        results=results,
+        totals=totals,
+        failing_node_ids=failing_node_ids,
+        verdict=verdict,
+        scoped_reason=scoped_reason,
     )
 
 
 def render_report(report: GateReport) -> str:
-    lines = [f"{'CHUNK':<6}{'FILES':>7}  {'VERDICT':<8}{'DURATION':>10}  UNITS"]
+    lines: list[str] = []
+    if report.scoped_reason:
+        # A scoped (--only) run must never read as a full-tree verdict -- a
+        # wrapper or human skimming for "VERDICT: PASS" could otherwise treat
+        # a single-directory smoke run as a real merge-gate pass. Both a
+        # banner up top and a suffix on the VERDICT line itself.
+        lines.append(f"*** SCOPED RUN ({report.scoped_reason}) -- NOT a full-tree verdict ***")
+        lines.append("")
+    lines.append(f"{'CHUNK':<6}{'FILES':>7}  {'VERDICT':<8}{'DURATION':>10}  UNITS")
     for result in report.results:
         units_str = ", ".join(result.chunk.names)
         lines.append(
@@ -472,7 +609,8 @@ def render_report(report: GateReport) -> str:
             lines.append(f"--- chunk {result.chunk.index} diagnostic tail ({result.verdict}) ---")
             lines.append(result.diagnostic_tail)
     lines.append("")
-    lines.append(f"VERDICT: {report.verdict}")
+    verdict_suffix = " (SCOPED -- NOT a full-tree verdict)" if report.scoped_reason else ""
+    lines.append(f"VERDICT: {report.verdict}{verdict_suffix}")
     return "\n".join(lines)
 
 
@@ -534,11 +672,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  chunk {chunk.index}: {chunk.file_count} files -- {', '.join(chunk.names)}")
         return 0
 
+    scoped_reason = f"--only {args.only!r}" if args.only is not None else None
+
     results = [
         run_chunk(chunk, test_timeout=args.test_timeout, chunk_timeout=args.chunk_timeout)
         for chunk in chunks
     ]
-    report = aggregate(results)
+    report = aggregate(results, scoped_reason=scoped_reason)
     print(render_report(report))
     return 0 if report.verdict == "PASS" else 1
 
