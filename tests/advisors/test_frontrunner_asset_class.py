@@ -373,12 +373,26 @@ class TestApproveFrontrunnerProposalAssetClassWiring:
 
     def test_never_raises_and_still_defaults_to_equities_for_a_malformed_candidate_tree(self, fbld):
         """AC-5 at the ORCHESTRATION layer, not just inside the pure helper
-        in isolation — a corrupted DB row (candidate_tree stored as a bare
-        string) must not crash approve_frontrunner_proposal. Per the plan's
-        architecture the derivation is D-1 (never raises) and the call site
-        proceeds normally to save_symphony with the safe EQUITIES fallback
-        — it does not fail closed before the call."""
-        proposal = _make_proposal(proposal_id=103, candidate_tree="not-a-dict-string")
+        in isolation — a REACHABLE non-dict candidate_tree must not crash
+        approve_frontrunner_proposal. Per the plan's architecture the
+        derivation is D-1 (never raises) and the call site proceeds
+        normally to save_symphony with the safe EQUITIES fallback — it
+        does not fail closed before the call.
+
+        Revise 3 (F5, team-lead-confirmed test-realism fix): candidate_tree
+        is now `[1, 2, 3]` — a list, exactly what `json.loads` produces for
+        a stored JSON array — instead of the original `"not-a-dict-string"`
+        bare string. Verified directly against `database._parse_
+        frontrunner_proposal_row` (`database.py:4550-4564`, calls
+        `json.loads(val)` with no try/except): a genuinely non-JSON stored
+        string would raise INSIDE `get_frontrunner_proposal` itself (never
+        reaching this function at all — see the corrupted-JSON test below,
+        which pins THAT path), so the original bare-string mock asserted a
+        success=True path production cannot actually produce. A stored
+        JSON ARRAY, by contrast, deserializes successfully to a Python list
+        and DOES reach `_resolve_draft_asset_class` as a real non-dict
+        value — this is the realistic malformation this test now pins."""
+        proposal = _make_proposal(proposal_id=103, candidate_tree=[1, 2, 3])
 
         with (
             patch("database.get_frontrunner_proposal", return_value=proposal),
@@ -400,6 +414,32 @@ class TestApproveFrontrunnerProposalAssetClassWiring:
             "a malformed candidate_tree must still default asset_class to "
             f"EQUITIES, got {kwargs.get('asset_class')!r}"
         )
+
+    def test_fails_closed_when_the_stored_candidate_tree_is_corrupted_json(self, fbld):
+        """F5 (Revise 3, new coverage): a TRULY corrupted (non-JSON) stored
+        candidate_tree raises `json.JSONDecodeError` INSIDE `database.
+        _parse_frontrunner_proposal_row` (via `get_frontrunner_proposal`,
+        which has no try/except of its own) — never reaching this
+        function's own D-1 protection at all. approve_frontrunner_proposal
+        must still degrade honestly (success=False, no Composer call) via
+        its own outer try/except, matching the proposal-not-found pattern
+        one section above. This is the production-realistic counterpart to
+        the always-reachable non-dict-value test above — together they
+        cover both real failure shapes."""
+        with (
+            patch(
+                "database.get_frontrunner_proposal",
+                side_effect=json.JSONDecodeError("Expecting value", "not-json", 0),
+            ),
+            patch("advisors.composer_draft_client.save_symphony") as mock_save,
+        ):
+            result = fbld.approve_frontrunner_proposal(104)
+
+        assert result.success is False, (
+            "a corrupted-JSON stored candidate_tree must surface a clean "
+            "failure, never a raised exception out of approve_frontrunner_proposal"
+        )
+        mock_save.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -446,22 +486,26 @@ class TestResolveDraftAssetClassObservability:
 
     @pytest.mark.parametrize(
         "bad_array",
-        [["EQUITIES", "CRYPTO"], ["FOREX"], [1, 1]],
-        ids=["mixed", "out_of_enum", "non_string_homogeneous"],
+        [["EQUITIES", "CRYPTO"], ["FOREX"]],
+        ids=["mixed", "out_of_enum"],
     )
     def test_warns_on_discard_when_asset_classes_array_is_present_but_unusable(
         self, fbld, caplog, bad_array
     ):
-        """F4: a present, non-empty asset_classes array that's mixed,
-        out-of-enum, or non-string (e.g. a homogeneous [1, 1] — team-lead's
-        original spec explicitly named all three: 'mixed/out-of-enum/
-        non-string') is a real value being discarded, not an absence.
+        """F4: a present, non-empty asset_classes array of STRINGS that's
+        mixed or out-of-enum is a real, recognizable value being discarded,
+        not an absence.
 
-        Sufficiency-review addition: the `non_string_homogeneous` case was
-        MISSING from the original RED plan (an omission by this reviewer,
-        not by team-lead's spec) — verified empirically that the GREEN
-        implementation already fires this warning correctly before adding
-        this pin, so it's a coverage gap, not a defect."""
+        Revise 3 (team-lead ruling): a homogeneous NON-STRING array (e.g.
+        [1, 1]) is now explicitly ruled a shape malformation, NOT a
+        recognizable discarded value — see
+        test_does_not_warn_or_crash_for_a_garbage_element_asset_classes_array
+        below. This test previously (Revise 2, commit 5ad0757f) included a
+        `non_string_homogeneous` case asserting the OPPOSITE (warn) — that
+        was this reviewer's own error, corrected here per the explicit
+        reversal ruling, consistent with the pre-existing non-string-
+        top-level no-warn rule (same "shape issue, not a discarded value"
+        reasoning)."""
         import logging
 
         with caplog.at_level(logging.WARNING):
@@ -472,6 +516,38 @@ class TestResolveDraftAssetClassObservability:
         assert warning_records, (
             f"a present-but-unusable asset_classes={bad_array!r} was silently "
             "discarded to EQUITIES with NO warning-level log record"
+        )
+
+    @pytest.mark.parametrize(
+        "garbage_array",
+        [[{"x": 1}, {"y": 2}], [1, 1]],
+        ids=["unhashable_elements", "hashable_non_string"],
+    )
+    def test_does_not_warn_or_crash_for_a_garbage_element_asset_classes_array(
+        self, fbld, caplog, garbage_array
+    ):
+        """F2 (Revise 3, team-lead ruling): a present asset_classes array
+        containing non-string/garbage elements is a SHAPE malformation, not
+        a discarded recognizable value — must degrade to EQUITIES silently
+        (no warning), and must NEVER crash via an uncaught TypeError from a
+        set(array)-based dedup strategy (unhashable elements). This is the
+        logging-behavior counterpart to the pre-existing crash-safety-only
+        pins (test_falls_back_to_equities_without_crashing_on_unhashable_
+        array_elements / test_falls_back_to_equities_for_a_homogeneous_non_
+        string_array in TestResolveDraftAssetClassArrayFallback, both of
+        which predate this observability feature and assert no return-value
+        regression but never checked logging)."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class({"asset_classes": garbage_array})
+
+        assert result == "EQUITIES", "must degrade to EQUITIES, never crash"
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warning_records, (
+            f"expected NO warning for a garbage-element asset_classes="
+            f"{garbage_array!r} (shape malformation, not a discarded value), got: "
+            f"{[r.getMessage() for r in warning_records]!r}"
         )
 
     @pytest.mark.parametrize(
@@ -551,3 +627,58 @@ class TestResolveDraftAssetClassObservability:
             f"{bad_value!r} with no array, got: "
             f"{[r.getMessage() for r in warning_records]!r}"
         )
+
+    @pytest.mark.parametrize(
+        "asset_class,asset_classes,present_value,absent_value",
+        [
+            ("FOREX", ["CRYPTO"], "FOREX", "CRYPTO"),
+            ("Crypto", ["OPTIONS"], "Crypto", "OPTIONS"),
+            ("FUTURES", ["EQUITIES", "CRYPTO"], "FUTURES", None),
+        ],
+        ids=["out_of_enum_string_vs_valid_array", "case_mismatch_vs_valid_array", "vs_mixed_array"],
+    )
+    def test_present_out_of_enum_top_level_string_is_decisive_array_never_consulted(
+        self, fbld, caplog, asset_class, asset_classes, present_value, absent_value
+    ):
+        """F1 (Revise 3, REAL BUG round-2 review caught): a PRESENT
+        top-level asset_class string, even when out-of-enum, must be
+        DECISIVE — the asset_classes array must NEVER be consulted once a
+        present string is found, per AC-4 ("array consulted ONLY when
+        top-level absent") and the helper's own docstring. The buggy
+        implementation (c5035fb2) logged the discard-warning for the
+        top-level string but had no `return`, silently falling through to
+        the array and potentially returning a non-EQUITIES array-derived
+        value while ALSO firing a second, FALSE "falling back to EQUITIES"-
+        worded warning that didn't match what actually happened.
+
+        Exactly ONE warning must fire (the top-level discard-warning) —
+        the third case (a mixed array) additionally proves the array's OWN
+        discard-warning must not ALSO fire, since the array must never even
+        be inspected once the top-level is decisive (not just "its result
+        doesn't leak into the return value")."""
+        import logging
+
+        tree = {"asset_class": asset_class, "asset_classes": asset_classes}
+        with caplog.at_level(logging.WARNING):
+            result = fbld._resolve_draft_asset_class(tree)
+
+        assert result == "EQUITIES", (
+            f"a present out-of-enum top-level string must be decisive — expected "
+            f"EQUITIES, got {result!r} (the array must never be consulted)"
+        )
+        warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(warning_records) == 1, (
+            f"expected EXACTLY 1 warning (the top-level discard only) for "
+            f"asset_class={asset_class!r}, asset_classes={asset_classes!r} — got "
+            f"{len(warning_records)}: {[r.getMessage() for r in warning_records]!r}"
+        )
+        assert present_value in warning_records[0].getMessage(), (
+            f"the single warning must name the discarded top-level value "
+            f"{present_value!r} — got: {warning_records[0].getMessage()!r}"
+        )
+        if absent_value is not None:
+            assert absent_value not in warning_records[0].getMessage(), (
+                f"the warning must NOT name {absent_value!r} — the array-derived "
+                f"value must never leak into the discard-warning's message, got: "
+                f"{warning_records[0].getMessage()!r}"
+            )
