@@ -103,9 +103,7 @@ class TestResolveDraftAssetClassTopLevelString:
     def test_falls_back_to_equities_when_asset_class_is_empty_string(self, fbld):
         assert fbld._resolve_draft_asset_class({"asset_class": ""}) == "EQUITIES"
 
-    @pytest.mark.parametrize(
-        "bad_value", ["equities", "FOREX", "Crypto", "equity", " EQUITIES"]
-    )
+    @pytest.mark.parametrize("bad_value", ["equities", "FOREX", "Crypto", "equity", " EQUITIES"])
     def test_falls_back_to_equities_for_out_of_enum_string(self, fbld, bad_value):
         assert fbld._resolve_draft_asset_class({"asset_class": bad_value}) == "EQUITIES"
 
@@ -168,6 +166,29 @@ class TestResolveDraftAssetClassArrayFallback:
     def test_falls_back_to_equities_when_asset_classes_is_an_empty_list(self, fbld):
         assert fbld._resolve_draft_asset_class({"asset_classes": []}) == "EQUITIES"
 
+    @pytest.mark.parametrize("homogeneous_bad_value", [1, True, None, 3.5])
+    def test_falls_back_to_equities_for_a_homogeneous_non_string_array(
+        self, fbld, homogeneous_bad_value
+    ):
+        """Sufficiency-review addition: a homogeneous (single-distinct-value)
+        array of a NON-string type must still fall back — pins the
+        `isinstance(only, str)` guard specifically, distinct from the
+        enum-membership check above (a dedup-then-return-without-a-type-
+        check implementation would wrongly propagate `1`/`True`/`None`)."""
+        tree = {"asset_classes": [homogeneous_bad_value, homogeneous_bad_value]}
+        assert fbld._resolve_draft_asset_class(tree) == "EQUITIES"
+
+    def test_falls_back_to_equities_without_crashing_on_unhashable_array_elements(self, fbld):
+        """Sufficiency-review addition (D-1): an asset_classes array
+        containing unhashable elements (e.g. a nested dict — a genuinely
+        malformed capture) must not crash a `set(array)`-based dedup
+        strategy. Distinct hostile path from the `.get()`-raises dict
+        subclass test above — this one specifically exercises the
+        array-processing branch's own exception safety, not the
+        top-level `.get()` call."""
+        tree = {"asset_classes": [{"unhashable": "dict"}, {"another": "dict"}]}
+        assert fbld._resolve_draft_asset_class(tree) == "EQUITIES"
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: _resolve_draft_asset_class — precedence when both present
@@ -222,9 +243,7 @@ class TestResolveDraftAssetClassRealFixtures:
         assert fbld._resolve_draft_asset_class(tree) == "EQUITIES"
 
     @pytest.mark.parametrize("filename", _EQUITIES_CARRYING_FIXTURES)
-    def test_propagates_crypto_when_a_real_equities_tree_is_stamped_crypto(
-        self, fbld, filename
-    ):
+    def test_propagates_crypto_when_a_real_equities_tree_is_stamped_crypto(self, fbld, filename):
         """The discriminating test: stamps ONLY the top-level asset_class to
         CRYPTO on a real tree that ALSO carries asset_classes=['EQUITIES'] —
         proves the helper genuinely reads the real field (a fallback-only /
@@ -239,9 +258,7 @@ class TestResolveDraftAssetClassRealFixtures:
         assert fbld._resolve_draft_asset_class(tree) == "CRYPTO"
 
     @pytest.mark.parametrize("filename", _ABSENT_ASSET_CLASS_FIXTURES)
-    def test_falls_back_to_equities_for_real_fixtures_lacking_the_field(
-        self, fbld, filename
-    ):
+    def test_falls_back_to_equities_for_real_fixtures_lacking_the_field(self, fbld, filename):
         tree = _load_tree(filename)
         assert "asset_class" not in tree and "asset_classes" not in tree, (
             f"fixture assumption drifted: {filename} now carries an asset "
@@ -354,9 +371,7 @@ class TestApproveFrontrunnerProposalAssetClassWiring:
             f"got {kwargs.get('asset_class')!r}"
         )
 
-    def test_never_raises_and_still_defaults_to_equities_for_a_malformed_candidate_tree(
-        self, fbld
-    ):
+    def test_never_raises_and_still_defaults_to_equities_for_a_malformed_candidate_tree(self, fbld):
         """AC-5 at the ORCHESTRATION layer, not just inside the pure helper
         in isolation — a corrupted DB row (candidate_tree stored as a bare
         string) must not crash approve_frontrunner_proposal. Per the plan's
