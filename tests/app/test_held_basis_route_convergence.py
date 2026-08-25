@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -39,12 +39,105 @@ import app as app_module
 import database as database_module
 
 _ET = ZoneInfo("America/New_York")
-# Must be the LIVE ET calendar date, not a fixed literal: the routes under
-# test resolve "today" internally from the ET wall clock (see
-# analytics.get_symphony_today_change's fallback, analytics.py:568), so a
-# hardcoded date detonates the day after it's written -- same date-bomb class
-# as commit 8b6fc8480 (PR #120, test_history_daily_drilldown.py).
-_TRADING_DAY = datetime.now(_ET).strftime("%Y-%m-%d")
+
+
+def _frozen_datetime_class(instant: datetime) -> type[datetime]:
+    """Builds a ``datetime`` subclass whose ``.now(tz)`` always resolves to
+    ``instant`` -- the established no-freezegun clock-freeze technique this
+    repo already uses (see tests/analytics/test_bl6_today_change_et_
+    fallback.py's ``_FrozenDatetime``). A proper subclass, so every OTHER
+    datetime behavior (construction, arithmetic, .strftime, comparisons)
+    stays real -- only .now() is overridden.
+
+    KNOWN DUPLICATION (code-review round 1, F5, accepted as low-priority):
+    this factory is structurally identical to test_bl6_today_change_et_
+    fallback.py's module-level ``_FrozenDatetime`` class (parametrized here
+    as a factory instead of a single fixed instant, since this module needs
+    several different frozen instants across its tests). Deliberately NOT
+    hoisted to a shared tests/conftest.py util this cycle -- that touches a
+    file every test in the tree imports, a broader blast radius than this
+    single-file, test-only hardening cycle's scope justifies for a
+    low-priority dedup.
+    """
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return instant.astimezone(tz)
+            # DEVIATION FROM REAL datetime.now() (code-review round 2, F3):
+            # real now() with no tz returns the LOCAL system time; this
+            # returns `instant`'s naive wall-clock value regardless of
+            # `instant`'s own tzinfo (UTC here) -- i.e. NOT converted to any
+            # local timezone. Currently inert: nothing in this module calls
+            # app_module.datetime.now() without a tz arg. A future no-tz
+            # caller would get this UTC-wall value, not "local now" -- a trap
+            # if such a call is ever added without updating this comment's
+            # assumption.
+            return instant.replace(tzinfo=None)
+
+    return _Frozen
+
+
+# HELD-BASIS HARDENING (residual of #127): a hardcoded _TRADING_DAY detonates
+# the day after it's written (the original #127 bug); computing it from the
+# LIVE ET wall clock at MODULE-IMPORT time fixed that but introduced a
+# narrower race -- app.py's live-branch routes (_dash_today app.py:1222,
+# _today_et app.py:2726, _compute_portfolio_strip's own fallback app.py:1502)
+# each resolve datetime.now(_ET) FRESH at REQUEST time, so a CI run whose
+# import happens pre-midnight-ET and whose HTTP requests happen post-
+# midnight-ET desyncs this module's seeded _TRADING_DAY from what the route
+# actually resolves. Fix: freeze app.py's clock to a FIXED instant (see
+# _frozen_route_clock below) and derive _TRADING_DAY from that SAME instant
+# -- both sides are now the same static value by construction, for every
+# test in this module, regardless of real wall-clock time. This also makes
+# _TRADING_DAY a genuinely static constant (no more real-time dependency to
+# age out at all).
+#
+# Chosen deliberately DISTINCT from BOTH TestClockBoundaryDeterminism boundary
+# days ("2026-08-20"/"2026-08-21", code-review round 2 F2): this default MUST
+# NOT coincidentally match either boundary day, or that boundary test's own
+# per-test freeze override becomes redundant -- the assertion would still
+# pass even if the override silently no-op'd, since the (unrelated) default
+# freeze would independently produce the same day. 2026-08-15 ET has no such
+# collision.
+_FROZEN_INSTANT = datetime(
+    2026, 8, 15, 18, 30, 0, tzinfo=UTC
+)  # arbitrary, far from any ET midnight boundary AND from both boundary-test days
+_TRADING_DAY = _FROZEN_INSTANT.astimezone(_ET).strftime("%Y-%m-%d")
+_FrozenDatetime = _frozen_datetime_class(_FROZEN_INSTANT)
+
+
+@pytest.fixture(autouse=True)
+def _frozen_route_clock(monkeypatch):
+    """Freezes datetime.now() calls inside app.py to _FROZEN_INSTANT for the
+    duration of each test in this module.
+
+    SCOPE (code-review round 2, F1 -- corrected from an earlier overclaim):
+    this patches ONLY the module-level name ``app_module.datetime`` (app.py
+    does ``from datetime import ... datetime`` at module scope, so that name
+    is directly patchable). It does NOT freeze:
+      - function-local ``from datetime import datetime`` re-imports elsewhere
+        in app.py (e.g. force_eod() app.py:3939, resend_discord() app.py:4000)
+        -- those re-bind a fresh, unpatched reference at call time.
+      - analytics.py's own request-time datetime fallback (analytics.py:
+        565-568) -- a function-local import there too.
+
+    INVARIANT this harness relies on: every route this test file drives
+    (``/``, ``/api/state``, ``/api/strip/<window>``) threads an explicit
+    ``trading_day`` end-to-end (confirmed via tests/analytics/test_bl6_
+    today_change_et_fallback.py's TestExplicitTradingDaySitesUnaffected AST
+    scan), so analytics.py's own fallback is dead code on every path this
+    file exercises -- freezing app_module.datetime alone is therefore
+    sufficient. A FUTURE test added to this file that drives a route NOT
+    covered by that invariant (e.g. one of the un-threaded call sites above,
+    or a genuinely new route) must either (a) confirm that route also
+    threads trading_day explicitly, or (b) extend this freeze to cover that
+    route's actual clock source -- do not assume this fixture alone
+    guarantees determinism for an untested code path.
+    """
+    monkeypatch.setattr(app_module, "datetime", _FrozenDatetime)
+
 
 _FIXTURE_PATH = (
     Path(__file__).parent.parent / "fixtures" / "math" / "held_basis_convergence_live_capture.json"
@@ -63,17 +156,26 @@ def golden_fixture() -> dict:
 
 
 def _insert_shadow_row(
-    db_path: str, symphony_id: str, shadow_return: float, current_return: float
+    db_path: str,
+    symphony_id: str,
+    shadow_return: float,
+    current_return: float,
+    trading_day: str | None = None,
 ) -> None:
+    """trading_day defaults to the module's frozen _TRADING_DAY -- all
+    existing call sites are byte-unchanged. TestClockBoundaryDeterminism
+    passes an explicit trading_day to seed a DIFFERENT boundary-instant day.
+    """
+    _day = trading_day if trading_day is not None else _TRADING_DAY
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO shadow_history "
         "(ts_utc, ts_et, trading_day, symphony_id, current_return, shadow_return) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (
-            f"{_TRADING_DAY}T13:30:02Z",
-            f"{_TRADING_DAY}T13:30:02",
-            _TRADING_DAY,
+            f"{_day}T13:30:02Z",
+            f"{_day}T13:30:02",
+            _day,
             symphony_id,
             current_return,
             shadow_return,
@@ -94,9 +196,21 @@ def _seed_live_bot_state_symphony(
 ) -> None:
     """Seed one symphony into bot_state via the real database.save_state,
     mirroring the real engine's persisted shape (BL-9's own marker key).
+
+    ORDERING PRECONDITION (code-review round 2, F4): reads app_module.
+    datetime.now(_ET) below, so it picks up whichever clock is ACTIVE at
+    CALL TIME -- the module-default _FROZEN_INSTANT (installed by the
+    autouse _frozen_route_clock fixture before every test body runs), or a
+    TestClockBoundaryDeterminism test's own per-test monkeypatch override.
+    Callers that install a per-test clock override (e.g.
+    ``monkeypatch.setattr(app_module, "datetime", ...)``) MUST do so BEFORE
+    calling this helper, or last_successful_cycle_at will be stamped from
+    the wrong (still-default) clock. Using this test module's own unfrozen
+    `datetime` here instead would contradict the static-clock invariant the
+    rest of this module relies on.
     """
     state = database_module.load_state() or {}
-    state["last_successful_cycle_at"] = datetime.now(_ET).isoformat()
+    state["last_successful_cycle_at"] = app_module.datetime.now(_ET).isoformat()
     state[sym_id] = {
         "name": name,
         "account": "ACC1",
@@ -211,10 +325,22 @@ class TestAC2CallerShapeParity:
     def test_frozen_snapshot_branch_card_if_held_unchanged_for_untriggered_symphony(
         self, frozen_client
     ):
-        """app.py:2169 (frozen/closed-market snapshot branch). Same
-        differential-value technique via /api/state's "state" JSON key
-        (which carries the frozen branch's mutated per-symphony _tc dict --
-        see this file's module docstring for the JSON-shape trace).
+        """app.py:2169 (frozen/closed-market snapshot branch), marker key
+        ABSENT case. Same differential-value technique via /api/state's
+        "state" JSON key (which carries the frozen branch's mutated
+        per-symphony _tc dict -- see this file's module docstring for the
+        JSON-shape trace).
+
+        This covers only the marker-ABSENT half of the class's "(marker
+        False/absent)" scope -- _seed_frozen_snapshot_symphony deliberately
+        never sets current_return_is_reconstructed at all, so this test only
+        exercises get_symphony_today_change's absent-key fallback branch
+        (analytics.py:585-586). See
+        test_frozen_snapshot_branch_card_if_held_unchanged_for_explicit_false_marker
+        below for the companion marker-PRESENT-but-False case (HELD-BASIS
+        HARDENING: confirmed via mutation testing that this test alone
+        cannot catch a bug isolated to the key-present branch, analytics.py:
+        583-584 -- the two tests are non-redundant).
         """
         sym_id = "frozen-card-untriggered"
         _seed_frozen_snapshot_symphony(
@@ -240,12 +366,67 @@ class TestAC2CallerShapeParity:
             f"(8.0); got if_held={tc.get('if_held')}"
         )
 
+    def test_frozen_snapshot_branch_card_if_held_unchanged_for_explicit_false_marker(
+        self, frozen_client
+    ):
+        """app.py:2169 (frozen/closed-market snapshot branch), marker key
+        PRESENT-BUT-FALSE case (HELD-BASIS HARDENING re-arm). Companion to
+        the ABSENT-key test above -- uses
+        _seed_frozen_snapshot_symphony_with_marker(is_reconstructed=False,
+        triggered=False) so current_return_is_reconstructed is explicitly
+        present with value False, exercising analytics.py:583-584's
+        key-presence branch (an explicit False must be respected, never
+        silently treated the same as "absent, fall through to sym_dict") --
+        the branch F4's whole "key-presence check, not truthiness" design
+        exists for, and which the ABSENT-key test above structurally cannot
+        reach (confirmed via mutation testing: forcing key-present branch to
+        always-True left the absent-key test green).
+        """
+        sym_id = "frozen-card-explicit-false-marker"
+        _seed_frozen_snapshot_symphony_with_marker(
+            sym_id,
+            name="Frozen Card Explicit False Marker",
+            value=10000.0,
+            current_return=3.5,
+            is_reconstructed=False,
+            triggered=False,
+        )
+        _insert_shadow_row(os.environ["DB_PATH"], sym_id, shadow_return=3.5, current_return=8.5)
+
+        resp = frozen_client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        assert data.get("market_state") == "closed_frozen", (
+            f"expected the frozen branch to be exercised; got market_state={data.get('market_state')!r}"
+        )
+        state = data.get("state") or {}
+        assert sym_id in state, (
+            f"expected {sym_id!r} in the frozen response's 'state' key; got {sorted(state.keys())!r}"
+        )
+        tc = (state[sym_id] or {}).get("_tc") or {}
+
+        assert tc.get("if_held") == pytest.approx(3.5, abs=1e-6), (
+            f"AC-2 FAIL: app.py:2169 (frozen snapshot branch) with an EXPLICIT False marker "
+            f"must render the snapshot's bot_state-derived if_held (3.5), never the shadow "
+            f"row's differing current_return (8.5); got if_held={tc.get('if_held')} -- an "
+            f"explicit False on the key-present branch (analytics.py:583-584) must be "
+            f"respected exactly like the absent-key fallback, not silently overridden"
+        )
+
     def test_live_poll_aggregate_and_card_if_held_unchanged_for_untriggered_symphony(self, client):
         """app.py:1508-1514->:1601 (aggregate strip) and app.py:2624-2630->:2675
         (live poll card) -- BOTH threading sites, marker explicitly False.
         Both must render the bot_state value, matching pre-fix behavior,
         proving Option B's marker-gating (not an always-prefer-shadow swap).
+
+        Caches cleared (matching AC-3/AC-5's convention) so the direct
+        if_held/dry_run pins below deterministically hit the Tier-2 VW floor
+        rather than a warm account-basis branch left over from a preceding
+        test in this same class/module.
         """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
         sym_id = "live-poll-untriggered"
         _seed_live_bot_state_symphony(
             sym_id,
@@ -275,12 +456,28 @@ class TestAC2CallerShapeParity:
 
         portfolio_strip = data.get("portfolio_strip") or {}
         today_change = portfolio_strip.get("today_change") or {}
-        # Untriggered/marker-False -> guard_delta_vw must be exactly 0 -> aggregate dry_run == if_held.
-        assert today_change.get("dry_run") == pytest.approx(
-            today_change.get("if_held"), abs=1e-6
-        ), (
+        # HELD-BASIS HARDENING re-arm (was a vacuous `dry_run == if_held` relative
+        # check): this fixture seeds shadow_return (4.0) coincidentally EQUAL to
+        # bot_state.current_return (4.0), so _value_weighted_portfolio's paired
+        # guard_delta_vw is mathematically forced to exactly 0 regardless of
+        # whether app.py's Tier-2-floor re-derivation (app.py:1657-1662) is
+        # implemented correctly -- 0 times any (even a badly-scaled) coefficient
+        # is still 0. Confirmed via mutation testing: scaling _floor_guard_delta
+        # by 2x in that formula left the old relative assertion green. Pin the
+        # DIRECT expected value instead (mirrors this file's own F8-fix precedent
+        # of replacing a weak relative/existence check with an exact pin) -- this
+        # also independently proves app.py:1508-1514's aggregate call site
+        # (a DIFFERENT call site than the per-symphony card asserted above)
+        # correctly suppresses the marker=False override too.
+        assert today_change.get("if_held") == pytest.approx(4.0, abs=1e-6), (
+            f"AC-2 FAIL: the aggregate today_change.if_held (app.py:1508-1514 -> :1601 call "
+            f"site) must remain the bot_state-derived value (4.0, marker=False), never leak "
+            f"the shadow row's differing current_return (9.0); got {today_change}"
+        )
+        assert today_change.get("dry_run") == pytest.approx(4.0, abs=1e-6), (
             f"AC-2 sanity: with a single untriggered symphony and no divergence, the aggregate "
-            f"today_change dry_run/if_held must agree; got {today_change}"
+            f"today_change.dry_run (sourced from shadow_return, independent of the marker) "
+            f"must also be 4.0; got {today_change}"
         )
 
 
@@ -809,6 +1006,7 @@ def _seed_frozen_snapshot_symphony_with_marker(
     value: float,
     current_return: float,
     is_reconstructed: bool,
+    triggered: bool = True,
 ) -> None:
     """F5(b)/(d) fixture: unlike _seed_frozen_snapshot_symphony (which
     deliberately never sets the marker, documenting that the EOD capture
@@ -821,6 +1019,12 @@ def _seed_frozen_snapshot_symphony_with_marker(
     captured by the snapshot builder with its LEFTOVER marker value from
     earlier in the day. This is therefore a real, reachable production
     shape for a frozen snapshot entry, not a synthetic/unreachable one.
+
+    triggered defaults to True (all 3 original F5 call sites' behavior is
+    byte-unchanged) -- HELD-BASIS HARDENING passes triggered=False to build
+    an honest "untriggered symphony, marker explicitly False" fixture for
+    AC-2's frozen-branch coverage gap (see
+    test_frozen_snapshot_branch_card_if_held_unchanged_for_explicit_false_marker).
     """
     state = database_module.load_state() or {}
     snapshot = state.get("last_market_close_snapshot") or {
@@ -838,7 +1042,7 @@ def _seed_frozen_snapshot_symphony_with_marker(
             "armed": False,
             "tp_armed": False,
             "para_armed": False,
-            "triggered": True,
+            "triggered": triggered,
             "current_return": current_return,
             "current_return_is_reconstructed": is_reconstructed,
             "current_value": value,
@@ -1013,4 +1217,128 @@ class TestF5FrozenBranchConvergence:
             f"+1.0pp paired-mean divergence must be exactly +0.6667pp (matching the live "
             f"branch's F2 fix), not the raw unscaled/mismatched-denominator VW passthrough; "
             f"got delta={delta} (today_change={today_change})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# HELD-BASIS HARDENING -- proves the _frozen_route_clock mechanism holds at
+# the LITERAL ET midnight boundary (the exact instant #127's race could
+# occur), not just "usually" for whatever the real wall clock happens to be
+# when the suite runs. Only the LIVE branch (/api/state via `client`) is
+# vulnerable to this race -- the frozen branch's trading_day is read from
+# the stored snapshot dict, never live-resolved (see module docstring).
+#
+# Revise (code-review round 1, F1 CRITICAL): the original version of these
+# 2 tests seeded a marker-FALSE symphony and asserted tc_held == the seeded
+# bot_state value -- but for marker=False, tc_held is sourced ENTIRELY from
+# bot_state.current_return regardless of the shadow row or trading_day
+# resolution, so both tests passed identically even with the freeze
+# removed entirely (vacuous, proven via mutation testing below). Redesign:
+# seed a TRIGGERED+MARKED (is_reconstructed=True) symphony whose bot_state.
+# current_return is a deliberately WRONG value, and a shadow_history row at
+# the boundary day carrying a DIFFERENT value -- the marker-gated override
+# (analytics.py:599-600, DE-HELD-BASIS-001) only renders the shadow value
+# when a matching-trading_day row is found, which only happens when the
+# route resolves "today" == the frozen boundary day. This makes the
+# assertion genuinely depend on the freeze succeeding.
+# ---------------------------------------------------------------------------
+
+
+class TestClockBoundaryDeterminism:
+    def test_route_converges_when_clock_frozen_at_235959_et(self, client, monkeypatch):
+        """Freezes app.py's clock to 23:59:59 ET on a fixed day D, seeds a
+        TRIGGERED+MARKED symphony's shadow row dated D with a value DIFFERENT
+        from its bot_state reconstructed value, and proves /api/state renders
+        the shadow-basis value -- reachable ONLY when the route resolves
+        "today" == D via the frozen clock -- one tick before the boundary
+        #127's race could straddle.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        boundary_instant = datetime(2026, 8, 20, 23, 59, 59, tzinfo=_ET)
+        boundary_day = "2026-08-20"
+        assert boundary_instant.strftime("%Y-%m-%d") == boundary_day  # fixture sanity
+
+        monkeypatch.setattr(app_module, "datetime", _frozen_datetime_class(boundary_instant))
+
+        sym_id = "boundary-235959"
+        _seed_live_bot_state_symphony(
+            sym_id,
+            name="Boundary 23:59:59 ET",
+            value=1000.0,
+            current_return=2.5,  # reconstructed bot_state value -- must NOT render
+            is_reconstructed=True,
+            triggered=True,
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"],
+            sym_id,
+            shadow_return=6.0,
+            current_return=6.0,  # shadow-basis value -- renders ONLY on a trading_day match
+            trading_day=boundary_day,
+        )
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        by_id = {s.get("id"): s for s in (data.get("symphonies") or []) if isinstance(s, dict)}
+        assert sym_id in by_id, (
+            f"expected {sym_id!r} among symphonies at the 23:59:59 ET boundary; got "
+            f"{sorted(by_id.keys())!r}"
+        )
+        assert by_id[sym_id].get("tc_held") == pytest.approx(6.0, abs=1e-6), (
+            f"boundary determinism FAIL at 23:59:59 ET: expected tc_held=6.0 (the shadow-basis "
+            f"override, reachable ONLY when the route resolves 'today' == {boundary_day!r} and "
+            f"finds the matching shadow_history row); got tc_held="
+            f"{by_id[sym_id].get('tc_held')} -- 2.5 would mean the route resolved a DIFFERENT "
+            f"day than the frozen clock intends (the exact #127 race), falling back to the "
+            f"un-overridden reconstructed bot_state value"
+        )
+
+    def test_route_converges_when_clock_frozen_at_000001_et_next_day(self, client, monkeypatch):
+        """Same proof, frozen 2 seconds later at 00:00:01 ET the NEXT calendar
+        day -- the other side of the exact boundary #127's race straddled.
+        """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
+        boundary_instant = datetime(2026, 8, 21, 0, 0, 1, tzinfo=_ET)
+        boundary_day = "2026-08-21"
+        assert boundary_instant.strftime("%Y-%m-%d") == boundary_day  # fixture sanity
+
+        monkeypatch.setattr(app_module, "datetime", _frozen_datetime_class(boundary_instant))
+
+        sym_id = "boundary-000001"
+        _seed_live_bot_state_symphony(
+            sym_id,
+            name="Boundary 00:00:01 ET",
+            value=1000.0,
+            current_return=3.5,  # reconstructed bot_state value -- must NOT render
+            is_reconstructed=True,
+            triggered=True,
+        )
+        _insert_shadow_row(
+            os.environ["DB_PATH"],
+            sym_id,
+            shadow_return=7.0,
+            current_return=7.0,  # shadow-basis value -- renders ONLY on a trading_day match
+            trading_day=boundary_day,
+        )
+
+        resp = client.get("/api/state")
+        assert resp.status_code == 200, f"unexpected status: {resp.status_code} {resp.get_data()!r}"
+        data = resp.get_json()
+        by_id = {s.get("id"): s for s in (data.get("symphonies") or []) if isinstance(s, dict)}
+        assert sym_id in by_id, (
+            f"expected {sym_id!r} among symphonies at the 00:00:01 ET (next-day) boundary; got "
+            f"{sorted(by_id.keys())!r}"
+        )
+        assert by_id[sym_id].get("tc_held") == pytest.approx(7.0, abs=1e-6), (
+            f"boundary determinism FAIL at 00:00:01 ET (next day): expected tc_held=7.0 (the "
+            f"shadow-basis override, reachable ONLY when the route resolves 'today' == "
+            f"{boundary_day!r} and finds the matching shadow_history row); got tc_held="
+            f"{by_id[sym_id].get('tc_held')} -- 3.5 would mean the route resolved a DIFFERENT "
+            f"day than the frozen clock intends (the exact #127 race), falling back to the "
+            f"un-overridden reconstructed bot_state value"
         )
