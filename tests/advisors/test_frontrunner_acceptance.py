@@ -774,12 +774,20 @@ def test_simplify_accepts_a_real_if_compound_overlay_counted_via_the_real_counte
 # ---------------------------------------------------------------------------
 
 
-def test_count_tree_nodes_descends_compound_condition_clauses_so_more_clauses_count_more():
-    """A 12-clause compound condition must count MORE nodes than a 2-clause
-    one when then/else allocation content is otherwise IDENTICAL -- proving
-    _count_tree_nodes genuinely descends into the compound condition's
-    clause list, not just the surrounding if/weight/asset structural
-    shape."""
+def test_count_tree_nodes_does_not_descend_compound_condition_clauses_after_ruling_3_reversion():
+    """R4-2 (Revise 4): RULING 3 (Revise 3's clause-descent change to the
+    SHARED, general-purpose _count_tree_nodes) is REVERTED -- a 12-clause
+    compound condition and a 2-clause one, with otherwise IDENTICAL then/
+    else allocation content, must now count the SAME via this shared
+    counter -- restoring its ORIGINAL children-only semantics (AC-6's
+    node_count_delta display metric was never meant to change; the
+    clause-aware behavior Revise 3 added here corrupted that display metric
+    for every symphony containing a compound condition anywhere, not just
+    frontrunner cascades, and was never numerically pinned before this
+    reversion). The DEDICATED clause-aware counter Revise 4 introduces
+    lives elsewhere and is used ONLY for the overlay SIMPLIFY operand --
+    see test_frontrunner_detector_r4_signal_logic.py's own clause-descent
+    test for THAT counter's (opposite) behavior."""
     from advisors import frontrunner_builder, symphony_schema
 
     def _make_if_compound_with_n_clauses(n: int) -> dict:
@@ -808,12 +816,75 @@ def test_count_tree_nodes_descends_compound_condition_clauses_so_more_clauses_co
     count_2 = frontrunner_builder._count_tree_nodes(tree_2)
     count_12 = frontrunner_builder._count_tree_nodes(tree_12)
 
-    assert count_12 > count_2, (
+    assert count_12 == count_2, (
         f"a 12-clause compound condition counted {count_12} nodes, a "
-        f"2-clause one counted {count_2} -- _count_tree_nodes is not "
-        f"descending into the compound condition's clause list at all "
-        f"(both trees have IDENTICAL then/else allocation content, so any "
-        f"difference must come from the clause count itself)"
+        f"2-clause one counted {count_2} -- the SHARED _count_tree_nodes "
+        f"must NOT descend into a compound condition's clause list after "
+        f"R4-2's reversion (both trees have IDENTICAL then/else allocation "
+        f"content, so ANY difference means the reversion didn't land, or "
+        f"was only partially applied)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# R4-2 companion: a real-fixture numeric regression pin on node_count_delta
+# itself (team-lead flagged this was never actually pinned before this
+# reversion -- only the compound-clause-descent SYMPTOM was tested, never
+# the display metric's own numeric value against a known real tree pair).
+# ---------------------------------------------------------------------------
+
+
+def test_node_count_delta_numeric_value_pinned_against_a_real_fixture_pair(facc):
+    """A concrete, hand-derivable node_count_delta value for a real
+    incumbent/candidate tree pair -- proving the display metric's ARITHMETIC
+    (candidate_node_count - incumbent_node_count, via the reverted,
+    children-only _count_tree_nodes) is correct, not just "some value that
+    happens not to crash". Uses two small, hand-countable trees (never a
+    hardcoded literal disconnected from their own structure) so the
+    expected value is independently derivable by inspection."""
+    from advisors import frontrunner_builder, symphony_schema
+
+    incumbent_tree = symphony_schema.make_root(
+        "Incumbent",
+        "daily",
+        [symphony_schema.make_asset("SPY"), symphony_schema.make_asset("AGG")],
+    )
+    candidate_tree = symphony_schema.make_root(
+        "Candidate",
+        "daily",
+        [
+            symphony_schema.make_asset("SPY"),
+            symphony_schema.make_asset("AGG"),
+            symphony_schema.make_asset("GLD"),
+        ],
+    )
+    incumbent_count = frontrunner_builder._count_tree_nodes(incumbent_tree)
+    candidate_count = frontrunner_builder._count_tree_nodes(candidate_tree)
+    # Hand-derivable: candidate has exactly ONE additional asset leaf over
+    # incumbent, with everything else structurally identical (same root
+    # wrapper shape, same first two assets) -- the delta must be exactly 1,
+    # independent of whatever the root wrapper's own internal node count is.
+    assert candidate_count - incumbent_count == 1, (
+        f"fixture sanity: candidate has exactly one more asset leaf than "
+        f"incumbent, so _count_tree_nodes(candidate) - "
+        f"_count_tree_nodes(incumbent) must be exactly 1, got "
+        f"{candidate_count - incumbent_count!r} -- either the fixture is "
+        f"malformed or _count_tree_nodes counts something beyond simple "
+        f"per-leaf structure"
+    )
+
+    metrics = {"annualized_return": 0.10, "max_drawdown": -0.05}
+    result = facc.evaluate_calmar_acceptance(
+        metrics,
+        metrics,
+        incumbent_node_count=incumbent_count,
+        candidate_node_count=candidate_count,
+        overlay_node_count=None,
+        replaced_cascade_node_count=None,
+    )
+    assert result.node_count_delta == 1, (
+        f"expected node_count_delta=1 (candidate_count={candidate_count} - "
+        f"incumbent_count={incumbent_count}), got {result.node_count_delta!r}"
     )
 
 
