@@ -727,30 +727,21 @@ def test_count_overlay_node_count_returns_none_unconditionally_when_compiled_tre
     (_run_build_for_symphony always has compiled_tree populated alongside a
     non-None candidate on the only real call path) and round-3 review found
     tier 2 additionally skips the unwrap step (a genuine miscount risk if
-    ever reached). _count_overlay_node_count(candidate, compiled_tree=None)
-    must now degrade to None UNCONDITIONALLY, regardless of what shape
-    candidate is — no compile is ever attempted when compiled_tree is
-    absent."""
-    # A perfectly valid, compilable DSL candidate — proves the None result
-    # is NOT because this specific candidate happens to be malformed.
-    valid_candidate = _dsl_overlay_candidate(n_assets=1)
-    result = fbld._count_overlay_node_count(valid_candidate, compiled_tree=None)
+    ever reached). compiled_tree=None must degrade to None UNCONDITIONALLY.
+
+    Revise 5, F6: this test previously varied a `candidate` argument
+    alongside compiled_tree=None (two variants -- a valid DSL candidate and
+    an already-step-shaped one) to prove the None result held "regardless of
+    what shape candidate is". F6 drops the dead `candidate` parameter
+    entirely (it was unused since R4-6 deleted both tiers that ever read
+    it), so there is no longer an second axis to vary -- this test now has
+    a single call, matching the single remaining parameter."""
+    result = fbld._count_overlay_node_count(None)
     assert result is None, (
         f"expected an unconditional None when compiled_tree is absent (R4-6 "
-        f"deletes the fallback-compile tier entirely), got {result!r} -- "
-        f"this candidate is genuinely valid/compilable, so a non-None "
-        f"result here means a fallback compile path still exists and "
-        f"should have been deleted"
-    )
-
-    # Also true for an already-step-shaped candidate (the old tier-2 input
-    # shape) — that tier is gone too, not just tier 3.
-    already_compiled_shape = {"step": "if", "children": [{"step": "if-child"}]}
-    result2 = fbld._count_overlay_node_count(already_compiled_shape, compiled_tree=None)
-    assert result2 is None, (
-        f"expected None for an already-step-shaped candidate with "
-        f"compiled_tree=None too — R4-6 deletes BOTH tier 2 and tier 3, "
-        f"got {result2!r}"
+        f"deletes the fallback-compile tier entirely; F6 additionally drops "
+        f"the dead `candidate` param this test used to also vary), got "
+        f"{result!r}"
     )
 
 
@@ -851,9 +842,7 @@ def test_count_overlay_node_count_logs_a_warning_on_a_none_degradation_path(fbld
 
     malformed_compiled_tree = {"children": []}  # zero children -- fails to unwrap
     with caplog.at_level(logging.WARNING):
-        result = fbld._count_overlay_node_count(
-            _dsl_overlay_candidate(n_assets=1), compiled_tree=malformed_compiled_tree
-        )
+        result = fbld._count_overlay_node_count(malformed_compiled_tree)
 
     assert result is None, "sanity: an unwrap-failing compiled_tree must still degrade to None"
     warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
@@ -1201,9 +1190,7 @@ def test_overlay_selection_declines_with_warning_on_aliased_duplicate_children(f
     unwrapped_if_node = {"step": "if", "children": [aliased_child, aliased_child]}
     malformed_compiled_root = {"step": "if", "children": [unwrapped_if_node]}
     with caplog.at_level(logging.WARNING):
-        result = fbld._count_overlay_node_count(
-            _dsl_overlay_candidate(n_assets=1), compiled_tree=malformed_compiled_root
-        )
+        result = fbld._count_overlay_node_count(malformed_compiled_root)
 
     assert result is None or isinstance(result, int), (
         f"expected an honest None or a real int, got {result!r} -- no "
@@ -1296,3 +1283,199 @@ def test_run_build_threads_fire_is_else_branch_into_the_acceptance_call_and_decl
         "unit-level decline (test_frontrunner_acceptance.py) is not "
         "actually taking effect through the real orchestration wiring"
     )
+
+
+# ---------------------------------------------------------------------------
+# Revise 5, F2/F4 (PR #128 round-4 /code-review): the OVERLAY-side operand
+# for the SAME conceptual multi-tier content the cascade side pins in
+# tests/advisors/test_frontrunner_detector_r4_signal_logic.py's
+# test_signal_logic_node_count_excludes_nested_tiers_own_continuation_by_design
+# (hand-derived to 6). This is the matched OTHER HALF of that pin -- see
+# that test file's own header comment (immediately above its section) for
+# the full trust-asymmetry derivation and the team-lead's BINDING
+# do-not-unify-the-counters ruling. Do not "fix" the diff below by making
+# either counter match the other.
+# ---------------------------------------------------------------------------
+
+
+def test_overlay_signal_logic_count_includes_nested_tiers_own_else_unlike_cascade_side(fbld):
+    """F2/F4 pin (Revise 5): the OVERLAY-side counter's hand-derived value
+    is 10 -- UNLIKE the cascade-side counter (pinned to 6, same tier
+    structure/tickers/wrappers: UVXY fire, VIXM+BIL nested-tier-else, an
+    outer placeholder), the overlay counter DOES count the nested tier's
+    own else (4 nodes) -- because on THIS side (a self-generated
+    candidate), the DSL/compiler convention structurally guarantees a
+    nested tier's own else is never a placeholder (see
+    _find_terminal_else_child's own docstring). The diff (10 - 6 = 4) is
+    EXACTLY the nested tier's own else subtree.
+
+    This call intentionally uses the POST-F6 single-argument keyword form
+    (compiled_tree=...) -- against the CURRENT (pre-F6) two-argument
+    signature this raises TypeError: missing required positional argument
+    'candidate', a clear and correct RED signal (not a counting-logic bug)
+    that resolves once F6 lands alongside this fix in the same GREEN pass."""
+    from advisors import plan_tree_compiler
+
+    overlay_candidate = {
+        "kind": "if",
+        "condition": {
+            "lhs_fn": "relative-strength-index",
+            "lhs_ticker": "SPY",
+            "window": 10,
+            "comparator": "gt",
+            "rhs": {"fixed": 79},
+        },
+        "then": [
+            {
+                "kind": "if",
+                "condition": {
+                    "lhs_fn": "relative-strength-index",
+                    "lhs_ticker": "SPY",
+                    "window": 10,
+                    "comparator": "gt",
+                    "rhs": {"fixed": 83},
+                },
+                "then": [
+                    {
+                        "kind": "weight",
+                        "scheme": "equal",
+                        "children": [{"kind": "asset", "ticker": "UVXY"}],
+                    }
+                ],
+                "else": [
+                    {
+                        "kind": "weight",
+                        "scheme": "equal",
+                        "children": [
+                            {"kind": "asset", "ticker": "VIXM"},
+                            {"kind": "asset", "ticker": "BIL"},
+                        ],
+                    }
+                ],
+            }
+        ],
+        "else": [
+            {
+                "kind": "weight",
+                "scheme": "equal",
+                "children": [{"kind": "asset", "ticker": "CORE_STRATEGY_PLACEHOLDER"}],
+            }
+        ],
+    }
+    plan_envelope = {
+        "plan_id": "revise-5-f2f4-overlay-pin",
+        "objective": "cut_drawdown",
+        "name": "Revise 5 F2/F4 overlay pin",
+        "rebalance": "daily",
+        "root": overlay_candidate,
+    }
+    compile_result = plan_tree_compiler.compile_plan(plan_envelope)
+    assert compile_result.tree is not None, (
+        f"fixture sanity: the DSL candidate must compile clean, got reason="
+        f"{compile_result.reason!r}"
+    )
+
+    overlay_count = fbld._count_overlay_node_count(compiled_tree=compile_result.tree)
+
+    # Cross-verified against the real detector in
+    # test_frontrunner_detector_r4_signal_logic.py's
+    # test_signal_logic_node_count_excludes_nested_tiers_own_continuation_by_design
+    # -- kept as a plain int here (not imported) since that test file's
+    # fixture builder is a module-private helper, matching this suite's
+    # existing convention of self-contained test files.
+    matched_cascade_signal_logic_count = 6
+
+    assert overlay_count == 10, (
+        f"expected 10 (1 + fire_child subtree of 9: outer_true_child + "
+        f"inner_if + inner_true_child + inner_fire_wt + UVXY + "
+        f"inner_else_child + inner_continuation_wt + VIXM + BIL -- the "
+        f"nested tier's own else IS counted here), got {overlay_count!r}"
+    )
+    assert overlay_count - matched_cascade_signal_logic_count == 4, (
+        f"the overlay/cascade diff must be exactly 4 -- the nested tier's "
+        f"own else subtree (inner_else_child + wt-wrapper + VIXM + BIL) -- "
+        f"got overlay={overlay_count!r}, cascade="
+        f"{matched_cascade_signal_logic_count!r}, diff="
+        f"{overlay_count - matched_cascade_signal_logic_count!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 5, F6 (PR #128 round-4 /code-review, LOW/cleanup): the `candidate`
+# parameter on _count_overlay_node_count is dead -- unused since R4-6
+# deleted both fallback tiers that ever read it (the docstring already says
+# "Unused"). Drop it entirely; the sole remaining parameter is
+# compiled_tree.
+# ---------------------------------------------------------------------------
+
+
+def test_count_overlay_node_count_has_single_compiled_tree_parameter(fbld):
+    """The signature must have exactly one parameter, named compiled_tree
+    (matching every existing doc reference to it)."""
+    import inspect
+
+    sig = inspect.signature(fbld._count_overlay_node_count)
+    params = list(sig.parameters.values())
+    assert len(params) == 1, (
+        f"expected exactly ONE parameter (compiled_tree), got "
+        f"{[p.name for p in params]!r} -- the dead `candidate` param must "
+        f"be dropped"
+    )
+    assert params[0].name == "compiled_tree", (
+        f"expected the sole remaining parameter to be named 'compiled_tree' "
+        f"(matching every doc reference to it), got {params[0].name!r}"
+    )
+
+
+def test_count_overlay_node_count_call_site_passes_a_single_argument(fbld):
+    """The sole production call site (inside _run_build_for_symphony) must
+    pass exactly one argument -- an AST-based check (same
+    ast.walk-after-locating-FunctionDef-by-name technique already
+    established twice earlier in this cycle) so this survives a future
+    refactor that moves the call site around, as long as it stays reachable
+    from _run_build_for_symphony's own source."""
+    import ast
+    import inspect
+    import pathlib
+
+    module_path = inspect.getfile(fbld)
+    tree = ast.parse(pathlib.Path(module_path).read_text(encoding="utf-8"))
+
+    run_build_def = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "_run_build_for_symphony"
+        ),
+        None,
+    )
+    assert run_build_def is not None, (
+        "_run_build_for_symphony function definition not found in frontrunner_builder.py's source"
+    )
+
+    calls = [
+        node
+        for node in ast.walk(run_build_def)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == "_count_overlay_node_count")
+            or (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_count_overlay_node_count"
+            )
+        )
+    ]
+    assert calls, (
+        "_run_build_for_symphony's own source contains no call to "
+        "_count_overlay_node_count -- expected the sole production call "
+        "site to live there (frontrunner_builder.py:2005 as of this "
+        "cycle's brief)"
+    )
+    for call in calls:
+        total_args = len(call.args) + len(call.keywords)
+        assert total_args == 1, (
+            f"expected the call to _count_overlay_node_count to pass "
+            f"exactly ONE argument (the dead `candidate` param is gone), "
+            f"found {total_args} at line {call.lineno}"
+        )

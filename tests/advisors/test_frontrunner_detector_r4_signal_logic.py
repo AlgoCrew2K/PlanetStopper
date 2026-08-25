@@ -809,3 +809,243 @@ def test_new_signal_logic_counter_and_shared_selection_helper_have_no_recursion_
         f"other back and forth), not just a function calling itself "
         f"directly, since both classes carry the identical stack-depth risk"
     )
+
+
+# ---------------------------------------------------------------------------
+# Revise 5, F2/F4 (PR #128 round-4 /code-review): the two SIMPLIFY operands
+# use DIFFERENT counting policies -- cascade-side _compute_signal_logic_
+# node_count (THIS module) EXCLUDES a nested qualifying tier's own
+# continuation entirely, at every nesting level; overlay-side
+# (frontrunner_builder._count_overlay_node_count -> this module's own
+# _count_clause_aware_signal_logic) does NOT -- it counts a nested tier's
+# own else, excluding ONLY the OUTERMOST placeholder.
+#
+# TEAM-LEAD RULING (BINDING, 2026-08-25): this asymmetry is CORRECT BY
+# DESIGN. DO NOT UNIFY THE TWO COUNTERS. Making the cascade counter descend
+# nested continuations the way the overlay counter does would REINTRODUCE
+# the Revise-3 CRITICAL fail-open regression (untrusted core bulk inflating
+# the "replaced logic" denominator -> admits oversized overlays). The
+# counting LOGIC does not change this round -- only two misleading
+# docstring claims of "a single shared counting implementation" get
+# corrected to honestly describe the two-policy design (see
+# .claude/tdd-handoff.md for the exact intended docstring wording).
+#
+# WHY the asymmetry is correct (trust-asymmetry, not an oversight):
+#   - Overlay (candidate) side: _find_terminal_else_child's own docstring
+#     (frontrunner_builder.py) documents a MANUFACTURING-TIME GUARANTEE we
+#     control -- tiers nest ONLY inside 'then'; a nested tier's own 'else'
+#     is real lower-intensity hedge content, NEVER a placeholder (verified
+#     against both real fixtures under tests/fixtures/advisors/frontrunner/
+#     and _EXAMPLE_OVERLAY, frontrunner_builder.py's own flagship worked
+#     example). Counting it is safe -- no core-content smuggling is
+#     structurally possible on a self-generated candidate.
+#   - Cascade (incumbent) side: _is_internal_hedge_subgate's own docstring
+#     (this module) documents REAL core-leak risk on the DETECTED,
+#     untrusted incumbent -- a nested continuation can genuinely be
+#     unrelated core-strategy bulk (thousands of nodes), the exact defect
+#     class DE-FR-SIMPLIFY-001 exists to prevent (Revise 3's stub-padding-
+#     bulk regression). Excluding at every qualifying nesting level is the
+#     conservative, fail-closed choice this whole module is built around.
+#   - Risk asymmetry: over-excluding a genuine small nested-tier continuation
+#     costs a few nodes (bounded); under-excluding risks unboundedly
+#     inflating the denominator with real core bulk if the documented leak
+#     risk ever materializes (unbounded). Bounded-small-cost beats
+#     unbounded-large-risk for untrusted input.
+#
+# The cascade fixture below and the OVERLAY fixture in
+# tests/advisors/test_frontrunner_simplify_path_wiring.py share IDENTICAL
+# tier structure/tickers/wrappers (UVXY fire, VIXM+BIL nested-tier-else,
+# 200x CORE_ASSET_OUTER_/CORE_STRATEGY_PLACEHOLDER outer-continuation) so
+# the diff between the two counters (6 vs 10) isolates cleanly to the ONE
+# structural difference under test -- never a fixture-construction
+# artifact. Hand-derived from the raw fixture pieces below -- never
+# mirrored from either counting function.
+# ---------------------------------------------------------------------------
+
+
+def _build_matched_multitier_cascade_fixture() -> dict:
+    """Outer RSI(SPY,10)>79 cascade; fire = a nested RSI(SPY,10)>83 tier
+    (fire=UVXY, continuation=[VIXM, BIL]); outer continuation = 200
+    CORE_ASSET_OUTER_ leaves. Weight-equal-wrapped throughout (matching the
+    overlay fixture's DSL-mandated wrapper convention in
+    test_frontrunner_simplify_path_wiring.py, for a clean apples-to-apples
+    node-count diff between the two counters).
+
+    Hand-derivation (node-by-node, never re-derived from any selection
+    code):
+      inner_fire = wt-cash-equal([UVXY])                       = 1+1 = 2
+      inner_continuation = wt-cash-equal([VIXM, BIL])           = 1+2 = 3
+      inner_if = if(cond, then=[inner_fire], else=[inner_continuation])
+               = 1(if) + [1(true_child)+2(inner_fire)] + [1(else_child)+3(inner_continuation)]
+               = 1 + 3 + 4 = 8
+      outer_continuation = wt-cash-equal([200x CORE_ASSET_OUTER_])
+                          = 1 + 200 = 201
+      outer_if = if(cond, then=[inner_if], else=[outer_continuation])
+
+    _select_fire_and_continuation(outer_if): cond_n=_count_nodes(true_child)
+    =1+8=9, else_n=_count_nodes(else_child)=1+201=202. cond_n(9)<=else_n(202)
+    -> fire=true_child (the correct, non-inverted pick).
+
+    signal_logic_node_count walk: +1(outer_if) +1(true_child)
+    +1(inner_if, qualifies as a nested tier -- UVXY sits in its own
+    cond_child) -- inner's OWN continuation (inner_else_child + wt-wrapper
+    + VIXM + BIL, 4 nodes) EXCLUDED ENTIRELY -- +1(inner_true_child)
+    +1(inner_fire wt-wrapper) +1(UVXY) = 6 total.
+    Excluded: 4 (inner tier's own else) + 202 (outer's real core).
+    """
+    inner_fire = ss.make_weight_equal([ss.make_asset("UVXY")])
+    inner_continuation = ss.make_weight_equal([ss.make_asset("VIXM"), ss.make_asset("BIL")])
+    inner_cond = ss.make_condition(
+        ss.make_indicator("relative-strength-index", "SPY", window=10), "gt", 83
+    )
+    inner_if = ss.make_if(
+        inner_cond, then_children=[inner_fire], else_children=[inner_continuation]
+    )
+
+    outer_continuation = ss.make_weight_equal(
+        [ss.make_asset(f"CORE_ASSET_OUTER_{i:03d}") for i in range(200)]
+    )
+    outer_cond = ss.make_condition(
+        ss.make_indicator("relative-strength-index", "SPY", window=10), "gt", 79
+    )
+    return ss.make_if(outer_cond, then_children=[inner_if], else_children=[outer_continuation])
+
+
+def test_signal_logic_node_count_excludes_nested_tiers_own_continuation_by_design(fd):
+    """F2/F4 pin (Revise 5): the cascade-side counter's hand-derived value
+    is 6 -- the nested tier's own else (4 nodes: inner_else_child +
+    wt-wrapper + VIXM + BIL) is EXCLUDED, matching this module's
+    conservative, untrusted-input posture. See this section's header
+    comment for the full trust-asymmetry derivation and the team-lead's
+    BINDING do-not-unify-the-counters ruling; the matched overlay-side
+    value (10, which DOES count the same 4 nodes) is pinned separately in
+    tests/advisors/test_frontrunner_simplify_path_wiring.py -- the two
+    counters' DIFFERENT treatment of the SAME conceptual content is the
+    whole point of this pin, not a bug to converge."""
+    tree = _build_matched_multitier_cascade_fixture()
+    result = fd.detect_frontrunner_cascades(tree)
+    assert len(result.cascades) == 1
+    casc = result.cascades[0]
+    assert casc.signal_logic_node_count == 6, (
+        f"expected 6 (outer_if + true_child + inner_if + inner_true_child + "
+        f"inner_fire_wt + UVXY -- the nested tier's own 4-node else "
+        f"EXCLUDED), got {casc.signal_logic_node_count!r}"
+    )
+
+
+def _build_compound_nested_tier_cascade_fixture(n_clauses: int) -> dict:
+    """F4 positive pin: a nested qualifying tier (qualifies via
+    _is_internal_hedge_subgate -- NOT _qualifies_as_cascade_rung, since a
+    compound-condition if-child has no flat lhs-fn for the RSI check to
+    read) whose OWN condition is a genuine N-clause compound block. Proves
+    _compute_signal_logic_node_count's delegation to
+    _count_clause_aware_signal_logic correctly counts ALL N clauses via the
+    SAME `current.get("condition")` delegation path -- i.e. F4's literal
+    "general branch reads condition singular only, never conditions
+    plural" observation does NOT create an actual undercount, because
+    `conditions` (plural) never appears as a direct key on any node this
+    walk inspects without first passing through a `condition` (singular)
+    wrapper -- confirmed empirically by grepping all 6 real fixtures under
+    tests/fixtures/advisors/frontrunner/ for the literal string
+    "conditions": every occurrence is reached exclusively via a
+    `.condition` key, matching symphony_schema.make_compound_condition's
+    own construction (`conditions` is ALWAYS nested inside a
+    condition-type dict, never a bare sibling key on an if-child).
+
+    _count_nodes (used by qualification/selection) only ever walks
+    `children`, never `condition` -- so the compound condition's own size
+    is invisible to qualification/selection, letting n_clauses vary freely
+    without perturbing which side is picked as fire.
+
+    Hand-derived count formula (verified against n_clauses in {2, 12}
+    below): 7 + n_clauses -- 1(outer_if) + 1(outer_true_child) +
+    1(nested_tier) + 1(nested_true_child) + [1 + n_clauses] (compound
+    delegation: 1 wrapper + N clauses) + 1(wt-wrapper) + 1(UVXY) =
+    6 + (1 + n_clauses) = 7 + n_clauses.
+    """
+    clauses = [
+        ss.make_binary_condition(
+            ss.make_condition_operand("relative-strength-index", f"TICKER_{i:02d}", window=10),
+            "gt",
+            ss.make_constant_rhs(80),
+        )
+        for i in range(n_clauses)
+    ]
+    compound_condition = ss.make_compound_condition("any", clauses)
+    nested_tier = ss.make_if_compound(
+        compound_condition,
+        then_children=[ss.make_weight_equal([ss.make_asset("UVXY")])],
+        else_children=[ss.make_weight_equal([ss.make_asset(f"FILLER_{i:02d}") for i in range(30)])],
+    )
+    outer_continuation = ss.make_weight_equal(
+        [ss.make_asset(f"CORE_ASSET_OUTER_{i:03d}") for i in range(200)]
+    )
+    outer_cond = ss.make_condition(
+        ss.make_indicator("relative-strength-index", "SPY", window=10), "gt", 79
+    )
+    return ss.make_if(outer_cond, then_children=[nested_tier], else_children=[outer_continuation])
+
+
+def test_signal_logic_node_count_correctly_descends_a_nested_tiers_own_compound_condition(fd):
+    """F4: a nested qualifying tier's OWN compound condition must be fully
+    counted via the SAME current.get('condition') delegation path, proving
+    no undercount gap exists in practice despite the general branch never
+    directly reading 'conditions' (plural) -- see the fixture builder's own
+    docstring for the full reachability argument (grep-verified against
+    all 6 real fixtures)."""
+    small = _build_compound_nested_tier_cascade_fixture(n_clauses=2)
+    large = _build_compound_nested_tier_cascade_fixture(n_clauses=12)
+
+    small_result = fd.detect_frontrunner_cascades(small)
+    large_result = fd.detect_frontrunner_cascades(large)
+    assert len(small_result.cascades) == 1
+    assert len(large_result.cascades) == 1
+    small_count = small_result.cascades[0].signal_logic_node_count
+    large_count = large_result.cascades[0].signal_logic_node_count
+
+    assert small_count == 9, f"expected 7+2=9 for n_clauses=2, got {small_count!r}"
+    assert large_count == 19, f"expected 7+12=19 for n_clauses=12, got {large_count!r}"
+    assert large_count > small_count, (
+        "a 12-clause nested compound condition must count MORE than a "
+        "2-clause one -- proves genuine per-clause descent through the "
+        "nested tier's own condition delegation, not a fixed/ignored value"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 5, F5 (PR #128 round-4 /code-review, LOW/efficiency): _compact_
+# if_node calls _get_condition_branch_pair(node) inline near its top, THEN
+# calls _select_fire_and_continuation(node) a few lines later, which ITSELF
+# calls _get_condition_branch_pair(node) again on the SAME node -- 2 calls
+# where 1 suffices. Efficiency-only (no correctness impact -- confirmed:
+# _get_condition_branch_pair is a cheap, non-recursive lookup over a
+# 2-element list, not a whole-subtree walk).
+# ---------------------------------------------------------------------------
+
+
+def test_compact_if_node_calls_get_condition_branch_pair_at_most_once_per_node(fd):
+    """Isolated via a wraps=real call-count spy on _build_cascade_overlay
+    (NOT the whole detect_frontrunner_cascades pipeline, which has several
+    OTHER legitimate call sites -- _qualifies_as_cascade_rung,
+    _find_cascade_roots, _compute_fire_is_else_branch,
+    _compute_signal_logic_node_count -- that would confound a total-count
+    assertion), using the existing FLAT _build_normal_polarity_fixture()
+    (no nesting -> exactly one _compact_if_node invocation, no further
+    qualifying-tier recursion to inflate the count)."""
+    from unittest.mock import patch
+
+    tree = _build_normal_polarity_fixture()
+    real_pair_fn = fd._get_condition_branch_pair
+    with patch.object(fd, "_get_condition_branch_pair", wraps=real_pair_fn) as spy:
+        overlay, thresholds, vix_tickers = fd._build_cascade_overlay(tree)
+
+    assert overlay is not None  # sanity: the real compaction still ran
+    assert spy.call_count == 1, (
+        f"_get_condition_branch_pair was called {spy.call_count} times "
+        f"while compacting a single flat if-node (expected exactly 1) -- "
+        f"_compact_if_node computes the branch pair once inline, then AGAIN "
+        f"via _select_fire_and_continuation's own internal call; the "
+        f"selection helper should accept an already-computed pair (or "
+        f"_compact_if_node should compute it exactly once and reuse it) to "
+        f"eliminate the redundant call"
+    )
