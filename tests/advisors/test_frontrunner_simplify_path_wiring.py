@@ -296,6 +296,65 @@ def _build_real_cascade_via_detector(
     return incumbent_symphony, cascade, expected_signal_logic_count
 
 
+def _build_inverted_polarity_cascade_via_detector(fbld_module):
+    """Returns (incumbent_symphony, cascade) for a genuine, correctly-
+    detected real_tree_09/n2oo-class inverted-polarity cascade — fire
+    content (VXX/UVIX) sits on the is-else-condition?==True side, while the
+    is-else-condition?==False side (SVXY + 20 hedge-pad filler, deliberately
+    LARGER by node count) is what qualifies the root at all (qualification
+    checks the is-else=False side specifically for VIX content, independent
+    of which side compaction later selects as fire by size).
+
+    Empirically verified (probe, not guessed) against the REAL, unmodified
+    detector: this produces exactly ONE cascade (never discarded by the
+    detector's own zero-VIX-overlay defensive check, since the SIZE-
+    selected fire side genuinely has VIX content here — a DIFFERENT,
+    correctly-detected case from the degenerate "size-vs-direction
+    disagreement, zero VIX survives" shape that check exists to discard).
+    Mirrors tests/advisors/test_frontrunner_detector_r4_signal_logic.py's
+    own inverted-polarity fixture, adapted to this file's make_weight_equal
+    wrapping convention (re-verified via probe that wrapping doesn't shift
+    which side compaction selects as fire)."""
+    from advisors import frontrunner_detector, symphony_schema
+
+    cond_side_assets = [symphony_schema.make_asset("SVXY")] + [
+        symphony_schema.make_asset(f"HEDGEPAD{i:02d}") for i in range(20)
+    ]
+    else_side_assets = [symphony_schema.make_asset("VXX"), symphony_schema.make_asset("UVIX")]
+
+    if_node = symphony_schema.make_if(
+        symphony_schema.make_condition(
+            symphony_schema.make_indicator("relative-strength-index", "SPY", window=10),
+            "gt",
+            80,
+        ),
+        then_children=[symphony_schema.make_weight_equal(cond_side_assets)],
+        else_children=[symphony_schema.make_weight_equal(else_side_assets)],
+    )
+    incumbent_symphony = symphony_schema.make_root(
+        "Inverted Polarity Wiring Test Symphony", "daily", [if_node]
+    )
+
+    detection = frontrunner_detector.detect_frontrunner_cascades(incumbent_symphony)
+    assert detection.cascades, (
+        f"fixture sanity: the constructed inverted-polarity tree was not "
+        f"detected as a frontrunner cascade at all (skip_reason="
+        f"{detection.skip_reason!r}) -- the fixture is broken, not the "
+        f"production code under test"
+    )
+    cascade = detection.cascades[0]
+    assert cascade.fire_is_else_branch is True, (
+        f"fixture sanity: expected the detector to report "
+        f"fire_is_else_branch=True for this construction (fire content on "
+        f"the is-else-condition?==True side), got "
+        f"{cascade.fire_is_else_branch!r} -- either the fixture is broken "
+        f"or the detector's own polarity field is wrong (a DIFFERENT, "
+        f"already-covered concern in test_frontrunner_detector_r4_signal_"
+        f"logic.py, not what this wiring test targets)"
+    )
+    return incumbent_symphony, cascade
+
+
 def _mocked_fable_overlay_client(n_assets: int = 1, vix_ticker: str = "UVXY") -> MagicMock:
     """A small, valid overlay candidate — build-plan-DSL shape, same
     established idiom as test_frontrunner_gate_wiring.py. n_assets=1
@@ -1156,4 +1215,84 @@ def test_overlay_selection_declines_with_warning_on_aliased_duplicate_children(f
         "record -- B1's ruling requires next(..., None) + an EXPLICIT "
         "WARNING here (matching the A1 convention), never silent reliance "
         "on the outer blanket except's DEBUG-only catch-all"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Team-lead RED extension (2026-08-25, reviewing fps-impl's plan): unpinned
+# wiring is how the original F1-class defects survived this whole cycle --
+# a direct unit-level call to evaluate_calmar_acceptance with
+# fire_is_else_branch hardcoded (see test_frontrunner_acceptance.py) proves
+# the ACCEPTANCE clause itself is correct, but does NOT prove the real
+# orchestration (_run_build_for_symphony -> _gate_and_accept_candidate ->
+# evaluate_calmar_acceptance) actually THREADS cascade.fire_is_else_branch
+# through end to end. This test closes that gap.
+# ---------------------------------------------------------------------------
+
+
+def test_run_build_threads_fire_is_else_branch_into_the_acceptance_call_and_declines(fbld):
+    """An inverted-polarity cascade (fire content genuinely on the
+    is-else-condition?==True side, real_tree_09/n2oo class), run through
+    the REAL _run_build_for_symphony orchestration end to end, must:
+      1. Pass cascade.fire_is_else_branch=True VERBATIM into
+         evaluate_calmar_acceptance's real call (never dropped, never
+         re-derived, never silently defaulted to False upstream of the
+         acceptance clause).
+      2. Result in the candidate NOT being queued for approval -- the
+         acceptance layer's own fail-closed decline (proven at the unit
+         level in test_frontrunner_acceptance.py) must actually take
+         effect through the full orchestration, not just in isolation.
+
+    Metrics are set up so Calmar is exactly PRESERVED (never improved) and
+    the ratio/delta gates would OTHERWISE both pass -- isolating the
+    polarity check as the ONLY reason for the decline, mirroring the same
+    isolation discipline test_frontrunner_acceptance.py's own inverted-
+    polarity unit test uses."""
+    from advisors import frontrunner_detector
+    from advisors.frontrunner_acceptance import evaluate_calmar_acceptance as _real_eval
+
+    incumbent_symphony, cascade = _build_inverted_polarity_cascade_via_detector(fbld)
+    shape_pct = [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02]
+    shared_result = _make_shaped_result(shape_pct, n_days=100)
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        patch(
+            "advisors.frontrunner_detector.detect_frontrunner_cascades",
+            return_value=frontrunner_detector.DetectionResult(cascades=[cascade]),
+        ),
+        _patched_fable(fbld, n_assets=1),  # small overlay -- ratio would otherwise pass
+        patch("advisors.composer_backtest_client.run_backtest", return_value=shared_result),
+        patch(
+            "advisors.backtest_gate_engine.evaluate_candidate_batch",
+            return_value=_controlled_adopt_candidate_batch(),
+        ),
+        patch(
+            "advisors.frontrunner_acceptance.evaluate_calmar_acceptance",
+            wraps=_real_eval,
+        ) as mock_acceptance,
+        patch("database.insert_frontrunner_proposal") as mock_insert,
+        patch("database.insert_dof_ledger_row"),
+        patch("database.insert_advisor_observation"),
+    ):
+        fbld._run_build_for_symphony("test-symphony-id")
+
+    assert mock_acceptance.called, (
+        "evaluate_calmar_acceptance was never reached — the gate mock or "
+        "fixture wiring is broken upstream of the layer this test targets"
+    )
+    _, call_kwargs = mock_acceptance.call_args
+    assert call_kwargs.get("fire_is_else_branch") is True, (
+        f"expected fire_is_else_branch=True threaded verbatim from "
+        f"cascade.fire_is_else_branch into the real evaluate_calmar_"
+        f"acceptance call, got {call_kwargs.get('fire_is_else_branch')!r} "
+        f"-- the builder is not threading the detector-stamped polarity "
+        f"field through the real orchestration"
+    )
+
+    assert not mock_insert.called, (
+        "an inverted-polarity candidate was queued for approval despite "
+        "the acceptance layer's fail-closed polarity decline — the "
+        "unit-level decline (test_frontrunner_acceptance.py) is not "
+        "actually taking effect through the real orchestration wiring"
     )
