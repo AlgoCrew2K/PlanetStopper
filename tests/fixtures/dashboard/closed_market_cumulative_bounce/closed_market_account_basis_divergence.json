@@ -1,0 +1,45 @@
+{
+  "_provenance": "Schema-derived from app.py's closed_frozen branch snapshot-symphony shape (accounts_map entries consumed at app.py:2242-2258 / 2330-2348) and the _account_totals_cache keys it reads independently (app.py:2392-2400: portfolio_tc/portfolio_cr/portfolio_value). No producer-computed values captured live -- every number here is a test-authored input engineered to make account-basis and VW-basis cumulative_return.if_held diverge, mirroring the real closed-market bounce (~63.95% account-basis vs ~27.56% VW-basis) without asserting those exact production figures.",
+  "scenario": "closed_market_account_basis_divergence",
+  "description": "Two snapshot symphonies with cash present (symphony value sum 8000 < account value 10000, so invested_frac=0.8) and per-symphony simple_return values whose VW-weighted average (1.75%) is deliberately far from the Composer account-level cumulative_return (63.95%) seeded into _account_totals_cache -- proves the closed-market cumulative_return.if_held the route renders is genuinely distinguishable between the two bases, not a vacuous near-equal pair.",
+  "trading_day": "2026-08-20",
+  "account_id": "ACC1",
+  "symphonies": [
+    {
+      "id": "bounce-sym-a",
+      "name": "Bounce Test Symphony A",
+      "current_return": 3.0,
+      "current_value": 6000.0,
+      "simple_return": 0.02,
+      "net_deposits": 100.0,
+      "time_weighted_return": 0.021,
+      "max_drawdown": 0.05
+    },
+    {
+      "id": "bounce-sym-b",
+      "name": "Bounce Test Symphony B",
+      "current_return": 1.0,
+      "current_value": 2000.0,
+      "simple_return": 0.01,
+      "net_deposits": 100.0,
+      "time_weighted_return": 0.021,
+      "max_drawdown": 0.05
+    }
+  ],
+  "account_totals": {
+    "portfolio_cr": 63.95,
+    "portfolio_value": 10000.0
+  },
+  "shadow_history": {
+    "_provenance": "Schema-derived from database.py's shadow_history table (INSERT column set mirrors tests/app/test_held_basis_route_convergence.py's proven-working _insert_shadow_row helper: ts_utc/ts_et/trading_day/symphony_id/current_return/shadow_return; position_epoch/is_post_trigger left at their schema defaults). Needed because analytics.compute_windowed_symphony_guard_alpha (analytics.py:1939-1971) returns None -- not a bug, the documented AC-8b conservatism floor -- when a symphony has fewer than 2 in-window trading days of recorded shadow_history; the closed-market snapshot alone (accounts_map) carries no shadow_history rows. trading_day_offset_days is resolved to a REAL calendar date relative to datetime.now(UTC) AT TEST-RUN TIME (never a fixed calendar date) -- _window_cutoff_date (analytics.py:1840-1864) resolves its cutoff from the real wall clock, so a hardcoded date would silently age out of the 30d window as real time passes (the exact trap tests/analytics/test_windowed_strip.py's TestNeverTriggeredEveryWindow class documents).",
+    "_description": "bounce-sym-a diverges (shadow 3.5 vs current 3.0 on the more recent day) so its windowed guard alpha is a genuinely-nonzero real number; bounce-sym-b never diverges (shadow == current on both days) so its windowed guard alpha is a genuinely-computed 0.0 -- both are real floats, not None, so the portfolio-level VW guard_alpha resolves to a real number instead of the AC-8b insufficient-data None.",
+    "bounce-sym-a": [
+      {"trading_day_offset_days": 1, "shadow_return": 3.0, "current_return": 3.0},
+      {"trading_day_offset_days": 0, "shadow_return": 3.5, "current_return": 3.0}
+    ],
+    "bounce-sym-b": [
+      {"trading_day_offset_days": 1, "shadow_return": 1.0, "current_return": 1.0},
+      {"trading_day_offset_days": 0, "shadow_return": 1.0, "current_return": 1.0}
+    ]
+  }
+}

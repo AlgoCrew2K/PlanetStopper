@@ -1869,11 +1869,12 @@ def _compute_portfolio_strip(
                 _strip["guard_alpha"] = _ga if isinstance(_ga, (int, float)) else None
                 _win = _default.get("window", _DEFAULT_HERO_WINDOW)
                 _strip["window"] = _win if isinstance(_win, str) else _DEFAULT_HERO_WINDOW
-                # Expose the windowed VW cumulative_return so the JS poll path uses
-                # VW-basis Bot/Held for the cumulative comparison row on initial load.
-                # Without this field, updateComparisonRows falls back to the
-                # account-basis cumulative_return (if_held ~63.95%), which mismatches
-                # the windowed VW dry_run (~27.56%) and fabricates a large negative delta.
+                # DE-CLOSED-BOUNCE-001 (revise round): windowed_cumulative_return is
+                # NOT currently consumed client-side — F-014 removed updateComparison
+                # Rows' only read of it, and the revise round's rows-array gate
+                # (static/index.js) means no comparison row is ever sourced from a
+                # windowed-strip payload at all. Retained here only for response-shape
+                # parity with /api/strip/<window>'s own output.
                 _wcr = _default.get("cumulative_return")
                 if isinstance(_wcr, dict):
                     _strip["windowed_cumulative_return"] = _wcr
@@ -2495,6 +2496,40 @@ def get_state():
                     _acct_cr = _account_totals_cache.get("portfolio_cr")
                     if isinstance(_acct_cr, (int, float)):
                         _portfolio_strip["account_all_time_cr"] = _acct_cr
+
+                    # DE-CLOSED-BOUNCE-001: mirror the open path's own independently-
+                    # guarded default-window strip (app.py:1863-1881) so the closed
+                    # branch's portfolio_strip carries guard_alpha/window too. A null
+                    # guard_alpha here is what makes index.js's renderGuardAlpha fall
+                    # back to fetchWindowedStrip on every closed-market poll — this
+                    # block removes that trigger in the normal case. Deliberately its
+                    # own try/except (not folded into the surrounding try) so a
+                    # failure here can't discard the today_change/cumulative_return/
+                    # max_drawdown already computed above. Does NOT set
+                    # windowed_cumulative_return (unlike the open path) — that field
+                    # has no client-side consumer since F-014 removed its only read
+                    # site; adding a client-unread field here would just be dead
+                    # weight on every closed-market poll response.
+                    try:
+                        _snap_default = analytics.compute_windowed_portfolio_strip(
+                            _snap_symphonies_list,
+                            _snap_bot_state,
+                            window=_DEFAULT_HERO_WINDOW,
+                            conn=_frozen_shadow_conn,
+                        )
+                        if isinstance(_snap_default, dict):
+                            _snap_ga = _snap_default.get("guard_alpha")
+                            _portfolio_strip["guard_alpha"] = (
+                                _snap_ga if isinstance(_snap_ga, (int, float)) else None
+                            )
+                            _snap_win = _snap_default.get("window", _DEFAULT_HERO_WINDOW)
+                            _portfolio_strip["window"] = (
+                                _snap_win if isinstance(_snap_win, str) else _DEFAULT_HERO_WINDOW
+                            )
+                    except Exception:
+                        _daemon_log.error(
+                            "closed_frozen default-window strip failed", exc_info=True
+                        )
                 except Exception:
                     _portfolio_strip = {
                         "today_change": None,

@@ -158,12 +158,17 @@
         // which produces a fabricated -36.18% instead of the correct ~+0.90%.
         var guard_alpha = typeof ps.guard_alpha === 'number' ? ps.guard_alpha : null;
 
-        // Frozen-path fallback: the closed_frozen /api/state portfolio_strip is built
-        // inline (app.py ~line 1262) and does not call _compute_portfolio_strip, so
-        // guard_alpha and windowed_cumulative_return are absent.  /api/strip/<window>
-        // works in all market states.  Fetching it here populates both the headline
-        // (via the renderGuardAlpha call inside fetchWindowedStrip) and the cumulative
-        // row (via updateComparisonRows) with correct windowed VW values.
+        // DE-CLOSED-BOUNCE-001 fallback: guard_alpha can still be null here (e.g. the
+        // frozen path's own default-window strip computation failed, or
+        // weight_sum==0 leaves guard_alpha genuinely null on any path). /api/strip/
+        // <window> works in all market states, so fetching it backfills the
+        // headline (via the renderGuardAlpha call inside fetchWindowedStrip).
+        // It does NOT backfill the "Cumulative · lifetime" comparison row --
+        // updateComparisonRows structurally excludes that row from any payload
+        // lacking data_as_of, which this wrapped strip payload never carries (see
+        // updateComparisonRows' rows-array construction). A windowed value under a
+        // "lifetime" label would be wrong, so the row is left untouched rather than
+        // populated.
         // _fromStrip guard: compute_windowed_portfolio_strip can return guard_alpha:null
         // when weight_sum==0 (no symphonies). Without the guard that would loop forever.
         if (guard_alpha === null) {
@@ -997,15 +1002,26 @@
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
-        var rows = [
-            { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-            // F-014: this row's SSR label reads "Cumulative · lifetime"
-            // (templates/index.html:920) -- it must source the lifetime
-            // cumulative_return only. Do NOT prefer a windowed value here; that
-            // clobbers the lifetime-labeled figure with a windowed one on every poll.
-            { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
-            { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
-        ];
+        // DE-CLOSED-BOUNCE-001 (revise round, PR #136 finding #1): ALL THREE rows
+        // are built only from a genuine /api/state poll payload (which always
+        // carries data_as_of, BL-4/DE-AUDIT-BL4-001 above) -- not just 'cumulative'.
+        // A windowed-strip payload (fetchWindowedStrip's /api/strip/<window>
+        // response) never carries data_as_of and is on a different basis/scope for
+        // every row, not only the "Cumulative · lifetime"-labeled one (Today can be
+        // account-basis on a real poll vs always-VW on the windowed strip; MDD can
+        // be scoped to the snapshot's trading_day vs the picker's window) -- leaving
+        // `rows` empty on that payload (rather than writing an honest-empty {} per
+        // row) leaves every row's last-correct DOM value alone instead of bouncing
+        // it and back. Applies uniformly to EVERY caller, including the
+        // window-picker click handler.
+        var rows = [];
+        if ('data_as_of' in ps) {
+            rows = [
+                { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
+                { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
+                { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
+            ];
+        }
         rows.forEach(function (row) {
             // F-016: sentinelToNull's null result must survive to fmtPct (which has
             // its own honest '--' branch for null) -- do NOT coerce to 0 here, that
@@ -1463,9 +1479,13 @@
             });
     }
 
-    // Re-window the hero headline VALUE + the three vs-rows for a window token.
-    // The windowed strip dict shares portfolio_strip's shape, so we reuse
-    // renderGuardAlpha + updateComparisonRows by wrapping it as a poll-style payload.
+    // Re-window the hero headline VALUE for a window token. The windowed strip
+    // dict shares portfolio_strip's shape, so we reuse renderGuardAlpha by
+    // wrapping it as a poll-style payload. DE-CLOSED-BOUNCE-001 (revise round):
+    // this wrapped payload never carries data_as_of, so updateComparisonRows'
+    // rows array construction is gated to skip ALL THREE comparison rows on it
+    // (see updateComparisonRows) — none of the three vs-rows re-window from this
+    // call; only the headline does.
     // Defined at IIFE scope (not inside DOMContentLoaded) so renderGuardAlpha can call
     // it as a frozen-path fallback — renderGuardAlpha is also at IIFE scope and the
     // DOMContentLoaded callback would be invisible from there.
@@ -1612,8 +1632,9 @@
                 _heroWindow = token;
                 var winLabel = document.getElementById('guard-alpha-window-label');
                 if (winLabel) winLabel.textContent = winLabelMap[testid] || btn.textContent;
-                // The picker drives EVERY metric: re-window the chart lines (fetch +
-                // _cumChart update) AND the headline VALUE + vs-rows (windowed strip).
+                // The picker drives the chart lines (fetch + _cumChart update) and the
+                // headline VALUE (windowed strip) -- NOT the three vs-rows, which stay
+                // gated to genuine /api/state polls only (DE-CLOSED-BOUNCE-001).
                 fetch('/api/hero-chart/' + token)
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
@@ -1631,8 +1652,10 @@
                     .catch(function () {
                         applyHeroWindow(_heroWindow);
                     });
-                // Re-window the headline guard-alpha VALUE + the three vs-rows so the
-                // label always matches the actual window (kills the F1 mislabel).
+                // Re-window the headline guard-alpha VALUE so the label always matches
+                // the actual window (kills the F1 mislabel). Does NOT re-window the
+                // three vs-rows (DE-CLOSED-BOUNCE-001) -- fetchWindowedStrip's payload
+                // never carries data_as_of, so updateComparisonRows leaves them alone.
                 fetchWindowedStrip(token);
                 // AC-2: the $-saved panel re-windows in lockstep with the rest of
                 // the hero instead of always showing the all-time sum.
