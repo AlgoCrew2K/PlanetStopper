@@ -1049,3 +1049,37 @@ def test_compact_if_node_calls_get_condition_branch_pair_at_most_once_per_node(f
         f"_compact_if_node should compute it exactly once and reuse it) to "
         f"eliminate the redundant call"
     )
+
+
+def test_detect_frontrunner_cascades_derives_root_selection_exactly_once(fd):
+    """The line 1029-1031 comment above flagged _compute_fire_is_else_branch
+    and _compute_signal_logic_node_count as two MORE independent callers of
+    _select_fire_and_continuation on the same root node, each re-deriving
+    the identical selection the other already computed. This pins that the
+    full detect_frontrunner_cascades pipeline now derives the root-level
+    selection exactly once and hands it to both.
+
+    Uses the existing FLAT _build_normal_polarity_fixture() (no nesting) so
+    the walk inside _compute_signal_logic_node_count never triggers a
+    SECOND, deeper call to _select_fire_and_continuation -- isolating this
+    assertion to the root-level redundancy alone. Total expected calls: 1
+    from _build_cascade_overlay's own compaction (a separate, already-
+    deduped call site) + 1 shared root-level derivation reused by both
+    Cascade fields = 2."""
+    from unittest.mock import patch
+
+    tree = _build_normal_polarity_fixture()
+    real_selection_fn = fd._select_fire_and_continuation
+    with patch.object(fd, "_select_fire_and_continuation", wraps=real_selection_fn) as spy:
+        result = fd.detect_frontrunner_cascades(tree)
+
+    assert len(result.cascades) == 1  # sanity: the real detection still ran
+    assert spy.call_count == 2, (
+        f"_select_fire_and_continuation was called {spy.call_count} times "
+        f"detecting a single flat cascade (expected exactly 2: 1 for "
+        f"_build_cascade_overlay's compaction + 1 shared root-level "
+        f"selection reused by both signal_logic_node_count and "
+        f"fire_is_else_branch) -- the two Cascade-field computations should "
+        f"share one precomputed selection rather than each deriving it "
+        f"independently on the same root node"
+    )
