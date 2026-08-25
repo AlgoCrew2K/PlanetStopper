@@ -69,7 +69,7 @@ depth, never materialize or count their padding) but MUST be implemented
 as an ITERATIVE, explicit-stack walk per this module's own established
 convention (``_count_nodes``/``_collect_tickers``, both already iterative
 "so a very deep real tree never triggers RecursionError") -- see
-``test_new_signal_logic_counter_and_shared_selection_helper_are_not_self_recursive``
+``test_new_signal_logic_counter_and_shared_selection_helper_have_no_recursion_cycle``
 below, which pins this structurally via a source-scan, not a deep fixture
 (``symphony_schema.make_if``'s own ``copy.deepcopy`` hits Python's
 recursion ceiling before a fixture deep enough to trigger this empirically
@@ -663,14 +663,17 @@ def test_compact_if_node_resolves_selection_through_the_shared_helper(fd):
 # ---------------------------------------------------------------------------
 
 
-def _contains_self_recursive_call(func_def: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """True if func_def's own body (excluding any NESTED function
-    definitions inside it, which have their own independent recursion
-    status) contains a Call node referencing func_def's own name."""
+def _direct_calls_within(
+    func_def: ast.FunctionDef | ast.AsyncFunctionDef, candidate_names: set[str]
+) -> set[str]:
+    """Return the subset of candidate_names that func_def's OWN body
+    (excluding any NESTED function definitions inside it, which have their
+    own independent call graph) directly calls."""
+    called: set[str] = set()
     for node in ast.walk(func_def):
         if node is not func_def and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            # A nested function's body is scanned by its OWN check, not
-            # folded into the outer function's self-recursion verdict.
+            # A nested function's body is scanned by its OWN entry in the
+            # call graph, not folded into the outer function's.
             continue
         if isinstance(node, ast.Call):
             func = node.func
@@ -679,23 +682,67 @@ def _contains_self_recursive_call(func_def: ast.FunctionDef | ast.AsyncFunctionD
                 name = func.id
             elif isinstance(func, ast.Attribute):
                 name = func.attr
-            if name == func_def.name:
-                return True
-    return False
+            if name in candidate_names:
+                called.add(name)
+    return called
 
 
-def test_new_signal_logic_counter_and_shared_selection_helper_are_not_self_recursive(fd):
+def _find_cycle(call_graph: dict[str, set[str]]) -> list[str] | None:
+    """DFS cycle detection over a directed call graph (name -> names it
+    directly calls). Returns the cycle as a list of names (e.g.
+    ['a', 'b', 'a'] for a 2-cycle, ['a', 'a'] for a self-loop) or None if
+    acyclic. Generalizes beyond a simple self-loop check because a
+    per-function self-call check alone MISSES mutual recursion (A calls B,
+    B calls A) -- confirmed a real risk on this exact cycle: fps-impl's
+    reviewed implementation plan proposed exactly this shape (a
+    fire_count/subtree_count mutual-recursion pair) between the new
+    counter and the shared selection helper, which would pass a
+    self-call-only check while still being genuine, stack-depth-risking
+    Python recursion."""
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = dict.fromkeys(call_graph, WHITE)
+    path: list[str] = []
+
+    def _visit(node: str) -> list[str] | None:
+        color[node] = GRAY
+        path.append(node)
+        for neighbor in call_graph.get(node, ()):
+            if neighbor not in color:
+                # A call to a function outside the target set -- not part
+                # of this cycle-detection's scope.
+                continue
+            if color[neighbor] == GRAY:
+                cycle_start = path.index(neighbor)
+                return [*path[cycle_start:], neighbor]
+            if color[neighbor] == WHITE:
+                result = _visit(neighbor)
+                if result is not None:
+                    return result
+        path.pop()
+        color[node] = BLACK
+        return None
+
+    for start in call_graph:
+        if color[start] == WHITE:
+            found = _visit(start)
+            if found is not None:
+                return found
+    return None
+
+
+def test_new_signal_logic_counter_and_shared_selection_helper_have_no_recursion_cycle(fd):
     """Structural (AST-based) pin on the explicit-stack/iterative convention
     this module already established for _count_nodes/_collect_tickers ("so
     a very deep real tree never triggers RecursionError") -- the NEW
     signal-logic-counting function (whichever tier-1-approved name fps-impl
     picks: tried _count_clause_aware_signal_logic and
     count_clause_aware_signal_logic, the same candidates the B3 identity
-    tests use) and the shared selection helper above must both be
-    implemented WITHOUT calling themselves by name (a genuine, naive Python
-    recursive call) -- an explicit-stack/worklist implementation is the
-    only pattern this checks passes; ordinary Python function recursion on
-    a self-referencing name does not.
+    tests use) and the shared selection helper above must NOT form a
+    recursion cycle among themselves -- covers BOTH self-recursion (a
+    function calling itself directly) AND MUTUAL recursion (function A
+    calling function B, which calls A back) -- an explicit-stack/worklist
+    implementation is the only pattern that passes this check; ordinary
+    Python recursion, direct or mutual, does not.
 
     Deliberately does NOT attempt to construct a fixture deep enough to
     trigger an actual RecursionError (symphony_schema.make_if's own
@@ -726,6 +773,8 @@ def test_new_signal_logic_counter_and_shared_selection_helper_are_not_self_recur
         "cycle's other name-agnostic identity checks)"
     )
 
+    target_names = set(targets.values())
+    func_defs_by_name: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     for label, func_name in targets.items():
         func_def = next(
             (
@@ -742,11 +791,21 @@ def test_new_signal_logic_counter_and_shared_selection_helper_are_not_self_recur
             f"source AST -- unexpected mismatch between the runtime object "
             f"and its source location"
         )
-        assert not _contains_self_recursive_call(func_def), (
-            f"{label} ({func_name!r}, line {func_def.lineno}) calls itself "
-            f"by name -- this project's established convention "
-            f"(_count_nodes/_collect_tickers, both explicitly iterative "
-            f"'so a very deep real tree never triggers RecursionError') "
-            f"requires an explicit-stack/worklist walk here too, never "
-            f"ordinary Python recursion"
-        )
+        func_defs_by_name[func_name] = func_def
+
+    call_graph = {
+        name: _direct_calls_within(func_def, target_names)
+        for name, func_def in func_defs_by_name.items()
+    }
+    cycle = _find_cycle(call_graph)
+    assert cycle is None, (
+        f"a recursion cycle exists among the target functions: "
+        f"{' -> '.join(cycle)} -- this project's established convention "
+        f"(_count_nodes/_collect_tickers, both explicitly iterative 'so a "
+        f"very deep real tree never triggers RecursionError') requires an "
+        f"explicit-stack/worklist walk here too, never ordinary Python "
+        f"recursion -- this includes MUTUAL recursion between two "
+        f"functions (e.g. a fire-count/subtree-count pair calling each "
+        f"other back and forth), not just a function calling itself "
+        f"directly, since both classes carry the identical stack-depth risk"
+    )
