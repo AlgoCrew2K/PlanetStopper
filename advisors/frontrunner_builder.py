@@ -2399,28 +2399,26 @@ def _resolve_draft_asset_class(candidate_tree: dict | None) -> str:
     internal read error degrades to "EQUITIES" (composer_draft_client's own
     default), never propagated as an exception.
 
-    Precedence: a valid top-level `asset_class` string (case-exact member of
-    `_COMPOSER_ASSET_CLASSES`) always wins. Only when that's absent/non-
-    string/empty is the `asset_classes` array consulted -- a non-empty list
-    whose elements are all the SAME in-enum string is used; a mixed, empty,
-    or out-of-enum array falls back to EQUITIES.
+    Precedence: a present top-level `asset_class` string is DECISIVE -- a
+    case-exact member of `_COMPOSER_ASSET_CLASSES` is used verbatim; an
+    out-of-enum string still decides the outcome (EQUITIES), and either way
+    the `asset_classes` array is never consulted. The array is consulted
+    ONLY when the top-level value is absent, empty, or non-string -- a
+    non-empty array whose elements are all the SAME in-enum string is used;
+    a mixed, out-of-enum, empty, or non-list array falls back to EQUITIES,
+    as does an array containing any non-string element (a shape
+    malformation, not a discarded value).
 
-    Observability (Revise 2, /code-review round 1 F1/F2/F4): a WARNING is
-    logged when a present, non-empty, in-shape value is discarded to the
-    EQUITIES fallback (an out-of-enum top-level string, or a mixed/out-of-
-    enum asset_classes array OF STRINGS), and again whenever the final
-    derived result is non-EQUITIES (CRYPTO/OPTIONS) -- live Composer
-    acceptance of a derived non-EQUITIES value is unverified pending an
-    operator-gated task-zero live-create test. The normal absent-key/empty-
-    array/empty-string cases and shape malformations (non-list
-    asset_classes, an asset_classes array containing any non-string
-    element, non-string top-level asset_class) stay silent -- those are
-    absence/malformation, not a discarded value.
-
-    A present top-level `asset_class` string is DECISIVE once found, even
-    when out-of-enum (Revise 3, F1 real-bug fix) -- the `asset_classes`
-    array is never inspected once a present string exists, matching the
-    precedence rule above literally.
+    Observability: a WARNING is logged when a present, non-empty,
+    recognizable-shape value is discarded to the EQUITIES fallback (an
+    out-of-enum top-level string, or a mixed/out-of-enum asset_classes
+    array of strings), and again whenever the final derived result is
+    non-EQUITIES (CRYPTO/OPTIONS) -- live Composer acceptance of a derived
+    non-EQUITIES value is unverified pending an operator-gated task-zero
+    live-create test. The normal absent-key/empty-array/empty-string cases
+    and shape malformations (non-list asset_classes, an asset_classes array
+    containing any non-string element, non-string top-level asset_class)
+    stay silent -- those are absence/malformation, not a discarded value.
     """
     try:
         if not isinstance(candidate_tree, dict):
@@ -2442,21 +2440,19 @@ def _resolve_draft_asset_class(candidate_tree: dict | None) -> str:
                 "asset_class=%r, falling back to EQUITIES",
                 top_level,
             )
-            # F1 (Revise 3, real bug fix): a PRESENT top-level string is
-            # decisive even when out-of-enum -- the asset_classes array must
-            # NEVER be consulted once a present string was found (AC-4:
-            # "array consulted ONLY when top-level absent"). Must return
-            # here, not fall through.
+            # A present top-level string is decisive even when out-of-enum
+            # -- the asset_classes array must never be consulted once a
+            # present string was found (AC-4: "array consulted ONLY when
+            # top-level absent").
             return "EQUITIES"
 
         array = candidate_tree.get("asset_classes")
-        # F2 (Revise 3, semantics correction + robustness): a non-string
-        # element (unhashable or merely non-string) is a SHAPE MALFORMATION,
-        # same category as a non-list asset_classes or a non-string
-        # top-level asset_class -- silent EQUITIES fallback, no warning.
-        # `all(isinstance(x, str) ...)` is checked explicitly BEFORE dedup
-        # so this never relies on an uncaught TypeError from set(array) on
-        # an unhashable element falling through to the outer except.
+        # A non-string element (unhashable or merely non-string) is a SHAPE
+        # MALFORMATION, same category as a non-list asset_classes or a
+        # non-string top-level asset_class -- silent EQUITIES fallback, no
+        # warning. `all(isinstance(x, str) ...)` is checked explicitly
+        # BEFORE dedup so an unhashable element can never raise TypeError
+        # out of set(array) here.
         if isinstance(array, list) and array and all(isinstance(x, str) for x in array):
             distinct = set(array)
             if len(distinct) == 1:
