@@ -3,7 +3,7 @@
 > Shared Composer write client for the Frontrunner Builder and the `propose_strategies` retrofit: creates a NEW, UNDEPLOYED symphony via `POST /api/v0.1/symphonies` and verifies zero allocation before an approval may be marked "uploaded".
 
 **Source:** `advisors/composer_draft_client.py`
-**Last updated:** 2026-07-11 (Wave-1 backend, frreview-APPROVED, unchanged by the subsequent P2-1/P2-2 hardening — those touched `frontrunner_detector.py`/`frontrunner_builder.py` only)
+**Last updated:** 2026-07-11 (Wave-1 backend, frreview-APPROVED, unchanged by the subsequent P2-1/P2-2 hardening — those touched `frontrunner_detector.py`/`frontrunner_builder.py` only). **This module itself carries ZERO code diff as of `DE-FR-ASSET-CLASS-001` (2026-08-24/25)** — its sole production caller, `advisors/frontrunner_builder.approve_frontrunner_proposal`, now passes a CALLER-DERIVED `asset_class` value (via the new `_resolve_draft_asset_class` helper, reading the incumbent symphony's real asset class off `candidate_tree`) instead of always relying on the `_DEFAULT_ASSET_CLASS` default — see [advisors_frontrunner_builder.md](advisors_frontrunner_builder.md)'s "Asset-Class Derivation" section and `DE-FR-ASSET-CLASS-001` in `DECISIONS.md`. This module's own logic, transport contract ("never inspect `raw_value`"), and `_DEFAULT_ASSET_CLASS` fallback are unchanged — it still receives whatever `asset_class` the caller passes (or the default, for any other/future caller that omits it) with zero validation of its own.
 
 ## Overview
 
@@ -61,7 +61,7 @@ Creates a new **UNDEPLOYED** symphony via `POST /api/v0.1/symphonies` — the VA
 |------|------|--------------|
 | `name`, `description`, `color`, `hashtag` | `str` | Composer symphony metadata fields per the pinned create contract |
 | `raw_value` | `dict` | The full validated symphony tree |
-| `asset_class` | `str` | `"EQUITIES"` (default) or `"CRYPTO"` |
+| `asset_class` | `str` | `"EQUITIES"` (default) or `"CRYPTO"` per this function's own docstring — **doc-sweep note (`DE-FR-ASSET-CLASS-001`):** the source docstring's own wording predates the fuller enum; the real Composer `asset_class` enum is `EQUITIES\|CRYPTO\|OPTIONS` (`docs/research/composer/baseline__2026-05-12.md:86`, also the source-of-truth for `frontrunner_builder._COMPOSER_ASSET_CLASSES`). This function performs no validation of its own either way — any string a caller passes is forwarded verbatim in the POST body |
 | `already_uploaded_symphony_id` | `str \| None` | **Idempotency seam.** When supplied non-empty, this call is a no-op — no `POST` issued — and a success-shaped `DraftResult` echoing that id is returned immediately. Callers (the approval route) pass a candidate's previously-recorded `symphony_id`, so a duplicate Approve click never creates a second Composer symphony |
 | `max_retries` | `int` | Bounded retry count after transient failures (default `4`; `0` = no retries; never unbounded) |
 
@@ -111,4 +111,4 @@ Reads back a created symphony and confirms it holds **zero allocation** — the 
 
 ## Consumers
 
-- `advisors/frontrunner_builder.py::approve_frontrunner_proposal` — the **only** call site for `save_symphony` anywhere in the codebase (module-scope import restricted to this function; never referenced from the build/run path — see [`advisors/frontrunner_builder`](advisors_frontrunner_builder.md)'s no-auto-trade boundary section).
+- `advisors/frontrunner_builder.py::approve_frontrunner_proposal` — the **only** call site for `save_symphony` anywhere in the codebase (module-scope import restricted to this function; never referenced from the build/run path — see [`advisors/frontrunner_builder`](advisors_frontrunner_builder.md)'s no-auto-trade boundary section). As of `DE-FR-ASSET-CLASS-001`, this call site passes an `asset_class` value DERIVED from the candidate tree (via `_resolve_draft_asset_class`) rather than always relying on this module's own `_DEFAULT_ASSET_CLASS` default — see that module's "Asset-Class Derivation" section.

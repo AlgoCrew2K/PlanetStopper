@@ -2384,6 +2384,100 @@ class ApprovalResult:
     error: str | None = None
 
 
+# Composer's real asset-class enum for a symphony holdings/score tree, per
+# docs/research/composer/baseline__2026-05-12.md:86 ("asset_class":
+# "EQUITIES|CRYPTO|OPTIONS", verbatim from the holdings response schema).
+# Must stay consistent with composer_draft_client._DEFAULT_ASSET_CLASS /
+# the Composer create contract -- both currently hardcode "EQUITIES"
+# independently, with no shared source-of-truth reference between them.
+_COMPOSER_ASSET_CLASSES: tuple[str, ...] = ("EQUITIES", "CRYPTO", "OPTIONS")
+
+
+def _resolve_draft_asset_class(candidate_tree: dict | None) -> str:
+    """Derive the Composer asset_class for a draft symphony from its
+    candidate_tree. D-1 never-raises -- any malformed/None/non-dict tree or
+    internal read error degrades to "EQUITIES" (composer_draft_client's own
+    default), never propagated as an exception.
+
+    Precedence: a present top-level `asset_class` string is DECISIVE -- a
+    case-exact member of `_COMPOSER_ASSET_CLASSES` is used verbatim; an
+    out-of-enum string still decides the outcome (EQUITIES), and either way
+    the `asset_classes` array is never consulted. The array is consulted
+    ONLY when the top-level value is absent, empty, or non-string -- a
+    non-empty array whose elements are all the SAME in-enum string is used;
+    a mixed, out-of-enum, empty, or non-list array falls back to EQUITIES,
+    as does an array containing any non-string element (a shape
+    malformation, not a discarded value).
+
+    Observability: a WARNING is logged when a present, non-empty,
+    recognizable-shape value is discarded to the EQUITIES fallback (an
+    out-of-enum top-level string, or a mixed/out-of-enum asset_classes
+    array of strings), and again whenever the final derived result is
+    non-EQUITIES (CRYPTO/OPTIONS) -- live Composer acceptance of a derived
+    non-EQUITIES value is unverified pending an operator-gated task-zero
+    live-create test. The normal absent-key/empty-array/empty-string cases
+    and shape malformations (non-list asset_classes, an asset_classes array
+    containing any non-string element, non-string top-level asset_class)
+    stay silent -- those are absence/malformation, not a discarded value.
+    """
+    try:
+        if not isinstance(candidate_tree, dict):
+            return "EQUITIES"
+
+        top_level = candidate_tree.get("asset_class")
+        if isinstance(top_level, str) and top_level:
+            if top_level in _COMPOSER_ASSET_CLASSES:
+                if top_level != "EQUITIES":
+                    logger.warning(
+                        "_resolve_draft_asset_class: forwarding non-EQUITIES "
+                        "asset_class=%r to draft creation (unverified against "
+                        "live Composer acceptance)",
+                        top_level,
+                    )
+                return top_level
+            logger.warning(
+                "_resolve_draft_asset_class: discarding unrecognized top-level "
+                "asset_class=%r, falling back to EQUITIES",
+                top_level,
+            )
+            # A present top-level string is decisive even when out-of-enum
+            # -- the asset_classes array must never be consulted once a
+            # present string was found (AC-4: "array consulted ONLY when
+            # top-level absent").
+            return "EQUITIES"
+
+        array = candidate_tree.get("asset_classes")
+        # A non-string element (unhashable or merely non-string) is a SHAPE
+        # MALFORMATION, same category as a non-list asset_classes or a
+        # non-string top-level asset_class -- silent EQUITIES fallback, no
+        # warning. `all(isinstance(x, str) ...)` is checked explicitly
+        # BEFORE dedup so an unhashable element can never raise TypeError
+        # out of set(array) here.
+        if isinstance(array, list) and array and all(isinstance(x, str) for x in array):
+            distinct = set(array)
+            if len(distinct) == 1:
+                (only,) = distinct
+                if only in _COMPOSER_ASSET_CLASSES:
+                    if only != "EQUITIES":
+                        logger.warning(
+                            "_resolve_draft_asset_class: forwarding non-EQUITIES "
+                            "asset_class=%r (derived from asset_classes array) to "
+                            "draft creation (unverified against live Composer "
+                            "acceptance)",
+                            only,
+                        )
+                    return only
+            logger.warning(
+                "_resolve_draft_asset_class: discarding unusable "
+                "asset_classes=%r, falling back to EQUITIES",
+                array,
+            )
+
+        return "EQUITIES"
+    except Exception:
+        return "EQUITIES"
+
+
 def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
     """Operator-approved: create the candidate symphony in Composer as a NEW
     UNDEPLOYED symphony, verify zero-allocation, and mark the proposal
@@ -2501,6 +2595,8 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
             overlay_summary=proposal_metrics.get("overlay_summary"),
         )
 
+        asset_class = _resolve_draft_asset_class(candidate_tree)
+
         draft_result = composer_draft_client.save_symphony(
             name=name,
             description=description,
@@ -2508,6 +2604,7 @@ def approve_frontrunner_proposal(proposal_id: int) -> ApprovalResult:
             hashtag="#frontrunner",
             raw_value=candidate_tree,
             already_uploaded_symphony_id=proposal.get("created_symphony_id"),
+            asset_class=asset_class,
         )
 
         if not draft_result.success or not draft_result.symphony_id:
