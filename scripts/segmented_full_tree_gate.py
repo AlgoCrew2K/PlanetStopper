@@ -51,6 +51,32 @@ SAFETY MODEL
   here would otherwise still be resident when the NEXT chunk starts,
   re-creating the exact >90GB multi-process fan-out this tool exists to
   prevent.
+- A HARD per-chunk file ceiling (MAX_FILES_PER_CHUNK) is enforced
+  INDEPENDENTLY of "--chunks": the requested chunk count is a preference,
+  never a way to force fewer/larger chunks than proven safe. "--chunks 1"
+  (or 2) against the real ~712-file tree is silently raised to enough
+  chunks to respect the ceiling -- NOT packed into one giant -n0 process.
+  build_argv() also fail-closed-refuses (raises) to spawn any chunk over
+  the ceiling as a second, independent line of defense.
+- A SELF-LOCKFILE (outside the repo tree, keyed to this repo's path)
+  refuses to start a second concurrent instance of THIS tool. This is
+  DELIBERATELY separate from (and does not replace) the external-process
+  check above: that check cannot see an in-process "pytest.main()" launch
+  from a different script -- this repo's own documented no-xdist gate
+  technique looks exactly like "python somegate.py" from the outside, and
+  reliably detecting that from another process is fundamentally hard. Do
+  not run this gate concurrently with that technique; every chunk here is
+  already "-n0", so two concurrent instances of just THIS tool are only
+  ADDITIVE single-process memory pressure, never the xdist x nested-joblib
+  MULTIPLICATIVE fan-out that caused the original >90GB bugchecks -- a
+  lightweight lockfile is proportionate here, not heavier machinery.
+- Exit codes are NEVER ambiguous between outcome classes: 0 = genuine
+  full-tree PASS, 1 = genuine full-tree FAIL (a real test failed), 3 = ANY
+  --only scoped-run outcome (never mistakable for a full-tree verdict by
+  exit code alone), 4 = the gate could not genuinely run to a PASS/FAIL
+  conclusion at all (refused-to-start, infra ERROR, TIMEOUT) with no real
+  failure alongside it -- distinct from 1 so a wrapper can tell "declined"
+  from "tests failed".
 """
 
 from __future__ import annotations
@@ -58,10 +84,13 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import hashlib
+import math
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -76,6 +105,12 @@ TESTS_ROOT = REPO_ROOT / "tests"
 DEFAULT_TARGET_CHUNKS = 6
 DEFAULT_CHUNK_TIMEOUT_S = 2400  # wall-clock ceiling per chunk subprocess (40 min)
 DEFAULT_TEST_TIMEOUT_S = 900  # per-test ceiling, passed through to pytest-timeout
+# Proven-safe ceiling: the default 6-chunk plan against the real ~712-file
+# tree lands at ~119-120 files/chunk. 150 gives headroom above that while
+# staying well clear of the single-process MemoryError class this tool
+# exists to prevent. Enforced independent of --chunks -- see plan_chunks()
+# and _validate_chunk_size().
+MAX_FILES_PER_CHUNK = 150
 
 
 # ---------------------------------------------------------------------------
@@ -194,10 +229,24 @@ def plan_chunks(units: list[Unit], target_chunks: int = DEFAULT_TARGET_CHUNKS) -
     each unit into whichever chunk currently has the fewest files (ties
     broken by lowest chunk index). This gives a near-optimal balanced
     partition without ever splitting a unit.
+
+    `target_chunks` is a PREFERENCE, never a way to force fewer/larger
+    chunks than MAX_FILES_PER_CHUNK allows: effective_chunks =
+    max(target_chunks, ceil(total_files / MAX_FILES_PER_CHUNK)), so e.g.
+    "--chunks 1" against the real ~712-file tree is silently raised to
+    enough chunks to respect the ceiling, rather than packing everything
+    into one giant -n0 subprocess -- the exact single-process MemoryError
+    class this tool exists to prevent. If a single ATOMIC unit alone
+    exceeds the ceiling, no chunk count can fix that (units are never
+    split) -- build_argv()'s _validate_chunk_size() is the fail-closed
+    backstop for that edge case, refusing to spawn it at all.
     """
     if not units:
         return []
-    n_chunks = min(target_chunks, len(units))
+    total_files = sum(u.file_count for u in units)
+    min_chunks_for_ceiling = math.ceil(total_files / MAX_FILES_PER_CHUNK)
+    effective_target = max(target_chunks, min_chunks_for_ceiling)
+    n_chunks = min(effective_target, len(units))
     chunks = [Chunk(index=i, units=[]) for i in range(n_chunks)]
     ordered = sorted(units, key=lambda u: (-u.file_count, u.name))
     for unit in ordered:
@@ -248,12 +297,31 @@ def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int
 
 
 def build_argv(chunk: Chunk, test_timeout: int = DEFAULT_TEST_TIMEOUT_S) -> list[str]:
+    _validate_chunk_size(chunk)
     argv = [sys.executable, "-m", "pytest"]
     for unit in chunk.units:
         argv.extend(unit.paths)
     argv += ["-n0", "-q", f"--timeout={test_timeout}"]
     _validate_safe_argv(argv)
     return argv
+
+
+def _validate_chunk_size(chunk: Chunk) -> None:
+    """Fail-closed guard: a single chunk must never exceed
+    MAX_FILES_PER_CHUNK files, regardless of how it was constructed
+    (plan_chunks' own ceiling logic, --only's ceiling, or any future
+    caller). Called from build_argv -- the ONE choke point every chunk
+    passes through before a subprocess is ever spawned -- so this backstop
+    holds even if a caller bypasses plan_chunks entirely. Raises rather
+    than silently spawning an oversized single-process pytest run: the
+    exact single-process MemoryError class this tool exists to prevent.
+    """
+    if chunk.file_count > MAX_FILES_PER_CHUNK:
+        raise RuntimeError(
+            f"SAFETY: chunk {chunk.index} has {chunk.file_count} files, exceeding "
+            f"MAX_FILES_PER_CHUNK={MAX_FILES_PER_CHUNK}. Refusing to spawn a single "
+            "pytest process over the proven-safe chunk-size ceiling."
+        )
 
 
 def _validate_safe_argv(argv: list[str]) -> None:
@@ -337,6 +405,61 @@ def _other_pytest_running() -> tuple[bool, str]:
         )
         return False, ""
     return False, ""
+
+
+class GateAlreadyRunning(Exception):
+    """Raised when this tool's own self-lockfile shows a live instance already running."""
+
+
+def _lockfile_path() -> Path:
+    """A stable per-repo lockfile path OUTSIDE the repo tree -- never at
+    risk of being git-tracked or accidentally committed. Keyed to
+    REPO_ROOT's absolute path so a checkout of this repo elsewhere on the
+    same machine gets its own independent lock."""
+    key = hashlib.sha256(str(REPO_ROOT).encode()).hexdigest()[:16]
+    return Path(tempfile.gettempdir()) / f"segmented_full_tree_gate_{key}.lock"
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Best-effort liveness check. If psutil is unavailable, degrades to
+    "not alive" (so a stale lock is reclaimed rather than blocking every
+    future run forever) -- consistent with every other psutil-optional
+    guard in this file, which all fail toward letting the gate proceed
+    rather than blocking indefinitely on something unverifiable."""
+    if psutil is None:
+        return False
+    return psutil.pid_exists(pid)
+
+
+def _acquire_self_lock(lock_path: Path | None = None) -> Path:
+    """Write a self-lockfile recording this process's pid, refusing
+    (raising GateAlreadyRunning) if a LIVE instance already holds one.
+
+    This closes the "two instances of THIS tool" concurrency case -- see
+    the module docstring's SAFETY MODEL for why this is deliberately
+    separate from (and does not replace) _other_pytest_running.
+    """
+    if lock_path is None:
+        lock_path = _lockfile_path()
+    if lock_path.exists():
+        held_pid: int | None
+        try:
+            held_pid = int(lock_path.read_text().strip())
+        except (ValueError, OSError):
+            held_pid = None
+        if held_pid is not None and _pid_is_alive(held_pid):
+            raise GateAlreadyRunning(
+                f"Another instance of this gate (pid={held_pid}) is already running "
+                f"(lockfile: {lock_path}). Refusing to start a second one."
+            )
+        # Stale lock (holder no longer alive, or unreadable) -- safe to reclaim.
+    lock_path.write_text(str(os.getpid()))
+    return lock_path
+
+
+def _release_self_lock(lock_path: Path) -> None:
+    with contextlib.suppress(OSError):
+        lock_path.unlink()
 
 
 def _kill_process_tree(proc: psutil.Process) -> None:
@@ -458,10 +581,14 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
             )
             proc.kill()
         try:
-            stdout, _stderr = proc.communicate(timeout=5)
+            stdout, stderr = proc.communicate(timeout=5)
         except Exception:
-            stdout = ""
-        tail = "\n".join((stdout or "").splitlines()[-30:])
+            stdout, stderr = "", ""
+        # A hung test's traceback / pytest-timeout dump usually lands on
+        # stderr, not stdout -- include both in the diagnostic tail (stdout
+        # already captured above).
+        combined = (stdout or "") + "\n" + (stderr or "")
+        tail = "\n".join(combined.splitlines()[-30:])
         return ChunkResult(
             chunk=chunk,
             returncode=None,
@@ -607,8 +734,25 @@ def parse_summary(text: str) -> dict[str, int] | None:
 
 def extract_node_ids(text: str) -> list[str]:
     """Extract FAILED/ERROR node ids from pytest's short test summary info,
-    in the order they appear, with any trailing " - <reason>" stripped."""
-    return _NODEID_RE.findall(text)
+    in the order they appear, with any trailing " - <reason>" stripped.
+
+    Only candidates containing "::" are kept. A real pytest node id always
+    has at least one "::" (file::test, optionally file::Class::test, plus
+    an optional "[params]" suffix) -- this filters out a test that simply
+    LOGS a line starting with "ERROR " or "FAILED " as ordinary output
+    prose (e.g. "ERROR failed to connect to broker"), which would
+    otherwise pollute this rerun-id list.
+
+    RESIDUAL TRADE-OFF: a whole-FILE pytest collection error can
+    legitimately show as "ERROR tests/foo/test_bar.py" (no "::" at all,
+    the whole file failed to collect) -- that id is now filtered out of
+    this list too. This does NOT affect the verdict: parse_summary's
+    counts (e.g. "1 error") are entirely independent of this list, so the
+    failure is still correctly reported as non-PASS. Only the human-facing
+    rerun-id string is occasionally missing for that less-common case.
+    """
+    candidates = _NODEID_RE.findall(text)
+    return [c for c in candidates if "::" in c]
 
 
 # ---------------------------------------------------------------------------
@@ -682,10 +826,35 @@ def render_report(report: GateReport) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _positive_int(value: str) -> int:
+    """argparse `type=` validator: rejects <= 0 with a clean argparse error
+    instead of an unhandled traceback later (e.g. "--chunks 0" would
+    otherwise reach plan_chunks/min() on an implied-empty range)."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} must be >= 1")
+    return parsed
+
+
+# Exit codes -- see the module docstring's SAFETY MODEL for the full
+# rationale. Never ambiguous between outcome classes.
+EXIT_PASS = 0
+EXIT_FAIL = 1
+EXIT_CONFIG_ERROR = 2
+EXIT_SCOPED = 3
+EXIT_DECLINED = 4
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1] if __doc__ else None)
     parser.add_argument(
-        "--chunks", type=int, default=DEFAULT_TARGET_CHUNKS, help="target number of chunks"
+        "--chunks",
+        type=_positive_int,
+        default=DEFAULT_TARGET_CHUNKS,
+        help="target number of chunks (a preference -- MAX_FILES_PER_CHUNK is a hard floor)",
     )
     parser.add_argument(
         "--chunk-timeout",
@@ -705,7 +874,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help=(
             "debug: run only units whose name contains this substring, as one chunk. "
-            "Always exits 3 (never 0/1) -- a scoped run is never a full-tree verdict."
+            "Always exits 3 (never 0/1), including with --dry-run -- a scoped run is "
+            "never a full-tree verdict."
         ),
     )
     parser.add_argument(
@@ -719,16 +889,18 @@ def main(argv: list[str] | None = None) -> int:
             "[gate] ERROR: no test units discovered under tests/ -- misconfiguration?",
             file=sys.stderr,
         )
-        return 2
+        return EXIT_CONFIG_ERROR
 
     if args.only is not None:
         try:
             chunks = [resolve_only_selection(units, args.only, target_chunks=args.chunks)]
         except OnlyFilterRefused as exc:
             print(f"[gate] REFUSED: {exc}", file=sys.stderr)
-            return 2
+            return EXIT_CONFIG_ERROR
     else:
         chunks = plan_chunks(units, target_chunks=args.chunks)
+
+    scoped_reason = f"--only {args.only!r}" if args.only is not None else None
 
     if args.dry_run:
         print(
@@ -736,25 +908,45 @@ def main(argv: list[str] | None = None) -> int:
         )
         for chunk in chunks:
             print(f"  chunk {chunk.index}: {chunk.file_count} files -- {', '.join(chunk.names)}")
-        return 0
+        # A scoped dry-run is still a --only invocation, never a full-tree
+        # verdict -- honor the same "--only always exits 3" contract here
+        # too, rather than the generic dry-run 0.
+        return EXIT_SCOPED if scoped_reason else EXIT_PASS
 
-    scoped_reason = f"--only {args.only!r}" if args.only is not None else None
+    try:
+        lock_path = _acquire_self_lock()
+    except GateAlreadyRunning as exc:
+        print(f"[gate] REFUSED: {exc}", file=sys.stderr)
+        return EXIT_CONFIG_ERROR
+    try:
+        results = [
+            run_chunk(chunk, test_timeout=args.test_timeout, chunk_timeout=args.chunk_timeout)
+            for chunk in chunks
+        ]
+    finally:
+        _release_self_lock(lock_path)
 
-    results = [
-        run_chunk(chunk, test_timeout=args.test_timeout, chunk_timeout=args.chunk_timeout)
-        for chunk in chunks
-    ]
     report = aggregate(results, scoped_reason=scoped_reason)
     print(render_report(report))
+
     if report.scoped_reason:
-        # Exit 0 is reserved for a genuine FULL-TREE pass. A --only run is
-        # marked in the printed report (see render_report), but text alone
-        # is not enough for a wrapper keying off "$? == 0" -- it gets its
-        # own distinct exit code for ANY outcome (PASS, FAIL, ERROR, ...),
-        # so it can never be mistaken for a full-tree merge-gate pass by
-        # exit code either.
-        return 3
-    return 0 if report.verdict == "PASS" else 1
+        # Exit 0/1 are reserved for a genuine FULL-TREE verdict. A --only
+        # run is marked in the printed report (see render_report), but
+        # text alone is not enough for a wrapper keying off "$?" -- it gets
+        # its own distinct exit code for ANY outcome (PASS, FAIL, ERROR,
+        # ...), so it can never be mistaken for a full-tree result by exit
+        # code either.
+        return EXIT_SCOPED
+    if report.verdict == "PASS":
+        return EXIT_PASS
+    # FAIL: distinguish a genuine test failure from a gate that could not
+    # run to a real conclusion at all (refused-to-start, infra ERROR,
+    # TIMEOUT) with no real failure alongside it -- a CI wrapper needs to
+    # tell "tests failed" apart from "gate declined / infra problem".
+    has_real_failure = any(r.verdict == "FAIL" for r in results)
+    if not has_real_failure and any(r.verdict in ("ERROR", "TIMEOUT") for r in results):
+        return EXIT_DECLINED
+    return EXIT_FAIL
 
 
 if __name__ == "__main__":

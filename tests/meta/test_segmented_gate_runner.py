@@ -11,18 +11,26 @@ guard, summary-line parsing, node-id extraction, aggregation, verdict
 computation, and the argv safety guardrails -- all against synthetic
 fixtures or literal strings pulled from real prototype evidence logs.
 
-These tests NEVER spawn a real full-tree (or even multi-chunk) pytest run.
-The one function that touches subprocess/psutil (run_chunk) is exercised
-only indirectly through its pure helpers; end-to-end proof that the runner
-actually works against the real tree is a separate manual smoke step
-(--dry-run, then --only tests/engine), not part of this file.
+These tests NEVER spawn a real full-tree (or even multi-chunk) pytest run,
+and NEVER a real subprocess at all. run_chunk is exercised mostly through
+its pure helpers (_classify_chunk_outcome, _attach_psutil_process,
+_validate_chunk_size, ...); the one exception monkeypatches
+subprocess.Popen with a synthetic fake to prove the TIMEOUT path's
+diagnostic tail includes stderr, not just stdout -- no real process
+involved. end-to-end proof that the runner actually works against the
+real tree is a separate manual smoke step (--dry-run, then
+--only tests/engine), not part of this file.
 """
 
 from __future__ import annotations
 
+import argparse
 import ast
 import inspect
+import math
+import os
 import random
+import subprocess
 import sys
 from pathlib import Path
 
@@ -208,6 +216,69 @@ def test_plan_chunks_empty_units_returns_empty_plan():
     assert gate.plan_chunks([], target_chunks=6) == []
 
 
+def test_plan_chunks_chunks_1_still_respects_the_ceiling():
+    # The real safety hole this closes: "--chunks 1" against the full tree
+    # must NOT pack all ~712 files into one -n0 subprocess.
+    units = _units_from_counts(_REALISTIC_COUNTS)
+    total_files = sum(u.file_count for u in units)
+    chunks = gate.plan_chunks(units, target_chunks=1)
+    assert len(chunks) >= math.ceil(total_files / gate.MAX_FILES_PER_CHUNK)
+    assert all(c.file_count <= gate.MAX_FILES_PER_CHUNK for c in chunks)
+
+
+def test_plan_chunks_chunks_2_still_respects_the_ceiling():
+    units = _units_from_counts(_REALISTIC_COUNTS)
+    chunks = gate.plan_chunks(units, target_chunks=2)
+    assert all(c.file_count <= gate.MAX_FILES_PER_CHUNK for c in chunks)
+
+
+def test_plan_chunks_large_target_is_unaffected_by_the_ceiling():
+    # A generous --chunks request that ALREADY respects the ceiling must
+    # not be silently reduced -- the ceiling only ever pushes the count UP.
+    units = _units_from_counts(_REALISTIC_COUNTS)
+    chunks = gate.plan_chunks(units, target_chunks=6)
+    assert len(chunks) == 6
+
+
+# ---------------------------------------------------------------------------
+# _validate_chunk_size / build_argv -- the fail-closed backstop that holds
+# even if a caller bypasses plan_chunks' own ceiling logic entirely.
+# ---------------------------------------------------------------------------
+
+
+def _oversized_chunk() -> gate.Chunk:
+    return gate.Chunk(
+        index=0,
+        units=[
+            gate.Unit(
+                name="tests/huge",
+                paths=("tests/huge",),
+                file_count=gate.MAX_FILES_PER_CHUNK + 1,
+            )
+        ],
+    )
+
+
+def test_validate_chunk_size_raises_on_oversized_chunk():
+    with pytest.raises(RuntimeError):
+        gate._validate_chunk_size(_oversized_chunk())
+
+
+def test_validate_chunk_size_passes_at_exactly_the_ceiling():
+    at_ceiling = gate.Chunk(
+        index=0,
+        units=[
+            gate.Unit(name="tests/big", paths=("tests/big",), file_count=gate.MAX_FILES_PER_CHUNK)
+        ],
+    )
+    gate._validate_chunk_size(at_ceiling)  # must not raise
+
+
+def test_build_argv_refuses_an_oversized_chunk():
+    with pytest.raises(RuntimeError):
+        gate.build_argv(_oversized_chunk())
+
+
 # ---------------------------------------------------------------------------
 # resolve_only_selection (the --only refusal guard)
 # ---------------------------------------------------------------------------
@@ -382,6 +453,25 @@ def test_extract_node_ids_preserves_spaces_in_parametrized_brackets_no_reason():
 def test_extract_node_ids_preserves_spaces_in_parametrized_brackets_with_reason():
     text = "FAILED tests/x/test_z.py::test_foo[a b] - AssertionError: boom\n1 failed in 1.00s"
     assert gate.extract_node_ids(text) == ["tests/x/test_z.py::test_foo[a b]"]
+
+
+def test_extract_node_ids_filters_logged_prose_without_double_colon():
+    # A test that LOGS a line starting with "ERROR " as ordinary output
+    # (not a pytest short-summary entry) must not pollute the rerun list --
+    # a real node id always contains "::".
+    text = "\n".join(
+        [
+            "ERROR failed to connect to broker",
+            "FAILED tests/x/test_y.py::test_z",
+            "1 failed, 1 error in 2.00s",
+        ]
+    )
+    assert gate.extract_node_ids(text) == ["tests/x/test_y.py::test_z"]
+
+
+def test_extract_node_ids_filters_a_bare_failed_prose_line_too():
+    text = "FAILED to load configuration\nFAILED tests/a/test_b.py::test_c\n1 failed in 1.00s"
+    assert gate.extract_node_ids(text) == ["tests/a/test_b.py::test_c"]
 
 
 # ---------------------------------------------------------------------------
@@ -884,3 +974,225 @@ def test_main_returns_3_for_scoped_fail_too_never_1(monkeypatch):
     # from a --only invocation and mistake it for a full-tree result.
     _patch_discovery_and_run_chunk(monkeypatch, "tests/engine", "FAIL", {"failed": 1})
     assert gate.main(["--only", "tests/engine"]) == 3
+
+
+def test_main_returns_4_for_declined_run_with_no_real_failure(monkeypatch):
+    # An ERROR chunk (refused-to-start / infra failure / anomalous outcome)
+    # with NO real FAIL anywhere is "declined", not "tests failed" -- a
+    # distinct exit code so a CI wrapper can tell the two apart.
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "ERROR", None)
+    assert gate.main(["--chunks", "1"]) == 4
+
+
+def test_main_returns_4_for_a_timeout_with_no_real_failure(monkeypatch):
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "TIMEOUT", None)
+    assert gate.main(["--chunks", "1"]) == 4
+
+
+def test_main_returns_1_when_fail_and_error_both_present(monkeypatch):
+    # A genuine FAIL takes priority over exit 4, even alongside an ERROR
+    # chunk -- a real test failure is never masked by an infra hiccup
+    # elsewhere in the same run.
+    unit_a = gate.Unit(name="tests/a", paths=("tests/a",), file_count=99)
+    unit_b = gate.Unit(name="tests/b", paths=("tests/b",), file_count=1)
+    monkeypatch.setattr(gate, "discover_units", lambda root: [unit_a, unit_b])
+
+    def fake_run_chunk(chunk, test_timeout, chunk_timeout):
+        if chunk.index == 0:
+            return _chunk_result(0, "FAIL", counts={"failed": 1})
+        return _chunk_result(1, "ERROR", counts=None)
+
+    monkeypatch.setattr(gate, "run_chunk", fake_run_chunk)
+    assert gate.main(["--chunks", "2"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# --only + --dry-run -- a scoped dry-run is still a --only invocation, never
+# a full-tree verdict; it must honor the same "--only always exits 3"
+# contract as a real scoped run, not the generic dry-run 0.
+# ---------------------------------------------------------------------------
+
+
+def test_main_only_dry_run_returns_scoped_exit_code(monkeypatch):
+    fake_unit = gate.Unit(name="tests/engine", paths=("tests/engine",), file_count=1)
+    monkeypatch.setattr(gate, "discover_units", lambda root: [fake_unit])
+    assert gate.main(["--only", "tests/engine", "--dry-run"]) == 3
+
+
+def test_main_plain_dry_run_returns_0(monkeypatch):
+    fake_unit = gate.Unit(name="tests/engine", paths=("tests/engine",), file_count=1)
+    monkeypatch.setattr(gate, "discover_units", lambda root: [fake_unit])
+    assert gate.main(["--dry-run"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# _positive_int / "--chunks 0"|"-1" -- a clean argparse rejection, not an
+# unhandled min()-on-empty-range traceback deep inside plan_chunks.
+# ---------------------------------------------------------------------------
+
+
+def test_positive_int_accepts_positive_values():
+    assert gate._positive_int("1") == 1
+    assert gate._positive_int("42") == 42
+
+
+def test_positive_int_rejects_zero():
+    with pytest.raises(argparse.ArgumentTypeError):
+        gate._positive_int("0")
+
+
+def test_positive_int_rejects_negative():
+    with pytest.raises(argparse.ArgumentTypeError):
+        gate._positive_int("-1")
+
+
+def test_positive_int_rejects_non_integer():
+    with pytest.raises(argparse.ArgumentTypeError):
+        gate._positive_int("abc")
+
+
+def test_main_rejects_chunks_zero_cleanly():
+    # argparse's own type= validation fires during parse_args(), before
+    # discover_units/plan_chunks ever run -- a clean SystemExit(2), never a
+    # traceback from min() on an implied-empty chunk range.
+    with pytest.raises(SystemExit):
+        gate.main(["--chunks", "0"])
+
+
+def test_main_rejects_chunks_negative_cleanly():
+    with pytest.raises(SystemExit):
+        gate.main(["--chunks", "-1"])
+
+
+# ---------------------------------------------------------------------------
+# Self-lockfile -- closes the "two instances of THIS tool" concurrency case.
+# All tests pass an explicit tmp_path lock file, never the real system-temp
+# one main() uses by default, for isolation.
+# ---------------------------------------------------------------------------
+
+
+def test_lockfile_path_is_outside_the_repo_tree():
+    path = gate._lockfile_path()
+    assert gate.REPO_ROOT not in path.parents
+    assert path.name.startswith("segmented_full_tree_gate_")
+    assert path.suffix == ".lock"
+
+
+def test_lockfile_path_is_stable_across_calls():
+    assert gate._lockfile_path() == gate._lockfile_path()
+
+
+def test_pid_is_alive_returns_false_when_psutil_unavailable(monkeypatch):
+    monkeypatch.setattr(gate, "psutil", None)
+    assert gate._pid_is_alive(os.getpid()) is False
+
+
+def test_pid_is_alive_true_for_our_own_genuinely_alive_pid():
+    # No mocking -- exercises the real psutil.pid_exists() against a pid we
+    # know for certain is alive right now (ourselves).
+    assert gate._pid_is_alive(os.getpid()) is True
+
+
+def test_acquire_self_lock_creates_file_with_own_pid(tmp_path):
+    lock_path = tmp_path / "test.lock"
+    result = gate._acquire_self_lock(lock_path)
+    assert result == lock_path
+    assert lock_path.exists()
+    assert int(lock_path.read_text().strip()) == os.getpid()
+    gate._release_self_lock(lock_path)
+
+
+def test_acquire_self_lock_refuses_when_a_live_pid_holds_it(tmp_path):
+    lock_path = tmp_path / "test.lock"
+    # Our own pid is, by definition, alive right now -- exercises the real
+    # psutil.pid_exists() check with no mocking.
+    lock_path.write_text(str(os.getpid()))
+    with pytest.raises(gate.GateAlreadyRunning):
+        gate._acquire_self_lock(lock_path)
+
+
+def test_acquire_self_lock_reclaims_a_stale_lock(tmp_path, monkeypatch):
+    lock_path = tmp_path / "test.lock"
+    lock_path.write_text("999999999")
+    monkeypatch.setattr(gate, "_pid_is_alive", lambda pid: False)
+    result = gate._acquire_self_lock(lock_path)
+    assert result == lock_path
+    assert int(lock_path.read_text().strip()) == os.getpid()
+
+
+def test_acquire_self_lock_reclaims_an_unreadable_lock(tmp_path):
+    lock_path = tmp_path / "test.lock"
+    lock_path.write_text("not-a-pid")
+    result = gate._acquire_self_lock(lock_path)
+    assert int(result.read_text().strip()) == os.getpid()
+
+
+def test_release_self_lock_removes_the_file(tmp_path):
+    lock_path = tmp_path / "test.lock"
+    lock_path.write_text("123")
+    gate._release_self_lock(lock_path)
+    assert not lock_path.exists()
+
+
+def test_release_self_lock_is_a_noop_when_already_gone(tmp_path):
+    lock_path = tmp_path / "does_not_exist.lock"
+    gate._release_self_lock(lock_path)  # must not raise
+
+
+def test_main_refuses_to_start_when_lock_already_held(monkeypatch, tmp_path):
+    # A live lock (our own pid) held by a "prior instance" must refuse the
+    # WHOLE gate run before any chunk executes.
+    lock_path = tmp_path / "held.lock"
+    lock_path.write_text(str(os.getpid()))
+    monkeypatch.setattr(gate, "_lockfile_path", lambda: lock_path)
+    fake_unit = gate.Unit(name="tests/fake", paths=("tests/fake",), file_count=1)
+    monkeypatch.setattr(gate, "discover_units", lambda root: [fake_unit])
+    called = []
+    monkeypatch.setattr(gate, "run_chunk", lambda *a, **k: called.append(1))
+    assert gate.main(["--chunks", "1"]) == gate.EXIT_CONFIG_ERROR
+    assert called == []  # never reached run_chunk
+
+
+def test_main_releases_the_lock_after_a_normal_run(monkeypatch, tmp_path):
+    lock_path = tmp_path / "released.lock"
+    monkeypatch.setattr(gate, "_lockfile_path", lambda: lock_path)
+    _patch_discovery_and_run_chunk(monkeypatch, "tests/fake", "PASS", {"passed": 1})
+    gate.main(["--chunks", "1"])
+    assert not lock_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# run_chunk TIMEOUT path -- the diagnostic tail must include stderr, not
+# just stdout (a hung test's traceback / pytest-timeout dump usually lands
+# on stderr). subprocess.Popen is monkeypatched with a synthetic fake --
+# no real process is ever spawned.
+# ---------------------------------------------------------------------------
+
+
+def test_run_chunk_timeout_diagnostic_tail_includes_stdout_and_stderr(monkeypatch):
+    monkeypatch.setattr(gate, "psutil", None)  # simplest path: no tree-kill machinery involved
+
+    class _FakePopen:
+        def __init__(self, argv, **kwargs):
+            self.pid = 424242
+            self.returncode = None
+            self._calls = 0
+
+        def communicate(self, timeout=None):
+            self._calls += 1
+            if self._calls == 1:
+                raise subprocess.TimeoutExpired(cmd="pytest", timeout=timeout)
+            self.returncode = -9
+            return ("stdout tail marker\n", "stderr traceback marker\n")
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(gate.subprocess, "Popen", _FakePopen)
+
+    chunk = gate.Chunk(index=0, units=[gate.Unit(name="tests/x", paths=("tests/x",), file_count=1)])
+    result = gate.run_chunk(chunk, test_timeout=900, chunk_timeout=1)
+
+    assert result.verdict == "TIMEOUT"
+    assert "stdout tail marker" in result.diagnostic_tail
+    assert "stderr traceback marker" in result.diagnostic_tail
