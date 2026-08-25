@@ -10459,3 +10459,46 @@ Solo code-owner cycle, on a SEPARATE branch from `feature/frontrunner-simplify-p
 ### Reference (Revise 7)
 
 `DE-FR-SPLICE-POLARITY-001` — tracked as this Revise of `DE-FR-SIMPLIFY-001`, closing the construction-level gap Revise 4/5's `fire_is_else_branch` acceptance-side decline only firewalled. Separate branch from `feature/frontrunner-simplify-path` above (and from Revise 6's `feature/frontrunner-128-cleanup`): branch `feature/splice-polarity-fix`, worktree `.claude/worktrees/splice-polarity`, forked from `origin/main` @ `53eb78c9` (#132, the `guard_delta_vw` `/api/state` F6 follow-up — the last commit merged before this cycle branched). Commit chain: `00756c6f` (RED) -> `2d957f2e` (GREEN) -> `64f1fa90` (ruff format fix) -> [this doc pass, sp-doc]. Team: sp-test-writer (test-writer), sp-impl (implementer), sp-reviewer (code review — APPROVE, no findings), sp-doc (this entry).
+
+## DE-CLOSED-BOUNCE-001 — Closed-market cumulative-return bounce: guard-alpha fallback's unguarded side effect on the lifetime row (2026-08-25)
+
+Branch: `fix/closed-market-cumulative-bounce` | Base: `82657b96` (pre-cycle main) | HEAD: `8b0ad603`
+
+### Problem
+
+On the closed_frozen `/api/state` route (market closed, serving the EOD snapshot), the "Cumulative · lifetime" comparison row on the dashboard bounced between the correct account-basis lifetime value (~63.95%, matching Composer) and an incorrect VW-windowed value (~27.56%) on every ~30 s poll cycle.
+
+### Root cause — two legs, both required to produce the bounce
+
+**Leg 1 (server, structural trigger):** the closed_frozen branch's inline `_portfolio_strip` dict (`app.py`, built directly from `analytics.get_portfolio_cumulative_return_account_basis()` etc., never via `_compute_portfolio_strip()`/`compute_windowed_portfolio_strip()`) never set `guard_alpha` or `window` at all. This differs from the live-poll path, which has always populated a default-window `guard_alpha`/`window` pair (`app.py:1859-1881`) alongside its own account-basis `cumulative_return`.
+
+**Leg 2 (client, the race):** `renderGuardAlpha()` (`static/index.js`) falls back to `fetchWindowedStrip('30d')` whenever `ps.guard_alpha` isn't a number — which, per Leg 1, was true on EVERY closed-market poll, not just an edge case. `fetchWindowedStrip()` wraps `/api/strip/<window>`'s response (whose `cumulative_return` field is windowed VW-basis, from `analytics.compute_windowed_portfolio_strip`) and calls BOTH `renderGuardAlpha()` (intended) AND `updateComparisonRows()` (unintended side effect) with it. `updateComparisonRows()` sourced the lifetime-labeled row from `ps.cumulative_return` with no discriminator between a genuine `/api/state` poll payload (account-basis, correct) and the windowed-strip wrapped payload (VW-basis, wrong for a "lifetime" label) — so on every closed-market poll cycle, two writers raced to the same DOM row, and whichever of `/api/state` / `/api/strip/30d` resolved last on that tick won.
+
+This is a DIFFERENT bug from F-014 (`DE-DISPLAY-TRUTH-001`, 2026-07-21, shipped and still in effect): F-014 was `updateComparisonRows()` itself explicitly preferring a `windowed_cumulative_return` field over `cumulative_return` — that preference is gone from current code and F-014's fix is not implicated here. This bug is a *different* function's fallback (`renderGuardAlpha`) reaching into `updateComparisonRows()` as an unguarded side effect, structurally triggered on every closed-market poll by Leg 1.
+
+**A misleading comment made the bug harder to spot.** The pre-fix comment at `static/index.js:161-166` claimed fetching the windowed strip populated the cumulative row "with correct windowed VW values" — the exact wrong mental model that produced the bounce; a windowed value is never correct under a row SSR-labeled "Cumulative · lifetime" (`templates/index.html:920`).
+
+### Fix — both legs closed
+
+**Leg 1 (`app.py`, +33 lines):** the closed_frozen branch's happy-path `_portfolio_strip` construction gains its own `try`/`except` block (deliberately separate from the surrounding try, so a failure here can't discard the already-computed `today_change`/`cumulative_return`/`max_drawdown`) that mirrors the live path's own default-window strip computation (`app.py:1859-1881`): calls `analytics.compute_windowed_portfolio_strip(_snap_symphonies_list, _snap_bot_state, window=_DEFAULT_HERO_WINDOW, conn=_frozen_shadow_conn)` and, on success, sets `guard_alpha` (float or `None`), `window` (string), and — for shape parity with the live path, not currently consumed client-side (see `docs/generated/static_index_js.md`) — `windowed_cumulative_return`. `guard_alpha` can still legitimately be `None` here (e.g. `weight_sum==0`, or this new block's own `except` firing) — the Leg-2 fallback path remains necessary for that genuine edge case, it's just no longer the every-poll default.
+
+**Leg 2 (`static/index.js`):** `updateComparisonRows()` no longer includes the `cumulative` row in its `rows` array unconditionally. `rows` starts as `[today, mdd]`; the `cumulative` row entry is spliced in at index 1 ONLY when `'data_as_of' in ps` — reusing the exact discriminator `DE-AUDIT-BL4-001` established for the account-basis chip/freshness helpers in this same function (`data_as_of` is set by every genuine `/api/state` producer, never by the windowed-strip producer). On a `fetchWindowedStrip` wrapped payload, the cumulative row is skipped entirely by `rows.forEach` — its DOM elements are left untouched rather than being overwritten with a windowed value (or flickered to an honest-empty state and back). This applies uniformly to EVERY caller of `updateComparisonRows`, including the window-picker click handler — a windowed value is wrong under a "lifetime" label regardless of who triggered the windowed-strip fetch. The misleading `renderGuardAlpha` comment (`:161-166`) is rewritten to describe the corrected behavior and why `guard_alpha` can still be null.
+
+### Files changed
+
+- `app.py` — closed_frozen branch's `_portfolio_strip` gains a dedicated default-window `guard_alpha`/`window`/`windowed_cumulative_return` block (+33 lines), mirroring the live path's existing pattern.
+- `static/index.js` — `updateComparisonRows()`'s `rows` array construction gates the `cumulative` entry on `'data_as_of' in ps`; `renderGuardAlpha()`'s fallback comment corrected.
+- `tests/app/test_closed_market_cumulative_bounce.py` (new, 420 lines, 6 tests: `TestClosedFrozenGuardAlphaPresence` x2, `TestClosedFrozenNullGuardAlphaIsLegitimate` x1, `TestClosedFrozenCumulativeReturnBasis` x2, `TestOpenMarketNoRegression` x1).
+- `tests/dashboard/test_closed_market_bounce_js.py` (new, 159 lines, 1 test: `TestCumulativeRowGuardedByRealStatePollDiscriminator`).
+- `tests/fixtures/dashboard/closed_market_account_basis_divergence.json` (new fixture, 45 lines).
+- `docs/generated/static_index_js.md`, `docs/generated/app.md`, `docs/generated/INDEX.md` (this cycle's doc pass).
+
+### Verification
+
+Independently re-run by this doc-writer at HEAD `8b0ad603` (not relaying the team's own reported counts): `pytest tests/app/test_closed_market_cumulative_bounce.py tests/dashboard/test_closed_market_bounce_js.py -n0` — **7 passed, 0 failed**. `ruff check app.py` — all checks passed; `ruff format --check app.py` — already formatted. `node --check static/index.js` — clean. bounce-test-writer's own sufficiency review of the GREEN diff: clean, matches the `DE-AUDIT-BL4-001` discriminator precedent and the F-014 distinction documented above.
+
+**Not covered by this entry:** the PM's live visual/E2E render gate (bounce-ux, 3 scenarios — happy path, window-picker click, sparse-shadow-history) was still pending at the time of this doc pass, same pattern as `DE-DISPLAY-TRUTH-001`'s own closing note.
+
+### Reference
+
+`DE-CLOSED-BOUNCE-001`; branch `fix/closed-market-cumulative-bounce`; worktree `.claude/worktrees/bounce-fix`; base `origin/main` @ `82657b96` (#135, the segmented full-tree pytest gate runner). Commit chain: `12b9da17` (RED, closed-market portfolio_strip missing guard_alpha/window) -> `c309a7ee` (RED, client leg discriminator) -> `50ef3431` (test, fixture extension — seed shadow_history for windowed guard_alpha) -> `d34a3c1c` (GREEN, both legs) -> `8b0ad603` (test, None-guard_alpha legitimacy pin) -> [this doc pass, bounce-doc]. Cross-links: `DE-DISPLAY-TRUTH-001` (F-014, related-but-distinct — same display-truth-cluster class of bug, different mechanism); `DE-AUDIT-BL4-001` (the `'data_as_of' in ps` discriminator this fix's client leg reuses). Team: bounce-test-writer (test-writer/coordinator), bounce-impl (implementer), bounce-ux (live visual gate, pending at doc-pass time), bounce-doc (this entry).
