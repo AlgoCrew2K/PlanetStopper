@@ -48,6 +48,16 @@ def _frozen_datetime_class(instant: datetime) -> type[datetime]:
     fallback.py's ``_FrozenDatetime``). A proper subclass, so every OTHER
     datetime behavior (construction, arithmetic, .strftime, comparisons)
     stays real -- only .now() is overridden.
+
+    KNOWN DUPLICATION (code-review round 1, F5, accepted as low-priority):
+    this factory is structurally identical to test_bl6_today_change_et_
+    fallback.py's module-level ``_FrozenDatetime`` class (parametrized here
+    as a factory instead of a single fixed instant, since this module needs
+    several different frozen instants across its tests). Deliberately NOT
+    hoisted to a shared tests/conftest.py util this cycle -- that touches a
+    file every test in the tree imports, a broader blast radius than this
+    single-file, test-only hardening cycle's scope justifies for a
+    low-priority dedup.
     """
 
     class _Frozen(datetime):
@@ -153,7 +163,13 @@ def _seed_live_bot_state_symphony(
     mirroring the real engine's persisted shape (BL-9's own marker key).
     """
     state = database_module.load_state() or {}
-    state["last_successful_cycle_at"] = datetime.now(_ET).isoformat()
+    # Reads app_module.datetime (not this test module's own unfrozen
+    # `datetime`) so the stamp reflects whichever clock is ACTIVE for this
+    # test -- the module-default _FROZEN_INSTANT (autouse fixture), or a
+    # TestClockBoundaryDeterminism test's own per-test override. Using the
+    # unfrozen wall clock here would contradict the static-clock invariant
+    # the rest of this module relies on (HELD-BASIS HARDENING F4).
+    state["last_successful_cycle_at"] = app_module.datetime.now(_ET).isoformat()
     state[sym_id] = {
         "name": name,
         "account": "ACC1",
@@ -361,7 +377,15 @@ class TestAC2CallerShapeParity:
         (live poll card) -- BOTH threading sites, marker explicitly False.
         Both must render the bot_state value, matching pre-fix behavior,
         proving Option B's marker-gating (not an always-prefer-shadow swap).
+
+        Caches cleared (matching AC-3/AC-5's convention) so the direct
+        if_held/dry_run pins below deterministically hit the Tier-2 VW floor
+        rather than a warm account-basis branch left over from a preceding
+        test in this same class/module.
         """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
         sym_id = "live-poll-untriggered"
         _seed_live_bot_state_symphony(
             sym_id,
@@ -1162,16 +1186,35 @@ class TestF5FrozenBranchConvergence:
 # when the suite runs. Only the LIVE branch (/api/state via `client`) is
 # vulnerable to this race -- the frozen branch's trading_day is read from
 # the stored snapshot dict, never live-resolved (see module docstring).
+#
+# Revise (code-review round 1, F1 CRITICAL): the original version of these
+# 2 tests seeded a marker-FALSE symphony and asserted tc_held == the seeded
+# bot_state value -- but for marker=False, tc_held is sourced ENTIRELY from
+# bot_state.current_return regardless of the shadow row or trading_day
+# resolution, so both tests passed identically even with the freeze
+# removed entirely (vacuous, proven via mutation testing below). Redesign:
+# seed a TRIGGERED+MARKED (is_reconstructed=True) symphony whose bot_state.
+# current_return is a deliberately WRONG value, and a shadow_history row at
+# the boundary day carrying a DIFFERENT value -- the marker-gated override
+# (analytics.py:599-600, DE-HELD-BASIS-001) only renders the shadow value
+# when a matching-trading_day row is found, which only happens when the
+# route resolves "today" == the frozen boundary day. This makes the
+# assertion genuinely depend on the freeze succeeding.
 # ---------------------------------------------------------------------------
 
 
 class TestClockBoundaryDeterminism:
     def test_route_converges_when_clock_frozen_at_235959_et(self, client, monkeypatch):
         """Freezes app.py's clock to 23:59:59 ET on a fixed day D, seeds a
-        shadow row dated D (matching what datetime.now(_ET) resolves to at
-        that instant), and proves /api/state converges -- one tick before
-        the boundary #127's race could straddle.
+        TRIGGERED+MARKED symphony's shadow row dated D with a value DIFFERENT
+        from its bot_state reconstructed value, and proves /api/state renders
+        the shadow-basis value -- reachable ONLY when the route resolves
+        "today" == D via the frozen clock -- one tick before the boundary
+        #127's race could straddle.
         """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
         boundary_instant = datetime(2026, 8, 20, 23, 59, 59, tzinfo=_ET)
         boundary_day = "2026-08-20"
         assert boundary_instant.strftime("%Y-%m-%d") == boundary_day  # fixture sanity
@@ -1180,13 +1223,18 @@ class TestClockBoundaryDeterminism:
 
         sym_id = "boundary-235959"
         _seed_live_bot_state_symphony(
-            sym_id, name="Boundary 23:59:59 ET", value=1000.0, current_return=5.0
+            sym_id,
+            name="Boundary 23:59:59 ET",
+            value=1000.0,
+            current_return=2.5,  # reconstructed bot_state value -- must NOT render
+            is_reconstructed=True,
+            triggered=True,
         )
         _insert_shadow_row(
             os.environ["DB_PATH"],
             sym_id,
-            shadow_return=5.0,
-            current_return=5.0,
+            shadow_return=6.0,
+            current_return=6.0,  # shadow-basis value -- renders ONLY on a trading_day match
             trading_day=boundary_day,
         )
 
@@ -1195,20 +1243,25 @@ class TestClockBoundaryDeterminism:
         data = resp.get_json()
         by_id = {s.get("id"): s for s in (data.get("symphonies") or []) if isinstance(s, dict)}
         assert sym_id in by_id, (
-            f"expected {sym_id!r} among symphonies at the 23:59:59 ET boundary -- a mismatch "
-            f"here means the route resolved a DIFFERENT trading_day than the seeded shadow "
-            f"row, i.e. the exact #127 race; got {sorted(by_id.keys())!r}"
+            f"expected {sym_id!r} among symphonies at the 23:59:59 ET boundary; got "
+            f"{sorted(by_id.keys())!r}"
         )
-        assert by_id[sym_id].get("tc_held") == pytest.approx(5.0, abs=1e-6), (
-            f"boundary determinism FAIL at 23:59:59 ET: expected tc_held=5.0 (the seeded "
-            f"bot_state value, correctly resolved against the same-day shadow row); got "
-            f"tc_held={by_id[sym_id].get('tc_held')}"
+        assert by_id[sym_id].get("tc_held") == pytest.approx(6.0, abs=1e-6), (
+            f"boundary determinism FAIL at 23:59:59 ET: expected tc_held=6.0 (the shadow-basis "
+            f"override, reachable ONLY when the route resolves 'today' == {boundary_day!r} and "
+            f"finds the matching shadow_history row); got tc_held="
+            f"{by_id[sym_id].get('tc_held')} -- 2.5 would mean the route resolved a DIFFERENT "
+            f"day than the frozen clock intends (the exact #127 race), falling back to the "
+            f"un-overridden reconstructed bot_state value"
         )
 
     def test_route_converges_when_clock_frozen_at_000001_et_next_day(self, client, monkeypatch):
         """Same proof, frozen 2 seconds later at 00:00:01 ET the NEXT calendar
         day -- the other side of the exact boundary #127's race straddled.
         """
+        app_module._account_totals_cache.clear()
+        app_module._account_totals_last_good.clear()
+
         boundary_instant = datetime(2026, 8, 21, 0, 0, 1, tzinfo=_ET)
         boundary_day = "2026-08-21"
         assert boundary_instant.strftime("%Y-%m-%d") == boundary_day  # fixture sanity
@@ -1217,13 +1270,18 @@ class TestClockBoundaryDeterminism:
 
         sym_id = "boundary-000001"
         _seed_live_bot_state_symphony(
-            sym_id, name="Boundary 00:00:01 ET", value=1000.0, current_return=6.0
+            sym_id,
+            name="Boundary 00:00:01 ET",
+            value=1000.0,
+            current_return=3.5,  # reconstructed bot_state value -- must NOT render
+            is_reconstructed=True,
+            triggered=True,
         )
         _insert_shadow_row(
             os.environ["DB_PATH"],
             sym_id,
-            shadow_return=6.0,
-            current_return=6.0,
+            shadow_return=7.0,
+            current_return=7.0,  # shadow-basis value -- renders ONLY on a trading_day match
             trading_day=boundary_day,
         )
 
@@ -1232,12 +1290,14 @@ class TestClockBoundaryDeterminism:
         data = resp.get_json()
         by_id = {s.get("id"): s for s in (data.get("symphonies") or []) if isinstance(s, dict)}
         assert sym_id in by_id, (
-            f"expected {sym_id!r} among symphonies at the 00:00:01 ET (next-day) boundary -- a "
-            f"mismatch here means the route resolved a DIFFERENT trading_day than the seeded "
-            f"shadow row, i.e. the exact #127 race; got {sorted(by_id.keys())!r}"
+            f"expected {sym_id!r} among symphonies at the 00:00:01 ET (next-day) boundary; got "
+            f"{sorted(by_id.keys())!r}"
         )
-        assert by_id[sym_id].get("tc_held") == pytest.approx(6.0, abs=1e-6), (
-            f"boundary determinism FAIL at 00:00:01 ET (next day): expected tc_held=6.0 (the "
-            f"seeded bot_state value, correctly resolved against the same-day shadow row); "
-            f"got tc_held={by_id[sym_id].get('tc_held')}"
+        assert by_id[sym_id].get("tc_held") == pytest.approx(7.0, abs=1e-6), (
+            f"boundary determinism FAIL at 00:00:01 ET (next day): expected tc_held=7.0 (the "
+            f"shadow-basis override, reachable ONLY when the route resolves 'today' == "
+            f"{boundary_day!r} and finds the matching shadow_history row); got tc_held="
+            f"{by_id[sym_id].get('tc_held')} -- 3.5 would mean the route resolved a DIFFERENT "
+            f"day than the frozen clock intends (the exact #127 race), falling back to the "
+            f"un-overridden reconstructed bot_state value"
         )
