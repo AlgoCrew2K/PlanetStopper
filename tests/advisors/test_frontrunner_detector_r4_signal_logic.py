@@ -478,3 +478,68 @@ def test_detection_output_unchanged_for_existing_fields_across_all_real_fixtures
             )
             assert casc.rsi_thresholds, f"{path.stem}/{casc.group_name}: rsi_thresholds is empty"
             assert casc.vix_tickers, f"{path.stem}/{casc.group_name}: vix_tickers is empty"
+
+
+# ---------------------------------------------------------------------------
+# R4-2/B3 companion: the DEDICATED clause-aware counter (the shared
+# single-source-of-truth this module uses to stamp signal_logic_node_count,
+# and frontrunner_builder imports verbatim for the overlay operand per B3 --
+# see tests/advisors/test_frontrunner_simplify_path_wiring.py's identity
+# pin) has the OPPOSITE behavior from the shared, general-purpose,
+# REVERTED _count_tree_nodes (which tests/advisors/test_frontrunner_
+# acceptance.py's own reversion pin proves does NOT descend clauses
+# anymore): this dedicated counter MUST genuinely descend a compound
+# condition's clause list, since it is what makes clause count load-bearing
+# on the overlay SIMPLIFY operand's honesty (a 2-clause vs a 12-clause
+# compound condition are genuinely different amounts of signal logic).
+# ---------------------------------------------------------------------------
+
+
+def test_dedicated_clause_aware_counter_genuinely_descends_compound_condition_clauses(fd):
+    """A 12-clause compound condition must count MORE than a 2-clause one
+    via the DEDICATED clause-aware counter (name TBD by fps-impl -- see
+    test_frontrunner_simplify_path_wiring.py's identity pin for how this
+    test's sibling locates it without presupposing the name), with
+    otherwise IDENTICAL then/else allocation content -- the opposite
+    assertion from the shared _count_tree_nodes's own reversion pin,
+    confirming R4-2's split landed as two genuinely different counters,
+    not a single counter that (wrongly) either always or never descends."""
+    from advisors import symphony_schema as ss
+
+    def _make_if_compound_with_n_clauses(n: int) -> dict:
+        conditions = [
+            ss.make_binary_condition(
+                ss.make_condition_operand("relative-strength-index", f"TICKER_{i:02d}", window=10),
+                "gt",
+                ss.make_constant_rhs(80),
+            )
+            for i in range(n)
+        ]
+        compound_condition = ss.make_compound_condition("any", conditions)
+        return ss.make_if_compound(
+            compound_condition,
+            then_children=[ss.make_weight_equal([ss.make_asset("VIXY")])],
+            else_children=[ss.make_weight_equal([ss.make_asset("CORE_ASSET_0001")])],
+        )
+
+    tree_2 = _make_if_compound_with_n_clauses(2)
+    tree_12 = _make_if_compound_with_n_clauses(12)
+
+    counter = getattr(fd, "_count_clause_aware_signal_logic", None) or getattr(
+        fd, "count_clause_aware_signal_logic", None
+    )
+    assert counter is not None, (
+        "expected frontrunner_detector to expose the dedicated clause-aware "
+        "counter (name TBD by fps-impl) -- not found under either "
+        "candidate name"
+    )
+
+    count_2 = counter(tree_2)
+    count_12 = counter(tree_12)
+    assert count_12 > count_2, (
+        f"a 12-clause compound condition counted {count_12} via the "
+        f"dedicated clause-aware counter, a 2-clause one counted "
+        f"{count_2} -- this counter must genuinely descend compound "
+        f"condition clauses (both trees have IDENTICAL then/else "
+        f"allocation content, so any equal-count result means it isn't)"
+    )
