@@ -65,6 +65,15 @@ def _frozen_datetime_class(instant: datetime) -> type[datetime]:
         def now(cls, tz=None):
             if tz is not None:
                 return instant.astimezone(tz)
+            # DEVIATION FROM REAL datetime.now() (code-review round 2, F3):
+            # real now() with no tz returns the LOCAL system time; this
+            # returns `instant`'s naive wall-clock value regardless of
+            # `instant`'s own tzinfo (UTC here) -- i.e. NOT converted to any
+            # local timezone. Currently inert: nothing in this module calls
+            # app_module.datetime.now() without a tz arg. A future no-tz
+            # caller would get this UTC-wall value, not "local now" -- a trap
+            # if such a call is ever added without updating this comment's
+            # assumption.
             return instant.replace(tzinfo=None)
 
     return _Frozen
@@ -84,22 +93,48 @@ def _frozen_datetime_class(instant: datetime) -> type[datetime]:
 # test in this module, regardless of real wall-clock time. This also makes
 # _TRADING_DAY a genuinely static constant (no more real-time dependency to
 # age out at all).
+#
+# Chosen deliberately DISTINCT from BOTH TestClockBoundaryDeterminism boundary
+# days ("2026-08-20"/"2026-08-21", code-review round 2 F2): this default MUST
+# NOT coincidentally match either boundary day, or that boundary test's own
+# per-test freeze override becomes redundant -- the assertion would still
+# pass even if the override silently no-op'd, since the (unrelated) default
+# freeze would independently produce the same day. 2026-08-15 ET has no such
+# collision.
 _FROZEN_INSTANT = datetime(
-    2026, 8, 20, 18, 30, 0, tzinfo=UTC
-)  # arbitrary, far from any ET midnight boundary
+    2026, 8, 15, 18, 30, 0, tzinfo=UTC
+)  # arbitrary, far from any ET midnight boundary AND from both boundary-test days
 _TRADING_DAY = _FROZEN_INSTANT.astimezone(_ET).strftime("%Y-%m-%d")
 _FrozenDatetime = _frozen_datetime_class(_FROZEN_INSTANT)
 
 
 @pytest.fixture(autouse=True)
 def _frozen_route_clock(monkeypatch):
-    """Freezes every datetime.now() call inside app.py to _FROZEN_INSTANT for
-    the duration of each test in this module -- app.py does a module-level
-    ``from datetime import ... datetime`` (not a function-local import), so
-    ``app_module.datetime`` is a directly patchable name. This eliminates the
-    import-time-vs-request-time race described above at its root: the
-    route's "today" and this module's seeded "today" can no longer diverge,
-    because both derive from the identical frozen instant.
+    """Freezes datetime.now() calls inside app.py to _FROZEN_INSTANT for the
+    duration of each test in this module.
+
+    SCOPE (code-review round 2, F1 -- corrected from an earlier overclaim):
+    this patches ONLY the module-level name ``app_module.datetime`` (app.py
+    does ``from datetime import ... datetime`` at module scope, so that name
+    is directly patchable). It does NOT freeze:
+      - function-local ``from datetime import datetime`` re-imports elsewhere
+        in app.py (e.g. force_eod() app.py:3939, resend_discord() app.py:4000)
+        -- those re-bind a fresh, unpatched reference at call time.
+      - analytics.py's own request-time datetime fallback (analytics.py:
+        565-568) -- a function-local import there too.
+
+    INVARIANT this harness relies on: every route this test file drives
+    (``/``, ``/api/state``, ``/api/strip/<window>``) threads an explicit
+    ``trading_day`` end-to-end (confirmed via tests/analytics/test_bl6_
+    today_change_et_fallback.py's TestExplicitTradingDaySitesUnaffected AST
+    scan), so analytics.py's own fallback is dead code on every path this
+    file exercises -- freezing app_module.datetime alone is therefore
+    sufficient. A FUTURE test added to this file that drives a route NOT
+    covered by that invariant (e.g. one of the un-threaded call sites above,
+    or a genuinely new route) must either (a) confirm that route also
+    threads trading_day explicitly, or (b) extend this freeze to cover that
+    route's actual clock source -- do not assume this fixture alone
+    guarantees determinism for an untested code path.
     """
     monkeypatch.setattr(app_module, "datetime", _FrozenDatetime)
 
@@ -161,14 +196,20 @@ def _seed_live_bot_state_symphony(
 ) -> None:
     """Seed one symphony into bot_state via the real database.save_state,
     mirroring the real engine's persisted shape (BL-9's own marker key).
+
+    ORDERING PRECONDITION (code-review round 2, F4): reads app_module.
+    datetime.now(_ET) below, so it picks up whichever clock is ACTIVE at
+    CALL TIME -- the module-default _FROZEN_INSTANT (installed by the
+    autouse _frozen_route_clock fixture before every test body runs), or a
+    TestClockBoundaryDeterminism test's own per-test monkeypatch override.
+    Callers that install a per-test clock override (e.g.
+    ``monkeypatch.setattr(app_module, "datetime", ...)``) MUST do so BEFORE
+    calling this helper, or last_successful_cycle_at will be stamped from
+    the wrong (still-default) clock. Using this test module's own unfrozen
+    `datetime` here instead would contradict the static-clock invariant the
+    rest of this module relies on.
     """
     state = database_module.load_state() or {}
-    # Reads app_module.datetime (not this test module's own unfrozen
-    # `datetime`) so the stamp reflects whichever clock is ACTIVE for this
-    # test -- the module-default _FROZEN_INSTANT (autouse fixture), or a
-    # TestClockBoundaryDeterminism test's own per-test override. Using the
-    # unfrozen wall clock here would contradict the static-clock invariant
-    # the rest of this module relies on (HELD-BASIS HARDENING F4).
     state["last_successful_cycle_at"] = app_module.datetime.now(_ET).isoformat()
     state[sym_id] = {
         "name": name,
