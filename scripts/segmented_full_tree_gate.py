@@ -71,12 +71,22 @@ SAFETY MODEL
   MULTIPLICATIVE fan-out that caused the original >90GB bugchecks -- a
   lightweight lockfile is proportionate here, not heavier machinery.
 - Exit codes are NEVER ambiguous between outcome classes: 0 = genuine
-  full-tree PASS, 1 = genuine full-tree FAIL (a real test failed), 3 = ANY
-  --only scoped-run outcome (never mistakable for a full-tree verdict by
-  exit code alone), 4 = the gate could not genuinely run to a PASS/FAIL
-  conclusion at all (refused-to-start, infra ERROR, TIMEOUT) with no real
-  failure alongside it -- distinct from 1 so a wrapper can tell "declined"
-  from "tests failed".
+  full-tree PASS, 1 = genuine full-tree FAIL -- a real test OR collection
+  failure that must BLOCK a merge (includes a broken-to-collect tree:
+  pytest returncode 2 with a parseable error count is a real failure, not
+  an infra decline), 2 = the request itself was malformed (bad CLI args,
+  no test files discovered, an --only selector that matches nothing or
+  is too broad), 3 = ANY --only scoped-run outcome including a scoped
+  --dry-run (never mistakable for a full-tree verdict by exit code
+  alone), 4 = the GATE declined to RUN a chunk at all despite a
+  well-formed request (a lockfile held by another instance, a concurrent
+  pytest refusal, an oversized-chunk refusal -- pytest never even
+  started) or could not reach a determinable result (TIMEOUT, an
+  unparseable crash before any summary printed) -- with no real failure
+  alongside it, so a wrapper can tell "declined/undetermined" from "tests
+  failed" (a genuine failure always wins when both appear in the same
+  run), 5 = a PLAIN --dry-run: nothing executed, so it must not share
+  exit 0 with a genuine full-tree PASS either.
 """
 
 from __future__ import annotations
@@ -265,7 +275,15 @@ def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int
     ~11.6k-item MemoryError-class failure this tool exists to prevent. So
     this refuses (raises, runs nothing) when the substring is empty/blank,
     matches nothing, or the matched units together exceed one chunk's fair
-    share of the tree (with a 25% margin) for the requested chunk count.
+    share of the tree (with a 25% margin, but never above
+    MAX_FILES_PER_CHUNK) for the requested chunk count.
+
+    The ceiling is clamped to MAX_FILES_PER_CHUNK so this can NEVER accept
+    a selection that build_argv()'s _validate_chunk_size() would then
+    refuse: with a small --chunks (e.g. 4 against the real ~712-file
+    tree), fair_share*1.25 alone can exceed 150, which would otherwise let
+    a >150-file selection through here only to crash ungracefully deeper
+    in the call stack. The two ceilings must always agree.
     """
     substring = substring.strip()
     if not substring:
@@ -278,15 +296,17 @@ def resolve_only_selection(units: list[Unit], substring: str, target_chunks: int
 
     total_files = sum(u.file_count for u in units)
     fair_share = total_files / max(target_chunks, 1)
-    ceiling = max(1, round(fair_share * 1.25))
+    ceiling = min(max(1, round(fair_share * 1.25)), MAX_FILES_PER_CHUNK)
     matched_files = sum(u.file_count for u in matched)
     if matched_files > ceiling:
         raise OnlyFilterRefused(
             f"--only {substring!r} matched {len(matched)} unit(s) / {matched_files} files, "
-            f"exceeding the single-chunk ceiling ({ceiling} files, ~1.25x the {fair_share:.0f}-file "
-            f"fair share of {total_files} total files across {target_chunks} chunks). This guard "
-            "exists specifically to stop --only from collapsing the whole tree into one uncapped "
-            "process. Pass a more specific (e.g. fully-qualified 'tests/<dir>') substring."
+            f"exceeding the single-chunk ceiling ({ceiling} files -- min of 1.25x the "
+            f"{fair_share:.0f}-file fair share of {total_files} total files across "
+            f"{target_chunks} chunks, and the hard MAX_FILES_PER_CHUNK={MAX_FILES_PER_CHUNK}). "
+            "This guard exists specifically to stop --only from collapsing the whole tree into "
+            "one uncapped process. Pass a more specific (e.g. fully-qualified 'tests/<dir>') "
+            "substring."
         )
     return Chunk(index=0, units=matched)
 
@@ -335,8 +355,24 @@ def _validate_safe_argv(argv: list[str]) -> None:
         raise RuntimeError("SAFETY: -n0 must be explicit in every chunk invocation")
     if "tests" in argv:
         raise RuntimeError("SAFETY: the bare 'tests' root must never be passed as an argument")
-    if not any(a.startswith("--timeout=") for a in argv):
+    timeout_args = [a for a in argv if a.startswith("--timeout=")]
+    if not timeout_args:
         raise RuntimeError("SAFETY: --timeout must be explicit")
+    timeout_value_str = timeout_args[0].split("=", 1)[1]
+    try:
+        timeout_value = int(timeout_value_str)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"SAFETY: --timeout value {timeout_value_str!r} is not an integer"
+        ) from exc
+    if timeout_value <= 0:
+        # 0 (or negative) DISABLES pytest-timeout's per-test safety net
+        # entirely -- merely being PRESENT on the command line is not
+        # enough; the value itself must actually enforce a limit.
+        raise RuntimeError(
+            f"SAFETY: --timeout={timeout_value} would disable pytest-timeout's per-test "
+            "safety net (0/negative means 'no limit') -- the value must be > 0"
+        )
     path_tokens = [a for a in argv[3:] if not a.startswith("-")]
     if not path_tokens:
         raise RuntimeError("SAFETY: at least one explicit path must be passed")
@@ -369,6 +405,9 @@ def _looks_like_pytest_invocation(name: str, cmdline: list[str]) -> bool:
         if base == "pytest" or base.startswith("pytest.") or base == "py.test":
             return True
         if token == "-m" and i + 1 < len(tokens) and tokens[i + 1] == "pytest":
+            return True
+        # Glued form: "-mpytest" (vs. the separate "-m" "pytest" pair above).
+        if token.startswith("-m") and token.endswith("pytest"):
             return True
     return False
 
@@ -539,7 +578,27 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
             diagnostic_tail=msg,
         )
 
-    argv = build_argv(chunk, test_timeout=test_timeout)
+    try:
+        argv = build_argv(chunk, test_timeout=test_timeout)
+    except RuntimeError as exc:
+        # Belt-and-suspenders: build_argv's own guards (_validate_chunk_size,
+        # _validate_safe_argv) should already have been satisfied by the
+        # caller (plan_chunks respects MAX_FILES_PER_CHUNK; --only's
+        # ceiling is clamped to agree with it) -- but if a FUTURE caller
+        # ever bypasses those, this must degrade to a clean declined
+        # verdict, never an unhandled traceback that crashes the whole
+        # sequential gate mid-run.
+        msg = f"Refused to start: {exc}"
+        print(f"[gate] REFUSING TO START chunk {chunk.index}: {msg}", file=sys.stderr)
+        return ChunkResult(
+            chunk=chunk,
+            returncode=None,
+            counts=None,
+            node_ids=[],
+            duration_s=0.0,
+            verdict="ERROR",
+            diagnostic_tail=msg,
+        )
     env = os.environ.copy()
     # Force each chunk's subprocess to get its OWN fresh temp DB via
     # conftest.py's pytest_configure(), rather than inheriting a value from
@@ -607,10 +666,18 @@ def run_chunk(chunk: Chunk, test_timeout: int, chunk_timeout: int) -> ChunkResul
     # parent's pid -- it is NOT a guarantee against every reparented
     # orphan. The real orphan-prevention guarantee is the TIMEOUT path
     # above, where the parent is still alive and its full descendant tree
-    # is reliably enumerable. A worker pool that outlives a chunk's NORMAL
-    # completion indicates a leaky test in the suite itself (out of this
-    # gate's scope to fully catch) -- this is cheap insurance for the
-    # common case, not a guarantee.
+    # is reliably enumerable.
+    #
+    # A worker pool that outlives a chunk's NORMAL completion is a LEAKY
+    # TEST in the suite itself -- not this gate's job to fully catch, and
+    # deliberately NOT patched over with heuristic between-chunk process
+    # killing: (a) every chunk here runs "-n0", so a leaked pool is
+    # additive memory pressure, never the xdist x nested-joblib
+    # multiplicative fan-out that caused the original >90GB bugchecks;
+    # (b) killing a reparented process by heuristic (e.g. "anything
+    # mentioning our repo path") is itself dangerous -- it can kill an
+    # unrelated process a developer is running. This mop-up is cheap
+    # insurance for the common (still-parented) case, nothing more.
     if ps_proc is not None:
         _kill_process_tree(ps_proc)
 
@@ -656,6 +723,18 @@ def _classify_chunk_outcome(returncode: int, counts: dict[str, int] | None) -> s
     branch below and downgrade an otherwise completely clean tree to a gate
     FAIL. NO_TESTS is distinct from PASS (nothing was actually verified),
     but does not fail the grand verdict either -- see aggregate().
+
+    returncode 2 ("interrupted") ALSO fires for a broken-to-collect tree
+    (import/collection errors) as long as pytest still reached a parseable
+    summary reporting them. That IS a real failure that must BLOCK a merge
+    -- a broken/uncollectable tree is not a retryable "gate declined to
+    run," it is FAIL, exactly like returncode 1. Exit code 4 (DECLINED) is
+    reserved strictly for cases where the GATE itself never let pytest run
+    at all (lockfile held, a concurrent-pytest refusal, an oversized-chunk
+    refusal) or genuinely could not determine an outcome (TIMEOUT, no
+    summary printed at all). A returncode 2 with NO real failure counted
+    (e.g. a genuine Ctrl-C interrupt with nothing failed yet) has nothing
+    to attribute a FAIL to, so it stays ERROR.
     """
     if returncode == 5:
         return "NO_TESTS"
@@ -664,11 +743,12 @@ def _classify_chunk_outcome(returncode: int, counts: dict[str, int] | None) -> s
     failed = counts.get("failed", 0) + counts.get("errors", 0)
     if returncode == 0 and failed == 0:
         return "PASS"
-    if returncode == 1 and failed > 0:
+    if returncode in (1, 2) and failed > 0:
         # Attributable failure(s) -- node ids were extracted by the caller.
         return "FAIL"
-    # Anomalous combination (e.g. returncode 2 "interrupted", or counts
-    # that don't match the returncode) -- never silently call this PASS.
+    # Anomalous combination (e.g. returncode 2 with nothing actually
+    # failed, or counts that don't match the returncode) -- never silently
+    # call this PASS.
     return "ERROR"
 
 
@@ -846,6 +926,7 @@ EXIT_FAIL = 1
 EXIT_CONFIG_ERROR = 2
 EXIT_SCOPED = 3
 EXIT_DECLINED = 4
+EXIT_DRY_RUN = 5
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -858,15 +939,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--chunk-timeout",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_CHUNK_TIMEOUT_S,
-        help="wall-clock seconds per chunk subprocess",
+        help="wall-clock seconds per chunk subprocess (must be > 0)",
     )
     parser.add_argument(
         "--test-timeout",
-        type=int,
+        type=_positive_int,
         default=DEFAULT_TEST_TIMEOUT_S,
-        help="per-test seconds, passed to pytest-timeout",
+        help="per-test seconds, passed to pytest-timeout (must be > 0 -- 0 disables it)",
     )
     parser.add_argument(
         "--only",
@@ -879,7 +960,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--dry-run", action="store_true", help="print the chunk plan and execute nothing"
+        "--dry-run",
+        action="store_true",
+        help="print the chunk plan and execute nothing (exits 5, or 3 if combined with --only)",
     )
     args = parser.parse_args(argv)
 
@@ -910,14 +993,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  chunk {chunk.index}: {chunk.file_count} files -- {', '.join(chunk.names)}")
         # A scoped dry-run is still a --only invocation, never a full-tree
         # verdict -- honor the same "--only always exits 3" contract here
-        # too, rather than the generic dry-run 0.
-        return EXIT_SCOPED if scoped_reason else EXIT_PASS
+        # too. A PLAIN dry-run executed nothing either, so it must not
+        # share exit 0 with a genuine full-tree PASS -- its own dedicated
+        # "no verdict at all" code.
+        return EXIT_SCOPED if scoped_reason else EXIT_DRY_RUN
 
     try:
         lock_path = _acquire_self_lock()
     except GateAlreadyRunning as exc:
+        # A lockfile refusal means the gate declined to run ANY chunk at
+        # all -- the same "declined to run" class as a per-chunk
+        # concurrent-pytest/oversized-chunk refusal (see run_chunk), just
+        # caught before any chunk exists to carry that verdict. EXIT_DECLINED,
+        # not EXIT_CONFIG_ERROR: the request itself was well-formed.
         print(f"[gate] REFUSED: {exc}", file=sys.stderr)
-        return EXIT_CONFIG_ERROR
+        return EXIT_DECLINED
     try:
         results = [
             run_chunk(chunk, test_timeout=args.test_timeout, chunk_timeout=args.chunk_timeout)
@@ -939,10 +1029,14 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_SCOPED
     if report.verdict == "PASS":
         return EXIT_PASS
-    # FAIL: distinguish a genuine test failure from a gate that could not
-    # run to a real conclusion at all (refused-to-start, infra ERROR,
-    # TIMEOUT) with no real failure alongside it -- a CI wrapper needs to
-    # tell "tests failed" apart from "gate declined / infra problem".
+    # FAIL: distinguish a genuine test/collection failure (a real reason to
+    # BLOCK a merge) from the gate declining to run a chunk at all
+    # (concurrent-pytest / oversized-chunk refusal -- pytest never even
+    # started) or failing to reach a determinable result (TIMEOUT, an
+    # unparseable crash before any summary printed). A CI wrapper needs to
+    # tell "tests/collection failed, block the merge" (1) apart from "the
+    # gate itself declined or couldn't tell" (4) -- a genuine FAIL always
+    # wins when both appear in the same run.
     has_real_failure = any(r.verdict == "FAIL" for r in results)
     if not has_real_failure and any(r.verdict in ("ERROR", "TIMEOUT") for r in results):
         return EXIT_DECLINED

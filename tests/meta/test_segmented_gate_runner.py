@@ -334,6 +334,32 @@ def test_only_broad_but_specific_match_within_ceiling_is_accepted():
     assert [u.name for u in chunk.units] == ["tests/database"]
 
 
+def test_only_ceiling_never_exceeds_max_files_per_chunk():
+    # Purpose-built scenario: with the OLD formula (no clamp), fair_share *
+    # 1.25 exceeds MAX_FILES_PER_CHUNK, so resolve_only_selection would
+    # ACCEPT a selection that build_argv's hard ceiling would then REFUSE
+    # -- an ungraceful crash, not a clean --only refusal. The two ceilings
+    # must agree: this must now be refused HERE, cleanly.
+    units = [
+        gate.Unit(name="tests/target", paths=("tests/target",), file_count=170),
+        gate.Unit(name="tests/other", paths=("tests/other",), file_count=542),
+    ]
+    # total_files=712, target_chunks=4 -> fair_share=178, the OLD (uncapped)
+    # ceiling = round(178*1.25) = 222 -- would have ACCEPTED 170 files. The
+    # new ceiling = min(222, MAX_FILES_PER_CHUNK=150) = 150 -- refuses it.
+    with pytest.raises(gate.OnlyFilterRefused):
+        gate.resolve_only_selection(units, "tests/target", target_chunks=4)
+
+
+def test_only_ceiling_clamp_still_accepts_a_selection_under_150():
+    units = [
+        gate.Unit(name="tests/target", paths=("tests/target",), file_count=140),
+        gate.Unit(name="tests/other", paths=("tests/other",), file_count=572),
+    ]
+    chunk = gate.resolve_only_selection(units, "tests/target", target_chunks=4)
+    assert [u.name for u in chunk.units] == ["tests/target"]
+
+
 # ---------------------------------------------------------------------------
 # parse_summary
 # ---------------------------------------------------------------------------
@@ -607,14 +633,28 @@ def test_classify_chunk_outcome_no_summary_is_error():
     assert gate._classify_chunk_outcome(1, None) == "ERROR"
 
 
-def test_classify_chunk_outcome_anomalous_returncode_is_error():
-    # returncode 2 ("interrupted") with a summary present -- never PASS.
+def test_classify_chunk_outcome_returncode_2_with_zero_failed_stays_error():
+    # returncode 2 ("interrupted") with NOTHING actually failed (e.g. a
+    # genuine Ctrl-C mid-run) has no real failure to attribute a FAIL to --
+    # stays ERROR, never PASS.
     assert gate._classify_chunk_outcome(2, {"passed": 5}) == "ERROR"
 
 
 def test_classify_chunk_outcome_returncode_1_with_zero_failed_is_error():
     # Should not normally happen, but never silently call it PASS or FAIL.
     assert gate._classify_chunk_outcome(1, {"passed": 5}) == "ERROR"
+
+
+def test_classify_chunk_outcome_returncode_2_with_errors_is_fail_not_declined():
+    # THE #3 fix: a broken-to-collect tree (import/collection errors) can
+    # exit pytest's own returncode 2 while still printing a parseable
+    # summary. That IS a real failure that must BLOCK a merge -- it must
+    # NOT be filed under the gate's "declined to run" bucket.
+    assert gate._classify_chunk_outcome(2, {"errors": 1}) == "FAIL"
+
+
+def test_classify_chunk_outcome_returncode_2_with_failed_is_fail():
+    assert gate._classify_chunk_outcome(2, {"failed": 3, "passed": 5}) == "FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +883,7 @@ def test_other_pytest_running_ignores_path_substring_false_positive(monkeypatch)
         ("py.test", ["py.test", "tests/"], True),
         ("python.exe", ["python.exe", "-m", "pytest", "tests/"], True),
         ("python.exe", ["python.exe", "-m", "pytest"], True),
+        ("python.exe", ["python.exe", "-mpytest", "tests/x"], True),  # glued form
         ("python.exe", ["python.exe", "-m", "pip", "list"], False),
         ("bash.exe", ["bash.exe", "-c", "cd /c/worktrees/pytest-gate && echo hi"], False),
         ("notepad.exe", ["notepad.exe"], False),
@@ -851,6 +892,10 @@ def test_other_pytest_running_ignores_path_substring_false_positive(monkeypatch)
 )
 def test_looks_like_pytest_invocation(name, cmdline, expected):
     assert gate._looks_like_pytest_invocation(name, cmdline) is expected
+
+
+def test_looks_like_pytest_invocation_glued_dash_m_pytest():
+    assert gate._looks_like_pytest_invocation("python.exe", ["python.exe", "-mpytest", "tests/x"])
 
 
 # ---------------------------------------------------------------------------
@@ -1019,10 +1064,14 @@ def test_main_only_dry_run_returns_scoped_exit_code(monkeypatch):
     assert gate.main(["--only", "tests/engine", "--dry-run"]) == 3
 
 
-def test_main_plain_dry_run_returns_0(monkeypatch):
+def test_main_plain_dry_run_returns_dedicated_dry_run_code_never_0(monkeypatch):
+    # A plain --dry-run executes nothing -- it must not share exit 0 with a
+    # genuine full-tree PASS.
     fake_unit = gate.Unit(name="tests/engine", paths=("tests/engine",), file_count=1)
     monkeypatch.setattr(gate, "discover_units", lambda root: [fake_unit])
-    assert gate.main(["--dry-run"]) == 0
+    result = gate.main(["--dry-run"])
+    assert result == gate.EXIT_DRY_RUN
+    assert result not in (gate.EXIT_PASS, gate.EXIT_FAIL)
 
 
 # ---------------------------------------------------------------------------
@@ -1062,6 +1111,60 @@ def test_main_rejects_chunks_zero_cleanly():
 def test_main_rejects_chunks_negative_cleanly():
     with pytest.raises(SystemExit):
         gate.main(["--chunks", "-1"])
+
+
+def test_main_rejects_test_timeout_zero():
+    # --test-timeout 0 would silently DISABLE pytest-timeout's per-test
+    # safety net (0 means "no limit" to pytest-timeout).
+    with pytest.raises(SystemExit):
+        gate.main(["--test-timeout", "0"])
+
+
+def test_main_rejects_test_timeout_negative():
+    with pytest.raises(SystemExit):
+        gate.main(["--test-timeout", "-1"])
+
+
+def test_main_rejects_chunk_timeout_zero():
+    # --chunk-timeout 0 would make subprocess.communicate(timeout=0)
+    # instant-TIMEOUT every single chunk.
+    with pytest.raises(SystemExit):
+        gate.main(["--chunk-timeout", "0"])
+
+
+def test_main_rejects_chunk_timeout_negative():
+    with pytest.raises(SystemExit):
+        gate.main(["--chunk-timeout", "-1"])
+
+
+# ---------------------------------------------------------------------------
+# _validate_safe_argv's --timeout value -- presence alone is not enough; a
+# --timeout=0 (or negative) passes a naive "is --timeout= present" check
+# while still fully disabling pytest-timeout's per-test safety net.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_safe_argv_raises_on_timeout_zero():
+    argv = [sys.executable, "-m", "pytest", "tests/engine", "-n0", "-q", "--timeout=0"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_raises_on_timeout_negative():
+    argv = [sys.executable, "-m", "pytest", "tests/engine", "-n0", "-q", "--timeout=-5"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_raises_on_timeout_non_integer():
+    argv = [sys.executable, "-m", "pytest", "tests/engine", "-n0", "-q", "--timeout=soon"]
+    with pytest.raises(RuntimeError):
+        gate._validate_safe_argv(argv)
+
+
+def test_validate_safe_argv_passes_on_positive_timeout():
+    argv = [sys.executable, "-m", "pytest", "tests/engine", "-n0", "-q", "--timeout=900"]
+    gate._validate_safe_argv(argv)  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -1141,7 +1244,9 @@ def test_release_self_lock_is_a_noop_when_already_gone(tmp_path):
 
 def test_main_refuses_to_start_when_lock_already_held(monkeypatch, tmp_path):
     # A live lock (our own pid) held by a "prior instance" must refuse the
-    # WHOLE gate run before any chunk executes.
+    # WHOLE gate run before any chunk executes. Lock-held is "the gate
+    # declined to run" -- EXIT_DECLINED(4), not EXIT_CONFIG_ERROR(2): the
+    # request itself was perfectly well-formed.
     lock_path = tmp_path / "held.lock"
     lock_path.write_text(str(os.getpid()))
     monkeypatch.setattr(gate, "_lockfile_path", lambda: lock_path)
@@ -1149,7 +1254,7 @@ def test_main_refuses_to_start_when_lock_already_held(monkeypatch, tmp_path):
     monkeypatch.setattr(gate, "discover_units", lambda root: [fake_unit])
     called = []
     monkeypatch.setattr(gate, "run_chunk", lambda *a, **k: called.append(1))
-    assert gate.main(["--chunks", "1"]) == gate.EXIT_CONFIG_ERROR
+    assert gate.main(["--chunks", "1"]) == gate.EXIT_DECLINED
     assert called == []  # never reached run_chunk
 
 
@@ -1196,3 +1301,29 @@ def test_run_chunk_timeout_diagnostic_tail_includes_stdout_and_stderr(monkeypatc
     assert result.verdict == "TIMEOUT"
     assert "stdout tail marker" in result.diagnostic_tail
     assert "stderr traceback marker" in result.diagnostic_tail
+
+
+# ---------------------------------------------------------------------------
+# run_chunk + an oversized chunk -- belt-and-suspenders: build_argv's
+# _validate_chunk_size raising must degrade to a clean declined ChunkResult,
+# NEVER an unhandled traceback that crashes the whole sequential gate. No
+# subprocess.Popen mock needed here -- build_argv raises BEFORE Popen would
+# ever be reached.
+# ---------------------------------------------------------------------------
+
+
+def test_run_chunk_gracefully_declines_an_oversized_chunk_never_a_traceback(monkeypatch):
+    monkeypatch.setattr(gate, "psutil", None)
+    oversized = gate.Chunk(
+        index=0,
+        units=[
+            gate.Unit(
+                name="tests/huge",
+                paths=("tests/huge",),
+                file_count=gate.MAX_FILES_PER_CHUNK + 1,
+            )
+        ],
+    )
+    result = gate.run_chunk(oversized, test_timeout=900, chunk_timeout=60)
+    assert result.verdict == "ERROR"
+    assert "MAX_FILES_PER_CHUNK" in result.diagnostic_tail
