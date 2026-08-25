@@ -8,9 +8,37 @@ Acceptance is TWO independent paths, either of which admits a candidate:
      does not breach an absolute floor (a candidate cannot buy an improved
      ratio via extreme leverage that also posts a catastrophic drawdown).
   2. PRESERVE + SIMPLIFY — candidate's Calmar is within tolerance of the
-     incumbent's (neither meaningfully better nor worse) AND the candidate
-     tree is MATERIALLY smaller (a genuine any/all collapse), same drawdown
-     floor guard applies.
+     incumbent's (neither meaningfully better nor worse) AND the generated
+     overlay's SIGNAL LOGIC (condition + real fire/then branch, EXCLUDING
+     the placeholder-else) is MATERIALLY smaller than the replaced cascade's
+     SIGNAL LOGIC (condition + real fire branch, EXCLUDING the stub-padded
+     continuation) — never the whole-symphony node counts, which stay
+     ~98-100% of each other for any single-cascade splice, and never the
+     whole compacted/compiled subtree including its stub/placeholder branch
+     (DE-FR-SIMPLIFY-001 Revise 3 RULING 1 — counting the stub padding as
+     "replaced logic" was a CRITICAL defect that inverted this path from
+     unreachable to admitting oversized overlays).
+
+     NOTE (Revise 5): the two SIGNAL LOGIC counts above are computed via
+     genuinely DIFFERENT exclusion policies — this is intentional, not an
+     inconsistency. The overlay's exclusion is scoped to ONLY its
+     outermost placeholder-else (a nested tier's own else is real content,
+     safe to count — see frontrunner_builder.py's
+     _find_terminal_else_child docstring for the manufacturing-time
+     guarantee that makes this safe). The cascade's exclusion applies at
+     EVERY nesting level of a qualifying tier/subgate (a nested
+     continuation on the untrusted, detected incumbent side can genuinely
+     be unrelated core-strategy bulk — see frontrunner_detector.py's
+     _is_internal_hedge_subgate docstring for the documented leak risk).
+     This reflects a genuine trust difference between a self-generated
+     candidate and a detected incumbent, not a bug to converge — DO NOT
+     unify the two counting policies.
+
+     AND the whole-symphony
+     tree did not GROW (``node_count_delta <= 0`` — RULING 2, a third,
+     independent gate: the delta-scoped ratio alone cannot see a candidate
+     whose overall tree grew even though its signal logic shrank). Same
+     drawdown floor guard applies.
 
 Sharpe and volatility are always REPORTED on the result for the Advisor-tab
 card, but NEVER gate acceptance either way (AC-7) — a terrible Sharpe cannot
@@ -39,14 +67,47 @@ compute_calmar(cagr, max_drawdown) -> float | None
     inf) when max_drawdown is exactly 0.
 
 evaluate_calmar_acceptance(incumbent_metrics, candidate_metrics, *,
-                            incumbent_node_count, candidate_node_count) -> AcceptanceResult
+                            incumbent_node_count, candidate_node_count,
+                            overlay_node_count=None,
+                            replaced_cascade_node_count=None,
+                            fire_is_else_branch=False) -> AcceptanceResult
     The AC-7 acceptance gate. Never raises (D-1) — malformed/missing metrics
-    degrade to a rejected result.
+    degrade to a rejected result. The SIMPLIFY path compares
+    ``overlay_node_count`` (the generated overlay's SIGNAL-LOGIC-ONLY count,
+    caller-derived) against ``replaced_cascade_node_count`` (the replaced
+    cascade's SIGNAL-LOGIC-ONLY count, caller-derived — Revise 4: read
+    verbatim off the detector's own ``cascade.signal_logic_node_count``,
+    never re-derived here) — NOT the whole-symphony
+
+    (Revise 5: overlay_node_count and replaced_cascade_node_count are
+    computed via DIFFERENT exclusion policies by design — see the module
+    docstring's Revise-5 NOTE above for the full trust-asymmetry
+    derivation. Do not attempt to make these two counters symmetric.)
+
+    ``incumbent_node_count``/``candidate_node_count`` (stay ~98-100% of each
+    other for any single-cascade splice) and NOT the whole compacted/
+    compiled subtree including its stub/placeholder branch. Those two
+    whole-tree params are retained for the ``node_count_delta`` display
+    metric AND (RULING 2) as an independent third SIMPLIFY gate —
+    ``node_count_delta <= 0`` — alongside the delta-scoped ratio and the
+    Calmar-not-worse check. R4-5 (Revise 4): each whole-tree param is
+    coerced via ``_safe_node_count_int`` (bool/non-numeric declines,
+    genuinely numeric strings still accepted); a coercion failure on either
+    side makes ``node_count_delta`` itself ``None`` rather than raising.
+    Omitting the delta-scoped keyword-only params (a legacy call site) makes
+    SIMPLIFY structurally unreachable rather than falling back to the old,
+    broken whole-tree comparison. ``fire_is_else_branch=True`` (Revise 5,
+    F1: widened from Revise 4's original SIMPLIFY-only scope) unconditionally
+    declines the WHOLE acceptance — neither "performance" (IMPROVE) nor
+    "simplification" (SIMPLIFY) — regardless of the other gates, with a
+    WARNING log and no early return (all other reporting fields stay
+    populated) — see the function's own docstring.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -63,11 +124,18 @@ logger = logging.getLogger(__name__)
 # structurally-identical trees.
 CALMAR_PRESERVE_TOLERANCE: float = 0.02  # 2% relative tolerance
 
-# A candidate tree is "materially simpler" when its node count is at most
-# this fraction of the incumbent's — i.e. at least a 50% reduction. This is
-# deliberately a large threshold: the feature plan's own grounding note
-# describes collapsing "hundreds of flat RSI-gt rungs" via any/all, which is
-# an order-of-magnitude reduction, not a marginal trim.
+# A candidate's generated overlay (signal-logic-only — condition + real
+# fire/then branch, excluding the placeholder-else) is "materially simpler"
+# than the replaced cascade's own signal logic (condition + real fire
+# branch, excluding the stub-padded continuation) when the overlay's count
+# is at most this fraction of the cascade's — i.e. at least a 50%
+# reduction. This is deliberately a large threshold: the feature plan's own
+# grounding note describes collapsing "hundreds of flat RSI-gt rungs" via
+# any/all, which is an order-of-magnitude reduction, not a marginal trim.
+# The calibration basis was always overlay-scale (a handful to a few dozen
+# nodes), never whole-symphony scale — DE-FR-SIMPLIFY-001 Revise 3's
+# delta-scoping/signal-logic-only fix corrected WHICH operands this ratio is
+# compared against, not the ratio's own value.
 MATERIAL_SIMPLIFICATION_MAX_RATIO: float = 0.50
 
 # Absolute drawdown floor (as a positive fraction) — a candidate's OWN max
@@ -111,7 +179,7 @@ class AcceptanceResult:
 
     accepted: bool
     tags: set[str] = field(default_factory=set)
-    node_count_delta: int = 0
+    node_count_delta: int | None = 0
     candidate_sharpe: float | None = None
     candidate_volatility: float | None = None
     incumbent_calmar: float | None = None
@@ -120,7 +188,7 @@ class AcceptanceResult:
 
 def _rejected(
     *,
-    node_count_delta: int = 0,
+    node_count_delta: int | None = 0,
     candidate_sharpe: float | None = None,
     candidate_volatility: float | None = None,
     incumbent_calmar: float | None = None,
@@ -173,12 +241,128 @@ def _safe_float(value) -> float | None:
         return None
 
 
+def _safe_node_count_float(value) -> float | None:
+    """Stricter float coercion for the SIMPLIFY-clause node-count operands
+    ONLY (never used for CAGR/MDD/sharpe/volatility parsing — see
+    ``_safe_float`` for that; deliberately NOT touching that general-purpose
+    helper keeps this hardening scoped to exactly the operands it targets).
+
+    F9 (DE-FR-SIMPLIFY-001 Revise 3): a node count is never legitimately a
+    bool (Python's ``bool`` is an ``int`` subtype — ``float(True) == 1.0``
+    would silently coerce a caller bug into a plausible-looking tiny count),
+    a numeric string (``float("20") == 20.0`` — same silent-coercion risk),
+    or a non-finite value (``inf`` trivially satisfies any ratio comparison
+    for a finite counterpart; ``nan`` comparisons are always False, an
+    ambiguous fall-through rather than an honest decline). A huge integer
+    (e.g. ``10**400``) raises ``OverflowError`` from ``float()`` — caught
+    here so the caller's own reporting fields (Sharpe/volatility/both Calmar
+    values/node_count_delta, all independently computable) are never lost to
+    an unhandled exception escaping to ``evaluate_calmar_acceptance``'s outer
+    catch-all, which nulls everything.
+
+    Declines (returns None, never raises) on any of the above.
+    """
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if math.isnan(result) or math.isinf(result):
+        return None
+    if not result.is_integer():
+        # B2 (DE-FR-SIMPLIFY-001 Revise 4): a node count is never
+        # legitimately a non-whole float either (3.7 nodes is meaningless).
+        # A genuinely whole-number float (e.g. 20.0, which a caller-side
+        # arithmetic operation might plausibly produce) is still accepted
+        # above this check; only a fractional value declines here.
+        return None
+    return result
+
+
+def _safe_node_count_int(value) -> int | None:
+    """Stricter int coercion for RULING 2's own operands
+    (``incumbent_node_count``/``candidate_node_count``, feeding
+    ``node_count_delta``) — the SAME hardening class as
+    ``_safe_node_count_float`` (F9/B2), R4-5 (DE-FR-SIMPLIFY-001 Revise 4).
+
+    ``bool`` is rejected explicitly (``int(True) == 1`` silently coerces —
+    the same class of caller-bug risk every other operand in this module
+    guards against). ``None``/a non-numeric string/other malformed input
+    degrades via the natural ``int(value)`` ``TypeError``/``ValueError``,
+    caught here rather than allowed to escape to
+    ``evaluate_calmar_acceptance``'s outer catch-all (which would null every
+    OTHER reporting field, not just ``node_count_delta``). A genuinely
+    numeric string (e.g. ``"50"``) is still accepted -- ``int()`` already
+    handles that correctly and no test requires rejecting it, unlike
+    ``_safe_node_count_float``'s ratio operands, which reject ALL strings.
+
+    F3 (DE-FR-SIMPLIFY-001 Revise 5): ``int(float("inf"))`` raises
+    ``OverflowError``, not ``TypeError``/``ValueError`` — confirmed directly
+    against the interpreter, and identical for ``numpy.float64("inf")`` and
+    ``decimal.Decimal("Infinity")``. Uncaught, this escaped to
+    ``evaluate_calmar_acceptance``'s outer catch-all, nulling every OTHER
+    reporting field too. Now caught here, mirroring
+    ``_safe_node_count_float``'s existing ``OverflowError`` handling.
+
+    Declines (returns None, never raises) on any of the above.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _is_delta_scoped_material_simplification(
+    overlay_node_count, replaced_cascade_node_count
+) -> bool:
+    """Fail-closed SIMPLIFY-clause check (DE-FR-SIMPLIFY-001, AC-1/AC-5).
+
+    Compares the candidate's OWN OVERLAY (the small generated subtree) against
+    the REPLACED CASCADE (the incumbent subtree it swaps out) — never the
+    whole-symphony node counts, which stay ~98-100% of each other for any
+    single-cascade splice and can never signal a genuine simplification.
+
+    Declines (returns False, never raises) when: either operand is missing/
+    None, either operand is non-numeric (bool/string/other — F9, via
+    ``_safe_node_count_float``), either operand is non-finite (inf/nan —
+    F9), either operand is zero or negative (a real compiled overlay always
+    has >=1 node and a real replaced cascade always has >=1 node, so 0 can
+    only mean "count unavailable" upstream — treated identically to
+    None/absent, never as a legitimately tiny value that would trivially
+    satisfy the ratio), or the overlay is literally bigger than the cascade
+    it replaces (F12: this last check is a "ratio >= 1" tripwire — the ratio
+    comparison below would already reject this case on its own; it is kept
+    as an explicit, self-documenting guard, not a co-equal condition
+    alongside the `<=0` checks above it). A caller omitting both operands
+    (the legacy invocation shape) always declines here — SIMPLIFY becomes
+    structurally unreachable for an un-migrated call site rather than
+    silently keeping the old whole-tree comparison's behavior.
+    """
+    overlay = _safe_node_count_float(overlay_node_count)
+    cascade = _safe_node_count_float(replaced_cascade_node_count)
+    if overlay is None or cascade is None:
+        return False
+    if overlay <= 0 or cascade <= 0:
+        return False
+    if overlay > cascade:
+        return False
+    return overlay <= cascade * MATERIAL_SIMPLIFICATION_MAX_RATIO
+
+
 def evaluate_calmar_acceptance(
     incumbent_metrics: dict,
     candidate_metrics: dict,
     *,
     incumbent_node_count: int,
     candidate_node_count: int,
+    overlay_node_count: int | None = None,
+    replaced_cascade_node_count: int | None = None,
+    fire_is_else_branch: bool = False,
 ) -> AcceptanceResult:
     """Evaluate whether a candidate frontrunner overlay is accepted (AC-7).
 
@@ -189,8 +373,34 @@ def evaluate_calmar_acceptance(
         output: ``annualized_return`` (CAGR), ``max_drawdown`` (<= 0),
         optionally ``sharpe`` / ``volatility``.
     incumbent_node_count, candidate_node_count : int
-        Total node counts of the incumbent and candidate symphony trees —
-        the AC-7 "materially simplifying" signal.
+        Total node counts of the incumbent and candidate SYMPHONY trees —
+        used ONLY for the ``node_count_delta`` display metric AND (RULING 2)
+        the whole-symphony-did-not-grow SIMPLIFY gate. R4-5 (Revise 4):
+        coerced via ``_safe_node_count_int``, which declines (rather than
+        raising) on a bool/non-numeric-string/other malformed value —
+        ``node_count_delta`` itself becomes ``None`` (never a fabricated
+        number) when either side fails to coerce.
+    overlay_node_count, replaced_cascade_node_count : int | None
+        Delta-scoped node counts (DE-FR-SIMPLIFY-001) driving the SIMPLIFY
+        acceptance path — the candidate's own small generated overlay vs. the
+        incumbent cascade subtree it replaces. Keyword-only and additive
+        (default None); omitting them makes SIMPLIFY structurally
+        unreachable (fail-closed), never a silent fallback to the whole-tree
+        comparison.
+    fire_is_else_branch : bool
+        When True, the cascade's fire (signal) content sits on the
+        ``is-else-condition?==True`` side (inverted polarity) —
+        ``_graft_incumbent_core``'s core-preservation logic assumes normal
+        polarity and would silently drop the real core on this cascade
+        shape. Revise 4 declined only SIMPLIFY unconditionally on this
+        condition. Revise 5 (F1) widens this: the WHOLE acceptance is now
+        declined UNCONDITIONALLY (neither "performance"/IMPROVE nor
+        "simplification"/SIMPLIFY), since IMPROVE was previously reachable
+        unconditionally regardless of polarity — a genuinely-better-Calmar
+        inverted-polarity candidate could otherwise still be accepted and
+        queued for a real Composer draft creation. No early return: all
+        other reporting fields (sharpe/volatility/both Calmars/
+        node_count_delta) stay genuinely computed. Default False.
 
     Returns
     -------
@@ -199,7 +409,13 @@ def evaluate_calmar_acceptance(
         never fabricate an accept on incomplete data.
     """
     try:
-        node_count_delta = int(candidate_node_count) - int(incumbent_node_count)
+        incumbent_count_int = _safe_node_count_int(incumbent_node_count)
+        candidate_count_int = _safe_node_count_int(candidate_node_count)
+        node_count_delta = (
+            candidate_count_int - incumbent_count_int
+            if incumbent_count_int is not None and candidate_count_int is not None
+            else None
+        )
 
         incumbent_cagr = _safe_float(incumbent_metrics.get("annualized_return"))
         incumbent_mdd = _safe_float(incumbent_metrics.get("max_drawdown"))
@@ -243,19 +459,31 @@ def evaluate_calmar_acceptance(
 
         tags: set[str] = set()
 
-        # Path 1 — IMPROVE: candidate's Calmar strictly better.
-        if candidate_calmar > incumbent_calmar:
-            tags.add("performance")
-
-        # Path 2 — SIMPLIFY: the candidate tree is materially smaller AND its
-        # Calmar is not WORSE than the incumbent's (either genuinely improved,
-        # covered by "performance" above too, or preserved within tolerance —
-        # both are acceptable grounds for "this simplification didn't cost
-        # anything"). A candidate that is simpler but has a strictly WORSE
-        # Calmar outside tolerance does not qualify — AC-7's "preserve within
-        # tolerance while materially simplifying" phrasing sets a floor, not a
-        # requirement that Calmar be UNCHANGED when it also happens to be
-        # better.
+        # Path 2's gate computation (calmar_not_worse / is_materially_simpler
+        # / whole_tree_did_not_grow) is needed either way below, so it stays
+        # unconditional here — the F1 polarity gate below controls whether
+        # any tag is ever ADDED from either path, not whether these are
+        # computed.
+        #
+        # Path 2 — SIMPLIFY: the candidate's OVERLAY is materially smaller than
+        # the REPLACED CASCADE it swaps out (DE-FR-SIMPLIFY-001 — delta-scoped
+        # signal-logic-only counts, never the whole-symphony node counts,
+        # which stay ~98-100% of each other for any single-cascade splice)
+        # AND its Calmar is not WORSE than the incumbent's (either genuinely
+        # improved, covered by "performance" above too, or preserved within
+        # tolerance — both are acceptable grounds for "this simplification
+        # didn't cost anything") AND (RULING 2, Revise 3) the WHOLE-SYMPHONY
+        # tree did not GROW. A candidate that is simpler but has a strictly
+        # WORSE Calmar outside tolerance does not qualify — AC-7's "preserve
+        # within tolerance while materially simplifying" phrasing sets a
+        # floor, not a requirement that Calmar be UNCHANGED when it also
+        # happens to be better. RULING 2 restores an independent invariant
+        # the delta-scoped ratio alone cannot see: _graft_incumbent_core
+        # re-inserting the incumbent's full core into the candidate's else
+        # branch can make the overall spliced tree BIGGER even though the
+        # signal logic genuinely shrank — "simplification" tagged on a
+        # bigger tree is an absurdity the ratio alone cannot catch, so this
+        # is a THIRD, independent gate, never traded off against the ratio.
         calmar_not_worse = (
             candidate_calmar >= incumbent_calmar
             or abs(candidate_calmar - incumbent_calmar)
@@ -263,12 +491,41 @@ def evaluate_calmar_acceptance(
             if incumbent_calmar != 0
             else candidate_calmar >= incumbent_calmar
         )
-        is_materially_simpler = (
-            incumbent_node_count > 0
-            and candidate_node_count <= incumbent_node_count * MATERIAL_SIMPLIFICATION_MAX_RATIO
+        is_materially_simpler = _is_delta_scoped_material_simplification(
+            overlay_node_count, replaced_cascade_node_count
         )
-        if calmar_not_worse and is_materially_simpler:
-            tags.add("simplification")
+        # R4-5 (Revise 4): an undeterminable delta (either whole-tree node
+        # count failed to coerce) never satisfies the "did not grow" gate —
+        # declining, not silently treating None as passing.
+        whole_tree_did_not_grow = node_count_delta is not None and node_count_delta <= 0
+
+        if fire_is_else_branch:
+            # F1 (DE-FR-SIMPLIFY-001 Revise 5): inverted-polarity cascade —
+            # decline the WHOLE acceptance (neither Path 1/"performance" nor
+            # Path 2/"simplification"), not just SIMPLIFY. Revise 4 only
+            # gated SIMPLIFY here, leaving Path 1 reachable unconditionally
+            # above this check — a genuinely-better-Calmar inverted-polarity
+            # candidate could still be accepted and queued for a real
+            # Composer draft creation despite _graft_incumbent_core silently
+            # dropping the real core for this polarity (see the function
+            # docstring). Evaluated FIRST and short-circuits both paths
+            # entirely. Logged so a candidate withheld for this reason is
+            # never silent. No early return here — the AcceptanceResult
+            # construction below is still reached with every other
+            # reporting field genuinely computed.
+            logger.warning(
+                "evaluate_calmar_acceptance: acceptance declined unconditionally "
+                "-- cascade fire content sits on the is-else-condition?==True "
+                "side (inverted polarity); neither the IMPROVE nor SIMPLIFY path "
+                "is evaluated for this candidate"
+            )
+        else:
+            # Path 1 — IMPROVE: candidate's Calmar strictly better.
+            if candidate_calmar > incumbent_calmar:
+                tags.add("performance")
+            # Path 2 — SIMPLIFY: see the gate computation above.
+            if calmar_not_worse and is_materially_simpler and whole_tree_did_not_grow:
+                tags.add("simplification")
 
         accepted = bool(tags)
 

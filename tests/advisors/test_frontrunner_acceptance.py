@@ -41,7 +41,9 @@ magic literal):
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 
+import numpy as np
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -173,9 +175,19 @@ def test_worse_calmar_with_no_simplification_is_rejected(facc):
 
 
 def test_preserved_calmar_with_material_simplification_is_accepted(facc):
-    """Candidate's Calmar is essentially UNCHANGED (within tolerance) but the
-    candidate tree has materially fewer nodes than the incumbent (a genuine
-    any/all collapse) -> accept, tagged 'simplification'."""
+    """Candidate's Calmar is essentially UNCHANGED (within tolerance) and the
+    OVERLAY (the small generated node) is materially fewer nodes than the
+    REPLACED CASCADE (the incumbent subtree it swaps out) -> accept, tagged
+    'simplification'.
+
+    DE-FR-SIMPLIFY-001 (AC-1/AC-3): the whole-tree incumbent_node_count/
+    candidate_node_count are deliberately left at a near-100%-of-incumbent
+    ratio (500 vs 495, ~99%) — a spliced candidate is ALWAYS ~98-100% of the
+    incumbent's whole-tree size (the defect this fix closes), so if this test
+    passed via the whole-tree operands it would be proving the OLD broken
+    behavior, not the fix. Only the delta-scoped overlay_node_count (20) vs
+    replaced_cascade_node_count (200) — the real objects the builder has in
+    scope — can make this fixture reach the SIMPLIFY tag."""
     # Same Calmar exactly (16 / 0.08 == 16 / 0.08) — the cleanest possible
     # "preserved" fixture, no tolerance-boundary ambiguity.
     incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
@@ -185,16 +197,19 @@ def test_preserved_calmar_with_material_simplification_is_accepted(facc):
         incumbent,
         candidate,
         incumbent_node_count=500,
-        candidate_node_count=40,  # materially smaller
+        candidate_node_count=495,  # whole-tree: ~99% of incumbent — NOT simpler
+        overlay_node_count=20,
+        replaced_cascade_node_count=200,  # delta-scoped: 10% — genuinely simpler
     )
     assert result.accepted is True
     assert "simplification" in result.tags
 
 
 def test_preserved_calmar_without_material_simplification_is_rejected(facc):
-    """Calmar preserved but the candidate is NOT materially simpler (same
-    node count, or even larger) -> reject. 'Preserve + simplify' requires
-    BOTH conditions, not just the preserve half."""
+    """Calmar preserved but the OVERLAY is NOT materially simpler than the
+    REPLACED CASCADE it swaps out (same delta-scoped count, or even larger)
+    -> reject. 'Preserve + simplify' requires BOTH conditions, not just the
+    preserve half."""
     incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
     candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
 
@@ -202,9 +217,43 @@ def test_preserved_calmar_without_material_simplification_is_rejected(facc):
         incumbent,
         candidate,
         incumbent_node_count=50,
-        candidate_node_count=50,  # NOT simpler
+        candidate_node_count=50,  # whole-tree: NOT simpler either
+        overlay_node_count=50,
+        replaced_cascade_node_count=50,  # delta-scoped: NOT simpler
     )
     assert result.accepted is False
+
+
+def test_simplify_clause_ignores_whole_tree_counts_when_delta_scoped_operands_given(
+    facc,
+):
+    """DE-FR-SIMPLIFY-001 AC-1 adversarial pin: the whole-tree counts must
+    NEVER be what decides the SIMPLIFY tag once the delta-scoped operands are
+    supplied — even when the whole-tree ratio would (under the OLD, broken
+    math) have looked like a huge simplification. Fixture is deliberately
+    FLIPPED: incumbent_node_count=500/candidate_node_count=40 (whole-tree
+    ratio 0.08 — the old clause would have accepted on this alone) paired
+    with overlay_node_count=180/replaced_cascade_node_count=200 (delta-scoped
+    ratio 0.90 — genuinely NOT materially simpler). The correct, fixed
+    behavior is REJECT — proving the clause reads the new operands, not the
+    whole-tree ones, regardless of which one is more flattering."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=500,
+        candidate_node_count=40,  # whole-tree ratio 0.08 -- would old-accept
+        overlay_node_count=180,
+        replaced_cascade_node_count=200,  # delta-scoped ratio 0.90 -- correct-reject
+    )
+    assert result.accepted is False, (
+        "the SIMPLIFY clause admitted a candidate on the flattering WHOLE-TREE "
+        "ratio (0.08) while the real delta-scoped ratio (0.90) says it is NOT "
+        "materially simpler -- the clause is still reading the wrong operands"
+    )
+    assert "simplification" not in result.tags
 
 
 def test_node_count_delta_is_reported_on_the_result(facc):
@@ -303,13 +352,19 @@ def test_sharpe_and_volatility_are_present_on_the_result_for_reporting(facc):
 
 
 def test_candidate_that_both_improves_and_simplifies_is_tagged_both(facc):
-    """A candidate that improves Calmar AND is materially simpler should
-    carry BOTH tags — the two acceptance paths are not mutually exclusive."""
+    """A candidate that improves Calmar AND is materially simpler (by the
+    delta-scoped overlay-vs-replaced-cascade operands) should carry BOTH tags
+    — the two acceptance paths are not mutually exclusive."""
     incumbent = _metrics(annualized_return=0.08, max_drawdown=-0.10)
     candidate = _metrics(annualized_return=0.15, max_drawdown=-0.10)
 
     result = facc.evaluate_calmar_acceptance(
-        incumbent, candidate, incumbent_node_count=500, candidate_node_count=40
+        incumbent,
+        candidate,
+        incumbent_node_count=500,
+        candidate_node_count=495,  # whole-tree: ~99% -- irrelevant to this test
+        overlay_node_count=20,
+        replaced_cascade_node_count=200,  # delta-scoped: genuinely simpler
     )
     assert result.accepted is True
     assert "performance" in result.tags
@@ -358,3 +413,1217 @@ def test_never_raises_on_malformed_metrics_dict(facc):
         {}, {}, incumbent_node_count=50, candidate_node_count=50
     )
     assert result.accepted is False
+
+
+# ---------------------------------------------------------------------------
+# DE-FR-SIMPLIFY-001 AC-4: IMPROVE path is byte-unchanged by the new kwargs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "extra_kwargs",
+    [
+        pytest.param({}, id="new_kwargs_omitted"),
+        pytest.param(
+            {"overlay_node_count": 400, "replaced_cascade_node_count": 10},
+            id="new_kwargs_present_but_overlay_bigger_than_cascade",
+        ),
+    ],
+)
+def test_improve_only_candidate_is_tagged_performance_regardless_of_new_kwarg_presence(
+    facc, extra_kwargs
+):
+    """AC-4: a candidate whose Calmar genuinely improves (and whose whole-tree
+    node counts do NOT indicate simplification) must be tagged {'performance'}
+    only, and this must be IDENTICAL whether the new overlay_node_count/
+    replaced_cascade_node_count kwargs are omitted entirely or supplied with
+    a value that itself could never admit SIMPLIFY (overlay bigger than the
+    cascade it replaces) — the IMPROVE branch structurally never reads these
+    operands, so its outcome is byte-unchanged either way."""
+    incumbent = _metrics(annualized_return=0.08, max_drawdown=-0.10)
+    candidate = _metrics(annualized_return=0.15, max_drawdown=-0.10)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,  # equal -- no whole-tree simplification signal
+        **extra_kwargs,
+    )
+    assert result.accepted is True
+    assert result.tags == {"performance"}
+
+
+def test_legacy_callsite_without_new_kwargs_never_admits_via_simplify(facc):
+    """AC-5/Edge-Cases fail-closed pin: a caller using the OLD 4-argument
+    invocation shape (incumbent_metrics, candidate_metrics,
+    incumbent_node_count, candidate_node_count — no overlay_node_count/
+    replaced_cascade_node_count at all) must NEVER admit via the SIMPLIFY
+    path, even when the whole-tree node counts alone look like a dramatic
+    reduction (500 -> 40, the shape the OLD broken clause would have
+    accepted on). The fail-closed default means an un-migrated caller
+    degrades to 'simplification structurally unreachable', not 'silently
+    keeps the old bug's behavior' -- either way this fixture must REJECT."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)  # Calmar preserved
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=500,
+        candidate_node_count=40,
+        # overlay_node_count / replaced_cascade_node_count deliberately OMITTED
+    )
+    assert result.accepted is False, (
+        "a legacy call site omitting the new overlay/replaced-cascade kwargs "
+        "was admitted via SIMPLIFY -- the fail-closed default did not fire"
+    )
+    assert "simplification" not in result.tags
+
+
+# ---------------------------------------------------------------------------
+# DE-FR-SIMPLIFY-001 AC-5: SIMPLIFY-clause truth table -- boundary + guards.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_zero(facc):
+    """A replaced-cascade count of exactly 0 must decline (no
+    ZeroDivisionError, never a fabricated acceptance) -- mirrors the existing
+    'incumbent_node_count > 0' guard shape already present for the whole-tree
+    ratio."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=1,
+        replaced_cascade_node_count=0,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_zero(facc):
+    """team-lead RED addition (post-plan-approval, reviewing fps-impl's
+    implementation plan): overlay_node_count=0 with a valid, positive
+    replaced_cascade_node_count must DECLINE -- even though the naive ratio
+    math trivially passes (0 <= cascade*0.5 is always true for any
+    positive cascade count, and 0 also passes a bare non-negative/
+    <=cascade guard). A genuine generated overlay can never be a literal
+    zero-node tree; 0 can ONLY arise from a counting-failure silently
+    degrading to a falsy default, and treating that as 'the smallest
+    possible simplification' would fabricate an acceptance from a defect,
+    not a real candidate. 0 must be handled exactly like None/absent."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=0,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, (
+        "overlay_node_count=0 was accepted via SIMPLIFY -- a zero-node "
+        "overlay is not a legitimate 'maximally simple' candidate, it is "
+        "indistinguishable from a counting failure and must fail closed "
+        "exactly like None/absent"
+    )
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_none(facc):
+    """replaced_cascade_node_count=None (explicit) must decline -- same
+    fail-closed contract as the kwarg being omitted entirely."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=20,
+        replaced_cascade_node_count=None,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_none(facc):
+    """overlay_node_count=None (cascade side supplied, overlay side is not)
+    must decline -- both operands are required, not just one."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=None,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_exceeds_replaced_cascade_node_count(
+    facc,
+):
+    """A candidate overlay literally BIGGER than the cascade it replaces
+    cannot be 'materially simplifying' under any reading -- must decline."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=250,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_and_never_raises_on_negative_overlay_node_count(facc):
+    """D-1 house style (Edge Cases: 'zero-node/malformed subtree inputs ->
+    decline, never raise'): a negative overlay_node_count is malformed input
+    -- must degrade to a reject, never raise, never fabricate an accept."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=-5,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_and_never_raises_on_non_numeric_overlay_node_count(facc):
+    """D-1: a non-numeric overlay_node_count (a caller bug passing a dict/str
+    instead of an int) must degrade to a reject, never raise -- the whole
+    evaluate_calmar_acceptance contract is never-raises regardless of which
+    operand is malformed."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count="not-a-number",
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+
+
+def test_simplify_ratio_boundary_matches_golden_fixture(facc):
+    """Golden-fixture truth table (project rule: every math-adjacent change
+    gets a golden-fixture test) -- tests/fixtures/math/
+    frontrunner_simplify_ratio_boundary.json pins the ratio boundary (at/
+    above/below MATERIAL_SIMPLIFICATION_MAX_RATIO=0.50) against REAL calls
+    into evaluate_calmar_acceptance, including a deliberately near-100%
+    whole-tree node-count pair on every row (proving the old whole-tree
+    comparison could never have produced these accept rows)."""
+    import json
+    import pathlib
+
+    fixture_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "math"
+        / "frontrunner_simplify_ratio_boundary.json"
+    )
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    incumbent = _metrics(
+        annualized_return=fixture["annualized_return"],
+        max_drawdown=fixture["max_drawdown"],
+    )
+    candidate = _metrics(
+        annualized_return=fixture["annualized_return"],
+        max_drawdown=fixture["max_drawdown"],
+    )
+
+    for row in fixture["rows"]:
+        result = facc.evaluate_calmar_acceptance(
+            incumbent,
+            candidate,
+            incumbent_node_count=fixture["whole_tree_incumbent_node_count"],
+            candidate_node_count=fixture["whole_tree_candidate_node_count"],
+            overlay_node_count=row["overlay_node_count"],
+            replaced_cascade_node_count=row["replaced_cascade_node_count"],
+        )
+        assert result.accepted is row["expected_accepted"], (
+            f"fixture row {row['name']!r} "
+            f"(overlay={row['overlay_node_count']}, "
+            f"cascade={row['replaced_cascade_node_count']}) expected "
+            f"accepted={row['expected_accepted']}, got {result.accepted} "
+            f"(tags={result.tags!r})"
+        )
+        if row["expected_accepted"]:
+            assert "simplification" in result.tags, (
+                f"fixture row {row['name']!r} accepted but is not tagged 'simplification'"
+            )
+        else:
+            assert "simplification" not in result.tags, (
+                f"fixture row {row['name']!r} declined but still carries a 'simplification' tag"
+            )
+
+
+# ---------------------------------------------------------------------------
+# team-lead plan-approval addition: at least one case must use an
+# if_compound-shaped overlay as the counted overlay operand (Edge Cases:
+# "compound/if_compound overlays -> counted like any node subtree, no
+# special-casing").
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_accepts_a_real_if_compound_overlay_counted_via_the_real_counter(facc):
+    """A genuine if_compound-shaped overlay (the SAME compound-condition
+    shape the Fable generator can actually produce, via
+    symphony_schema.make_if_compound/make_compound_condition/
+    make_binary_condition) must be counted like any other node subtree -- no
+    special-casing that under/over-counts a compound condition block. Builds
+    a REAL compound tree, counts it via the REAL
+    frontrunner_builder._count_tree_nodes (the single shared counter, AC-2),
+    and feeds that REAL count into evaluate_calmar_acceptance as
+    overlay_node_count -- never a hand-typed literal standing in for what the
+    counter would produce."""
+    from advisors import frontrunner_builder, symphony_schema
+
+    # A 2-leaf ANY compound condition (mirrors a genuine Fable-generated
+    # if_compound overlay shape) driving a small then/else allocation --
+    # small in absolute terms but its own node count is DERIVED below, never
+    # hardcoded.
+    compound_condition = symphony_schema.make_compound_condition(
+        "any",
+        [
+            symphony_schema.make_binary_condition(
+                symphony_schema.make_condition_operand("relative-strength-index", "SPY", window=10),
+                "gt",
+                symphony_schema.make_constant_rhs(80),
+            ),
+            symphony_schema.make_binary_condition(
+                symphony_schema.make_condition_operand("relative-strength-index", "QQQ", window=10),
+                "gt",
+                symphony_schema.make_constant_rhs(80),
+            ),
+        ],
+    )
+    overlay_tree = symphony_schema.make_if_compound(
+        compound_condition,
+        then_children=[symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])],
+        else_children=[
+            symphony_schema.make_weight_equal([symphony_schema.make_asset("CORE_ASSET_0001")])
+        ],
+    )
+    # Derived from the REAL counter, not a hand-typed literal.
+    overlay_node_count = frontrunner_builder._count_tree_nodes(overlay_tree)
+    assert overlay_node_count > 1, (
+        "sanity: a compound if-node with then/else children must count as "
+        "more than a single node, or this fixture proves nothing"
+    )
+
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=500,
+        candidate_node_count=495,  # whole-tree: irrelevant, ~99%
+        overlay_node_count=overlay_node_count,
+        # A large replaced cascade so the REAL compound-tree count (however
+        # many nodes it actually is) still clears the 0.50 ratio comfortably
+        # -- the point is that the compound tree's REAL count flows through,
+        # not that this specific boundary is being probed here.
+        replaced_cascade_node_count=overlay_node_count * 10,
+    )
+    assert result.accepted is True, (
+        f"a real if_compound overlay (counted at {overlay_node_count} nodes "
+        f"via the shared _count_tree_nodes counter) replacing a cascade 10x "
+        f"its size was not accepted via SIMPLIFY -- compound overlays must "
+        f"count like any other node subtree"
+    )
+    assert "simplification" in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 (PR #128 /code-review, RULING 3 / F3+F10): _count_tree_nodes must
+# descend into a compound condition's clause list, not just the
+# "children"-shaped structural nodes -- otherwise a 2-clause and a 12-clause
+# compound condition (identical then/else allocation content) count as the
+# SAME size, which is dishonest (a 12-rung OR collapse is a materially
+# bigger piece of logic than a 2-rung one) and made the ">1" sanity check
+# above vacuous -- any nonzero compound condition trivially clears ">1"
+# regardless of clause count.
+# ---------------------------------------------------------------------------
+
+
+def test_count_tree_nodes_does_not_descend_compound_condition_clauses_after_ruling_3_reversion():
+    """R4-2 (Revise 4): RULING 3 (Revise 3's clause-descent change to the
+    SHARED, general-purpose _count_tree_nodes) is REVERTED -- a 12-clause
+    compound condition and a 2-clause one, with otherwise IDENTICAL then/
+    else allocation content, must now count the SAME via this shared
+    counter -- restoring its ORIGINAL children-only semantics (AC-6's
+    node_count_delta display metric was never meant to change; the
+    clause-aware behavior Revise 3 added here corrupted that display metric
+    for every symphony containing a compound condition anywhere, not just
+    frontrunner cascades, and was never numerically pinned before this
+    reversion). The DEDICATED clause-aware counter Revise 4 introduces
+    lives elsewhere and is used ONLY for the overlay SIMPLIFY operand --
+    see test_frontrunner_detector_r4_signal_logic.py's own clause-descent
+    test for THAT counter's (opposite) behavior."""
+    from advisors import frontrunner_builder, symphony_schema
+
+    def _make_if_compound_with_n_clauses(n: int) -> dict:
+        conditions = [
+            symphony_schema.make_binary_condition(
+                symphony_schema.make_condition_operand(
+                    "relative-strength-index", f"TICKER_{i:02d}", window=10
+                ),
+                "gt",
+                symphony_schema.make_constant_rhs(80),
+            )
+            for i in range(n)
+        ]
+        compound_condition = symphony_schema.make_compound_condition("any", conditions)
+        return symphony_schema.make_if_compound(
+            compound_condition,
+            then_children=[symphony_schema.make_weight_equal([symphony_schema.make_asset("VIXY")])],
+            else_children=[
+                symphony_schema.make_weight_equal([symphony_schema.make_asset("CORE_ASSET_0001")])
+            ],
+        )
+
+    tree_2 = _make_if_compound_with_n_clauses(2)
+    tree_12 = _make_if_compound_with_n_clauses(12)
+
+    count_2 = frontrunner_builder._count_tree_nodes(tree_2)
+    count_12 = frontrunner_builder._count_tree_nodes(tree_12)
+
+    assert count_12 == count_2, (
+        f"a 12-clause compound condition counted {count_12} nodes, a "
+        f"2-clause one counted {count_2} -- the SHARED _count_tree_nodes "
+        f"must NOT descend into a compound condition's clause list after "
+        f"R4-2's reversion (both trees have IDENTICAL then/else allocation "
+        f"content, so ANY difference means the reversion didn't land, or "
+        f"was only partially applied)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# R4-2 companion: a real-fixture numeric regression pin on node_count_delta
+# itself (team-lead flagged this was never actually pinned before this
+# reversion -- only the compound-clause-descent SYMPTOM was tested, never
+# the display metric's own numeric value against a known real tree pair).
+# ---------------------------------------------------------------------------
+
+
+def test_node_count_delta_numeric_value_pinned_against_a_real_fixture_pair(facc):
+    """A concrete, hand-derivable node_count_delta value for a real
+    incumbent/candidate tree pair -- proving the display metric's ARITHMETIC
+    (candidate_node_count - incumbent_node_count, via the reverted,
+    children-only _count_tree_nodes) is correct, not just "some value that
+    happens not to crash". Uses two small, hand-countable trees (never a
+    hardcoded literal disconnected from their own structure) so the
+    expected value is independently derivable by inspection."""
+    from advisors import frontrunner_builder, symphony_schema
+
+    incumbent_tree = symphony_schema.make_root(
+        "Incumbent",
+        "daily",
+        [symphony_schema.make_asset("SPY"), symphony_schema.make_asset("AGG")],
+    )
+    candidate_tree = symphony_schema.make_root(
+        "Candidate",
+        "daily",
+        [
+            symphony_schema.make_asset("SPY"),
+            symphony_schema.make_asset("AGG"),
+            symphony_schema.make_asset("GLD"),
+        ],
+    )
+    incumbent_count = frontrunner_builder._count_tree_nodes(incumbent_tree)
+    candidate_count = frontrunner_builder._count_tree_nodes(candidate_tree)
+    # Hand-derivable: candidate has exactly ONE additional asset leaf over
+    # incumbent, with everything else structurally identical (same root
+    # wrapper shape, same first two assets) -- the delta must be exactly 1,
+    # independent of whatever the root wrapper's own internal node count is.
+    assert candidate_count - incumbent_count == 1, (
+        f"fixture sanity: candidate has exactly one more asset leaf than "
+        f"incumbent, so _count_tree_nodes(candidate) - "
+        f"_count_tree_nodes(incumbent) must be exactly 1, got "
+        f"{candidate_count - incumbent_count!r} -- either the fixture is "
+        f"malformed or _count_tree_nodes counts something beyond simple "
+        f"per-leaf structure"
+    )
+
+    metrics = {"annualized_return": 0.10, "max_drawdown": -0.05}
+    result = facc.evaluate_calmar_acceptance(
+        metrics,
+        metrics,
+        incumbent_node_count=incumbent_count,
+        candidate_node_count=candidate_count,
+        overlay_node_count=None,
+        replaced_cascade_node_count=None,
+    )
+    assert result.node_count_delta == 1, (
+        f"expected node_count_delta=1 (candidate_count={candidate_count} - "
+        f"incumbent_count={incumbent_count}), got {result.node_count_delta!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 3, RULING 2 (F2, PR #128 /code-review): SIMPLIFY additionally
+# requires whole-tree no-growth (node_count_delta <= 0) -- restores the
+# deleted invariant. A candidate whose delta-scoped ratio passes but whose
+# WHOLE SYMPHONY actually grew (e.g. _graft_incumbent_core re-inserting the
+# full core into the else branch makes the overall spliced tree bigger even
+# though the signal logic shrank) must decline -- "simplification" tagged
+# on a bigger tree is an absurdity the ratio alone cannot catch.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_whole_tree_grew_even_though_ratio_passes(facc):
+    """A candidate with a genuinely small overlay vs a large replaced
+    cascade (ratio easily passes) must still DECLINE if the whole-tree node
+    count GREW (candidate_node_count > incumbent_node_count) -- the
+    delta-scoped ratio alone cannot see this; RULING 2 adds it as a THIRD,
+    independent gate."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=100,
+        candidate_node_count=150,  # whole tree GREW (+50)
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,  # ratio 0.05 -- easily passes
+    )
+    assert result.accepted is False, (
+        "a candidate was accepted via SIMPLIFY despite the whole symphony "
+        "growing (candidate_node_count=150 > incumbent_node_count=100) -- "
+        "RULING 2's no-growth gate did not fire"
+    )
+    assert "simplification" not in result.tags
+
+
+def test_simplify_accepts_when_whole_tree_node_count_delta_is_exactly_zero(facc):
+    """Boundary: node_count_delta == 0 (whole tree exactly unchanged) must
+    still ACCEPT -- RULING 2's gate is <=0, not a strict <0."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=100,
+        candidate_node_count=100,  # delta == 0
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is True
+    assert "simplification" in result.tags
+
+
+def test_simplify_accepts_when_whole_tree_shrank_and_ratio_passes(facc):
+    """Regression pin: the ordinary, expected case -- whole tree shrank AND
+    the delta-scoped ratio passes -- must accept (RULING 2's gate is
+    additive, never a NEW way to block a genuinely good candidate)."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=500,
+        candidate_node_count=495,  # whole tree shrank
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is True
+    assert "simplification" in result.tags
+
+
+def test_simplify_still_declines_on_growth_even_with_a_dramatic_ratio(facc):
+    """Adversarial: an extremely favorable delta-scoped ratio (overlay
+    massively smaller than the cascade) must NOT override the no-growth
+    gate -- RULING 2 is independent of, not traded off against, the
+    ratio."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=100,
+        candidate_node_count=101,  # grew by just 1 node
+        overlay_node_count=1,
+        replaced_cascade_node_count=1000,  # ratio 0.001 -- as favorable as it gets
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 3, F9 (PR #128 /code-review): _safe_float at the SIMPLIFY gate
+# boundary must accept real finite numbers only -- bool/numeric-string/inf/
+# nan must DECLINE, per the existing docstring's own promise ("either
+# operand is non-numeric" -> decline). A bool is technically an int subtype
+# in Python (float(True) == 1.0) and would otherwise silently coerce into a
+# passing ratio; a numeric string would silently coerce too; inf/nan pass a
+# bare isinstance(float) check but are never genuine node counts.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_overlay_node_count_is_a_bool(facc):
+    """bool is an int subtype in Python -- float(True) == 1.0 would silently
+    coerce and could satisfy a favorable ratio. Must decline: a boolean is
+    never a genuine node count."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=True,  # float(True) == 1.0, would trivially pass any ratio
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_a_bool(facc):
+    """Symmetric to the overlay-side bool guard -- the cascade side must be
+    equally protected."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=10,
+        replaced_cascade_node_count=True,  # float(True) == 1.0
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_a_numeric_string(facc):
+    """A numeric string (a plausible caller bug -- e.g. a value that
+    round-tripped through JSON as a string) must decline, never silently
+    coerce via float("20")."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count="20",
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_infinite(facc):
+    """float('inf') passes a naive isinstance(float) check and is not
+    caught by a bare '<=0' guard, but is never a genuine node count -- must
+    decline."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=float("inf"),
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_infinite(facc):
+    """Symmetric inf guard on the cascade side -- inf trivially satisfies
+    'overlay <= cascade * 0.5' for ANY positive overlay, which would
+    fabricate an acceptance for literally any candidate."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=10,
+        replaced_cascade_node_count=float("inf"),
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_overlay_node_count_is_nan(facc):
+    """NaN comparisons are always False in Python (nan <= x is False, nan >
+    x is False) -- must be explicitly caught and declined, not silently
+    fall through a comparison chain to an ambiguous result."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=float("nan"),
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 3 ADDENDUM A3 (empirically verified, PR #128 review): _safe_float
+# catches only (TypeError, ValueError). overlay_node_count=10**400 raises
+# OverflowError (a real int too large to represent as a float) -- this
+# escapes _safe_float entirely, propagates up through evaluate_calmar_
+# acceptance's OWN outer except-all, and returns a BARE _rejected() with
+# candidate_sharpe/candidate_volatility/incumbent_calmar/candidate_calmar/
+# node_count_delta all NULLED -- even though incumbent/candidate metrics
+# were fully valid and these fields were genuinely computable. This is a
+# reporting-payload-loss bug, not just a wrong-accept-reject bug: a
+# legitimately-computed reject silently loses its audit trail.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_on_a_huge_int_overlay_without_losing_reporting_fields(facc):
+    """overlay_node_count=10**400 must still DECLINE (never accept), but the
+    reporting fields that were genuinely computable from valid incumbent/
+    candidate metrics (Sharpe, volatility, both Calmar figures, and
+    node_count_delta) must survive intact -- NOT fall through to the outer
+    except-all's bare _rejected() (which nulls everything). Expected values
+    are derived independently from the SAME fixture inputs, never
+    hardcoded."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+    expected_node_count_delta = 50 - 50
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=10**400,  # raises OverflowError inside float()
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, "a 10**400-node overlay must never be accepted"
+    assert "simplification" not in result.tags
+
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- the "
+        f"OverflowError escaped to the outer except-all's bare _rejected(), "
+        f"nulling reporting fields that were genuinely computable from valid "
+        f"metrics"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9), (
+        f"candidate_volatility was lost (got {result.candidate_volatility!r})"
+    )
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9), (
+        f"incumbent_calmar was lost (got {result.incumbent_calmar!r})"
+    )
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9), (
+        f"candidate_calmar was lost (got {result.candidate_calmar!r})"
+    )
+    assert result.node_count_delta == expected_node_count_delta, (
+        f"node_count_delta was lost (got {result.node_count_delta!r}, "
+        f"expected {expected_node_count_delta!r})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Revise 4, B2 (review round 3): _safe_node_count_float accepts non-integral
+# floats today -- overlay_node_count=0.4 trivially passes the ratio check
+# (0.4 <= 200*0.5) even though a real node count is never fractional. Fold
+# into the same F9 hardening class: an is_integer() requirement.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_overlay_node_count_is_non_integral(facc):
+    """B2: a fractional node count (0.4) is never a genuine node count --
+    must decline, never silently pass the ratio check on a value that
+    happens to satisfy the arithmetic while being structurally nonsensical."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=0.4,  # 0.4 <= 200*0.5 -- would trivially pass the ratio
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_declines_when_replaced_cascade_node_count_is_non_integral(facc):
+    """Symmetric non-integral guard on the cascade side. overlay_node_count
+    is deliberately chosen (1) so that IF the fractional value were silently
+    allowed through, the ratio would ACCIDENTALLY pass (1 <= 3.7*0.5=1.85) --
+    proving this test genuinely exercises the is_integer() guard, not some
+    unrelated ratio failure that would decline regardless (verified
+    empirically: an earlier draft with overlay_node_count=10 passed
+    vacuously, since 10 > 3.7*0.5 fails the ratio on its own, for reasons
+    unrelated to the is_integer() guard under test)."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=1,
+        replaced_cascade_node_count=3.7,  # non-integral -- never a genuine count
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+
+
+def test_simplify_accepts_a_genuinely_whole_number_float_node_count(facc):
+    """Sanity/non-regression companion to the two declines above: a float
+    that IS a whole number (e.g. 20.0, the natural type a JSON round-trip
+    or an average-of-identical-values computation might produce) is a
+    legitimate node count and must NOT be rejected merely for being a
+    float -- only genuinely FRACTIONAL values are the adversarial target."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=50,
+        overlay_node_count=20.0,  # whole-number float -- legitimate
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is True, (
+        f"a whole-number float (20.0) node count was rejected -- the "
+        f"is_integer() guard must accept whole-number floats, only reject "
+        f"genuinely fractional ones; got tags={result.tags!r}"
+    )
+    assert "simplification" in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 4, R4-5: RULING 2's own operands (incumbent_node_count/
+# candidate_node_count, feeding node_count_delta = int(candidate_node_count)
+# - int(incumbent_node_count), the FIRST statement inside the try block)
+# get the SAME hardening class as the ratio operands (F9/B2) -- bool/string/
+# None must decline SIMPLIFY without nulling the OTHER reporting fields
+# (Sharpe/volatility/both Calmar values), never fall through to the outer
+# except-all's bare _rejected() the way a bare int(None)/int("x") raise
+# would today.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_incumbent_node_count_is_none_without_losing_reporting_fields(
+    facc,
+):
+    """incumbent_node_count=None -- int(None) raises TypeError today,
+    escaping to the outer except-all and nulling every reporting field.
+    Calmar is exactly PRESERVED (never improved) so 'performance' cannot
+    mask this -- the only path to acceptance here is SIMPLIFY, which must
+    decline; Sharpe/volatility/Calmar must all survive as genuinely
+    computable values from valid incumbent/candidate metrics."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=None,
+        candidate_node_count=50,
+        overlay_node_count=10,  # would otherwise satisfy the ratio (10 <= 200*0.5)
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, "SIMPLIFY must decline with an undeterminable delta"
+    assert "simplification" not in result.tags
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- "
+        f"incumbent_node_count=None must not null unrelated reporting fields"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+def test_simplify_declines_when_candidate_node_count_is_a_numeric_string_without_losing_reporting_fields(
+    facc,
+):
+    """candidate_node_count='50' -- a plausible caller bug (e.g. a value
+    that round-tripped through JSON as a string) -- int('50') actually
+    succeeds in Python, so this specifically targets the malformed
+    NON-numeric-string case (e.g. a corrupted/truncated value) that would
+    raise ValueError and null everything today."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count="not-a-number",
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- a "
+        f"malformed candidate_node_count must not null unrelated reporting "
+        f"fields"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+def test_simplify_declines_when_incumbent_node_count_is_a_bool_without_losing_reporting_fields(
+    facc,
+):
+    """bool is an int subtype -- int(True)==1 silently coerces rather than
+    raising, so this specifically targets the SILENT-coercion risk class
+    (consistent with every other operand's bool guard in this file) rather
+    than an exception-escape risk: a bool sneaking through as a node count
+    is a genuine caller-bug class even when it doesn't crash. candidate_
+    node_count is deliberately chosen (1) so that IF the bool were silently
+    coerced to 1, node_count_delta=1-1=0 would ACCIDENTALLY satisfy RULING
+    2's <=0 gate -- proving this test genuinely exercises bool-rejection,
+    not an unrelated delta failure (verified empirically: an earlier draft
+    with candidate_node_count=50 passed vacuously, since 50-1=49 already
+    fails the <=0 gate for reasons unrelated to bool-rejection)."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=True,  # int(True) == 1 -- silent coercion risk
+        candidate_node_count=1,
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9)
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Revise 5, F3 (PR #128 round-4 /code-review, MED/contract): the SAME
+# hardening class as the bool/None/numeric-string guards above, but for a
+# case those guards don't catch -- `_safe_node_count_int` currently catches
+# only `(TypeError, ValueError)`. `int(float('inf'))` (and the numpy/Decimal
+# equivalents) raises `OverflowError` instead, which escapes uncaught to
+# `evaluate_calmar_acceptance`'s outer `except Exception: return _rejected()`
+# -- nulling EVERY reporting field, not just node_count_delta. This is the
+# EXACT A3-class bug `_safe_node_count_float` (the ratio operands' own
+# stricter coercion, above) already guards via its own explicit
+# `OverflowError` catch -- `_safe_node_count_int` needs the same treatment.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_when_incumbent_node_count_is_infinite_without_losing_reporting_fields(
+    facc,
+):
+    """incumbent_node_count=float('inf') -- int(float('inf')) raises
+    OverflowError today, escaping to the outer except-all and nulling every
+    reporting field. Calmar is exactly PRESERVED (never improved) so
+    'performance' cannot mask this -- the only path to acceptance here is
+    SIMPLIFY, which must decline; Sharpe/volatility/Calmar must all survive
+    as genuinely computable values from valid incumbent/candidate metrics.
+    Mirrors the None/string/bool siblings above exactly, targeting the ONE
+    exception class those tests don't exercise."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=float("inf"),
+        candidate_node_count=50,
+        overlay_node_count=10,  # would otherwise satisfy the ratio (10 <= 200*0.5)
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False, "SIMPLIFY must decline with an undeterminable delta"
+    assert "simplification" not in result.tags
+    assert result.node_count_delta is None, (
+        f"expected node_count_delta=None on an uncoercible operand, got "
+        f"{result.node_count_delta!r} (the pre-fix bug produces the "
+        f"_rejected() default of 0, a FABRICATED value, not an honest None)"
+    )
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- "
+        f"incumbent_node_count=inf must not null unrelated reporting fields"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+@pytest.mark.parametrize(
+    "infinite_value",
+    [float("inf"), np.float64("inf"), Decimal("Infinity")],
+    ids=["float-inf", "numpy.float64-inf", "decimal.Decimal-Infinity"],
+)
+def test_simplify_declines_when_candidate_node_count_is_infinite_across_numeric_types(
+    facc, infinite_value
+):
+    """The same OverflowError-escape defect fires identically for
+    numpy.float64('inf') and decimal.Decimal('Infinity') -- both raise the
+    identical OverflowError from int(), verified directly against the
+    interpreter before writing this test (never assumed). Parametrized
+    since all three share one assertion body; cheap coverage across the
+    numeric types a caller might plausibly pass."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=1.2, volatility=0.15)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08, sharpe=0.9, volatility=0.18)
+    expected_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=50,
+        candidate_node_count=infinite_value,
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+    )
+    assert result.accepted is False
+    assert "simplification" not in result.tags
+    assert result.node_count_delta is None, (
+        f"expected node_count_delta=None for {infinite_value!r}, got {result.node_count_delta!r}"
+    )
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost for {infinite_value!r} (got "
+        f"{result.candidate_sharpe!r}) -- an infinite candidate_node_count "
+        f"of any numeric type must not null unrelated reporting fields"
+    )
+    assert result.candidate_volatility == pytest.approx(0.18, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_calmar, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Revise 4, final pin: an inverted-polarity cascade (fire content genuinely
+# on the is-else-condition?==True side -- the real_tree_09/n2oo class) must
+# DECLINE SIMPLIFY fail-closed with a WARNING, regardless of what the
+# ratio/node_count_delta gates alone would say -- the PRE-EXISTING (not this
+# cycle's) _graft_incumbent_core always reads "the incumbent's real
+# is-else-condition?==True child" as "the real core to preserve"; for an
+# inverted-polarity cascade that child is actually the FIRE content, and the
+# genuine core silently gets dropped by the graft, making node_count_delta
+# go hugely negative and RULING 2's <=0 gate pass VACUOUSLY. This file does
+# NOT characterize or fix the graft itself (a tracked, separate backlog
+# item) -- only proves the acceptance layer fails closed on the polarity
+# signal.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_on_inverted_polarity_cascade_regardless_of_ratio_or_delta(facc, caplog):
+    """A cascade whose fire content sits on the is-else-condition?==True
+    side must DECLINE SIMPLIFY unconditionally -- even when the ratio and
+    node_count_delta gates would OTHERWISE both pass (constructed
+    deliberately here so this test isolates the polarity check itself, not
+    a side effect of some other gate already failing)."""
+    import logging
+
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    with caplog.at_level(logging.WARNING):
+        result = facc.evaluate_calmar_acceptance(
+            incumbent,
+            candidate,
+            incumbent_node_count=200,  # candidate << incumbent -- delta gate would pass
+            candidate_node_count=50,
+            overlay_node_count=10,  # 10 <= 200*0.5 -- ratio gate would pass
+            replaced_cascade_node_count=200,
+            fire_is_else_branch=True,  # the inverted-polarity signal
+        )
+
+    assert result.accepted is False, (
+        "an inverted-polarity cascade must decline SIMPLIFY even though the "
+        "ratio and node_count_delta gates would both otherwise pass -- the "
+        "graft's core-dropping defect on this exact polarity makes those "
+        "gates meaningless here"
+    )
+    assert "simplification" not in result.tags
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "an inverted-polarity decline must log a WARNING (team-lead ruling) "
+        "-- a silent decline here gives the operator zero signal that a "
+        "genuinely-materially-simpler-looking candidate was withheld for a "
+        "structural reason unrelated to its own Calmar/size profile"
+    )
+
+
+def test_simplify_reachable_on_normal_polarity_cascade_with_identical_otherwise_inputs(facc):
+    """Direct contrast to the inverted-polarity decline above: the SAME
+    otherwise-qualifying inputs, with fire_is_else_branch=False (or
+    omitted, matching every pre-existing call site's legacy shape), must
+    still admit via SIMPLIFY -- proving the new polarity check declines
+    ONLY the inverted case, never a blanket new restriction on SIMPLIFY
+    generally."""
+    incumbent = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+    candidate = _metrics(annualized_return=0.16, max_drawdown=-0.08)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=200,
+        candidate_node_count=50,
+        overlay_node_count=10,
+        replaced_cascade_node_count=200,
+        fire_is_else_branch=False,
+    )
+    assert result.accepted is True
+    assert "simplification" in result.tags
+
+
+# ---------------------------------------------------------------------------
+# Revise 5, F1 (PR #128 round-4 /code-review, HIGH/safety): the inverted-
+# polarity fail-closed decline above (Revise 4's final pin) only guards the
+# SIMPLIFY tag -- Path 1 (IMPROVE/"performance", `if candidate_calmar >
+# incumbent_calmar: tags.add("performance")`) runs FIRST and
+# UNCONDITIONALLY, so an inverted-polarity candidate (whose fire content
+# sits on the untrustworthy is-else-condition?==True side --
+# _graft_incumbent_core silently drops the real core for this polarity) with
+# a merely-BETTER Calmar still gets accepted=True and queued for operator
+# approval on real Composer draft creation. Team-lead ruling: when
+# fire_is_else_branch=True, decline the WHOLE acceptance fail-closed
+# (neither tag), warning logged, never null the OTHER reporting fields
+# (Sharpe/volatility/both Calmars/node_count_delta all stay genuinely
+# computed), never an early return. The Revise-4 tests directly above only
+# ever used Calmar-PRESERVED inputs (incumbent==candidate metrics) and so
+# never exercised this IMPROVE-path gap at all.
+# ---------------------------------------------------------------------------
+
+
+def test_simplify_declines_via_performance_path_too_on_inverted_polarity_cascade(facc, caplog):
+    """An inverted-polarity cascade whose candidate Calmar is GENUINELY
+    BETTER than the incumbent's (2.0 vs 1.0 -- would otherwise earn
+    'performance' unconditionally, since that check runs BEFORE the
+    polarity gate today) must still be declined fail-closed."""
+    import logging
+
+    incumbent = _metrics(annualized_return=0.10, max_drawdown=-0.10, sharpe=1.0, volatility=0.15)
+    candidate = _metrics(annualized_return=0.20, max_drawdown=-0.10, sharpe=0.9, volatility=0.12)
+    expected_incumbent_calmar = incumbent["annualized_return"] / abs(incumbent["max_drawdown"])
+    expected_candidate_calmar = candidate["annualized_return"] / abs(candidate["max_drawdown"])
+    assert expected_candidate_calmar > expected_incumbent_calmar, (
+        "fixture sanity: candidate Calmar must genuinely beat incumbent's, "
+        "or this test doesn't isolate the IMPROVE-path gap at all"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = facc.evaluate_calmar_acceptance(
+            incumbent,
+            candidate,
+            incumbent_node_count=200,
+            candidate_node_count=50,
+            overlay_node_count=10,
+            replaced_cascade_node_count=200,
+            fire_is_else_branch=True,
+        )
+
+    assert result.accepted is False, (
+        "an inverted-polarity candidate with a genuinely better Calmar was "
+        "accepted via the IMPROVE/'performance' path -- F1: that path runs "
+        "unconditionally BEFORE the polarity check today, so it must ALSO "
+        "be gated by fire_is_else_branch, not just SIMPLIFY"
+    )
+    assert result.tags == set(), (
+        f"expected NO tags on an inverted-polarity fail-closed decline "
+        f"(neither 'performance' nor 'simplification'), got {result.tags!r}"
+    )
+    assert result.candidate_sharpe == pytest.approx(0.9, abs=1e-9), (
+        f"candidate_sharpe was lost (got {result.candidate_sharpe!r}) -- the "
+        f"polarity decline must not null unrelated reporting fields (no "
+        f"early return)"
+    )
+    assert result.candidate_volatility == pytest.approx(0.12, abs=1e-9)
+    assert result.incumbent_calmar == pytest.approx(expected_incumbent_calmar, abs=1e-9)
+    assert result.candidate_calmar == pytest.approx(expected_candidate_calmar, abs=1e-9)
+    assert result.node_count_delta == 50 - 200, (
+        f"node_count_delta was lost/altered (got {result.node_count_delta!r}) "
+        f"-- the polarity decline must not null the whole-tree display metric"
+    )
+    warning_records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warning_records, (
+        "an inverted-polarity decline via the IMPROVE path must ALSO log a "
+        "WARNING (same team-lead ruling as the SIMPLIFY-path decline) -- a "
+        "silent decline here gives zero operator-visible signal"
+    )
+
+
+def test_performance_path_still_reachable_on_normal_polarity_with_identical_inputs(facc):
+    """Direct contrast to the decline above: the SAME inputs,
+    fire_is_else_branch=False, must still admit via 'performance' -- proving
+    F1's fix is not a blanket new restriction on the IMPROVE path
+    generally. overlay_node_count is deliberately large relative to
+    replaced_cascade_node_count (180 > 200*0.5=100) so SIMPLIFY's own ratio
+    gate fails here, isolating this contrast strictly to the IMPROVE path
+    (a tags=={'performance','simplification'} result would still prove the
+    IMPROVE path fired, but would muddy this test's isolation of exactly
+    what F1 changes)."""
+    incumbent = _metrics(annualized_return=0.10, max_drawdown=-0.10, sharpe=1.0, volatility=0.15)
+    candidate = _metrics(annualized_return=0.20, max_drawdown=-0.10, sharpe=0.9, volatility=0.12)
+
+    result = facc.evaluate_calmar_acceptance(
+        incumbent,
+        candidate,
+        incumbent_node_count=200,
+        candidate_node_count=50,
+        overlay_node_count=180,
+        replaced_cascade_node_count=200,
+        fire_is_else_branch=False,
+    )
+    assert result.accepted is True
+    assert result.tags == {"performance"}, (
+        f"expected ONLY 'performance' (SIMPLIFY's ratio deliberately fails "
+        f"here to isolate this contrast to the IMPROVE path alone), got "
+        f"{result.tags!r}"
+    )

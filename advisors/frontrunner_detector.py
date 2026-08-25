@@ -85,6 +85,18 @@ _RSI_FN_SUBSTRINGS: tuple[str, ...] = ("relative-strength-index", "rsi")
 # swallowed core logic across the size-cliff boundary — a hard bug signal.
 _CORE_PLACEHOLDER_PREFIX = "CORE_ASSET_"
 
+# The synthetic placeholder-leaf ticker _build_cascade_overlay stamps onto the
+# stubbed continuation/core branch it replaces (never real tree content).
+# PUBLIC (not underscore-prefixed): consumers outside this module (the
+# Frontrunner Builder's SIMPLIFY-path signal-logic-only counter,
+# DE-FR-SIMPLIFY-001 Revise 3 RULING 1) must identify this exact marker to
+# exclude the stub branch from a node count — importing this constant instead
+# of duplicating the literal means a future rename here can never silently
+# break that exclusion (the stub would stop matching, get counted again, and
+# the CRITICAL SIMPLIFY-inflation defect this constant's consumer fixes would
+# return with no warning).
+STUBBED_CORE_CONTINUATION_TICKER = "_STUBBED_CORE_CONTINUATION"
+
 # AC-6 REBUILD (2026-07-16): the size-cliff ratio/absolute checks below and
 # the overbought-range floor matched 0 real trees (44/456 recovery even after
 # fixing direction) — empirically falsified against the operator's own real
@@ -170,6 +182,8 @@ class Cascade:
     rsi_thresholds: list[float] = field(default_factory=list)
     vix_tickers: set[str] = field(default_factory=set)
     group_name: str | None = None
+    signal_logic_node_count: int | None = None
+    fire_is_else_branch: bool = False
 
 
 @dataclass
@@ -599,6 +613,152 @@ def _find_cascade_roots(node, group_name: str | None, out: list[tuple[dict, str 
             stack.append((child, next_group_name))
 
 
+def _select_fire_and_continuation(
+    node: dict, *, pair: tuple[dict, dict] | None = None
+) -> tuple[dict, dict] | None:
+    """Shared fire/continuation selection helper (single source of truth,
+    DE-FR-SIMPLIFY-001 Revise 4). Given a 2-child if-node, returns
+    ``(fire_child, continuation_child)`` via the size-based rule this module
+    ratified for overlay construction — fire is the smaller of the two
+    direct children by raw node count (see ``_compact_if_node``'s docstring
+    for the falsified-and-reverted direction-explicit alternative that was
+    tried and rejected). Returns ``None`` on a malformed/unidentifiable
+    2-child shape.
+
+    Called by BOTH ``_compact_if_node`` (refactored to consume this rather
+    than reimplementing the split inline) and the signal-logic node-count
+    computation below — the selection algorithm itself must never be
+    duplicated between them (team-lead ruling, Revise 4).
+
+    ``pair`` : tuple[dict, dict] | None
+        F5 (DE-FR-SIMPLIFY-001 Revise 5): optional PRE-COMPUTED
+        ``_get_condition_branch_pair(node)`` result, keyword-only. When
+        provided (``_compact_if_node`` already computed its own pair for the
+        RSI-threshold parse), it is reused instead of calling
+        ``_get_condition_branch_pair`` a second time on the same node —
+        eliminating a redundant call, efficiency-only, no correctness
+        impact. Defaults to ``None``, in which case this function computes
+        the pair itself exactly as before (every OTHER caller, which has no
+        pre-computed pair to hand in, is unaffected)."""
+    if pair is None:
+        pair = _get_condition_branch_pair(node)
+    if pair is None:
+        return None
+    cond_child, else_child = pair
+    cond_n = _count_nodes(cond_child)
+    else_n = _count_nodes(else_child)
+    fire_child = cond_child if cond_n <= else_n else else_child
+    continuation_child = else_child if fire_child is cond_child else cond_child
+    return fire_child, continuation_child
+
+
+def _count_clause_aware_signal_logic(node) -> int:
+    """General-purpose, non-exclusion node counter — descends ``children``
+    AND a compound condition's ``condition``/``conditions`` DATA fields (a
+    compound-condition object is never itself exclusion-relevant — it holds
+    no further Composer "step"-shaped if-nodes needing fire/continuation
+    selection, only clause data). Iterative (explicit stack), never
+    recursive, matching this module's own ``_count_nodes``/``_collect_
+    tickers`` convention. The single source of truth for clause-aware
+    counting — imported verbatim by ``frontrunner_builder`` for the overlay
+    SIMPLIFY operand (B3, DE-FR-SIMPLIFY-001 Revise 4), never reimplemented
+    there."""
+    if not isinstance(node, dict):
+        return 0
+    count = 0
+    stack: list = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        count += 1
+        for child in current.get("children") or []:
+            stack.append(child)
+        condition_block = current.get("condition")
+        if isinstance(condition_block, dict):
+            stack.append(condition_block)
+        conditions_list = current.get("conditions")
+        if isinstance(conditions_list, list):
+            for clause in conditions_list:
+                if isinstance(clause, dict):
+                    stack.append(clause)
+    return count
+
+
+def _compute_signal_logic_node_count(if_node: dict) -> int | None:
+    """Honest signal-logic node count for the cascade rooted at ``if_node``
+    (DE-FR-SIMPLIFY-001 Revise 4, R4-1): the if-node itself, plus its fire
+    branch counted for real — a NESTED qualifying if-node (a further
+    scale-in tier, or an internal hedge subgate) has its OWN continuation
+    excluded via the SAME ``_select_fire_and_continuation`` selection rule
+    applied inline, never a fixed stub-marker search (which Revise 3 proved
+    disprovable on multi-tier cascades). Computed on the PRE-stub original
+    subtree, never the padded compact overlay.
+
+    Iterative (single explicit stack) — no direct or mutual recursion with
+    ``_select_fire_and_continuation``/``_count_clause_aware_signal_logic``,
+    both of which are one-directional callees, never callers back into this
+    function (structurally enforced, see the R4-4 no-cycle test). Mutual
+    "tier" recursion between this function and itself is bounded by the
+    number of nested cascade tiers (empirically <=2 across all real
+    fixtures), not tree size.
+
+    Returns ``None`` when ``if_node`` isn't a valid 2-child if-node —
+    never fabricates a count for an unidentifiable shape."""
+    if not isinstance(if_node, dict) or if_node.get("step") != _STEP_IF:
+        return None
+    selection = _select_fire_and_continuation(if_node)
+    if selection is None:
+        return None
+    fire_child, _ = selection
+
+    count = 1  # the root if-node itself
+    stack: list = [fire_child]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, dict):
+            continue
+        if current.get("step") == _STEP_IF and (
+            _qualifies_as_cascade_rung(current, is_nested_tier=True)
+            or _is_internal_hedge_subgate(current)
+        ):
+            inner_selection = _select_fire_and_continuation(current)
+            count += 1  # this nested if-node itself
+            if inner_selection is not None:
+                stack.append(inner_selection[0])
+            else:
+                # Can't determine which side is fire for this qualifying
+                # node -- count everything honestly rather than guessing or
+                # silently dropping content.
+                for child in current.get("children") or []:
+                    stack.append(child)
+            continue
+        count += 1
+        for child in current.get("children") or []:
+            stack.append(child)
+        condition_block = current.get("condition")
+        if isinstance(condition_block, dict):
+            count += _count_clause_aware_signal_logic(condition_block)
+    return count
+
+
+def _compute_fire_is_else_branch(if_node: dict) -> bool:
+    """True when the fire (signal) side of the ROOT cascade if-node lands on
+    the ``is-else-condition?==True`` child -- inverted polarity, per
+    DE-FR-SIMPLIFY-001 Revise 4's final pin (the acceptance layer declines
+    SIMPLIFY unconditionally when this is True, since ``_graft_incumbent_
+    core``'s core-preservation logic assumes normal polarity). Reads the
+    SAME selection the node-count walk above uses (never a second,
+    independent derivation) — root-level only; nested-tier polarity is not
+    evaluated, since only the root's fire selection feeds the acceptance
+    gate. Returns ``False`` (never-True default) on a malformed shape."""
+    selection = _select_fire_and_continuation(if_node)
+    if selection is None:
+        return False
+    fire_child, _ = selection
+    return fire_child.get("is-else-condition?") is True
+
+
 def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[str]]:
     """Build a COMPACT overlay subtree for a cascade root, resolving scale-in tiers.
 
@@ -650,7 +810,14 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
             # Defensive: shouldn't happen for a confirmed cascade/tier root.
             return copy.deepcopy(node)
 
-        cond_child, else_child = pair
+        # RSI-threshold parsing reads cond_child specifically (the side that
+        # actually carries a comparator/threshold), regardless of which side
+        # ends up being fire — a genuinely separate concern from fire/
+        # continuation SELECTION, so this _get_condition_branch_pair lookup
+        # is computed here (DE-FR-SIMPLIFY-001 Revise 4) and reused below via
+        # _select_fire_and_continuation's ``pair`` param (F5, Revise 5)
+        # rather than computed a second time.
+        cond_child, _else_child = pair
         if _is_rsi_condition(cond_child) and cond_child.get("comparator") == "gt":
             threshold = _parse_rsi_threshold(cond_child)
             # AC-6 REBUILD: report every parseable threshold, root or nested
@@ -664,10 +831,21 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
             if threshold is not None:
                 thresholds.append(threshold)
 
-        cond_n = _count_nodes(cond_child)
-        else_n = _count_nodes(else_child)
-        fire_child = cond_child if cond_n <= else_n else else_child
-        continuation_child = else_child if fire_child is cond_child else cond_child
+        # Fire/continuation SELECTION itself is delegated to the shared
+        # helper (team-lead ruling, Revise 4) — never reimplemented inline
+        # here, so the signal-logic node-count computation elsewhere in this
+        # module can never disagree with this function's own choice of fire
+        # branch. F5 (Revise 5): the branch pair computed above (for the
+        # RSI-threshold parse) is reused here via the keyword-only ``pair``
+        # param, rather than letting the helper compute it again from
+        # scratch on the same node.
+        selection = _select_fire_and_continuation(node, pair=pair)
+        if selection is None:
+            # Unreachable in practice (pair already succeeded above), but
+            # defensive rather than silently trusting a duplicated
+            # assumption about the helper's internals.
+            return copy.deepcopy(node)
+        fire_child, continuation_child = selection
 
         vix_tickers.update(_collect_tickers(fire_child) & VIX_FAMILY_TICKERS)
 
@@ -696,7 +874,7 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
             "children": [
                 {
                     "step": _STEP_ASSET,
-                    "ticker": "_STUBBED_CORE_CONTINUATION",
+                    "ticker": STUBBED_CORE_CONTINUATION_TICKER,
                     "id": f"{continuation_child.get('id')}-stub-{i}",
                     "children": [],
                 }
@@ -797,7 +975,7 @@ def _build_cascade_overlay(root_if_node: dict) -> tuple[dict, list[float], set[s
                 ):
                     compacted_c = {
                         "step": _STEP_ASSET,
-                        "ticker": "_STUBBED_CORE_CONTINUATION",
+                        "ticker": STUBBED_CORE_CONTINUATION_TICKER,
                         "id": f"{compacted_c.get('id', 'unknown')}-unrelated-stub",
                         "children": [],
                     }
@@ -892,6 +1070,11 @@ def detect_frontrunner_cascades(tree: dict) -> DetectionResult:
                     rsi_thresholds=thresholds,
                     vix_tickers=vix_tickers,
                     group_name=group_name,
+                    # Computed on the PRE-stub root_node, never the padded
+                    # overlay_tree, per R4-1's explicit ruling (DE-FR-
+                    # SIMPLIFY-001 Revise 4).
+                    signal_logic_node_count=_compute_signal_logic_node_count(root_node),
+                    fire_is_else_branch=_compute_fire_is_else_branch(root_node),
                 )
             )
 
