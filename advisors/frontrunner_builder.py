@@ -35,11 +35,12 @@ generate_candidate_overlay(signal_context: dict, *, n_attempts=...) -> Generatio
     preserved), and compiles it. Never raises (D-1) — degrades to
     ``.candidate=None, .error=<reason>``.
 
-splice_candidate_into_symphony(incumbent_symphony, incumbent_cascade, candidate) -> dict | None
+splice_candidate_into_symphony(incumbent_symphony, incumbent_cascade, candidate, *, compiled_tree=None) -> dict | None
     Replace the detected incumbent cascade subtree with the compiled candidate
     overlay inside a full copy of the incumbent symphony, re-validating via
-    ``symphony_schema.validate_tree``. Returns None on any structural failure
-    (never raises).
+    ``symphony_schema.validate_tree``. ``compiled_tree``, when supplied, is
+    reused as the already-compiled candidate instead of compiling ``candidate``
+    fresh. Returns None on any structural failure (never raises).
 
 run_frontrunner_build(symphony_ids: list[str] | None = None) -> None
     D-1 never-raises entry point for the scheduler/route: detect -> generate

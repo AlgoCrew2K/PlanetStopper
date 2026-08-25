@@ -685,7 +685,9 @@ def _count_clause_aware_signal_logic(node) -> int:
     return count
 
 
-def _compute_signal_logic_node_count(if_node: dict) -> int | None:
+def _compute_signal_logic_node_count(
+    if_node: dict, *, selection: tuple[dict, dict] | None = None
+) -> int | None:
     """Honest signal-logic node count for the cascade rooted at ``if_node``
     (DE-FR-SIMPLIFY-001 Revise 4, R4-1): the if-node itself, plus its fire
     branch counted for real — a NESTED qualifying if-node (a further
@@ -703,11 +705,23 @@ def _compute_signal_logic_node_count(if_node: dict) -> int | None:
     number of nested cascade tiers (empirically <=2 across all real
     fixtures), not tree size.
 
+    ``selection`` : tuple[dict, dict] | None
+        Optional pre-computed ``_select_fire_and_continuation(if_node)``
+        result for THIS root ``if_node``, keyword-only. When supplied, it is
+        reused instead of deriving it again from scratch, so a caller that
+        already needs the same root-level selection for another purpose
+        never pays for it twice. Defaults to None, in which case this
+        function derives it itself exactly as before. Applies ONLY to the
+        root-level derivation above — every nested if-node the walk below
+        encounters still computes its own selection independently and never
+        inherits this one.
+
     Returns ``None`` when ``if_node`` isn't a valid 2-child if-node —
     never fabricates a count for an unidentifiable shape."""
     if not isinstance(if_node, dict) or if_node.get("step") != _STEP_IF:
         return None
-    selection = _select_fire_and_continuation(if_node)
+    if selection is None:
+        selection = _select_fire_and_continuation(if_node)
     if selection is None:
         return None
     fire_child, _ = selection
@@ -742,7 +756,9 @@ def _compute_signal_logic_node_count(if_node: dict) -> int | None:
     return count
 
 
-def _compute_fire_is_else_branch(if_node: dict) -> bool:
+def _compute_fire_is_else_branch(
+    if_node: dict, *, selection: tuple[dict, dict] | None = None
+) -> bool:
     """True when the fire (signal) side of the ROOT cascade if-node lands on
     the ``is-else-condition?==True`` child -- inverted polarity, per
     DE-FR-SIMPLIFY-001 Revise 4's final pin (the acceptance layer declines
@@ -751,8 +767,18 @@ def _compute_fire_is_else_branch(if_node: dict) -> bool:
     SAME selection the node-count walk above uses (never a second,
     independent derivation) — root-level only; nested-tier polarity is not
     evaluated, since only the root's fire selection feeds the acceptance
-    gate. Returns ``False`` (never-True default) on a malformed shape."""
-    selection = _select_fire_and_continuation(if_node)
+    gate. Returns ``False`` (never-True default) on a malformed shape.
+
+    ``selection`` : tuple[dict, dict] | None
+        Optional pre-computed ``_select_fire_and_continuation(if_node)``
+        result for this SAME root node, keyword-only. When supplied, reused
+        instead of deriving it again — letting a caller that already
+        computed the identical root-level selection for another purpose
+        (e.g. the node count above) hand it in rather than pay for a second,
+        redundant derivation. Defaults to None, in which case this function
+        derives it itself exactly as before."""
+    if selection is None:
+        selection = _select_fire_and_continuation(if_node)
     if selection is None:
         return False
     fire_child, _ = selection
@@ -1064,6 +1090,13 @@ def detect_frontrunner_cascades(tree: dict) -> DetectionResult:
                 # this gap without depending on _compact_subtree's internal
                 # cleanup behavior.
                 continue
+            # Root-level fire/continuation selection, derived once here and
+            # handed to both fields below instead of letting each one
+            # re-derive it independently on the same root_node. Neither
+            # function's own nested-tier walk ever sees or inherits this
+            # value — it is consumed only for each function's root-level
+            # derivation.
+            root_selection = _select_fire_and_continuation(root_node)
             cascades.append(
                 Cascade(
                     overlay_tree=copy.deepcopy(overlay_tree),
@@ -1073,8 +1106,12 @@ def detect_frontrunner_cascades(tree: dict) -> DetectionResult:
                     # Computed on the PRE-stub root_node, never the padded
                     # overlay_tree, per R4-1's explicit ruling (DE-FR-
                     # SIMPLIFY-001 Revise 4).
-                    signal_logic_node_count=_compute_signal_logic_node_count(root_node),
-                    fire_is_else_branch=_compute_fire_is_else_branch(root_node),
+                    signal_logic_node_count=_compute_signal_logic_node_count(
+                        root_node, selection=root_selection
+                    ),
+                    fire_is_else_branch=_compute_fire_is_else_branch(
+                        root_node, selection=root_selection
+                    ),
                 )
             )
 
