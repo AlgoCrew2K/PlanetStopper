@@ -3,7 +3,7 @@
 > Deterministic, no-LLM wind-down checklist builder for an operator-approved Retirement Recommender candidate: the candidate's id/name/current holdings plus a fixed set of manual steps the operator performs by hand in Composer. The one entirely deterministic module in the Retirement Approval Lifecycle feature (operator ruling, Gate-2b) -- a template, not a generated artifact. No trade, order, liquidation, deploy, or `LIVE_EXECUTION` primitive of any kind.
 
 **Source:** `advisors/retirement_checklist.py`
-**Last updated:** 2026-08-26 (new module, Phase 2 Cycle 2b, `DE-RETIRE-APPROVAL-001`)
+**Last updated:** 2026-08-26 (new module, Phase 2 Cycle 2b, `DE-RETIRE-APPROVAL-001`; corrected same-day for the PR #139 review remediation's F5 fix -- see the "Honest off-hours degrade" section below)
 
 ## Overview
 
@@ -45,7 +45,9 @@ else:
     unavailable_note = _HOLDINGS_UNAVAILABLE_NOTE
 ```
 
-An empty-dict, `None`, or entirely-missing `logic_holdings` all take the SAME `else` branch -- there is no fabricated ticker anywhere in this path. `_HOLDINGS_UNAVAILABLE_NOTE` = `"current holdings unavailable (off-hours) -- view live positions in Composer"`, a named module-level constant (not a magic string), rendered verbatim by the template when `cl.get('unavailable_note')` is truthy (with a hardcoded fallback string of the same wording as a defense-in-depth belt-and-suspenders in `templates/ai_advisor.html`, in case `cl` is present but this key is somehow absent).
+An empty-dict, `None`, or entirely-missing `logic_holdings` all take the SAME `else` branch -- there is no fabricated ticker anywhere in this path. `_HOLDINGS_UNAVAILABLE_NOTE` = `"current holdings unavailable (off-hours) -- view live positions in Composer"`, a named module-level constant (not a magic string), rendered verbatim by the template as `{{- cl.get('unavailable_note') | e -}}` -- the single source of truth for this text.
+
+**[CORRECTED, PR #139 review remediation, F5, `5655edfd`, 2026-08-26]** `templates/ai_advisor.html` originally ALSO carried a hardcoded `{% else %}current holdings unavailable (off-hours) — view live positions in Composer{% endif %}` fallback branch, duplicating this constant's exact wording as a defense-in-depth belt-and-suspenders for the case where `cl` is present but `unavailable_note` is somehow falsy. This branch was dead code by construction: `build_checklist` (this module) ALWAYS sets `unavailable_note` to the named constant whenever `holdings_available` is `False` (see the function body above -- there is no code path where `holdings_available=False` and `unavailable_note` is simultaneously falsy). A same-cycle PR-level `/code-review` (PR #139) flagged the duplicate literal as a drift risk (a future change to `_HOLDINGS_UNAVAILABLE_NOTE` here would silently NOT update the template's independent copy) and it was removed -- the template now renders `cl.get('unavailable_note')` unconditionally on that branch, with this module's constant as the sole source of the text.
 
 ## `logic_holdings` weight-shape defensive extraction
 
