@@ -40,9 +40,29 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # the file as it exists at RED-phase authoring time (Cycle-2a, already
 # shipped) -- if this hash mismatches, retirement_recommender.py was touched
 # this cycle, which AC-2 forbids.
+#
+# CI-caught false failure (2026-08-26, root-caused by team-lead): this used
+# to hash RAW file bytes, which differ by line-ending convention alone --
+# CRLF on a Windows checkout (this repo's default git config) vs LF on CI's
+# Linux checkout. `git diff 1c449941 HEAD -- advisors/retirement_recommender.py`
+# is genuinely empty (confirmed) -- the file IS byte-unchanged in the sense
+# that matters (no real edit), but a raw-byte hash is not line-ending-stable
+# across platforms. Fixed: hash the LF-NORMALIZED content instead (CRLF ->
+# LF before hashing) via _lf_normalized_sha256, so the guard is platform-
+# independent while still catching any REAL content modification (the
+# normalization only collapses \r\n -> \n, it does not touch anything else).
 _RETIREMENT_RECOMMENDER_GOLDEN_SHA256 = (
-    "a3e6d697b521594de7a3364967d8fc4e607eccfb8c49707ce1358d9ae22a3af9"
+    "b8ffb354e584a42ffbfc84f3d4697f4e221dab48210dba0f67741f1ad878cad6"
 )
+
+
+def _lf_normalized_sha256(path: pathlib.Path) -> str:
+    """sha256 of `path`'s content with CRLF normalized to LF first -- makes
+    the golden-hash pin stable across a Windows (CRLF) checkout and a Linux
+    CI (LF) checkout of the identical logical file content."""
+    raw = path.read_bytes()
+    normalized = raw.replace(b"\r\n", b"\n")
+    return hashlib.sha256(normalized).hexdigest()
 
 
 def _sample_recs() -> list[dict]:
@@ -66,12 +86,45 @@ def test_retirement_recommender_module_is_byte_unchanged_this_cycle():
     assert path.exists(), (
         "advisors/retirement_recommender.py must exist (Cycle-2a, already shipped)."
     )
-    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    actual_hash = _lf_normalized_sha256(path)
     assert actual_hash == _RETIREMENT_RECOMMENDER_GOLDEN_SHA256, (
         "advisors/retirement_recommender.py was modified this cycle -- AC-2 requires "
         "it to stay byte-unchanged (LLM-free); the explainer wiring belongs in "
         "app.py's producer orchestration only, never inside build_recommendations."
     )
+
+
+class TestLfNormalizedSha256GuardIntentPreserved:
+    """The CRLF-normalization fix (2026-08-26) must only neutralize
+    line-ending differences -- it must still catch a REAL content
+    modification. Proven against tmp_path-created files, never the real
+    production file (this test-writer's role never edits production code,
+    not even transiently for a test)."""
+
+    def test_two_files_differing_only_by_line_ending_hash_identically(self, tmp_path):
+        content = "line one\nline two\nline three\n"
+        crlf_path = tmp_path / "crlf.py"
+        lf_path = tmp_path / "lf.py"
+        crlf_path.write_bytes(content.replace("\n", "\r\n").encode("utf-8"))
+        lf_path.write_bytes(content.encode("utf-8"))
+
+        assert _lf_normalized_sha256(crlf_path) == _lf_normalized_sha256(lf_path), (
+            "A CRLF and an LF copy of the SAME logical content must hash identically "
+            "-- otherwise this guard still false-fails across a Windows/Linux "
+            "checkout boundary, the exact CI-red bug being fixed."
+        )
+
+    def test_two_files_with_genuinely_different_content_hash_differently(self, tmp_path):
+        original = tmp_path / "original.py"
+        modified = tmp_path / "modified.py"
+        original.write_bytes(b"def foo():\r\n    return 1\r\n")
+        modified.write_bytes(b"def foo():\r\n    return 2\r\n")  # a real content change
+
+        assert _lf_normalized_sha256(original) != _lf_normalized_sha256(modified), (
+            "The LF-normalization fix must NOT weaken the guard's actual intent -- "
+            "a genuine content modification (not just a line-ending difference) must "
+            "still produce a different hash."
+        )
 
 
 def test_retirement_recommender_module_never_imports_ai_advisor():
