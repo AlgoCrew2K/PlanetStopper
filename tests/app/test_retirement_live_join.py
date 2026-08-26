@@ -220,9 +220,7 @@ class TestLiveJoinDegradesHonestlyOnReadFailure:
         _seed_symphony_roster("cand-lj-6", "sib-lj-6")
         _seed_recommendation(candidate_id="cand-lj-6", sibling_id="sib-lj-6")
 
-        with patch(
-            "database.get_retirement_decisions", side_effect=RuntimeError("db read failed")
-        ):
+        with patch("database.get_retirement_decisions", side_effect=RuntimeError("db read failed")):
             resp = client.get("/ai-advisor")
 
         assert resp.status_code == 200, (
@@ -237,7 +235,9 @@ class TestLiveJoinDegradesHonestlyOnReadFailure:
         longer in the latest recommendation batch -- the live-join only
         stamps cards that render; an orphaned decision row must never crash
         the page."""
-        db_module.upsert_retirement_decision("orphan-candidate-no-longer-flagged", approval_status="approved")
+        db_module.upsert_retirement_decision(
+            "orphan-candidate-no-longer-flagged", approval_status="approved"
+        )
         # No matching recommendation seeded at all.
         resp = client.get("/ai-advisor")
         assert resp.status_code == 200

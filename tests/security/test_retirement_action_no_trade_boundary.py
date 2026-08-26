@@ -135,7 +135,9 @@ def _parse_app_py() -> ast.Module:
     return ast.parse(app_path.read_text(encoding="utf-8"))
 
 
-def _find_function_def(tree: ast.Module, fn_name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+def _find_function_def(
+    tree: ast.Module, fn_name: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn_name:
             return node

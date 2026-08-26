@@ -52,7 +52,9 @@ _SAMPLE_RECOMMENDATION = {
 }
 
 
-def _make_fake_llm_response(text: str = "A concise explanation of why this candidate is redundant."):
+def _make_fake_llm_response(
+    text: str = "A concise explanation of why this candidate is redundant.",
+):
     content_block = SimpleNamespace(text=text)
     return SimpleNamespace(content=[content_block], model="claude-fable-5", stop_reason="end_turn")
 
@@ -125,7 +127,9 @@ def test_prompt_is_grounded_in_the_recommendations_own_evidence():
     with patch("ai_advisor._build_client", return_value=fake_client):
         re_mod.explain_recommendation(_SAMPLE_RECOMMENDATION)
 
-    assert fake_client.messages.create.called, "explain_recommendation never called messages.create."
+    assert fake_client.messages.create.called, (
+        "explain_recommendation never called messages.create."
+    )
     _, call_kwargs = fake_client.messages.create.call_args
     prompt_blob = str(call_kwargs)
 
@@ -212,7 +216,10 @@ def test_error_log_never_contains_the_raw_exception_message(caplog):
     fake_client = MagicMock()
     fake_client.messages.create.side_effect = RuntimeError(secret_bearing_message)
 
-    with caplog.at_level(logging.WARNING), patch("ai_advisor._build_client", return_value=fake_client):
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("ai_advisor._build_client", return_value=fake_client),
+    ):
         result = re_mod.explain_recommendation(_SAMPLE_RECOMMENDATION)
 
     assert result is None

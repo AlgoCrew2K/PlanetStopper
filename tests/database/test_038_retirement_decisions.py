@@ -74,9 +74,7 @@ import database as db_module
 from database import init_db, run_migrations
 
 _MIGRATION_PATH = (
-    __import__("pathlib").Path(__file__).parents[2]
-    / "migrations"
-    / "038_retirement_decisions.sql"
+    __import__("pathlib").Path(__file__).parents[2] / "migrations" / "038_retirement_decisions.sql"
 )
 
 _VALID_STATUSES = {"pending", "approved", "rejected"}
@@ -202,7 +200,14 @@ def test_retirement_decisions_schema_shape(migrated_db):
     finally:
         conn.close()
 
-    expected_columns = {"id", "candidate_id", "sibling_id", "approval_status", "decided_at", "updated_at"}
+    expected_columns = {
+        "id",
+        "candidate_id",
+        "sibling_id",
+        "approval_status",
+        "decided_at",
+        "updated_at",
+    }
     assert expected_columns <= set(columns.keys()), (
         f"retirement_decisions is missing expected columns. "
         f"Expected at least {expected_columns}, got {sorted(columns.keys())}."
@@ -237,15 +242,13 @@ def test_candidate_id_unique_enforced_at_sql_level(migrated_db):
     conn = sqlite3.connect(migrated_db)
     try:
         conn.execute(
-            "INSERT INTO retirement_decisions (candidate_id, approval_status) "
-            "VALUES (?, ?)",
+            "INSERT INTO retirement_decisions (candidate_id, approval_status) VALUES (?, ?)",
             ("dup-candidate", "pending"),
         )
         conn.commit()
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO retirement_decisions (candidate_id, approval_status) "
-                "VALUES (?, ?)",
+                "INSERT INTO retirement_decisions (candidate_id, approval_status) VALUES (?, ?)",
                 ("dup-candidate", "pending"),
             )
     finally:
@@ -295,8 +298,7 @@ class TestUpsertRetirementDecision:
         all_rows = db_module.get_retirement_decisions()
         matching = [r for r in all_rows if r["candidate_id"] == "cand-dup-1"]
         assert len(matching) == 1, (
-            f"Expected exactly one row for cand-dup-1 after two upserts, "
-            f"got {len(matching)}."
+            f"Expected exactly one row for cand-dup-1 after two upserts, got {len(matching)}."
         )
         assert matching[0]["approval_status"] == "approved"
 
@@ -311,7 +313,9 @@ class TestUpsertRetirementDecision:
         """UPS5 (adversarial): the ValueError-raising call above must not have
         left a partial/garbage row behind."""
         with pytest.raises(ValueError):
-            db_module.upsert_retirement_decision("cand-bad-status-2", approval_status="not-a-status")
+            db_module.upsert_retirement_decision(
+                "cand-bad-status-2", approval_status="not-a-status"
+            )
         assert db_module.get_retirement_decision("cand-bad-status-2") is None, (
             "An invalid approval_status must not create a row at all."
         )

@@ -233,7 +233,9 @@ class TestEscaping:
     def test_malicious_explanation_is_escaped(self, client, isolated_db):
         malicious = "<script>alert('xss')</script>"
         _seed_symphony_roster("cand-pr-10", "sib-pr-10")
-        _seed_recommendation(candidate_id="cand-pr-10", sibling_id="sib-pr-10", explanation=malicious)
+        _seed_recommendation(
+            candidate_id="cand-pr-10", sibling_id="sib-pr-10", explanation=malicious
+        )
         resp = client.get("/ai-advisor")
         body = resp.get_data(as_text=True)
         assert 'data-testid="retirement-rec-explanation"' in body
@@ -246,9 +248,7 @@ class TestEscaping:
         docstring-style comments legitimately mention the string 'safe' in
         prose, e.g. 'XSS-safe: all values escaped with | e, no | safe used.',
         which must not itself trip this check)."""
-        path = (
-            __import__("pathlib").Path(__file__).parents[2] / "templates" / "ai_advisor.html"
-        )
+        path = __import__("pathlib").Path(__file__).parents[2] / "templates" / "ai_advisor.html"
         source = path.read_text(encoding="utf-8")
         stripped = re.sub(r"\{#.*?#\}", "", source, flags=re.DOTALL)
         assert not re.search(r"\|\s*safe\b", stripped), (

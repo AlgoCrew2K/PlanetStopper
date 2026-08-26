@@ -103,7 +103,9 @@ def test_candidate_id_is_echoed_from_the_recommendation():
 def test_candidate_name_resolved_from_bot_state_when_present():
     import advisors.retirement_checklist as rc_mod
 
-    bot_state = {"sym-candidate-1": {"name": "My Candidate Symphony", "logic_holdings": {"AAPL": 1.0}}}
+    bot_state = {
+        "sym-candidate-1": {"name": "My Candidate Symphony", "logic_holdings": {"AAPL": 1.0}}
+    }
     result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
     assert result["candidate_name"] == "My Candidate Symphony"
 

@@ -52,7 +52,9 @@ def auth_client(monkeypatch):
 
 
 def _assert_route_exists(resp, route: str) -> None:
-    assert resp.status_code != 404, f"{route} returned 404 -- the route has not been added to app.py yet."
+    assert resp.status_code != 404, (
+        f"{route} returned 404 -- the route has not been added to app.py yet."
+    )
 
 
 def _get_csrf_token(client) -> str:
@@ -69,7 +71,9 @@ def _get_csrf_token(client) -> str:
 
 
 def test_approve_without_csrf_token_returns_403(client, _reenable_csrf):
-    resp = client.post(_APPROVE_URL, json={"candidate_id": "cand-1"}, content_type="application/json")
+    resp = client.post(
+        _APPROVE_URL, json={"candidate_id": "cand-1"}, content_type="application/json"
+    )
     _assert_route_exists(resp, _APPROVE_URL)
     assert resp.status_code == 403
 
@@ -148,7 +152,9 @@ def test_approve_missing_candidate_id_returns_invalid_error_without_calling_the_
 
 def test_approve_engine_error_returns_static_error_token_never_str_exc(client):
     secret_bearing_message = "sqlite write failed: path=C:\\secret\\db.sqlite token=xyz789"
-    with patch("database.upsert_retirement_decision", side_effect=RuntimeError(secret_bearing_message)):
+    with patch(
+        "database.upsert_retirement_decision", side_effect=RuntimeError(secret_bearing_message)
+    ):
         resp = client.post(
             _APPROVE_URL, json={"candidate_id": "cand-1"}, content_type="application/json"
         )
@@ -232,7 +238,9 @@ def test_approve_does_not_itself_render_or_build_the_checklist():
 
 
 def test_reject_without_csrf_token_returns_403(client, _reenable_csrf):
-    resp = client.post(_REJECT_URL, json={"candidate_id": "cand-1"}, content_type="application/json")
+    resp = client.post(
+        _REJECT_URL, json={"candidate_id": "cand-1"}, content_type="application/json"
+    )
     _assert_route_exists(resp, _REJECT_URL)
     assert resp.status_code == 403
 

@@ -63,7 +63,9 @@ def test_retirement_recommender_module_is_byte_unchanged_this_cycle():
     build_recommendations)' -- enforced as a hard zero-diff pin, not just a
     prose promise."""
     path = REPO_ROOT / "advisors" / "retirement_recommender.py"
-    assert path.exists(), "advisors/retirement_recommender.py must exist (Cycle-2a, already shipped)."
+    assert path.exists(), (
+        "advisors/retirement_recommender.py must exist (Cycle-2a, already shipped)."
+    )
     actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     assert actual_hash == _RETIREMENT_RECOMMENDER_GOLDEN_SHA256, (
         "advisors/retirement_recommender.py was modified this cycle -- AC-2 requires "
@@ -201,7 +203,9 @@ def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(ca
     (honoring the existing Cycle-2a contract) with an empty list."""
     with (
         patch("advisors.retirement_recommender.build_recommendations", return_value=[]),
-        patch("advisors.retirement_recommender.persist_recommendations", return_value=0) as mock_persist,
+        patch(
+            "advisors.retirement_recommender.persist_recommendations", return_value=0
+        ) as mock_persist,
         patch("advisors.retirement_explainer.explain_recommendation") as mock_explain,
     ):
         app_module._retirement_recommender_tick_worker()
@@ -209,7 +213,9 @@ def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(ca
     mock_explain.assert_not_called()
     mock_persist.assert_called_once()
     call_args = mock_persist.call_args[0]
-    assert call_args[0] == [], f"Expected persist_recommendations([]) on an empty night, got {call_args}."
+    assert call_args[0] == [], (
+        f"Expected persist_recommendations([]) on an empty night, got {call_args}."
+    )
 
 
 def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(caplog):

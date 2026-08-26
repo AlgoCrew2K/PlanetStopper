@@ -41,8 +41,12 @@ from hypothesis import strategies as st
 def _rec_strategy():
     return st.fixed_dictionaries(
         {
-            "candidate_id": st.text(min_size=1, max_size=20, alphabet=st.characters(blacklist_categories=("Cs",))),
-            "sibling_id": st.text(min_size=1, max_size=20, alphabet=st.characters(blacklist_categories=("Cs",))),
+            "candidate_id": st.text(
+                min_size=1, max_size=20, alphabet=st.characters(blacklist_categories=("Cs",))
+            ),
+            "sibling_id": st.text(
+                min_size=1, max_size=20, alphabet=st.characters(blacklist_categories=("Cs",))
+            ),
             "correlation": st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
             "uncertainty_gate_passed": st.booleans(),
             "structural_redundancy_gate_passed": st.booleans(),
@@ -54,8 +58,9 @@ class TestExplainerNeverMutatesInput:
     @given(rec=_rec_strategy())
     @settings(max_examples=25, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_success_path_never_mutates_the_input_dict(self, rec):
-        import advisors.retirement_explainer as re_mod
         from types import SimpleNamespace
+
+        import advisors.retirement_explainer as re_mod
 
         before = copy.deepcopy(rec)
         fake_client = MagicMock()
@@ -66,8 +71,7 @@ class TestExplainerNeverMutatesInput:
             re_mod.explain_recommendation(rec)
 
         assert rec == before, (
-            f"explain_recommendation mutated its input rec dict. "
-            f"Before={before!r}, after={rec!r}."
+            f"explain_recommendation mutated its input rec dict. Before={before!r}, after={rec!r}."
         )
 
     @given(rec=_rec_strategy())
