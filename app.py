@@ -7498,7 +7498,9 @@ def _dispatch_retirement_decision(approval_status: str):
     body = request.get_json(silent=True) or {}
     candidate_id = body.get("candidate_id")
     if not isinstance(candidate_id, str) or not candidate_id or len(candidate_id) > 300:
-        return jsonify({"success": False, "approval_status": None, "error": "invalid candidate_id"}), 200
+        return jsonify(
+            {"success": False, "approval_status": None, "error": "invalid candidate_id"}
+        ), 200
 
     try:
         database.upsert_retirement_decision(candidate_id, approval_status=approval_status)
@@ -7507,7 +7509,9 @@ def _dispatch_retirement_decision(approval_status: str):
             "_dispatch_retirement_decision(%s) failed: %s", approval_status, exc, exc_info=True
         )
         # D-1 security contract: do NOT echo str(exc) — may carry a DB path.
-        return jsonify({"success": False, "approval_status": None, "error": type(exc).__name__}), 200
+        return jsonify(
+            {"success": False, "approval_status": None, "error": type(exc).__name__}
+        ), 200
 
     return jsonify({"success": True, "approval_status": approval_status, "error": None}), 200
 
