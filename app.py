@@ -6204,7 +6204,6 @@ def ai_advisor_tab():
         for _rec in retirement_recommendations:
             _decision = _ret_decisions_by_id.get(_rec.get("candidate_id"))
             _rec["approval_status"] = (_decision or {}).get("approval_status") or "pending"
-            _rec["_decision"] = _decision
             if _rec["approval_status"] == "approved":
                 _ret_any_approved = True
 

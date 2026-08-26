@@ -945,7 +945,9 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Retirement Recommendations panel (Cycle 2a) -- minimal, read-only    */
+        /* Retirement Recommendations panel -- Cycle 2a's card layout, plus   */
+        /* Cycle 2b's explanation/status/approve-reject/checklist additions   */
+        /* further down this stylesheet.                                     */
         /* ------------------------------------------------------------------ */
         .retirement-rec-card {
             border: 1px solid var(--studio-border);
@@ -1522,9 +1524,11 @@
 
         </div>
         <!-- ============================================================ -->
-        <!-- Retirement Recommendations panel (Cycle 2a) -- minimal,        -->
-        <!-- server-rendered, READ-ONLY. No operator lifecycle affordance   -->
-        <!-- of any kind here -- that's Cycle 2b.                          -->
+        <!-- Retirement Recommendations panel. Cycle 2a shipped the        -->
+        <!-- read-only recommendation cards; Cycle 2b (AC-7) added the     -->
+        <!-- operator lifecycle affordance itself -- the explanation,      -->
+        <!-- live status chip, Approve/Reject buttons, and the             -->
+        <!-- deterministic wind-down checklist on approved cards.          -->
         <!-- ============================================================ -->
         <section class="matrix-card" data-testid="retirement-recommendations-panel">
             <div class="matrix-card-header">Retirement Recommendations</div>
@@ -1590,11 +1594,7 @@
                             </div>
                             {% else %}
                             <div class="retirement-checklist-holdings retirement-checklist-holdings--unavailable">
-                                {%- if cl.get('unavailable_note') -%}
-                                {{ cl.get('unavailable_note') | e }}
-                                {%- else -%}
-                                current holdings unavailable (off-hours) — view live positions in Composer
-                                {%- endif -%}
+                                {{- cl.get('unavailable_note') | e -}}
                             </div>
                             {% endif %}
                             <ol class="retirement-checklist-steps">

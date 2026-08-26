@@ -1143,14 +1143,28 @@
                 if (data && data.success === true) {
                     if (card) {
                         card.style.opacity = '1';
+                        // F3: color the confirmation by the actual action taken
+                        // -- a reject confirmation must never render in the
+                        // same success-green used for approve.
+                        var confirmColor = action === 'reject' ? cssVar('--studio-neg') : cssVar('--studio-pos');
                         var msg = action === 'approve'
                             ? 'Approved — reload this page to view the wind-down checklist.'
                             : 'Rejected.';
                         var actionsRow = card.querySelector('.retirement-rec-actions');
                         if (actionsRow) {
                             actionsRow.innerHTML =
-                                '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                                '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:700;">' +
                                 msg + '</p>';
+                        }
+                        // F4: the status chip must reflect the new decision
+                        // immediately, not just the actions row -- otherwise a
+                        // stale "Pending" chip sits next to the confirmation
+                        // message until the page is reloaded.
+                        var newStatus = action === 'reject' ? 'rejected' : 'approved';
+                        var statusChip = card.querySelector('[data-testid="retirement-rec-status"]');
+                        if (statusChip) {
+                            statusChip.textContent = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
+                            statusChip.className = 'retirement-status-chip retirement-status-chip--' + newStatus;
                         }
                     }
                 } else {
