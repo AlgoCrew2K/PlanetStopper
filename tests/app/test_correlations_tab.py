@@ -173,9 +173,45 @@ def thin_pair_matrix():
 
 @pytest.fixture(autouse=True)
 def _cleanup_stub():
-    """Ensure the stub module is removed from sys.modules after every test."""
+    """Ensure the stub module is removed from sys.modules after every test,
+    AND restore the real correlation_diagnostic.compute_pairwise_correlations
+    if a test's _inject_correlation_diagnostic_stub call took the real-module
+    branch (line ~86 above), which DIRECTLY MUTATES the real module's
+    attribute rather than swapping a stub into sys.modules.
+
+    CI-caught test-isolation bug (full-tree run, not caught by any segmented
+    chunk): _remove_correlation_diagnostic_stub() only pops sys.modules and
+    the advisors-package attribute -- neither of which the real-module branch
+    ever touches -- so a MagicMock left there by one test call leaked
+    module-globally into every OTHER test file that imports
+    advisors.correlation_diagnostic afterward (first caught by
+    tests/advisors/test_retirement_recommender_degenerate.py's pure {} -> []
+    empty-input test, which is correct production code -- the leaked mock
+    was the defect, not the new test).
+
+    Fix: capture the REAL (unmutated) function reference in this fixture's
+    own local scope at SETUP time (before the test body can call
+    _inject_correlation_diagnostic_stub), then unconditionally restore it at
+    teardown -- regardless of whether this particular test happened to
+    trigger the real-module mutation path. Deliberately NOT a module-level
+    mutable (that would just be a second instance of the same class of bug,
+    shared cross-test state) -- this is fixture-local state, scoped fresh per
+    test invocation by pytest's own fixture mechanism, the correct pattern.
+    """
+    try:
+        from advisors import correlation_diagnostic as _real
+
+        _original_compute_pairwise_correlations = _real.compute_pairwise_correlations
+    except ImportError:
+        _real = None
+        _original_compute_pairwise_correlations = None
+
     yield
+
     _remove_correlation_diagnostic_stub()
+
+    if _real is not None:
+        _real.compute_pairwise_correlations = _original_compute_pairwise_correlations
 
 
 # ---------------------------------------------------------------------------
@@ -481,3 +517,83 @@ def test_correlations_route_rejects_post(test_client):
         f"POST /ai-advisor/correlations must return 404 or 405 (no mutation surface); "
         f"got {resp.status_code}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression guard for the CI-caught test-isolation leak (full-tree run).
+# Deliberately the LAST test in this file (definition order) so it runs
+# AFTER every test above that calls _inject_correlation_diagnostic_stub and
+# exercises the real-module mutation branch -- deterministically reproducing
+# the leak pre-fix within a single file's own run (no cross-file ordering
+# dependency needed to prove this specific guard).
+# ---------------------------------------------------------------------------
+
+
+class TestLeakedMockDoesNotCorruptAnAlreadyBoundConsumerReference:
+    """Deterministic two-test reproduction of the CI-caught leak's ACTUAL
+    mechanism -- not a naive single-test check.
+
+    Why a single-test `from advisors import correlation_diagnostic as _real;
+    assert not isinstance(_real.compute_pairwise_correlations, Mock)` is
+    VACUOUS: _remove_correlation_diagnostic_stub() unconditionally pops
+    "advisors.correlation_diagnostic" from sys.modules on every test's
+    teardown, so a plain `from ... import ...` AFTER that always triggers a
+    FRESH re-import -- a brand-new, never-mutated module object every single
+    time, regardless of whether the restore fix actually works. Verified
+    empirically: that check passed even with the restore logic deliberately
+    removed.
+
+    The real leak mechanism: a CONSUMER module -- advisors.retirement_
+    recommender does `from advisors import correlation_diagnostic` at ITS
+    OWN module level -- binds ONE FIXED reference the FIRST TIME IT IS EVER
+    IMPORTED in the process, to whatever sys.modules["advisors.
+    correlation_diagnostic"] was AT THAT MOMENT. That reference is NEVER
+    updated by any later sys.modules pop/reimport cycle elsewhere -- Python
+    module bindings don't retroactively follow sys.modules changes. If that
+    first-ever import happens to land WHILE test_correlations_tab.py's
+    real-module mutation branch is active (between a mutating test's setup
+    and its own teardown -- exactly the timing CI's real loadfile order hit,
+    and exactly what broke tests/advisors/test_retirement_recommender_
+    degenerate.py's pure {} -> [] empty-input test elsewhere), the consumer
+    is corrupted for the rest of the process unless the mutation is restored
+    on that SAME object instance before its teardown completes.
+
+    Test A below forces a controlled RE-BINDING of retirement_recommender's
+    own `correlation_diagnostic` reference WHILE a mutation is active, via
+    importlib.reload() -- NOT a plain first-ever `import` (which only
+    reproduces the exposure window if this genuinely happens to be the
+    process's first-ever import of that module, an assumption that broke
+    the first version of this test the moment it ran alongside ANY other
+    file that imports retirement_recommender first, e.g. the full-tree CI
+    order this guard exists to protect against -- self-defeating). reload()
+    forces the module's top-level `from advisors import correlation_
+    diagnostic` line to re-execute NOW, capturing whatever object is
+    CURRENTLY in sys.modules regardless of import history, making this
+    deterministic under any file/test ordering. Test B (autouse
+    _cleanup_stub's teardown fires automatically between A and B) checks
+    that SAME bound reference was correctly restored.
+    """
+
+    def test_a_reload_of_a_consumer_lands_during_an_active_mutation(self):
+        import importlib
+
+        _inject_correlation_diagnostic_stub([_make_pair_result("leak-x", "leak-y")])
+        import advisors.retirement_recommender as _rr_consumer
+
+        importlib.reload(_rr_consumer)  # re-binds correlation_diagnostic NOW, mid-mutation
+
+    def test_b_consumer_binding_is_clean_after_test_a_tore_down(self):
+        from unittest.mock import Mock
+
+        import advisors.retirement_recommender as _rr_consumer
+
+        bound_fn = _rr_consumer.correlation_diagnostic.compute_pairwise_correlations
+        assert not isinstance(bound_fn, Mock), (
+            "advisors.retirement_recommender.correlation_diagnostic."
+            "compute_pairwise_correlations -- the SPECIFIC module-object "
+            "reference retirement_recommender.py bound during its first-ever "
+            "import (deliberately forced mid-mutation by test_a above) -- is "
+            "still a leaked Mock after test_a's teardown ran. The autouse "
+            "_cleanup_stub fixture failed to restore the real function on "
+            "the SAME object instance a real consumer is bound to."
+        )

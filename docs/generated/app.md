@@ -138,7 +138,14 @@ Minimal unauthenticated liveness probe (F-005, `DE-OPS-CLUSTER-001`, 2026-07-21)
 ### Scheduler
 
 #### `run_scheduler() → None`
-Runs the `schedule` loop: every minute at `:00` triggers `threaded_trigger()` and `_refresh_account_totals()`; daily at 02:00 runs `_run_trigger_retention()`; daily at 03:00 runs `_run_lens_pipeline()` (gated by `DISABLE_DAEMON_LENS_PIPELINE`); daily at **03:30** runs `_run_incubation_tick()` (the Strategy Incubation Gate's forward-data tick, staggered 30 minutes after the lens-pipeline slot so the two off-hours jobs never contend for the same minute -- see below).
+Runs the `schedule` loop: every minute at `:00` triggers `threaded_trigger()` and `_refresh_account_totals()`; daily at 02:00 runs `_run_trigger_retention()`; daily at 03:00 runs `_run_lens_pipeline()` (gated by `DISABLE_DAEMON_LENS_PIPELINE`); daily at **03:30** runs `_run_incubation_tick()` (the Strategy Incubation Gate's forward-data tick, staggered 30 minutes after the lens-pipeline slot so the two off-hours jobs never contend for the same minute -- see below); daily at **03:45** runs `_run_retirement_recommender_tick()` (Phase 2 Cycle 2a Revise round, `DE-RETIRE-CORE-001`, 2026-08-26 -- staggered a further 15 minutes after the incubation slot so all three off-hours jobs run without same-minute contention).
+
+#### `_run_retirement_recommender_tick() → None` / `_retirement_recommender_tick_worker() → None`
+Non-blocking daily off-hours wrapper (mirrors `_run_incubation_tick`'s own two-function split): `_run_retirement_recommender_tick()` spawns a daemon thread (`name="retirement-recommender-tick"`) so the scheduler thread returns immediately, never blocking the 1-minute execution path (Architecture Constraint 1); the thread runs `_retirement_recommender_tick_worker()`, which lazily imports `advisors.retirement_recommender.build_recommendations`/`persist_recommendations` (CC-2 -- never a module-level import), calls `build_recommendations()` then `persist_recommendations(<its return value>)`, and logs the count persisted at INFO. This is the sole production caller of either function -- without it, `GET /api/retirement-recommendations` and the Overview-tab panel would have nothing to read (the gap the original cycle shipped with; closed here). D-1: any exception is caught and logged as `type(exc).__name__` only, at WARNING+ -- a producer failure can never crash the scheduler thread.
+
+**Two independent error-logging layers, by design (not redundant).** `build_recommendations()` itself gained its own internal `except`-clause WARNING log at `f9819274` (Revise round 2, PR-level `/code-review` Finding 5) -- since that function never raises (D-1), this worker's own `except` around the call chain will essentially never fire FOR a `build_recommendations`-internal failure specifically (it always returns `[]` cleanly); this worker's `except` remains the catch-all for failures OUTSIDE that boundary -- e.g. an exception raised by `persist_recommendations()` itself, or by the lazy import. The two logs are not duplicative: they cover disjoint failure surfaces.
+
+See [advisors/retirement_recommender](advisors_retirement_recommender.md) and `DE-RETIRE-CORE-001` in `DECISIONS.md`.
 
 #### `trigger_alpha_bot(force: bool = False) → None`
 Spawns `alpha_bot_execution.py` as a subprocess. Passes `--force` when `force=True`. Logs stdout/stderr to `alphabot_daemon.log`. After the subprocess exits (success or `CalledProcessError`), calls `_notify_cycle_complete()` in a `finally` block — the cycle notification is unconditional.
@@ -505,6 +512,30 @@ See `DE-INCUBATION-GATE-001` in `DECISIONS.md` and `docs/generated/advisors_incu
 
 **Consumed by:** `refreshIncubationChips()` in `static/ai_advisor.js` -- see `docs/generated/static_ai_advisor_js.md`.
 
+#### `GET /api/retirement-recommendations` -- `api_retirement_recommendations()` (Phase 2 Cycle 2a, `DE-RETIRE-CORE-001`, 2026-08-26)
+
+Returns the currently PERSISTED advisory retirement recommendations -- read-only, never recomputes/reruns `advisors.retirement_recommender` from this route (see [advisors/retirement_recommender](advisors_retirement_recommender.md) for the module that produces these rows).
+
+**`_fetch_retirement_recommendations(limit=None) -> list[dict]`** -- shared helper, called by BOTH this route AND the `ai_advisor_tab()` Overview panel prefetch below (one fetch+flatten implementation, never duplicated). Reads `database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=...)` and returns each row's `raw_response` dict verbatim (the authoritative schema documented in [advisors/retirement_recommender](advisors_retirement_recommender.md) (its "`raw_response` shape" section) -- no renaming/translation layer). `limit` defaults to the existing `_ADVISOR_OBSERVATIONS_PAGE_LIMIT` module constant, resolved lazily inside the function body rather than as a parameter default (that constant is defined later in the file; a def-time default would raise `NameError` at import). This helper itself RAISES on a DB-read failure -- each caller degrades to its own honest empty result independently (route: `{"recommendations": []}`; panel: template's empty-state), the same per-route error-ownership convention `api_incubation` already uses.
+
+**Latest-night-only filtering (Revise round 2, PR-level `/code-review` Finding 4, fixed at `0d9af079`).** `advisor_observations` is append-only, and the 03:45 daily tick persists every night — so a multi-night deployment accumulates one row per night per still-flagged pair, PLUS stale rows for pairs no longer flagged. The original cycle's helper returned every row up to `limit`, newest-first, unfiltered — meaning the route/panel could show duplicate or stale cards from prior nights alongside the current night's. Fixed: after fetching, the helper computes `latest_date = max(row["created_at"][:10] for row in dated_rows)` and keeps only rows whose `created_at[:10]` (UTC calendar date) matches — the same "one batch, not the whole table" trick `database.get_candidate_alert_last_run` already established for a different feature, applied Python-side here since `get_advisor_observations_for_role` already returns `created_at` on every row (no second query needed). A row with no `created_at` at all is excluded from consideration entirely (not included via any fallback); if every fetched row lacks `created_at`, the helper returns `[]`. A pair still flagged on consecutive nights produces a genuine append-only duplicate row for that candidate — the date filter naturally keeps only the latest night's row for it too, so this fix incidentally also closes same-candidate duplication, not just cross-night staleness.
+
+**Response shape:** `{"recommendations": [<raw_response dict, flattened to top level>, ...]}`.
+
+**Strict-JSON safe:** every numeric field, including nested `candidate_metrics`/`sibling_metrics`, is sanitized through a local `_json_safe` NaN/Infinity guard before `jsonify()` -- a raw `NaN`/`Infinity` token would corrupt the WHOLE response for a real browser's `response.json()` (RFC 8259 has no such tokens). A single malformed row's sanitization failure is caught per-row and skipped -- one bad row never breaks the whole response.
+
+**Key properties:**
+- **Read-only.** Not in `_SETTINGS_WRITE_ALLOWLIST`, no `LIVE_EXECUTION` interaction. GET never writes.
+- **Never a 500.** A read failure degrades to `{"recommendations": []}`.
+- **Auth-gated.** Covered by the global `_auth_before_request` hook, same as `guard_alpha_summary()`/`api_incubation()` -- no additional decorator.
+- **Empty -> `{"recommendations": []}`**, the honest empty state, never an error or a wrapper object.
+
+**Producer (Revise round, `cac04985`) -- the ledger this route reads is no longer empty-forever.** A daily off-hours scheduler tick, `_run_retirement_recommender_tick()`, is registered at **03:45** in `run_scheduler()` (staggered 15 minutes after the Strategy Incubation Gate's existing 03:30 slot) and calls `advisors.retirement_recommender.build_recommendations()` then `persist_recommendations(...)` on its return value -- the sole production caller of either function. `advisors.retirement_recommender` is lazily imported inside the tick worker (CC-2), which runs in its own daemon thread so the scheduler loop returns immediately (Architecture Constraint 1 -- never blocks the 1-minute execution path). D-1: a producer failure is logged as `type(exc).__name__` only and never crashes the scheduler thread. See [advisors/retirement_recommender](advisors_retirement_recommender.md#internal-dependencies) (its "Callers" note under Internal Dependencies) for the full worker design.
+
+**Original-cycle gap, closed by this Revise round.** This route originally shipped with no producer anywhere in production -- it and the panel below were wired to read a ledger nothing wrote, so both would have rendered an honest empty state indefinitely. Flagged during doc review rather than shipped silently; the PM ruled it in-scope to close within this cycle (not deferred to 2b) once flagged. See `DE-RETIRE-CORE-001`'s "Revise round" section in `DECISIONS.md`.
+
+See `DE-RETIRE-CORE-001` in `DECISIONS.md` and [advisors/retirement_recommender](advisors_retirement_recommender.md).
+
 ---
 
 ### Settings Write Paths
@@ -828,6 +859,26 @@ The whole per-row block stays inside the pre-existing `try/except` around the `f
 Additive, right after the existing `sb_observations` build block. Builds a `candidate_hash -> ledger row` lookup from ONE `database.get_incubation_overview()` call, then for every `sb_observations` entry whose `raw_response.candidate_hash` matches a ledger row, stamps `_incubation_badge_label`/`_incubation_badge_modifier` onto that observation dict in place (mirrors the RF-1 `_preview_text` in-place-stamp precedent above). Computed fresh per request, from the SAME `_incubation_badge()` helper the `GET /api/incubation` route uses (see above) -- never a frozen field, per the AC-5 amendment: `advisor_observations` rows are append-only/immutable, so a status frozen at persist time could never reflect a later promotion/failure.
 
 A survivor with no `candidate_hash` (a pre-feature row, or an admission that failed/hit the cap) or no matching ledger row is left un-stamped -- `templates/ai_advisor.html` renders no chip for that card (`{% if obs._incubation_badge_modifier %}`-guarded) rather than fabricating a status. Wrapped in `try/except`: a ledger-read failure at this stamping step degrades to zero chips rendered, never a 500 of the whole `/ai-advisor` page.
+
+---
+
+### `ai_advisor_tab()` — Retirement Recommendations panel prefetch (Phase 2 Cycle 2a, `DE-RETIRE-CORE-001`, 2026-08-26)
+
+Additive to the existing `GET /ai-advisor` context assembly. Prefetches the SAME persisted `RETIREMENT_RECOMMENDATION` rows the route above serves, via the SAME shared `_fetch_retirement_recommendations()` helper (one implementation, two consumers — never duplicated):
+
+```python
+retirement_recommendations: list[dict] = []
+try:
+    retirement_recommendations = _fetch_retirement_recommendations()
+except Exception:
+    pass  # Empty-state rendered by template on [].
+```
+
+Threaded into `render_template(...)`'s kwargs as `retirement_recommendations`. Read-only — never recomputes/reruns `advisors.retirement_recommender` from this render path (see [advisors/retirement_recommender](advisors_retirement_recommender.md)). A read failure silently leaves the list empty; the template's own honest empty-state (`data-testid="retirement-recommendations-empty"`) renders in that case, never a 500 of the whole `/ai-advisor` page.
+
+**Panel placement and content (`templates/ai_advisor.html`).** A new `<section class="matrix-card" data-testid="retirement-recommendations-panel">` sits at the **end of the Overview tab** (`tab-panel-overview`), after the existing correlations/Market-Prism blocks and immediately before that tab panel's closing `</div>`. Purely read-only, server-rendered, NO operator affordance of any kind (no approve/reject/dismiss control — that lifecycle is Cycle 2b). Per recommendation card: candidate id → "kept: {sibling id}", correlation (2dp or `—`), the composite gap (`sibling_composite - candidate_composite`, 2dp or `—` if either is `None`), both gate verdicts ("passed"/"not met"), and the `basis_label` disclosure line in a small italic footer. All fields render through Jinja `.get(...)` with `| e` escaping — no `| safe` anywhere in this block, matching this file's existing convention. Styling reuses existing dashboard CSS-token variables (`var(--studio-border)`, `var(--studio-ink)`, `var(--studio-ink-dim)`) — no raw hex, no inline colors, consistent with the Market-Prism/correlations panels' precedent.
+
+The panel's honest empty state (`"No retirement recommendations yet — advisory, read-only."`) still renders correctly whenever the ledger genuinely has no gate-surviving recommendations (e.g. a fresh droplet before the first 03:45 tick, or a live fleet with no `>=0.65` pairs) -- but it is no longer empty-forever: the same `_run_retirement_recommender_tick()` producer documented under `GET /api/retirement-recommendations` above populates the ledger this panel reads, daily at 03:45. See `DE-RETIRE-CORE-001` in `DECISIONS.md`.
 
 ---
 

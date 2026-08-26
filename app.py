@@ -955,6 +955,49 @@ def _run_incubation_tick() -> None:
     t.start()
 
 
+def _retirement_recommender_tick_worker() -> None:
+    """Background worker that runs the Retirement Recommender's daily tick.
+
+    Imported lazily to keep advisors.retirement_recommender off the execution
+    path (CC-2). Calls the real producer chain -- build_recommendations() then
+    persist_recommendations(<its own return value>) -- so the read-only
+    GET /api/retirement-recommendations route and the AI Advisor panel have
+    something to render (PM ruling, review-response cycle 2: without this
+    tick nothing in production ever calls the producer, so both read-only
+    surfaces render an honest-empty state forever).
+
+    D-1 error contract: only type(exc).__name__ appears in log records at
+    WARNING+ -- a producer failure must never crash the scheduler thread.
+    """
+    try:
+        from advisors.retirement_recommender import (  # lazy — not module-level (CC-2)
+            build_recommendations,
+            persist_recommendations,
+        )
+
+        recs = build_recommendations()
+        persist_recommendations(recs)
+        _daemon_log.info("Retirement recommender tick complete: %d recommendation(s).", len(recs))
+    except Exception as exc:
+        _daemon_log.error("Retirement recommender tick worker failed: %s", type(exc).__name__)
+
+
+def _run_retirement_recommender_tick() -> None:
+    """Non-blocking daily off-hours wrapper for the retirement recommender tick.
+
+    Spawns a daemon thread so the scheduler thread returns immediately — the
+    tick never blocks the 1-minute execution path (arch constraint 1).
+    """
+    import threading
+
+    t = threading.Thread(
+        target=_retirement_recommender_tick_worker,
+        daemon=True,
+        name="retirement-recommender-tick",
+    )
+    t.start()
+
+
 def run_scheduler():
     schedule.every().minute.at(":00").do(threaded_trigger)
     schedule.every().minute.at(":00").do(_refresh_account_totals)
@@ -965,6 +1008,10 @@ def run_scheduler():
     # Strategy Incubation Gate daily tick — staggered 30 minutes after the lens
     # pipeline slot so the two off-hours jobs never contend for the same minute.
     schedule.every().day.at("03:30").do(_run_incubation_tick)
+    # Retirement Recommender daily tick — staggered 15 minutes after the
+    # incubation slot so all three off-hours jobs run without same-minute
+    # contention.
+    schedule.every().day.at("03:45").do(_run_retirement_recommender_tick)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -3797,6 +3844,110 @@ def api_incubation():
     return jsonify({"incubating": out})
 
 
+def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
+    """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
+
+    Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
+    Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
+    never duplicated. Each returned dict IS the persisted raw_response verbatim
+    (the authoritative schema -- candidate_id/sibling_id/correlation/etc, see
+    .claude/tdd-handoff.md) -- no renaming/translation layer between
+    advisors.retirement_recommender's persistence and this read path. Never
+    recomputes/reruns the module -- read-only over already-persisted rows.
+
+    limit defaults to _ADVISOR_OBSERVATIONS_PAGE_LIMIT, resolved lazily inside
+    the function body (not as a parameter default) because that module-level
+    constant is defined later in this file -- a def-time default would raise
+    NameError at import.
+
+    PR-level /code-review Finding 4: advisor_observations is append-only and
+    the 03:45 daily tick (_run_retirement_recommender_tick) persists every
+    night, so a multi-night deployment accumulates one row per night per
+    still-flagged pair, plus stale rows for pairs no longer flagged. This
+    filters to ONLY the rows sharing the MOST RECENT fetched row's calendar
+    date (UTC, `created_at[:10]`) -- the same substr(created_at,1,10)-equals-
+    MAX(...) "one batch, not the whole table" trick database.get_
+    candidate_alert_last_run already established, applied Python-side here
+    since get_advisor_observations_for_role already returns created_at on
+    every row (no second query needed). A pair still flagged on consecutive
+    nights produces a genuine append-only duplicate row -- the date filter
+    naturally keeps only the latest night's row for that candidate too.
+
+    Raises on a DB-read failure (does not swallow) -- each caller degrades to
+    an empty result on its own terms (route: honest {"recommendations": []};
+    panel: honest empty-state), matching this file's existing per-route error
+    ownership convention (see api_incubation above).
+    """
+    if limit is None:
+        limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
+    rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
+    dated_rows = [row for row in rows if row.get("created_at")]
+    if not dated_rows:
+        return []
+    latest_date = max(row["created_at"][:10] for row in dated_rows)
+    out: list[dict] = []
+    for row in dated_rows:
+        if row["created_at"][:10] != latest_date:
+            continue
+        raw = row.get("raw_response")
+        if isinstance(raw, dict):
+            out.append(raw)
+    return out
+
+
+@app.route("/api/retirement-recommendations")
+def api_retirement_recommendations():
+    """Return the current advisory retirement recommendations (AC-9).
+
+    Read-only -- reads persisted RETIREMENT_RECOMMENDATION advisor_observations
+    rows via _fetch_retirement_recommendations() (never recomputes/reruns
+    advisors.retirement_recommender from this route). Covered by the global
+    _auth_before_request hook (no extra decorator needed, same as
+    guard_alpha_summary/api_incubation) -- NOT in _SETTINGS_WRITE_ALLOWLIST, no
+    LIVE_EXECUTION interaction. GET never writes.
+
+    Response shape: {"recommendations": [<raw_response dict, flattened to top
+    level>, ...]}. Each item carries the authoritative raw_response schema
+    verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
+    n_obs, candidate_composite, sibling_composite, candidate_metrics,
+    sibling_metrics, uncertainty_gate_passed, structural_redundancy_gate_passed,
+    stressed_correlation, holdings_overlap, basis_label).
+
+    Empty -> {"recommendations": []}, never a 500; a read failure degrades to
+    the same empty list rather than 500ing (mirrors api_incubation).
+
+    Strict-JSON safe: every numeric field (including nested candidate_metrics/
+    sibling_metrics) is sanitized through a local NaN/Infinity guard (mirrors
+    api_incubation's own _json_safe_float) before jsonify() -- a raw NaN/
+    Infinity token would corrupt the WHOLE response for a real browser's
+    response.json().
+    """
+
+    def _json_safe(value):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        if isinstance(value, dict):
+            return {k: _json_safe(v) for k, v in value.items()}
+        return value
+
+    try:
+        raw_rows = _fetch_retirement_recommendations()
+    except Exception:
+        _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
+        raw_rows = []
+
+    out = []
+    for raw in raw_rows:
+        try:
+            out.append({k: _json_safe(v) for k, v in raw.items()})
+        except Exception:
+            # One malformed row must never break the whole route.
+            _daemon_log.debug("api_retirement_recommendations: row degraded", exc_info=True)
+            continue
+
+    return jsonify({"recommendations": out})
+
+
 @app.route("/api/exit-turnover")
 def exit_turnover():
     """Return per-symphony exit-trigger turnover stats + an estimated annual
@@ -5994,6 +6145,20 @@ def ai_advisor_tab():
             _obs["_incubation_badge_modifier"] = _badge["modifier"]
 
     # ------------------------------------------------------------------ #
+    # Retirement Recommendations panel (Cycle 2a, AC-10): prefetch the    #
+    # latest persisted RETIREMENT_RECOMMENDATION rows via the SAME helper #
+    # GET /api/retirement-recommendations uses. Read-only -- never        #
+    # recomputes/reruns advisors.retirement_recommender from this render. #
+    # Each entry is the persisted raw_response dict verbatim (the         #
+    # authoritative schema) -- no renaming/translation layer.             #
+    # ------------------------------------------------------------------ #
+    retirement_recommendations: list[dict] = []
+    try:
+        retirement_recommendations = _fetch_retirement_recommendations()
+    except Exception:
+        pass  # Empty-state rendered by template on [].
+
+    # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
     # rows (AC-9-route). Shared by both proposal_source values             #
     # ('frontrunner_builder' and 'strategy_builder_retrofit') — one query, #
@@ -6103,6 +6268,7 @@ def ai_advisor_tab():
         sb_card_artifacts=sb_card_artifacts,
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
+        retirement_recommendations=retirement_recommendations,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,
