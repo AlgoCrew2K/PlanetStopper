@@ -461,10 +461,19 @@ def build_recommendations(
         if not pairs:
             return []
 
-        involved = sorted({sym for p in pairs for sym in (p.sym_a, p.sym_b)})
+        # AC-3: "normalized across the current fleet" -- the FULL live roster
+        # with a usable return series (series_by_symphony's keys), never just
+        # the narrower subset of symphonies that happen to appear in a
+        # flagged pair. A pair-only population is not a fleet at all, and is
+        # mathematically degenerate for min-max normalization (every
+        # non-tied metric collapses to a winner-take-all {0, 1}, discarding
+        # all magnitude information) -- confirmed to flip which symphony is
+        # selected as the retirement candidate purely as a function of
+        # whether an unrelated third live symphony exists in the roster
+        # (quant-code-reviewer Finding 1).
         metrics_by_symphony = {
             sym: analytics.compute_quantstats_metrics(list(series_by_symphony[sym].values()))
-            for sym in involved
+            for sym in series_by_symphony
         }
         scores = compute_composite_scores(metrics_by_symphony)
 
