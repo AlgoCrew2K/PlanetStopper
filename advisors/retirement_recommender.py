@@ -25,12 +25,15 @@ contract, matching the sibling advisors modules).
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 
 import analytics
 import database
 from advisors import correlation_diagnostic
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Named constants (no magic numbers -- every value source-commented)
@@ -246,10 +249,12 @@ def select_retirement_candidate(
     lexically smaller symphony_id. Symmetric in (sym_a, sym_b) -- the result
     identifies an entity, not a call-order-dependent position.
 
-    An ineligible symphony (CompositeScore.eligible is False) is NEVER
-    returned as the candidate. If the natural (lower-composite) candidate is
-    ineligible, the pair yields NO candidate at all (fail-closed) -- never a
-    fallback to nominating the stronger, eligible sibling instead. A symphony
+    An ineligible symphony (CompositeScore.eligible is False, composite is
+    None) is NEVER returned as the candidate. PM ruling (PR-level
+    /code-review Finding 1): if EITHER side of the pair is ineligible, the
+    pair yields NO candidate at all (fail-closed) -- never a fallback
+    nominating the eligible sibling, regardless of which side (natural
+    candidate or natural keep member) is the ineligible one. A symphony
     missing from `scores` entirely is treated the same as "no valid pair"
     (never a KeyError).
     """
@@ -261,11 +266,17 @@ def select_retirement_candidate(
         return None
 
     comp_a, comp_b = score_a.composite, score_b.composite
-    if comp_a is None and comp_b is None:
+    # PM ruling (PR-level /code-review Finding 1) OVERRIDES the original
+    # AC-11-derived "may still be the keep member" design: when EITHER side
+    # is ineligible (composite is None), the pair yields NO candidate at all
+    # -- never a fallback nominating the eligible sibling. composite=None can
+    # hide a catastrophic/unmeasurable loss; keeping the unscoreable member
+    # while retiring the well-characterized one is backwards for a capital
+    # decision. (Was `comp_a is None and comp_b is None` -- fail-open on
+    # exactly one side ineligible.)
+    if comp_a is None or comp_b is None:
         return None
-    if comp_a is None:
-        natural = sym_b
-    elif comp_b is None or comp_a < comp_b:
+    if comp_a < comp_b:
         natural = sym_a
     elif comp_b < comp_a:
         natural = sym_b
@@ -354,8 +365,19 @@ def evaluate_structural_redundancy_gate(
 
 def _compute_stressed_correlation(vals_a: list[float], vals_b: list[float]) -> float | None:
     """AC-6 stress sub-window: the top ceil(STRESS_WINDOW_FRACTION * n)
-    aligned days ranked by max(|return_a|, |return_b|) descending -- the
-    highest-magnitude, most-likely-stressed subset of the aligned history.
+    aligned days ranked by MOST-NEGATIVE combined return
+    ((return_a[i] + return_b[i]) / 2) ascending -- the deepest joint-drawdown
+    subset of the aligned history, targeting genuine crash/stress days.
+
+    PM ruling (PR-level /code-review Finding 3): NOT magnitude-based
+    (max(|return_a|, |return_b|) descending) -- magnitude selection admits
+    big RALLY (up) days alongside genuine crash (down) days, so a pair that
+    co-moves nicely on rallies but DIVERGES on drawdowns (the exact crash-
+    diversification case this gate exists to protect, per the Phase-1 audit)
+    can have its "stressed" window filled entirely with well-correlated
+    rally days, never sampling the divergent crash days at all -- silently
+    passing the gate for a pair that should have been withheld. Downside/
+    most-negative selection targets the crash days specifically.
 
     Returns None (fail-closed, mirroring PairResult.correlation's own
     convention) when the selected subset is too thin (< STRESS_MIN_OBS) or
@@ -366,8 +388,8 @@ def _compute_stressed_correlation(vals_a: list[float], vals_b: list[float]) -> f
     if k < STRESS_MIN_OBS:
         return None
 
-    magnitudes = [max(abs(vals_a[i]), abs(vals_b[i])) for i in range(n)]
-    top_idx = sorted(range(n), key=lambda i: magnitudes[i], reverse=True)[:k]
+    combined = [(vals_a[i] + vals_b[i]) / 2 for i in range(n)]
+    top_idx = sorted(range(n), key=lambda i: combined[i])[:k]  # ascending -- most negative first
     stress_a = [vals_a[i] for i in top_idx]
     stress_b = [vals_b[i] for i in top_idx]
 
@@ -526,7 +548,14 @@ def build_recommendations(
                 candidates_by_id[candidate_id] = raw_response
 
         return [candidates_by_id[k] for k in sorted(candidates_by_id)]
-    except Exception:
+    except Exception as exc:
+        # D-1 contract: log only type(exc).__name__, never str(exc) -- an
+        # exception message could carry a file path, DB row content, or
+        # other internal detail that shouldn't reach logs at WARNING+. This
+        # still lets the nightly scheduler tick distinguish a genuine
+        # internal crash from an honest "no recommendations tonight" empty
+        # result (PR-level /code-review Finding 5).
+        logger.warning("build_recommendations: internal failure: %s", type(exc).__name__)
         return []
 
 
