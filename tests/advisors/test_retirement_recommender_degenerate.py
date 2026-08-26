@@ -141,7 +141,13 @@ class TestClusterDedup:
         pairings -- dedupe keeping the strongest-evidence pair."""
         n = 200
         days = trading_days(n)
-        base = [0.10 * math.sin(i * 0.3) for i in range(n)]
+        # Linear ramp, not a sine wave -- review-response cycle 3 F3 fallout:
+        # a downside-selection stress window can land in a smooth function's
+        # near-zero-derivative extremum region, where fixed-magnitude noise
+        # dominates the locally-flat true signal and collapses the sampled
+        # correlation (verified empirically). A linear ramp has no such
+        # region -- constant derivative everywhere.
+        base = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
         b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(base)]
         c = [0.93 * v + 0.001 * ((i % 5) - 2) for i, v in enumerate(base)]
         series = {

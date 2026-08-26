@@ -210,7 +210,10 @@ class TestBasisPinBotNotHeld:
         """
         n = 200
         days = trading_days(n)
-        bot_a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+        # Linear ramp, not a sine wave -- review-response cycle 3 F3 fallout:
+        # see test_retirement_recommender_composite.py's _fleet_scope_series
+        # docstring for the full derivation.
+        bot_a = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
         bot_b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(bot_a)]
         held_b = [-0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(bot_a)]
 
@@ -258,7 +261,10 @@ class TestBasisPinBotNotHeld:
         reference the actual-traded/bot basis, never say 'held' or 'if-held'."""
         n = 200
         days = trading_days(n)
-        bot_a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+        # Linear ramp, not a sine wave -- review-response cycle 3 F3 fallout:
+        # see test_retirement_recommender_composite.py's _fleet_scope_series
+        # docstring for the full derivation.
+        bot_a = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
         bot_b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(bot_a)]
         series = {
             "sym-a": {d: (bot_a[i], 0.0) for i, d in enumerate(days)},

@@ -67,7 +67,12 @@ def rr():
 def _build_screen_hit_db(tmp_path, monkeypatch):
     n = 200
     days = trading_days(n)
-    a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+    # Linear ramp, not a sine wave -- review-response cycle 3 F3 fallout: see
+    # test_retirement_recommender_composite.py's _fleet_scope_series docstring
+    # for the full derivation (a downside-selection stress window can land in
+    # a smooth function's near-zero-derivative extremum, collapsing the
+    # sampled correlation under fixed-magnitude noise).
+    a = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
     b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(a)]
     series = {
         "candidate-sym": {d: (a[i], 0.0) for i, d in enumerate(days)},

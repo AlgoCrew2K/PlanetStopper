@@ -256,7 +256,10 @@ class TestPropertyUncorrelatedSymphonyNeverCreatesRecommendation:
         n = 200
         days = trading_days(n)
         # Baseline pair: strongly correlated (would be flagged on its own).
-        base_a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+        # Linear ramp, not a sine wave -- review-response cycle 3 F3 fallout:
+        # see test_retirement_recommender_composite.py's _fleet_scope_series
+        # docstring for the full derivation.
+        base_a = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
         base_b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(base_a)]
         # Third symphony: independent-ish oscillation at a different, unrelated
         # frequency/phase -- uncorrelated with both a and b.
@@ -294,7 +297,10 @@ class TestPropertyDeterminismUnderReordering:
         order must not leak into which pairs get recommended."""
         n = 200
         days = trading_days(n)
-        a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+        # Linear ramp, not a sine wave -- review-response cycle 3 F3 fallout:
+        # see test_retirement_recommender_composite.py's _fleet_scope_series
+        # docstring for the full derivation.
+        a = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
         b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(a)]
         c = [0.10 * math.cos(i * 1.31) for i in range(n)]
 

@@ -406,8 +406,20 @@ def _fleet_scope_series(n: int = 200) -> dict[str, list[float]]:
     ~0.9999 (a clean screen hit), A-C and B-C correlate ~0.00003/0.00001
     (C is live but joins no pair) -- computed and confirmed via
     correlation_diagnostic._pearson_r in the review-response scratch session,
-    not asserted from memory."""
-    bot_a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+    not asserted from memory.
+
+    bot_a is a LINEAR RAMP, not a sine wave (review-response cycle 3, F3
+    fallout): a smooth periodic function has near-zero local derivative at
+    its extrema, so a downside/most-negative-combined-return stress-window
+    selection (F3's fix) can end up sampling a cluster of near-identical
+    values there, where the fixed-magnitude additive noise dominates the
+    (locally tiny) true signal variance and collapses the sampled
+    correlation -- verified empirically (not assumed) across every n/k
+    combination this test suite uses. A linear ramp has constant, non-zero
+    derivative everywhere, so its own most-negative subset is always a
+    contiguous, non-degenerate block with real spread, regardless of which
+    selection rule (magnitude- or downside-based) picks it."""
+    bot_a = [-0.10 + 0.20 * i / (n - 1) for i in range(n)]
     bot_b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(bot_a)]
     bot_c = [0.10 * math.cos(i * 1.31) for i in range(n)]
     return {"A": bot_a, "B": bot_b, "C": bot_c}
