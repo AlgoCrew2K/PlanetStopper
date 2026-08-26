@@ -1,0 +1,142 @@
+# advisors/retirement_recommender
+
+> Advisory, read-only math core that flags a live symphony as a *retirement candidate* when it is both redundant (highly correlated with a live sibling) and the weaker performer of the pair -- gated by two conservative, fail-closed regime checks so a calm-market correlation point estimate never over-prunes crash-diversification. No trade, order, liquidation, or `LIVE_EXECUTION` primitive of any kind.
+
+**Source:** `advisors/retirement_recommender.py`
+**Last updated:** 2026-08-26 (new module, Phase 2 Cycle 2a, `DE-RETIRE-CORE-001`)
+
+## Overview
+
+`advisors/retirement_recommender.py` implements the deterministic math core of the Retirement Recommender: three stages, each conservative and fail-closed.
+
+1. **Screen** (`screen_correlated_pairs`) -- pairwise Pearson correlation over each live symphony's CONTINUOUS actual-traded (bot) daily return series, a thin wrapper over the existing `advisors.correlation_diagnostic.compute_pairwise_correlations`.
+2. **Composite rank** (`compute_composite_scores` / `select_retirement_candidate`) -- a CAGR-dominant, fleet-normalized performance score identifies which member of a flagged pair is the weaker performer (the retirement candidate).
+3. **Gates** (`evaluate_uncertainty_gate` / `evaluate_structural_redundancy_gate`) -- a bare correlation point estimate over-prunes crash-diversification (this is the Phase-1 audit's "option C" finding, cited verbatim in the module docstring): a recommendation only survives if the correlation estimate is statistically robust (uncertainty gate) AND the redundancy holds across regimes, not just in calm markets (structural-redundancy gate).
+
+`build_recommendations()` orchestrates all three stages against the live roster and returns a flat list of evidence dicts; `persist_recommendations()` writes each one as an append-only `advisor_observations` row. **This module never moves money and never writes settings** -- structurally enforced by `tests/security/test_retirement_recommender_no_trade_boundary.py` (adversarial source-scan, mirrors `tests/security/test_frontrunner_no_trade_boundary.py`).
+
+Cycle 2a ships ONLY this math core + advisory persistence + the read-only route/panel (see [app](app.md)). The LLM explainer, the operator approval/reject lifecycle, and the Composer liquidation checklist are explicitly Cycle 2b -- out of scope here, and this module contains no seam for any of them.
+
+## The basis rule -- read this before touching the module
+
+**Both the screen (stage 1) and the composite metrics (stage 2) are computed over the SAME series: element `[1]` (bot / actual-traded) of `analytics.get_symphony_bot_and_held_daily_returns(symphony_id, days=RETIREMENT_LOOKBACK_DAYS)`.** This is deliberate and load-bearing, not an implementation detail:
+
+- **Never `analytics.compute_per_symphony_returns`'s trigger-day series.** That series is sparse and selection-biased -- it contains ONLY the days a symphony actually recorded a trigger, silently omitting every day it just held. `analytics.py:1698-1707` documents the concrete failure mode this produces: a 4-trigger sample averaging ~0.45%/day annualizes to an absurd ~209.8% CAGR when treated as consecutive trading days. A retirement decision is a capital decision; it must never rest on that kind of statistic.
+- **Never element `[2]` (the if-held / counterfactual series).** Retirement is about how the symphony ACTUALLY performed under Planet Stopper's own exit/guard-alpha logic, not the counterfactual of never having a stop at all. `/api/performance`'s own JSON labels are the opposite of what they sound like (`live_metrics` there means the *counterfactual*) -- a documented historical inversion trap in this codebase. `build_recommendations` reads the tuple as `dates, bot_returns, _held_returns = result` and the held leg is discarded with a leading underscore, never touched again.
+- **One coherent basis throughout.** Using the same continuous bot series for both the correlation screen and the composite ranking avoids introducing a second, independently selection-biased source and keeps the screen's redundancy claim consistent with the ranking that decides which sibling is "weaker."
+
+`raw_response["basis_label"]` (`_BASIS_LABEL = "actual-traded (bot) daily returns"`) is stamped onto every persisted recommendation and every route/panel response, verbatim, so this basis is visible to the operator alongside the recommendation itself -- never assumed, always disclosed.
+
+## Named constants -- real shipped values (not the plan's placeholders)
+
+Every constant is source-commented in `advisors/retirement_recommender.py` (`:35-119`) with its rationale. Values as actually shipped at HEAD `568293e4`:
+
+| Constant | Value | Meaning / why this value |
+|----------|-------|---------------------------|
+| `CORRELATION_SCREEN_THRESHOLD` | `0.65` | Screen bar (AC-1). Operator/Phase-1-audit ruling -- a spec-pinned literal, not tuned. |
+| `MIN_OBS_FLOOR` | `30` | Minimum overlapping observations for the uncertainty gate (AC-5). **Reused, not reinvented:** `= correlation_diagnostic.THIN_DATA_THRESHOLD`, the same Bailey/de Prado (2014) interpretability floor already established elsewhere in this codebase. |
+| `UNCERTAINTY_CI_CONFIDENCE` | `0.95` | Two-sided confidence level for the Fisher-z CI on the correlation estimate (AC-5). |
+| `_Z_95` | `1.96` | Critical value for the 0.95 CI. Matches this repo's own house convention (`tests/guard_preconditions/_reference_stats.py`'s `Z_95`), deliberately NOT `scipy.stats.norm.ppf(0.975)`'s more precise `1.959964`. |
+| `STRESS_REDUNDANCY_THRESHOLD` | `0.65` | Stressed-sub-window correlation bar (AC-6). Numerically equal to `CORRELATION_SCREEN_THRESHOLD` (redundancy must hold under stress at the same bar it was flagged at under calm conditions) but kept as a SEPARATE named constant, deliberately, so the two can be tuned independently later without an implicit coupling. |
+| `STRESS_MIN_OBS` | `10` | Minimum aligned observations inside the stressed sub-window for its correlation to be estimable at all (AC-6). Independent of, and much smaller than, `MIN_OBS_FLOOR` -- a genuine stress window is a small minority of the full history by construction. |
+| `STRESS_WINDOW_FRACTION` | `0.05` | Fraction of aligned trading days, ranked by same-day combined return magnitude descending, treated as "stressed" (AC-6). Mirrors the standard 95%-confidence VaR tail convention (the worst/most-extreme 5% of days). |
+| `RETIREMENT_LOOKBACK_DAYS` | `250` | Default lookback for the continuous per-symphony bot series (AC-2 / Architecture). ~one full trading year -- the same walk-forward window length already used elsewhere in this codebase's optimizer (`autotuner.py`). |
+| `W_CAGR` | `0.40` | Composite weight, CAGR (AC-3). Strictly dominant over the other four (operator ruling). |
+| `W_SHARPE` | `0.20` | Composite weight, Sharpe. |
+| `W_SORTINO` | `0.15` | Composite weight, Sortino. |
+| `W_MAXDD` | `0.15` | Composite weight, Max Drawdown. |
+| `W_CALMAR` | `0.10` | Composite weight, Calmar. |
+
+The five weights sum to `1.0` so the composite stays in the same rough `[0, 1]` numeric range as any one normalized input metric. `_METRIC_KEYS` (`annualized_return`, `sharpe`, `sortino`, `max_drawdown`, `calmar`) and `_METRIC_WEIGHTS` are the `compute_quantstats_metrics` key names reused verbatim -- no renaming/translation layer between the metrics producer and this module's weighting table.
+
+## `screen_correlated_pairs(series_by_symphony) -> list[PairResult]`
+
+Thin wrapper over `correlation_diagnostic.compute_pairwise_correlations`, filtering to pairs where `correlation is not None and correlation >= CORRELATION_SCREEN_THRESHOLD`. A pair whose `PairResult.correlation is None` (zero-variance, or fewer than 2 aligned observations -- `correlation_diagnostic`'s own contract) is never a screen hit (AC-1). Never raises; fewer than 2 symphonies yields an empty list via the underlying function's own contract.
+
+## `compute_composite_scores(metrics_by_symphony) -> dict[str, CompositeScore]`
+
+Fleet-normalized, CAGR-dominant composite (AC-3). Each of the 5 metrics is min-max normalized **across the current fleet's ELIGIBLE symphonies only** -- an ineligible symphony's partial values must never distort the range its eligible peers are scored against. All 5 raw metrics already use a "higher = better" convention (`max_drawdown` is `<= 0`, so a shallower/less-negative value is already numerically higher), so no per-metric sign inversion is applied; normalizing the raw values directly preserves that ordering. A degenerate fleet range (a single eligible symphony, or every eligible symphony tied on one metric) normalizes that metric to a neutral `0.5` midpoint -- there is no relative-ranking information to extract.
+
+`CompositeScore.eligible` is `False` iff ANY of the 5 metrics is `None` (AC-11) -- that symphony's `composite` is `None` and it can never be returned as a retirement candidate (see `select_retirement_candidate` below), though it may still be the "keep" (sibling) member of a pair.
+
+## `select_retirement_candidate(sym_a, sym_b, scores) -> str | None`
+
+The candidate is the **lower-composite** member of a pair (AC-4). Deterministic tiebreak: (a) lower composite; (b) tie -> lower `metrics['annualized_return']`; (c) tie -> lexically smaller `symphony_id`. Symmetric in `(sym_a, sym_b)` -- the result identifies an entity, not a call-order-dependent position, so the same pair always resolves to the same candidate regardless of argument order.
+
+**An ineligible symphony is NEVER returned as the candidate.** If the natural (lower-composite) choice is ineligible, the function returns `None` for the whole pair -- fail-closed, never a fallback to nominating the eligible-but-stronger sibling instead. A symphony missing from `scores` entirely degrades the same way (never a `KeyError`).
+
+## `evaluate_uncertainty_gate(pair) -> GateVerdict`
+
+Passes iff the Fisher-z 95% CI **lower bound** on the pair's correlation is also `>= CORRELATION_SCREEN_THRESHOLD` AND `n_obs >= MIN_OBS_FLOOR` (AC-5). `GateVerdict.ci_lower`/`ci_upper` are populated here and threaded verbatim into `raw_response` by the orchestrator.
+
+```python
+z = math.atanh(r)
+se = 1.0 / math.sqrt(n - 3)
+ci_lower = math.tanh(z - _Z_95 * se)
+ci_upper = math.tanh(z + _Z_95 * se)
+```
+
+Fails closed (never raises) when `correlation is None`, `n_obs < MIN_OBS_FLOOR`, or the Fisher-z formula is otherwise undefined (`n <= 3` or `|r| >= 1.0`). `MIN_OBS_FLOOR` (30) already exceeds the `n <= 3` boundary, making that branch unreachable once the floor check passes -- it is still guarded explicitly rather than relying on that implication.
+
+## `evaluate_structural_redundancy_gate(pair, stressed_corr, holdings_overlap) -> GateVerdict`
+
+Passes iff `stressed_corr is not None AND stressed_corr >= STRESS_REDUNDANCY_THRESHOLD` (AC-6). `stressed_corr=None` is the single fail-closed signal for BOTH "the stress sub-window has fewer than `STRESS_MIN_OBS` aligned days" and "the stress-window Pearson r is itself undefined (zero variance)" -- mirroring `PairResult.correlation`'s own None convention (one signal, two causes, both fail-closed identically).
+
+`holdings_overlap` is **corroborating evidence only** -- recorded into `raw_response` by the orchestrator but never consumed by this gate's pass/fail logic (the parameter is accepted, then explicitly discarded with `del holdings_overlap` and a comment explaining why, for a symmetric call signature and possible future use). A calm-only pair -- high full-window correlation, low stressed-window correlation -- correctly yields NO recommendation: the sibling provides crash-diversification exactly the way the Phase-1 audit's option-C finding said a bare point estimate would miss.
+
+### `_compute_stressed_correlation(vals_a, vals_b) -> float | None`
+
+The stressed sub-window: the top `ceil(STRESS_WINDOW_FRACTION * n)` aligned days, ranked by `max(|return_a|, |return_b|)` descending -- the highest-magnitude, most-likely-stressed subset of the aligned history. Returns `None` (fail-closed) when the selected subset is thinner than `STRESS_MIN_OBS`, or when the Pearson r over it is itself undefined. Reuses `correlation_diagnostic._pearson_r` directly (module-qualified access to the private helper, a deliberate architectural choice per the RED handoff) so the stress-window statistic shares the EXACT SAME formula and None-convention as the full-window screen -- never a second, independently-drifting correlation implementation.
+
+### `_compute_holdings_overlap(holdings_a, holdings_b) -> float | None`
+
+Jaccard overlap (`|intersection| / |union|`) of two symphonies' held ticker sets. `None` when either side's `logic_holdings` is empty (off-hours / flat market) -- must never crash, and must never be silently treated as zero overlap, which would fabricate a signal that doesn't exist.
+
+## `build_recommendations(*, db_file=None, days=RETIREMENT_LOOKBACK_DAYS) -> list[dict]`
+
+Orchestrator. Discovers the live roster via `_live_symphony_roster(bot_state)` -- a structural discriminator (`isinstance(entry, dict) and "name" in entry`) matching the house convention used at 7+ other call sites for distinguishing a real symphony entry from `bot_state`'s top-level portfolio metadata keys (`date`, `last_execution_mode`, etc.). Fewer than 2 live symphonies (or fewer than 2 with a usable AC-2 series) returns `[]` (AC-11).
+
+Pipeline per surviving pair: screen -> pull the AC-2 aligned values via `correlation_diagnostic._extract_aligned_pairs` -> compute the stressed correlation + holdings overlap -> uncertainty gate -> structural-redundancy gate -> `select_retirement_candidate` -> assemble the `raw_response` evidence dict. A pair failing either gate, or yielding no valid candidate, contributes nothing and the loop continues to the next pair (no early abort).
+
+**Dedup on cluster hits.** The same symphony can be flagged against multiple siblings (a correlation cluster). `_evidence_strength(raw_response)` (currently just `raw_response["correlation"]`, the raw full-window value) ranks competing recommendations for the same candidate; only the single strongest-evidence recommendation per candidate survives into the returned list, keyed by `candidate_id` and returned sorted by id for determinism.
+
+**Never raises.** The entire body is wrapped in one `try/except Exception: return []` -- an unexpected failure anywhere in the pipeline degrades to an honest empty result rather than propagating (D-1 honest-degradation contract, matching every sibling advisors module).
+
+### `raw_response` shape (the authoritative schema — AC-8)
+
+Every dict `build_recommendations()` returns, and every row `persist_recommendations()` writes, carries exactly these keys:
+
+| Key | Meaning |
+|-----|---------|
+| `candidate_id` | The weaker-performer symphony_id (AC-4) — the retirement candidate. |
+| `sibling_id` | The other, stronger-composite member of the pair (the "keep"). |
+| `correlation` | Full-window Pearson r for the pair. |
+| `ci_lower` / `ci_upper` | Fisher-z 95% CI bounds on `correlation` (AC-5). |
+| `n_obs` | Overlapping finite observations the correlation was computed from. |
+| `candidate_composite` / `sibling_composite` | Each member's fleet-normalized composite score. |
+| `candidate_metrics` / `sibling_metrics` | Each member's raw 5-metric dict (`annualized_return`, `sharpe`, `sortino`, `max_drawdown`, `calmar`). |
+| `uncertainty_gate_passed` / `structural_redundancy_gate_passed` | Both always `True` by construction — a pair whose gate failed never reaches `raw_response` assembly at all; the keys exist so a persisted/rendered row is self-describing without requiring the reader to infer the gate outcome from presence alone. |
+| `stressed_correlation` | The AC-6 stress-sub-window correlation that passed the gate. |
+| `holdings_overlap` | Jaccard overlap, or `None` off-hours/flat-market (corroborating only). |
+| `basis_label` | `"actual-traded (bot) daily returns"` — see "The basis rule" above. |
+
+## `persist_recommendations(recs, *, db_file=None) -> int`
+
+One `database.insert_advisor_observation(advisor_role="RETIREMENT_RECOMMENDATION", subject_type="symphony", subject_id=<candidate_id>, symphony_id=<candidate_id>, verdict="retire_candidate", raw_response=<the dict above>)` call per recommendation; returns the count persisted (AC-8). `db_file` is accepted purely for interface symmetry with `build_recommendations` — `database.insert_advisor_observation` has no `db_file` override of its own (it always writes through `database.DB_FILE`), so the parameter is discarded (`del db_file`) rather than threaded further; documented inline so the asymmetry isn't mistaken for a bug.
+
+**Advisory-only is structurally guaranteed, not merely intended.** `insert_advisor_observation` stores `is_advisory_only=1` unconditionally regardless of any caller-supplied value (`database.py:1175-1177`) — this module could not accidentally write a non-advisory row even if it tried.
+
+## `RETIREMENT_RECOMMENDATION` — deliberately NOT in `_ADVISOR_ROLES`
+
+`app.py`'s `_ADVISOR_ROLES` list (the roles the AI-Advisor-tab Overview observations loop iterates) is `[OVERFITTING_CONSCIENCE, SPEC_CRITIC, NARRATOR, MARKET_PRISM, ADD_CANDIDATE, ASSET_SWAP, LOGIC_CHANGE]`. `RETIREMENT_RECOMMENDATION` is not, and must not be, added to it — the same convention already established for `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE` (advisor-role rows that exist purely to back a dedicated route/panel, kept out of the general Overview observations loop so they don't render twice or out of context there). No schema migration is needed either way: `advisor_role` is a free-text column, not an enum. See `GET /api/retirement-recommendations` and the Overview-tab panel in [app](app.md).
+
+## Internal Dependencies
+
+- `analytics` — `get_symphony_bot_and_held_daily_returns` (the AC-2 basis series), `compute_quantstats_metrics` (the 5 composite metrics). See [analytics](analytics.md).
+- `database` — `load_state` (live roster + `logic_holdings`), `insert_advisor_observation` (AC-8 persistence, forces `is_advisory_only=1`). See [database](database.md).
+- `advisors.correlation_diagnostic` — `compute_pairwise_correlations` (AC-1 screen), `THIN_DATA_THRESHOLD` (→ `MIN_OBS_FLOOR`), `_extract_aligned_pairs` and `_pearson_r` (module-qualified reuse for the AC-6 stress-window statistic — the exact same alignment/Pearson-r implementation as the full-window screen, never forked).
+- No import of `alpha_bot_execution`, `math_engine`, or any order/liquidation/deploy primitive anywhere in this module — structurally enforced by `tests/security/test_retirement_recommender_no_trade_boundary.py` (AC-7).
+
+**Callers:** `app.py`'s `_fetch_retirement_recommendations()` reads PERSISTED rows only — it does not call `build_recommendations()`/`persist_recommendations()` at all (Cycle 2a ships no scheduler; see [app](app.md) for the honest-empty-state consequence of that: the route/panel render nothing until a recommendation is persisted by some future caller). No production call site invokes `build_recommendations`/`persist_recommendations` yet in this cycle — they are covered by unit/property tests only. This is a named, tracked scope boundary (a scheduled tick, mirroring the Strategy Incubation Gate's 03:30 slot, is explicitly deferred rather than silently assumed), not an oversight — see `DE-RETIRE-CORE-001` in `DECISIONS.md`.
+
+See `DE-RETIRE-CORE-001` in `DECISIONS.md` for the full Gate-1/Gate-2 design record.

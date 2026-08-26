@@ -10573,3 +10573,67 @@ Independently re-run by this doc-writer at HEAD `6b164736` (not relaying the tea
 ### Reference
 
 Branch `fix/correlation-date-alignment`; worktree `.claude/worktrees/corr-align`; base `origin/main` @ `879218db` (#136). Commit chain: `c99bd845` (RED, `tests/app/test_correlations_date_alignment.py`) -> `6b164736` (GREEN, `app.py` assembly fix) -> [this doc pass, corr-doc]. Team: corr-test-writer (test-writer), corr-impl (implementer), corr-doc (this entry). Cross-links: math audit "formulas sound, wiring broken" finding (same class of bug — correct producer, untested call-site wiring).
+
+---
+
+## DE-RETIRE-CORE-001 — Retirement Recommender, Phase 2 Cycle 2a: advisory redundancy/performance-rank math core (2026-08-26)
+
+Branch `feature/retirement-recommender-core` | Worktree `.claude/worktrees/retirement-core` | Base `origin/main` @ `aa4361cd` (#137, correlation date-alignment fix)
+
+### What this cycle builds
+
+A new, standalone advisory module — `advisors/retirement_recommender.py` — that flags a live symphony as a *retirement candidate* when it is BOTH redundant (highly correlated with a live sibling) AND the weaker performer of the correlated pair. Cycle 2a ships ONLY the deterministic math core + advisory persistence + a read-only route/panel. It has NO execution, liquidation, or trade primitive of any kind. See [advisors/retirement_recommender](docs/generated/advisors_retirement_recommender.md) for the full module reference (real constant values, `raw_response` schema, per-function design).
+
+### Gate-1 (WHAT) rulings — operator-approved acceptance criteria
+
+- **Composite formula:** CAGR + Sharpe + Sortino + Max Drawdown + Calmar, fleet-normalized, **CAGR strictly dominant** over the other four. Shipped weights: `W_CAGR=0.40 / W_SHARPE=0.20 / W_SORTINO=0.15 / W_MAXDD=0.15 / W_CALMAR=0.10` (sum to 1.0). Named constants, no magic numbers, each source-commented in the module.
+- **Screen threshold:** pairwise Pearson correlation `>= 0.65` (`CORRELATION_SCREEN_THRESHOLD`) flags a pair as a redundancy CANDIDATE — the threshold screens, it does not by itself recommend (see the 3-gate design below).
+- **Live-only, no backtest/synthetic-history sourcing.** Both the screen and the composite metrics are computed over each symphony's own live `shadow_history`, never a walk-forward replay.
+- **Scope slice: math-core-first.** This cycle explicitly excludes the LLM explainer, the operator approval/reject lifecycle (a `frontrunner_proposals`-style table + approve/reject routes), and the Composer liquidation checklist — all deferred to Cycle 2b. No execution/liquidation/trade primitive of any kind exists in this module, structurally enforced (see Security below).
+
+### Gate-2 (HOW) — the 3-gate design, and why
+
+**The problem a bare correlation screen creates.** The Phase-1 audit (option C) found that a plain calm-regime correlation point estimate over-prunes crash-diversification: two symphonies can look highly correlated in calm markets while one of them is exactly the sibling that decorrelates — and therefore protects the book — during a real drawdown. Retiring on the point estimate alone would systematically remove the diversification that matters most precisely when it matters most. This is the SAME risk class `advisors/correlation_diagnostic.py`'s own `CRISIS_CAVEAT` already documents for the Correlations panel ("Correlations destabilize toward 1.0 in market stress... these estimates are least reliable exactly when de-correlation matters most").
+
+**The fix: two independent, conservative, fail-closed gates between "screened" and "recommended."**
+
+1. **Uncertainty gate (AC-5).** A correlation estimate can be `>= 0.65` and still be statistically noisy on a thin sample. The gate requires the Fisher-z 95% CI **lower bound** to ALSO clear `0.65`, AND `n_obs >= 30` (`MIN_OBS_FLOOR`, reused from `correlation_diagnostic.THIN_DATA_THRESHOLD` — the same interpretability floor already established elsewhere in this codebase, not a second independently chosen number). This guards estimation error: a correlation that only clears the bar on its point estimate, not on a defensible confidence interval, does not survive.
+2. **Structural-redundancy gate (AC-6).** Redundancy must hold ACROSS regimes, not just in the calm majority of trading days. The gate recomputes Pearson r over a stressed sub-window — the top 5% (`STRESS_WINDOW_FRACTION`) of aligned days by combined return magnitude, a standard VaR-tail-style stress proxy — and requires it to ALSO clear `0.65` (`STRESS_REDUNDANCY_THRESHOLD`, a numerically-equal but deliberately SEPARATE constant so the two bars can be tuned independently later). A calm-only pair (high full-window correlation, low stressed-window correlation) fails this gate — the sibling is providing crash-diversification, and retirement is withheld. Holdings-overlap (Jaccard) is computed as CORROBORATING evidence only when `logic_holdings` is populated on both sides (market hours) — it is recorded into the evidence dict but never blocks or rescues the gate decision by itself, since `logic_holdings` is empty off-hours/flat-market and an absence there must never read as "not redundant."
+
+Both gates fail closed on every degenerate input (thin data, undefined correlation, too-few stressed-window observations) — a retirement recommendation is a capital decision, and the design bias throughout is toward silence over a false positive.
+
+**Candidate selection (AC-4).** Within a gate-surviving pair, the lower-composite member is the candidate — deterministic tiebreak (lower CAGR, then lexical symphony_id) so the same inputs always produce the same candidate regardless of pair ordering. An ineligible symphony (any of its 5 metrics is `None`) can never be nominated as the candidate; if the natural (lower-composite) choice is ineligible, the whole pair yields no recommendation rather than falling back to nominating the eligible sibling instead.
+
+### The basis decision
+
+**Continuous bot series, not trigger-day, not if-held.** Both the correlation screen and the composite metrics read `analytics.get_symphony_bot_and_held_daily_returns(symphony_id, days=250)`'s element `[1]` (bot / actual-traded) — never `compute_per_symphony_returns`'s sparse trigger-day series (selection-biased, `analytics.py:1698-1707` documents a 4-trigger sample annualizing to an absurd ~210% CAGR when treated as consecutive days) and never element `[2]` (the if-held counterfactual — this codebase has a documented historical inversion trap where `/api/performance`'s `live_metrics` label actually means the COUNTERFACTUAL, not the live bot). Retirement is a decision about how a symphony actually performed under Planet Stopper's own guard-alpha/exit logic, not a hypothetical without it. One coherent basis feeds both the screen and the ranking — never two independently selection-biased sources. `raw_response["basis_label"]` discloses this to the operator on every recommendation, verbatim, rather than leaving it implicit. `RETIREMENT_LOOKBACK_DAYS=250` (~one trading year) matches the walk-forward window length already used elsewhere in this codebase's optimizer.
+
+### Advisory-only / no-execution-primitive boundary
+
+`advisors/retirement_recommender.py` contains no import of `alpha_bot_execution`, `math_engine`, or any order/sell/liquidate/deploy/`LIVE_EXECUTION` write path — structurally enforced by an adversarial source-scan test, `tests/security/test_retirement_recommender_no_trade_boundary.py` (mirrors the existing `tests/security/test_frontrunner_no_trade_boundary.py` precedent). Every recommendation persists purely as an `advisor_observations` row via `database.insert_advisor_observation`, which stores `is_advisory_only=1` UNCONDITIONALLY regardless of any caller-supplied value (`database.py:1175-1177`) — this module structurally cannot write a non-advisory row even if a future change tried. `GET /api/retirement-recommendations` is read-only (not in `_SETTINGS_WRITE_ALLOWLIST`, no `LIVE_EXECUTION` interaction, GET never writes), and the Overview-tab panel carries zero interactive/operator affordance — no approve/reject/dismiss control exists anywhere in this cycle's UI.
+
+### `RETIREMENT_RECOMMENDATION` role — deliberately excluded from `_ADVISOR_ROLES`
+
+The new advisor role is **not** added to `app.py`'s `_ADVISOR_ROLES` list (the roles the Overview-tab observations loop iterates: `OVERFITTING_CONSCIENCE`, `SPEC_CRITIC`, `NARRATOR`, `MARKET_PRISM`, `ADD_CANDIDATE`, `ASSET_SWAP`, `LOGIC_CHANGE`). This is the same convention already established for `MARKET_PRISM_SOURCES` and `MARKET_LENS_CACHE` — advisor-role rows that exist purely to back a dedicated route/panel, deliberately kept out of the general Overview loop so they don't render twice or out of the context their own panel provides. No schema migration was needed either way: `advisor_role` is a free-text column, not an enum.
+
+### Known scope gap — flagged, not hidden
+
+**No production caller of `build_recommendations()`/`persist_recommendations()` exists yet.** `app.py` never imports or calls either function this cycle (confirmed by direct grep against the shipped diff, not inferred) — the route and panel are wired to READ persisted `RETIREMENT_RECOMMENDATION` rows, but nothing yet WRITES them. The feature plan's Architecture section explicitly left this as a team decision ("an off-hours daily tick... may be added... if scheduling is deferred to 2b, the route recomputes read-only... either is acceptable so long as the GET never writes") — the shipped team chose neither option literally: no scheduler tick was added, AND the route does not recompute-on-GET either; it reads-only from a ledger nothing populates. This satisfies the letter of AC-9 (GET never writes) and produces a fully-tested, fully-wired, honestly-empty feature — but it means the panel/route will show nothing in any live environment until a follow-up adds either a scheduled tick (mirroring the Strategy Incubation Gate's 03:30 slot) or an on-demand trigger. Flagged explicitly to the PM at doc-pass time rather than left as a silent gap; tracked as an open item for Cycle 2b or an earlier follow-up, PM's call.
+
+### Files changed
+
+- `advisors/retirement_recommender.py` (new, 546 lines) — screen/composite/2-gate/orchestrator/persist.
+- `app.py` (+99 lines) — `_fetch_retirement_recommendations()` shared helper, `GET /api/retirement-recommendations` route, `ai_advisor_tab()` panel prefetch.
+- `templates/ai_advisor.html` (+72 lines) — read-only Retirement Recommendations panel, end of the Overview tab.
+- `tests/advisors/test_retirement_recommender_{composite,degenerate,persistence,properties,screen,structural_redundancy_gate,uncertainty_gate}.py` + `_retirement_recommender_reference.py` (new, 8 files) — unit/golden-fixture/property/degenerate/persistence coverage.
+- `tests/app/test_retirement_recommendations_{route,panel}.py` (new, 2 files) — route + panel behavioral coverage.
+- `tests/security/test_retirement_recommender_no_trade_boundary.py` (new) — AC-7 adversarial source-scan.
+- `docs/generated/advisors_retirement_recommender.md` (new), `docs/generated/app.md`, `docs/generated/INDEX.md` (this cycle's doc pass).
+
+### Verification
+
+Independently re-run by this doc-writer at HEAD `568293e4` (not relaying the team's own reported counts): `pytest tests/advisors/test_retirement_recommender_composite.py tests/advisors/test_retirement_recommender_degenerate.py tests/advisors/test_retirement_recommender_persistence.py tests/advisors/test_retirement_recommender_properties.py tests/advisors/test_retirement_recommender_screen.py tests/advisors/test_retirement_recommender_structural_redundancy_gate.py tests/advisors/test_retirement_recommender_uncertainty_gate.py tests/app/test_retirement_recommendations_panel.py tests/app/test_retirement_recommendations_route.py tests/security/test_retirement_recommender_no_trade_boundary.py -n0` — **100 passed, 0 failed**. `ruff check advisors/retirement_recommender.py app.py` — all checks passed; `ruff format --check advisors/retirement_recommender.py app.py` — both already formatted.
+
+### Reference
+
+Commit chain: `51c32408` (plan) -> `357ae5fe` (RED, 99 tests across screen/basis, composite/tiebreak, uncertainty gate, structural-redundancy gate, properties, degenerate cases, persistence, no-trade-boundary, route, panel) -> `c9c0e6eb` (GREEN, `advisors/retirement_recommender.py`) -> `568293e4` (GREEN, route + panel) -> [this doc pass, retire-doc]. Team: retire-test (test-writer), retire-math (math-core implementer), retire-route (route/panel implementer), retire-review (independent reviewer, in parallel with this doc pass), retire-doc (this entry). Cross-links: `docs/research/methodology-validation-2026-07.md` (the prior Phase-1 audit whose "option C" finding motivates the 2-gate design); `DE-INCUBATION-GATE-001` (the `_ADVISOR_ROLES`-exclusion / live-join-not-frozen-status precedent this cycle follows); `advisors/correlation_diagnostic.py`'s `CRISIS_CAVEAT` (the same crisis-instability risk this cycle's structural-redundancy gate exists to guard against).

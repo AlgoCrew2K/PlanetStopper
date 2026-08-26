@@ -505,6 +505,26 @@ See `DE-INCUBATION-GATE-001` in `DECISIONS.md` and `docs/generated/advisors_incu
 
 **Consumed by:** `refreshIncubationChips()` in `static/ai_advisor.js` -- see `docs/generated/static_ai_advisor_js.md`.
 
+#### `GET /api/retirement-recommendations` -- `api_retirement_recommendations()` (Phase 2 Cycle 2a, `DE-RETIRE-CORE-001`, 2026-08-26)
+
+Returns the currently PERSISTED advisory retirement recommendations -- read-only, never recomputes/reruns `advisors.retirement_recommender` from this route (see [advisors/retirement_recommender](advisors_retirement_recommender.md) for the module that produces these rows).
+
+**`_fetch_retirement_recommendations(limit=None) -> list[dict]`** -- shared helper, called by BOTH this route AND the `ai_advisor_tab()` Overview panel prefetch below (one fetch+flatten implementation, never duplicated). Reads `database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=...)` and returns each row's `raw_response` dict verbatim (the authoritative schema documented in [advisors/retirement_recommender](advisors_retirement_recommender.md#raw_response-shape-the-authoritative-schema--ac-8) -- no renaming/translation layer). `limit` defaults to the existing `_ADVISOR_OBSERVATIONS_PAGE_LIMIT` module constant, resolved lazily inside the function body rather than as a parameter default (that constant is defined later in the file; a def-time default would raise `NameError` at import). This helper itself RAISES on a DB-read failure -- each caller degrades to its own honest empty result independently (route: `{"recommendations": []}`; panel: template's empty-state), the same per-route error-ownership convention `api_incubation` already uses.
+
+**Response shape:** `{"recommendations": [<raw_response dict, flattened to top level>, ...]}`.
+
+**Strict-JSON safe:** every numeric field, including nested `candidate_metrics`/`sibling_metrics`, is sanitized through a local `_json_safe` NaN/Infinity guard before `jsonify()` -- a raw `NaN`/`Infinity` token would corrupt the WHOLE response for a real browser's `response.json()` (RFC 8259 has no such tokens). A single malformed row's sanitization failure is caught per-row and skipped -- one bad row never breaks the whole response.
+
+**Key properties:**
+- **Read-only.** Not in `_SETTINGS_WRITE_ALLOWLIST`, no `LIVE_EXECUTION` interaction. GET never writes.
+- **Never a 500.** A read failure degrades to `{"recommendations": []}`.
+- **Auth-gated.** Covered by the global `_auth_before_request` hook, same as `guard_alpha_summary()`/`api_incubation()` -- no additional decorator.
+- **Empty -> `{"recommendations": []}`**, the honest empty state, never an error or a wrapper object.
+
+**Known scope gap, flagged not hidden:** as of this cycle, NO production code path calls `advisors.retirement_recommender.build_recommendations()`/`persist_recommendations()` -- this route and the panel below are wired to READ rows that nothing yet WRITES. The route/panel will render an honest empty state indefinitely in production until a scheduler tick or an on-demand trigger is added (deferred to Cycle 2b or a follow-up, per the feature plan's explicit "team decides via the RED tests; either is acceptable so long as the GET never writes" allowance -- the team chose read-only-recompute-deferred, not the alternative). See `DE-RETIRE-CORE-001` in `DECISIONS.md`.
+
+See `DE-RETIRE-CORE-001` in `DECISIONS.md` and [advisors/retirement_recommender](advisors_retirement_recommender.md).
+
 ---
 
 ### Settings Write Paths
@@ -828,6 +848,26 @@ The whole per-row block stays inside the pre-existing `try/except` around the `f
 Additive, right after the existing `sb_observations` build block. Builds a `candidate_hash -> ledger row` lookup from ONE `database.get_incubation_overview()` call, then for every `sb_observations` entry whose `raw_response.candidate_hash` matches a ledger row, stamps `_incubation_badge_label`/`_incubation_badge_modifier` onto that observation dict in place (mirrors the RF-1 `_preview_text` in-place-stamp precedent above). Computed fresh per request, from the SAME `_incubation_badge()` helper the `GET /api/incubation` route uses (see above) -- never a frozen field, per the AC-5 amendment: `advisor_observations` rows are append-only/immutable, so a status frozen at persist time could never reflect a later promotion/failure.
 
 A survivor with no `candidate_hash` (a pre-feature row, or an admission that failed/hit the cap) or no matching ledger row is left un-stamped -- `templates/ai_advisor.html` renders no chip for that card (`{% if obs._incubation_badge_modifier %}`-guarded) rather than fabricating a status. Wrapped in `try/except`: a ledger-read failure at this stamping step degrades to zero chips rendered, never a 500 of the whole `/ai-advisor` page.
+
+---
+
+### `ai_advisor_tab()` — Retirement Recommendations panel prefetch (Phase 2 Cycle 2a, `DE-RETIRE-CORE-001`, 2026-08-26)
+
+Additive to the existing `GET /ai-advisor` context assembly. Prefetches the SAME persisted `RETIREMENT_RECOMMENDATION` rows the route above serves, via the SAME shared `_fetch_retirement_recommendations()` helper (one implementation, two consumers — never duplicated):
+
+```python
+retirement_recommendations: list[dict] = []
+try:
+    retirement_recommendations = _fetch_retirement_recommendations()
+except Exception:
+    pass  # Empty-state rendered by template on [].
+```
+
+Threaded into `render_template(...)`'s kwargs as `retirement_recommendations`. Read-only — never recomputes/reruns `advisors.retirement_recommender` from this render path (see [advisors/retirement_recommender](advisors_retirement_recommender.md)). A read failure silently leaves the list empty; the template's own honest empty-state (`data-testid="retirement-recommendations-empty"`) renders in that case, never a 500 of the whole `/ai-advisor` page.
+
+**Panel placement and content (`templates/ai_advisor.html`).** A new `<section class="matrix-card" data-testid="retirement-recommendations-panel">` sits at the **end of the Overview tab** (`tab-panel-overview`), after the existing correlations/Market-Prism blocks and immediately before that tab panel's closing `</div>`. Purely read-only, server-rendered, NO operator affordance of any kind (no approve/reject/dismiss control — that lifecycle is Cycle 2b). Per recommendation card: candidate id → "kept: {sibling id}", correlation (2dp or `—`), the composite gap (`sibling_composite - candidate_composite`, 2dp or `—` if either is `None`), both gate verdicts ("passed"/"not met"), and the `basis_label` disclosure line in a small italic footer. All fields render through Jinja `.get(...)` with `| e` escaping — no `| safe` anywhere in this block, matching this file's existing convention. Styling reuses existing dashboard CSS-token variables (`var(--studio-border)`, `var(--studio-ink)`, `var(--studio-ink-dim)`) — no raw hex, no inline colors, consistent with the Market-Prism/correlations panels' precedent.
+
+Same known scope gap as the route above: the panel will render its honest empty state (`"No retirement recommendations yet — advisory, read-only."`) in every live environment until some caller actually persists a row — see the route section's note and `DE-RETIRE-CORE-001` in `DECISIONS.md`.
 
 ---
 
