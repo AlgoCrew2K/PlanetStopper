@@ -2,20 +2,28 @@
 
 feature-plans/retirement-approval-lifecycle.md AC-6: build_checklist(
 recommendation: dict, bot_state: dict) -> dict returns a deterministic,
-advisory wind-down checklist -- NO LLM. Return shape (pinned in
-.claude/tdd-handoff.md):
+advisory wind-down checklist -- NO LLM.
+
+CONTRACT RECONCILIATION (2026-08-26): the return shape below is the
+FINAL, team-lead-mediated, peer-converged contract between ret2-explainer
+(producer) and ret2-route (consumer) -- it supersedes an earlier
+tickers/holdings_unavailable draft this test-writer originally pinned.
+Adopted verbatim per team-lead's reconciliation message:
+
     {
         "candidate_id": str,
-        "candidate_name": str | None,
-        "tickers": list[str],
-        "steps": list[str],
-        "holdings_unavailable": bool,
+        "candidate_name": str | None,     # local hash->name lookup, None if unresolvable
+        "holdings": list[str],            # SORTED tickers, [] when unavailable
+        "holdings_available": bool,
+        "steps": list[str],               # fixed manual wind-down prose
+        "unavailable_note": str | None,   # populated ONLY when holdings_available is False
     }
 
-Ticker extraction from bot_state[candidate_id]["logic_holdings"] is
-defensive over weight-representation shape (float vs {"weight": x}). Honest
-off-hours degrade: an empty/missing logic_holdings sets
-holdings_unavailable=True and NEVER fabricates a ticker.
+Note the inverted polarity vs the original draft (holdings_available, not
+holdings_unavailable) and the off-hours note living in its OWN field
+(unavailable_note) rather than embedded inside steps text. sibling_id is
+deliberately NOT part of this return -- ret2-route reads it from the card's
+own raw_response instead.
 
 Expected state: RED until advisors/retirement_checklist.py exists.
 """
@@ -60,19 +68,27 @@ def test_module_exposes_build_checklist_callable():
 
 
 # ===========================================================================
-# Deterministic output, return-shape pin
+# Deterministic output, return-shape pin (the reconciled contract)
 # ===========================================================================
 
 
-def test_returns_all_five_pinned_keys():
+def test_returns_exactly_the_six_reconciled_keys():
     import advisors.retirement_checklist as rc_mod
 
     bot_state = {"sym-candidate-1": {"name": "Candidate Symphony", "logic_holdings": {"AAPL": 0.5}}}
     result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
 
-    expected_keys = {"candidate_id", "candidate_name", "tickers", "steps", "holdings_unavailable"}
+    expected_keys = {
+        "candidate_id",
+        "candidate_name",
+        "holdings",
+        "holdings_available",
+        "steps",
+        "unavailable_note",
+    }
     assert expected_keys <= set(result.keys()), (
-        f"build_checklist must return at least {expected_keys}, got {sorted(result.keys())}."
+        f"build_checklist must return at least {expected_keys}, got {sorted(result.keys())}. "
+        "This is the reconciled contract (2026-08-26) -- see this file's module docstring."
     )
 
 
@@ -103,7 +119,9 @@ def test_candidate_name_none_when_not_resolvable():
 def test_steps_are_a_non_empty_fixed_list_referencing_composer():
     """AC-6: 'the fixed manual steps (advisory prose the operator performs
     in Composer)' -- steps must be present regardless of holdings
-    availability, and must reference Composer (the manual wind-down venue)."""
+    availability, and must reference Composer (the manual wind-down venue).
+    steps is UNAFFECTED by the off-hours note (that lives in
+    unavailable_note now, not embedded in steps text)."""
     import advisors.retirement_checklist as rc_mod
 
     bot_state = {"sym-candidate-1": {"name": "X", "logic_holdings": {"AAPL": 1.0}}}
@@ -118,19 +136,31 @@ def test_steps_are_a_non_empty_fixed_list_referencing_composer():
     )
 
 
+def test_unavailable_note_is_none_when_holdings_are_available():
+    import advisors.retirement_checklist as rc_mod
+
+    bot_state = {"sym-candidate-1": {"name": "X", "logic_holdings": {"AAPL": 1.0}}}
+    result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
+    assert result["holdings_available"] is True
+    assert result["unavailable_note"] is None, (
+        "unavailable_note must be None when holdings_available is True -- populated "
+        "ONLY on the honest off-hours degrade path."
+    )
+
+
 # ===========================================================================
 # Ticker extraction -- weight-shape variance (the AC-6 defensive requirement)
 # ===========================================================================
 
 
-class TestTickerExtractionWeightShapeVariance:
+class TestHoldingsExtractionWeightShapeVariance:
     def test_float_weight_shape(self):
         import advisors.retirement_checklist as rc_mod
 
         bot_state = {"sym-candidate-1": {"logic_holdings": {"AAPL": 0.5, "MSFT": 0.5}}}
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
-        assert set(result["tickers"]) == {"AAPL", "MSFT"}
-        assert result["holdings_unavailable"] is False
+        assert set(result["holdings"]) == {"AAPL", "MSFT"}
+        assert result["holdings_available"] is True
 
     def test_dict_wrapped_weight_shape(self):
         import advisors.retirement_checklist as rc_mod
@@ -141,8 +171,8 @@ class TestTickerExtractionWeightShapeVariance:
             }
         }
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
-        assert set(result["tickers"]) == {"AAPL", "MSFT"}
-        assert result["holdings_unavailable"] is False
+        assert set(result["holdings"]) == {"AAPL", "MSFT"}
+        assert result["holdings_available"] is True
 
     def test_mixed_float_and_dict_weight_shape_in_the_same_holdings(self):
         """Adversarial: a single logic_holdings dict mixing both
@@ -161,9 +191,23 @@ class TestTickerExtractionWeightShapeVariance:
             }
         }
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
-        assert set(result["tickers"]) == {"AAPL", "MSFT", "GOOGL"}, (
+        assert set(result["holdings"]) == {"AAPL", "MSFT", "GOOGL"}, (
             f"Mixed weight-shape holdings must yield the FULL ticker set, "
-            f"got {result['tickers']!r}."
+            f"got {result['holdings']!r}."
+        )
+
+    def test_holdings_are_sorted(self):
+        """Contract pin: 'holdings: list[str] -- SORTED tickers.' Deliberately
+        seeded out of alphabetical insertion order to prove the function
+        sorts, rather than just happening to preserve dict insertion order."""
+        import advisors.retirement_checklist as rc_mod
+
+        bot_state = {
+            "sym-candidate-1": {"logic_holdings": {"MSFT": 0.3, "AAPL": 0.4, "GOOGL": 0.3}}
+        }
+        result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
+        assert result["holdings"] == ["AAPL", "GOOGL", "MSFT"], (
+            f"holdings must be sorted alphabetically, got {result['holdings']!r}."
         )
 
 
@@ -173,41 +217,68 @@ class TestTickerExtractionWeightShapeVariance:
 
 
 class TestOffHoursDegrade:
-    def test_empty_logic_holdings_marks_unavailable_and_yields_no_tickers(self):
+    def test_empty_logic_holdings_marks_unavailable_and_yields_no_holdings(self):
         import advisors.retirement_checklist as rc_mod
 
         bot_state = {"sym-candidate-1": {"name": "X", "logic_holdings": {}}}
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
-        assert result["holdings_unavailable"] is True
-        assert result["tickers"] == [], "An empty logic_holdings must never fabricate tickers."
+        assert result["holdings_available"] is False
+        assert result["holdings"] == [], "An empty logic_holdings must never fabricate tickers."
 
     def test_missing_logic_holdings_key_marks_unavailable(self):
         import advisors.retirement_checklist as rc_mod
 
         bot_state = {"sym-candidate-1": {"name": "X"}}  # no logic_holdings key at all
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
-        assert result["holdings_unavailable"] is True
-        assert result["tickers"] == []
+        assert result["holdings_available"] is False
+        assert result["holdings"] == []
 
     def test_candidate_entirely_absent_from_bot_state_marks_unavailable(self):
         import advisors.retirement_checklist as rc_mod
 
         result = rc_mod.build_checklist(_SAMPLE_REC, {})
-        assert result["holdings_unavailable"] is True
-        assert result["tickers"] == []
+        assert result["holdings_available"] is False
+        assert result["holdings"] == []
 
-    def test_off_hours_note_appears_in_steps_and_mentions_composer(self):
+    def test_unavailable_note_is_populated_and_mentions_composer(self):
         """AC-6: 'an explicit "current holdings unavailable (off-hours) —
-        view live positions in Composer" note' -- checked by substance
-        (unavailable + Composer), not by pinning the exact wording verbatim,
-        so a copy-edit doesn't spuriously break this test."""
+        view live positions in Composer" note' -- now its OWN field
+        (unavailable_note), checked by substance (unavailable + Composer),
+        not exact wording, so a copy-edit doesn't spuriously break this
+        test."""
         import advisors.retirement_checklist as rc_mod
 
         bot_state = {"sym-candidate-1": {"name": "X", "logic_holdings": {}}}
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
-        joined = " ".join(result["steps"]).lower()
-        assert "unavailable" in joined
-        assert "composer" in joined
+
+        assert isinstance(result["unavailable_note"], str) and result["unavailable_note"], (
+            f"unavailable_note must be a non-empty string when holdings_available is "
+            f"False, got {result['unavailable_note']!r}."
+        )
+        lowered = result["unavailable_note"].lower()
+        assert "unavailable" in lowered
+        assert "composer" in lowered
+
+    def test_steps_are_unaffected_by_the_off_hours_degrade(self):
+        """The off-hours note lives in unavailable_note now, not steps --
+        steps must still be the same fixed, non-empty manual-wind-down
+        prose regardless of holdings availability."""
+        import advisors.retirement_checklist as rc_mod
+
+        available_bot_state = {"sym-candidate-1": {"name": "X", "logic_holdings": {"AAPL": 1.0}}}
+        unavailable_bot_state = {"sym-candidate-1": {"name": "X", "logic_holdings": {}}}
+
+        result_available = rc_mod.build_checklist(_SAMPLE_REC, available_bot_state)
+        result_unavailable = rc_mod.build_checklist(_SAMPLE_REC, unavailable_bot_state)
+
+        assert len(result_unavailable["steps"]) > 0
+        assert " ".join(result_unavailable["steps"]) != "", (
+            "steps must not be emptied out by the off-hours degrade path."
+        )
+        assert "Composer" in " ".join(result_unavailable["steps"])
+        # Sanity: both paths reference Composer in steps (steps content is
+        # not conditioned on holdings availability).
+        assert "Composer" in " ".join(result_available["steps"])
 
 
 # ===========================================================================
@@ -222,7 +293,7 @@ def test_malformed_recommendation_missing_candidate_id_never_raises():
         result = rc_mod.build_checklist({}, {})
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"build_checklist raised on a recommendation missing candidate_id: {exc!r}")
-    assert result["holdings_unavailable"] is True
+    assert result["holdings_available"] is False
 
 
 def test_bot_state_none_never_raises():
@@ -234,8 +305,8 @@ def test_bot_state_none_never_raises():
         result = rc_mod.build_checklist(_SAMPLE_REC, None)
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"build_checklist raised on bot_state=None: {exc!r}")
-    assert result["holdings_unavailable"] is True
-    assert result["tickers"] == []
+    assert result["holdings_available"] is False
+    assert result["holdings"] == []
 
 
 def test_logic_holdings_with_non_dict_entry_value_never_raises():
@@ -253,7 +324,7 @@ def test_logic_holdings_with_non_dict_entry_value_never_raises():
         result = rc_mod.build_checklist(_SAMPLE_REC, bot_state)
     except Exception as exc:  # noqa: BLE001
         pytest.fail(f"build_checklist raised on a malformed logic_holdings entry: {exc!r}")
-    assert "AAPL" in result["tickers"], "A well-formed sibling entry must still be extracted."
+    assert "AAPL" in result["holdings"], "A well-formed sibling entry must still be extracted."
 
 
 # ===========================================================================

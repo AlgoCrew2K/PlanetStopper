@@ -9,6 +9,12 @@ lives in tests/security/test_retirement_action_no_trade_boundary.py's
 TestChecklistModuleNeverReachesLlm (whole-module AST walk, not just one
 function) -- not duplicated here.
 
+CONTRACT RECONCILIATION (2026-08-26): build_checklist's return shape here
+uses the FINAL, team-lead-mediated, peer-converged keys ("holdings"/
+"holdings_available", not the earlier "tickers"/"holdings_unavailable"
+draft) -- see tests/advisors/test_retirement_checklist.py's module
+docstring for the full reconciled contract.
+
 Expected state: RED until advisors/retirement_explainer.py and
 advisors/retirement_checklist.py exist.
 """
@@ -101,10 +107,10 @@ def _holdings_and_expected_tickers(draw):
     return holdings, set(tickers)
 
 
-class TestChecklistTickerExtractionInvariant:
+class TestChecklistHoldingsExtractionInvariant:
     @given(data=_holdings_and_expected_tickers())
     @settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_ticker_set_matches_holdings_keys_regardless_of_weight_shape(self, data):
+    def test_holdings_set_matches_logic_holdings_keys_regardless_of_weight_shape(self, data):
         import advisors.retirement_checklist as rc_mod
 
         holdings, expected_tickers = data
@@ -113,14 +119,14 @@ class TestChecklistTickerExtractionInvariant:
 
         result = rc_mod.build_checklist(rec, bot_state)
 
-        assert set(result["tickers"]) == expected_tickers, (
-            f"Ticker extraction depends on weight-representation shape: "
-            f"expected {expected_tickers}, got {set(result['tickers'])} for "
-            f"holdings={holdings!r}."
+        assert set(result["holdings"]) == expected_tickers, (
+            f"Holdings extraction depends on weight-representation shape: "
+            f"expected {expected_tickers}, got {set(result['holdings'])} for "
+            f"logic_holdings={holdings!r}."
         )
-        # holdings_unavailable must be exactly the emptiness of the input --
+        # holdings_available must be exactly the non-emptiness of the input --
         # never a fabricated signal decoupled from the real data.
-        assert result["holdings_unavailable"] == (len(holdings) == 0)
+        assert result["holdings_available"] == (len(holdings) > 0)
 
     @given(data=_holdings_and_expected_tickers())
     @settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
@@ -133,8 +139,24 @@ class TestChecklistTickerExtractionInvariant:
 
         result = rc_mod.build_checklist(rec, bot_state)
 
-        fabricated = set(result["tickers"]) - expected_tickers
+        fabricated = set(result["holdings"]) - expected_tickers
         assert not fabricated, (
             f"build_checklist fabricated ticker(s) not present in the input "
             f"logic_holdings: {fabricated}."
+        )
+
+    @given(data=_holdings_and_expected_tickers())
+    @settings(max_examples=40, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    def test_holdings_are_always_sorted(self, data):
+        """Contract pin: 'holdings: list[str] -- SORTED tickers.'"""
+        import advisors.retirement_checklist as rc_mod
+
+        holdings, _expected_tickers = data
+        bot_state = {"cand-prop3": {"name": "X", "logic_holdings": holdings}}
+        rec = {"candidate_id": "cand-prop3", "sibling_id": "sib-prop3"}
+
+        result = rc_mod.build_checklist(rec, bot_state)
+
+        assert result["holdings"] == sorted(result["holdings"]), (
+            f"build_checklist's holdings must always be sorted, got {result['holdings']!r}."
         )
