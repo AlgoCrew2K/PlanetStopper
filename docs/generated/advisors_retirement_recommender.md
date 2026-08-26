@@ -3,7 +3,7 @@
 > Advisory, read-only math core that flags a live symphony as a *retirement candidate* when it is both redundant (highly correlated with a live sibling) and the weaker performer of the pair -- gated by two conservative, fail-closed regime checks so a calm-market correlation point estimate never over-prunes crash-diversification. No trade, order, liquidation, or `LIVE_EXECUTION` primitive of any kind.
 
 **Source:** `advisors/retirement_recommender.py`
-**Last updated:** 2026-08-26 (new module, Phase 2 Cycle 2a, `DE-RETIRE-CORE-001`)
+**Last updated:** 2026-08-26 (new module, Phase 2 Cycle 2a, `DE-RETIRE-CORE-001` + Revise round: full-fleet composite normalization + the 03:45 scheduler-tick producer)
 
 ## Overview
 
@@ -29,7 +29,7 @@ Cycle 2a ships ONLY this math core + advisory persistence + the read-only route/
 
 ## Named constants -- real shipped values (not the plan's placeholders)
 
-Every constant is source-commented in `advisors/retirement_recommender.py` (`:35-119`) with its rationale. Values as actually shipped at HEAD `568293e4`:
+Every constant is source-commented in `advisors/retirement_recommender.py` (`:35-119`) with its rationale. Values as actually shipped at HEAD `cac04985`:
 
 | Constant | Value | Meaning / why this value |
 |----------|-------|---------------------------|
@@ -56,6 +56,8 @@ Thin wrapper over `correlation_diagnostic.compute_pairwise_correlations`, filter
 ## `compute_composite_scores(metrics_by_symphony) -> dict[str, CompositeScore]`
 
 Fleet-normalized, CAGR-dominant composite (AC-3). Each of the 5 metrics is min-max normalized **across the current fleet's ELIGIBLE symphonies only** -- an ineligible symphony's partial values must never distort the range its eligible peers are scored against. All 5 raw metrics already use a "higher = better" convention (`max_drawdown` is `<= 0`, so a shallower/less-negative value is already numerically higher), so no per-metric sign inversion is applied; normalizing the raw values directly preserves that ordering. A degenerate fleet range (a single eligible symphony, or every eligible symphony tied on one metric) normalizes that metric to a neutral `0.5` midpoint -- there is no relative-ranking information to extract.
+
+**"Fleet" means the FULL live roster, not the flagged pair (Revise round, `quant-code-reviewer` Finding 1, fixed at `882aac2f`).** The function itself has always min-max-normalized over whatever `metrics_by_symphony` dict it is handed -- the defect was entirely in the orchestrator's INPUT to it. The original `build_recommendations` computed `metrics_by_symphony` only for `involved` (the symphonies appearing in at least one screened/flagged pair -- 2 members in the common single-pair case), not every live symphony with a usable AC-2 series. Min-max normalization over exactly 2 points is mathematically degenerate: every non-tied metric collapses to a winner-take-all `{0.0, 1.0}`, discarding all magnitude information -- and review proved this flips which symphony is selected as the retirement candidate purely as a function of whether an unrelated THIRD live symphony happens to exist in the roster (a 3-symphony fixture where the identical A-B pair picks the opposite candidate depending on whether uncorrelated symphony C is included in the normalization population; see `tests/advisors/test_retirement_recommender_composite.py::TestFleetNormalizationScopeAtOrchestratorLevel`). Fixed in the orchestrator: `build_recommendations` now builds `metrics_by_symphony` over every key in `series_by_symphony` (every live symphony with a usable AC-2 series), not the pair-only subset. The five composite weights (`W_CAGR=0.40` etc.) are unchanged -- this was a normalization-POPULATION fix, not a weighting fix.
 
 `CompositeScore.eligible` is `False` iff ANY of the 5 metrics is `None` (AC-11) -- that symphony's `composite` is `None` and it can never be returned as a retirement candidate (see `select_retirement_candidate` below), though it may still be the "keep" (sibling) member of a pair.
 
@@ -96,7 +98,9 @@ Jaccard overlap (`|intersection| / |union|`) of two symphonies' held ticker sets
 
 Orchestrator. Discovers the live roster via `_live_symphony_roster(bot_state)` -- a structural discriminator (`isinstance(entry, dict) and "name" in entry`) matching the house convention used at 7+ other call sites for distinguishing a real symphony entry from `bot_state`'s top-level portfolio metadata keys (`date`, `last_execution_mode`, etc.). Fewer than 2 live symphonies (or fewer than 2 with a usable AC-2 series) returns `[]` (AC-11).
 
-Pipeline per surviving pair: screen -> pull the AC-2 aligned values via `correlation_diagnostic._extract_aligned_pairs` -> compute the stressed correlation + holdings overlap -> uncertainty gate -> structural-redundancy gate -> `select_retirement_candidate` -> assemble the `raw_response` evidence dict. A pair failing either gate, or yielding no valid candidate, contributes nothing and the loop continues to the next pair (no early abort).
+After screening, `metrics_by_symphony` is built over **every key in `series_by_symphony`** -- the full live roster with a usable AC-2 series -- and fed to `compute_composite_scores` (Revise round fix, see above; NOT `involved`/the pair-only subset the original cycle used).
+
+Pipeline per surviving pair: screen -> pull the AC-2 aligned values via `correlation_diagnostic._extract_aligned_pairs` -> compute the stressed correlation + holdings overlap -> uncertainty gate -> structural-redundancy gate -> `select_retirement_candidate` (against the full-fleet-normalized scores) -> assemble the `raw_response` evidence dict. A pair failing either gate, or yielding no valid candidate, contributes nothing and the loop continues to the next pair (no early abort).
 
 **Dedup on cluster hits.** The same symphony can be flagged against multiple siblings (a correlation cluster). `_evidence_strength(raw_response)` (currently just `raw_response["correlation"]`, the raw full-window value) ranks competing recommendations for the same candidate; only the single strongest-evidence recommendation per candidate survives into the returned list, keyed by `candidate_id` and returned sorted by id for determinism.
 
@@ -137,6 +141,10 @@ One `database.insert_advisor_observation(advisor_role="RETIREMENT_RECOMMENDATION
 - `advisors.correlation_diagnostic` — `compute_pairwise_correlations` (AC-1 screen), `THIN_DATA_THRESHOLD` (→ `MIN_OBS_FLOOR`), `_extract_aligned_pairs` and `_pearson_r` (module-qualified reuse for the AC-6 stress-window statistic — the exact same alignment/Pearson-r implementation as the full-window screen, never forked).
 - No import of `alpha_bot_execution`, `math_engine`, or any order/liquidation/deploy primitive anywhere in this module — structurally enforced by `tests/security/test_retirement_recommender_no_trade_boundary.py` (AC-7).
 
-**Callers:** `app.py`'s `_fetch_retirement_recommendations()` reads PERSISTED rows only — it does not call `build_recommendations()`/`persist_recommendations()` at all (Cycle 2a ships no scheduler; see [app](app.md) for the honest-empty-state consequence of that: the route/panel render nothing until a recommendation is persisted by some future caller). No production call site invokes `build_recommendations`/`persist_recommendations` yet in this cycle — they are covered by unit/property tests only. This is a named, tracked scope boundary (a scheduled tick, mirroring the Strategy Incubation Gate's 03:30 slot, is explicitly deferred rather than silently assumed), not an oversight — see `DE-RETIRE-CORE-001` in `DECISIONS.md`.
+**Callers (Revise round — producer added, `cac04985`):** `app.py`'s `_run_retirement_recommender_tick()` -> `_retirement_recommender_tick_worker()` is the sole production caller of BOTH `build_recommendations()` and `persist_recommendations()` — a daily off-hours scheduler tick registered at **03:45** in `run_scheduler()` (`schedule.every().day.at("03:45").do(_run_retirement_recommender_tick)`), staggered 15 minutes after the Strategy Incubation Gate's existing 03:30 slot so the three off-hours jobs never contend for the same minute. `advisors.retirement_recommender` is lazily imported inside the worker function (CC-2 — never a module-level import from `app.py`), and the tick spawns its own daemon thread so `run_scheduler()`'s loop returns immediately (the tick itself never blocks the 1-minute execution path, Architecture Constraint 1). D-1 error contract: a producer failure is caught and logged as `type(exc).__name__` only — it can never crash the scheduler thread.
+
+`app.py`'s `_fetch_retirement_recommendations()` (the route/panel's read path) is unaffected by this addition — it still only ever reads PERSISTED rows, never calls the producer functions itself; the tick is what populates the ledger those reads now find.
+
+**Original-cycle gap, closed by the Revise round.** The original ship of this module had a route and panel fully wired to read a ledger nothing wrote — no scheduler tick existed, so both would have rendered an honest empty state indefinitely in production. This was found and flagged (not hidden) during doc review, and the PM ruled it in-scope to close within this cycle rather than deferring to 2b — see `DE-RETIRE-CORE-001`'s "Revise round" section in `DECISIONS.md` for the full record of both this and the composite-normalization fix above.
 
 See `DE-RETIRE-CORE-001` in `DECISIONS.md` for the full Gate-1/Gate-2 design record.
