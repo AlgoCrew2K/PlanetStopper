@@ -3797,6 +3797,90 @@ def api_incubation():
     return jsonify({"incubating": out})
 
 
+def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
+    """Return persisted RETIREMENT_RECOMMENDATION raw_response dicts, newest-first.
+
+    Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
+    Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
+    never duplicated. Each returned dict IS the persisted raw_response verbatim
+    (the authoritative schema -- candidate_id/sibling_id/correlation/etc, see
+    .claude/tdd-handoff.md) -- no renaming/translation layer between
+    advisors.retirement_recommender's persistence and this read path. Never
+    recomputes/reruns the module -- read-only over already-persisted rows.
+
+    limit defaults to _ADVISOR_OBSERVATIONS_PAGE_LIMIT, resolved lazily inside
+    the function body (not as a parameter default) because that module-level
+    constant is defined later in this file -- a def-time default would raise
+    NameError at import.
+
+    Raises on a DB-read failure (does not swallow) -- each caller degrades to
+    an empty result on its own terms (route: honest {"recommendations": []};
+    panel: honest empty-state), matching this file's existing per-route error
+    ownership convention (see api_incubation above).
+    """
+    if limit is None:
+        limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
+    out: list[dict] = []
+    for row in database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit):
+        raw = row.get("raw_response")
+        if isinstance(raw, dict):
+            out.append(raw)
+    return out
+
+
+@app.route("/api/retirement-recommendations")
+def api_retirement_recommendations():
+    """Return the current advisory retirement recommendations (AC-9).
+
+    Read-only -- reads persisted RETIREMENT_RECOMMENDATION advisor_observations
+    rows via _fetch_retirement_recommendations() (never recomputes/reruns
+    advisors.retirement_recommender from this route). Covered by the global
+    _auth_before_request hook (no extra decorator needed, same as
+    guard_alpha_summary/api_incubation) -- NOT in _SETTINGS_WRITE_ALLOWLIST, no
+    LIVE_EXECUTION interaction. GET never writes.
+
+    Response shape: {"recommendations": [<raw_response dict, flattened to top
+    level>, ...]}. Each item carries the authoritative raw_response schema
+    verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
+    n_obs, candidate_composite, sibling_composite, candidate_metrics,
+    sibling_metrics, uncertainty_gate_passed, structural_redundancy_gate_passed,
+    stressed_correlation, holdings_overlap, basis_label).
+
+    Empty -> {"recommendations": []}, never a 500; a read failure degrades to
+    the same empty list rather than 500ing (mirrors api_incubation).
+
+    Strict-JSON safe: every numeric field (including nested candidate_metrics/
+    sibling_metrics) is sanitized through a local NaN/Infinity guard (mirrors
+    api_incubation's own _json_safe_float) before jsonify() -- a raw NaN/
+    Infinity token would corrupt the WHOLE response for a real browser's
+    response.json().
+    """
+
+    def _json_safe(value):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return None
+        if isinstance(value, dict):
+            return {k: _json_safe(v) for k, v in value.items()}
+        return value
+
+    try:
+        raw_rows = _fetch_retirement_recommendations()
+    except Exception:
+        _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
+        raw_rows = []
+
+    out = []
+    for raw in raw_rows:
+        try:
+            out.append({k: _json_safe(v) for k, v in raw.items()})
+        except Exception:
+            # One malformed row must never break the whole route.
+            _daemon_log.debug("api_retirement_recommendations: row degraded", exc_info=True)
+            continue
+
+    return jsonify({"recommendations": out})
+
+
 @app.route("/api/exit-turnover")
 def exit_turnover():
     """Return per-symphony exit-trigger turnover stats + an estimated annual
@@ -5994,6 +6078,20 @@ def ai_advisor_tab():
             _obs["_incubation_badge_modifier"] = _badge["modifier"]
 
     # ------------------------------------------------------------------ #
+    # Retirement Recommendations panel (Cycle 2a, AC-10): prefetch the    #
+    # latest persisted RETIREMENT_RECOMMENDATION rows via the SAME helper #
+    # GET /api/retirement-recommendations uses. Read-only -- never        #
+    # recomputes/reruns advisors.retirement_recommender from this render. #
+    # Each entry is the persisted raw_response dict verbatim (the         #
+    # authoritative schema) -- no renaming/translation layer.             #
+    # ------------------------------------------------------------------ #
+    retirement_recommendations: list[dict] = []
+    try:
+        retirement_recommendations = _fetch_retirement_recommendations()
+    except Exception:
+        pass  # Empty-state rendered by template on [].
+
+    # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
     # rows (AC-9-route). Shared by both proposal_source values             #
     # ('frontrunner_builder' and 'strategy_builder_retrofit') — one query, #
@@ -6103,6 +6201,7 @@ def ai_advisor_tab():
         sb_card_artifacts=sb_card_artifacts,
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
+        retirement_recommendations=retirement_recommendations,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,

@@ -944,6 +944,36 @@
             font-size: 0.875rem;
         }
 
+        /* ------------------------------------------------------------------ */
+        /* Retirement Recommendations panel (Cycle 2a) -- minimal, read-only    */
+        /* ------------------------------------------------------------------ */
+        .retirement-rec-card {
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.8125rem;
+        }
+        .retirement-rec-card:last-child { margin-bottom: 0; }
+        .retirement-rec-pair {
+            font-weight: 700;
+            color: var(--studio-ink);
+            margin-bottom: 0.375rem;
+        }
+        .retirement-rec-meta, .retirement-rec-gates {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            color: var(--studio-ink-dim);
+            font-size: 0.75rem;
+            margin-bottom: 0.25rem;
+        }
+        .retirement-rec-basis {
+            color: var(--studio-ink-faint, var(--studio-ink-dim));
+            font-size: 0.6875rem;
+            font-style: italic;
+        }
+
         /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
         .prism-verification {
             margin-top: 0.75rem;
@@ -1417,6 +1447,48 @@
             </aside>
 
         </div>
+        <!-- ============================================================ -->
+        <!-- Retirement Recommendations panel (Cycle 2a) -- minimal,        -->
+        <!-- server-rendered, READ-ONLY. No operator lifecycle affordance   -->
+        <!-- of any kind here -- that's Cycle 2b.                          -->
+        <!-- ============================================================ -->
+        <section class="matrix-card" data-testid="retirement-recommendations-panel">
+            <div class="matrix-card-header">Retirement Recommendations</div>
+            {% if retirement_recommendations %}
+                {% for rec in retirement_recommendations %}
+                <div class="retirement-rec-card" data-testid="retirement-recommendation-card">
+                    <div class="retirement-rec-pair">
+                        <span class="retirement-rec-candidate">{{ rec.get('candidate_id', '') | e }}</span>
+                        <span aria-hidden="true">&rarr;</span>
+                        <span class="retirement-rec-sibling">kept: {{ rec.get('sibling_id', '') | e }}</span>
+                    </div>
+                    <div class="retirement-rec-meta">
+                        <span data-testid="retirement-rec-correlation">
+                            Correlation: {{ "%.2f" | format(rec.correlation) if rec.get('correlation') is not none else '—' }}
+                        </span>
+                        <span>
+                            Composite gap:
+                            {%- if rec.get('sibling_composite') is not none and rec.get('candidate_composite') is not none %}
+                                {{ "%.2f" | format(rec.sibling_composite - rec.candidate_composite) }}
+                            {%- else %}
+                                —
+                            {%- endif %}
+                        </span>
+                    </div>
+                    <div class="retirement-rec-gates">
+                        <span>Uncertainty gate: {{ 'passed' if rec.get('uncertainty_gate_passed') else 'not met' }}</span>
+                        <span>Structural-redundancy gate: {{ 'passed' if rec.get('structural_redundancy_gate_passed') else 'not met' }}</span>
+                    </div>
+                    <div class="retirement-rec-basis">{{ rec.get('basis_label', '') | e }}</div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="prism-empty" data-testid="retirement-recommendations-empty">
+                    No retirement recommendations yet — advisory, read-only.
+                </p>
+            {% endif %}
+        </section>{# /retirement-recommendations-panel #}
+
         </div>{# /tab-panel-overview #}
 
         <!-- ============================================================ -->
