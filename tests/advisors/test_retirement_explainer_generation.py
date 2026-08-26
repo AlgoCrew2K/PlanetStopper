@@ -58,7 +58,14 @@ def _make_fake_llm_response(text: str = "A concise explanation of why this candi
 
 
 def _make_fake_client(text: str | None = None):
-    fake_response = _make_fake_llm_response(text=text) if text else _make_fake_llm_response()
+    # Bug fix (found by ret2-explainer during GREEN, 2026-08-26): `if text` treats
+    # an explicit text="" (used by test_empty_llm_response_returns_none) as falsy,
+    # silently substituting the default non-empty text instead of producing a
+    # genuinely empty response. `is not None` distinguishes "caller omitted text
+    # (use the default)" from "caller explicitly asked for an empty string".
+    fake_response = (
+        _make_fake_llm_response(text=text) if text is not None else _make_fake_llm_response()
+    )
     fake_client = MagicMock()
     fake_client.messages.create.return_value = fake_response
     return fake_client
