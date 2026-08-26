@@ -1080,11 +1080,100 @@
         frDispatchProposalAction('reject', proposalId);
     }
 
+    /**
+     * Shared approve/reject dispatch for a retirement recommendation card
+     * (Cycle 2b, AC-5/AC-7). Mirrors frDispatchProposalAction's shape
+     * exactly: CSRF header from /api/csrf-token, POST to
+     * /ai-advisor/retirement/{approve,reject} with {candidate_id},
+     * disable-on-submit, status-message swap on success.
+     *
+     * candidateId is a real string id (e.g. a Composer hash) read from the
+     * clicked button's own data-candidate-id attribute at the Jinja
+     * onclick call site (this.dataset.candidateId) -- never embedded as a
+     * raw string literal inside an inline-JS expression. The card is
+     * located by scanning [data-testid="retirement-recommendation-card"]
+     * for the one whose approve/reject button carries a matching
+     * data-candidate-id -- never by building a CSS-selector string out of
+     * untrusted input.
+     *
+     * Deliberately no auto page-reload on success: the wind-down checklist
+     * is assembled server-side at render time only
+     * (advisors.retirement_checklist.build_checklist, called from
+     * ai_advisor_tab()) -- a JS-side re-render would be a second,
+     * drift-prone implementation of the same deterministic checklist. A
+     * manual reload picks it up.
+     */
+    function retDispatchDecision(action, candidateId) {
+        var cards = document.querySelectorAll('[data-testid="retirement-recommendation-card"]');
+        var card = null;
+        for (var i = 0; i < cards.length; i++) {
+            var testCandidateBtn = cards[i].querySelector(
+                '[data-testid="retirement-approve-btn"], [data-testid="retirement-reject-btn"]'
+            );
+            if (testCandidateBtn && testCandidateBtn.dataset.candidateId === candidateId) {
+                card = cards[i];
+                break;
+            }
+        }
+        var approveBtn = card ? card.querySelector('[data-testid="retirement-approve-btn"]') : null;
+        var rejectBtn = card ? card.querySelector('[data-testid="retirement-reject-btn"]') : null;
+        if (approveBtn) { approveBtn.disabled = true; }
+        if (rejectBtn) { rejectBtn.disabled = true; }
+        if (card) { card.style.opacity = '0.6'; }
+
+        var routePath = action === 'approve' ? '/ai-advisor/retirement/approve' : '/ai-advisor/retirement/reject';
+
+        (async function () {
+            try {
+                var csrfToken = _csrfToken;
+                if (!csrfToken) {
+                    var tokenResp = await fetch('/api/csrf-token');
+                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                    var tokenData = await tokenResp.json();
+                    csrfToken = tokenData.csrf_token;
+                }
+
+                var resp = await fetch(routePath, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                    body: JSON.stringify({ candidate_id: candidateId }),
+                });
+                var data = await resp.json();
+
+                if (data && data.success === true) {
+                    if (card) {
+                        card.style.opacity = '1';
+                        var msg = action === 'approve'
+                            ? 'Approved — reload this page to view the wind-down checklist.'
+                            : 'Rejected.';
+                        var actionsRow = card.querySelector('.retirement-rec-actions');
+                        if (actionsRow) {
+                            actionsRow.innerHTML =
+                                '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                                msg + '</p>';
+                        }
+                    }
+                } else {
+                    if (card) { card.style.opacity = '1'; }
+                    if (approveBtn) { approveBtn.disabled = false; }
+                    if (rejectBtn) { rejectBtn.disabled = false; }
+                    alert((action === 'approve' ? 'Approve' : 'Reject') + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
+                }
+            } catch (err) {
+                if (card) { card.style.opacity = '1'; }
+                if (approveBtn) { approveBtn.disabled = false; }
+                if (rejectBtn) { rejectBtn.disabled = false; }
+                alert('Request failed: ' + err.message);
+            }
+        }());
+    }
+
     // Expose on window so Jinja onclick="..." handlers can call them.
     window.openChatWithArtifact = openChatWithArtifact;
     window.sbRunAnalysis = sbRunAnalysis;
     window.frRunBuild = frRunBuild;
     window.frApprove = frApprove;
     window.frReject = frReject;
+    window.retDispatchDecision = retDispatchDecision;
 
 })();
