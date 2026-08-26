@@ -955,6 +955,49 @@ def _run_incubation_tick() -> None:
     t.start()
 
 
+def _retirement_recommender_tick_worker() -> None:
+    """Background worker that runs the Retirement Recommender's daily tick.
+
+    Imported lazily to keep advisors.retirement_recommender off the execution
+    path (CC-2). Calls the real producer chain -- build_recommendations() then
+    persist_recommendations(<its own return value>) -- so the read-only
+    GET /api/retirement-recommendations route and the AI Advisor panel have
+    something to render (PM ruling, review-response cycle 2: without this
+    tick nothing in production ever calls the producer, so both read-only
+    surfaces render an honest-empty state forever).
+
+    D-1 error contract: only type(exc).__name__ appears in log records at
+    WARNING+ -- a producer failure must never crash the scheduler thread.
+    """
+    try:
+        from advisors.retirement_recommender import (  # lazy — not module-level (CC-2)
+            build_recommendations,
+            persist_recommendations,
+        )
+
+        recs = build_recommendations()
+        persist_recommendations(recs)
+        _daemon_log.info("Retirement recommender tick complete: %d recommendation(s).", len(recs))
+    except Exception as exc:
+        _daemon_log.error("Retirement recommender tick worker failed: %s", type(exc).__name__)
+
+
+def _run_retirement_recommender_tick() -> None:
+    """Non-blocking daily off-hours wrapper for the retirement recommender tick.
+
+    Spawns a daemon thread so the scheduler thread returns immediately — the
+    tick never blocks the 1-minute execution path (arch constraint 1).
+    """
+    import threading
+
+    t = threading.Thread(
+        target=_retirement_recommender_tick_worker,
+        daemon=True,
+        name="retirement-recommender-tick",
+    )
+    t.start()
+
+
 def run_scheduler():
     schedule.every().minute.at(":00").do(threaded_trigger)
     schedule.every().minute.at(":00").do(_refresh_account_totals)
@@ -965,6 +1008,10 @@ def run_scheduler():
     # Strategy Incubation Gate daily tick — staggered 30 minutes after the lens
     # pipeline slot so the two off-hours jobs never contend for the same minute.
     schedule.every().day.at("03:30").do(_run_incubation_tick)
+    # Retirement Recommender daily tick — staggered 15 minutes after the
+    # incubation slot so all three off-hours jobs run without same-minute
+    # contention.
+    schedule.every().day.at("03:45").do(_run_retirement_recommender_tick)
     while True:
         schedule.run_pending()
         time.sleep(1)
