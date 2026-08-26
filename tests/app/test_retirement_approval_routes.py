@@ -180,6 +180,21 @@ def test_approve_never_touches_composer_draft_client(client):
     mock_verify.assert_not_called()
 
 
+def test_approve_never_calls_the_llm_client_seam(client):
+    """Companion runtime-mock belt-and-suspenders to the static AST
+    call-graph proof in tests/security/test_retirement_action_no_trade_
+    boundary.py's TestApproveRejectRoutesNeverReachLlmOrComposerDraftClient
+    (review finding, 2026-08-26, ret2-review) -- mirrors this file's own
+    existing composer_draft_client mock-assertion pattern immediately
+    above, applied to the LLM seam instead."""
+    with (
+        patch("database.upsert_retirement_decision", return_value=True),
+        patch("ai_advisor._build_client") as mock_build_client,
+    ):
+        client.post(_APPROVE_URL, json={"candidate_id": "cand-1"}, content_type="application/json")
+    mock_build_client.assert_not_called()
+
+
 def test_approve_is_idempotent_on_repeat_calls(client):
     """AC-3/AC-5: re-approving an already-decided candidate is a no-op
     UPSERT, never an error."""
@@ -294,6 +309,17 @@ def test_reject_never_touches_composer_draft_client(client):
         client.post(_REJECT_URL, json={"candidate_id": "cand-1"}, content_type="application/json")
     mock_save.assert_not_called()
     mock_verify.assert_not_called()
+
+
+def test_reject_never_calls_the_llm_client_seam(client):
+    """Companion runtime-mock belt-and-suspenders — see test_approve_never_
+    calls_the_llm_client_seam's docstring above for the full rationale."""
+    with (
+        patch("database.upsert_retirement_decision", return_value=True),
+        patch("ai_advisor._build_client") as mock_build_client,
+    ):
+        client.post(_REJECT_URL, json={"candidate_id": "cand-1"}, content_type="application/json")
+    mock_build_client.assert_not_called()
 
 
 def test_reject_response_never_contains_live_execution_key(client):

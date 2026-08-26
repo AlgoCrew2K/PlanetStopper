@@ -40,6 +40,7 @@ retirement approve/reject routes with the pinned handler names below.
 from __future__ import annotations
 
 import ast
+import copy
 import pathlib
 
 import pytest
@@ -151,6 +152,93 @@ def _references_name_or_attr(subtree: ast.AST, target: str) -> bool:
         if isinstance(node, ast.Attribute) and node.attr == target:
             return True
     return False
+
+
+def _resolve_bare_name_callee(call_node: ast.Call) -> str | None:
+    """Return the plain function name a Call node targets IFF it's a bare
+    `some_name(...)` call (e.g. `_dispatch_retirement_decision(...)`).
+    Attribute-target calls (`database.upsert_retirement_decision(...)`,
+    `jsonify(...)` is itself a bare name but resolved-away below since it
+    isn't a local app.py def) are deliberately not resolved here -- those
+    target ANOTHER module's function, already caught directly by the plain
+    substring/Name/Attribute checks on the calling subtree; we only need to
+    recurse into functions actually DEFINED in app.py's own module scope."""
+    func = call_node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _collect_transitive_local_call_subtrees(
+    tree: ast.Module, fn_name: str, *, _visited: set[str] | None = None
+) -> list[ast.AST]:
+    """Real (bounded) call-graph walk, fixing a review finding (2026-08-26,
+    ret2-review) against the original Group C implementation: a single-hop
+    ast.walk scoped to only the named route FunctionDef never descended
+    into a thin wrapper's delegated-to helper (both
+    ai_advisor_retirement_approve/_reject are one-line `return
+    _dispatch_retirement_decision(...)` calls -- the ENTIRE route body,
+    including the real candidate_id validation and the
+    database.upsert_retirement_decision call, lives in that helper, which
+    the original scan never touched).
+
+    Returns [fn_node] PLUS every other module-level FunctionDef in app.py's
+    own AST that fn_name's body transitively calls via a bare-Name Call --
+    visited-set-guarded against infinite recursion on (mutual or self)
+    recursion, so this remains a bounded, terminating walk regardless of
+    app.py's real call shape. Only bare-Name calls that actually resolve to
+    a real module-level FunctionDef in app.py are followed (a call to a
+    builtin like `int(...)` or a Flask helper like `jsonify(...)` simply
+    fails the `_find_function_def` lookup and is not recursed into -- correct,
+    since those aren't local functions this scan needs to open up further).
+    """
+    if _visited is None:
+        _visited = set()
+    if fn_name in _visited:
+        return []
+    _visited.add(fn_name)
+
+    fn_node = _find_function_def(tree, fn_name)
+    if fn_node is None:
+        return []
+
+    subtrees: list[ast.AST] = [fn_node]
+    for node in ast.walk(fn_node):
+        if isinstance(node, ast.Call):
+            callee_name = _resolve_bare_name_callee(node)
+            if callee_name and callee_name != fn_name and _find_function_def(tree, callee_name):
+                subtrees.extend(
+                    _collect_transitive_local_call_subtrees(tree, callee_name, _visited=_visited)
+                )
+    return subtrees
+
+
+def _unparse_without_docstrings(node: ast.AST) -> str:
+    """Same rationale as this file's own _read_executable_source (see module
+    docstring): a function's own docstring may legitimately DOCUMENT an
+    exclusion in prose (e.g. "-- reaches no Composer/exec/LIVE_EXECUTION/
+    trade primitive of any kind", which _dispatch_retirement_decision's real
+    docstring says verbatim) without tripping a plain substring scan over
+    its unparsed source. Deep-copies `node` first (never mutates the shared
+    parsed tree other callers may still be walking), blanks out any
+    docstring-shaped leading Expr(Constant(str)) statement from every
+    Module/ClassDef/FunctionDef/AsyncFunctionDef body found anywhere inside
+    it, then unparses. Falls back to "" on a Python without ast.unparse
+    (matches this file's existing hasattr(ast, "unparse") guard elsewhere)."""
+    if not hasattr(ast, "unparse"):
+        return ""
+    tree_copy = copy.deepcopy(node)
+    for n in ast.walk(tree_copy):
+        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(n, "body", None)
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                n.body = body[1:] or [ast.Pass()]
+    return ast.unparse(tree_copy)
 
 
 # ===========================================================================
@@ -285,9 +373,28 @@ class TestApproveRejectRoutesNeverReachLlmOrComposerDraftClient:
     just a runtime mock, proving neither new route handler's function body
     can reach ai_advisor._build_client, composer_draft_client, or
     alpha_bot_execution -- catches a future refactor a runtime-mock-only
-    test could miss."""
+    test could miss.
 
-    def _get_handler(self, fn_name: str) -> ast.FunctionDef | ast.AsyncFunctionDef:
+    [FIXED, review finding, 2026-08-26 (ret2-review)]: the original version
+    of this class scoped its ast.walk to ONLY the named route FunctionDef
+    (ast_advisor_retirement_approve/_reject). Both routes are thin one-line
+    wrappers (`return _dispatch_retirement_decision(...)`) -- the ENTIRE
+    real body (candidate_id validation, the database.upsert_retirement_
+    decision call) lives in that shared helper, which the single-hop scan
+    never touched. A future refactor adding an LLM-seam/composer_draft_
+    client/alpha_bot_execution/LIVE_EXECUTION reference INSIDE
+    _dispatch_retirement_decision (rather than directly in either named
+    route function) would have sailed through every test in this class
+    undetected -- exactly the "future refactor a runtime-mock-only test
+    could miss" scenario this class's own docstring claims to guard
+    against, except the AST scan itself didn't either, since it was a
+    single-hop scan, not a real call-graph walk. Now uses
+    _collect_transitive_local_call_subtrees (a bounded, visited-set-guarded
+    walk following bare-Name calls to other app.py module-level functions)
+    so an N-level-deep future wrapper chain is covered too, not just this
+    specific 1-level case."""
+
+    def _get_transitive_subtrees(self, fn_name: str) -> list[ast.AST]:
         tree = _parse_app_py()
         node = _find_function_def(tree, fn_name)
         if node is None:
@@ -296,48 +403,76 @@ class TestApproveRejectRoutesNeverReachLlmOrComposerDraftClient:
                 "approve/reject route has not been added (pinned name per "
                 ".claude/tdd-handoff.md)."
             )
-        return node
+        return _collect_transitive_local_call_subtrees(tree, fn_name)
+
+    @pytest.mark.parametrize("fn_name", [_APPROVE_ROUTE_FN_NAME, _REJECT_ROUTE_FN_NAME])
+    def test_transitive_walk_actually_descends_into_the_shared_dispatch_helper(self, fn_name):
+        """Non-vacuity guard for the fix itself: prove the transitive walk
+        is genuinely reaching beyond the single named route function --
+        without this, a bug in _collect_transitive_local_call_subtrees
+        (e.g. a resolution failure silently degrading back to [fn_node])
+        would make every other test in this class pass for the WRONG
+        reason again, identical to the exact defect class this fix exists
+        to close."""
+        subtrees = self._get_transitive_subtrees(fn_name)
+        visited_names = {getattr(node, "name", None) for node in subtrees}
+        assert "_dispatch_retirement_decision" in visited_names, (
+            f"The transitive call-graph walk from {fn_name} did not reach "
+            f"_dispatch_retirement_decision (only found {visited_names}) -- either "
+            "the shared helper was renamed/removed, or the walk itself regressed "
+            "back to a single-hop scan."
+        )
+        assert len(subtrees) >= 2, (
+            f"Expected at least 2 subtrees ({fn_name} itself + the helper it "
+            f"delegates to), got {len(subtrees)}."
+        )
 
     @pytest.mark.parametrize("fn_name", [_APPROVE_ROUTE_FN_NAME, _REJECT_ROUTE_FN_NAME])
     def test_route_handler_never_references_llm_seam(self, fn_name):
-        handler = self._get_handler(fn_name)
-        assert not _references_name_or_attr(handler, _LLM_SEAM_ATTR), (
-            f"{fn_name}'s function body references the LLM client seam "
-            f"({_LLM_SEAM_ATTR}) -- approve/reject must be a deterministic status "
-            "write only, never touching the LLM."
-        )
-        assert not _references_name_or_attr(handler, _EXPLAINER_ENTRYPOINT), (
-            f"{fn_name}'s function body references {_EXPLAINER_ENTRYPOINT} -- "
-            "the explainer must never run on the approve/reject action path "
-            "(operator ruling, Gate-2b)."
-        )
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            assert not _references_name_or_attr(subtree, _LLM_SEAM_ATTR), (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                f"references the LLM client seam ({_LLM_SEAM_ATTR}) -- approve/reject "
+                "must be a deterministic status write only, never touching the LLM."
+            )
+            assert not _references_name_or_attr(subtree, _EXPLAINER_ENTRYPOINT), (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                f"references {_EXPLAINER_ENTRYPOINT} -- the explainer must never run on "
+                "the approve/reject action path (operator ruling, Gate-2b)."
+            )
 
     @pytest.mark.parametrize("fn_name", [_APPROVE_ROUTE_FN_NAME, _REJECT_ROUTE_FN_NAME])
     def test_route_handler_never_references_composer_draft_client(self, fn_name):
-        handler = self._get_handler(fn_name)
-        source_segment = ast.unparse(handler) if hasattr(ast, "unparse") else ""
-        assert "composer_draft_client" not in source_segment, (
-            f"{fn_name} must never reference composer_draft_client -- retirement "
-            "approve is a status-only DB write (AC-5), never a Composer symphony "
-            "creation call (that is the frontrunner /proposal/approve route only)."
-        )
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            source_segment = _unparse_without_docstrings(subtree)
+            assert "composer_draft_client" not in source_segment, (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                "references composer_draft_client -- retirement approve is a status-only "
+                "DB write (AC-5), never a Composer symphony creation call (that is the "
+                "frontrunner /proposal/approve route only)."
+            )
 
     @pytest.mark.parametrize("fn_name", [_APPROVE_ROUTE_FN_NAME, _REJECT_ROUTE_FN_NAME])
     def test_route_handler_never_references_alpha_bot_execution(self, fn_name):
-        handler = self._get_handler(fn_name)
-        source_segment = ast.unparse(handler) if hasattr(ast, "unparse") else ""
-        assert "alpha_bot_execution" not in source_segment, (
-            f"{fn_name} must never reference alpha_bot_execution (the live "
-            "execution engine)."
-        )
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            source_segment = _unparse_without_docstrings(subtree)
+            assert "alpha_bot_execution" not in source_segment, (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                "references alpha_bot_execution (the live execution engine)."
+            )
 
     @pytest.mark.parametrize("fn_name", [_APPROVE_ROUTE_FN_NAME, _REJECT_ROUTE_FN_NAME])
     def test_route_handler_never_references_live_execution(self, fn_name):
-        handler = self._get_handler(fn_name)
-        source_segment = ast.unparse(handler) if hasattr(ast, "unparse") else ""
-        assert "LIVE_EXECUTION" not in source_segment, (
-            f"{fn_name} must never read/write LIVE_EXECUTION."
-        )
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            source_segment = _unparse_without_docstrings(subtree)
+            assert "LIVE_EXECUTION" not in source_segment, (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                "reads/writes LIVE_EXECUTION."
+            )
 
 
 # ===========================================================================
