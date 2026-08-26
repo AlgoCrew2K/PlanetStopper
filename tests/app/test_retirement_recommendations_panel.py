@@ -247,17 +247,22 @@ class TestPanelEscaping:
 
 
 class TestPanelNoActionableControls:
-    def test_panel_section_has_no_form_or_action_buttons(self, client, isolated_db):
-        """2a is read-only/advisory-only -- approve/reject lifecycle is 2b,
-        explicitly out of scope. The panel section itself must contain no
-        <form>, no submit-shaped <button>, and no approve/reject strings --
-        scoped STRICTLY to the panel's own <section>...</section> markup
-        (via _extract_panel_section's tag-depth walk), never a fixed-char
-        guess. This is the exact 2a-vs-2b safety divider (AC-10), so it must
-        hold regardless of where on the page the panel is placed and must
-        still catch a real actionable control if one is ever added inside
-        the panel (a fixed window that under- or over-scopes could silently
-        stop verifying anything real)."""
+    def test_panel_section_has_no_native_form_element(self, client, isolated_db):
+        """[SUPERSEDED, Cycle-2b, feature-plans/retirement-approval-lifecycle.md
+        AC-7] The original 2a version of this test additionally banned the bare
+        strings "approve"/"reject"/"retire-approve"/"retire-reject" anywhere in
+        the panel section, encoding a 2a-only "zero actionable controls" boundary
+        that Cycle-2b's AC-7 deliberately supersedes -- the panel now legitimately
+        renders Approve/Reject buttons (wired via retDispatchDecision, mirroring
+        the frontrunner card's frApprove/frReject JS-fetch pattern). That word-ban
+        assertion is REMOVED here (see tests/app/test_retirement_panel_render.py
+        for the new Cycle-2b coverage of the buttons themselves and their D-1/CSRF
+        behavior). The genuinely durable invariant from 2a survives unchanged:
+        no NATIVE <form> element -- 2b's buttons are JS-dispatched fetch() calls
+        (no page-reload native form POST), the same non-form pattern the
+        frontrunner proposal cards already use. Still scoped STRICTLY to the
+        panel's own <section>...</section> markup via the tag-depth walk, never a
+        fixed-char guess."""
         _seed_symphony_roster("cand-panel-4", "sib-panel-4")
         _seed_recommendation(candidate_id="cand-panel-4", sibling_id="sib-panel-4")
         resp = client.get("/ai-advisor")
@@ -277,15 +282,10 @@ class TestPanelNoActionableControls:
 
         lowered = section.lower()
         assert "<form" not in lowered, (
-            "The retirement-recommendations panel must not contain a <form> "
-            "element -- no actionable control (approve/reject is 2b)."
+            "The retirement-recommendations panel must not contain a native "
+            "<form> element -- Approve/Reject (Cycle-2b, AC-7) is a JS-dispatched "
+            "fetch() call, never a page-reload native form POST."
         )
-        for forbidden in ("approve", "reject", "retire-approve", "retire-reject"):
-            assert forbidden not in lowered, (
-                f"Found forbidden actionable-control string {forbidden!r} inside "
-                "the retirement-recommendations panel's OWN section markup -- "
-                "2a is read-only, no approve/reject affordance is in scope."
-            )
 
 
 class TestExtractPanelSectionScopingHelper:
