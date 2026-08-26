@@ -27,7 +27,12 @@ Contract pinned in .claude/tdd-handoff.md "retirement_recommender.py -- composit
 
 from __future__ import annotations
 
+import math
+
 import pytest
+
+import analytics
+from tests.advisors._retirement_recommender_reference import seed_state_db, trading_days
 
 
 @pytest.fixture(scope="module")
@@ -324,4 +329,255 @@ class TestSelectRetirementCandidate:
             "Both symphonies in the pair are ineligible -- there is no valid "
             "candidate; select_retirement_candidate must return None rather "
             "than arbitrarily picking one."
+        )
+
+
+# ---------------------------------------------------------------------------
+# quant-code-reviewer Finding 1 (BLOCKING): fleet-normalization population
+# scope at the ORCHESTRATOR level. AC-3 says "normalized across the current
+# fleet" -- the ORIGINAL RED suite never pinned whether that means the WHOLE
+# live roster or just the symphonies inside a flagged pair. Min-max
+# normalization over exactly 2 points (a flagged pair, the common case) is
+# mathematically degenerate -- it collapses every non-tied metric to a
+# winner-take-all {0.0, 1.0}, discarding all magnitude information -- so this
+# is not a cosmetic scoping choice, it changes WHICH symphony gets
+# recommended for retirement. Verified numerically (not asserted from
+# memory) that build_recommendations's current `involved`-only scoping and a
+# full-live-roster scoping produce OPPOSITE candidate picks for the identical
+# pair once a 3rd, uncorrelated, extreme-performing live symphony exists.
+# ---------------------------------------------------------------------------
+
+
+# Hand-verified metrics (see the retirement-recommender-core review-response
+# session's scratch calculation): under 2-member (pair-only) normalization,
+# min-max collapses every non-tied metric to {0,1} and A wins (composite
+# 0.40 > B's 0.60 is FALSE -- A=0.40, B=0.60, so B is naturally "keep" and A
+# is "candidate"). Under full-roster (A,B,C) normalization, C's extreme
+# values on sharpe/sortino/max_drawdown/calmar compress B's advantage on
+# those 4 toward ~0 while A's CAGR win stays anchored (C's CAGR sits BETWEEN
+# A and B, so it does not widen the CAGR range) -- composite_A=0.40 becomes
+# HIGHER than composite_B (~0.097), flipping which symphony is the weaker
+# performer entirely from the population choice alone.
+_FLEET_SCOPE_METRICS = {
+    "A": {
+        "total_return": 0.0,
+        "annualized_return": 0.12,
+        "sharpe": 0.3,
+        "sortino": 0.4,
+        "max_drawdown": -0.20,
+        "calmar": 0.6,
+        "win_rate": 0.5,
+        "volatility": 0.1,
+    },
+    "B": {
+        "total_return": 0.0,
+        "annualized_return": 0.10,
+        "sharpe": 0.5,
+        "sortino": 0.6,
+        "max_drawdown": -0.10,
+        "calmar": 1.0,
+        "win_rate": 0.5,
+        "volatility": 0.1,
+    },
+    "C": {
+        "total_return": 0.0,
+        "annualized_return": 0.11,  # between A and B -- does NOT widen the CAGR range
+        "sharpe": 5.0,
+        "sortino": 6.0,
+        "max_drawdown": -0.01,
+        "calmar": 10.0,
+        "win_rate": 0.5,
+        "volatility": 0.1,
+    },
+}
+
+
+def _fleet_scope_series(n: int = 200) -> dict[str, list[float]]:
+    """Real, correlation_diagnostic-verified return series: A-B correlate
+    ~0.9999 (a clean screen hit), A-C and B-C correlate ~0.00003/0.00001
+    (C is live but joins no pair) -- computed and confirmed via
+    correlation_diagnostic._pearson_r in the review-response scratch session,
+    not asserted from memory."""
+    bot_a = [0.10 * math.sin(i * 0.3) for i in range(n)]
+    bot_b = [0.95 * v + 0.001 * ((i % 3) - 1) for i, v in enumerate(bot_a)]
+    bot_c = [0.10 * math.cos(i * 1.31) for i in range(n)]
+    return {"A": bot_a, "B": bot_b, "C": bot_c}
+
+
+def _tagged_quantstats_mock(series_by_tag: dict[str, list[float]]):
+    """Replacement for analytics.compute_quantstats_metrics that returns
+    pre-validated, hand-verified metrics for whichever of A/B/C's REAL
+    constructed return series was passed in (matched by value, not by call
+    order or position -- robust to any internal iteration-order change).
+
+    This decouples the test from quantstats' own return-to-metric math (an
+    already-tested, separate function/module) so it isolates PURELY the
+    orchestrator's population-scope choice under review -- the actual thing
+    Finding 1 is about. Raises loudly (AssertionError, not a silent
+    fallback) if a series doesn't match any known tag, so a broken match
+    fails immediately and legibly rather than masquerading as a false
+    positive/negative on the real assertion below.
+    """
+
+    def _mock(returns_series, freq="D"):
+        for tag, s in series_by_tag.items():
+            if len(returns_series) == len(s) and all(
+                math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
+                for a, b in zip(returns_series, s, strict=True)
+            ):
+                return dict(_FLEET_SCOPE_METRICS[tag])
+        raise AssertionError(
+            f"quantstats mock: no known A/B/C series matched (len={len(returns_series)}, "
+            f"first 3 values={returns_series[:3]}) -- fixture/mock mismatch, not a real result"
+        )
+
+    return _mock
+
+
+class TestFleetNormalizationScopeAtOrchestratorLevel:
+    def test_composite_scope_over_hand_verified_metrics_flips_the_candidate(self, rr):
+        """Pure-math sanity check (no DB, no mocking): confirms the SAME
+        hand-verified A/B/C metrics really do produce opposite candidate
+        picks under the two scoping choices, independent of
+        build_recommendations entirely -- isolates the math claim from the
+        orchestrator-wiring claim tested below."""
+        two_member = rr.compute_composite_scores(
+            {"A": _FLEET_SCOPE_METRICS["A"], "B": _FLEET_SCOPE_METRICS["B"]}
+        )
+        full_roster = rr.compute_composite_scores(_FLEET_SCOPE_METRICS)
+
+        two_member_candidate = rr.select_retirement_candidate("A", "B", two_member)
+        full_roster_candidate = rr.select_retirement_candidate(
+            "A", "B", {"A": full_roster["A"], "B": full_roster["B"]}
+        )
+
+        assert two_member_candidate == "A", (
+            "fixture sanity: 2-member scoping must pick A as the candidate"
+        )
+        assert full_roster_candidate == "B", (
+            "fixture sanity: full-roster scoping must pick B as the candidate"
+        )
+        assert two_member_candidate != full_roster_candidate, (
+            "fixture sanity: the whole point of this fixture is that the two "
+            "scoping choices disagree on which symphony is the candidate"
+        )
+
+    def test_build_recommendations_normalizes_against_the_full_live_roster_not_just_the_flagged_pair(
+        self, rr, tmp_path, monkeypatch
+    ):
+        """THE orchestrator-level pin for Finding 1. Three LIVE symphonies:
+        A and B are correlated (screen hit); C is live but uncorrelated with
+        either (joins no pair). AC-3 says the composite is 'normalized
+        across the current fleet' -- read most naturally as the WHOLE live
+        roster, not just the two symphonies inside one flagged pair (a
+        pair-only population isn't really a 'fleet' at all, and is
+        mathematically degenerate for min-max normalization -- see the
+        module docstring above).
+
+        Per the hand-verified fixture, correct full-roster scoping must pick
+        B as the candidate for the A-B pair; a build_recommendations that
+        instead scores only the `involved` (pair-only) subset would pick A
+        -- this assertion is the one that actually distinguishes the two
+        implementations, not merely a shape/presence check.
+        """
+        series = _fleet_scope_series()
+        days = trading_days(len(series["A"]))
+        db_series = {sym: {d: (series[sym][i], 0.0) for i, d in enumerate(days)} for sym in series}
+        db_file = seed_state_db(tmp_path, monkeypatch, series_by_symphony=db_series)
+
+        monkeypatch.setattr(
+            analytics, "compute_quantstats_metrics", _tagged_quantstats_mock(series)
+        )
+
+        recs = rr.build_recommendations(db_file=db_file, days=None)
+        assert len(recs) >= 1, (
+            "fixture sanity: the A-B pair must clear the screen and both gates "
+            "(near-perfect correlation, n=200) and produce a recommendation"
+        )
+
+        ab_recs = [
+            r for r in recs if {_field(r, "candidate_id"), _field(r, "sibling_id")} == {"A", "B"}
+        ]
+        assert len(ab_recs) == 1, f"expected exactly one A/B recommendation, got {ab_recs!r}"
+        candidate_id = _field(ab_recs[0], "candidate_id")
+
+        assert candidate_id == "B", (
+            f"build_recommendations picked {candidate_id!r} as the A-B pair's "
+            "retirement candidate. Per the hand-verified fixture, full-live-"
+            "roster fleet normalization (correctly including live symphony C "
+            "in the normalization population, per AC-3's 'current fleet') "
+            "must pick 'B'. Picking 'A' means compute_composite_scores was "
+            "invoked over only the flagged-pair subset ({'A','B'}) rather "
+            "than the full live roster ({'A','B','C'}) -- quant-code-reviewer "
+            "Finding 1: fix build_recommendations to score against "
+            "symphony_ids (the full live roster with a usable return series), "
+            "not the narrower `involved` set."
+        )
+
+        assert "C" not in {_field(r, "candidate_id") for r in recs} | {
+            _field(r, "sibling_id") for r in recs
+        }, (
+            "C is uncorrelated with both A and B and must never appear in any "
+            "recommendation, even though its metrics now (correctly) "
+            "influence the A-B pair's normalization."
+        )
+
+
+def _field(rec, name):
+    if isinstance(rec, dict):
+        if name in rec:
+            return rec[name]
+        raw = rec.get("raw_response")
+        if isinstance(raw, dict):
+            return raw.get(name)
+        return None
+    if hasattr(rec, name):
+        return getattr(rec, name)
+    raw = getattr(rec, "raw_response", None)
+    if isinstance(raw, dict):
+        return raw.get(name)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# quant-code-reviewer Finding 3 (non-blocking coverage gap): the REAL
+# production None-composite boundary. Ruling 5's original tests constructed
+# a CompositeScore directly with composite=<a real float> AND eligible=False
+# -- an input compute_composite_scores itself never actually produces (there,
+# composite is None IFF eligible is False, always). This test exercises the
+# REAL compute_composite_scores -> select_retirement_candidate boundary: one
+# symphony genuinely lacking data (a real None metric, so
+# compute_composite_scores itself sets composite=None) paired with an
+# eligible sibling, pinning that the eligible sibling is correctly selected
+# as the candidate rather than the ineligible one blocking selection
+# entirely -- confirming this is the INTENDED behavior (AC-11's "may still
+# be the keep member"), not an accidental byproduct of branch ordering.
+# ---------------------------------------------------------------------------
+
+
+class TestSelectRetirementCandidateRealNoneCompositeBoundary:
+    def test_real_ineligible_none_composite_does_not_block_the_eligible_sibling(self, rr):
+        metrics_by_symphony = {
+            "data-poor": _metrics(
+                None, 0.5, 0.6, -0.10, 1.0
+            ),  # sharpe present but CAGR missing -> ineligible
+            "data-rich": _metrics(0.10, 0.5, 0.6, -0.10, 1.0),
+        }
+        scores = rr.compute_composite_scores(metrics_by_symphony)
+        # Fixture sanity: confirm the REAL function produces composite=None
+        # for the ineligible symphony (not a hand-set float) before trusting
+        # the candidate-selection assertion below.
+        assert scores["data-poor"].eligible is False
+        assert scores["data-poor"].composite is None
+        assert scores["data-rich"].eligible is True
+        assert scores["data-rich"].composite is not None
+
+        candidate = rr.select_retirement_candidate("data-poor", "data-rich", scores)
+        assert candidate == "data-rich", (
+            "A real (compute_composite_scores-produced) None-composite "
+            "ineligible symphony paired with an eligible sibling must select "
+            "the eligible sibling as the candidate -- AC-11's 'may still be "
+            "the keep member' for the ineligible side. This pins the "
+            "production code path, not just the hand-constructed synthetic "
+            "CompositeScore inputs the earlier ruling-5 tests used."
         )

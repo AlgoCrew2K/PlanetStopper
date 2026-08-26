@@ -251,11 +251,31 @@ class TestStructuralRedundancyGateEndToEnd:
         # differ -- otherwise the pair could tie down to the lexical tiebreak,
         # which is fine, but an explicit performance gap makes the assertion
         # about WHICH one is the candidate meaningful rather than incidental.
+        #
+        # Naming (verified empirically via analytics.compute_quantstats_metrics,
+        # not assumed): scaling a return series DOWN by a positive factor <1
+        # shrinks both gains AND losses/drawdowns. Sharpe/Sortino are
+        # ratio-based and stay ~scale-invariant, but max_drawdown improves
+        # (shrinks toward zero) and Calmar improves too -- so the
+        # SCALED-DOWN series ends up with a materially WORSE (lower) raw
+        # CAGR but a BETTER Sortino/max_drawdown/Calmar than the unscaled
+        # one; only Sharpe stays roughly tied. Net composite (CAGR-dominant
+        # weight 0.40 vs the other four's combined 0.60): the unscaled,
+        # bigger-swings series is the one with the LOWER composite -- it
+        # loses on 4-of-5 metrics despite winning the single highest-weight
+        # one. Named "volatile-sym"/"calmer-sym" rather than "strong"/"weak"
+        # so the names describe the actual construction (raw swing
+        # magnitude), not a performance conclusion this fixture doesn't
+        # actually verify by name alone -- prior "strong-sym"/"weak-sym"
+        # naming asserted the OPPOSITE of the true outcome (quant-code-
+        # reviewer Finding 2 review-response: caught before commit, the
+        # original comment's "materially worse CAGR/Sharpe/etc." claim for
+        # the scaled-down series was only true for CAGR, not the other 4).
         days = trading_days(len(full_a))
-        weaker_scale = 0.4  # scaled-down returns -> materially worse CAGR/Sharpe/etc.
+        scale = 0.4  # shrinks gains AND losses/drawdowns proportionally
         series = {
-            "strong-sym": {d: (full_a[i], 0.0) for i, d in enumerate(days)},
-            "weak-sym": {d: (full_b[i] * weaker_scale, 0.0) for i, d in enumerate(days)},
+            "volatile-sym": {d: (full_a[i], 0.0) for i, d in enumerate(days)},
+            "calmer-sym": {d: (full_b[i] * scale, 0.0) for i, d in enumerate(days)},
         }
         db_file = seed_state_db(tmp_path, monkeypatch, series_by_symphony=series)
 
@@ -267,7 +287,15 @@ class TestStructuralRedundancyGateEndToEnd:
             "pass for this fixture."
         )
         candidate_ids = {_rec_field(r, "candidate_id") for r in recs}
-        assert candidate_ids <= {"strong-sym", "weak-sym"}
+        assert candidate_ids == {"volatile-sym"}, (
+            f"expected 'volatile-sym' (the unscaled, bigger-swings series -- "
+            f"empirically the LOWER-composite member: it loses on 4 of 5 "
+            f"metrics -- sortino/max_drawdown/calmar to 'calmer-sym', with "
+            f"sharpe ~tied -- despite winning the single highest-weight CAGR "
+            f"metric) to be the sole retirement candidate, got "
+            f"{candidate_ids!r}. A bare subset check (quant-code-reviewer "
+            "Finding 2) doesn't actually verify WHICH symphony was picked."
+        )
 
     def test_stress_window_too_thin_fails_closed(self, rr):
         """AC-6 edge case: stress sub-window has fewer than STRESS_MIN_OBS
