@@ -7,13 +7,19 @@ this module has no write path of any kind (no advisor_observations row, no
 retirement_decisions row, no bot_state write) and no trade/execution
 primitive.
 
-Pattern: mirrors advisors/advisor_chat.py's explain_artifact exactly --
-the same client factory seam, the same plain-text (not tool-use)
-messages.create call, the same text-block extraction, the same D-1
-graceful-degradation contract. explain_recommendation is read-only and
-pure with respect to its input dict (it never mutates the recommendation
-passed in); stamping the result onto a recommendation's raw_response is
-the PRODUCER's job (the nightly tick worker), not this function's.
+Pattern: shares advisors/advisor_chat.py's explain_artifact's client
+factory seam, plain-text (not tool-use) messages.create call, text-block
+extraction, and D-1 graceful-degradation contract. NOT an exact mirror --
+unlike explain_artifact, this function has no equivalent of that module's
+validate_artifact() input-length-capping layer (PR #139 review, F8;
+accepted as low-risk: the recommendation raw_response schema has no
+open-ended, operator-controlled string field for an oversized value to
+hide in, unlike advisor_chat's artifact-borne rules_text). See
+DE-RETIRE-APPROVAL-001 in DECISIONS.md for the full ruling.
+explain_recommendation is read-only and pure with respect to its input
+dict (it never mutates the recommendation passed in); stamping the result
+onto a recommendation's raw_response is the PRODUCER's job (the nightly
+tick worker), not this function's.
 
 Graceful degradation (D-1): explain_recommendation NEVER raises. Any
 failure -- client construction, the LLM call itself, or response
