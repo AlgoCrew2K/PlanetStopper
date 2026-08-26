@@ -102,7 +102,40 @@ def _inject_correlation_diagnostic_stub(return_value: list):
 
 
 def _remove_correlation_diagnostic_stub():
-    """Remove the stub from sys.modules after a test."""
+    """Remove the stub from sys.modules after a test -- but ONLY when a
+    genuine hand-built STUB was actually swapped in, never when the
+    REAL-MODULE mutation branch was used.
+
+    CI-caught leak, root-caused via object-identity diagnostic (2026-08-26):
+    this used to pop "advisors.correlation_diagnostic" from sys.modules
+    UNCONDITIONALLY, including after the real-module branch (return _real,
+    line ~87 above -- Cycle-2a shipped the real module, so this helper's
+    original "does not exist yet (RED state)" docstring assumption is now
+    stale). Popping the REAL module forces the NEXT `from advisors import
+    correlation_diagnostic` statement ANYWHERE in the process (including
+    this same helper's own next call, at line ~81) to re-execute
+    correlation_diagnostic.py from scratch, producing a BRAND NEW module
+    object instance -- permanently diverging from any consumer that already
+    holds a reference to the PREVIOUS instance. advisors.retirement_
+    recommender does `from advisors import correlation_diagnostic` at ITS
+    OWN module level, binding ONE FIXED reference the first time it is ever
+    imported in the process; no later attribute-level restoration on a
+    *different* object instance can ever reach that stale, orphaned
+    reference. Confirmed empirically: id(rr.correlation_diagnostic) matched
+    NEITHER the current sys.modules entry NOR a fresh consumer's own import,
+    under CI's real cross-file (loadfile) test order.
+
+    Discriminator: a hand-built stub (types.ModuleType("...") with no
+    __file__ set) is safe to remove -- the real module (if it exists) was
+    never touched by that path. A real imported module always has
+    __file__ set by Python's import machinery; leave it in sys.modules
+    untouched so its identity (and every consumer's reference to it)
+    stays stable across the whole test session.
+    """
+    current = sys.modules.get("advisors.correlation_diagnostic")
+    if current is not None and getattr(current, "__file__", None) is not None:
+        return  # a real imported module -- never pop it, see docstring above
+
     sys.modules.pop("advisors.correlation_diagnostic", None)
     try:
         import advisors as _advisors_pkg
@@ -596,4 +629,71 @@ class TestLeakedMockDoesNotCorruptAnAlreadyBoundConsumerReference:
             "still a leaked Mock after test_a's teardown ran. The autouse "
             "_cleanup_stub fixture failed to restore the real function on "
             "the SAME object instance a real consumer is bound to."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Second regression guard, added 2026-08-26: a DIFFERENT, more precise leak
+# mechanism than the Mock-leftover one above. See _remove_correlation_
+# diagnostic_stub's own docstring for the full mechanism -- this pins the
+# OBJECT-IDENTITY divergence directly, which test_a/test_b above (a
+# not-a-Mock check) would NOT have caught: the CI failure this guards
+# against (tests/advisors/test_retirement_recommender_screen.py returning
+# empty sets under CI's real --dist loadfile cross-file order) was never
+# about a leaked Mock landing on retirement_recommender's reference -- it
+# was retirement_recommender's `correlation_diagnostic` reference becoming a
+# permanently STALE, orphaned real module object (a perfectly ordinary,
+# non-Mock function on it) that had silently DIVERGED from the CURRENT
+# canonical sys.modules entry, because _remove_correlation_diagnostic_stub
+# used to unconditionally pop sys.modules even after the real-module
+# mutation branch, forcing the next `from advisors import
+# correlation_diagnostic` (this helper's own next call) to create a BRAND
+# NEW module object instance every time.
+# ---------------------------------------------------------------------------
+
+
+class TestConsumerModuleIdentityNeverDivergesFromCanonicalSysModulesEntry:
+    """Deterministic reproduction of the ACTUAL CI-caught mechanism
+    (root-caused via a live id()-comparison diagnostic against a real
+    cross-file pytest run, 2026-08-26): after this file's own real-module
+    mutation-branch tests run their full inject/teardown cycle, advisors.
+    retirement_recommender's `correlation_diagnostic` reference must remain
+    the SAME OBJECT as sys.modules["advisors.correlation_diagnostic"] --
+    not just "not currently a Mock" (test_a/test_b's weaker check above),
+    which is silently satisfied even when the two have drifted apart onto
+    two different (both real, both non-Mock) module instances."""
+
+    def test_repeated_inject_teardown_cycles_never_orphan_the_consumers_reference(self):
+        # Force a clean, KNOWN-matching baseline first (mirrors test_a's own
+        # reload-to-resync pattern) -- this test must prove the INVARIANT
+        # holds across cycles, not depend on incidentally-already-matching
+        # process state left over from whatever ran before it.
+        import importlib
+
+        import advisors.retirement_recommender as _rr_consumer
+
+        importlib.reload(_rr_consumer)
+        assert _rr_consumer.correlation_diagnostic is sys.modules["advisors.correlation_diagnostic"]
+
+        # Multiple real-module-branch inject/teardown cycles -- the exact
+        # shape every test above this class already exercises repeatedly;
+        # asserting the invariant survives several cycles, not just one.
+        for _ in range(3):
+            _inject_correlation_diagnostic_stub([_make_pair_result("cycle-x", "cycle-y")])
+            _remove_correlation_diagnostic_stub()
+
+        assert (
+            _rr_consumer.correlation_diagnostic is sys.modules["advisors.correlation_diagnostic"]
+        ), (
+            "advisors.retirement_recommender.correlation_diagnostic has DIVERGED "
+            "from the canonical sys.modules['advisors.correlation_diagnostic'] "
+            "entry after repeated inject/teardown cycles -- this is the exact "
+            "object-identity mechanism behind the CI-caught leak (see "
+            "_remove_correlation_diagnostic_stub's docstring). A monkeypatch."
+            "setattr call elsewhere in the process (e.g. tests/advisors/"
+            "test_retirement_recommender_screen.py) that targets the CURRENT "
+            "canonical module will silently fail to affect "
+            "retirement_recommender's actual calls if this divergence exists, "
+            "with no exception raised anywhere -- the exact 'returns an empty "
+            "set instead of the expected pair' failure mode this guards."
         )

@@ -966,6 +966,15 @@ def _retirement_recommender_tick_worker() -> None:
     tick nothing in production ever calls the producer, so both read-only
     surfaces render an honest-empty state forever).
 
+    Cycle 2b (AC-2): between build and persist, each recommendation is run
+    through advisors.retirement_explainer.explain_recommendation and the
+    result is stamped onto rec["explanation"] -- this keeps the LLM entirely
+    out of advisors/retirement_recommender.py (byte-unchanged this cycle,
+    pinned by a golden hash test) and out of the render/approve/checklist
+    paths (operator ruling, Gate-2b). A per-rec explainer failure degrades
+    that one recommendation's explanation to None and never blocks
+    persistence of the rest of the batch.
+
     D-1 error contract: only type(exc).__name__ appears in log records at
     WARNING+ -- a producer failure must never crash the scheduler thread.
     """
@@ -976,6 +985,22 @@ def _retirement_recommender_tick_worker() -> None:
         )
 
         recs = build_recommendations()
+        if recs:
+            from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
+
+            for rec in recs:
+                try:
+                    rec["explanation"] = explain_recommendation(rec)
+                except Exception as exc:
+                    # Defense-in-depth: explain_recommendation is D-1/never-
+                    # raises by its own contract, but a violation must never
+                    # take down the whole tick or leak the raw exception.
+                    _daemon_log.warning(
+                        "Retirement explainer failed for %s: %s",
+                        rec.get("candidate_id"),
+                        type(exc).__name__,
+                    )
+                    rec["explanation"] = None
         persist_recommendations(recs)
         _daemon_log.info("Retirement recommender tick complete: %d recommendation(s).", len(recs))
     except Exception as exc:
@@ -6159,6 +6184,57 @@ def ai_advisor_tab():
         pass  # Empty-state rendered by template on [].
 
     # ------------------------------------------------------------------ #
+    # Retirement approval live-join (Cycle 2b, AC-4): status is read      #
+    # FRESH from the mutable retirement_decisions table on every request #
+    # -- never from the frozen advisor_observations row (which never     #
+    # carries an approval_status key at all). Mirrors the incubation     #
+    # _incubation_by_hash live-join above. A recommendation with no      #
+    # decision row shows "pending"; an orphaned decision row (candidate  #
+    # no longer in the latest batch) is harmless -- only rendering cards #
+    # get stamped.                                                       #
+    # ------------------------------------------------------------------ #
+    if retirement_recommendations:
+        try:
+            _ret_decisions_by_id = {
+                _row.get("candidate_id"): _row for _row in database.get_retirement_decisions()
+            }
+        except Exception:
+            _ret_decisions_by_id = {}
+        _ret_any_approved = False
+        for _rec in retirement_recommendations:
+            _decision = _ret_decisions_by_id.get(_rec.get("candidate_id"))
+            _rec["approval_status"] = (_decision or {}).get("approval_status") or "pending"
+            if _rec["approval_status"] == "approved":
+                _ret_any_approved = True
+
+        # Checklist assembly (AC-6/AC-7 glue): deterministic, no LLM, built
+        # ONLY for approved cards -- never inside the approve route itself
+        # (AC-5: "Approve writes status ONLY"). bot_state is only fetched
+        # when at least one card actually needs it (own dedicated try, same
+        # F5 rationale as the frontrunner identity-resolution prefetch below
+        # -- non-blocking, read-only, no wasted I/O on an all-pending batch).
+        if _ret_any_approved:
+            _ret_bot_state: dict = {}
+            try:
+                _ret_bot_state = database.load_state()
+            except Exception:
+                _ret_bot_state = {}
+            try:
+                from advisors.retirement_checklist import build_checklist  # noqa: PLC0415
+            except Exception:
+                build_checklist = None
+            for _rec in retirement_recommendations:
+                if _rec["approval_status"] != "approved":
+                    continue
+                if build_checklist is None:
+                    _rec["_checklist"] = None
+                    continue
+                try:
+                    _rec["_checklist"] = build_checklist(_rec, _ret_bot_state)
+                except Exception:
+                    _rec["_checklist"] = None
+
+    # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
     # rows (AC-9-route). Shared by both proposal_source values             #
     # ('frontrunner_builder' and 'strategy_builder_retrofit') — one query, #
@@ -7393,6 +7469,78 @@ def ai_advisor_proposal_reject():
         return jsonify({"error": type(exc).__name__}), 200
 
     return jsonify({"success": bool(updated)}), 200
+
+
+def _dispatch_retirement_decision(approval_status: str):
+    """Shared body for the two retirement approve/reject routes (Cycle 2b,
+    AC-5) -- a status-ONLY write via database.upsert_retirement_decision.
+
+    Deliberately NOT the frontrunner /ai-advisor/proposal/approve route
+    (reaches composer_draft_client.save_symphony) -- this reaches no
+    Composer/exec/LIVE_EXECUTION/trade primitive of any kind, and never
+    calls advisors.retirement_checklist.build_checklist (the checklist is
+    assembled at render time in ai_advisor_tab(), not here).
+
+    candidate_id is validated as a non-empty str under a bounded length (300
+    chars, matching Composer-hash-scale ids) -- deliberately NOT gated
+    against the current latest recommendation batch (team-lead-approved
+    deviation from the plan's "where practical" wording): the nightly 03:45
+    tick can rebuild between an operator's page load and their click, and
+    this is a status write on an advisory record, not a money-moving action
+    -- an orphaned decision row is harmless (plan Edge Cases).
+
+    CSRF via the global _csrf_before_request hook, auth via the global
+    _auth_before_request hook -- neither is called here. Not added to
+    _SETTINGS_WRITE_ALLOWLIST. D-1: any accessor exception returns
+    type(exc).__name__ only, never str(exc).
+    """
+    body = request.get_json(silent=True) or {}
+    candidate_id = body.get("candidate_id")
+    if not isinstance(candidate_id, str) or not candidate_id or len(candidate_id) > 300:
+        return jsonify(
+            {"success": False, "approval_status": None, "error": "invalid candidate_id"}
+        ), 200
+
+    try:
+        database.upsert_retirement_decision(candidate_id, approval_status=approval_status)
+    except Exception as exc:
+        _daemon_log.error(
+            "_dispatch_retirement_decision(%s) failed: %s", approval_status, exc, exc_info=True
+        )
+        # D-1 security contract: do NOT echo str(exc) — may carry a DB path.
+        return jsonify(
+            {"success": False, "approval_status": None, "error": type(exc).__name__}
+        ), 200
+
+    return jsonify({"success": True, "approval_status": approval_status, "error": None}), 200
+
+
+@app.route("/ai-advisor/retirement/approve", methods=["POST"])
+def ai_advisor_retirement_approve():
+    """Approve a retirement recommendation (Cycle 2b, AC-5).
+
+    Accepts JSON: { candidate_id: <str> }. Status-only DB write via
+    database.upsert_retirement_decision(candidate_id, approval_status="approved")
+    -- reaches no Composer/exec/trade primitive and never reads or writes
+    the live-execution env flag. Never calls advisors.retirement_checklist.
+    build_checklist (assembled at render time) or advisors.retirement_
+    explainer.explain_recommendation (producer-time only). See
+    _dispatch_retirement_decision for the shared contract.
+    """
+    return _dispatch_retirement_decision("approved")
+
+
+@app.route("/ai-advisor/retirement/reject", methods=["POST"])
+def ai_advisor_retirement_reject():
+    """Reject a retirement recommendation (Cycle 2b, AC-5).
+
+    Accepts JSON: { candidate_id: <str> }. Status-only DB write via
+    database.upsert_retirement_decision(candidate_id, approval_status="rejected")
+    -- reaches no Composer/exec/trade primitive and never reads or writes
+    the live-execution env flag. See _dispatch_retirement_decision for the
+    shared contract.
+    """
+    return _dispatch_retirement_decision("rejected")
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:

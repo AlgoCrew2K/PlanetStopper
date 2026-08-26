@@ -1782,6 +1782,7 @@ _MIGRATION_FILES = [
     "035_sleeves.sql",
     "036_sleeve_rule_fires.sql",
     "037_strategy_incubation.sql",
+    "038_retirement_decisions.sql",
 ]
 
 
@@ -4995,6 +4996,128 @@ def get_incubation_daily_series(candidate_hash: str) -> "tuple[list[float], list
     forward_return_pct = [row[0] for row in rows]
     spy_return_pct = [row[1] for row in rows]
     return forward_return_pct, spy_return_pct
+
+
+# --- 038: Retirement Approval Lifecycle ---
+# Mutable operator approve/reject status for Retirement Recommender candidates
+# (Phase 2, Cycle 2b). See migrations/038_retirement_decisions.sql for the
+# schema-level rationale (append-only advisor_observations vs. this mutable,
+# candidate_id-keyed table).
+
+_VALID_RETIREMENT_APPROVAL_STATUSES: frozenset[str] = frozenset({"pending", "approved", "rejected"})
+
+_RETIREMENT_DECISIONS_COLUMNS = [
+    "id",
+    "candidate_id",
+    "sibling_id",
+    "approval_status",
+    "decided_at",
+    "updated_at",
+]
+
+
+def upsert_retirement_decision(
+    candidate_id: str,
+    *,
+    approval_status: str,
+    sibling_id: "str | None" = None,
+) -> bool:
+    """UPSERT a retirement candidate's approval status, keyed by candidate_id's
+    UNIQUE constraint (INSERT ... ON CONFLICT(candidate_id) DO UPDATE) — a
+    repeat call for the same candidate_id updates the existing row in place,
+    never inserts a second row.
+
+    approval_status must be one of {pending, approved, rejected} — raises
+    ValueError otherwise (a caller bug, mirrors
+    update_frontrunner_proposal_status's _VALID_PROPOSAL_APPROVAL_STATUSES
+    pattern) and writes nothing on an invalid value.
+
+    sibling_id=None (the default) on an update PRESERVES the existing stored
+    value (COALESCE, same pattern as update_frontrunner_proposal_status's
+    created_symphony_id); a non-None sibling_id always overwrites. No
+    production caller passes sibling_id this cycle — the approve/reject
+    routes pass only candidate_id — the column/param exist per the schema's
+    reserved-for-future-use shape.
+
+    decided_at is stamped datetime('now') whenever the WRITTEN
+    approval_status is 'approved' or 'rejected'; stays NULL while 'pending'.
+    updated_at is stamped datetime('now') on every write.
+
+    Returns True on a successful write (insert or update). Write path
+    (get_connection()), parameterized SQL throughout.
+    """
+    if approval_status not in _VALID_RETIREMENT_APPROVAL_STATUSES:
+        raise ValueError(
+            f"approval_status must be one of {sorted(_VALID_RETIREMENT_APPROVAL_STATUSES)}; "
+            f"got {approval_status!r}"
+        )
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO retirement_decisions "
+            "(candidate_id, sibling_id, approval_status, decided_at, updated_at) "
+            "VALUES (?, ?, ?, "
+            "CASE WHEN ? IN ('approved', 'rejected') THEN datetime('now') ELSE NULL END, "
+            "datetime('now')) "
+            "ON CONFLICT(candidate_id) DO UPDATE SET "
+            "sibling_id = COALESCE(excluded.sibling_id, retirement_decisions.sibling_id), "
+            "approval_status = excluded.approval_status, "
+            "decided_at = CASE WHEN excluded.approval_status IN ('approved', 'rejected') "
+            "THEN datetime('now') ELSE NULL END, "
+            "updated_at = datetime('now')",
+            (candidate_id, sibling_id, approval_status, approval_status),
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_retirement_decisions() -> "list[dict]":
+    """All retirement_decisions rows, unfiltered — for the AC-4 render-time
+    live-join. Read path (get_ro_connection(), architecture constraint 5).
+    Never raises: an empty table, a missing table (e.g. a DB that predates
+    migration 038), or any other read failure degrades to [].
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT " + ", ".join(_RETIREMENT_DECISIONS_COLUMNS) + " FROM retirement_decisions"
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    return [dict(zip(_RETIREMENT_DECISIONS_COLUMNS, row)) for row in rows]
+
+
+def get_retirement_decision(candidate_id: str) -> "dict | None":
+    """Single-row lookup by candidate_id. Read path (get_ro_connection()).
+    Never raises: an unknown candidate_id, a missing table, or any other read
+    failure returns None.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT "
+                + ", ".join(_RETIREMENT_DECISIONS_COLUMNS)
+                + " FROM retirement_decisions WHERE candidate_id = ?",
+                (candidate_id,),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    return dict(zip(_RETIREMENT_DECISIONS_COLUMNS, row))
 
 
 # Initialize tables on import

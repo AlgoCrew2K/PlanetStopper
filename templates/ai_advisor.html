@@ -945,7 +945,9 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Retirement Recommendations panel (Cycle 2a) -- minimal, read-only    */
+        /* Retirement Recommendations panel -- Cycle 2a's card layout, plus   */
+        /* Cycle 2b's explanation/status/approve-reject/checklist additions   */
+        /* further down this stylesheet.                                     */
         /* ------------------------------------------------------------------ */
         .retirement-rec-card {
             border: 1px solid var(--studio-border);
@@ -973,6 +975,80 @@
             font-size: 0.6875rem;
             font-style: italic;
         }
+
+        /* Cycle 2b (AC-7) additions -- explanation, live status chip,
+           approve/reject actions, deterministic checklist. All fields rely
+           on Jinja's default autoescaping only; no raw hex, design tokens
+           only. */
+        .retirement-rec-explanation {
+            color: var(--studio-ink);
+            font-size: 0.8125rem;
+            margin: 0.5rem 0;
+            line-height: 1.4;
+        }
+
+        /* Mirrors .incubation-status-chip's shape exactly (3 modifiers
+           instead of 4 -- pending/approved/rejected). */
+        .retirement-status-chip {
+            display: inline-block;
+            padding: 0.2rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            border: 1px solid var(--studio-border);
+            margin-top: 0.25rem;
+        }
+        .retirement-status-chip--pending {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
+        }
+        .retirement-status-chip--approved {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+            background: rgba(31, 122, 77, 0.12);
+            font-weight: 800;
+        }
+        .retirement-status-chip--rejected {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
+        }
+
+        .retirement-rec-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.625rem;
+        }
+
+        .retirement-checklist {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--studio-border);
+            font-size: 0.8125rem;
+        }
+        .retirement-checklist-header {
+            font-size: 0.5625rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.5rem;
+        }
+        .retirement-checklist-holdings {
+            color: var(--studio-ink);
+            margin-bottom: 0.5rem;
+        }
+        .retirement-checklist-holdings--unavailable {
+            color: var(--studio-ink-dim);
+            font-style: italic;
+        }
+        .retirement-checklist-steps {
+            margin: 0;
+            padding-left: 1.25rem;
+            color: var(--studio-ink);
+        }
+        .retirement-checklist-steps li { margin-bottom: 0.25rem; }
 
         /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
         .prism-verification {
@@ -1448,9 +1524,11 @@
 
         </div>
         <!-- ============================================================ -->
-        <!-- Retirement Recommendations panel (Cycle 2a) -- minimal,        -->
-        <!-- server-rendered, READ-ONLY. No operator lifecycle affordance   -->
-        <!-- of any kind here -- that's Cycle 2b.                          -->
+        <!-- Retirement Recommendations panel. Cycle 2a shipped the        -->
+        <!-- read-only recommendation cards; Cycle 2b (AC-7) added the     -->
+        <!-- operator lifecycle affordance itself -- the explanation,      -->
+        <!-- live status chip, Approve/Reject buttons, and the             -->
+        <!-- deterministic wind-down checklist on approved cards.          -->
         <!-- ============================================================ -->
         <section class="matrix-card" data-testid="retirement-recommendations-panel">
             <div class="matrix-card-header">Retirement Recommendations</div>
@@ -1480,6 +1558,55 @@
                         <span>Structural-redundancy gate: {{ 'passed' if rec.get('structural_redundancy_gate_passed') else 'not met' }}</span>
                     </div>
                     <div class="retirement-rec-basis">{{ rec.get('basis_label', '') | e }}</div>
+                    <div class="retirement-rec-explanation" data-testid="retirement-rec-explanation">
+                        {%- if rec.get('explanation') %}{{ rec.get('explanation') | e }}{% else %}explanation unavailable{% endif -%}
+                    </div>
+                    <span class="retirement-status-chip retirement-status-chip--{{ rec.get('approval_status', 'pending') | e }}"
+                          data-testid="retirement-rec-status">
+                        {{- rec.get('approval_status', 'pending') | capitalize | e -}}
+                    </span>
+                    {% if rec.get('approval_status', 'pending') == 'pending' %}
+                    <div class="retirement-rec-actions">
+                        <button type="button"
+                                class="run-trigger-btn"
+                                data-testid="retirement-approve-btn"
+                                data-candidate-id="{{ rec.get('candidate_id', '') | e }}"
+                                onclick="retDispatchDecision('approve', this.dataset.candidateId)">
+                            Approve retirement
+                        </button>
+                        <button type="button"
+                                class="discuss-btn"
+                                data-testid="retirement-reject-btn"
+                                data-candidate-id="{{ rec.get('candidate_id', '') | e }}"
+                                onclick="retDispatchDecision('reject', this.dataset.candidateId)">
+                            Reject
+                        </button>
+                    </div>
+                    {% endif %}
+                    {% if rec.get('approval_status') == 'approved' %}
+                    {% set cl = rec.get('_checklist') %}
+                    <div class="retirement-checklist" data-testid="retirement-checklist">
+                        <div class="retirement-checklist-header">Manual wind-down checklist</div>
+                        {% if cl %}
+                            {% if cl.get('holdings_available') and cl.get('holdings') %}
+                            <div class="retirement-checklist-holdings">
+                                Current holdings: {{ cl.get('holdings', []) | join(', ') | e }}
+                            </div>
+                            {% else %}
+                            <div class="retirement-checklist-holdings retirement-checklist-holdings--unavailable">
+                                {{- cl.get('unavailable_note') | e -}}
+                            </div>
+                            {% endif %}
+                            <ol class="retirement-checklist-steps">
+                                {% for step in cl.get('steps', []) %}
+                                <li>{{ step | e }}</li>
+                                {% endfor %}
+                            </ol>
+                        {% else %}
+                            <p class="prism-empty">Checklist unavailable.</p>
+                        {% endif %}
+                    </div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             {% else %}
