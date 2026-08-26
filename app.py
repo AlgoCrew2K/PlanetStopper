@@ -3845,7 +3845,7 @@ def api_incubation():
 
 
 def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
-    """Return persisted RETIREMENT_RECOMMENDATION raw_response dicts, newest-first.
+    """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
 
     Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
     Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
@@ -3860,6 +3860,19 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     constant is defined later in this file -- a def-time default would raise
     NameError at import.
 
+    PR-level /code-review Finding 4: advisor_observations is append-only and
+    the 03:45 daily tick (_run_retirement_recommender_tick) persists every
+    night, so a multi-night deployment accumulates one row per night per
+    still-flagged pair, plus stale rows for pairs no longer flagged. This
+    filters to ONLY the rows sharing the MOST RECENT fetched row's calendar
+    date (UTC, `created_at[:10]`) -- the same substr(created_at,1,10)-equals-
+    MAX(...) "one batch, not the whole table" trick database.get_
+    candidate_alert_last_run already established, applied Python-side here
+    since get_advisor_observations_for_role already returns created_at on
+    every row (no second query needed). A pair still flagged on consecutive
+    nights produces a genuine append-only duplicate row -- the date filter
+    naturally keeps only the latest night's row for that candidate too.
+
     Raises on a DB-read failure (does not swallow) -- each caller degrades to
     an empty result on its own terms (route: honest {"recommendations": []};
     panel: honest empty-state), matching this file's existing per-route error
@@ -3867,8 +3880,15 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     """
     if limit is None:
         limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
+    rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
+    dated_rows = [row for row in rows if row.get("created_at")]
+    if not dated_rows:
+        return []
+    latest_date = max(row["created_at"][:10] for row in dated_rows)
     out: list[dict] = []
-    for row in database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit):
+    for row in dated_rows:
+        if row["created_at"][:10] != latest_date:
+            continue
         raw = row.get("raw_response")
         if isinstance(raw, dict):
             out.append(raw)
