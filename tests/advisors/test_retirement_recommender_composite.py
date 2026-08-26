@@ -291,28 +291,37 @@ class TestSelectRetirementCandidate:
             "sibling instead."
         )
 
-    def test_ineligible_higher_composite_sibling_does_not_block_the_eligible_candidate(self, rr):
-        """The mirror case: the natural KEEP member (higher composite) is
-        ineligible, but the natural CANDIDATE (lower composite) is eligible.
-        AC-11: an ineligible symphony 'may still be the keep member of a
-        pair' -- so this must NOT block the eligible, lower-composite sibling
-        from being correctly selected as the candidate."""
+    def test_ineligible_higher_composite_sibling_yields_no_candidate_fail_closed(self, rr):
+        """PM ruling (PR-level /code-review Finding 1, overrides the original
+        AC-11-derived expectation this test used to encode): fail-CLOSED. The
+        natural KEEP member (higher composite) being ineligible must NOT let
+        the eligible, lower-composite sibling become the candidate -- the
+        pair yields no recommendation at all.
+
+        Non-vacuity fix: the ORIGINAL version of this test hand-set
+        composite=0.80 on the ineligible entry -- a REAL float, never None.
+        Since select_retirement_candidate's ineligible branches only fire on
+        an ACTUAL None, that construction silently skipped the very code path
+        (retirement_recommender.py's `comp_b is None` check) this test claims
+        to exercise, falling through to plain float comparison instead.
+        Fixed here to composite=None, the value compute_composite_scores
+        itself always produces for an ineligible entry -- matching the
+        production invariant so the ineligible-branch is genuinely hit."""
         scores = {
             "eligible-low": rr.CompositeScore(
                 composite=0.20, metrics=_metrics(0.04, 0.2, 0.3, -0.40, 0.1), eligible=True
             ),
             "ineligible-high": rr.CompositeScore(
-                composite=0.80,
+                composite=None,
                 metrics=_metrics(0.25, None, 2.0, -0.05, 3.5),
                 eligible=False,
             ),
         }
         candidate = rr.select_retirement_candidate("eligible-low", "ineligible-high", scores)
-        assert candidate == "eligible-low", (
-            "'eligible-high' being ineligible must not prevent the eligible, "
-            "lower-composite 'eligible-low' from being selected as the "
-            "candidate -- an ineligible symphony may still serve as the keep "
-            "member (AC-11)."
+        assert candidate is None, (
+            "'ineligible-high' has a genuinely None composite -- the pair "
+            "must yield NO candidate at all, fail-closed. Must NOT fall back "
+            "to nominating the eligible 'eligible-low' sibling."
         )
 
     def test_both_ineligible_yields_no_candidate(self, rr):
@@ -540,23 +549,36 @@ def _field(rec, name):
 
 
 # ---------------------------------------------------------------------------
-# quant-code-reviewer Finding 3 (non-blocking coverage gap): the REAL
-# production None-composite boundary. Ruling 5's original tests constructed
-# a CompositeScore directly with composite=<a real float> AND eligible=False
-# -- an input compute_composite_scores itself never actually produces (there,
-# composite is None IFF eligible is False, always). This test exercises the
-# REAL compute_composite_scores -> select_retirement_candidate boundary: one
-# symphony genuinely lacking data (a real None metric, so
-# compute_composite_scores itself sets composite=None) paired with an
-# eligible sibling, pinning that the eligible sibling is correctly selected
-# as the candidate rather than the ineligible one blocking selection
-# entirely -- confirming this is the INTENDED behavior (AC-11's "may still
-# be the keep member"), not an accidental byproduct of branch ordering.
+# PR-level /code-review Finding 1 (BLOCKING, retirement_recommender.py:266):
+# fail-open on an ineligible member -- SUPERSEDES the original ruling-5
+# "may still be the keep member" design. PM RULING (overrides the plan's
+# AC-11 wording): fail-CLOSED. When EITHER member of a screened pair has
+# composite=None (ineligible), emit NO recommendation for that pair at all
+# -- never fall back to nominating the eligible sibling. Reason: composite=
+# None can mean a catastrophic/unmeasurable loss (e.g. a NaN-driving CAGR
+# collapse); keeping the unscoreable member in the portfolio while retiring
+# the well-characterized one is backwards for a capital decision.
+#
+# The ORIGINAL guarding test here was VACUOUS: it hand-constructed
+# CompositeScore(composite=0.80, eligible=False) for the ineligible side --
+# a REAL float, never None. Since select_retirement_candidate's ineligible-
+# member branch is only reached when a composite is ACTUALLY None (`if
+# comp_a is None: ...` / `elif comp_b is None: ...`), a hand-set 0.80 never
+# exercises that branch at all -- the test silently fell through to plain
+# float comparison instead, never proving anything about the ineligible-
+# member code path it claimed to guard. This section's tests use ONLY REAL
+# `compute_composite_scores`-produced None values (never a hand-set float on
+# an eligible=False entry) so the ineligible-member branch is what's
+# actually exercised.
 # ---------------------------------------------------------------------------
 
 
 class TestSelectRetirementCandidateRealNoneCompositeBoundary:
-    def test_real_ineligible_none_composite_does_not_block_the_eligible_sibling(self, rr):
+    def test_real_ineligible_none_composite_yields_no_candidate_fail_closed(self, rr):
+        """The primary non-vacuous pin for Finding 1: a genuinely ineligible
+        symphony (compute_composite_scores-produced composite=None) paired
+        with an eligible sibling must yield NO recommendation for the pair --
+        not a fallback to the eligible sibling as candidate."""
         metrics_by_symphony = {
             "data-poor": _metrics(
                 None, 0.5, 0.6, -0.10, 1.0
@@ -573,11 +595,31 @@ class TestSelectRetirementCandidateRealNoneCompositeBoundary:
         assert scores["data-rich"].composite is not None
 
         candidate = rr.select_retirement_candidate("data-poor", "data-rich", scores)
-        assert candidate == "data-rich", (
+        assert candidate is None, (
             "A real (compute_composite_scores-produced) None-composite "
-            "ineligible symphony paired with an eligible sibling must select "
-            "the eligible sibling as the candidate -- AC-11's 'may still be "
-            "the keep member' for the ineligible side. This pins the "
-            "production code path, not just the hand-constructed synthetic "
-            "CompositeScore inputs the earlier ruling-5 tests used."
+            "ineligible symphony paired with an eligible sibling must yield "
+            "NO candidate -- fail-CLOSED (PM ruling overriding the original "
+            "AC-11 'may still be the keep member' reading). Retiring the "
+            "well-characterized sibling while an unscoreable member (possibly "
+            "hiding a catastrophic loss) stays in the portfolio is backwards "
+            "for a capital decision."
+        )
+
+    def test_real_ineligible_none_composite_yields_no_candidate_regardless_of_position(self, rr):
+        """Mirror of the above with sym_a/sym_b swapped -- directly exercises
+        BOTH branches of the ineligible-member check (`comp_a is None` AND
+        `comp_b is None`), since select_retirement_candidate's argument order
+        determines which branch a given None hits."""
+        metrics_by_symphony = {
+            "data-rich": _metrics(0.10, 0.5, 0.6, -0.10, 1.0),
+            "data-poor": _metrics(None, 0.5, 0.6, -0.10, 1.0),
+        }
+        scores = rr.compute_composite_scores(metrics_by_symphony)
+        assert scores["data-poor"].composite is None
+        assert scores["data-rich"].composite is not None
+
+        candidate = rr.select_retirement_candidate("data-rich", "data-poor", scores)
+        assert candidate is None, (
+            "Same fail-closed outcome regardless of which position (sym_a or "
+            "sym_b) the ineligible member occupies."
         )

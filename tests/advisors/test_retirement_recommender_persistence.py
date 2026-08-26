@@ -228,3 +228,103 @@ def _rec_raw_response(rec):
     if isinstance(raw, dict):
         return raw
     pytest.fail(f"Could not extract a raw_response dict from recommendation item: {rec!r}")
+
+
+# ---------------------------------------------------------------------------
+# PR-level /code-review Finding 5 (retirement_recommender.py's top-level
+# `except Exception: return []`): a silent except swallows a genuine crash
+# with zero trace -- the nightly scheduler tick would log "0 recommendations"
+# indistinguishably whether the run was a real honest-empty result or a
+# silent internal failure. PM ruling: log a WARNING with type(exc).__name__
+# before returning [] -- never str(exc) (D-1: no internals leaked), matching
+# the house convention already used by sibling advisors modules (e.g.
+# advisors/incubation.py's `logger.warning("...: %s", type(exc).__name__)`).
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRecommendationsLogsOnInternalFailure:
+    def test_internal_exception_is_logged_as_a_warning_before_returning_empty(
+        self, rr, tmp_path, monkeypatch, caplog
+    ):
+        """Currently RED: build_recommendations's top-level except swallows
+        the exception with no logging at all -- a real crash and an honest
+        'no live symphonies' empty result are indistinguishable in the logs."""
+        db_file = _build_screen_hit_db(tmp_path, monkeypatch)
+
+        def _explode(*_a, **_k):
+            raise RuntimeError("simulated internal failure")
+
+        monkeypatch.setattr(db_module, "load_state", _explode)
+
+        with caplog.at_level("WARNING", logger="advisors.retirement_recommender"):
+            result = rr.build_recommendations(db_file=db_file, days=None)
+
+        assert result == [], (
+            "D-1 contract: an internal failure must still degrade to an "
+            "honest empty list, never propagate."
+        )
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warning_records, (
+            "build_recommendations swallowed a RuntimeError with NO logging at "
+            "all -- the nightly scheduler tick cannot distinguish a genuine "
+            "internal crash from an honest 'no recommendations tonight' "
+            "result (PR-level /code-review Finding 5). Expected at least one "
+            "WARNING-level log record."
+        )
+        assert any("RuntimeError" in r.getMessage() for r in warning_records), (
+            f"Expected a WARNING record naming the exception type "
+            f"('RuntimeError'), got: {[r.getMessage() for r in warning_records]}"
+        )
+
+    def test_logged_exception_type_reflects_the_real_exception_class(
+        self, rr, tmp_path, monkeypatch, caplog
+    ):
+        """Proves the log message names type(exc).__name__ DYNAMICALLY, not a
+        hardcoded literal -- a different exception class must produce a
+        differently-worded log record."""
+        db_file = _build_screen_hit_db(tmp_path, monkeypatch)
+
+        def _explode_differently(*_a, **_k):
+            raise ValueError("a different simulated failure")
+
+        monkeypatch.setattr(db_module, "load_state", _explode_differently)
+
+        with caplog.at_level("WARNING", logger="advisors.retirement_recommender"):
+            rr.build_recommendations(db_file=db_file, days=None)
+
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("ValueError" in r.getMessage() for r in warning_records), (
+            f"Expected a WARNING record naming 'ValueError' (the real "
+            f"exception class raised), got: "
+            f"{[r.getMessage() for r in warning_records]}"
+        )
+        assert not any("RuntimeError" in r.getMessage() for r in warning_records), (
+            "Log record named the WRONG exception type -- 'RuntimeError' must "
+            "not appear when a ValueError was actually raised (proves the "
+            "type name is derived dynamically, not a copy-pasted literal)."
+        )
+
+    def test_logged_message_never_leaks_the_exception_string_itself(
+        self, rr, tmp_path, monkeypatch, caplog
+    ):
+        """D-1 contract: only type(exc).__name__ may appear, never str(exc) --
+        an exception message could carry a file path, a DB row's raw content,
+        or other internal detail that shouldn't reach logs at WARNING+ on a
+        production D-1 boundary."""
+        db_file = _build_screen_hit_db(tmp_path, monkeypatch)
+        secret_marker = "UNIQUE_SENTINEL_STRING_MUST_NOT_LEAK_67891"
+
+        def _explode_with_sensitive_detail(*_a, **_k):
+            raise RuntimeError(secret_marker)
+
+        monkeypatch.setattr(db_module, "load_state", _explode_with_sensitive_detail)
+
+        with caplog.at_level("WARNING", logger="advisors.retirement_recommender"):
+            rr.build_recommendations(db_file=db_file, days=None)
+
+        for record in caplog.records:
+            assert secret_marker not in record.getMessage(), (
+                f"Log record leaked the raw exception string ({secret_marker!r}) "
+                "-- D-1 contract requires only type(exc).__name__, never "
+                "str(exc)."
+            )

@@ -24,11 +24,22 @@ Contract under test (pinned in .claude/tdd-handoff.md "app.py -- route"):
 - Empty -> {"recommendations": []}, never a 500.
 - NaN/Infinity in any numeric field sanitized to null before jsonify.
 - GET never writes (no persistence call reachable from this route).
+- PR-level /code-review Finding 4 (PM ruling): the nightly 03:45 tick calls
+  build_recommendations()+persist_recommendations() EVERY night into an
+  APPEND-ONLY table, so a multi-night deployment accumulates one row per
+  night per still-flagged pair, plus stale rows for pairs no longer flagged.
+  _fetch_retirement_recommendations() must filter to ONLY the rows sharing
+  the MOST RECENT row's calendar date (the same substr(created_at,1,10)
+  trick database.get_candidate_alert_last_run already established) -- never
+  the newest-N rows verbatim across multiple nights. See
+  TestFetchRetirementRecommendationsLatestBatchOnly below.
 """
 
 from __future__ import annotations
 
+import json
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -112,6 +123,112 @@ def _seed_recommendation(candidate_id="cand-sym", sibling_id="sib-sym"):
         verdict="retire_candidate",
         raw_response=_sample_raw_response(candidate_id, sibling_id),
     )
+
+
+def _seed_recommendation_backdated(candidate_id: str, sibling_id: str, days_ago: int) -> None:
+    """Insert a RETIREMENT_RECOMMENDATION row with an explicit, backdated
+    created_at -- insert_advisor_observation has no created_at override (it
+    always uses the schema's DEFAULT (datetime('now'))), so a raw SQL insert
+    is required to simulate "an older night's batch". Mirrors
+    tests/database/test_033_candidate_alert_state.py's
+    test_older_batch_does_not_inflate_latest_run -- the same established
+    idiom for backdating advisor_observations.created_at in this codebase."""
+    old_date = (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = db_module.get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO advisor_observations "
+            "(advisor_role, subject_type, subject_id, verdict, raw_response, "
+            " is_advisory_only, symphony_id, created_at) "
+            "VALUES ('RETIREMENT_RECOMMENDATION', 'symphony', ?, 'retire_candidate', "
+            " ?, 1, ?, ?)",
+            (
+                candidate_id,
+                json.dumps(_sample_raw_response(candidate_id, sibling_id)),
+                candidate_id,
+                old_date,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# PR-level /code-review Finding 4 (app.py's _fetch_retirement_recommendations,
+# and the 03:45 nightly tick): the nightly tick calls
+# build_recommendations()+persist_recommendations() EVERY night, and
+# advisor_observations is APPEND-ONLY (never updated/deleted) -- so a
+# multi-night deployment accumulates one row per night per still-flagged
+# pair, and a prior night's candidate that's no longer flagged tonight still
+# has its old row sitting in the table. The original _fetch_retirement_
+# recommendations returned the newest-N rows VERBATIM (whatever
+# get_advisor_observations_for_role's default limit/ordering produced),
+# which folds multiple nights together -- duplicate/stale cards. PM ruling:
+# filter to ONLY the rows sharing the MOST RECENT row's calendar date (the
+# same substr(created_at,1,10)-equals-MAX(...) trick already established by
+# database.get_candidate_alert_last_run for an analogous "one batch, not the
+# whole table" read).
+# ---------------------------------------------------------------------------
+
+
+class TestFetchRetirementRecommendationsLatestBatchOnly:
+    def test_fetch_returns_only_the_latest_nights_rows_not_a_stale_prior_night(self, isolated_db):
+        """THE load-bearing pin for Finding 4: two nights of rows persisted;
+        only the latest night's candidates must be returned. Currently RED
+        (the un-fixed fetch returns both nights' rows verbatim)."""
+        _seed_recommendation_backdated("old-night-cand", "old-night-sib", days_ago=1)
+        _seed_recommendation("new-night-cand", "new-night-sib")
+
+        result = app_module._fetch_retirement_recommendations()
+        candidate_ids = {r.get("candidate_id") for r in result}
+
+        assert "new-night-cand" in candidate_ids, (
+            "The latest night's real recommendation must be present."
+        )
+        assert "old-night-cand" not in candidate_ids, (
+            f"A prior night's stale recommendation ('old-night-cand', "
+            f"backdated 1 day) leaked into the fetch alongside tonight's "
+            f"batch: {candidate_ids!r}. _fetch_retirement_recommendations "
+            "must return ONLY the rows sharing the most recent row's "
+            "calendar date, not the newest-N rows verbatim across multiple "
+            "nights (PR-level /code-review Finding 4)."
+        )
+
+    def test_route_response_excludes_a_stale_prior_night_batch(self, client, isolated_db):
+        """Same invariant, exercised through the real HTTP route (not just the
+        helper function directly) -- proves the fix is actually wired into
+        the response path a real dashboard load would hit."""
+        _seed_recommendation_backdated("old-night-cand-2", "old-night-sib-2", days_ago=3)
+        _seed_recommendation("new-night-cand-2", "new-night-sib-2")
+
+        resp = client.get("/api/retirement-recommendations")
+        data = resp.get_json()
+        candidate_ids = {r.get("candidate_id") for r in data["recommendations"]}
+
+        assert "new-night-cand-2" in candidate_ids
+        assert "old-night-cand-2" not in candidate_ids, (
+            f"GET /api/retirement-recommendations surfaced a 3-day-stale "
+            f"recommendation alongside tonight's batch: {candidate_ids!r}."
+        )
+
+    def test_same_candidate_persisted_two_nights_returns_only_the_latest_row(self, isolated_db):
+        """A pair still flagged on consecutive nights produces a genuine
+        DUPLICATE row (advisor_observations is append-only -- the nightly
+        tick never upserts). The fetch must surface the candidate only ONCE
+        (the latest night's row), not once per historical night it was ever
+        flagged."""
+        _seed_recommendation_backdated("repeat-cand", "repeat-sib", days_ago=1)
+        _seed_recommendation("repeat-cand", "repeat-sib")
+
+        result = app_module._fetch_retirement_recommendations()
+        matching = [r for r in result if r.get("candidate_id") == "repeat-cand"]
+        assert len(matching) == 1, (
+            f"'repeat-cand' was flagged on 2 consecutive nights (append-only "
+            f"duplicate rows) but appeared {len(matching)} times in the "
+            f"fetch result -- expected exactly 1 (the latest night's row "
+            "only)."
+        )
 
 
 # ---------------------------------------------------------------------------

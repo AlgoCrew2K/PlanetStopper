@@ -46,24 +46,43 @@ def _metrics(a, s, so, m, c):
 
 # ---------------------------------------------------------------------------
 # Property: no recommendation ever targets an ineligible symphony as candidate
+#
+# PR-level /code-review Finding 1: the ORIGINAL version of this property
+# drew composite_a/composite_b and eligible_a/eligible_b as fully INDEPENDENT
+# hypothesis strategies -- meaning eligible=False could pair with any random
+# REAL float composite, an input compute_composite_scores itself never
+# produces (there, composite is None IFF eligible is False, always) and
+# hypothesis's st.floats() strategy can NEVER draw None. That made the
+# property structurally incapable of ever exercising
+# select_retirement_candidate's `comp_a is None`/`comp_b is None` branches --
+# 100% vacuous with respect to Finding 1's actual bug. Fixed: a single
+# correlated strategy per side that always pairs eligible=True with a real
+# float and eligible=False with composite=None, matching the real
+# compute_composite_scores invariant exactly.
 # ---------------------------------------------------------------------------
 
 _composite_floats = st.floats(
     min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False
 )
 
+# (composite, eligible) pairs matching compute_composite_scores' real
+# invariant: eligible entries always carry a real float, ineligible entries
+# always carry composite=None. Never the inconsistent combination.
+_eligible_or_ineligible_composite = st.one_of(
+    _composite_floats.map(lambda c: (c, True)),
+    st.just((None, False)),
+)
+
 
 class TestPropertyIneligibleNeverCandidate:
     @given(
-        composite_a=_composite_floats,
-        composite_b=_composite_floats,
-        eligible_a=st.booleans(),
-        eligible_b=st.booleans(),
+        side_a=_eligible_or_ineligible_composite,
+        side_b=_eligible_or_ineligible_composite,
     )
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=200)
-    def test_ineligible_symphony_never_returned_as_candidate(
-        self, rr, composite_a, composite_b, eligible_a, eligible_b
-    ):
+    def test_ineligible_symphony_never_returned_as_candidate(self, rr, side_a, side_b):
+        composite_a, eligible_a = side_a
+        composite_b, eligible_b = side_b
         scores = {
             "sym-a": rr.CompositeScore(
                 composite=composite_a,
@@ -81,8 +100,40 @@ class TestPropertyIneligibleNeverCandidate:
             assert scores[candidate].eligible is True, (
                 f"select_retirement_candidate returned {candidate!r} as the "
                 f"candidate, but scores[{candidate!r}].eligible is False -- an "
-                "ineligible symphony must never be the candidate (AC-11), for "
-                "ANY composite/eligibility combination."
+                "ineligible symphony must never be the candidate, for ANY "
+                "composite/eligibility combination."
+            )
+
+    @given(
+        side_a=_eligible_or_ineligible_composite,
+        side_b=_eligible_or_ineligible_composite,
+    )
+    @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=200)
+    def test_any_ineligible_side_yields_no_candidate_at_all_fail_closed(self, rr, side_a, side_b):
+        """PR-level /code-review Finding 1 (BLOCKING), PM ruling: fail-CLOSED
+        overrides the original 'may still be the keep member' design -- if
+        EITHER side is ineligible (composite is None), the pair must yield
+        NO candidate at all, never a fallback nominating the eligible side."""
+        composite_a, eligible_a = side_a
+        composite_b, eligible_b = side_b
+        scores = {
+            "sym-a": rr.CompositeScore(
+                composite=composite_a,
+                metrics=_metrics(0.1, 0.1, 0.1, -0.1, 0.1),
+                eligible=eligible_a,
+            ),
+            "sym-b": rr.CompositeScore(
+                composite=composite_b,
+                metrics=_metrics(0.1, 0.1, 0.1, -0.1, 0.1),
+                eligible=eligible_b,
+            ),
+        }
+        candidate = rr.select_retirement_candidate("sym-a", "sym-b", scores)
+        if not eligible_a or not eligible_b:
+            assert candidate is None, (
+                f"eligible_a={eligible_a}, eligible_b={eligible_b} -- at least "
+                f"one side is ineligible, so the pair must yield NO candidate "
+                f"(fail-closed), got {candidate!r}."
             )
 
 
