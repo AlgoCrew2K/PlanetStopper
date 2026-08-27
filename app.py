@@ -955,6 +955,116 @@ def _run_incubation_tick() -> None:
     t.start()
 
 
+# PR#140 /code-review finding 1 (Cycle 2c, AC-4): the number of decimal
+# places every float in a retirement evidence snapshot is rounded to before
+# comparison -- named so both _round_floats and its docstrings share one
+# source of truth.
+_MATERIAL_CHANGE_ROUND_NDIGITS = 2
+
+
+def _round_floats(value, ndigits: int):
+    """Recursively round every float in `value` to `ndigits` places.
+
+    dict/list shapes are walked (into candidate_metrics/sibling_metrics);
+    bool/int/str/None pass through unchanged. bool MUST be checked before
+    float/int (bool is an int subclass in Python, and int is never rounded
+    here -- see n_obs, which is intentionally compared exactly).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return round(value, ndigits)
+    if isinstance(value, dict):
+        return {k: _round_floats(v, ndigits) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_round_floats(v, ndigits) for v in value]
+    return value
+
+
+def _canonical_evidence_snapshot(rec: dict) -> dict:
+    """Return a rounded snapshot of every evidence field in `rec` EXCEPT
+    "explanation" (the value being reused) and the pair-identity keys
+    "candidate_id"/"sibling_id" (already matched by construction to find
+    this prior row -- not citable evidence).
+
+    PR#140 /code-review finding 1 (Cycle 2c, AC-4): the whole-dict design
+    replaces a curated field-list comparison -- advisors.retirement_
+    explainer._build_explain_messages json.dumps()s the WHOLE rec and
+    instructs the LLM to ground claims in ALL supplied evidence, so a
+    curated subset could miss a materially-drifted field (e.g.
+    stressed_correlation, ci_lower/ci_upper, n_obs, or an individual
+    candidate_metrics/sibling_metrics value) the LLM could still cite. Every
+    float is rounded recursively (including into nested metrics dicts); a
+    key missing on either side of the comparison makes the two snapshots
+    NOT equal (plain dict `==` is exact key-set + value equality) -- this
+    subsumes the freshness-on-rename rule and the legacy-row rule for free,
+    with zero special-casing. Future-proof against schema growth: a NEW
+    raw_response field automatically joins the comparison.
+    """
+    excluded = {"explanation", "candidate_id", "sibling_id"}
+    snapshot = {k: v for k, v in rec.items() if k not in excluded}
+    return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
+
+
+def _build_retirement_prior_row_map(rows: list[dict]) -> dict[tuple, dict]:
+    """Build a {(candidate_id, sibling_id): newest_matching_raw_response}
+    map from a newest-first advisor_observations row list.
+
+    PR#140 /code-review finding 2 (Cycle 2c, AC-4 efficiency): hoists the
+    reuse-lookup to ONE query per tick instead of a fresh role-wide DB query
+    per rec -- _retirement_recommender_tick_worker builds this map once from
+    a single database.get_advisor_observations_for_role() call, then every
+    rec's reuse decision is an O(1) dict lookup against it. Only the FIRST
+    (i.e. newest, since `rows` is newest-first by id DESC) row per pair is
+    kept -- matches the pre-existing "most recent prior row governs"
+    contract. Malformed rows (non-dict raw_response) are skipped, never
+    raised.
+    """
+    prior_map: dict[tuple, dict] = {}
+    for row in rows:
+        raw = row.get("raw_response")
+        if not isinstance(raw, dict):
+            continue
+        key = (raw.get("candidate_id"), raw.get("sibling_id"))
+        if key not in prior_map:
+            prior_map[key] = raw
+    return prior_map
+
+
+def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> str | None:
+    """Return a prior explanation text reusable for `rec`, or None to force a
+    fresh explain_recommendation call (Cycle 2c, AC-4: nightly-explain spend
+    control).
+
+    `prior_map` is a {(candidate_id, sibling_id): newest_matching_raw_response}
+    map pre-built ONCE per tick via _build_retirement_prior_row_map (PR#140
+    review finding 2) -- an O(1) lookup here, no DB access, no per-rec query.
+
+    Reuse-eligible iff the prior row's explanation is truthy AND
+    _canonical_evidence_snapshot(rec) == _canonical_evidence_snapshot(prior_raw)
+    (PR#140 review finding 1 -- see that function's docstring for the full
+    rationale). Fail-open: the whole lookup + comparison is ONE unit -- ANY
+    exception anywhere inside it resolves to "no match", i.e. returns None,
+    identically to the "no prior history" case. Never propagates.
+    """
+    try:
+        key = (rec.get("candidate_id"), rec.get("sibling_id"))
+        prior_raw = prior_map.get(key)
+        if prior_raw is None:
+            return None
+
+        prior_explanation = prior_raw.get("explanation")
+        if not prior_explanation:
+            return None
+
+        if _canonical_evidence_snapshot(rec) != _canonical_evidence_snapshot(prior_raw):
+            return None
+
+        return prior_explanation
+    except Exception:
+        return None
+
+
 def _retirement_recommender_tick_worker() -> None:
     """Background worker that runs the Retirement Recommender's daily tick.
 
@@ -966,14 +1076,37 @@ def _retirement_recommender_tick_worker() -> None:
     tick nothing in production ever calls the producer, so both read-only
     surfaces render an honest-empty state forever).
 
-    Cycle 2b (AC-2): between build and persist, each recommendation is run
-    through advisors.retirement_explainer.explain_recommendation and the
-    result is stamped onto rec["explanation"] -- this keeps the LLM entirely
-    out of advisors/retirement_recommender.py (byte-unchanged this cycle,
-    pinned by a golden hash test) and out of the render/approve/checklist
-    paths (operator ruling, Gate-2b). A per-rec explainer failure degrades
-    that one recommendation's explanation to None and never blocks
-    persistence of the rest of the batch.
+    Cycle 2b (AC-2): each recommendation is run through advisors.
+    retirement_explainer.explain_recommendation and the result is stamped
+    onto rec["explanation"] -- this keeps the LLM entirely out of
+    advisors/retirement_recommender.py (byte-unchanged this cycle, pinned by
+    a golden hash test) and out of the render/approve/checklist paths
+    (operator ruling, Gate-2b). A per-rec explainer failure degrades that
+    one recommendation's explanation to None and never blocks persistence
+    of the rest of the batch.
+
+    Cycle 2c (AC-2): before its own explain-or-reuse decision, each rec is
+    enriched in place with candidate_name/sibling_name resolved from live
+    database.load_state() (honest raw-id fallback when unresolvable or on a
+    load failure; only set when the key is absent, never clobbering a
+    caller-supplied value) -- this both grounds the explainer's prompt in
+    readable names and (critically) lands those two keys in the dict that
+    flows into persist_recommendations, which AC-4's reuse check depends on
+    to detect a rename against a prior night's persisted row. A bot_state
+    load failure degrades the name fields to the raw id but never skips the
+    explainer call itself.
+
+    Cycle 2c (AC-4): before calling the explainer, each rec is checked
+    against a prior-row map (built ONCE per tick, PR#140 review finding 2)
+    via _retirement_find_reusable_prior_explanation for a reusable prior
+    explanation (nightly-explain spend control, whole-dict canonical-
+    snapshot equality per PR#140 review finding 1) -- when found, the prior
+    text is reused verbatim and explain_recommendation is skipped for that
+    rec; otherwise a fresh explanation is generated exactly as before. This
+    decision is made independently per rec in the batch. Enrichment and the
+    reuse-or-explain decision are one merged pass over recs (PR#140 review
+    finding 5) -- enrichment for a given rec always completes before that
+    SAME rec's reuse check runs, since both live in the same loop iteration.
 
     D-1 error contract: only type(exc).__name__ appears in log records at
     WARNING+ -- a producer failure must never crash the scheduler thread.
@@ -988,7 +1121,50 @@ def _retirement_recommender_tick_worker() -> None:
         if recs:
             from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
 
+            try:
+                _ret_bot_state = database.load_state()
+            except Exception:
+                _ret_bot_state = {}
+            try:
+                from advisors.frontrunner_builder import (  # lazy (CC-2)
+                    resolve_incumbent_display_name as _resolve_ret_name,
+                )
+            except Exception:
+                _resolve_ret_name = None
+
+            # PR#140 review finding 2: ONE role-wide query per tick (not one
+            # per rec) -- builds the {(candidate_id, sibling_id): raw} map
+            # every rec's reuse decision below looks up against.
+            try:
+                _prior_rows = database.get_advisor_observations_for_role(
+                    "RETIREMENT_RECOMMENDATION", limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+                )
+                _prior_map = _build_retirement_prior_row_map(_prior_rows)
+            except Exception:
+                _prior_map = {}
+
             for rec in recs:
+                # A real build_recommendations() rec never carries these keys
+                # (they are not part of the recommender's authoritative
+                # schema) -- only set them when absent, never clobber a
+                # value a caller already supplied.
+                if "candidate_name" not in rec:
+                    rec["candidate_name"] = (
+                        _resolve_ret_name(_ret_bot_state, rec.get("candidate_id"))
+                        if _resolve_ret_name is not None
+                        else rec.get("candidate_id")
+                    )
+                if "sibling_name" not in rec:
+                    rec["sibling_name"] = (
+                        _resolve_ret_name(_ret_bot_state, rec.get("sibling_id"))
+                        if _resolve_ret_name is not None
+                        else rec.get("sibling_id")
+                    )
+
+                reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
+                if reused_explanation is not None:
+                    rec["explanation"] = reused_explanation
+                    continue
                 try:
                     rec["explanation"] = explain_recommendation(rec)
                 except Exception as exc:
@@ -3869,6 +4045,77 @@ def api_incubation():
     return jsonify({"incubating": out})
 
 
+def _join_retirement_approval_status(recs: list[dict]) -> None:
+    """Stamp approval_status onto each retirement recommendation dict in
+    place, read FRESH from the mutable retirement_decisions table on every
+    call -- never cached (Cycle 2c, AC-6).
+
+    Shared by BOTH _fetch_retirement_recommendations (backs GET /api/
+    retirement-recommendations) and the AI Advisor Overview-tab panel
+    prefetch, so a programmatic API consumer and the rendered panel always
+    agree on decision state. A database.get_retirement_decisions() read
+    failure degrades every row to the honest "pending" default rather than
+    raising -- mirrors this route's existing per-row-degrades-gracefully
+    convention (see api_incubation above). Never raises.
+    """
+    try:
+        decisions_by_id = {
+            row.get("candidate_id"): row for row in database.get_retirement_decisions()
+        }
+    except Exception:
+        decisions_by_id = {}
+    for rec in recs:
+        decision = decisions_by_id.get(rec.get("candidate_id"))
+        rec["approval_status"] = (decision or {}).get("approval_status") or "pending"
+
+
+def _refresh_retirement_display_names(recs: list[dict]) -> None:
+    """Overwrite candidate_name/sibling_name on each rec with a FRESH
+    resolution against CURRENT bot_state, in place.
+
+    PR#140 /code-review finding 3 (Cycle 2c): AC-2's tick-time enrichment
+    persists candidate_name/sibling_name into the raw_response (needed so
+    AC-4's reuse gate, above, can detect a rename against a prior night --
+    see _canonical_evidence_snapshot). But GET /api/retirement-recommendations
+    returned that raw_response verbatim, while ai_advisor_tab()'s panel
+    resolved the display name FRESH at request time -- if a symphony was
+    renamed between the 03:45 tick and a later request, the API showed the
+    STALE tick-time name while the panel showed the CURRENT name for the
+    SAME candidate_id, contradicting AC-6's "the API and panel never
+    disagree" principle. Called from _fetch_retirement_recommendations, so
+    BOTH the API route and the panel prefetch get the fix from one shared
+    call site. This overwrite is entirely in-memory -- it never touches the
+    persisted advisor_observations row, and AC-4's reuse gate reads that raw
+    DB row directly via database.get_advisor_observations_for_role (a
+    separate code path this never touches), so the tick-time value rename-
+    detection needs stays intact in the database.
+
+    A no-op on an empty list (skips the load_state() call entirely -- no
+    wasted I/O when there is nothing to resolve). A database.load_state()
+    failure degrades every name to its raw-id fallback, never raises.
+    """
+    if not recs:
+        return
+    try:
+        bot_state = database.load_state()
+    except Exception:
+        bot_state = {}
+    try:
+        from advisors.frontrunner_builder import (  # noqa: PLC0415
+            resolve_incumbent_display_name as _resolve_name,
+        )
+    except Exception:
+        _resolve_name = None
+
+    for rec in recs:
+        if _resolve_name is not None:
+            rec["candidate_name"] = _resolve_name(bot_state, rec.get("candidate_id"))
+            rec["sibling_name"] = _resolve_name(bot_state, rec.get("sibling_id"))
+        else:
+            rec["candidate_name"] = rec.get("candidate_id")
+            rec["sibling_name"] = rec.get("sibling_id")
+
+
 def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
 
@@ -3879,6 +4126,12 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     .claude/tdd-handoff.md) -- no renaming/translation layer between
     advisors.retirement_recommender's persistence and this read path. Never
     recomputes/reruns the module -- read-only over already-persisted rows.
+    ADDITIVE exceptions: each returned dict also carries a freshly-live-joined
+    "approval_status" key via _join_retirement_approval_status (Cycle 2c,
+    AC-6) and FRESH (not tick-time-stale) "candidate_name"/"sibling_name"
+    keys via _refresh_retirement_display_names (PR#140 review finding 3) --
+    neither is part of the persisted raw_response itself; both are computed
+    fresh every call.
 
     limit defaults to _ADVISOR_OBSERVATIONS_PAGE_LIMIT, resolved lazily inside
     the function body (not as a parameter default) because that module-level
@@ -3917,6 +4170,8 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
         raw = row.get("raw_response")
         if isinstance(raw, dict):
             out.append(raw)
+    _join_retirement_approval_status(out)
+    _refresh_retirement_display_names(out)
     return out
 
 
@@ -6176,7 +6431,29 @@ def ai_advisor_tab():
     # recomputes/reruns advisors.retirement_recommender from this render. #
     # Each entry is the persisted raw_response dict verbatim (the         #
     # authoritative schema) -- no renaming/translation layer.             #
+    #                                                                      #
+    # Shared lazy bot_state loader (PR#140 review findings 4/5): the       #
+    # checklist assembly below AND the frontrunner identity resolution     #
+    # further down both independently need the full bot_state dict --     #
+    # this loads it AT MOST ONCE per request, on first actual need,        #
+    # shared by both consumers. A request with no approved retirement      #
+    # cards AND no pending frontrunner proposals still costs zero          #
+    # load_state() calls here (preserves the pre-existing lazy-I/O         #
+    # guarantee -- see the frontrunner block's own F5/F9(c) rationale).    #
     # ------------------------------------------------------------------ #
+    _ai_advisor_bot_state_loaded = False
+    _ai_advisor_bot_state: dict = {}
+
+    def _ensure_ai_advisor_bot_state() -> dict:
+        nonlocal _ai_advisor_bot_state_loaded, _ai_advisor_bot_state
+        if not _ai_advisor_bot_state_loaded:
+            try:
+                _ai_advisor_bot_state = database.load_state()
+            except Exception:
+                _ai_advisor_bot_state = {}
+            _ai_advisor_bot_state_loaded = True
+        return _ai_advisor_bot_state
+
     retirement_recommendations: list[dict] = []
     try:
         retirement_recommendations = _fetch_retirement_recommendations()
@@ -6184,55 +6461,40 @@ def ai_advisor_tab():
         pass  # Empty-state rendered by template on [].
 
     # ------------------------------------------------------------------ #
-    # Retirement approval live-join (Cycle 2b, AC-4): status is read      #
-    # FRESH from the mutable retirement_decisions table on every request #
-    # -- never from the frozen advisor_observations row (which never     #
-    # carries an approval_status key at all). Mirrors the incubation     #
-    # _incubation_by_hash live-join above. A recommendation with no      #
-    # decision row shows "pending"; an orphaned decision row (candidate  #
-    # no longer in the latest batch) is harmless -- only rendering cards #
-    # get stamped.                                                       #
+    # Retirement approval status + display names: both now resolved       #
+    # INSIDE _fetch_retirement_recommendations() itself -- approval_status #
+    # via _join_retirement_approval_status (Cycle 2c, AC-6) and            #
+    # candidate_name/sibling_name via _refresh_retirement_display_names    #
+    # (PR#140 review finding 3) -- so this panel and GET /api/retirement-  #
+    # recommendations always agree on both. Every rec already carries a   #
+    # fresh "approval_status" and fresh "candidate_name"/"sibling_name"   #
+    # by the time it reaches here; the template reads those fields        #
+    # directly (no separate panel-local resolution needed).               #
     # ------------------------------------------------------------------ #
-    if retirement_recommendations:
-        try:
-            _ret_decisions_by_id = {
-                _row.get("candidate_id"): _row for _row in database.get_retirement_decisions()
-            }
-        except Exception:
-            _ret_decisions_by_id = {}
-        _ret_any_approved = False
-        for _rec in retirement_recommendations:
-            _decision = _ret_decisions_by_id.get(_rec.get("candidate_id"))
-            _rec["approval_status"] = (_decision or {}).get("approval_status") or "pending"
-            if _rec["approval_status"] == "approved":
-                _ret_any_approved = True
+    _ret_any_approved = any(
+        _rec.get("approval_status") == "approved" for _rec in retirement_recommendations
+    )
 
-        # Checklist assembly (AC-6/AC-7 glue): deterministic, no LLM, built
-        # ONLY for approved cards -- never inside the approve route itself
-        # (AC-5: "Approve writes status ONLY"). bot_state is only fetched
-        # when at least one card actually needs it (own dedicated try, same
-        # F5 rationale as the frontrunner identity-resolution prefetch below
-        # -- non-blocking, read-only, no wasted I/O on an all-pending batch).
-        if _ret_any_approved:
-            _ret_bot_state: dict = {}
+    # Checklist assembly (AC-6/AC-7 glue): deterministic, no LLM, built
+    # ONLY for approved cards -- never inside the approve route itself
+    # (AC-5: "Approve writes status ONLY"). Shares the lazy bot_state
+    # loader defined above with the frontrunner block below.
+    if _ret_any_approved:
+        _ret_bot_state = _ensure_ai_advisor_bot_state()
+        try:
+            from advisors.retirement_checklist import build_checklist  # noqa: PLC0415
+        except Exception:
+            build_checklist = None
+        for _rec in retirement_recommendations:
+            if _rec["approval_status"] != "approved":
+                continue
+            if build_checklist is None:
+                _rec["_checklist"] = None
+                continue
             try:
-                _ret_bot_state = database.load_state()
+                _rec["_checklist"] = build_checklist(_rec, _ret_bot_state)
             except Exception:
-                _ret_bot_state = {}
-            try:
-                from advisors.retirement_checklist import build_checklist  # noqa: PLC0415
-            except Exception:
-                build_checklist = None
-            for _rec in retirement_recommendations:
-                if _rec["approval_status"] != "approved":
-                    continue
-                if build_checklist is None:
-                    _rec["_checklist"] = None
-                    continue
-                try:
-                    _rec["_checklist"] = build_checklist(_rec, _ret_bot_state)
-                except Exception:
-                    _rec["_checklist"] = None
+                _rec["_checklist"] = None
 
     # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
@@ -6272,18 +6534,18 @@ def ai_advisor_tab():
 
         # Resolved ONCE outside the per-row loop (not once per row) — mirrors
         # advisors.frontrunner_builder.approve_frontrunner_proposal's own
-        # NAME<-hash lookup pattern. Guarded to a DEDICATED inner try (F5,
-        # Revise 2) — a load_state() failure must degrade identity resolution
-        # to the raw-hash fallback for every row, never skip the per-row loop
-        # body entirely (which would leave candidate_tree un-popped).  Also
-        # skipped outright when there are zero pending proposals (F9(c)) —
-        # wasted I/O with no possible benefit since the loop never iterates.
+        # NAME<-hash lookup pattern. A load_state() failure degrades identity
+        # resolution to the raw-hash fallback for every row, never skips the
+        # per-row loop body entirely (which would leave candidate_tree
+        # un-popped). Also skipped outright when there are zero pending
+        # proposals (F9(c)) — wasted I/O with no possible benefit since the
+        # loop never iterates. Shares the lazy bot_state loader defined near
+        # the top of this function with the retirement checklist block
+        # above (PR#140 review findings 4/5) — at most one load_state()
+        # call total for both, never a redundant second one when both need it.
         _fr_bot_state: dict = {}
         if frontrunner_proposals:
-            try:
-                _fr_bot_state = database.load_state()
-            except Exception:
-                _fr_bot_state = {}
+            _fr_bot_state = _ensure_ai_advisor_bot_state()
         for _fr_p in frontrunner_proposals:
             _fr_tree = _fr_p.pop("candidate_tree", None)
             _fr_p["candidate_tree_preview"] = _bounded_json_preview(

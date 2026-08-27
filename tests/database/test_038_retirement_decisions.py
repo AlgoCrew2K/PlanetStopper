@@ -4,6 +4,27 @@ RED tests -- Migration 038: retirement_decisions + accessors (AC-3).
 Feature: feature-plans/retirement-approval-lifecycle.md (contract frozen in
 .claude/tdd-handoff.md -- implementers read the handoff, not the plan).
 
+Cycle 2c addendum (feature-plans/retirement-approval-polish.md, PR#139's
+2nd /code-review remediation -- .claude/tdd-handoff.md for this cycle pins
+the exact contract):
+  AC-5 (decided_at semantic, F3): an idempotent re-approve/re-reject
+    PRESERVES the original decided_at (the first decision time) and only
+    bumps updated_at -- decided_at records the ORIGINAL decision, not the
+    last write. The prior behavior (still exercised by UPS1/UPS2/UPS2b
+    below, which this cycle does NOT change -- a brand-new candidate's
+    FIRST decision still stamps decided_at fresh) re-stamped decided_at to
+    datetime('now') on EVERY write where the new status is approved/
+    rejected, even a same-status idempotent re-write or a status
+    transition -- see TestDecidedAtPreservedAcrossRewrites below.
+  AC-8 (dead accessor removal, F5): the unused singular
+    database.get_retirement_decision accessor is removed (verified via repo
+    grep: its only callers were this file's own tests, pre-Cycle-2c) -- the
+    render/API paths use the plural batch get_retirement_decisions(). Every
+    UPS-series test below that used to call get_retirement_decision(id) is
+    REPOINTED onto the local _find_decision(id) helper (built on the plural
+    accessor), preserving IDENTICAL test intent/coverage -- see
+    TestDeadAccessorRemoved below for the removal proof itself.
+
 THE IMPLEMENTATION DELIVERABLES (all must land for these tests to go GREEN):
   1. migrations/038_retirement_decisions.sql:
        retirement_decisions(
@@ -41,8 +62,8 @@ THE IMPLEMENTATION DELIVERABLES (all must land for these tests to go GREEN):
          -- ALL rows, unfiltered, each a flat dict of the 6 columns. []  when
             the table is empty. Never raises.
        get_retirement_decision(candidate_id) -> dict | None
-         -- single-row lookup by candidate_id. None for an unknown id. Never
-            raises.
+         -- [REMOVED, Cycle 2c AC-8] single-row lookup by candidate_id, was
+            dead code (zero production callers) -- see TestDeadAccessorRemoved.
 
 Coverage (all FAIL RED until GREEN implementation lands):
   M1: migration file exists on disk
@@ -55,8 +76,13 @@ Coverage (all FAIL RED until GREEN implementation lands):
   M7: candidate_id UNIQUE is enforced at the raw-SQL level (defense-in-depth,
       independent of the accessor's own upsert logic)
 
-  UPS1-UPS9: upsert_retirement_decision / get_retirement_decisions /
-             get_retirement_decision contract
+  UPS1-UPS9: upsert_retirement_decision / get_retirement_decisions contract
+             (repointed off the removed get_retirement_decision, AC-8)
+  DS1-DS4 (Cycle 2c AC-5): decided_at preserved across an idempotent
+      re-write and a status transition; updated_at still bumps regardless;
+      a brand-new candidate's first decision is unaffected.
+  DA1-DA2 (Cycle 2c AC-8): get_retirement_decision no longer exists on the
+      database module; no production caller references it repo-wide.
 
 Fixture: none -- rows are seeded directly via the production accessors under
 test (feedback_no_hardcoded_test_values) -- every expected value is derived
@@ -93,6 +119,18 @@ def migrated_db(tmp_path, monkeypatch):
     init_db()
     run_migrations()
     yield db_path
+
+
+def _find_decision(candidate_id: str) -> dict | None:
+    """Cycle 2c (AC-8) repoint: single-row lookup built on the PLURAL
+    get_retirement_decisions() -- replaces every prior call site of the now-
+    removed singular get_retirement_decision(candidate_id), preserving
+    IDENTICAL test coverage/intent (None for an unknown id, the matching row
+    dict otherwise)."""
+    for row in db_module.get_retirement_decisions():
+        if row["candidate_id"] == candidate_id:
+            return row
+    return None
 
 
 def _table_exists(db_path: str, table_name: str) -> bool:
@@ -267,7 +305,7 @@ class TestUpsertRetirementDecision:
         result = db_module.upsert_retirement_decision("cand-new-1", approval_status="pending")
         assert result is True
 
-        row = db_module.get_retirement_decision("cand-new-1")
+        row = _find_decision("cand-new-1")
         assert row is not None
         assert row["approval_status"] == "pending"
         assert row["decided_at"] is None, "decided_at must stay NULL while pending."
@@ -275,7 +313,7 @@ class TestUpsertRetirementDecision:
     def test_approving_sets_decided_at_non_null(self, migrated_db):
         """UPS2: writing approval_status='approved' sets decided_at (non-null)."""
         db_module.upsert_retirement_decision("cand-approve-1", approval_status="approved")
-        row = db_module.get_retirement_decision("cand-approve-1")
+        row = _find_decision("cand-approve-1")
         assert row is not None
         assert row["approval_status"] == "approved"
         assert row["decided_at"] is not None, "decided_at must be set on an approve write."
@@ -283,7 +321,7 @@ class TestUpsertRetirementDecision:
     def test_rejecting_sets_decided_at_non_null(self, migrated_db):
         """UPS2b: same for 'rejected'."""
         db_module.upsert_retirement_decision("cand-reject-1", approval_status="rejected")
-        row = db_module.get_retirement_decision("cand-reject-1")
+        row = _find_decision("cand-reject-1")
         assert row is not None
         assert row["approval_status"] == "rejected"
         assert row["decided_at"] is not None
@@ -316,7 +354,7 @@ class TestUpsertRetirementDecision:
             db_module.upsert_retirement_decision(
                 "cand-bad-status-2", approval_status="not-a-status"
             )
-        assert db_module.get_retirement_decision("cand-bad-status-2") is None, (
+        assert _find_decision("cand-bad-status-2") is None, (
             "An invalid approval_status must not create a row at all."
         )
 
@@ -329,7 +367,7 @@ class TestUpsertRetirementDecision:
         )
         db_module.upsert_retirement_decision("cand-sib-1", approval_status="approved")
 
-        row = db_module.get_retirement_decision("cand-sib-1")
+        row = _find_decision("cand-sib-1")
         assert row is not None
         assert row["sibling_id"] == "sib-original", (
             f"sibling_id must be preserved when omitted on update, got {row['sibling_id']!r}."
@@ -344,14 +382,14 @@ class TestUpsertRetirementDecision:
             "cand-sib-2", approval_status="approved", sibling_id="sib-b"
         )
 
-        row = db_module.get_retirement_decision("cand-sib-2")
+        row = _find_decision("cand-sib-2")
         assert row is not None
         assert row["sibling_id"] == "sib-b"
 
     def test_unknown_candidate_id_returns_none_never_raises(self, migrated_db):
         """UPS8: get_retirement_decision on an id that was never written
         returns None, never raises."""
-        assert db_module.get_retirement_decision("cand-never-written") is None
+        assert _find_decision("cand-never-written") is None
 
     def test_get_retirement_decisions_empty_table_returns_empty_list(self, migrated_db):
         """UPS9a: an empty table returns [], never raises."""
@@ -377,6 +415,191 @@ class TestUpsertRetirementDecision:
         assert result is True
 
         # The table must still exist and the row must be retrievable exactly.
-        row = db_module.get_retirement_decision(tricky_id)
+        row = _find_decision(tricky_id)
         assert row is not None
         assert row["candidate_id"] == tricky_id
+
+
+# ---------------------------------------------------------------------------
+# AC-5 (Cycle 2c, feature-plans/retirement-approval-polish.md): decided_at
+# semantic -- preserved across an idempotent re-write and a status
+# transition, updated_at always bumps regardless.
+#
+# Deliberately verified via a RAW backdated INSERT (bypassing the accessor
+# under test entirely for the SETUP step) rather than relying on wall-clock
+# separation between two real upsert_retirement_decision() calls --
+# datetime('now') has 1-second resolution, so two calls inside the same test
+# process within the same second would produce an IDENTICAL decided_at even
+# under the OLD buggy always-re-stamp behavior, making a same-second
+# assertion pass vacuously for the wrong reason. Backdating to a fixed
+# distant timestamp makes "preserved" vs "re-stamped" unambiguous and
+# deterministic regardless of test execution speed.
+# ---------------------------------------------------------------------------
+
+_BACKDATED_TIMESTAMP = "2020-01-01T00:00:00Z"
+
+
+def _raw_insert_backdated(
+    db_path: str, candidate_id: str, *, approval_status: str, decided_at: str | None
+) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "INSERT INTO retirement_decisions "
+            "(candidate_id, approval_status, decided_at, updated_at) VALUES (?, ?, ?, ?)",
+            (candidate_id, approval_status, decided_at, _BACKDATED_TIMESTAMP),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestDecidedAtPreservedAcrossRewrites:
+    def test_idempotent_reapprove_preserves_original_decided_at(self, migrated_db):
+        """DS1: re-upserting the SAME approval_status ('approved' again)
+        must NOT re-stamp decided_at -- it already recorded the original
+        decision."""
+        _raw_insert_backdated(
+            migrated_db, "cand-ds-1", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-ds-1", approval_status="approved")
+
+        row = _find_decision("cand-ds-1")
+        assert row is not None
+        assert row["decided_at"] == _BACKDATED_TIMESTAMP, (
+            f"An idempotent re-approve must PRESERVE the original decided_at "
+            f"({_BACKDATED_TIMESTAMP!r}), got {row['decided_at']!r} -- decided_at "
+            "must record the FIRST decision, not the last write."
+        )
+
+    def test_idempotent_reapprove_still_bumps_updated_at(self, migrated_db):
+        """DS2: decided_at is preserved, but updated_at must still reflect
+        that a write happened."""
+        _raw_insert_backdated(
+            migrated_db, "cand-ds-2", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-ds-2", approval_status="approved")
+
+        row = _find_decision("cand-ds-2")
+        assert row is not None
+        assert row["updated_at"] != _BACKDATED_TIMESTAMP, (
+            "updated_at must be bumped on every write, even when decided_at is "
+            "preserved (idempotent re-approve is still a real write)."
+        )
+
+    def test_reject_then_reapprove_preserves_the_original_decided_at_throughout(self, migrated_db):
+        """DS3: the plan's own edge-case ruling -- 'preserve the original
+        row's decided_at (first-ever decision on this candidate); updated_at
+        tracks the latest change.' A genuine STATUS TRANSITION (approved ->
+        rejected -> approved again) must never re-stamp decided_at at any
+        step, even though the status itself legitimately changes each time."""
+        _raw_insert_backdated(
+            migrated_db, "cand-ds-3", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-ds-3", approval_status="rejected")
+        row_after_reject = _find_decision("cand-ds-3")
+        assert row_after_reject is not None
+        assert row_after_reject["approval_status"] == "rejected"
+        assert row_after_reject["decided_at"] == _BACKDATED_TIMESTAMP, (
+            "A status TRANSITION (approved -> rejected) must still preserve the "
+            "original decided_at -- it is not a 'first decision' event."
+        )
+
+        db_module.upsert_retirement_decision("cand-ds-3", approval_status="approved")
+        row_after_reapprove = _find_decision("cand-ds-3")
+        assert row_after_reapprove is not None
+        assert row_after_reapprove["approval_status"] == "approved"
+        assert row_after_reapprove["decided_at"] == _BACKDATED_TIMESTAMP, (
+            "Re-approving after a reject must STILL preserve the ORIGINAL "
+            "decided_at, not the reject's timestamp and not a fresh 'now'."
+        )
+
+    def test_pending_to_approved_transition_stamps_decided_at_on_first_real_decision(
+        self, migrated_db
+    ):
+        """DS4 (adversarial, CASE-ordering guard): a candidate created as
+        'pending' has decided_at=NULL. Its FIRST real decision (pending ->
+        approved) must correctly stamp decided_at fresh -- the 'preserve if
+        already set' rule must not be written in a way that also refuses to
+        stamp a NULL decided_at (e.g. a naive COALESCE(decided_at, ...) vs a
+        correctly-ordered CASE could get this backwards)."""
+        db_module.upsert_retirement_decision("cand-ds-4", approval_status="pending")
+        row_pending = _find_decision("cand-ds-4")
+        assert row_pending is not None
+        assert row_pending["decided_at"] is None
+
+        db_module.upsert_retirement_decision("cand-ds-4", approval_status="approved")
+        row_approved = _find_decision("cand-ds-4")
+        assert row_approved is not None
+        assert row_approved["decided_at"] is not None, (
+            "A candidate's FIRST real decision (pending -> approved) must stamp "
+            "decided_at -- it was never set before, so there is nothing to preserve."
+        )
+
+
+# ---------------------------------------------------------------------------
+# AC-8 (Cycle 2c): the dead singular get_retirement_decision accessor is
+# removed.
+# ---------------------------------------------------------------------------
+
+
+class TestDeadAccessorRemoved:
+    def test_get_retirement_decision_no_longer_exists_on_database_module(self):
+        """DA1: the singular accessor is gone -- the plural
+        get_retirement_decisions() is the sole read path."""
+        assert not hasattr(db_module, "get_retirement_decision"), (
+            "database.get_retirement_decision (singular) still exists -- AC-8 "
+            "requires removing it (zero production callers; the plural "
+            "get_retirement_decisions() is the sole read path)."
+        )
+        assert hasattr(db_module, "get_retirement_decisions"), (
+            "database.get_retirement_decisions (plural) must still exist -- this is "
+            "NOT the accessor being removed."
+        )
+
+    def test_no_production_module_references_the_removed_accessor(self):
+        """DA2: repo-wide proof (not just 'I checked app.py') -- no .py file
+        outside this test file (and the migrations tree, which lists no
+        accessor names at all) references get_retirement_decision as a bare
+        call (i.e. NOT followed by the plural 's').
+
+        repo_root here resolves to THIS WORKTREE's own root (parents[2] of
+        this file, matching tests/security/test_retirement_action_no_trade_
+        boundary.py's identical REPO_ROOT convention) -- rglob from there
+        never descends into .claude/worktrees/<other-worktree> at all (this
+        worktree has no nested worktrees inside it), so the usual "exclude
+        .claude/worktrees" blast-radius-scanner guard (CLAUDE.md's Known
+        Gotchas table) does not apply here and is deliberately NOT added --
+        adding it would incorrectly exclude EVERY file in this scan, since
+        this worktree's own absolute path already contains
+        '.claude/worktrees/retire-polish/' as a path prefix."""
+        import pathlib
+        import re
+
+        repo_root = pathlib.Path(__file__).resolve().parents[2]
+        this_file = pathlib.Path(__file__).resolve()
+        # Matches "get_retirement_decision(" but NOT "get_retirement_decisions("
+        # -- the plural has an 's' between the name and the '(' that the
+        # singular pattern's negative lookahead excludes.
+        pattern = re.compile(r"get_retirement_decision(?!s)\s*\(")
+
+        offenders: list[str] = []
+        for py_file in repo_root.rglob("*.py"):
+            resolved = py_file.resolve()
+            if resolved == this_file:
+                continue
+            try:
+                text = resolved.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if pattern.search(text):
+                offenders.append(str(resolved.relative_to(repo_root)))
+
+        assert offenders == [], (
+            f"Found reference(s) to the removed get_retirement_decision (singular) "
+            f"outside this test file: {offenders}. AC-8 requires it fully removed "
+            "with no remaining callers."
+        )

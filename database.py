@@ -5039,9 +5039,15 @@ def upsert_retirement_decision(
     routes pass only candidate_id — the column/param exist per the schema's
     reserved-for-future-use shape.
 
-    decided_at is stamped datetime('now') whenever the WRITTEN
-    approval_status is 'approved' or 'rejected'; stays NULL while 'pending'.
-    updated_at is stamped datetime('now') on every write.
+    decided_at is stamped datetime('now') on a candidate's FIRST real
+    decision (existing decided_at is NULL, i.e. still 'pending') when the
+    written approval_status is 'approved' or 'rejected'; stays NULL while
+    'pending'. Once decided_at is non-NULL it is PRESERVED verbatim on every
+    subsequent write — an idempotent re-approve/re-reject or a status
+    transition (e.g. approved -> rejected -> approved) never re-stamps it;
+    decided_at records the original decision time, not the last write
+    (Cycle 2c, DE-RETIRE-POLISH-001 AC-5). updated_at is stamped
+    datetime('now') on every write, unconditionally.
 
     Returns True on a successful write (insert or update). Write path
     (get_connection()), parameterized SQL throughout.
@@ -5063,8 +5069,10 @@ def upsert_retirement_decision(
             "ON CONFLICT(candidate_id) DO UPDATE SET "
             "sibling_id = COALESCE(excluded.sibling_id, retirement_decisions.sibling_id), "
             "approval_status = excluded.approval_status, "
-            "decided_at = CASE WHEN excluded.approval_status IN ('approved', 'rejected') "
-            "THEN datetime('now') ELSE NULL END, "
+            "decided_at = CASE "
+            "WHEN retirement_decisions.decided_at IS NOT NULL THEN retirement_decisions.decided_at "
+            "WHEN excluded.approval_status IN ('approved', 'rejected') THEN datetime('now') "
+            "ELSE NULL END, "
             "updated_at = datetime('now')",
             (candidate_id, sibling_id, approval_status, approval_status),
         )
@@ -5093,31 +5101,6 @@ def get_retirement_decisions() -> "list[dict]":
     except Exception:
         return []
     return [dict(zip(_RETIREMENT_DECISIONS_COLUMNS, row)) for row in rows]
-
-
-def get_retirement_decision(candidate_id: str) -> "dict | None":
-    """Single-row lookup by candidate_id. Read path (get_ro_connection()).
-    Never raises: an unknown candidate_id, a missing table, or any other read
-    failure returns None.
-    """
-    try:
-        conn = get_ro_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT "
-                + ", ".join(_RETIREMENT_DECISIONS_COLUMNS)
-                + " FROM retirement_decisions WHERE candidate_id = ?",
-                (candidate_id,),
-            )
-            row = cursor.fetchone()
-        finally:
-            conn.close()
-    except Exception:
-        return None
-    if row is None:
-        return None
-    return dict(zip(_RETIREMENT_DECISIONS_COLUMNS, row))
 
 
 # Initialize tables on import
