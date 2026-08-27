@@ -539,12 +539,14 @@ class TestNewRoutesNotInSettingsWriteAllowlist:
 
 
 # ===========================================================================
-# Group E (Cycle 2c, DE-RETIRE-POLISH-001, ret3-review finding (b)): static
-# AST call-graph proof for the 3 NEW app.py HELPER call paths this cycle
-# added -- the nightly tick-worker producer orchestration (AC-2/AC-4), its
-# reuse-decision helper (AC-4), and the approval-status live-join helper
-# (AC-6). ai_advisor_tab()'s own retirement name-resolution (AC-1) is
-# covered SEPARATELY below (TestAiAdvisorTabRetirementBlockNeverReachesExecSeam)
+# Group E (Cycle 2c, DE-RETIRE-POLISH-001, ret3-review findings (b) and,
+# later, (c)): static AST call-graph proof for the app.py HELPER call paths
+# this cycle added -- the nightly tick-worker producer orchestration
+# (AC-2/AC-4), its reuse-decision helper (AC-4), the approval-status
+# live-join helper (AC-6), and (finding (c), added after the PR#140 review
+# round that shipped findings 1/3) the shared fetch-time helper that resolves
+# fresh display names for BOTH the API and the panel. ai_advisor_tab()'s own
+# retirement name-resolution (AC-1) is covered SEPARATELY below (TestAiAdvisorTabRetirementBlockNeverReachesExecSeam)
 # via a scoped source-window scan, NOT this transitive-walk pattern -- see
 # that class's docstring for why (empirically: a full-function transitive
 # walk of ai_advisor_tab() produces a FALSE POSITIVE via _build_meta, an
@@ -572,10 +574,36 @@ _RETIREMENT_TICK_WORKER_FN_NAME = "_retirement_recommender_tick_worker"
 _RETIREMENT_REUSE_HELPER_FN_NAME = "_retirement_find_reusable_prior_explanation"
 _RETIREMENT_APPROVAL_JOIN_FN_NAME = "_join_retirement_approval_status"
 
+# PR#140 /code-review re-review finding (c) (2026-08-27, ret3-review):
+# finding 3's refactor moved AC-1's name-resolution OUT of ai_advisor_tab()'s
+# inline block (where Group F structurally covered it) into a new module-
+# level function, _refresh_retirement_display_names, called from the shared
+# _fetch_retirement_recommendations() (consumed by BOTH the API route and
+# the panel). Neither was in Group E's entry-point list nor Group F's source
+# window -- ret3-review PROVED the gap by injecting save_symphony(recs) into
+# _refresh_retirement_display_names's body and confirming this file's suite
+# still passed 57/57 (uncaught), then reverting.
+#
+# Fix: cover the PARENT _fetch_retirement_recommendations, not just the leaf
+# _refresh_retirement_display_names -- empirically verified first (matching
+# this file's own established practice, see Group F's docstring on why
+# ai_advisor_tab() itself was rejected): the transitive closure from
+# _fetch_retirement_recommendations is a tight 3 nodes (itself +
+# _join_retirement_approval_status + _refresh_retirement_display_names, both
+# reached via bare-Name calls in its own body) with zero forbidden-token
+# hits -- no _build_meta-style false-positive risk. This is also the
+# team-lead-preferred choice for a reason beyond just closing today's gap:
+# it future-proofs against the NEXT refactor that adds a function to this
+# shared fetch-time path (this gap class has now recurred 3 times as the
+# code evolved -- covering the stable parent closes the whole class, not
+# just today's instance).
+_RETIREMENT_FETCH_FN_NAME = "_fetch_retirement_recommendations"
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
     _RETIREMENT_APPROVAL_JOIN_FN_NAME,
+    _RETIREMENT_FETCH_FN_NAME,
 ]
 
 # Team-lead named this explicitly alongside composer_draft_client -- checked
