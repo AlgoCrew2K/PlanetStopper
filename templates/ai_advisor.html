@@ -1535,10 +1535,14 @@
             {% if retirement_recommendations %}
                 {% for rec in retirement_recommendations %}
                 <div class="retirement-rec-card" data-testid="retirement-recommendation-card">
+                    {# AC-1 (Cycle 2c): resolved display name is primary; the raw    #}
+                    {# Composer hash stays available but secondary (title tooltip). #}
+                    {% set _cand_display = rec.get('_candidate_name') or rec.get('candidate_id', '') %}
+                    {% set _sib_display = rec.get('_sibling_name') or rec.get('sibling_id', '') %}
                     <div class="retirement-rec-pair">
-                        <span class="retirement-rec-candidate">{{ rec.get('candidate_id', '') | e }}</span>
+                        <span class="retirement-rec-candidate" title="{{ rec.get('candidate_id', '') | e }}">{{ _cand_display | e }}</span>
                         <span aria-hidden="true">&rarr;</span>
-                        <span class="retirement-rec-sibling">kept: {{ rec.get('sibling_id', '') | e }}</span>
+                        <span class="retirement-rec-sibling" title="{{ rec.get('sibling_id', '') | e }}">kept: {{ _sib_display | e }}</span>
                     </div>
                     <div class="retirement-rec-meta">
                         <span data-testid="retirement-rec-correlation">
@@ -1571,14 +1575,14 @@
                                 class="run-trigger-btn"
                                 data-testid="retirement-approve-btn"
                                 data-candidate-id="{{ rec.get('candidate_id', '') | e }}"
-                                onclick="retDispatchDecision('approve', this.dataset.candidateId)">
+                                onclick="retDispatchDecision('approve', this)">
                             Approve retirement
                         </button>
                         <button type="button"
                                 class="discuss-btn"
                                 data-testid="retirement-reject-btn"
                                 data-candidate-id="{{ rec.get('candidate_id', '') | e }}"
-                                onclick="retDispatchDecision('reject', this.dataset.candidateId)">
+                                onclick="retDispatchDecision('reject', this)">
                             Reject
                         </button>
                     </div>
@@ -1588,6 +1592,9 @@
                     <div class="retirement-checklist" data-testid="retirement-checklist">
                         <div class="retirement-checklist-header">Manual wind-down checklist</div>
                         {% if cl %}
+                            {# AC-3 (Cycle 2c): render build_checklist's already-resolved #}
+                            {# candidate_name -- honest fallback to the raw hash.          #}
+                            <div class="retirement-checklist-candidate">{{ (cl.get('candidate_name') or cl.get('candidate_id', '')) | e }}</div>
                             {% if cl.get('holdings_available') and cl.get('holdings') %}
                             <div class="retirement-checklist-holdings">
                                 Current holdings: {{ cl.get('holdings', []) | join(', ') | e }}

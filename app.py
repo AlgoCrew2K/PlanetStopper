@@ -955,6 +955,81 @@ def _run_incubation_tick() -> None:
     t.start()
 
 
+def _retirement_find_reusable_prior_explanation(rec: dict) -> str | None:
+    """Return a prior explanation text reusable for `rec`, or None to force a
+    fresh explain_recommendation call (Cycle 2c, AC-4: nightly-explain spend
+    control).
+
+    Looks up the most recent PRIOR persisted RETIREMENT_RECOMMENDATION
+    advisor_observations row for the exact same (candidate_id, sibling_id)
+    pair (database.get_advisor_observations_for_role returns newest-first by
+    id DESC -- the first matching row IS the most recent prior one) and
+    reuses its explanation only when ALL of the following hold: the prior
+    explanation is truthy; correlation/candidate_composite/sibling_composite
+    match within 2-decimal rounding; uncertainty_gate_passed/
+    structural_redundancy_gate_passed/basis_label match exactly; and
+    candidate_name/sibling_name match exactly (missing on either side counts
+    as a mismatch -- a legacy prior row predating AC-2's name enrichment
+    can't prove "no rename happened", and a genuine rename must force a
+    fresh explanation rather than reuse stale prose).
+
+    Fail-open: the whole lookup + comparison is ONE unit -- ANY exception
+    anywhere inside it (a raising accessor, a malformed/missing prior field,
+    a TypeError rounding a non-numeric value, etc.) resolves to "no match",
+    i.e. returns None, identically to the "no prior history" case. Never
+    propagates.
+    """
+    try:
+        rows = database.get_advisor_observations_for_role(
+            "RETIREMENT_RECOMMENDATION", limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+        )
+        candidate_id = rec.get("candidate_id")
+        sibling_id = rec.get("sibling_id")
+        prior_raw = None
+        for row in rows:
+            raw = row.get("raw_response")
+            if not isinstance(raw, dict):
+                continue
+            if raw.get("candidate_id") == candidate_id and raw.get("sibling_id") == sibling_id:
+                prior_raw = raw
+                break  # newest-first -- the first match is the most recent prior row
+
+        if prior_raw is None:
+            return None
+
+        prior_explanation = prior_raw.get("explanation")
+        if not prior_explanation:
+            return None
+
+        if round(rec["correlation"], 2) != round(prior_raw["correlation"], 2):
+            return None
+        if round(rec["candidate_composite"], 2) != round(prior_raw["candidate_composite"], 2):
+            return None
+        if round(rec["sibling_composite"], 2) != round(prior_raw["sibling_composite"], 2):
+            return None
+        if rec["uncertainty_gate_passed"] != prior_raw["uncertainty_gate_passed"]:
+            return None
+        if (
+            rec["structural_redundancy_gate_passed"]
+            != prior_raw["structural_redundancy_gate_passed"]
+        ):
+            return None
+        if rec["basis_label"] != prior_raw["basis_label"]:
+            return None
+        if "candidate_name" not in rec or "candidate_name" not in prior_raw:
+            return None
+        if rec["candidate_name"] != prior_raw["candidate_name"]:
+            return None
+        if "sibling_name" not in rec or "sibling_name" not in prior_raw:
+            return None
+        if rec["sibling_name"] != prior_raw["sibling_name"]:
+            return None
+
+        return prior_explanation
+    except Exception:
+        return None
+
+
 def _retirement_recommender_tick_worker() -> None:
     """Background worker that runs the Retirement Recommender's daily tick.
 
@@ -975,6 +1050,22 @@ def _retirement_recommender_tick_worker() -> None:
     that one recommendation's explanation to None and never blocks
     persistence of the rest of the batch.
 
+    Cycle 2c (AC-2): before the explain loop, each rec is enriched in place
+    with candidate_name/sibling_name resolved from live database.load_state()
+    (honest raw-id fallback when unresolvable or on a load failure) -- this
+    both grounds the explainer's prompt in readable names and (critically)
+    lands those two keys in the dict that flows into persist_recommendations,
+    which AC-4's reuse check below depends on to detect a rename against a
+    prior night's persisted row. A bot_state load failure degrades the name
+    fields to the raw id but never skips the explainer call itself.
+
+    Cycle 2c (AC-4): before calling the explainer, each rec is checked via
+    _retirement_find_reusable_prior_explanation for a reusable prior
+    explanation (nightly-explain spend control) -- when found, the prior
+    text is reused verbatim and explain_recommendation is skipped for that
+    rec; otherwise a fresh explanation is generated exactly as before. This
+    decision is made independently per rec in the batch.
+
     D-1 error contract: only type(exc).__name__ appears in log records at
     WARNING+ -- a producer failure must never crash the scheduler thread.
     """
@@ -988,7 +1079,40 @@ def _retirement_recommender_tick_worker() -> None:
         if recs:
             from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
 
+            try:
+                _ret_bot_state = database.load_state()
+            except Exception:
+                _ret_bot_state = {}
+            try:
+                from advisors.frontrunner_builder import (  # lazy (CC-2)
+                    resolve_incumbent_display_name as _resolve_ret_name,
+                )
+            except Exception:
+                _resolve_ret_name = None
+
             for rec in recs:
+                # A real build_recommendations() rec never carries these keys
+                # (they are not part of the recommender's authoritative
+                # schema) -- only set them when absent, never clobber a
+                # value a caller already supplied.
+                if "candidate_name" not in rec:
+                    rec["candidate_name"] = (
+                        _resolve_ret_name(_ret_bot_state, rec.get("candidate_id"))
+                        if _resolve_ret_name is not None
+                        else rec.get("candidate_id")
+                    )
+                if "sibling_name" not in rec:
+                    rec["sibling_name"] = (
+                        _resolve_ret_name(_ret_bot_state, rec.get("sibling_id"))
+                        if _resolve_ret_name is not None
+                        else rec.get("sibling_id")
+                    )
+
+            for rec in recs:
+                reused_explanation = _retirement_find_reusable_prior_explanation(rec)
+                if reused_explanation is not None:
+                    rec["explanation"] = reused_explanation
+                    continue
                 try:
                     rec["explanation"] = explain_recommendation(rec)
                 except Exception as exc:
@@ -3869,6 +3993,30 @@ def api_incubation():
     return jsonify({"incubating": out})
 
 
+def _join_retirement_approval_status(recs: list[dict]) -> None:
+    """Stamp approval_status onto each retirement recommendation dict in
+    place, read FRESH from the mutable retirement_decisions table on every
+    call -- never cached (Cycle 2c, AC-6).
+
+    Shared by BOTH _fetch_retirement_recommendations (backs GET /api/
+    retirement-recommendations) and the AI Advisor Overview-tab panel
+    prefetch, so a programmatic API consumer and the rendered panel always
+    agree on decision state. A database.get_retirement_decisions() read
+    failure degrades every row to the honest "pending" default rather than
+    raising -- mirrors this route's existing per-row-degrades-gracefully
+    convention (see api_incubation above). Never raises.
+    """
+    try:
+        decisions_by_id = {
+            row.get("candidate_id"): row for row in database.get_retirement_decisions()
+        }
+    except Exception:
+        decisions_by_id = {}
+    for rec in recs:
+        decision = decisions_by_id.get(rec.get("candidate_id"))
+        rec["approval_status"] = (decision or {}).get("approval_status") or "pending"
+
+
 def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
 
@@ -3879,6 +4027,9 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     .claude/tdd-handoff.md) -- no renaming/translation layer between
     advisors.retirement_recommender's persistence and this read path. Never
     recomputes/reruns the module -- read-only over already-persisted rows.
+    ADDITIVE exception (Cycle 2c, AC-6): each returned dict also carries a
+    freshly-live-joined "approval_status" key via _join_retirement_approval_status
+    -- not part of the persisted raw_response itself, computed fresh every call.
 
     limit defaults to _ADVISOR_OBSERVATIONS_PAGE_LIMIT, resolved lazily inside
     the function body (not as a parameter default) because that module-level
@@ -3917,6 +4068,7 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
         raw = row.get("raw_response")
         if isinstance(raw, dict):
             out.append(raw)
+    _join_retirement_approval_status(out)
     return out
 
 
@@ -6184,41 +6336,52 @@ def ai_advisor_tab():
         pass  # Empty-state rendered by template on [].
 
     # ------------------------------------------------------------------ #
-    # Retirement approval live-join (Cycle 2b, AC-4): status is read      #
-    # FRESH from the mutable retirement_decisions table on every request #
-    # -- never from the frozen advisor_observations row (which never     #
-    # carries an approval_status key at all). Mirrors the incubation     #
-    # _incubation_by_hash live-join above. A recommendation with no      #
-    # decision row shows "pending"; an orphaned decision row (candidate  #
-    # no longer in the latest batch) is harmless -- only rendering cards #
-    # get stamped.                                                       #
+    # Retirement approval status (Cycle 2b, AC-4): now joined INSIDE      #
+    # _fetch_retirement_recommendations() itself (Cycle 2c, AC-6) so both #
+    # this panel AND GET /api/retirement-recommendations see identical,  #
+    # always-fresh decision state from one shared helper -- every rec    #
+    # already carries "approval_status" by the time it reaches here.     #
     # ------------------------------------------------------------------ #
     if retirement_recommendations:
+        # Display-name resolution (Cycle 2c, AC-1): resolve each rec's
+        # candidate/sibling DISPLAY NAME from live bot_state -- unconditional
+        # on approval_status (a pending card must also show the resolved
+        # name, not just an approved one). database.load_state() is called
+        # ONCE per request here (not per row), and the same _ret_bot_state
+        # is reused below for the checklist assembly so an approved batch
+        # doesn't trigger a second load_state() call.
+        _ret_bot_state: dict = {}
         try:
-            _ret_decisions_by_id = {
-                _row.get("candidate_id"): _row for _row in database.get_retirement_decisions()
-            }
+            _ret_bot_state = database.load_state()
         except Exception:
-            _ret_decisions_by_id = {}
+            _ret_bot_state = {}
+        try:
+            from advisors.frontrunner_builder import (  # noqa: PLC0415
+                resolve_incumbent_display_name as _ret_resolve_display_name,
+            )
+        except Exception:
+            _ret_resolve_display_name = None
+
         _ret_any_approved = False
         for _rec in retirement_recommendations:
-            _decision = _ret_decisions_by_id.get(_rec.get("candidate_id"))
-            _rec["approval_status"] = (_decision or {}).get("approval_status") or "pending"
-            if _rec["approval_status"] == "approved":
+            if _ret_resolve_display_name is not None:
+                _rec["_candidate_name"] = _ret_resolve_display_name(
+                    _ret_bot_state, _rec.get("candidate_id")
+                )
+                _rec["_sibling_name"] = _ret_resolve_display_name(
+                    _ret_bot_state, _rec.get("sibling_id")
+                )
+            else:
+                _rec["_candidate_name"] = _rec.get("candidate_id")
+                _rec["_sibling_name"] = _rec.get("sibling_id")
+            if _rec.get("approval_status") == "approved":
                 _ret_any_approved = True
 
         # Checklist assembly (AC-6/AC-7 glue): deterministic, no LLM, built
         # ONLY for approved cards -- never inside the approve route itself
-        # (AC-5: "Approve writes status ONLY"). bot_state is only fetched
-        # when at least one card actually needs it (own dedicated try, same
-        # F5 rationale as the frontrunner identity-resolution prefetch below
-        # -- non-blocking, read-only, no wasted I/O on an all-pending batch).
+        # (AC-5: "Approve writes status ONLY"). Reuses _ret_bot_state loaded
+        # above -- no second load_state() call.
         if _ret_any_approved:
-            _ret_bot_state: dict = {}
-            try:
-                _ret_bot_state = database.load_state()
-            except Exception:
-                _ret_bot_state = {}
             try:
                 from advisors.retirement_checklist import build_checklist  # noqa: PLC0415
             except Exception:

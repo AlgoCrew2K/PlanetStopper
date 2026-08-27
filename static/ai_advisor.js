@@ -1082,19 +1082,19 @@
 
     /**
      * Shared approve/reject dispatch for a retirement recommendation card
-     * (Cycle 2b, AC-5/AC-7). Mirrors frDispatchProposalAction's shape
-     * exactly: CSRF header from /api/csrf-token, POST to
-     * /ai-advisor/retirement/{approve,reject} with {candidate_id},
-     * disable-on-submit, status-message swap on success.
+     * (Cycle 2b, AC-5/AC-7; reworked Cycle 2c, AC-7). Mirrors
+     * frDispatchProposalAction's direct-element shape: CSRF header from
+     * /api/csrf-token, POST to /ai-advisor/retirement/{approve,reject} with
+     * {candidate_id}, disable-on-submit, status-message swap on success.
      *
-     * candidateId is a real string id (e.g. a Composer hash) read from the
-     * clicked button's own data-candidate-id attribute at the Jinja
-     * onclick call site (this.dataset.candidateId) -- never embedded as a
-     * raw string literal inside an inline-JS expression. The card is
-     * located by scanning [data-testid="retirement-recommendation-card"]
-     * for the one whose approve/reject button carries a matching
-     * data-candidate-id -- never by building a CSS-selector string out of
-     * untrusted input.
+     * btnEl is the CLICKED button element itself (the Jinja onclick handler
+     * passes `this`) -- candidateId and the ancestor card are both derived
+     * directly from it (.dataset.candidateId / .closest(...)) rather than
+     * scanning every [data-testid="retirement-recommendation-card"] on the
+     * page and comparing a dataset attribute to find "the" one. This is the
+     * direct-element analog of frDispatchProposalAction's unique-id lookup:
+     * the clicked button's own ancestor card is always correct regardless
+     * of any duplicate/matching-candidate-id edge case.
      *
      * Deliberately no auto page-reload on success: the wind-down checklist
      * is assembled server-side at render time only
@@ -1103,18 +1103,9 @@
      * drift-prone implementation of the same deterministic checklist. A
      * manual reload picks it up.
      */
-    function retDispatchDecision(action, candidateId) {
-        var cards = document.querySelectorAll('[data-testid="retirement-recommendation-card"]');
-        var card = null;
-        for (var i = 0; i < cards.length; i++) {
-            var testCandidateBtn = cards[i].querySelector(
-                '[data-testid="retirement-approve-btn"], [data-testid="retirement-reject-btn"]'
-            );
-            if (testCandidateBtn && testCandidateBtn.dataset.candidateId === candidateId) {
-                card = cards[i];
-                break;
-            }
-        }
+    function retDispatchDecision(action, btnEl) {
+        var candidateId = btnEl ? btnEl.dataset.candidateId : null;
+        var card = btnEl ? btnEl.closest('[data-testid="retirement-recommendation-card"]') : null;
         var approveBtn = card ? card.querySelector('[data-testid="retirement-approve-btn"]') : null;
         var rejectBtn = card ? card.querySelector('[data-testid="retirement-reject-btn"]') : null;
         if (approveBtn) { approveBtn.disabled = true; }
