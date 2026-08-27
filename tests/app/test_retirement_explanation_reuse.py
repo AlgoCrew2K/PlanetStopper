@@ -10,29 +10,63 @@ is still explained. Fail-open: if the reuse-lookup fails, fall back to
 generating (never silently drop the explanation).
 
 .claude/tdd-handoff.md pins the exact contract (co-designed with ret3-route,
-team-lead-approved):
+team-lead-approved).
 
-Reuse-eligible iff ALL hold, vs the most recent PRIOR persisted
+**Superseded by a PR #140 /code-review finding (2026-08-27, team-lead
+finding 1), fixed in THIS revision:** the original design (kept here as
+history, do not re-implement) compared a curated 8-9 field subset
+(correlation/composites/gates/basis_label/names). The bug: advisors.
+retirement_explainer._build_explain_messages does json.dumps(THE WHOLE rec)
+and instructs the LLM to "ground every claim strictly in the supplied
+evidence" -- so the explanation can cite MORE than the curated subset
+covered (stressed_correlation, ci_lower/ci_upper, n_obs, and the per-
+symphony candidate_metrics/sibling_metrics dicts the composite is derived
+from). If one of those UNCOVERED fields drifted materially while the
+curated subset stayed stable, the gate would reuse stale prose citing a
+now-wrong number -- a real honesty gap, not a hypothetical.
+
+**Fixed contract: whole-dict canonical-snapshot equality, not a curated
+field list.** Reuse-eligible iff, vs the most recent PRIOR persisted
 RETIREMENT_RECOMMENDATION row for the exact same (candidate_id, sibling_id)
 pair (rows are newest-first; first match = most recent):
   1. prior row's raw_response["explanation"] is truthy (never reuse a null)
-  2. round(correlation, 2) == round(prior_correlation, 2)
-  3. round(candidate_composite, 2) == round(prior_candidate_composite, 2)
-  4. round(sibling_composite, 2) == round(prior_sibling_composite, 2)
-  5. uncertainty_gate_passed == prior (exact)
-  6. structural_redundancy_gate_passed == prior (exact)
-  7. basis_label == prior (exact)
-  8. candidate_name == prior.get("candidate_name") (exact; missing on either
-     side => not-equal => regenerate -- freshness-on-rename ruling, and a
-     legacy pre-AC-2 prior row with no candidate_name key can't prove "no
-     rename" happened)
-  9. sibling_name == prior.get("sibling_name") (exact, same rule)
+  2. _canonical_evidence_snapshot(rec) == _canonical_evidence_snapshot(prior_raw)
 
-The WHOLE reuse-decision (lookup + all 9 comparisons) is ONE unit: any
-exception anywhere in it resolves to "no match" -> generate fresh. This is
-the fail-open mechanism, tested once via a raising accessor (sufficient --
-it's one code path) and once via a malformed prior row (a different failure
-shape reaching the same fallback).
+_canonical_evidence_snapshot(d) = every key in d EXCEPT "explanation" (the
+value being reused) and the pair-identity keys "candidate_id"/"sibling_id"
+(already matched by construction to find this prior row -- not citable
+"evidence" in the honesty sense), with every float rounded to 2 decimal
+places, RECURSIVELY into nested dicts (candidate_metrics/sibling_metrics).
+None passes through unchanged (two None stressed_correlation values still
+match structurally-equal snapshots; one None vs one real value correctly
+mismatches, since None != any rounded float). A key missing on either side
+means the two snapshots are NOT equal (plain dict `==` is exact key-set +
+value) -- this subsumes the freshness-on-rename rule and the legacy-row
+rule (a prior row predating this fix, or predating AC-2's name enrichment,
+is missing keys the current rec has) for free, with zero special-casing.
+
+This directly satisfies "a reused explanation must never cite a number that
+changed since it was generated" for the ENTIRE evidence surface the prompt
+actually embeds, not just 8 hand-picked fields -- and is future-proof
+against schema growth (a NEW raw_response field automatically joins the
+comparison, rather than silently reopening this exact gap again).
+
+n_obs is an int (never rounded, exact equality) -- RETIREMENT_LOOKBACK_DAYS
+is a FIXED-SIZE rolling window (not "all history"), so in the steady state
+n_obs should stay constant night-to-night for a mature pair; exact equality
+is defensible, not a de-facto "never reuse" trap. stressed_correlation/
+candidate_metrics/sibling_metrics WILL legitimately force a regen more
+often than the old curated design (team-lead's own illustrative drift:
+stressed_correlation 0.71 -> 0.66) -- that is the INTENDED, correct
+honesty-first behavior, not a bill-protection regression; tolerances are
+deliberately NOT loosened to compensate, since that would reopen the exact
+gap this fix closes.
+
+The WHOLE reuse-decision (lookup + snapshot-equality comparison) is ONE
+unit: any exception anywhere in it resolves to "no match" -> generate
+fresh. Tested via a raising accessor (the realistic exception surface --
+the snapshot/rounding logic itself degrades gracefully on malformed data
+rather than raising, see TestFailOpen's docstrings for why).
 
 Uses advisors.retirement_recommender.build_recommendations /
 advisors.retirement_explainer.explain_recommendation as CC-2 lazy-imported
@@ -58,16 +92,44 @@ _CANDIDATE_NAME = "Momentum Alpha Rotation"
 _SIBLING_HASH = "sib-reuse-bbb"
 _SIBLING_NAME = "Value Tilt Core"
 
+# Fixture-realism check (team-lead's explicit note on the finding-1 fix):
+# this key set + nesting is copied verbatim from advisors/retirement_
+# recommender.py's real raw_response construction (build_recommendations,
+# the `raw_response = {...}` literal) plus AC-2's candidate_name/
+# sibling_name additions -- re-verified by reading that module directly
+# before writing this fixture, not invented as a plausible superset.
+_DEFAULT_CANDIDATE_METRICS = {
+    "annualized_return": 0.03,
+    "sharpe": 0.20,
+    "sortino": 0.25,
+    "max_drawdown": -0.30,
+    "calmar": 0.10,
+}
+_DEFAULT_SIBLING_METRICS = {
+    "annualized_return": 0.18,
+    "sharpe": 1.40,
+    "sortino": 1.80,
+    "max_drawdown": -0.06,
+    "calmar": 3.00,
+}
+
 
 def _sample_raw_response(
     candidate_id=_CANDIDATE_HASH,
     sibling_id=_SIBLING_HASH,
     *,
     correlation=0.80,
+    ci_lower=0.72,
+    ci_upper=0.86,
+    n_obs=200,
     candidate_composite=0.20,
     sibling_composite=0.75,
+    candidate_metrics=None,
+    sibling_metrics=None,
     uncertainty_gate_passed=True,
     structural_redundancy_gate_passed=True,
+    stressed_correlation=0.78,
+    holdings_overlap=0.10,
     basis_label="actual-traded (bot) daily returns",
     candidate_name=_CANDIDATE_NAME,
     sibling_name=_SIBLING_NAME,
@@ -76,10 +138,23 @@ def _sample_raw_response(
         "candidate_id": candidate_id,
         "sibling_id": sibling_id,
         "correlation": correlation,
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
+        "n_obs": n_obs,
         "candidate_composite": candidate_composite,
         "sibling_composite": sibling_composite,
+        "candidate_metrics": (
+            dict(candidate_metrics)
+            if candidate_metrics is not None
+            else dict(_DEFAULT_CANDIDATE_METRICS)
+        ),
+        "sibling_metrics": (
+            dict(sibling_metrics) if sibling_metrics is not None else dict(_DEFAULT_SIBLING_METRICS)
+        ),
         "uncertainty_gate_passed": uncertainty_gate_passed,
         "structural_redundancy_gate_passed": structural_redundancy_gate_passed,
+        "stressed_correlation": stressed_correlation,
+        "holdings_overlap": holdings_overlap,
         "basis_label": basis_label,
         "candidate_name": candidate_name,
         "sibling_name": sibling_name,
@@ -197,6 +272,73 @@ class TestReuseWhenUnchanged:
         assert len(explain_calls) == 0
         assert persisted[0]["explanation"] == "reused text"
 
+    def test_reuse_tolerates_tiny_rounding_noise_across_the_whole_evidence_surface(
+        self, isolated_db
+    ):
+        """Finding 1 fix extension: the tolerance must hold for EVERY
+        rounded field the whole-dict snapshot now covers (not just
+        correlation/composite) -- day-to-day recomputation noise anywhere
+        in the evidence must not force an unnecessary regen."""
+        prior_candidate_metrics = {
+            "annualized_return": 0.031,
+            "sharpe": 0.201,
+            "sortino": 0.251,
+            "max_drawdown": -0.301,
+            "calmar": 0.101,
+        }
+        new_candidate_metrics = {
+            "annualized_return": 0.034,
+            "sharpe": 0.204,
+            "sortino": 0.254,
+            "max_drawdown": -0.304,
+            "calmar": 0.104,
+        }
+        # Every pair below rounds identically to 2dp.
+        prior_raw = _sample_raw_response(
+            correlation=0.801,
+            ci_lower=0.721,
+            ci_upper=0.861,
+            candidate_composite=0.204,
+            sibling_composite=0.751,
+            stressed_correlation=0.781,
+            holdings_overlap=0.101,
+            candidate_metrics=prior_candidate_metrics,
+        )
+        prior = _prior_row(1, prior_raw, explanation="reused across the board")
+        new_rec = _sample_raw_response(
+            correlation=0.804,
+            ci_lower=0.724,
+            ci_upper=0.864,
+            candidate_composite=0.196,
+            sibling_composite=0.754,
+            stressed_correlation=0.784,
+            holdings_overlap=0.104,
+            candidate_metrics=new_candidate_metrics,
+        )
+
+        explain_calls, persisted = _run_worker_with_mocked_prior_rows([prior], new_rec)
+
+        assert len(explain_calls) == 0, (
+            "Sub-hundredth noise across the whole evidence surface must not force a regen."
+        )
+        assert persisted[0]["explanation"] == "reused across the board"
+
+    def test_reuses_when_stressed_correlation_and_holdings_overlap_are_none_on_both_sides(
+        self, isolated_db
+    ):
+        """Corroborating None-handling: two genuinely-matching None values
+        must NOT force a spurious regen -- None is a valid, comparable
+        evidence state (the stress sub-window is too thin / holdings are
+        off-hours-unavailable on both nights), not an automatic mismatch."""
+        prior_raw = _sample_raw_response(stressed_correlation=None, holdings_overlap=None)
+        prior = _prior_row(1, prior_raw, explanation="reused despite nones")
+        new_rec = _sample_raw_response(stressed_correlation=None, holdings_overlap=None)
+
+        explain_calls, persisted = _run_worker_with_mocked_prior_rows([prior], new_rec)
+
+        assert len(explain_calls) == 0
+        assert persisted[0]["explanation"] == "reused despite nones"
+
 
 # ===========================================================================
 # Regenerate when materially changed (one dimension at a time)
@@ -242,6 +384,122 @@ class TestRegenerateWhenChanged:
     def test_regenerates_when_basis_label_changed(self, isolated_db):
         prior = _prior_row(1, _sample_raw_response(basis_label="actual-traded (bot) daily returns"))
         new_rec = _sample_raw_response(basis_label="something-else")
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_stressed_correlation_changed(self, isolated_db):
+        """Finding 1 (PR#140 /code-review): the explainer prompt embeds the
+        WHOLE rec, including stressed_correlation -- the LLM could cite it
+        even though the OLD curated field-set never compared it. Team-lead's
+        own illustrative drift: 0.71 -> 0.66 (both pass the structural gate,
+        rounded composites/correlation/gates unchanged -- exactly the case
+        that slipped through pre-fix)."""
+        prior = _prior_row(1, _sample_raw_response(stressed_correlation=0.71))
+        new_rec = _sample_raw_response(stressed_correlation=0.66)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_ci_lower_changed(self, isolated_db):
+        prior = _prior_row(1, _sample_raw_response(ci_lower=0.72))
+        new_rec = _sample_raw_response(ci_lower=0.55)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_ci_upper_changed(self, isolated_db):
+        prior = _prior_row(1, _sample_raw_response(ci_upper=0.86))
+        new_rec = _sample_raw_response(ci_upper=0.99)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_n_obs_changed(self, isolated_db):
+        """n_obs is compared EXACTLY (an int, _round_floats leaves it
+        untouched) -- RETIREMENT_LOOKBACK_DAYS is a fixed-size rolling
+        window, so in the steady state n_obs should stay constant night-to-
+        night for a mature pair; a genuine change signals a real data-
+        availability shift (e.g. a gap) worth re-explaining, not noise."""
+        prior = _prior_row(1, _sample_raw_response(n_obs=200))
+        new_rec = _sample_raw_response(n_obs=150)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_candidate_metric_changed(self, isolated_db):
+        """One of the 5 per-symphony metrics the composite is derived from
+        -- the explainer prompt embeds the whole candidate_metrics dict
+        verbatim, so the LLM could cite an individual metric (e.g. Sharpe)
+        even though the OLD curated field-set only compared the aggregate
+        composite, not its inputs."""
+        prior_metrics = dict(_DEFAULT_CANDIDATE_METRICS)
+        new_metrics = dict(_DEFAULT_CANDIDATE_METRICS)
+        new_metrics["sharpe"] = 0.99  # materially different from the 0.20 default
+
+        prior = _prior_row(1, _sample_raw_response(candidate_metrics=prior_metrics))
+        new_rec = _sample_raw_response(candidate_metrics=new_metrics)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_sibling_metric_changed(self, isolated_db):
+        prior_metrics = dict(_DEFAULT_SIBLING_METRICS)
+        new_metrics = dict(_DEFAULT_SIBLING_METRICS)
+        new_metrics["calmar"] = 0.01
+
+        prior = _prior_row(1, _sample_raw_response(sibling_metrics=prior_metrics))
+        new_rec = _sample_raw_response(sibling_metrics=new_metrics)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_holdings_overlap_changed(self, isolated_db):
+        prior = _prior_row(1, _sample_raw_response(holdings_overlap=0.10))
+        new_rec = _sample_raw_response(holdings_overlap=0.90)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_stressed_correlation_goes_from_none_to_a_real_value(
+        self, isolated_db
+    ):
+        """None-handling: stressed_correlation is Optional (None when the
+        stress sub-window is too thin, per evaluate_structural_redundancy_
+        gate's own fail-closed contract) -- a transition from None to a real
+        value (or vice versa) is itself material and must force a regen,
+        never crash the comparison (None has no __round__)."""
+        prior = _prior_row(1, _sample_raw_response(stressed_correlation=None))
+        new_rec = _sample_raw_response(stressed_correlation=0.70)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert len(explain_calls) == 1
+
+    def test_regenerates_when_prior_row_predates_finding1_evidence_fields(self, isolated_db):
+        """General principle beyond just names: ANY missing evidence key on
+        the prior row (e.g. a row persisted before this fix shipped,
+        carrying only the OLD curated field subset) must be treated as
+        changed -- can't prove "no drift" on evidence it never recorded.
+        Proves the whole-dict-equality design's missing-key handling holds
+        for the finding-1 fields specifically, not just names (see
+        test_regenerates_when_prior_row_predates_name_enrichment below)."""
+        old_shape_raw = {
+            "candidate_id": _CANDIDATE_HASH,
+            "sibling_id": _SIBLING_HASH,
+            "correlation": 0.80,
+            "candidate_composite": 0.20,
+            "sibling_composite": 0.75,
+            "uncertainty_gate_passed": True,
+            "structural_redundancy_gate_passed": True,
+            "basis_label": "actual-traded (bot) daily returns",
+            "candidate_name": _CANDIDATE_NAME,
+            "sibling_name": _SIBLING_NAME,
+            # ci_lower/ci_upper/n_obs/candidate_metrics/sibling_metrics/
+            # stressed_correlation/holdings_overlap all absent -- the exact
+            # shape a pre-finding-1 persisted row would have.
+        }
+        prior = _prior_row(1, old_shape_raw)
+        new_rec = _sample_raw_response()  # the full, current schema
 
         explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
         assert len(explain_calls) == 1
@@ -367,10 +625,16 @@ class TestFailOpen:
         assert persisted[0]["explanation"] == "fresh explanation"
 
     def test_malformed_prior_row_falls_back_to_fresh_generation(self, isolated_db):
-        """A different failure SHAPE reaching the same fallback: the prior
-        row exists and the accessor call succeeds, but its raw_response is
-        missing fields the comparison needs (e.g. a corrupt/older-schema
-        row) -- must degrade to fresh generation, never crash the worker."""
+        """A different SHAPE reaching the same safe outcome: the prior row
+        exists and the accessor call succeeds, but its raw_response is
+        missing nearly every field the comparison needs (e.g. a severely
+        corrupt/malformed row). Under the whole-dict-snapshot design this
+        degrades via a plain snapshot INEQUALITY (an empty-vs-populated
+        dict, never a raised exception -- _round_floats passes through
+        anything it doesn't recognize rather than crashing on it), not the
+        try/except fail-open path -- still proves the same safe end-to-end
+        outcome (never reuse, never crash the worker), just via a different
+        internal mechanism than the accessor-raises case above."""
         malformed_prior = {
             "id": 1,
             "created_at": "2026-08-20T03:45:00Z",
