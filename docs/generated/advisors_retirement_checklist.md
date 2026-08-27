@@ -3,13 +3,13 @@
 > Deterministic, no-LLM wind-down checklist builder for an operator-approved Retirement Recommender candidate: the candidate's id/name/current holdings plus a fixed set of manual steps the operator performs by hand in Composer. The one entirely deterministic module in the Retirement Approval Lifecycle feature (operator ruling, Gate-2b) -- a template, not a generated artifact. No trade, order, liquidation, deploy, or `LIVE_EXECUTION` primitive of any kind.
 
 **Source:** `advisors/retirement_checklist.py`
-**Last updated:** 2026-08-26 (new module, Phase 2 Cycle 2b, `DE-RETIRE-APPROVAL-001`; corrected same-day for the PR #139 review remediation's F5 fix -- see the "Honest off-hours degrade" section below)
+**Last updated:** 2026-08-27 (module BYTE-UNCHANGED this pass -- verified zero diff against Cycle 2b's shipped state; doc correction only, Phase 2 Cycle 2c epic-completion, AC-3, `DE-RETIRE-APPROVAL-001`/`DE-RETIRE-POLISH-001` -- see the "Consumed by the template" section below, which corrects the FIRST `/code-review` pass's F7 ACCEPT ruling now that `templates/ai_advisor.html` renders `candidate_name`.) Prior: 2026-08-26 (new module, Phase 2 Cycle 2b, `DE-RETIRE-APPROVAL-001`; corrected same-day for the PR #139 review remediation's F5 fix -- see the "Honest off-hours degrade" section below)
 
 ## Overview
 
 `advisors/retirement_checklist.py` has exactly one public function, `build_checklist(recommendation: dict, bot_state: dict) -> dict`, which assembles a deterministic, advisory wind-down checklist for a retirement candidate. It never calls a language model of any kind -- the module contains no LLM client import, no generation call, and no reference to `ai_advisor` or the anthropic SDK anywhere in its source (structurally enforced, see "No LLM, no exec path" below).
 
-**Who calls it, and when.** The sole production caller is `app.py`'s `ai_advisor_tab()`, which assembles the checklist AT RENDER TIME for each recommendation card whose live `approval_status` is `"approved"` -- never inside the approve route itself (`_dispatch_retirement_decision` is a status-ONLY write, AC-5) and never at producer/persist time (unlike the explainer, which runs once at 03:45 and is persisted; the checklist is recomputed fresh on every render, since it reflects LIVE current holdings, not a historical snapshot). See [app](app.md)'s "Retirement approval live-join + checklist assembly" section for the full call-site wiring (including the `_ret_any_approved` short-circuit that skips the `database.load_state()` fetch entirely when no card in the batch is approved).
+**Who calls it, and when.** The sole production caller is `app.py`'s `ai_advisor_tab()`, which assembles the checklist AT RENDER TIME for each recommendation card whose live `approval_status` is `"approved"` -- never inside the approve route itself (`_dispatch_retirement_decision` is a status-ONLY write, AC-5) and never at producer/persist time (unlike the explainer, which runs once at 03:45 and is persisted; the checklist is recomputed fresh on every render, since it reflects LIVE current holdings, not a historical snapshot). See [app](app.md)'s "Retirement Approval Lifecycle — explainer output, display names, live-join, and checklist assembly" section for the full call-site wiring, including the `_ret_any_approved` short-circuit that skips `build_checklist` entirely when no card in the batch is approved. **As of Cycle 2c (AC-1),** the `database.load_state()` call this caller passes in as `bot_state` is no longer conditional on any card being approved -- it now runs unconditionally per request (for the AC-1 display-name resolution every card needs, approved or not) and is REUSED for the checklist call, rather than being fetched a second time.
 
 ## `build_checklist(recommendation: dict, bot_state: dict) -> dict`
 
@@ -22,13 +22,17 @@
 | Key | Type | Meaning |
 |-----|------|---------|
 | `candidate_id` | `str \| None` | Echoed verbatim from `recommendation.get("candidate_id")`. |
-| `candidate_name` | `str \| None` | `bot_state[candidate_id]["name"]` when resolvable; `None` if the candidate isn't present in `bot_state` or that entry isn't a dict. |
+| `candidate_name` | `str \| None` | `bot_state[candidate_id]["name"]` when resolvable; `None` if the candidate isn't present in `bot_state` or that entry isn't a dict. **Rendered by the template as of Cycle 2c, AC-3** — see "Consumed by the template" below. |
 | `holdings` | `list[str]` | Sorted ticker keys from `bot_state[candidate_id]["logic_holdings"]`. `[]` when unavailable (see the off-hours degrade below). |
 | `holdings_available` | `bool` | `True` iff `logic_holdings` resolved to a non-empty dict. |
 | `steps` | `list[str]` | A fresh copy of the fixed `_CHECKLIST_STEPS` tuple (see below) -- always populated, regardless of holdings availability. |
 | `unavailable_note` | `str \| None` | `_HOLDINGS_UNAVAILABLE_NOTE` when `holdings_available` is `False`; `None` otherwise. |
 
 **Never raises**, regardless of malformed/missing/`None` input -- every dict access is defended with an `isinstance` check before use (`rec = recommendation if isinstance(recommendation, dict) else {}`, same pattern for `bot_state`/`entry`/`logic_holdings`). A `None` or non-dict `recommendation`/`bot_state` degrades to the same honest-empty shape a real-but-empty input would produce.
+
+## Consumed by the template (Cycle 2c, AC-3) -- corrects the first `/code-review` pass's F7 ACCEPT ruling
+
+`build_checklist` has returned `candidate_name` as one of its 6 documented keys since it was first written (Cycle 2b). Through Cycle 2b and its Revise round, `templates/ai_advisor.html` never read it — the FIRST PR #139 `/code-review` pass's Finding F7 correctly identified this and the PM ruled it ACCEPT ("benign, keep as-is... a real future consumer... is a plausible near-term render enhancement"; see `DE-RETIRE-APPROVAL-001`'s Revise-round section in `DECISIONS.md`). **That future consumer landed in Cycle 2c (AC-1..AC-8's own AC-3, from a SECOND, later `/code-review` pass — not a re-litigation of F7, a fulfillment of the exact enhancement F7's ACCEPT ruling anticipated):** the checklist block now renders `{{ (cl.get('candidate_name') or cl.get('candidate_id', '')) | e }}` as a header line inside the wind-down checklist, with an honest fallback to the raw `candidate_id` when the name is unresolvable — mirroring the SAME fallback shape `build_checklist` itself already uses internally. This module (`retirement_checklist.py`) is BYTE-UNCHANGED for AC-3 — the field it has always returned simply gained a consumer, exactly per the plan's own Architecture note ("`advisors/retirement_checklist.py` -- already returns `candidate_name` -- no change unless the fallback needs hardening (AC-3 is template-side)"). The F7 ACCEPT ruling in `DECISIONS.md`'s Revise-round section is preserved verbatim as a historical record of what was true through Cycle 2b — this section is the forward correction, not a rewrite of that history.
 
 ## Honest off-hours degrade (AC-6)
 
@@ -81,6 +85,6 @@ Group A's shared parametrized scan (applied to both `retirement_explainer.py` an
 
 - None -- this module imports nothing beyond `from __future__ import annotations`. It does not import `database`, `ai_advisor`, `alpha_bot_execution`, `composer_draft_client`, or any other module in this codebase.
 
-**Caller:** `app.py`'s `ai_advisor_tab()` -- see [app](app.md)'s "Retirement approval live-join + checklist assembly" section for the render-time call site (fetches `bot_state` via `database.load_state()` once per request, only when at least one card is approved, and assembles the checklist per approved card in its own `try`/`except`, degrading `_rec["_checklist"]` to `None` on any failure -- the template then renders "Checklist unavailable." rather than a 500).
+**Caller:** `app.py`'s `ai_advisor_tab()` -- see [app](app.md)'s "Retirement Approval Lifecycle — explainer output, display names, live-join, and checklist assembly" section for the render-time call site (fetches `bot_state` via `database.load_state()` once per request -- unconditionally, since Cycle 2c's AC-1 needs it for every card -- and assembles the checklist per approved card in its own `try`/`except`, degrading `_rec["_checklist"]` to `None` on any failure -- the template then renders "Checklist unavailable." rather than a 500).
 
 See `DE-RETIRE-APPROVAL-001` in `DECISIONS.md` for the full Gate-2b design record.
