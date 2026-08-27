@@ -1537,8 +1537,8 @@
                 <div class="retirement-rec-card" data-testid="retirement-recommendation-card">
                     {# AC-1 (Cycle 2c): resolved display name is primary; the raw    #}
                     {# Composer hash stays available but secondary (title tooltip). #}
-                    {% set _cand_display = rec.get('_candidate_name') or rec.get('candidate_id', '') %}
-                    {% set _sib_display = rec.get('_sibling_name') or rec.get('sibling_id', '') %}
+                    {% set _cand_display = rec.get('candidate_name') or rec.get('candidate_id', '') %}
+                    {% set _sib_display = rec.get('sibling_name') or rec.get('sibling_id', '') %}
                     <div class="retirement-rec-pair">
                         <span class="retirement-rec-candidate" title="{{ rec.get('candidate_id', '') | e }}">{{ _cand_display | e }}</span>
                         <span aria-hidden="true">&rarr;</span>
