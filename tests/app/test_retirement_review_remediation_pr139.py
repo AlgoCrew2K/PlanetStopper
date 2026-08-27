@@ -7,16 +7,24 @@ ai_advisor.html, app.py) are covered here; the other three (F1, F2, F7) plus
 F8's doc-honesty fix are ACCEPT-no-code-change rulings recorded in
 DECISIONS.md under DE-RETIRE-APPROVAL-001 (ret2-doc's job, not tested here).
 
-  F3 (RED, JS-source-assertion): static/ai_advisor.js's retDispatchDecision
-     success handler colors the confirmation message with cssVar('--studio-
-     pos') UNCONDITIONALLY regardless of `action` -- a REJECT confirmation
-     renders in success-green. Must branch: approve -> --studio-pos, reject
-     -> --studio-neg.
-  F4 (RED, JS-source-assertion): the same success handler updates ONLY
-     .retirement-rec-actions -- .retirement-status-chip (data-testid=
-     "retirement-rec-status") is never touched, so a stale "Pending" chip
-     sits next to the new "Approved/Rejected" confirmation until reload.
-     Must update the chip's text AND its BEM modifier class client-side.
+  F3/F4 [RETIRED, Cycle 2c, ret3-test]: originally lived here as
+     JS-source-assertion tests locating retDispatchDecision's body via the
+     hardcoded literal signature 'function retDispatchDecision(action,
+     candidateId) {'. Cycle 2c's AC-7 (feature-plans/retirement-approval-
+     polish.md, DE-RETIRE-POLISH-001) deliberately changed that signature to
+     `(action, btnEl)` (the clicked-element rework, replacing the old
+     card-scan-by-candidateId lookup) -- the literal-signature locator no
+     longer matches, which is a STALE TEST, not a regression (root cause:
+     the fixed literal outlived the signature it was pinned to; see
+     feedback_rootcause_determines_role -- this is squarely a test-writer
+     fix, not implementer's). The underlying F3 (reject confirmation colored
+     --studio-neg, not success-green) and F4 (status chip text + BEM
+     modifier class updated on success) behavioral guarantees are NOT lost
+     -- they are re-verified, with a locator generalized to tolerate a
+     changed parameter list, by tests/app/test_retirement_button_robustness.py
+     ::TestPriorRoundFixesSurviveTheRework (Cycle 2c). Removed here rather
+     than fixed in place to avoid maintaining two independent locators for
+     the identical guarantee.
   F5 (light source-assertion, behavior-preserving cleanup): templates/
      ai_advisor.html's checklist off-hours holdings block has an
      UNREACHABLE {% else %} literal fallback (build_checklist ALWAYS sets
@@ -36,20 +44,14 @@ DECISIONS.md under DE-RETIRE-APPROVAL-001 (ret2-doc's job, not tested here).
      now FALSE, since Cycle 2b's own buttons/status chip/checklist ARE that
      affordance. Correct the comment.
 
-Mechanics note (F3/F4): there is no runtime JS/DOM test harness in this
-repo (confirmed; team-lead's explicit ruling was to use the established
-JS-source-assertion pattern instead -- mirrors tests/app/
-test_incubation_badge_render.py's string-presence style). _extract_braced_js_block
-below is a minimal brace-depth-walk extraction (mirrors
-test_retirement_recommendations_panel.py's _extract_panel_section tag-depth
-walk, applied to `{`/`}` instead of XML tags) -- scoped tightly enough
-(retDispatchDecision's success branch is ~15 lines of plain string-
-concatenation JS, no template literals/`${}`, no stray braces inside string
-literals -- verified by reading the function directly) that naive brace
-counting (not string-literal-aware) is safe for this specific, bounded use.
+Mechanics note (F5/F6/stale-comment): plain source-presence/absence checks
+over templates/ai_advisor.html and app.py -- no JS involved in this file's
+remaining coverage (the JS-source-assertion pattern this file originally
+used for F3/F4 lives on in test_retirement_button_robustness.py, which
+carries its own brace-depth-walk extraction helper).
 
-Expected state: RED (F3/F4/F5/F6/stale-comment) until ret2-route lands the
-fix.
+Expected state: GREEN -- F5/F6/stale-comment landed in Cycle 2b; F3/F4 were
+retired in Cycle 2c (see above).
 """
 
 from __future__ import annotations
@@ -60,7 +62,6 @@ import re
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_JS_PATH = REPO_ROOT / "static" / "ai_advisor.js"
 _HTML_PATH = REPO_ROOT / "templates" / "ai_advisor.html"
 _APP_PY_PATH = REPO_ROOT / "app.py"
 
@@ -74,12 +75,6 @@ _STALE_PANEL_COMMENT_CLAIM = "No operator lifecycle affordance of any kind here"
 _DEAD_ELSE_LITERAL = "current holdings unavailable (off-hours) — view live positions in Composer"
 
 
-def _js_source() -> str:
-    if not _JS_PATH.exists():
-        pytest.fail(f"expected file not found: {_JS_PATH}")
-    return _JS_PATH.read_text(encoding="utf-8")
-
-
 def _html_source() -> str:
     if not _HTML_PATH.exists():
         pytest.fail(f"expected file not found: {_HTML_PATH}")
@@ -90,130 +85,6 @@ def _app_py_source() -> str:
     if not _APP_PY_PATH.exists():
         pytest.fail(f"expected file not found: {_APP_PY_PATH}")
     return _APP_PY_PATH.read_text(encoding="utf-8")
-
-
-def _extract_braced_js_block(source: str, open_brace_idx: int) -> str:
-    """Return the substring from `open_brace_idx` (which MUST point at a
-    literal '{') through its matching closing '}', inclusive -- a plain
-    brace-depth walk. NOT string-literal-aware (see module docstring for
-    why that's safe for the specific, bounded call sites this file uses)."""
-    assert source[open_brace_idx] == "{", (
-        f"_extract_braced_js_block called with a non-'{{' index {open_brace_idx}"
-    )
-    depth = 0
-    for i in range(open_brace_idx, len(source)):
-        if source[i] == "{":
-            depth += 1
-        elif source[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return source[open_brace_idx : i + 1]
-    pytest.fail("_extract_braced_js_block: no matching close brace found -- malformed JS?")
-
-
-def _retdispatch_function_body() -> str:
-    source = _js_source()
-    marker = "function retDispatchDecision(action, candidateId) {"
-    idx = source.find(marker)
-    if idx == -1:
-        pytest.fail(
-            "static/ai_advisor.js: 'function retDispatchDecision(action, candidateId) {' "
-            "not found -- has the function been renamed?"
-        )
-    open_brace_idx = idx + len(marker) - 1  # the literal '{' at the marker's end
-    return _extract_braced_js_block(source, open_brace_idx)
-
-
-def _retdispatch_success_branch() -> str:
-    """Scope tightly to the `if (data && data.success === true) { ... }`
-    block inside retDispatchDecision -- the exact region F3/F4's fix must
-    land in."""
-    fn_body = _retdispatch_function_body()
-    marker = "if (data && data.success === true) {"
-    idx = fn_body.find(marker)
-    if idx == -1:
-        pytest.fail(
-            "retDispatchDecision: 'if (data && data.success === true) {' not found -- "
-            "has the success-branch condition changed shape?"
-        )
-    open_brace_idx = idx + len(marker) - 1
-    return _extract_braced_js_block(fn_body, open_brace_idx)
-
-
-# ===========================================================================
-# F3: reject confirmation must use --studio-neg, not --studio-pos, unconditionally
-# ===========================================================================
-
-
-class TestF3RejectConfirmationColor:
-    def test_success_branch_references_both_pos_and_neg_colors(self):
-        """The success branch must reference BOTH cssVar tokens -- a
-        hardcoded single color (today's bug) structurally cannot reference
-        two different CSS var names. Any correct action-branching
-        implementation (ternary, if/else, lookup object) necessarily
-        writes both literals somewhere in this scope."""
-        success_branch = _retdispatch_success_branch()
-        assert "--studio-pos" in success_branch, (
-            "Expected '--studio-pos' to still be referenced in the success branch "
-            "(the approve-path color)."
-        )
-        assert "--studio-neg" in success_branch, (
-            "Expected '--studio-neg' to be referenced in the success branch (the "
-            "reject-path color) -- F3: today the confirmation message is colored "
-            "'--studio-pos' UNCONDITIONALLY regardless of action, so a REJECT "
-            "confirmation renders in success-green. Branch the color by action."
-        )
-
-    def test_success_branch_ties_neg_color_to_the_reject_action(self):
-        """Non-vacuity guard beyond simple presence: 'reject' (the action
-        value) and '--studio-neg' must appear close enough together to
-        plausibly be the SAME conditional expression, not just both present
-        somewhere unrelated in the block. Windowed proximity check (200
-        chars) rather than a strict regex, to stay implementation-style
-        agnostic (ternary vs if/else vs lookup object all pass)."""
-        success_branch = _retdispatch_success_branch()
-        neg_idx = success_branch.find("--studio-neg")
-        assert neg_idx != -1, "must appear (see prior test)"
-        window = success_branch[max(0, neg_idx - 200) : neg_idx + 200]
-        assert "reject" in window, (
-            f"'--studio-neg' does not appear near any reference to 'reject' within "
-            f"the success branch -- the color must be conditioned on the actual "
-            f"action, not just independently present. Window: {window!r}"
-        )
-
-
-# ===========================================================================
-# F4: the status chip must be updated (text + modifier class) on success
-# ===========================================================================
-
-
-class TestF4StatusChipUpdatedOnSuccess:
-    def test_success_branch_references_the_status_chip(self):
-        success_branch = _retdispatch_success_branch()
-        assert (
-            "retirement-rec-status" in success_branch or "retirement-status-chip" in success_branch
-        ), (
-            "F4: the success branch never references the status chip "
-            "(data-testid='retirement-rec-status' / class 'retirement-status-chip') "
-            "-- only .retirement-rec-actions is updated, so a stale 'Pending' chip "
-            "sits next to the new confirmation message until reload."
-        )
-
-    def test_success_branch_updates_chip_text_content(self):
-        success_branch = _retdispatch_success_branch()
-        assert "textContent" in success_branch or "innerText" in success_branch, (
-            "F4: the success branch must update the chip's displayed text "
-            "(textContent/innerText) to the new status, not just its class."
-        )
-
-    def test_success_branch_updates_chip_modifier_class(self):
-        success_branch = _retdispatch_success_branch()
-        assert "retirement-status-chip--" in success_branch, (
-            "F4: the success branch must update the chip's BEM modifier class "
-            "(retirement-status-chip--pending/--approved/--rejected) to reflect the "
-            "new status, mirroring the server-rendered class pattern in "
-            "templates/ai_advisor.html."
-        )
 
 
 # ===========================================================================
