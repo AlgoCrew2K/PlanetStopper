@@ -1,5 +1,17 @@
 """RED tests -- Retirement Approval Lifecycle no-auto-trade boundary (AC-8).
 
+Cycle 2c addendum (feature-plans/retirement-approval-polish.md,
+DE-RETIRE-POLISH-001, ret3-review finding (b)): Groups A-D below are
+byte-unchanged from the Cycle 2b (PR #139) round and continue to cover the
+approve/reject routes + the 2 explainer/checklist modules. Cycle 2c added 4
+NEW call paths this file did not previously structurally cover --
+_retirement_recommender_tick_worker, _retirement_find_reusable_prior_
+explanation, _join_retirement_approval_status, and ai_advisor_tab()'s own
+name-resolution -- see Group E at the bottom. ret3-review hand-read the
+diff and confirmed zero exec seam in all 4 (no defect today); Group E makes
+that a STRUCTURAL, durable regression guard instead of a one-time review
+finding -- GREEN-ON-ARRIVAL, not a RED-then-GREEN fix.
+
 feature-plans/retirement-approval-lifecycle.md AC-8: "Extend/parametrize
 tests/security/test_retirement_recommender_no_trade_boundary.py (or a sibling)
 to source-scan EVERY new module (retirement_explainer.py,
@@ -126,6 +138,16 @@ def _read_executable_source(rel_path: str) -> str:
     for line in lines:
         stripped_lines.append("" if line.lstrip().startswith("#") else line)
     return "\n".join(stripped_lines)
+
+
+def _app_py_source() -> str:
+    """Raw app.py source text -- for Group F's scoped source-window scan
+    (Cycle 2c). Distinct from _parse_app_py() below, which returns a parsed
+    AST for Group C/E's transitive call-graph walk."""
+    app_path = REPO_ROOT / "app.py"
+    if not app_path.exists():
+        pytest.fail("app.py not found -- cannot source-scan")
+    return app_path.read_text(encoding="utf-8")
 
 
 def _parse_app_py() -> ast.Module:
@@ -513,4 +535,245 @@ class TestNewRoutesNotInSettingsWriteAllowlist:
         assert not hit, (
             f"_SETTINGS_WRITE_ALLOWLIST must not contain retirement-related or "
             f"LIVE_EXECUTION keys. Found: {hit}"
+        )
+
+
+# ===========================================================================
+# Group E (Cycle 2c, DE-RETIRE-POLISH-001, ret3-review finding (b)): static
+# AST call-graph proof for the 3 NEW app.py HELPER call paths this cycle
+# added -- the nightly tick-worker producer orchestration (AC-2/AC-4), its
+# reuse-decision helper (AC-4), and the approval-status live-join helper
+# (AC-6). ai_advisor_tab()'s own retirement name-resolution (AC-1) is
+# covered SEPARATELY below (TestAiAdvisorTabRetirementBlockNeverReachesExecSeam)
+# via a scoped source-window scan, NOT this transitive-walk pattern -- see
+# that class's docstring for why (empirically: a full-function transitive
+# walk of ai_advisor_tab() produces a FALSE POSITIVE via _build_meta, an
+# unrelated shared page-header helper that legitimately reads LIVE_EXECUTION
+# for a read-only "live mode" display badge, nothing to do with retirement
+# at all -- team-lead's own conditional guidance ("include it as a 4th
+# entry point IF the scan cleanly handles the breadth ... otherwise
+# document...") anticipated exactly this, and the scoped-window approach
+# closes the gap STRUCTURALLY rather than falling back to prose-only
+# documentation).
+
+# Deliberately does NOT check the LLM seam (_LLM_SEAM_ATTR/_EXPLAINER_
+# ENTRYPOINT) for these 3 entry points -- unlike Group C's approve/reject
+# routes, _retirement_recommender_tick_worker is EXPECTED and SUPPOSED to
+# reach advisors.retirement_explainer.explain_recommendation (that is
+# AC-2/AC-4's whole job, the nightly producer, not an operator action) --
+# asserting its absence here would be checking the wrong property and could
+# mislead a future reader about what this function is guarding. The
+# Gate-2b operator ruling ("LLM stays out of the approve/reject/checklist
+# action path") is about the ACTION path, already covered by Group C; this
+# group covers the EXEC/TRADE boundary only, exactly as team-lead specified:
+# "no save_symphony/composer_draft_client/alpha_bot_execution/LIVE_EXECUTION".
+
+_RETIREMENT_TICK_WORKER_FN_NAME = "_retirement_recommender_tick_worker"
+_RETIREMENT_REUSE_HELPER_FN_NAME = "_retirement_find_reusable_prior_explanation"
+_RETIREMENT_APPROVAL_JOIN_FN_NAME = "_join_retirement_approval_status"
+
+_CYCLE_2C_ENTRY_POINT_FN_NAMES = [
+    _RETIREMENT_TICK_WORKER_FN_NAME,
+    _RETIREMENT_REUSE_HELPER_FN_NAME,
+    _RETIREMENT_APPROVAL_JOIN_FN_NAME,
+]
+
+# Team-lead named this explicitly alongside composer_draft_client -- checked
+# via _references_name_or_attr (Name/Attribute AST check) rather than a
+# substring, since a direct `from advisors.composer_draft_client import
+# save_symphony` + bare `save_symphony(...)` call would slip past a pure
+# "composer_draft_client" substring check on the unparsed source; the
+# Name/Attribute check catches both that shape AND the attribute-chain
+# shape (`composer_draft_client.save_symphony(...)`, already also caught by
+# the substring check below -- deliberate overlap, defense-in-depth).
+_SAVE_SYMPHONY_ATTR = "save_symphony"
+
+
+class TestCycle2cCallPathsNeverReachExecSeam:
+    """GREEN-ON-ARRIVAL (ret3-review confirmed zero exec seam in all 4 by
+    hand-reading the diff before this test existed) -- a durable structural
+    regression guard against a FUTURE change adding an exec call to any of
+    these paths, not a RED-then-GREEN fix for a defect that exists today.
+    Mirrors Group C's transitive-walk pattern and helpers exactly (same
+    _collect_transitive_local_call_subtrees/_references_name_or_attr/
+    _unparse_without_docstrings -- no new helper machinery needed)."""
+
+    def _get_transitive_subtrees(self, fn_name: str) -> list[ast.AST]:
+        tree = _parse_app_py()
+        node = _find_function_def(tree, fn_name)
+        if node is None:
+            pytest.fail(
+                f"app.py has no function named {fn_name!r} -- has this Cycle 2c "
+                "call path been renamed/removed? (DE-RETIRE-POLISH-001)"
+            )
+        return _collect_transitive_local_call_subtrees(tree, fn_name)
+
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_exists(self, fn_name):
+        tree = _parse_app_py()
+        assert _find_function_def(tree, fn_name) is not None, (
+            f"app.py has no function named {fn_name!r} -- this Cycle 2c safety "
+            "boundary is unverifiable without it."
+        )
+
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_transitive_walk_is_non_vacuous(self, fn_name):
+        """Non-vacuity guard (team-lead's explicit requirement): the scan
+        must ACTUALLY traverse the named function, not silently no-op from a
+        lookup failure -- mirrors Group C's own
+        test_transitive_walk_actually_descends_into_the_shared_dispatch_helper
+        in spirit, adapted since these 4 entry points don't all delegate to
+        a single named shared helper the way the approve/reject routes do."""
+        subtrees = self._get_transitive_subtrees(fn_name)
+        assert len(subtrees) >= 1, (
+            f"_collect_transitive_local_call_subtrees({fn_name!r}) returned an "
+            "empty walk -- the scan did not actually traverse anything."
+        )
+        visited_names = {getattr(node, "name", None) for node in subtrees}
+        assert fn_name in visited_names, (
+            f"The transitive walk for {fn_name!r} did not even include itself -- "
+            f"got {visited_names}."
+        )
+
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_never_references_composer_draft_client(self, fn_name):
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            source_segment = _unparse_without_docstrings(subtree)
+            assert "composer_draft_client" not in source_segment, (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                "references composer_draft_client -- no Cycle 2c retirement call path "
+                "may create a real Composer symphony (that remains the frontrunner "
+                "/proposal/approve route's exclusive province)."
+            )
+
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_never_references_save_symphony(self, fn_name):
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            assert not _references_name_or_attr(subtree, _SAVE_SYMPHONY_ATTR), (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                f"references {_SAVE_SYMPHONY_ATTR} -- no Cycle 2c retirement call path "
+                "may create a real Composer symphony."
+            )
+
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_never_references_alpha_bot_execution(self, fn_name):
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            source_segment = _unparse_without_docstrings(subtree)
+            assert "alpha_bot_execution" not in source_segment, (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                "references alpha_bot_execution (the live execution engine)."
+            )
+
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_never_references_live_execution(self, fn_name):
+        subtrees = self._get_transitive_subtrees(fn_name)
+        for subtree in subtrees:
+            source_segment = _unparse_without_docstrings(subtree)
+            assert "LIVE_EXECUTION" not in source_segment, (
+                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
+                "reads/writes LIVE_EXECUTION."
+            )
+
+
+# ===========================================================================
+# Group F (Cycle 2c): ai_advisor_tab()'s retirement name-resolution block
+# (AC-1) -- a SCOPED SOURCE-WINDOW scan, not the Group E transitive-walk
+# pattern.
+# ===========================================================================
+
+
+def _ai_advisor_tab_retirement_block_source() -> str:
+    """Extract ONLY the retirement-panel prefetch/name-resolution/checklist
+    block inside ai_advisor_tab() -- from its own opening comment marker to
+    the Frontrunner Builder panel's opening comment marker that immediately
+    follows it in app.py (verified adjacent by direct inspection; a
+    misplacement would make this helper fail loudly via the assertions
+    below rather than silently under/over-scope).
+
+    Why a text window instead of Group E's AST transitive walk: an earlier
+    attempt to add ai_advisor_tab() as a 4th Group E entry point FAILED --
+    the whole function's transitive closure pulls in _build_meta, a shared
+    page-header helper called by nearly every route in the app, which
+    legitimately does `env_vars.get('LIVE_EXECUTION', ...)` to render a
+    read-only "live mode" display badge -- entirely unrelated to retirement,
+    and already outside this feature's blast radius. A scoped window keyed
+    to the retirement block's own comment markers gives a STRUCTURAL,
+    false-positive-free regression guard for the actual new code (AC-1's
+    name-resolution + the pre-existing AC-10/AC-6 checklist glue it sits
+    beside) without pulling in the rest of this large, multi-purpose render
+    function.
+    """
+    source = _app_py_source()
+    start_marker = "# Retirement Recommendations panel (Cycle 2a, AC-10): prefetch the"
+    end_marker = "# Frontrunner Builder panel: prefetch pending frontrunner_proposals"
+    start_idx = source.find(start_marker)
+    if start_idx == -1:
+        pytest.fail(
+            f"app.py: start marker {start_marker!r} not found -- has the retirement "
+            "panel prefetch block's leading comment been reworded? Update this "
+            "helper's marker to match."
+        )
+    end_idx = source.find(end_marker, start_idx)
+    if end_idx == -1:
+        pytest.fail(
+            f"app.py: end marker {end_marker!r} not found after the retirement block "
+            "start -- has the Frontrunner Builder panel been reordered/reworded, or "
+            "does the retirement block no longer end where this test assumes?"
+        )
+    return source[start_idx:end_idx]
+
+
+class TestAiAdvisorTabRetirementBlockNeverReachesExecSeam:
+    """GREEN-ON-ARRIVAL, scoped source-window sibling to Group E -- see the
+    Group E section comment above for why ai_advisor_tab() as a whole isn't
+    scanned via the transitive-walk pattern."""
+
+    def test_block_is_non_trivially_sized(self):
+        """Non-vacuity guard: the extracted window must be substantial
+        (covers the real AC-1 resolution code, not an empty/near-empty
+        string from a marker landing right next to its own end)."""
+        block = _ai_advisor_tab_retirement_block_source()
+        assert len(block) > 500, (
+            f"The extracted retirement block is suspiciously small ({len(block)} "
+            "chars) -- the markers may have matched the wrong location."
+        )
+
+    def test_block_actually_contains_the_ac1_resolution_code(self):
+        """Further non-vacuity: prove the window genuinely captured AC-1's
+        real resolution logic, not just its own leading comment."""
+        block = _ai_advisor_tab_retirement_block_source()
+        assert "retirement_recommendations" in block
+        assert "load_state" in block, (
+            "Expected the retirement block to reference load_state() (AC-1's "
+            "bot_state resolution) -- the window may be mis-scoped."
+        )
+
+    def test_block_never_references_composer_draft_client(self):
+        block = _ai_advisor_tab_retirement_block_source()
+        assert "composer_draft_client" not in block, (
+            "ai_advisor_tab()'s retirement block references composer_draft_client -- "
+            "the Overview-tab render path must never create a real Composer symphony."
+        )
+
+    def test_block_never_references_save_symphony(self):
+        block = _ai_advisor_tab_retirement_block_source()
+        assert _SAVE_SYMPHONY_ATTR not in block, (
+            "ai_advisor_tab()'s retirement block references save_symphony."
+        )
+
+    def test_block_never_references_alpha_bot_execution(self):
+        block = _ai_advisor_tab_retirement_block_source()
+        assert "alpha_bot_execution" not in block, (
+            "ai_advisor_tab()'s retirement block references alpha_bot_execution."
+        )
+
+    def test_block_never_reads_or_writes_live_execution(self):
+        block = _ai_advisor_tab_retirement_block_source()
+        assert "LIVE_EXECUTION" not in block, (
+            "ai_advisor_tab()'s retirement block references LIVE_EXECUTION -- this "
+            "block must be a pure read-only name-resolution/checklist-assembly path, "
+            "not a live-mode-conditional one."
         )
