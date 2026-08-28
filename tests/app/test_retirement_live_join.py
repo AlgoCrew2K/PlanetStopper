@@ -241,3 +241,102 @@ class TestLiveJoinDegradesHonestlyOnReadFailure:
         # No matching recommendation seeded at all.
         resp = client.get("/ai-advisor")
         assert resp.status_code == 200
+
+
+# ===========================================================================
+# Cycle 2d AC-5 (PR#140 2nd /code-review finding 6): _join_retirement_
+# approval_status must NOT issue database.get_retirement_decisions() when
+# recs is empty -- early-return on [] (the honest-empty-state common case)
+# BEFORE the DB read, mirroring _refresh_retirement_display_names's own
+# existing empty-list skip (see test_retirement_display_names.py's docstring
+# on that function: "A no-op on an empty list -- skips the load_state() call
+# entirely").
+# ===========================================================================
+
+
+class TestEmptyRecsSkipsDecisionsRead:
+    def test_join_approval_status_issues_zero_queries_when_recs_empty(self, monkeypatch):
+        """Direct unit-level proof: calling _join_retirement_approval_status
+        with an empty list must never touch database.get_retirement_decisions
+        at all."""
+        import app as app_module
+
+        calls = {"n": 0}
+
+        def _counting(*a, **kw):
+            calls["n"] += 1
+            return []
+
+        monkeypatch.setattr(app_module.database, "get_retirement_decisions", _counting)
+
+        app_module._join_retirement_approval_status([])
+
+        assert calls["n"] == 0, (
+            f"_join_retirement_approval_status([]) called database.get_retirement_"
+            f"decisions() {calls['n']} time(s) -- must skip the DB read entirely on "
+            "the empty-recs common case."
+        )
+
+    def test_join_approval_status_still_queries_once_when_recs_nonempty(self, monkeypatch):
+        """Non-regression anchor: the early-return is scoped to the empty
+        case only -- a non-empty recs list must still be live-joined exactly
+        as before (one query)."""
+        import app as app_module
+
+        calls = {"n": 0}
+
+        def _counting(*a, **kw):
+            calls["n"] += 1
+            return []
+
+        monkeypatch.setattr(app_module.database, "get_retirement_decisions", _counting)
+
+        app_module._join_retirement_approval_status([{"candidate_id": "cand-nonempty"}])
+
+        assert calls["n"] == 1, (
+            f"Expected exactly ONE database.get_retirement_decisions() call for a "
+            f"non-empty recs list, got {calls['n']}."
+        )
+
+    def test_route_level_empty_recommendations_makes_zero_decisions_calls(
+        self, client, isolated_db, monkeypatch
+    ):
+        """End-to-end proof, via the ROUTE (not the direct unit call above).
+
+        A DB with zero RETIREMENT_RECOMMENDATION rows at all short-circuits
+        earlier inside _fetch_retirement_recommendations (its own
+        `if not dated_rows: return []` guard, BEFORE _join_retirement_
+        approval_status is ever reached) -- that scenario would pass
+        vacuously today regardless of this fix, proving nothing about
+        AC-5's specific target function. The REAL route-level path that
+        exercises AC-5 is a batch that exists (dated_rows non-empty) but
+        whose every row's raw_response is malformed (not a dict) -- `out`
+        stays [] AFTER the early-return guard, and _join_retirement_
+        approval_status([]) IS reached with an empty list."""
+        db_module.insert_advisor_observation(
+            advisor_role="RETIREMENT_RECOMMENDATION",
+            subject_type="symphony",
+            subject_id="cand-malformed",
+            symphony_id="cand-malformed",
+            verdict="retire_candidate",
+            raw_response="[1, 2, 3]",  # pre-serialised JSON ARRAY, not a dict
+        )
+
+        calls = {"n": 0}
+        real_get_decisions = db_module.get_retirement_decisions
+
+        def _counting(*a, **kw):
+            calls["n"] += 1
+            return real_get_decisions(*a, **kw)
+
+        monkeypatch.setattr(db_module, "get_retirement_decisions", _counting)
+
+        resp = client.get("/api/retirement-recommendations")
+
+        assert resp.status_code == 200
+        assert resp.get_json() == {"recommendations": []}
+        assert calls["n"] == 0, (
+            f"Expected zero database.get_retirement_decisions() calls when every row "
+            f"in the batch is malformed (out stays empty past the early-return "
+            f"guard), got {calls['n']}."
+        )

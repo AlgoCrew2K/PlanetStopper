@@ -5046,8 +5046,12 @@ def upsert_retirement_decision(
     subsequent write — an idempotent re-approve/re-reject or a status
     transition (e.g. approved -> rejected -> approved) never re-stamps it;
     decided_at records the original decision time, not the last write
-    (Cycle 2c, DE-RETIRE-POLISH-001 AC-5). updated_at is stamped
-    datetime('now') on every write, unconditionally.
+    (Cycle 2c, DE-RETIRE-POLISH-001 AC-5). A write that transitions an
+    already-decided row BACK to 'pending' resets decided_at to NULL — the
+    invariant pending => decided_at IS NULL always holds; a subsequent
+    re-approve/re-reject after such a reset stamps a fresh decided_at, since
+    there is nothing left to preserve (Cycle 2d, DE-RETIRE-POLISH-001 AC-3).
+    updated_at is stamped datetime('now') on every write, unconditionally.
 
     Returns True on a successful write (insert or update). Write path
     (get_connection()), parameterized SQL throughout.
@@ -5070,6 +5074,7 @@ def upsert_retirement_decision(
             "sibling_id = COALESCE(excluded.sibling_id, retirement_decisions.sibling_id), "
             "approval_status = excluded.approval_status, "
             "decided_at = CASE "
+            "WHEN excluded.approval_status = 'pending' THEN NULL "
             "WHEN retirement_decisions.decided_at IS NOT NULL THEN retirement_decisions.decided_at "
             "WHEN excluded.approval_status IN ('approved', 'rejected') THEN datetime('now') "
             "ELSE NULL END, "

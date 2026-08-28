@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
@@ -1108,6 +1109,16 @@ def _retirement_recommender_tick_worker() -> None:
     finding 5) -- enrichment for a given rec always completes before that
     SAME rec's reuse check runs, since both live in the same loop iteration.
 
+    Cycle 2d (AC-2, PR#140 2nd /code-review findings 2+3): immediately after
+    name enrichment and BEFORE the reuse-or-explain decision, each rec's
+    numeric evidence is rounded to _MATERIAL_CHANGE_ROUND_NDIGITS via
+    _round_floats and reassigned onto recs[i] (the function is pure -- a
+    rebind of the loop-local name alone would not propagate). This makes
+    the citation precision the explainer sees equal the comparison
+    precision the reuse gate checks, and equal what ultimately gets
+    persisted -- regardless of whether that rec's explanation is reused or
+    freshly generated.
+
     D-1 error contract: only type(exc).__name__ appears in log records at
     WARNING+ -- a producer failure must never crash the scheduler thread.
     """
@@ -1143,7 +1154,7 @@ def _retirement_recommender_tick_worker() -> None:
             except Exception:
                 _prior_map = {}
 
-            for rec in recs:
+            for _i, rec in enumerate(recs):
                 # A real build_recommendations() rec never carries these keys
                 # (they are not part of the recommender's authoritative
                 # schema) -- only set them when absent, never clobber a
@@ -1160,6 +1171,23 @@ def _retirement_recommender_tick_worker() -> None:
                         if _resolve_ret_name is not None
                         else rec.get("sibling_id")
                     )
+
+                # PR#140 2nd /code-review findings 2+3 (Cycle 2d, AC-2): round
+                # every numeric field to _MATERIAL_CHANGE_ROUND_NDIGITS BEFORE
+                # the reuse-vs-fresh decision AND before explain_recommendation
+                # sees it -- so the LLM never cites a number more precise than
+                # what gets persisted/rendered (closes finding 3's stale-
+                # citation window), and a stable pair's rounded evidence is
+                # byte-identical night-to-night even though build_recommendations
+                # legitimately returns slightly different raw floats each run
+                # (restores finding 2's reuse spend savings). _round_floats is
+                # pure (returns a NEW structure) -- reassign onto recs[_i] so
+                # persist_recommendations(recs) sees the rounded values
+                # regardless of which branch below runs; a rebind of the
+                # loop-local `rec` name alone would not propagate. n_obs (int)
+                # passes through _round_floats unrounded, as always.
+                rec = _round_floats(rec, _MATERIAL_CHANGE_ROUND_NDIGITS)
+                recs[_i] = rec
 
                 reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
                 if reused_explanation is not None:
@@ -4057,7 +4085,15 @@ def _join_retirement_approval_status(recs: list[dict]) -> None:
     failure degrades every row to the honest "pending" default rather than
     raising -- mirrors this route's existing per-row-degrades-gracefully
     convention (see api_incubation above). Never raises.
+
+    PR#140 2nd /code-review finding 6 (Cycle 2d, AC-5): a no-op on an empty
+    list, BEFORE calling database.get_retirement_decisions() -- mirrors
+    _refresh_retirement_display_names's own existing empty-list skip. Avoids
+    an unnecessary DB read on the honest-empty-state common case (no
+    RETIREMENT_RECOMMENDATION rows, or every row in the batch malformed).
     """
+    if not recs:
+        return
     try:
         decisions_by_id = {
             row.get("candidate_id"): row for row in database.get_retirement_decisions()
@@ -4069,7 +4105,9 @@ def _join_retirement_approval_status(recs: list[dict]) -> None:
         rec["approval_status"] = (decision or {}).get("approval_status") or "pending"
 
 
-def _refresh_retirement_display_names(recs: list[dict]) -> None:
+def _refresh_retirement_display_names(
+    recs: list[dict], bot_state_getter: Callable[[], dict] | None = None
+) -> None:
     """Overwrite candidate_name/sibling_name on each rec with a FRESH
     resolution against CURRENT bot_state, in place.
 
@@ -4090,14 +4128,38 @@ def _refresh_retirement_display_names(recs: list[dict]) -> None:
     separate code path this never touches), so the tick-time value rename-
     detection needs stays intact in the database.
 
-    A no-op on an empty list (skips the load_state() call entirely -- no
-    wasted I/O when there is nothing to resolve). A database.load_state()
-    failure degrades every name to its raw-id fallback, never raises.
+    PR#140 2nd /code-review finding 1 (Cycle 2d, AC-1): resolution is a
+    3-tier fallback chain per field, independently for candidate/sibling --
+    (1) freshly-resolved name against CURRENT bot_state (resolve_incumbent_
+    display_name's own contract: returns the raw id verbatim when
+    unresolvable, never None); (2) when tier 1 fell back to the raw id (i.e.
+    genuinely unresolved against current bot_state), prefer the PERSISTED
+    tick-time name already on the rec (rec.get("candidate_name"), stamped by
+    AC-2's Cycle-2c tick-time enrichment) when truthy -- a symphony that has
+    since left bot_state (renamed/removed/retired) must not regress to the
+    hash while a known-good name is still available; (3) the raw id itself,
+    last resort, when neither tier resolves anything (the original "never
+    had a name" case). Tier 1 always wins over a stale persisted name when
+    the symphony IS currently resolvable.
+
+    AC-4 (Cycle 2d, finding 5): bot_state_getter is an optional zero-arg
+    callable returning bot_state, threaded from _fetch_retirement_
+    recommendations. None (the default -- used by api_retirement_
+    recommendations()'s route-level call, which has no shared closure to
+    reuse) preserves the ORIGINAL behavior of calling database.load_state()
+    directly here. ai_advisor_tab()'s call passes its own memoized
+    _ensure_ai_advisor_bot_state closure so this function's bot_state need
+    is absorbed into that SAME cached load, instead of independently calling
+    database.load_state() a second time on the same request.
+
+    A no-op on an empty list (skips the bot_state load entirely -- no wasted
+    I/O when there is nothing to resolve). A bot_state load failure degrades
+    every name to its raw-id fallback, never raises.
     """
     if not recs:
         return
     try:
-        bot_state = database.load_state()
+        bot_state = bot_state_getter() if bot_state_getter is not None else database.load_state()
     except Exception:
         bot_state = {}
     try:
@@ -4107,16 +4169,26 @@ def _refresh_retirement_display_names(recs: list[dict]) -> None:
     except Exception:
         _resolve_name = None
 
+    def _resolved_or_persisted_or_hash(raw_id, persisted_name):
+        fresh = _resolve_name(bot_state, raw_id) if _resolve_name is not None else raw_id
+        if fresh != raw_id:
+            return fresh
+        if persisted_name:
+            return persisted_name
+        return fresh
+
     for rec in recs:
-        if _resolve_name is not None:
-            rec["candidate_name"] = _resolve_name(bot_state, rec.get("candidate_id"))
-            rec["sibling_name"] = _resolve_name(bot_state, rec.get("sibling_id"))
-        else:
-            rec["candidate_name"] = rec.get("candidate_id")
-            rec["sibling_name"] = rec.get("sibling_id")
+        rec["candidate_name"] = _resolved_or_persisted_or_hash(
+            rec.get("candidate_id"), rec.get("candidate_name")
+        )
+        rec["sibling_name"] = _resolved_or_persisted_or_hash(
+            rec.get("sibling_id"), rec.get("sibling_name")
+        )
 
 
-def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
+def _fetch_retirement_recommendations(
+    limit: int | None = None, bot_state_getter: Callable[[], dict] | None = None
+) -> list[dict]:
     """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
 
     Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
@@ -4132,6 +4204,15 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
     keys via _refresh_retirement_display_names (PR#140 review finding 3) --
     neither is part of the persisted raw_response itself; both are computed
     fresh every call.
+
+    bot_state_getter (Cycle 2d, AC-4, PR#140 2nd /code-review finding 5) is
+    threaded straight through to _refresh_retirement_display_names -- None
+    (the default, used by api_retirement_recommendations()'s route-level
+    call) preserves the original per-call database.load_state() behavior;
+    ai_advisor_tab()'s panel prefetch passes its own memoized
+    _ensure_ai_advisor_bot_state closure so the name-refresh consumer shares
+    ONE bot_state load with the checklist/frontrunner-identity consumers on
+    the same request, instead of loading it again independently.
 
     limit defaults to _ADVISOR_OBSERVATIONS_PAGE_LIMIT, resolved lazily inside
     the function body (not as a parameter default) because that module-level
@@ -4171,7 +4252,7 @@ def _fetch_retirement_recommendations(limit: int | None = None) -> list[dict]:
         if isinstance(raw, dict):
             out.append(raw)
     _join_retirement_approval_status(out)
-    _refresh_retirement_display_names(out)
+    _refresh_retirement_display_names(out, bot_state_getter=bot_state_getter)
     return out
 
 
@@ -4191,7 +4272,16 @@ def api_retirement_recommendations():
     verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
     n_obs, candidate_composite, sibling_composite, candidate_metrics,
     sibling_metrics, uncertainty_gate_passed, structural_redundancy_gate_passed,
-    stressed_correlation, holdings_overlap, basis_label).
+    stressed_correlation, holdings_overlap, basis_label), PLUS three
+    additional keys -- approval_status, candidate_name, sibling_name (PR#140
+    2nd /code-review finding 7) -- that are NOT part of the persisted
+    raw_response schema above. These three are freshly-computed request-time
+    overlays, live-joined/live-resolved on every single call via
+    _fetch_retirement_recommendations() (approval_status via _join_
+    retirement_approval_status against the mutable retirement_decisions
+    table; candidate_name/sibling_name via _refresh_retirement_display_names
+    against current bot_state) -- never cached, never stored back into the
+    row's raw_response.
 
     Empty -> {"recommendations": []}, never a 500; a read failure degrades to
     the same empty list rather than 500ing (mirrors api_incubation).
@@ -6432,14 +6522,17 @@ def ai_advisor_tab():
     # Each entry is the persisted raw_response dict verbatim (the         #
     # authoritative schema) -- no renaming/translation layer.             #
     #                                                                      #
-    # Shared lazy bot_state loader (PR#140 review findings 4/5): the       #
-    # checklist assembly below AND the frontrunner identity resolution     #
-    # further down both independently need the full bot_state dict --     #
-    # this loads it AT MOST ONCE per request, on first actual need,        #
-    # shared by both consumers. A request with no approved retirement      #
-    # cards AND no pending frontrunner proposals still costs zero          #
-    # load_state() calls here (preserves the pre-existing lazy-I/O         #
-    # guarantee -- see the frontrunner block's own F5/F9(c) rationale).    #
+    # Shared lazy bot_state loader (PR#140 review findings 4/5; Cycle 2d     #
+    # AC-4/finding 5 additionally threads it into _fetch_retirement_        #
+    # recommendations()'s own bot_state need below): the checklist          #
+    # assembly, the frontrunner identity resolution further down, AND       #
+    # _refresh_retirement_display_names (via the call immediately below)    #
+    # all need the full bot_state dict -- this loads it AT MOST ONCE per    #
+    # request, on first actual need, shared by all consumers. A request     #
+    # with no retirement recommendations, no approved retirement cards,     #
+    # AND no pending frontrunner proposals still costs zero load_state()    #
+    # calls here (preserves the pre-existing lazy-I/O guarantee -- see the  #
+    # frontrunner block's own F5/F9(c) rationale).                          #
     # ------------------------------------------------------------------ #
     _ai_advisor_bot_state_loaded = False
     _ai_advisor_bot_state: dict = {}
@@ -6456,7 +6549,14 @@ def ai_advisor_tab():
 
     retirement_recommendations: list[dict] = []
     try:
-        retirement_recommendations = _fetch_retirement_recommendations()
+        # Cycle 2d (AC-4, PR#140 2nd /code-review finding 5): pass the
+        # shared closure so _refresh_retirement_display_names's bot_state
+        # need (inside _fetch_retirement_recommendations) is absorbed into
+        # the SAME memoized load the checklist/frontrunner blocks below
+        # use, instead of independently calling database.load_state() again.
+        retirement_recommendations = _fetch_retirement_recommendations(
+            bot_state_getter=_ensure_ai_advisor_bot_state
+        )
     except Exception:
         pass  # Empty-state rendered by template on [].
 

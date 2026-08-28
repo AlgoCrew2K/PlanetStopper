@@ -541,6 +541,112 @@ class TestDecidedAtPreservedAcrossRewrites:
 
 
 # ---------------------------------------------------------------------------
+# Cycle 2d AC-3 (PR#140 2nd /code-review finding 4): "pending" is a NULL-
+# decided_at state, not just an insert-time default -- a write that
+# transitions an already-DECIDED row BACK to 'pending' must reset decided_at
+# to NULL, closing the invariant gap `pending => decided_at IS NULL` left
+# open by the ON CONFLICT clause's original "preserve if already set"
+# ordering (which never considered a transition back to pending at all).
+# updated_at is unaffected -- it always bumps on every write regardless.
+# ---------------------------------------------------------------------------
+
+
+class TestPendingResetsDecidedAt:
+    def test_approved_to_pending_resets_decided_at_to_null(self, migrated_db):
+        """The core finding-4 scenario: a previously-approved row (real
+        decided_at set) is written back to 'pending' -- decided_at must
+        reset to NULL, not preserve the stale prior decision timestamp."""
+        _raw_insert_backdated(
+            migrated_db, "cand-reset-1", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-reset-1", approval_status="pending")
+
+        row = _find_decision("cand-reset-1")
+        assert row is not None
+        assert row["approval_status"] == "pending"
+        assert row["decided_at"] is None, (
+            f"A write transitioning an already-decided row back to 'pending' must "
+            f"reset decided_at to NULL, got {row['decided_at']!r} -- 'pending' must "
+            "never coexist with a non-NULL decided_at."
+        )
+
+    def test_rejected_to_pending_resets_decided_at_to_null(self, migrated_db):
+        """Same invariant from the OTHER decided state -- 'rejected' also
+        resets on a transition back to 'pending'."""
+        _raw_insert_backdated(
+            migrated_db, "cand-reset-2", approval_status="rejected", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-reset-2", approval_status="pending")
+
+        row = _find_decision("cand-reset-2")
+        assert row is not None
+        assert row["approval_status"] == "pending"
+        assert row["decided_at"] is None
+
+    def test_pending_reset_still_bumps_updated_at(self, migrated_db):
+        """updated_at is unaffected by this fix -- it always bumps on every
+        write, including the new pending-reset write (mirrors DS2's
+        established convention for the idempotent-reapprove case)."""
+        _raw_insert_backdated(
+            migrated_db, "cand-reset-3", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-reset-3", approval_status="pending")
+
+        row = _find_decision("cand-reset-3")
+        assert row is not None
+        assert row["updated_at"] != _BACKDATED_TIMESTAMP, (
+            "updated_at must still be bumped on the pending-reset write."
+        )
+
+    def test_approved_to_approved_still_preserves_decided_at(self, migrated_db):
+        """Non-regression anchor: this fix must NOT touch the existing DS1
+        idempotent-rewrite behavior -- writing the SAME decided status again
+        still preserves the original decided_at (only a transition TO
+        'pending' resets it)."""
+        _raw_insert_backdated(
+            migrated_db, "cand-reset-4", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+
+        db_module.upsert_retirement_decision("cand-reset-4", approval_status="approved")
+
+        row = _find_decision("cand-reset-4")
+        assert row is not None
+        assert row["decided_at"] == _BACKDATED_TIMESTAMP, (
+            "An idempotent re-approve (not a transition to pending) must still "
+            "preserve the original decided_at -- this fix is scoped to the "
+            "pending-transition case only."
+        )
+
+    def test_pending_after_reset_then_reapproved_stamps_a_fresh_decided_at(self, migrated_db):
+        """Adversarial follow-through: once decided_at has been reset to
+        NULL by a pending-transition, a SUBSEQUENT approve must be treated
+        as a genuine 'first decision' again (fresh timestamp), not silently
+        skipped because the candidate_id row already existed."""
+        _raw_insert_backdated(
+            migrated_db, "cand-reset-5", approval_status="approved", decided_at=_BACKDATED_TIMESTAMP
+        )
+        db_module.upsert_retirement_decision("cand-reset-5", approval_status="pending")
+        row_after_reset = _find_decision("cand-reset-5")
+        assert row_after_reset is not None
+        assert row_after_reset["decided_at"] is None
+
+        db_module.upsert_retirement_decision("cand-reset-5", approval_status="approved")
+
+        row_after_reapprove = _find_decision("cand-reset-5")
+        assert row_after_reapprove is not None
+        assert row_after_reapprove["decided_at"] is not None, (
+            "A re-approve after a pending-reset must stamp a FRESH decided_at -- "
+            "there is nothing left to preserve once it was reset to NULL."
+        )
+        assert row_after_reapprove["decided_at"] != _BACKDATED_TIMESTAMP, (
+            "The fresh decided_at must not be the stale pre-reset backdated value."
+        )
+
+
+# ---------------------------------------------------------------------------
 # AC-8 (Cycle 2c): the dead singular get_retirement_decision accessor is
 # removed.
 # ---------------------------------------------------------------------------

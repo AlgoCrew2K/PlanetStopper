@@ -341,6 +341,145 @@ class TestCardDisplayName:
 
 
 # ===========================================================================
+# Cycle 2d AC-1 (PR#140 2nd /code-review finding 1, SELF-INTRODUCED in 2c):
+# 3-tier fallback chain -- freshly-resolved name -> persisted tick-time
+# candidate_name/sibling_name (AC-2's Cycle-2c tick enrichment already
+# stamps this into raw_response) -> raw hash (last resort only). The 2c
+# behavior tested above (TestCardDisplayName's "falls back to raw hash when
+# unresolvable" tests) used a fixture with NO persisted candidate_name/
+# sibling_name key at all -- that "never had a name" case is UNCHANGED by
+# this fix and stays covered above. This section adds the NEW middle tier:
+# a symphony that WAS named (tick-time enrichment ran) but has since left
+# bot_state must show the persisted name, not regress straight to the hash.
+# ===========================================================================
+
+_PERSISTED_CANDIDATE_NAME = "Persisted Tick-Time Candidate"
+_PERSISTED_SIBLING_NAME = "Persisted Tick-Time Sibling"
+
+
+def _seed_recommendation_with_persisted_names(
+    candidate_id=_CANDIDATE_HASH,
+    sibling_id=_SIBLING_HASH,
+    *,
+    candidate_name=None,
+    sibling_name=None,
+):
+    """Simulates a raw_response shaped exactly like AC-2's Cycle-2c tick-time
+    enrichment already persisted -- candidate_name/sibling_name baked into
+    the DB row, deliberately independent of whatever the CURRENT bot_state
+    says (the whole point of this fallback tier)."""
+    import database as db_module
+
+    raw = _sample_raw_response(candidate_id, sibling_id)
+    if candidate_name is not None:
+        raw["candidate_name"] = candidate_name
+    if sibling_name is not None:
+        raw["sibling_name"] = sibling_name
+    db_module.insert_advisor_observation(
+        advisor_role="RETIREMENT_RECOMMENDATION",
+        subject_type="symphony",
+        subject_id=candidate_id,
+        symphony_id=candidate_id,
+        verdict="retire_candidate",
+        raw_response=raw,
+    )
+
+
+class TestPersistedNameFallbackWhenRemovedFromBotState:
+    def test_candidate_removed_from_bot_state_preserves_persisted_name_not_hash(
+        self, client, isolated_db
+    ):
+        """The core finding-1 scenario: the candidate has left bot_state
+        entirely (renamed/removed/retired) since the tick persisted a
+        friendly name -- the card must show the PERSISTED name, never
+        regress to the raw hash while that name is available."""
+        _seed_named_roster({_SIBLING_HASH: _SIBLING_NAME})  # candidate absent
+        _seed_recommendation_with_persisted_names(
+            _ORPHAN_CANDIDATE_HASH, _SIBLING_HASH, candidate_name=_PERSISTED_CANDIDATE_NAME
+        )
+
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+
+        assert _PERSISTED_CANDIDATE_NAME in body, (
+            f"AC-1 (2d): a candidate removed from bot_state since the tick must fall "
+            f"back to its PERSISTED tick-time name {_PERSISTED_CANDIDATE_NAME!r}, not "
+            "straight to the raw hash."
+        )
+
+    def test_sibling_removed_from_bot_state_preserves_persisted_name_not_hash(
+        self, client, isolated_db
+    ):
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME})  # sibling absent
+        _seed_recommendation_with_persisted_names(
+            _CANDIDATE_HASH, _ORPHAN_SIBLING_HASH, sibling_name=_PERSISTED_SIBLING_NAME
+        )
+
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+
+        assert _PERSISTED_SIBLING_NAME in body, (
+            f"Expected the persisted sibling name {_PERSISTED_SIBLING_NAME!r} to be "
+            "preserved when the sibling has left bot_state."
+        )
+
+    def test_fresh_resolution_still_wins_over_a_stale_persisted_name(self, client, isolated_db):
+        """Precedence check: fresh resolution is tier 1 -- a persisted
+        (possibly stale) name must never override a symphony that IS
+        currently resolvable in bot_state."""
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
+        _seed_recommendation_with_persisted_names(
+            _CANDIDATE_HASH, _SIBLING_HASH, candidate_name="Old Stale Persisted Name"
+        )
+
+        resp = client.get("/ai-advisor")
+        body = resp.get_data(as_text=True)
+
+        assert _CANDIDATE_NAME in body, "Fresh bot_state resolution must win."
+        assert "Old Stale Persisted Name" not in body, (
+            "A stale persisted name must never override a symphony that IS "
+            "currently resolvable in bot_state."
+        )
+
+    def test_last_resort_hash_fallback_still_applies_when_no_persisted_name_exists(
+        self, client, isolated_db
+    ):
+        """Non-regression anchor: the ORIGINAL (2c) last-resort hash fallback
+        must still hold for the genuinely 'never had a name' case -- no
+        persisted candidate_name key at all AND unresolvable in bot_state
+        (mirrors TestCardDisplayName's existing coverage above, re-asserted
+        here as the 3rd tier of the SAME chain this section is documenting)."""
+        _seed_named_roster({})  # nobody resolvable
+        _seed_recommendation(candidate_id=_ORPHAN_CANDIDATE_HASH, sibling_id=_ORPHAN_SIBLING_HASH)
+
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+
+        assert _ORPHAN_CANDIDATE_HASH in body, (
+            "With neither a fresh nor a persisted name available, the card must "
+            "fall back to the raw hash as the last resort."
+        )
+
+    def test_persisted_fallback_name_html_escaped_against_xss(self, client, isolated_db):
+        xss_name = "<img src=x onerror=alert(1)>"
+        _seed_named_roster({_SIBLING_HASH: _SIBLING_NAME})
+        _seed_recommendation_with_persisted_names(
+            _ORPHAN_CANDIDATE_HASH, _SIBLING_HASH, candidate_name=xss_name
+        )
+
+        resp = client.get("/ai-advisor")
+        body = resp.get_data(as_text=True)
+
+        assert xss_name not in body, (
+            "A malicious persisted candidate name must be HTML-escaped, never rendered raw."
+        )
+        assert "&lt;img" in body
+
+
+# ===========================================================================
 # AC-3: checklist display name (resolvable + honest hash fallback)
 # ===========================================================================
 
