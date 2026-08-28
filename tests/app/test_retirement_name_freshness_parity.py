@@ -238,23 +238,70 @@ class TestApiAndPanelAgreeOnDisplayName:
     def test_api_and_panel_agree_when_candidate_becomes_unresolvable(self, isolated_db):
         """Edge case: the candidate is REMOVED from bot_state entirely after
         the tick persisted a friendly name (e.g. the symphony was deleted).
-        Both surfaces must fall back to the raw hash CONSISTENTLY -- never
-        one showing a stale friendly name while the other shows the hash."""
+
+        **SUPERSEDED contract (Cycle 2d, feature-plans/retirement-approval-
+        polish-2d.md AC-1, PR#140 2nd /code-review finding 1):** the ORIGINAL
+        assertion here (Cycle 2c) was "both surfaces fall back to the raw
+        hash" -- that turned out to be a SELF-INTRODUCED regression: it
+        discards a perfectly good, already-resolved persisted name the
+        moment a symphony leaves bot_state, which is exactly the ordinary
+        "recently retired/removed" case this whole feature exists to
+        surface. The corrected contract is AC-1's 3-tier fallback chain
+        (fresh name -> persisted tick-time name -> raw hash, last resort
+        only): both surfaces now PRESERVE the persisted friendly name
+        consistently here, never falling back to the hash while a persisted
+        name exists. This is a root-cause SPEC CHANGE (feedback_rootcause_
+        determines_role), not a stale assertion of an unrelated fact --
+        fixed in place rather than deleted, since the underlying "API and
+        panel must agree on the SAME value" invariant this test exists to
+        prove is still exactly what's being tested, just with the corrected
+        expected value. See test_retirement_display_names.py's
+        TestPersistedNameFallbackWhenRemovedFromBotState for the primary
+        (panel-only) coverage of this same fallback tier."""
         _seed_recommendation(candidate_name=_TICK_TIME_CANDIDATE_NAME)
         _seed_named_roster({_SIBLING_HASH: _TICK_TIME_SIBLING_NAME})  # candidate absent
 
         api_row = _api_row_for(_CANDIDATE_HASH)
         panel_body = _panel_body()
 
-        assert api_row.get("candidate_name") != _TICK_TIME_CANDIDATE_NAME, (
-            "An unresolvable candidate must not leave the stale friendly name in the API response."
+        assert api_row.get("candidate_name") == _TICK_TIME_CANDIDATE_NAME, (
+            f"AC-1 (2d): an unresolvable candidate with a persisted tick-time name "
+            f"must PRESERVE that name ({_TICK_TIME_CANDIDATE_NAME!r}), not fall back "
+            f"to the raw hash. Got {api_row.get('candidate_name')!r}."
         )
         assert re.search(r"[^A-Za-z]None[^A-Za-z]", str(api_row.get("candidate_name"))) is None
-        # The panel already falls back to the hash (AC-1, covered by
-        # test_retirement_display_names.py) -- corroborate the API does too,
-        # by asserting the hash itself is what the API now shows.
+        assert _TICK_TIME_CANDIDATE_NAME in panel_body, (
+            "The panel must render the SAME preserved persisted name the API returns "
+            "-- both surfaces must agree."
+        )
+
+    def test_api_and_panel_still_agree_on_hash_fallback_when_no_persisted_name_exists(
+        self, isolated_db
+    ):
+        """Corroborating case: the LAST-RESORT hash fallback (AC-1's 3rd
+        tier) still applies -- and still holds cross-surface parity -- when
+        there is truly NO persisted name to fall back to (e.g. a pre-AC-2
+        legacy row that predates tick-time name enrichment entirely)."""
+        import database as db_module
+
+        raw = _sample_raw_response()
+        del raw["candidate_name"]
+        del raw["sibling_name"]
+        db_module.insert_advisor_observation(
+            advisor_role="RETIREMENT_RECOMMENDATION",
+            subject_type="symphony",
+            subject_id=raw["candidate_id"],
+            symphony_id=raw["candidate_id"],
+            verdict="retire_candidate",
+            raw_response=raw,
+        )
+        _seed_named_roster({})  # neither symphony resolvable, and nothing persisted either
+
+        api_row = _api_row_for(_CANDIDATE_HASH)
+        panel_body = _panel_body()
+
         assert api_row.get("candidate_name") == _CANDIDATE_HASH, (
-            f"Expected the API to fall back to the raw hash {_CANDIDATE_HASH!r} for "
-            f"an unresolvable candidate, got {api_row.get('candidate_name')!r}."
+            f"Expected the API to fall back to the raw hash {_CANDIDATE_HASH!r} when "
+            f"there is no persisted name at all, got {api_row.get('candidate_name')!r}."
         )
         assert _CANDIDATE_HASH in panel_body
