@@ -1565,8 +1565,19 @@ def dashboard():
                 coerce_none=False,
             )
         if "_mdd" not in _s:
+            # DE-PERF-WINDOW-TRUTH-001 (mdd-review BLOCK finding, 2026-09-03):
+            # same bug class as F-016 above -- _mdd feeds the per-card Bot/
+            # Held/Lifetime MDD cells (templates/index.html), which already
+            # have their own None-aware `is not none` guards. Coercing a
+            # genuine None (thin shadow-history <2 days, or no Composer
+            # max_drawdown scalar) to 0.0 here fabricated a false "0.0%"
+            # before the template's correct guard ever saw it.
             _s["_mdd"] = _safe_analytics(
-                analytics.get_symphony_max_drawdown, _sym_dict, _s, trading_day=_dash_today
+                analytics.get_symphony_max_drawdown,
+                _sym_dict,
+                _s,
+                trading_day=_dash_today,
+                coerce_none=False,
             )
 
     active_syms = [

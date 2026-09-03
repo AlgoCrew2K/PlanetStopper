@@ -882,8 +882,17 @@
           {% set cr_held = (meta.portfolio.cr_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
           {% set tc_bot = (meta.portfolio.tc if meta is defined and meta.portfolio is defined else 0) or 0 %}
           {% set tc_held = (meta.portfolio.tc_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
-          {% set mdd_bot = (meta.portfolio.mdd if meta is defined and meta.portfolio is defined else 0) or 0 %}
-          {% set mdd_held = (meta.portfolio.mdd_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
+          {# [Fixed, DE-PERF-WINDOW-TRUTH-001, 2026-09-03, mdd-review BLOCK
+             finding case 3 of 3]: the prior `(... if ... else 0) or 0` form
+             coerced a genuine None (portfolio-wide MDD unavailable) to a
+             fabricated 0 -- `or 0` treats None as falsy same as 0. Preserve
+             the raw value (via the same safe `.get()` + `is mapping` access
+             already established for the lifetime scalar above) so the
+             render spans below can render an honest em-dash instead. #}
+          {% set _mdd_bot_raw = (meta.portfolio.get('mdd') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
+          {% set _mdd_held_raw = (meta.portfolio.get('mdd_if_held') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
+          {% set mdd_bot = _mdd_bot_raw if _mdd_bot_raw is not none else 0 %}
+          {% set mdd_held = _mdd_held_raw if _mdd_held_raw is not none else 0 %}
           {# [Updated, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] The original F-2
              comment here described a genuine basis mismatch (bot MDD from a few
              shadow days vs held MDD from Composer's full lifetime) and mitigated
@@ -1000,8 +1009,8 @@
               <div class="vs-row-top">
                 {# F-2: when insufficient_history, label row with annotation instead of alpha delta #}
                 <span class="vs-row-label">Max DD{% if mdd_insufficient %} <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
-                <span data-testid="comp-mdd-bot-text" class="vs-val neg">{% if has_live_data %}Bot {{ "%.2f"|format(mdd_bot) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data %}Held {{ "%.2f"|format(mdd_held) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-bot-text" class="vs-val neg">{% if has_live_data and _mdd_bot_raw is not none %}Bot {{ "%.2f"|format(mdd_bot) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data and _mdd_held_raw is not none %}Held {{ "%.2f"|format(mdd_held) }}%{% else %}&mdash;{% endif %}</span>
                 {# F-2: suppress alpha delta when insufficient history — comparison is misleading #}
                 {% if not mdd_insufficient %}
                 <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>

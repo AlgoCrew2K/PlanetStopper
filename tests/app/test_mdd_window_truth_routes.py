@@ -485,8 +485,12 @@ class TestAC2LifetimeScalarRenderedSeparately:
         close = html.find(">", val_anchor)
         end = html.find("</span>", close)
         rendered_value = html[close + 1 : end].strip()
-        assert rendered_value == "—", (  # em-dash, matches the template's &mdash;
-            f"EXPECTED honest em-dash for a None Composer lifetime MDD scalar on "
+        assert rendered_value == "--", (  # literal double-hyphen -- matches this
+            # per-card span's pre-existing (untouched this cycle) None-guard at
+            # templates/index.html:1330/1441, which renders "--" not an em-dash
+            # char; extracted via raw HTML source slicing above, not an
+            # entity-decoding parser
+            f"EXPECTED honest '--' for a None Composer lifetime MDD scalar on "
             f"initial SSR page load; got fabricated rendered value: {rendered_value!r}. "
             f"Root cause: app.py's dashboard() builds _s['_mdd'] via "
             f"_safe_analytics(..., coerce_none=True default), which converts the "
@@ -644,8 +648,13 @@ class TestHeroCoerceNoneFabricatesZero:
             close = html.find(">", anchor)
             end = html.find("</span>", close)
             rendered_value = html[close + 1 : end].strip()
-            assert rendered_value == "—", (  # em-dash
-                f"EXPECTED honest em-dash for a portfolio-wide None MDD leg, got "
+            assert rendered_value == "&mdash;", (  # HTML entity, not a raw em-dash
+                # char -- matches this hero span's else-branch convention (shared
+                # with sibling spans e.g. comp-mdd-delta in the same vs-row block,
+                # and the already-GREEN "&mdash;" in snippet check above at
+                # line ~449); extracted via raw HTML source slicing, so the
+                # entity is never decoded to the Unicode char here
+                f"EXPECTED honest '&mdash;' for a portfolio-wide None MDD leg, got "
                 f"fabricated rendered value: {rendered_value!r}"
             )
 
