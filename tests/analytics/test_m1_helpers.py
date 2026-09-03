@@ -526,10 +526,19 @@ class TestGetSymphonyCumulativeReturn:
 class TestGetSymphonyMaxDrawdown:
     def test_if_held_equals_max_drawdown_from_composer(self, normal_symphony):
         """
-        if_held MDD must equal max_drawdown * 100 (percentage scale, consistent with CR/TC).
-        Composer returns max_drawdown as a fraction (e.g. 0.1495); the helper must multiply
-        by 100 before returning so all three metrics share the same percentage scale.
-        Fixture: normal_symphony.max_drawdown = 0.1495 → expected if_held = 14.95
+        [SUPERSEDED, DE-PERF-WINDOW-TRUTH-001, AC-1 spec supersession] --
+        this test previously asserted if_held == Composer max_drawdown * 100.
+        That assertion PINNED the exact defect docs/audit/PERF-WINDOW-TRUTH-
+        2026-09-03.md found: pairing Composer's LIFETIME max_drawdown scalar
+        against a bot-side quantity as if they were a genuine same-window
+        comparison. Post-fix, if_held is the peak-to-trough of the windowed
+        current_return path -- it must NOT equal the Composer scalar except
+        by coincidence. The Composer scalar remains available as its OWN
+        separate 'if_held_lifetime' key (AC-2) -- this test now pins THAT
+        distinction. See tests/analytics/test_mdd_window_truth.py for the
+        full AC-1/AC-2 contract (golden fixture, translation-invariance
+        regression, if_held_lifetime tests) -- this is a narrower anchor,
+        not a duplicate.
         """
         from analytics import get_symphony_max_drawdown
 
@@ -541,25 +550,51 @@ class TestGetSymphonyMaxDrawdown:
         assert "if_held" in result and "dry_run" in result, (
             f"result must have 'if_held' and 'dry_run'; got {list(result.keys())}"
         )
+        assert "if_held_lifetime" in result, (
+            "AC-2: result must carry a 'if_held_lifetime' key for the Composer "
+            "raw max_drawdown scalar, kept separate from if_held/dry_run"
+        )
 
-        expected = normal_symphony["max_drawdown"] * 100.0
-        assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
-            f"if_held MDD must equal Composer max_drawdown * 100 = {expected}%; "
-            f"got {result['if_held']} — check analytics.py:585 for the ×100 multiply."
+        composer_scalar_pct = normal_symphony["max_drawdown"] * 100.0
+        assert result["if_held_lifetime"] == pytest.approx(composer_scalar_pct, abs=1e-6), (
+            f"if_held_lifetime must equal Composer max_drawdown * 100 = "
+            f"{composer_scalar_pct}%; got {result['if_held_lifetime']}"
+        )
+        # normal_symphony carries no shadow_history-backing DB in this fixture
+        # (fixture-only, no db_path) -- if_held must therefore be the honest
+        # None sentinel, NEVER silently echo the Composer scalar (that fallback
+        # IS the removed defect).
+        assert result["if_held"] is None, (
+            f"if_held must be None when no shadow_history DB backs this "
+            f"symphony (fixture-only call, no db_path) -- got "
+            f"{result['if_held']}. If this equals {composer_scalar_pct}, "
+            f"if_held is still falling back to the Composer scalar."
         )
 
     def test_if_held_mdd_is_non_negative(self, symphony_stats_meta):
         """
         MDD is a non-negative float (Composer convention: 0.0 = no drawdown,
         positive value = drawdown magnitude). Must not be negative.
+
+        [Updated, DE-PERF-WINDOW-TRUTH-001]: if_held is now a genuine windowed
+        peak-to-trough of shadow_history.current_return, so it is honestly
+        None (not a Composer-scalar echo) when no shadow_history DB backs
+        these fixture-only symphonies -- guard added so this stays a
+        meaningful non-negativity check rather than crashing on None.
         """
         from analytics import get_symphony_max_drawdown
 
         for sym in symphony_stats_meta:
             result = get_symphony_max_drawdown(sym, bot_state_entry=None)
-            assert result["if_held"] >= 0.0, (
-                f"symphony {sym.get('id')}: if_held MDD must be >= 0; "
-                f"got {result['if_held']} — check sign convention"
+            if result["if_held"] is not None:
+                assert result["if_held"] >= 0.0, (
+                    f"symphony {sym.get('id')}: if_held MDD must be >= 0; "
+                    f"got {result['if_held']} — check sign convention"
+                )
+            assert result.get("if_held_lifetime") is None or result["if_held_lifetime"] >= 0.0, (
+                f"symphony {sym.get('id')}: if_held_lifetime must be >= 0 when "
+                f"present (Composer positive convention); got "
+                f"{result.get('if_held_lifetime')}"
             )
 
     def test_dry_run_is_none_when_no_shadow_rows_not_triggered(self, normal_symphony, tmp_path):
@@ -926,14 +961,24 @@ class TestGetPortfolioMaxDrawdown:
 
     def test_if_held_is_value_weighted_average_of_max_drawdown(self, symphony_stats_meta):
         """
-        Portfolio if_held MDD must be value-weighted mean of (symphony.max_drawdown * 100).
-        Per-symphony MDD is now percentage-scale (max_drawdown fraction × 100), consistent
-        with CR and TC. Portfolio aggregation value-weights those percentage values.
+        [SUPERSEDED, DE-PERF-WINDOW-TRUTH-001, AC-1 spec supersession] --
+        this test previously asserted portfolio if_held == value-weighted mean
+        of (symphony.max_drawdown * 100), i.e. a VW average of Composer
+        LIFETIME scalars. That IS the audit's #1 defect: if_held must now be
+        the value-weighted mean of each symphony's genuine windowed
+        current_return peak-to-trough (see
+        tests/analytics/test_mdd_window_truth.py::TestAC1GoldenFixture53DayWindow
+        for the DB-backed golden pin of this same aggregation path). This
+        fixture-only call (no shadow_history DB) has no windowed data to
+        aggregate, so the honest result is None -- not a silent scalar
+        fallback.
         """
         from analytics import get_portfolio_max_drawdown
 
         result = get_portfolio_max_drawdown(symphony_stats_meta, bot_state={})
 
+        # Composer-scalar VW average (the OLD, now-defective, expected value) --
+        # kept only to prove if_held no longer equals it.
         total_weight = 0.0
         weighted_sum = 0.0
         for sym in symphony_stats_meta:
@@ -941,24 +986,31 @@ class TestGetPortfolioMaxDrawdown:
             if w > 0:
                 weighted_sum += sym["max_drawdown"] * 100.0 * w
                 total_weight += w
+        old_defective_expected = weighted_sum / total_weight if total_weight > 0 else None
 
-        if total_weight > 0:
-            expected = weighted_sum / total_weight
-            assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
-                f"portfolio if_held MDD must be value-weighted avg of (max_drawdown*100); "
-                f"expected {expected:.6f}%, got {result['if_held']:.6f}%"
-            )
+        assert result["if_held"] is None, (
+            f"portfolio if_held MDD must be None (no shadow_history DB backs "
+            f"these fixture-only symphonies -- honest no-data sentinel, never "
+            f"a silent Composer-scalar VW average); got {result['if_held']}. "
+            f"If this equals {old_defective_expected}, if_held is still the "
+            f"superseded VW-of-lifetime-scalars formula."
+        )
 
     def test_if_held_mdd_is_non_negative(self, symphony_stats_meta):
-        """Portfolio if_held MDD must be non-negative (Composer convention)."""
+        """Portfolio if_held MDD must be non-negative (Composer convention).
+
+        [Updated, DE-PERF-WINDOW-TRUTH-001]: guarded against None -- these
+        fixture-only symphonies carry no shadow_history DB, so if_held is
+        honestly None rather than a Composer-scalar echo."""
         from analytics import get_portfolio_max_drawdown
 
         result = get_portfolio_max_drawdown(symphony_stats_meta, bot_state={})
 
-        assert result["if_held"] >= 0.0, (
-            f"portfolio if_held MDD must be >= 0 (Composer positive convention); "
-            f"got {result['if_held']}"
-        )
+        if result["if_held"] is not None:
+            assert result["if_held"] >= 0.0, (
+                f"portfolio if_held MDD must be >= 0 (Composer positive convention); "
+                f"got {result['if_held']}"
+            )
 
     def test_if_held_is_finite_float(self, symphony_stats_meta):
         """
@@ -1180,7 +1232,19 @@ class TestMissingFieldContract:
 
     def test_max_drawdown_raises_on_missing_max_drawdown(self):
         """
-        get_symphony_max_drawdown returns None sentinel when max_drawdown is absent.
+        get_symphony_max_drawdown returns None sentinel for if_held/dry_run
+        when no shadow_history rows back this symphony (fixture-only call,
+        no db_path). [Docstring corrected, DE-PERF-WINDOW-TRUTH-001]: the
+        None outcome here is now caused by absent shadow_history data, NOT
+        by the (now-irrelevant to if_held/dry_run) missing max_drawdown
+        field -- pre-fix, an early `if max_drawdown is None: return None`
+        guard made the ABSENT COMPOSER FIELD the direct cause; post-fix that
+        guard is removed (see test_missing_composer_scalar_does_not_suppress_
+        genuine_shadow_computation in test_mdd_window_truth.py, which proves a
+        symphony WITH real shadow_history but no Composer scalar still gets a
+        genuine computed value). The observable None here is coincidental,
+        not causal, and 'if_held_lifetime' is correctly None too (no Composer
+        field to source it from).
         """
         from analytics import get_symphony_max_drawdown
 
