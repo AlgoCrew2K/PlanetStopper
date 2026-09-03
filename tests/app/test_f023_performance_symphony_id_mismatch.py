@@ -473,6 +473,19 @@ def test_ai_advisor_js_symphony_picker_uses_name_as_value_not_id():
 
 
 def test_performance_aggregate_scope_response_shape_unchanged(client, monkeypatch):
+    """[Updated, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] This F-023/AC-6 test
+    originally pinned the aggregate scope response as byte-unchanged. That
+    baseline shape is still preserved below -- but mdd-window-truth's own
+    AC-5 (feature-plans/mdd-window-truth.md) LEGITIMATELY adds 3 honest
+    coverage-disclosure fields (`actual_days`/`coverage_days`/`date_range`)
+    to this exact response (app.py, commit c102b515) -- the old strict
+    equality was a stale test superseded by an intended shape change, not a
+    regression. AC-6's OTHER invariant (no `symphony_id_recognized` leak on
+    aggregate scope) is unaffected and still independently guarded by the
+    sibling test immediately below this one. This test now asserts the full
+    baseline key set is still present AND that the response contains
+    EXACTLY the baseline plus the 3 named AC-5 additions -- not "any new
+    keys allowed" -- so a future unrelated shape drift still fails loud."""
     dates = [f"2026-05-{i + 1:02d}" for i in range(10)]
     bot = [0.001 * i for i in range(10)]
     held = [0.0008 * i for i in range(10)]
@@ -485,7 +498,7 @@ def test_performance_aggregate_scope_response_shape_unchanged(client, monkeypatc
     resp = client.get("/api/performance?scope=aggregate&days=60")
     assert resp.status_code == 200
     body = resp.get_json()
-    expected_keys = {
+    baseline_keys = {
         "scope",
         "dates",
         "live_returns",
@@ -496,10 +509,19 @@ def test_performance_aggregate_scope_response_shape_unchanged(client, monkeypatc
         "insufficient_history",
         "window_days",
     }
-    assert set(body.keys()) == expected_keys, (
-        f"aggregate scope response shape changed -- AC-6 requires it stay "
-        f"byte-unchanged. Got keys: {sorted(body.keys())}"
+    ac5_coverage_disclosure_keys = {"actual_days", "coverage_days", "date_range"}
+    assert baseline_keys <= set(body.keys()), (
+        f"aggregate scope response is MISSING baseline keys -- a genuine "
+        f"regression, not the AC-5 addition. Missing: "
+        f"{baseline_keys - set(body.keys())}. Got keys: {sorted(body.keys())}"
     )
+    assert set(body.keys()) == baseline_keys | ac5_coverage_disclosure_keys, (
+        f"aggregate scope response shape changed by more than AC-5's 3 "
+        f"named coverage-disclosure fields -- unexpected extra/missing "
+        f"keys. Got keys: {sorted(body.keys())}"
+    )
+    for key in ac5_coverage_disclosure_keys:
+        assert key in body, f"AC-5 coverage-disclosure field {key!r} missing from aggregate response"
 
 
 def test_performance_aggregate_scope_never_has_symphony_id_recognized_key(client, monkeypatch):
