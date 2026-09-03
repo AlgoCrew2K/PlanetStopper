@@ -453,6 +453,198 @@ class TestAC2LifetimeScalarRenderedSeparately:
             f"value. Snippet: {snippet!r}"
         )
 
+    def test_percard_lifetime_mdd_none_renders_dash_not_zero_on_ssr(
+        self, client, mock_database, monkeypatch
+    ):
+        """[mdd-review handoff, DE-PERF-WINDOW-TRUTH-001, 2026-09-03, BLOCK
+        finding, freeze lifted for this fix] Case 1 of 3: dashboard()'s
+        per-symphony `_mdd` build (app.py:~1567-1568) calls
+        `_safe_analytics(analytics.get_symphony_max_drawdown, ...)` with
+        the DEFAULT `coerce_none=True`, which does
+        `{k: (v if v is not None else 0.0) ...}` across the WHOLE returned
+        dict -- destroying a genuine `if_held_lifetime=None` (symphony has
+        no Composer max_drawdown scalar, a real named plan edge case)
+        BEFORE the template's correct `is not none` guard ever sees it.
+        `_tc`'s sibling call already opts out (`coerce_none=False`, citing
+        this exact bug class as F-016) -- `_mdd` never got the same
+        treatment. The guard is correct; the bug is one call earlier."""
+        mock_database.load_state.return_value = _minimal_bot_state()
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        analytics_mock = _analytics_mock_sufficient_history(
+            mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=None,
+        )
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
+
+        resp = client.get("/")
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        html = resp.get_data(as_text=True)
+
+        val_anchor = html.find('data-field="mdd-lifetime"')
+        assert val_anchor != -1, "per-card mdd-lifetime value span not found in rendered HTML"
+        close = html.find(">", val_anchor)
+        end = html.find("</span>", close)
+        rendered_value = html[close + 1 : end].strip()
+        assert rendered_value == "—", (  # em-dash, matches the template's &mdash;
+            f"EXPECTED honest em-dash for a None Composer lifetime MDD scalar on "
+            f"initial SSR page load; got fabricated rendered value: {rendered_value!r}. "
+            f"Root cause: app.py's dashboard() builds _s['_mdd'] via "
+            f"_safe_analytics(..., coerce_none=True default), which converts the "
+            f"genuine if_held_lifetime=None into 0.0 before the template's correct "
+            f"none-guard ever sees it."
+        )
+
+
+# ===========================================================================
+# mdd-review BLOCK finding, case 2 of 3 (handoff, 2026-09-03): the MORE
+# SEVERE sibling of the lifetime-figure bug above -- the ACTUAL comparison
+# legs (mdd-bot/mdd-held), not just the lifetime figure, for a thin-history
+# symphony. Own class because it needs a hand-built mock
+# (_analytics_mock_sufficient_history hardcodes n_obs=30/non-None legs).
+# ===========================================================================
+
+
+class TestSSRCoerceNoneFabricatesZeroForThinHistorySymphony:
+    def test_percard_bot_held_mdd_none_renders_dash_not_zero_for_thin_history_symphony(
+        self, client, mock_database, monkeypatch
+    ):
+        """A thin-history symphony (n_obs=1, e.g. newly added, <2 days of
+        shadow_history -- per docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md
+        Design section point 3, if_held/dry_run can now genuinely be None
+        where if_held previously almost never was) renders the ACTUAL
+        Bot/Held comparison-leg cells as a fabricated '0.0%' on initial SSR
+        page load, not the plan's mandated honest '--'. Same root cause as
+        the lifetime-figure test above (_safe_analytics's coerce_none=True
+        default at app.py's dashboard() _mdd build), same fix."""
+        mock_database.load_state.return_value = _minimal_bot_state()
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+
+        m = MagicMock()
+        m.get_portfolio_today_change.return_value = {"if_held": 0.5, "dry_run": 0.4}
+        m.get_portfolio_cumulative_return.return_value = {"if_held": 10.0, "dry_run": 9.5}
+        m.get_portfolio_max_drawdown.return_value = {
+            "if_held": 10.5875, "dry_run": 10.3622, "if_held_lifetime": 12.0, "n_obs": 30,
+        }
+        m.get_symphony_today_change.return_value = {"if_held": 1.2, "dry_run": 0.9}
+        m.get_symphony_cumulative_return.return_value = {"if_held": 12.0, "dry_run": 12.0}
+        # KEY: thin-history symphony. if_held_lifetime present (Composer scalar
+        # IS available) to isolate this from test 1's scenario above.
+        m.get_symphony_max_drawdown.return_value = {
+            "if_held": None, "dry_run": None, "if_held_lifetime": 12.0, "n_obs": 1,
+        }
+        dates30 = [f"2026-05-{d:02d}" for d in range(1, 31)]
+        m.get_portfolio_daily_returns_from_shadow.return_value = (dates30, [0.01] * 30)
+        m.get_portfolio_bot_and_held_daily_returns.return_value = None
+        m.compute_portfolio_annualized_vol.return_value = 0.1
+        m.get_history_with_cache_invalidation.return_value = {}
+        m.compute_aggregate_returns.return_value = (dates30, [0.01] * 30, [0.01] * 30)
+        m._POST_MORTEMS_DIR = "/tmp/no-such-dir"
+        monkeypatch.setattr(app_module, "analytics", m)
+
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
+
+        resp = client.get("/")
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        html = resp.get_data(as_text=True)
+
+        for field in ("mdd-bot", "mdd-held"):
+            val_anchor = html.find(f'data-field="{field}"')
+            assert val_anchor != -1, f"{field} value span not found in rendered HTML"
+            close = html.find(">", val_anchor)
+            end = html.find("</span>", close)
+            rendered_value = html[close + 1 : end].strip()
+            assert rendered_value == "--", (
+                f"EXPECTED honest '--' for a None {field} (thin-history symphony, "
+                f"n_obs=1) on initial SSR page load; got fabricated rendered "
+                f"value: {rendered_value!r}."
+            )
+
+
+# ===========================================================================
+# Case 3 of 3 (team-lead-ruled in-scope, 2026-09-03): hero/portfolio-level
+# fabricated 0, same root-cause FAMILY as cases 1/2 (a genuinely-stored
+# Python None silently becomes a fabricated 0) but a DIFFERENT mechanism and
+# call path -- _build_meta's `mdd_data.get("dry_run", 0.0)` (app.py:~1733)
+# returns the default ONLY when the key is MISSING, never when the stored
+# value is None, so a real None (portfolio_strip["max_drawdown"] =
+# {"if_held": None, "dry_run": None, ...}, e.g. get_portfolio_bot_and_held_
+# daily_returns returning None for the WHOLE portfolio -- a near-empty
+# system) passes straight through into the template, where the hero row's
+# `(meta.portfolio.mdd if ... else 0) or 0` (templates/index.html:885-886)
+# is ALSO None-blind (None is falsy) and fabricates a 0.
+#
+# SCOPE BOUNDARY (team-lead ruling): MDD fields ONLY. The identical `or 0`/
+# `.get` pattern on tc/cr is pre-existing and NOT newly reachable by this
+# cycle -- do not extend this test class to tc/cr.
+# ===========================================================================
+
+
+class TestHeroLevelStoredNoneFabricatedAsZero:
+    def test_hero_mdd_stored_none_renders_dash_not_fabricated_zero(
+        self, client, mock_database, monkeypatch
+    ):
+        mock_database.load_state.return_value = _minimal_bot_state()
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+
+        analytics_mock = _analytics_mock_sufficient_history(
+            mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=99.99
+        )
+        # KEY: the underlying dict has if_held/dry_run KEYS PRESENT with
+        # value None (not an absent dict, not a missing key) -- the exact
+        # .get(key, default)-blind-spot shape. This is what distinguishes
+        # this test from a "missing key" bug, which .get(key, 0.0) WOULD
+        # correctly catch -- an assertion that merely checked "the cell
+        # isn't 0" without pinning this exact stored-None shape could pass
+        # for the wrong reason against an unrelated missing-key defect.
+        analytics_mock.get_portfolio_max_drawdown.return_value = {
+            "if_held": None, "dry_run": None, "if_held_lifetime": 99.99, "n_obs": 0,
+        }
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
+
+        resp = client.get("/")
+        assert resp.status_code == 200, resp.get_data(as_text=True)
+        html = resp.get_data(as_text=True)
+
+        # has_live_data (templates/index.html:925) is driven by cr_bot/
+        # cr_held/tc_bot/tc_held only, NOT mdd_bot/mdd_held -- the mock still
+        # supplies real non-zero TC/CR values, so the MDD row is reached via
+        # the SAME live-data branch a healthy TC/CR row uses. Confirms the
+        # bug isn't coincidentally masked by the unrelated empty-state gate.
+        today_anchor = html.find('data-testid="comp-today-bot-text"')
+        assert today_anchor != -1
+        today_snippet = html[today_anchor : today_anchor + 200]
+        assert "&mdash;" not in today_snippet, (
+            "test construction error: has_live_data must be True (driven by "
+            "TC/CR, which this test leaves genuinely non-zero) so the MDD "
+            "row's own render isn't coincidentally suppressed by the "
+            "unrelated has_live_data empty-state gate -- that would make "
+            "this test pass for the wrong reason regardless of the actual "
+            "None-fabrication bug."
+        )
+
+        for testid in ("comp-mdd-bot-text", "comp-mdd-held-text"):
+            anchor = html.find(f'data-testid="{testid}"')
+            assert anchor != -1, f"{testid} not found in rendered HTML"
+            snippet = html[anchor : anchor + 150]
+            assert "0.00%" not in snippet, (
+                f"HERO MDD FABRICATION FAIL: {testid} rendered a fabricated "
+                f"'0.00%' for a genuinely-stored None "
+                f"(portfolio_strip['max_drawdown'] = {{'if_held': None, "
+                f"'dry_run': None, ...}}) -- mdd_data.get('dry_run', 0.0)/"
+                f".get('if_held', 0.0) only apply the default when the KEY "
+                f"is missing, never when the STORED VALUE is None, so the "
+                f"None passed straight through _build_meta into the "
+                f"template's `... or 0` fallback, which is ALSO None-blind "
+                f"(None is falsy in Jinja same as Python). "
+                f"Snippet: {snippet!r}"
+            )
+            assert "&mdash;" in snippet, (
+                f"expected {testid} to degrade to the honest em-dash empty "
+                f"state instead of fabricating any numeric value. "
+                f"Snippet: {snippet!r}"
+            )
+
 
 # ===========================================================================
 # AC-5 — /api/performance and /api/history/<days> gain honest coverage fields
