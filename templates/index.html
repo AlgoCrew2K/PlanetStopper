@@ -1080,8 +1080,8 @@
              alpha_bot_execution.py (forbidden by AC-7); team-lead ruling, see
              feature-plans/mdd-window-truth.md's amended AC-2 + Decisions
              table. A Jinja comment (not an HTML comment) is used here
-             deliberately -- Jinja strips {# #} at render time, so this
-             explanatory note can never itself leak into the response body. #}
+             deliberately -- Jinja strips its own comments at render time, so
+             this explanatory note never reaches the response body. #}
           {# [Fixed, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] Same defect class as
              DE-FR-PROPOSAL-IDENTITY-001's stats-table cells: bare dot-access
              into a possibly-absent key (`meta.portfolio.mdd_if_held_lifetime`)
