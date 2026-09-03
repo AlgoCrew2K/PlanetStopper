@@ -972,3 +972,95 @@ class TestPerSymphonyCardHeldNoneGuard:
             f"mapping else None` + `is not none` check), in BOTH the active-"
             f"section and standby-section card blocks."
         )
+
+
+# ===========================================================================
+# Render-gate finding (mdd-render, 2026-09-03, freeze lifted for this fix):
+# the AC-2 explanatory comment near templates/index.html:1074-1084 contains a
+# LITERAL "{# #}" inside its own body ("Jinja strips {# #} at render time").
+# Jinja's {# ... #} comment lexer does not nest -- it closes at the FIRST
+# "#}" it finds after the opening "{#", which is the inner one inside that
+# literal "{# #}" example. Everything after that point, up to the comment's
+# real closing "#}", is no longer inside a comment at all -- it is rendered
+# as ordinary literal HTML text, directly above the Lifetime MDD line. This
+# guard operates at the ROUTE level (renders the real dashboard via the same
+# GET / harness AC-1/AC-2 use above), not a source-text regex on the
+# template, because the defect is specifically about what Jinja's lexer
+# ACTUALLY does at render time, not what the template source merely says.
+# ===========================================================================
+
+
+class TestJinjaCommentLeakRegressionGuard:
+    def test_leaked_jinja_comment_tail_text_absent_from_rendered_dashboard(
+        self, client, mock_database, monkeypatch
+    ):
+        """The exact leaked phrase (the tail of the AC-2 comment's own
+        explanatory sentence, orphaned as literal text once Jinja's
+        non-nesting lexer closes the comment early at the inner "{# #}"
+        example) must not appear anywhere in the rendered page."""
+        mock_database.load_state.return_value = _minimal_bot_state()
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        analytics_mock = _analytics_mock_sufficient_history(
+            mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=99.99
+        )
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+
+        leaked_phrase = "can never itself leak into the response body"
+        assert leaked_phrase not in html, (
+            f"Jinja comment-leak regression: the AC-2 comment's own "
+            f"explanatory tail text leaked into the rendered dashboard as "
+            f"visible HTML. Root cause: the comment body at "
+            f"templates/index.html:~1074-1084 contains a literal '{{# #}}' "
+            f"example inside its own prose ('Jinja strips {{# #}} at render "
+            f"time') -- Jinja's non-nesting {{# ... #}} lexer closes the "
+            f"REAL comment at that inner '#}}', leaking everything after it "
+            f"(including this phrase, {leaked_phrase!r}) as literal text "
+            f"directly above the Lifetime MDD line. Fix: remove the literal "
+            f"'{{# #}}' example from the comment's own prose (e.g. spell it "
+            f"out as 'the curly-brace-hash comment syntax' instead), or "
+            f"split the sentence so no '{{#'/'#}}' pair appears inside the "
+            f"comment body at all."
+        )
+
+    def test_no_jinja_comment_delimiter_survives_into_rendered_dashboard(
+        self, client, mock_database, monkeypatch
+    ):
+        """Strongest general guard: no Jinja comment delimiter ("{#" or
+        "#}") should ever survive into the rendered dashboard output at all
+        -- every one of them is supposed to be stripped by the template
+        engine. Verified against the real render (not just this cycle's
+        template edits) that no legitimate rendered data value contains
+        either 2-char sequence today, so this is not vacuous/over-broad for
+        the current fixture set."""
+        mock_database.load_state.return_value = _minimal_bot_state()
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        analytics_mock = _analytics_mock_sufficient_history(
+            mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=99.99
+        )
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        html = resp.get_data(as_text=True)
+
+        assert "{#" not in html, (
+            f"an unstripped Jinja comment OPEN delimiter '{{#' survived into "
+            f"the rendered dashboard -- a comment either failed to parse as "
+            f"a comment, or a literal '{{#' example inside a comment's own "
+            f"prose caused the real comment to close early, leaving a "
+            f"nested '{{#' rendered as literal text."
+        )
+        assert "#}" not in html, (
+            f"an unstripped Jinja comment CLOSE delimiter '#}}' survived "
+            f"into the rendered dashboard -- same defect class: a literal "
+            f"'#}}' example inside a comment's own prose closed the real "
+            f"comment early, leaving the orphaned '#}}' (and everything "
+            f"between it and the comment's intended close) rendered as "
+            f"literal text."
+        )
