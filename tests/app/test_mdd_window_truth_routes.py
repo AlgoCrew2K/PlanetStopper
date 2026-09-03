@@ -143,6 +143,45 @@ def _analytics_mock_sufficient_history(
     return m
 
 
+def _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, bot_state: dict) -> None:
+    """[Added during review, DE-PERF-WINDOW-TRUTH-001, root-caused by
+    mdd-ui]: tests/app/conftest.py's autouse `_stub_get_api_state_dict`
+    fixture (pre-existing, predates this cycle -- commit 650b8514) replaces
+    `app_module.get_api_state_dict` wholesale with a fixed stub dict that
+    has NO "portfolio_strip" key at all, for EVERY test in tests/app/.
+    `dashboard()`'s `portfolio_strip = api_state.get("portfolio_strip") or
+    {}` has no fallback computation (unlike bot_state, which falls back to
+    `database.load_state()`) -- so under that stub, portfolio_strip is
+    unconditionally {} regardless of what this test's own `analytics`/
+    `database` mocks are configured to return. Confirmed independently
+    (read tests/app/conftest.py + app.py:1483 directly) before writing this
+    workaround -- not the app.py bug it first looked like (see this
+    module's earlier commits' now-superseded diagnosis).
+
+    Fix: a test-body monkeypatch.setattr call executes AFTER the autouse
+    fixture's context-managed patch has already applied, so it simply
+    overrides get_api_state_dict for the remainder of this test (auto-
+    reverts at teardown like any other monkeypatch/fixture interaction).
+    Deliberately does NOT call the REAL get_api_state_dict() (that would
+    reach engine.exit_authority.get_exit_authority() with no live engine --
+    exactly the 500-on-jsonify failure mode the original stub exists to
+    prevent, per its own docstring) -- instead reuses the SAME safe stub
+    shape for every OTHER key, and computes a genuine portfolio_strip via
+    app_module._compute_portfolio_strip(bot_state), which uses the
+    already-mocked app_module.analytics/database this test configured.
+    """
+    real_portfolio_strip = app_module._compute_portfolio_strip(bot_state)
+    stub = {
+        "bot_state": {},
+        "is_locked": False,
+        "port_state": {},
+        "exit_authority": {},
+        "daemon_started_at": None,
+        "portfolio_strip": real_portfolio_strip,
+    }
+    monkeypatch.setattr(app_module, "get_api_state_dict", lambda: stub)
+
+
 def _minimal_bot_state() -> dict:
     return {
         "sym-x": {
@@ -189,9 +228,15 @@ class TestAC1WarmCacheNoLongerOverridesIfHeld:
 
         # Warm cache: a DIFFERENT value than the analytics mock's if_held, so
         # the two are trivially distinguishable in the rendered output.
+        # MUST be set BEFORE _stub_get_api_state_dict_with_real_portfolio_strip
+        # below, since that helper calls _compute_portfolio_strip immediately
+        # -- the warm-vs-cold branch it takes depends on the cache's state at
+        # call time, not at request time.
         stale_composer_scalar_pct = -173.2  # abs() would render 173.20 -- far from 10.59
         app_module._account_totals_cache["portfolio_mdd"] = stale_composer_scalar_pct
         app_module._account_totals_cache["portfolio_value"] = 20000.0
+
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
 
         resp = client.get("/")
         assert resp.status_code == 200, f"dashboard render failed: {resp.status_code}"
@@ -227,6 +272,7 @@ class TestAC1WarmCacheNoLongerOverridesIfHeld:
         )
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
         # cache left empty by the autouse fixture -> cold path
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
 
         resp = client.get("/")
         assert resp.status_code == 200
@@ -261,6 +307,7 @@ class TestAC2LifetimeScalarRenderedSeparately:
             mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=99.99
         )
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
 
         resp = client.get("/")
         assert resp.status_code == 200
@@ -299,6 +346,7 @@ class TestAC2LifetimeScalarRenderedSeparately:
             mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=99.99
         )
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
 
         resp = client.get("/")
         html = resp.get_data(as_text=True)
