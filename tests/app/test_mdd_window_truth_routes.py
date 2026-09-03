@@ -485,6 +485,14 @@ class TestAC2LifetimeScalarRenderedSeparately:
         close = html.find(">", val_anchor)
         end = html.find("</span>", close)
         rendered_value = html[close + 1 : end].strip()
+        # Explicit anti-fabrication guard, independent of dash-form convention --
+        # survives a future regression back to a fabricated numeric value even if
+        # the empty-state literal itself is later legitimately changed.
+        assert "0.0" not in rendered_value, (
+            f"anti-fabrication guard: rendered value must not contain a numeric "
+            f"'0.0' for a genuinely-None Composer lifetime MDD scalar, got "
+            f"{rendered_value!r}"
+        )
         assert rendered_value == "--", (  # literal double-hyphen -- matches this
             # per-card span's pre-existing (untouched this cycle) None-guard at
             # templates/index.html:1330/1441, which renders "--" not an em-dash
@@ -648,6 +656,14 @@ class TestHeroCoerceNoneFabricatesZero:
             close = html.find(">", anchor)
             end = html.find("</span>", close)
             rendered_value = html[close + 1 : end].strip()
+            # Explicit anti-fabrication guard, independent of dash-form convention --
+            # survives a future regression back to a fabricated numeric value even if
+            # the empty-state literal itself is later legitimately changed.
+            assert "0.0" not in rendered_value, (
+                f"anti-fabrication guard: rendered value must not contain a numeric "
+                f"'0.0' for a genuinely-None portfolio-wide MDD leg, got "
+                f"{rendered_value!r}"
+            )
             assert rendered_value == "&mdash;", (  # HTML entity, not a raw em-dash
                 # char -- matches this hero span's else-branch convention (shared
                 # with sibling spans e.g. comp-mdd-delta in the same vs-row block,
