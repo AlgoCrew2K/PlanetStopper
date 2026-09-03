@@ -381,6 +381,78 @@ class TestAC2LifetimeScalarRenderedSeparately:
             f"near the lifetime-scalar figure. Snippet: {snippet!r}"
         )
 
+    def test_lifetime_scalar_degrades_to_dash_when_meta_portfolio_dict_lacks_the_key_entirely(
+        self, client, mock_database, monkeypatch
+    ):
+        """Regression guard (requested by team-lead via mdd-ui, 2026-09-03)
+        for the Jinja Undefined-vs-None crash class fixed at `4800872c`:
+        `meta.portfolio.mdd_if_held_lifetime` (bare dot-access) returns
+        Jinja's `Undefined` sentinel -- a DISTINCT object from Python
+        `None` -- on any path where `meta.portfolio` is a genuine dict that
+        simply lacks this key. `is not none` does NOT catch `Undefined`, so
+        the `|abs` filter below it crashed with `TypeError`. This crash was
+        found only incidentally by `tests/analytics/test_portfolio_vol_
+        computation.py` (a test whose actual purpose is unrelated --
+        vol computation -- that happens to render `dashboard()` with a
+        context predating this cycle's new keys); that test has no
+        obligation to keep exercising this shape if it's ever refactored,
+        so this is the dedicated tripwire.
+
+        THE EXACT DEFECT SHAPE (per mdd-ui, verified against the fix at
+        templates/index.html:1086): `meta.portfolio` must be a REAL dict
+        that is simply MISSING the key -- not `None`, not an absent
+        `meta`/`meta.portfolio` entirely (those paths are already covered
+        by the pre-existing `meta is defined`/`meta.portfolio is defined`
+        guards and can't reproduce this class). `_build_meta` itself
+        unconditionally sets this key today (possibly to `None`, but never
+        omits it) -- so this test intercepts `_build_meta`'s OWN return
+        value and surgically pops the key, simulating a caller (a future
+        route, a stale cached value, a partial refactor) that predates this
+        cycle's schema, rather than trying to coerce today's `_build_meta`
+        into producing that shape naturally.
+        """
+        mock_database.load_state.return_value = _minimal_bot_state()
+        monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
+        analytics_mock = _analytics_mock_sufficient_history(
+            mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=99.99
+        )
+        monkeypatch.setattr(app_module, "analytics", analytics_mock)
+        _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
+
+        _real_build_meta = app_module._build_meta
+
+        def _build_meta_missing_lifetime_key(*args, **kwargs):
+            meta = _real_build_meta(*args, **kwargs)
+            assert "mdd_if_held_lifetime" in meta["portfolio"], (
+                "test precondition: _build_meta must normally set this key "
+                "(possibly to None) -- if it's already absent, this test "
+                "isn't exercising the intended before/after contrast"
+            )
+            # The exact defect shape: pop the key so it's genuinely ABSENT
+            # from an otherwise-real dict (not set to None).
+            meta["portfolio"].pop("mdd_if_held_lifetime")
+            return meta
+
+        monkeypatch.setattr(app_module, "_build_meta", _build_meta_missing_lifetime_key)
+
+        resp = client.get("/")
+        assert resp.status_code == 200, (
+            f"AC-2 regression-guard FAIL: dashboard render raised/500'd when "
+            f"meta.portfolio lacks 'mdd_if_held_lifetime' entirely (the "
+            f"Jinja Undefined-vs-None crash class fixed at 4800872c) -- got "
+            f"{resp.status_code}. Body: {resp.get_data(as_text=True)[:500]!r}"
+        )
+        html = resp.get_data(as_text=True)
+        anchor = html.find('data-testid="mdd-lifetime-scalar"')
+        assert anchor != -1, "rendered page must still contain the lifetime-scalar element"
+        snippet = html[anchor : anchor + 250]
+        assert "&mdash;" in snippet, (
+            f"expected the lifetime figure to gracefully degrade to the "
+            f"em-dash empty state ('&mdash;') when the key is genuinely "
+            f"absent from meta.portfolio, not raise and not fabricate a "
+            f"value. Snippet: {snippet!r}"
+        )
+
 
 # ===========================================================================
 # AC-5 — /api/performance and /api/history/<days> gain honest coverage fields
