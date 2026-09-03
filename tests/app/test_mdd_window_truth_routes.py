@@ -444,3 +444,159 @@ class TestAC4RenderedDisclosureTargetIsDistinctFromStabilityBanner:
             "obs-caption and insufficient-banner must be two distinct DOM "
             "elements, not the same element serving both purposes"
         )
+
+
+# ===========================================================================
+# mdd_insufficient re-scoping (relayed from main via mdd-ui, 2026-09-03,
+# corroborating a prior-cycle finding already in the template: F-2's comment
+# at templates/index.html:887-890 diagnosed the pre-AC-1 basis mismatch
+# (bot MDD from a thin shadow trajectory vs held MDD from Composer's full
+# lifetime) and mitigated it with a <30-trading-day DATA-DEPTH guard
+# (app.py:1702, `_insufficient_history = len(_hist_dates) < 30`) borrowed
+# from an UNRELATED statistical-stability threshold (Bailey/de-Prado 2014).
+# The mismatch itself is STRUCTURAL, not depth-dependent -- it does not
+# shrink at 30/300/3000 days -- so the guard was silently WRONG the whole
+# time it happened to read True (thin history) and has been rendering an
+# unqualified misleading winner bar since shadow_history crossed 30 days
+# (~2026-08-04). AC-1 makes both legs genuinely same-window comparable,
+# which retires the BASIS-mismatch concern entirely -- but the STABILITY
+# concern (quantstats/peak-to-trough are noisy on <30 observations) is
+# real and must survive, re-scoped to read `n_obs` (the exact count the
+# same-window computation used) instead of `len(_hist_dates)` (an
+# unrelated shadow-history date array that isn't guaranteed to track the
+# same window at all).
+#
+# VERIFIED DIRECTLY (not taken on the relay's word alone) via source read
+# at this cycle's HEAD: templates/index.html:1250/:1335 (`_card_mdd_
+# insufficient`) already reuse `meta.portfolio.insufficient_history` --
+# the SAME flag the hero row reads -- so re-scoping `_build_meta`'s
+# computation ONCE fixes both hero and cards for the insufficient-history
+# ALPHA-BADGE gating; mdd-ui's "cards have zero guard" framing conflates
+# that (already-shared) gate with a SEPARATE, genuinely per-card-only gap:
+# `mdd_held`/if_held at templates/index.html:1234/:1319 has NO None-guard
+# (`(mdd_d.get("if_held", 0) if mdd_d is mapping else 0) | float` coerces
+# a genuine None straight to 0.0), unlike `mdd_bot`/dry_run's existing
+# `is not none` guard two lines above it in BOTH card blocks. Both real
+# gaps are pinned below as distinct RED cases.
+# ===========================================================================
+
+_INDEX_HTML_PATH = Path(__file__).parent.parent.parent / "templates" / "index.html"
+
+_STALE_F2_COMMENT_FRAGMENTS = (
+    "computed from the shadow trajectory",
+    "from Composer's full lifetime",
+)
+
+
+class TestMddInsufficientRescopedToNObs:
+    def test_build_meta_insufficient_history_driven_by_n_obs_not_hist_dates_length(self):
+        """Behavioral (not just source-regex): drive app._build_meta directly
+        with a crafted portfolio_strip -- hist_dates >= 30 (OLD flag would
+        say 'sufficient') but max_drawdown.n_obs < 30 (the same-window
+        computation actually used few days) must yield insufficient_history
+        = True. The reverse combination (hist_dates < 30, n_obs >= 30) must
+        yield False. If insufficient_history still tracks hist_dates length,
+        BOTH assertions fail (the flag would be inverted from what this test
+        expects in at least one direction)."""
+        base_strip = {
+            "today_change": {"dry_run": 0.1, "if_held": 0.1},
+            "cumulative_return": {"dry_run": 1.0, "if_held": 1.0},
+            "hist_bot": [0.0],
+            "hist_held": [0.0],
+            "hist_source": "shadow_history",
+            "data_as_of": "09:30 ET",
+            "account_value": 10000.0,
+        }
+
+        # hist_dates says "plenty of history" (35 >= 30); n_obs says "thin"
+        # (5 < 30) -- the same-window computation this cycle introduces.
+        strip_thin_n_obs = dict(
+            base_strip,
+            hist_dates=["2026-01-01"] * 35,
+            max_drawdown={"if_held": 5.0, "dry_run": 5.0, "if_held_lifetime": 20.0, "n_obs": 5},
+        )
+        meta_thin = app_module._build_meta(
+            state_data={}, next_run_seconds=0, market_state="closed", portfolio_strip=strip_thin_n_obs
+        )
+        assert meta_thin["portfolio"]["insufficient_history"] is True, (
+            "AC re-scope FAIL: hist_dates has 35 entries (old flag would say "
+            "sufficient) but max_drawdown.n_obs=5 (the ACTUAL same-window "
+            "computation depth) -- insufficient_history must be True. If "
+            "False: the flag is still driven by len(_hist_dates), not n_obs."
+        )
+
+        # Reverse: hist_dates says "thin" (5 < 30); n_obs says "plenty" (35).
+        strip_healthy_n_obs = dict(
+            base_strip,
+            hist_dates=["2026-01-01"] * 5,
+            max_drawdown={"if_held": 5.0, "dry_run": 5.0, "if_held_lifetime": 20.0, "n_obs": 35},
+        )
+        meta_healthy = app_module._build_meta(
+            state_data={},
+            next_run_seconds=0,
+            market_state="closed",
+            portfolio_strip=strip_healthy_n_obs,
+        )
+        assert meta_healthy["portfolio"]["insufficient_history"] is False, (
+            "AC re-scope FAIL: hist_dates has only 5 entries (old flag would "
+            "say insufficient) but max_drawdown.n_obs=35 (the ACTUAL "
+            "same-window computation depth is healthy) -- insufficient_history "
+            "must be False. If True: the flag is still driven by "
+            "len(_hist_dates), not n_obs."
+        )
+
+    def test_stale_f2_comment_describing_the_now_fixed_basis_mismatch_is_replaced(self):
+        """The F-2 comment (templates/index.html:887-890) diagnosed a basis
+        mismatch (bot MDD from shadow trajectory vs held MDD from Composer's
+        full lifetime) that AC-1 fixes structurally -- both legs are now
+        genuinely same-window. Leaving the stale comment in place would
+        itself become a NEW false claim in the code (the mismatch it
+        describes no longer exists) -- it must be replaced with copy
+        describing ONLY the re-scoped statistical-stability purpose."""
+        src = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+        for fragment in _STALE_F2_COMMENT_FRAGMENTS:
+            assert fragment not in src, (
+                f"AC re-scope FAIL: the stale F-2 comment fragment {fragment!r} "
+                f"is still present in templates/index.html -- it describes a "
+                f"basis mismatch (shadow-trajectory bot vs Composer-lifetime "
+                f"held) that AC-1 fixes structurally; leaving it is itself a "
+                f"new false claim about the post-fix code."
+            )
+        lowered = src.lower()
+        assert "stability" in lowered or "bailey" in lowered or "de-prado" in lowered, (
+            "the replacement comment near mdd_insufficient must name the "
+            "REMAINING legitimate purpose (statistical stability, Bailey/"
+            "de-Prado 2014) -- not leave the rationale unstated."
+        )
+
+
+class TestPerSymphonyCardHeldNoneGuard:
+    """The genuinely per-card-only gap (distinct from the shared
+    insufficient_history flag above): mdd_held/if_held has no None-guard,
+    unlike mdd_bot/dry_run's existing one, in BOTH card blocks
+    (near templates/index.html:1230-1237 and :1315-1322)."""
+
+    # The EXACT current unguarded assignment (both card blocks, byte-identical
+    # today at templates/index.html:1234 and :1319) -- a direct pin of the
+    # defect line, not a loose "is there some 'is not none' nearby" search
+    # (which false-positived by matching mdd_bot's OWN render-time repeat of
+    # its guard within the search window, rather than a genuine held-side
+    # guard -- caught and fixed before commit).
+    _UNGUARDED_MDD_HELD_RE = re.compile(
+        r'mdd_held\s*=\s*\(\s*mdd_d\.get\(\s*"if_held"\s*,\s*0\s*\)\s*'
+        r"if\s+mdd_d\s+is\s+mapping\s+else\s+0\s*\)\s*\|\s*float"
+    )
+
+    def test_active_and_standby_cards_both_guard_mdd_held_against_none(self):
+        src = _INDEX_HTML_PATH.read_text(encoding="utf-8")
+        matches = list(self._UNGUARDED_MDD_HELD_RE.finditer(src))
+        assert not matches, (
+            f"AC-1 render gap: found {len(matches)} occurrence(s) of the "
+            f"UNGUARDED `mdd_held = (mdd_d.get('if_held', 0) ...) | float` "
+            f"assignment -- post-fix, if_held CAN be None (same as dry_run "
+            f"already can), and this pattern coerces None straight to a "
+            f"fabricated 0.0. Must be guarded the same way mdd_bot/dry_run "
+            f"already is (`_mdd_held_raw = mdd_d.get('if_held') if mdd_d is "
+            f"mapping else None` + `is not none` check), in BOTH the active-"
+            f"section and standby-section card blocks."
+        )

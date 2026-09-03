@@ -1,0 +1,40 @@
+{
+  "_provenance": "REQUIRED companion fixture per team-lead mandate (relayed by mdd-metric, 2026-09-03): the mdd_window_truth_53day.json golden fixture has day-0 return exactly 0.0%, making it insensitive to the phantom-baseline/day-0-anchor question quantstats.stats.max_drawdown resolves by prepending a baseline NAV=1.0 one step before the first real observation. A naive un-anchored hand-loop (peak = first REAL NAV, not a pre-baseline) would WRONGLY return 0.0 for a series whose single worst day is day 1 -- this fixture makes that discriminating case load-bearing. Verified via quantstats.stats.max_drawdown() directly (ground truth per team-lead ruling item 2, adopt-dont-invent), NOT hand-derived.",
+  "_purpose": "Anchor-sensitive golden-fixture pin: proves get_symphony_max_drawdown/get_portfolio_max_drawdown correctly anchor peak-to-trough BEFORE the first real observation, not at it. A golden fixture that cannot fail on the defect it exists to prevent is decoration (team-lead, verbatim).",
+  "_derivation": "Single symphony, single position-epoch, 5 consecutive trading days. Day 0 (oldest, days_ago=4) is a sharp single-day loss on BOTH legs (held -5.0%, bot -8.0% -- deliberately different magnitudes so if_held and dry_run are independently verifiable, not coincidentally equal). Days 1-4 (days_ago 3..0) are flat +1.0% gains on both legs -- genuine recoveries that must NOT be mistaken for a higher peak (a correctly-anchored implementation still measures the drawdown from the pre-day-0 phantom baseline of 1.0, not from a post-recovery high). A naive un-anchored implementation (peak initialized to the FIRST REAL NAV rather than a pre-existing baseline) would see day 0 as an unbeatable new low that IS also the running peak (since it is the first point processed), producing a WRONG 0.0% drawdown -- verified empirically, see _verification.",
+  "_verification": "quantstats.stats.max_drawdown() on fraction-scale pd.Series: held -> 5.000000000000004 (expected 5.0, float noise), bot -> 7.9999999999999964 (expected 8.0, float noise). A naive un-anchored reference loop (peak = returns[0] compounded, not a pre-baseline) computed on the SAME two series independently returns 0.0 for BOTH -- proving this fixture discriminates the anchored formula from the un-anchored one, unlike mdd_window_truth_53day.json (whose day-0 return is exactly 0.0%, insensitive to this question).",
+  "symphony_id": "sym-mdd-anchor-golden",
+  "current_value": 8000.0,
+  "n_days": 5,
+  "rows": [
+    {
+      "days_ago": 4,
+      "current_return": -5.0,
+      "shadow_return": -8.0
+    },
+    {
+      "days_ago": 3,
+      "current_return": 1.0,
+      "shadow_return": 1.0
+    },
+    {
+      "days_ago": 2,
+      "current_return": 1.0,
+      "shadow_return": 1.0
+    },
+    {
+      "days_ago": 1,
+      "current_return": 1.0,
+      "shadow_return": 1.0
+    },
+    {
+      "days_ago": 0,
+      "current_return": 1.0,
+      "shadow_return": 1.0
+    }
+  ],
+  "expected": {
+    "held_mdd_pct": 5.0,
+    "bot_mdd_pct": 8.0
+  }
+}

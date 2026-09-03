@@ -272,6 +272,29 @@ def golden_fixture() -> dict:
 
 
 class TestAC1GoldenFixture53DayWindow:
+    """
+    Audit residual U-9 (docs/audit/PERF-WINDOW-TRUTH-2026-09-03.md §10): the
+    real droplet's 53-day aggregate MDD_bot showed a ~1e-5 disagreement
+    between a "positional path" (trailing-N-rows slice, e.g.
+    get_portfolio_bot_and_held_daily_returns(days=N) -> all_days[-N:]) and a
+    "calendar path" (_window_cutoff_date-based inclusive cutoff). CONFIRMED
+    MOOT for the two functions this class tests, by construction, not by
+    empirical re-derivation against live data (unavailable to this
+    test-writer): get_symphony_max_drawdown/get_portfolio_max_drawdown use
+    ONLY get_..._bot_and_held_daily_returns(..., days=None) -- i.e. NO
+    windowing selection happens inside these two functions at all (confirmed
+    design doc, point 2/4) -- there is no second, competing selection
+    mechanism for U-9's disagreement to manifest between. This fixture's 53
+    rows are the symphony's ENTIRE shadow_history in the test DB, so
+    days=None trivially includes all of them; there is no larger superset a
+    positional vs calendar cutoff could disagree about carving a 53-day
+    subset FROM. compute_windowed_portfolio_strip (AC-3, tested separately
+    below) also uses only ONE selection mechanism (the calendar cutoff,
+    analytics.py:2071-2073) -- verified by direct source read, no positional
+    slice exists in that function either. See team-lead's request (relayed
+    2026-09-03) to "confirm rather than assume" this is moot.
+    """
+
     def test_reference_implementation_reproduces_the_audit_figures(self, golden_fixture):
         """Self-check: confirms the fixture's construction actually reproduces
         the audit's cited numbers via the IN-TEST reference implementation --
@@ -329,6 +352,101 @@ class TestAC1GoldenFixture53DayWindow:
         )
         assert result["dry_run"] == pytest.approx(
             golden_fixture["expected"]["bot_mdd_pct"], abs=_ABS
+        )
+
+
+# ===========================================================================
+# AC-1 REQUIRED companion golden fixture — day-0/phantom-baseline anchor
+# (team-lead mandate, relayed by mdd-metric 2026-09-03: "A golden fixture that
+# can't fail on the defect it exists to prevent is decoration." The 53-day
+# fixture above has day-0 return exactly 0.0%, making it insensitive to the
+# anchor question -- this fixture's single worst day IS day 0, discriminating
+# a correctly-anchored implementation from a naive un-anchored one that would
+# wrongly return 0.0.)
+# ===========================================================================
+
+
+@pytest.fixture(scope="module")
+def anchor_fixture() -> dict:
+    return json.loads(
+        (_FIXTURE_DIR / "mdd_window_truth_anchor_day1_worst.json").read_text(encoding="utf-8")
+    )
+
+
+class TestAC1GoldenFixtureAnchorDay1Worst:
+    _NAIVE_UNANCHORED_WRONG_VALUE = 0.0  # what a peak=first-real-NAV loop wrongly returns
+
+    def test_reference_implementation_reproduces_the_anchor_figures(self, anchor_fixture):
+        """Self-check: this file's reference formula (already phantom-baseline
+        anchored, see the module docstring) reproduces the fixture's verified
+        (via quantstats directly) figures."""
+        held_series = [r["current_return"] for r in anchor_fixture["rows"]]
+        bot_series = [r["shadow_return"] for r in anchor_fixture["rows"]]
+        assert _reference_normalized_max_drawdown_pct(held_series) == pytest.approx(
+            anchor_fixture["expected"]["held_mdd_pct"], abs=_ABS_PURE
+        )
+        assert _reference_normalized_max_drawdown_pct(bot_series) == pytest.approx(
+            anchor_fixture["expected"]["bot_mdd_pct"], abs=_ABS_PURE
+        )
+        # Proves this fixture is DISCRIMINATING (unlike the 53-day one): a
+        # naive un-anchored loop must give the WRONG answer here.
+        assert _reference_normalized_max_drawdown_pct(
+            held_series
+        ) != self._NAIVE_UNANCHORED_WRONG_VALUE
+        assert _reference_normalized_max_drawdown_pct(
+            bot_series
+        ) != self._NAIVE_UNANCHORED_WRONG_VALUE
+
+    def test_symphony_level_correctly_anchors_before_the_first_observation(
+        self, anchor_fixture, tmp_path
+    ):
+        """THE required RED case: get_symphony_max_drawdown must anchor its
+        running peak at a pre-existing baseline (NAV=1.0) BEFORE the first
+        real shadow_history row, not AT the first row. A naive
+        peak=first-real-value implementation would return
+        {'if_held': 0.0, 'dry_run': 0.0} here (the first day, being both the
+        only candidate peak AND the worst day, cancels itself out) --
+        anything matching that wrong shape fails this test."""
+        sym_id = anchor_fixture["symphony_id"]
+        db_file = _seed_db(tmp_path, {sym_id: anchor_fixture["rows"]})
+        sym_dict = _sym_dict(sym_id, anchor_fixture["current_value"], max_drawdown=0.4321)
+
+        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+
+        assert result["if_held"] == pytest.approx(
+            anchor_fixture["expected"]["held_mdd_pct"], abs=_ABS
+        ), (
+            f"ANCHOR FAIL: if_held must be {anchor_fixture['expected']['held_mdd_pct']} "
+            f"(the day-0 -5% loss, measured from a pre-existing NAV=1.0 baseline); "
+            f"got {result['if_held']}. A value of 0.0 means the implementation "
+            f"anchors its running peak at the FIRST REAL observation instead of "
+            f"a baseline BEFORE it -- the exact day-0-anchor defect this "
+            f"fixture exists to catch."
+        )
+        assert result["dry_run"] == pytest.approx(
+            anchor_fixture["expected"]["bot_mdd_pct"], abs=_ABS
+        ), (
+            f"ANCHOR FAIL: dry_run must be {anchor_fixture['expected']['bot_mdd_pct']} "
+            f"(the day-0 -8% loss); got {result['dry_run']}. A value of 0.0 "
+            f"means the same un-anchored defect on the bot leg."
+        )
+        assert result["n_obs"] == 5
+
+    def test_portfolio_level_correctly_anchors_before_the_first_observation(
+        self, anchor_fixture, tmp_path
+    ):
+        sym_id = anchor_fixture["symphony_id"]
+        db_file = _seed_db(tmp_path, {sym_id: anchor_fixture["rows"]})
+        symphonies = [_sym_dict(sym_id, anchor_fixture["current_value"])]
+        bot_state = {sym_id: {"name": "Anchor Golden Symphony"}}
+
+        result = analytics.get_portfolio_max_drawdown(symphonies, bot_state, db_path=db_file)
+
+        assert result["if_held"] == pytest.approx(
+            anchor_fixture["expected"]["held_mdd_pct"], abs=_ABS
+        )
+        assert result["dry_run"] == pytest.approx(
+            anchor_fixture["expected"]["bot_mdd_pct"], abs=_ABS
         )
 
 
