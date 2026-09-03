@@ -1073,7 +1073,17 @@
              table. A Jinja comment (not an HTML comment) is used here
              deliberately -- Jinja strips {# #} at render time, so this
              explanatory note can never itself leak into the response body. #}
-          {% set mdd_lifetime = (meta.portfolio.mdd_if_held_lifetime if meta is defined and meta.portfolio is defined else none) %}
+          {# [Fixed, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] Same defect class as
+             DE-FR-PROPOSAL-IDENTITY-001's stats-table cells: bare dot-access
+             into a possibly-absent key (`meta.portfolio.mdd_if_held_lifetime`)
+             returns Jinja's Undefined sentinel, not Python None, on any
+             pre-cycle path where meta.portfolio is a real dict that simply
+             lacks this NEW key -- `is not none` does not catch Undefined (a
+             distinct object, not None), so `|abs` below crashed with
+             TypeError. `.get()` on the dict returns real None on a missing
+             key, matching the mdd_d.get(...) pattern already used for the
+             per-card lifetime fields a few lines below. #}
+          {% set mdd_lifetime = (meta.portfolio.get('mdd_if_held_lifetime') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
           <div data-testid="mdd-lifetime-scalar" style="font-size:10px;color:var(--studio-ink-faint);margin:2px 0 6px;">
             Lifetime Max Drawdown &middot; since inception: <strong style="color:var(--studio-ink-dim);">{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
           </div>
