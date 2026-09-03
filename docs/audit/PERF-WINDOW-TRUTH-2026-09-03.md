@@ -1,11 +1,17 @@
-# Performance-Tab Window Truth — Audit Verdict
+# Performance-Tab & Main-Dashboard Window-Truth — Audit Verdict
 
 **Run date:** 2026-09-03
 **Branch / base SHA:** `audit/perf-window-truth` @ `731cb778`
-**Team:** `perf-trace` (code path) · `perf-data` (live droplet) · `perf-synth` (synthesis lead) · `composer-api-researcher` · `perf-doc`
-**Type:** READ-ONLY diagnostic. No production code changed by this audit.
+**Team:** `perf-trace` (code path) · `perf-data` (live droplet) · `perf-doc` (docs + cross-surface sweep) · `perf-composer-api` (external API research) · `perf-synth` (synthesis lead) · `team-lead` (arbiter)
+**Type:** READ-ONLY diagnostic. **Zero production-code diff** on this branch.
 
-> **Revision note (same day, post-integration).** §§1–8 of this document were written from the synthesis lead's own first-hand code trace while teammate reports were still outstanding, and §9 originally listed four unresolved questions. Team evidence subsequently landed (`perf-data`'s droplet verification, `composer-api-researcher`'s endpoint report, `perf-doc`'s cross-surface sweep) and **three of the four are now resolved — one of them reversing a conclusion in this document's own §7.** The reversal is called out explicitly at §7(c) and §9 rather than silently edited in. Companion source: `docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md`; consolidated ruling: `DE-PERF-WINDOW-TRUTH-001` in `DECISIONS.md`.
+**Revision history** — recorded because this audit reversed itself repeatedly and the corrections are part of the evidence:
+
+| Rev | Basis | Status |
+|---|---|---|
+| v1 | Synthesis lead's solo code trace, teammate reports outstanding | superseded |
+| v2 | Partial integration (`perf-data` genesis + Composer endpoint existence) | superseded |
+| **v3 (this)** | **Full team integration + team-lead rulings.** Adds F3/F7, reverses the "no computation bug" headline's scope, retracts one quantification, promotes E-17 to fact | **current** |
 
 ---
 
@@ -15,104 +21,127 @@ Operator, verbatim:
 
 > "I just checked my drawdown in performance and swapped to ytd from 60d and nothing changed. even if the bot numbers don't go back that far I would've expected my live numbers to. the displays need to be fucking accurate and informational of restrictions to data length."
 
-Two distinct claims are embedded here, and they have different answers:
-
-1. **"Nothing changed when I switched 60d → YTD."** — Reproduced and explained. See §3.
-2. **"My live numbers should go back further than the bot numbers."** — **The operator's expectation is reasonable but is not satisfiable from the current data plumbing.** See §5. This is the finding most likely to be mis-summarized, so it is stated at length.
-
 ---
 
 ## 1. Executive verdict
 
-**The Performance tab is not miscomputing max drawdown. It is telling the operator something untrue about how much history backs the number.**
+**He reported a display defect on the Performance tab. That defect is real. But the investigation it triggered found something worse on the dashboard he did not report — and that is the headline.**
 
-Three things are true simultaneously; do not stop at the first.
+### ⭐ The headline: the dashboard's Max DD row is 98.7% artifact, and it declares a winner on it
 
-- **(A) Both series are truncated to the same short window — by construction, not by accident.** The "live"/if-held line is *not* an independent longer record of the real account. It is the `current_return` **column of the very same `shadow_history` rows** that produce the bot line, read in a single SQL statement. Bot and Held are therefore *always* exactly the same length. There is no scenario in the current design where live history outlives bot history.
-- **(B) When the requested window exceeds the available history, every oversized window silently collapses to "all the data there is."** 60d, 90d, 125d, YTD, 1Y and 5Y all degrade to the identical full series once the table is shorter than 60 trading days. Identical inputs → identical MaxDD. The operator saw exactly this.
-- **(C) The UI actively misstates the window while this happens.** The caption renders `"<N> observations · 1260d window"` for a 5Y click backed by far fewer days, and the "insufficient history" banner is *suppressed* in precisely this regime because its threshold is 30 observations, not "does the window have the coverage it claims."
+The main dashboard renders a **Max DD** comparison of `Bot 5.79%` against `Held 23.44%`, stamps an **`α +17.66%`** delta badge on it, and applies a **`winner` CSS class to the Bot bar**. Every one of those three numbers is unsound:
 
-**Classification (this route):** a **display-honesty defect (severity HIGH)** stacked on a **data-depth limitation (severity MEDIUM, ops)**. **No max-drawdown computation bug exists in `/api/performance`** — the metric is computed correctly over whatever series it is handed (§4, E-4). On this route the lie is in the label, not in the arithmetic.
+| Quantity | Value |
+|---|---|
+| Rendered gap (`if_held 23.4446` − `dry_run 5.7874`) | **17.6572 points** — badge reads `α +17.66%` |
+| Honest, matched-basis gap (same 53 days, same metric, same units) | **0.2253 points** (held 10.5875% vs bot 10.3622%) |
+| **Artifact** | **17.43 points = 98.7% of the rendered figure** |
 
-> **(D) But a genuine computation defect DOES exist — on the MAIN DASHBOARD, not this tab — and it outranks everything above.** Found by `perf-doc`/`perf-trace` while this document was being drafted. The dashboard's Bot-vs-Held **Max DD** row pairs Composer's **lifetime** `if_held` scalar (since `invested_since`, e.g. 2024-07-12) against a `dry_run` figure that can only span `shadow_history` (from 2026-06-22) — a lifetime-vs-53-day comparison, rendered at 5+ live sites with **zero disclosure**. It is ranked the **#1 finding of the whole audit** and requires a **computation re-base**, not a disclosure fix. This document's §7 option (c) originally read "NOT APPLICABLE"; that was correct **for this tab only** and is corrected in place at §7(c). Full detail: `DE-PERF-WINDOW-TRUTH-001` §"Verdict 2" in `DECISIONS.md`.
+**Three defects stack to produce it** — period, subject, and units:
 
-**Verdict on the operator's core complaint — "the displays need to be accurate and informational of restrictions to data length": he is right on both surfaces, and the codebase already has the correct pattern implemented elsewhere and simply did not apply it here** (`GET /api/exit-turnover`'s `coverage_days`, §6).
+1. **Period mismatch.** `if_held` is Composer's **lifetime** `max_drawdown` scalar (reaching back to `invested_since`, as early as **2024-07-12**); `dry_run` can only span `shadow_history` (from 2026-06-22, 53 days).
+2. **Subject / metric-definition mismatch — the one that makes re-basing insufficient.** `dry_run` is **not the bot's drawdown at all.** `analytics.py:1067-1069` adds `if_held` as a *constant* to every point of `bot_equity[t]`, and peak-to-trough is translation-invariant under a constant offset. `perf-data` proved this by force-injection: setting `max_drawdown` to `0.1805 / 0.0 / 9.99 / −5.0` left `dry_run` identical to 10 decimals (`2.0328304291537336 / …32 / …05 / …62`). **`dry_run` is the peak-to-trough of the guard-alpha *divergence residual*** — a categorically different and structurally small quantity, identically zero on every untriggered day, and small on *any* amount of data.
+3. **Units mismatch.** `dry_run` is an un-normalized percentage-point peak-to-trough; Composer's scalar is a normalized fraction. (Consistent with the translation-invariance result — a normalized drawdown would not be translation-invariant.)
+
+**Aggravating: the UI does not merely display this, it adjudicates on it** (`templates/index.html:885-909` computes `mdd_bot_wins`/`mdd_alpha`; `:985-992` renders them). Live at **3 sites** — the hero vs-row plus both per-symphony card blocks.
+
+**And the codebase already knew.** A prior cycle diagnosed this exact mismatch — the comment at `templates/index.html:887-890` says verbatim that "the bot MDD is computed from the shadow trajectory… while the held MDD is from Composer's full lifetime. A winner bar on a 8-day bot vs lifetime held comparison would be misleading." **The correct diagnosis was given the wrong remedy:** a *data-depth* guard (`mdd_insufficient`, `len(hist_dates) < 30`, `app.py:1702`). Because the mismatch is **structural, not depth-related**, that guard **expired silently the moment history crossed 30 trading days — on or about 2026-08-04.** The dashboard has been adjudicating on a 98.7% artifact, unqualified, for roughly a month. *(Two further scope gaps: the guard only ever covered the hero row — both per-symphony card sites compute `mdd_alpha` with no guard at all, `templates/index.html:1230-1237` and `:1315-1322`.)*
+
+### The reported defect: Performance tab — display-honesty, arithmetic correct
+
+**Scoped statement (this wording is load-bearing):** there is **no computation bug in `/api/performance`.** MaxDD is genuinely computed over the already-sliced series (`app.py:4890-4891`; `analytics.py:348-427` is pure over its argument). Independently confirmed by `perf-trace` and `perf-doc`. **That exoneration applies to this route ONLY** — F3 and F7 are live on the dashboard.
+
+What the operator hit: with 53 trading days retained, `all_days[-60:]` returns all 53 and the YTD cutoff removes nothing, so **six of seven buttons return byte-identical data** — while the caption asserts `"· 1260d window"` for a 5Y click, silently drops the label entirely on YTD, and the banner stays hidden because its threshold is a *stability* floor (`< 30`), not a coverage check.
+
+**Verdict on his stated requirement — "accurate and informational of restrictions to data length": he is right on both surfaces**, and the codebase already ships the correct pattern in three places it simply never applied here (§6).
+
+**Honest business reading, stated without spin:** over the 53 days that can be measured, Guard Alpha shows **no meaningful drawdown advantage (0.23pp)**. That is a measurement, not a verdict on the strategy — 53 days is short and MDD is noisy. Nothing here supports "the bot works" *or* "the bot doesn't."
 
 ---
 
-## 2. Per-dimension verdict table
+## 2. Surface-by-surface matrix
 
-| # | Dimension | Verdict | Confidence | Basis |
-|---|-----------|---------|-----------|-------|
-| D1 | Does the window token reach the MaxDD computation? | **YES — correctly windowed** | HIGH | `app.py:4890-4891` over the sliced list; `analytics.py:348-427` is pure over its argument |
-| D2 | Is MaxDD computed on an unwindowed series (computation bug)? | **NO — no such bug found** | HIGH | Same as D1; no second/unwindowed MaxDD source feeds the tab (`static/performance.js:314-317`) |
-| D3 | Is "held/live" sourced from a longer record than "bot"? | **NO — same rows, same query** | HIGH | `analytics.py:1627-1634`, unpacked at `app.py:4827` |
-| D4 | Do oversized windows silently collapse to the full series? | **YES** | HIGH | `analytics.py:1654` / `1759-1761` (tail slice); `app.py:3332` (calendar slice) |
-| D5 | Does the UI disclose actual coverage? | **NO — and it misstates it** | HIGH | `static/performance.js:450-452`; `app.py:44` + `4884` |
-| D6 | Is there an established in-repo honesty pattern that was not applied? | **YES** | HIGH | `database.py:3624-3676` `coverage_days`; rationale `app.py:4329-4332` |
-| D7 | Why is the underlying history short — retention prune or genesis? | **GENESIS (go-live floor 2026-06-22), NOT pruning** | HIGH | `perf-data` droplet verification: 53 trading days / 73 calendar days as of 2026-09-03; 180-day prune cutoff (~2026-03-07) sits *before* the floor, so retention has deleted nothing (`app.py:794`, `database.py:3320-3334`) |
-| D8 | Does a longer live series exist anywhere to source from? | **Not in this codebase; but Composer DOES document three account-scoped dated series endpoints.** Reach/depth still unverified | MED | `composer-api-researcher` report §Q1/Q4; see E-19 |
-| D9 | Is there a computation defect anywhere in this audit's scope? | **YES — on the main dashboard, not this tab. Ranked #1** | HIGH | `analytics.py:1008-1060` (lifetime Composer `if_held`) vs `analytics.py:1049` (`shadow_history`-scoped `dry_run`); rendered `app.py:1558`, `2011-2016`, `2555`, `2741`, `3108` |
+Two statements in this audit look contradictory side by side and are both true of *different surfaces*. A careless reader will get this exactly backwards.
+
+| | Performance tab (`/api/performance`) | Main dashboard (`/api/state`, `/api/strip`) |
+|---|---|---|
+| **Held / `if_held` source** | `current_return` **column of the same `shadow_history` rows** as bot (E-1) | Composer's **lifetime** `max_drawdown` scalar (E-21) |
+| **Can held outlive bot?** | **No** — same rows, one query | **Yes** — and that is precisely the defect |
+| **Basis-mismatch defect?** | **CLEAN** ✅ | **PRESENT — F7, #1** ❌ |
+| **MaxDD windowed correctly?** | **Yes** ✅ | **No — F3**, never receives `window` ❌ |
+| **Primary defect** | Silent window collapse + false window label | Mismatched-basis, winner-badged comparison |
+
+**Genuinely good news, worth stating plainly: the tab the operator actually reported is clean of the basis defect. The dashboard he didn't report is not.**
+
+### Per-dimension verdicts
+
+| # | Dimension | Verdict | Confidence |
+|---|---|---|---|
+| D1 | Window token reaches the MaxDD computation (`/api/performance`)? | **YES — correctly windowed** | HIGH |
+| D2 | Computation bug in `/api/performance`? | **NO — actively hunted, absent** | HIGH |
+| D3 | Held sourced from a longer record than bot (Performance)? | **NO — same rows, same query** | HIGH |
+| D4 | Oversized windows collapse silently? | **YES — both mechanisms** | HIGH (live-reproduced) |
+| D5 | Does the UI disclose actual coverage? | **NO — and it misstates it** | HIGH |
+| D6 | Established in-repo honesty pattern not applied? | **YES — three of them** | HIGH |
+| D7 | Retention prune or genesis? | **GENESIS — 2026-06-22 go-live floor** | HIGH |
+| D8 | Longer live series available? | **YES — Composer daily series, live-probed back to 2024-07-12** | HIGH |
+| D9 | Computation defect anywhere in scope? | **YES — F3 (dormant) and F7 (#1, live)** | HIGH |
 
 ---
 
-## 3. The mechanism, step by step
+## 3. The mechanism — and two DIFFERENT collapse boundaries
 
-The route accepts the window two different ways, and **both** degrade silently:
+**Do not merge these into one curve.** Performance and the hero-chart/strip degrade at *different window sizes* because they use *different mechanisms*, even though both bottom out on the same 53-day dataset.
 
-**Numeric buttons (30 / 60 / 90 / 125 / 252 / 1260)** — a *trading-day tail slice*:
+**Performance tab — positional trading-day slice** (`all_days[-days:]`, `analytics.py:1654`, `:1759-1761`). Boundary sits **between 30d and 60d**:
 
-```python
-# analytics.py:1652-1654
-all_days = sorted(day_map.keys())
-sorted_days = all_days if days is None else all_days[-days:]
+```
+days=30    n=30  MDD_bot=-0.017943  MDD_held=-0.019888   DIFFERS
+days=60    n=53  MDD_bot=-0.051671  MDD_held=-0.055012   collapsed
+days=90/125/252/1260/ytd   n=53     identical to 60d
 ```
 
-`all_days[-60:]` on the live 53-element list returns **all 53 elements**. Python slicing does not error, warn, or signal short coverage. `all_days[-1260:]` returns the same 53. Six of the seven buttons therefore produce byte-identical input.
+**Hero-chart / strip — calendar cutoff** (`_window_cutoff_date`). Boundary sits **between 60d and 90d**:
 
-**The YTD button** — a *calendar cutoff* on the full series:
-
-```python
-# app.py:4810
-_fetch_days = None if is_ytd else days
-# app.py:3332
-idx = [i for i, d in enumerate(dates) if cutoff_iso is None or str(d) >= cutoff_iso]
+```
+30d   cutoff 2026-08-04  n=23  DIFFERENT (real subset)
+60d   cutoff 2026-07-05  n=44  DIFFERENT  MDD_bot=-0.027645  MDD_held=-0.029558
+90d   cutoff 2026-06-05  n=53  IDENTICAL  MDD_bot=-0.051661  MDD_held=-0.054991
+125d / 1y / ytd / all    n=53  IDENTICAL
 ```
 
-`analytics._window_cutoff_date("ytd")` correctly resolves to `date(today.year, 1, 1)` (`analytics.py:1859-1860`) — that part is **not** buggy. But if every retained row already post-dates 1 Jan, the filter removes nothing and YTD also returns all 53. (Live data confirms this precondition: history begins 2026-06-22, so **every** retained row post-dates 1 Jan 2026 — E-20.)
+**Consequence:** the operator's exact "60d→YTD, nothing changed" click reproduces **on Performance** (both already at the 53-day ceiling). It would **not** have reproduced on the hero-chart picker, where 60d is a genuine 44-day subset.
 
-**Result:** 60d and YTD hand `compute_quantstats_metrics` the identical list, so MaxDD is identical. Correct arithmetic on an unannounced substitution of the window.
+**Therefore — immunity is window-and-data dependent, never structural.** A calendar cutoff is non-degenerate exactly for cutoffs falling *inside* the retained span and degenerate beyond it. Both the original "structurally immune" claim and the sweeping counter-challenge were wrong; this is the accurate middle. Beyond the span, what saves the calendar surfaces is **disclosure**, not immunity — and that is precisely what Performance lacks.
 
 ---
 
 ## 4. Evidence table
 
-Every row is a direct source read at `731cb778`. Rows marked *interpretation* are labelled as such and are **not** promoted to fact.
-
 | ID | Claim | Evidence | Type |
 |----|-------|----------|------|
-| E-1 | Held and Bot come from ONE query over the SAME rows | `analytics.py:1627-1634` — `SELECT trading_day, symphony_id, shadow_return, current_return FROM shadow_history …` (single statement, both columns) | FACT |
-| E-2 | The route unpacks both series from that one call | `app.py:4820`, `app.py:4827` — `dates, shadow_returns, live_returns = _series` | FACT |
-| E-3 | Per-symphony scope has the same property | `analytics.py:1734-1743` (`SELECT trading_day, shadow_return, current_return … WHERE symphony_id = ?`) | FACT |
-| E-4 | MaxDD is computed over the **sliced** series (no unwindowed source) | `app.py:4890-4891`; `analytics.py:348-427` takes `returns_series` and never re-reads the DB | FACT |
-| E-5 | UI MaxDD reads only those payload metrics | `static/performance.js:314-317`, `:55-56` | FACT |
-| E-6 | Numeric windows collapse silently when short | `analytics.py:1654`; per-symphony `analytics.py:1759-1761` | FACT |
+| E-1 | Held and Bot come from ONE query over the SAME rows (Performance) | `analytics.py:1627-1634`; per-symphony `:1734-1743`; unpacked `app.py:4820`/`4827` | FACT |
+| E-4 | MaxDD computed over the **sliced** series; no unwindowed source | `app.py:4890-4891`; `analytics.py:348-427` | FACT |
+| E-6 | Numeric windows collapse silently when short | `analytics.py:1654`, `:1759-1761` | FACT |
 | E-7 | YTD token resolves correctly to Jan 1 (not itself a bug) | `analytics.py:1859-1860` | FACT |
-| E-8 | The caption **drops** the window label on YTD | `static/performance.js:450-452` — `if (typeof win === 'number')`, but `window_days` is the **string** `"ytd"` (`app.py:4786`, emitted at `app.py:4907`) | FACT |
-| E-9 | The caption **asserts** an unbacked window on numeric clicks | same lines — renders `' · ' + win + 'd window'` with no coverage check | FACT |
-| E-10 | The "insufficient history" banner is suppressed in this regime | `app.py:44` `_PERFORMANCE_MIN_HISTORY_DAYS = 30`; `app.py:4884` `observation_count < 30`; `static/performance.js:388` hides the banner when false | FACT |
-| E-11 | That banner is a *stability* warning, not a *coverage* disclosure | `templates/performance.html:430-431` — "At least 30 trading days … needed for stable quantstats metrics" | FACT |
-| E-12 | The response body has no coverage field at all | `app.py:4898-4917` — keys: scope, dates, live_returns, shadow_returns, live_metrics, shadow_metrics, observation_count, insufficient_history, window_days | FACT |
-| E-13 | The in-repo honesty precedent exists and is tested | `database.py:3624-3676` (`coverage_days = min(window, actual_days)`); rationale `app.py:4329-4332`; tests `tests/database/test_exit_turnover_stats.py` | FACT |
-| E-14 | `window_days` has **zero** test assertions; `obs-caption` is only tested for element presence | grep of `tests/` — `window_days` hits are unrelated (inverse-vol DSL); `tests/dashboard/test_risk_adjusted_display.py:200` asserts the testid exists only | FACT |
-| E-15 | Retention default is 180 days | `app.py:794` `SHADOW_HISTORY_RETENTION_DAYS`, default `"180"`; prune at `database.py:3320-3334` | FACT |
-| E-16 | No Composer historical-series endpoint is consumed anywhere | only `symphony-stats-meta` is called (`alpha_bot_execution.py:192`, `app.py:4951`); repo consumes scalar snapshot fields only (`analytics.py:507-510` data-source contract; `tests/analytics/test_live_m1_helpers.py:85-99` asserts scalars) | FACT |
-| E-17 | With ~53 trading days available, six of seven buttons return identical data | Deduction from E-6 + E-7, on the now-verified 53-day history (E-20) | *interpretation* (deductive; the mechanism is proven, the button-by-button numeric sweep was not separately measured — see §9 U-3) |
-| E-18 | Retention is **not** the cause — the prune cutoff predates the data | Verified: 180-day default (`app.py:794`) ⇒ cutoff ~2026-03-07, *before* the 2026-06-22 floor, so `database.py:3320-3334` has deleted nothing | FACT (was *interpretation* in the pre-integration draft; upgraded by `perf-data`) |
-| E-19 | Composer documents **three** account-scoped dated series endpoints, none called by this codebase; same credential pair, no new auth | `composer-api-researcher` report §Q1/Q4: `/portfolio-history` (`epoch_ms`/`series`/`cumulative_twr_series`), `/symphonies/{id}` (`epoch_ms`/`series`/`deposit_adjusted_series`), `/symphony-historical-holdings` (explicit `start_date`) | FACT (existence + field names, `[High]`) — **depth/reach remains `[Unverified]`** |
-| E-20 | `shadow_history` begins **2026-06-22** (Guard-Alpha go-live); 53 trading days / 73 calendar days as of 2026-09-03 | `perf-data` live droplet verification | FACT |
-| E-21 | Dashboard Max DD pairs a **lifetime** Composer scalar against a **53-day** shadow figure, undisclosed | `analytics.get_symphony_max_drawdown` `analytics.py:1008-1060`; `if_held` from Composer's `max_drawdown` ("since `invested_since`, full holding history") read at `alpha_bot_execution.py:275`; `dry_run` from `_get_shadow_divergence_trajectory` `analytics.py:1049`; generic labels `templates/index.html:988-990`, `1251-1254`, `1336-1339`, `static/index.js:1043-1057` | FACT (`perf-doc`) |
-| E-22 | A longer live series would **not** extend the guard-alpha comparison | Composer endpoints return *realized* performance only; the Planet-Stopper counterfactual exists nowhere but `shadow_history`, which cannot predate 2026-06-22 | FACT (structural) |
+| E-8 | Caption **drops** the window label on YTD | `static/performance.js:450-452` — `typeof win === 'number'` false for the string `"ytd"` (`app.py:4786`, `4907`) | FACT |
+| E-9 | Caption **asserts** an unbacked window on numeric clicks | same lines, no coverage check | FACT |
+| E-10 | Banner suppressed in exactly this regime | `app.py:44` (`=30`), `app.py:4884`, `static/performance.js:388` | FACT |
+| E-11 | That banner is a *stability* warning, not a *coverage* disclosure | `templates/performance.html:430-431` | FACT |
+| E-12 | Response body has no coverage field | `app.py:4898-4917` | FACT |
+| E-13 | In-repo honesty precedent exists and is tested | `database.py:3624-3676`; rationale `:3616-3621`; `app.py:4329-4332`; `tests/database/test_exit_turnover_stats.py` | FACT |
+| E-14 | `window_days` has **zero** test assertions; `obs-caption` presence-tested only | grep of `tests/`; `tests/dashboard/test_risk_adjusted_display.py:200` | FACT |
+| E-15 | Retention default 180; **unset** on the droplet | `app.py:794`; `grep -i retention /opt/planetstopper/.env` → exit 1 | FACT |
+| **E-17** | **Six of seven buttons return byte-identical data; only 30d differs** | `perf-data` numeric table (§3); MaxDD identical to 15 dp; `perf-trace` reproduced dates-list `==` True | **FACT** *(promoted from interpretation in v1/v2)* |
+| E-18 | Retention is **not** the cause — prune cutoff (~2026-03-07) predates the data | `app.py:794`, `database.py:3320-3334` vs the 2026-06-22 floor | FACT |
+| E-19 | Composer publishes 3 account-scoped dated-series endpoints; same auth we already send | `perf-composer-api` report §Q1/Q4 (`portfolio-history`, `symphonies/{id}`, `symphony-historical-holdings`) | FACT |
+| E-20 | `shadow_history` begins **2026-06-22**; 53 trading days / 73 calendar days | `MIN/MAX/COUNT(DISTINCT trading_day)` = `2026-06-22 / 2026-09-03 / 53`, identical across all 11 symphonies; `exit_triggers` + all 52 `post_mortem_*.json` share the date | FACT |
+| E-21 | Dashboard Max DD pairs a lifetime scalar against a 53-day divergence residual | `analytics.py:1042` (`if_held`), `:1049` (`dry_run`); `docs/research/dashboard/composer-per-symphony-stats.md:93` | FACT |
+| E-22 | A longer live series extends the **live** leg only | Composer returns realized performance; the counterfactual exists only in `shadow_history` | FACT (structural) |
+| **E-23** | **`dry_run` is mathematically invariant to `if_held`** | Force-injection `0.1805/0.0/9.99/−5.0` → `dry_run` identical to 10 dp; cause `analytics.py:1067-1069` (constant offset; peak-to-trough translation-invariant) | **FACT** (empirical) |
+| **E-24** | **Composer daily series live-probed back to 2024-07-12, zero truncation** | S-1/S-2 return 538–539 daily points, weekend-gap spacing confirmed; both raw `series` and cash-flow-clean `deposit_adjusted_series`/`cumulative_twr_series`; 4 read-only GETs, zero 429s | **FACT** — supersedes the earlier "no per-day series exists" reading, which was based on `symphony-stats-meta` alone |
+| **E-25** | **The mismatch was previously diagnosed and mis-remedied** | `templates/index.html:887-890` names it verbatim; remedy was a depth guard (`app.py:1702`, `<30`) that cannot fire on a structural mismatch — stopped firing ~2026-08-04 | **FACT** |
+| E-26 | `invested_since` spans 2024-07-12 → 2026-04-01 | `symphony-stats-meta`, all 11 symphonies | FACT |
 
 ---
 
@@ -120,142 +149,146 @@ Every row is a direct source read at `731cb778`. Rows marked *interpretation* ar
 
 > "even if the bot numbers don't go back that far I would've expected my live numbers to"
 
-**He is reasoning correctly about the world and incorrectly about this system — and the system, not the operator, is what's wrong here.**
+**He is right, and the system fails him in opposite directions on the two surfaces.**
 
-In the real world his Composer account *does* have a longer track record than Planet Stopper's guard has been running. His expectation that "if held" should be able to reach further back than "what the bot did" is a sound intuition.
+- **On Performance:** live *should* reach further and **doesn't** — held is the `current_return` column of the same rows as bot (E-1). Expectation unmet.
+- **On the dashboard:** live *does* reach further — and it is being subtracted from a 53-day divergence residual as though commensurable (E-21). Expectation met, catastrophically.
 
-But on this tab, **"live / if-held" is not a record of his account.** It is a *per-day counterfactual column* (`current_return`) that Planet Stopper writes into `shadow_history` on the same cycle, in the same row, as the bot's `shadow_return`. The two series are siblings inside one table:
+**And real live history genuinely exists**: `invested_since` reaches 2024-07-12 (E-26), and Composer serves genuine daily series back to that exact date with zero truncation (E-24). So the expectation is not merely reasonable — it is **satisfiable**, which was not clear earlier in this audit.
 
-- one query returns both columns (E-1),
-- the route unpacks both from that one call (E-2),
-- so **held cannot outlive bot by a single day.** They are the same rows.
+**Two structural constraints must survive into any fix:**
 
-### …but on the MAIN DASHBOARD he is literally right — and that is the #1 defect
-
-**Post-integration correction.** He wrote "I just checked my drawdown **in performance**", so §5's analysis above is the direct answer to what he clicked. But his *expectation* almost certainly comes from the main dashboard, where **the Held Max DD genuinely is a lifetime number** — Composer's own `max_drawdown` since `invested_since` (e.g. 2024-07-12), read straight into `bot_state` (E-21).
-
-So across the two surfaces:
-
-| Surface | Held / live basis | Bot basis | Result |
-|---|---|---|---|
-| Performance tab | `shadow_history.current_return` — 53 days | `shadow_history.shadow_return` — 53 days | Same length. His expectation **unmet** |
-| Main dashboard Max DD | Composer lifetime scalar — **since 2024-07-12** | `shadow_history`-scoped — 53 days | His expectation **met, and that is exactly what makes the comparison invalid** (E-21) |
-
-**His instinct was right, and the system is wrong in both directions at once:** where he looked, live *should* reach further and doesn't; where he didn't look, live *does* reach further and is being silently subtracted from a 53-day bot figure as though the two were commensurable. Both are display-truth failures; the second is also a math failure.
-
-**Consequence for remediation:**
-
-- "Just use the longer live data we already have" **is not available on the Performance tab** — there is no longer live series wired into this system (E-16). Composer *does* document three account-scoped dated endpoints on the existing credentials (E-19), so this is now a *scopeable* feature rather than an unknown — but their actual history depth is still **unverified** (§9, U-2).
-- **A hard structural ceiling applies regardless (E-22):** a longer live series would extend the **live** leg only. The Planet-Stopper counterfactual exists nowhere but `shadow_history` and cannot predate 2026-06-22, so **a longer guard-alpha comparison is unreachable at any price.** Anyone scoping option (b) must keep "your live performance since 2024" and "what Guard Alpha saved you" as separately-labelled claims — conflating them would be a second, subtler correctness error of exactly the kind this audit exists to catch.
-
-**What can be honestly promised today:** the display can stop claiming windows it cannot back, and the dashboard can stop comparing a lifetime figure to a 53-day one. Those are options (a) and (c), and both are correct regardless of how (b) resolves.
+1. **A longer window extends the live leg only (E-22).** Pre-2026-06-22, Guard Alpha did not exist and executed no trades, so **bot and held are identical by definition** over that period. There is no missing counterfactual to reconstruct — the counterfactual *equals* the realized series. A long-window Bot-vs-Held comparison is therefore honestly constructible: it correctly shows **zero divergence until 2026-06-22, then real divergence after**.
+2. **But note the uncomfortable consequence:** on a full-history basis both legs show ~23.4% max drawdown, dominated by 2024–2025 drawdowns the bot was never present for — making Guard Alpha's effect invisible at that scale. **There are exactly two honest presentations:** (a) the matched short window (~10.59% held vs ~10.36% bot — roughly neutral), or (b) full history (both legs identical, because the bot existed for ~4% of the period). **Neither supports the rendered "23.44 → 5.79 improvement." That number is artifact under every honest framing** — an independent corroboration of F7 at highest severity.
 
 ---
 
-## 6. What the display SHOULD say — the in-repo precedent
+## 6. What the display SHOULD say — three existing precedents, none applied
 
-The codebase already solved this exact problem once, deliberately, and documented why:
+The codebase has already solved this **three times**, and the honesty data is in some cases *already computed and simply never rendered*:
 
-```
-# database.py:3616-3621
-# … a trailing-365-day window sourced from this table cannot structurally back a
-# true year of history by default. _TURNOVER_WINDOWS_DAYS names the windows
-# this feature reports; coverage_days (below) makes the honesty explicit per
-# window instead of silently implying full coverage the table can't back.
-```
+1. **`coverage_days`** — `get_exit_turnover_stats` emits `min(window, actual_days)` per window (`database.py:3624-3676`) precisely so "a retention-pruned 365-day window never silently claims a full year" (`database.py:3616-3621`, `app.py:4329-4332`). Tested.
+2. **`basis_label`** — `/api/guard-alpha-summary` emits operator-facing **prose** (`"snapshot-time basis, since <earliest> · through <latest>"`, `app.py:3847-3861`) and `static/index.js:1532,1544` writes it to the screen. **This is the only surface in the entire app where computed coverage-honesty data actually reaches the operator.**
+3. **`available_days`** — `/api/hero-chart` already computes exactly the field the Performance fix needs (`app.py:3386`) and **nothing renders it** (repo-wide grep: one hit, the producer line).
 
-`get_exit_turnover_stats` emits `coverage_days = min(window, actual_days)` per window (`database.py:3667-3670`), and the route docstring states the intent plainly: *"coverage_days is capped by retained history, so a retention-pruned 365-day window never silently claims a full year"* (`app.py:4329-4332`).
+**The dominant failure mode across every windowed surface in this app is the `DE-AUDIT-BL4-001` anti-pattern: compute the honesty signal, never render it.** `available_days` (`app.py:3386`) and `/api/history`'s `window_days` (`app.py:4628`) are both fully-computed with zero consumers.
 
-`GET /api/performance` violates that established standard. It reports `observation_count` (a raw count the operator must mentally compare against a trading-day expectation) but **no coverage figure and no requested-vs-actual comparison** (E-12).
-
-**Target behavior, stated as an operator-visible contract:**
-
-1. Every response declares **requested window** and **actual covered span** (a `coverage_days`-shaped field, mirroring E-13).
-2. When actual < requested, the UI says so **in the caption**, e.g. *"53 observations · 60d window requested · only 53 trading days available (history begins 2026-06-22)"* — never the bare, false *"· 60d window"*.
-3. Windows that cannot be backed at all are **visibly annotated or disabled**, so clicking 5Y cannot silently return the 30d dataset.
-4. The YTD path must render a window label too — today it silently renders none (E-8), which makes the two views look gratuitously different for the wrong reason.
-5. Keep the existing 30-observation stability banner **separate** — it answers "are these metrics statistically stable?", not "does this window have the data it claims" (E-11). Conflating them is what let this defect hide.
+**Target contract:** every response declares requested window **and** actual covered span; when actual < requested the caption says so (*"53 observations · 60d requested · only 53 trading days available (history begins 2026-06-22)"*); windows that cannot be backed are annotated or disabled; the YTD path renders a label at all; and the `<30` stability banner stays **separate** from coverage — conflating the two is what let this hide.
 
 ---
 
-## 7. Remediation option set (for the PM)
+## 7. Findings ledger
 
-Options are independent. (a) is always correct; (c) is empty this cycle; (b) is the only one that could satisfy the operator's literal expectation, and it carries real uncertainty.
+| ID | Finding | Severity | Class |
+|----|---------|----------|-------|
+| **F7** | **Dashboard Bot-vs-Held Max DD: period + subject + units mismatch, winner-badged, 98.7% artifact.** 3 live render sites. Prior depth guard expired ~2026-08-04 (E-25) | **CRITICAL — #1** | Computation |
+| **F3** | `/api/strip/<window>`'s `max_drawdown` never receives `window` (`analytics.py:2016` → `get_portfolio_max_drawdown`, `:1251-1258`, has no such param) — byte-identical across all 6 tokens while `cumulative_return`/`guard_alpha`/`vol_*` in the **same response** vary correctly. **Dormant**: sole consumer `updateComparisonRows` is gated on a `data_as_of` field this payload never carries (`static/index.js:1492-1505`, `DE-CLOSED-BOUNCE-001`) | HIGH (dormant) | Computation |
+| F1 | Silent window collapse: 6 of 7 Performance buttons byte-identical (E-17) | HIGH | Data + display |
+| F2 | `window_days` echoes the *request*, not delivered coverage — an affirmative false claim. Present on `/api/performance` **and** `/api/history` | HIGH | Display |
+| F4 | Caption drops the window label entirely on YTD (E-8) | MEDIUM | Render bug |
+| F5 | **Cross-tab semantic mismatch — elevated to its own finding, NOT "documented-deliberate."** Performance's `1Y`=252 **trading** days; History's `1Y`=365 **calendar** days. Two separately-timed fixes landing on different semantics is not a deliberate joint decision merely because each was individually documented — and same-label-different-span is squarely the display-truth class reported | MEDIUM | Semantic |
+| F6 | **"YTD" has four independent implementations.** Three surfaces use the shared server-side `_window_cutoff_date`; History reimplements it **client-side** in local-tz `Date` arithmetic (`static/history.js:389-395`) — the same bespoke-YTD-trim pattern deleted server-side under AC-5. Can diverge by a day at TZ/DST boundaries | MEDIUM | Semantic |
+| F8 | Coverage fields computed with **zero render consumers**: `available_days` (`app.py:3386`), `/api/history`'s `window_days` (`app.py:4628`) | MEDIUM | Display |
+| F9 | Three different validation behaviours across window-token routes: 404 (`/api/strip`), silent-lifetime-fallback (`/api/hero-chart`), fail-open-to-`all` (`/api/guard-alpha-summary`) | LOW | Consistency |
+| F10 | `/api/settings/flush-resync`'s `_REAL_POST_MORTEM_DATES` allowlist is stale ("verified 2026-05-21"). POSTed today it deletes every post-mortem since 2026-05-20 — destroying the very data depth this audit concerns. Latent (needs an operator POST) | MEDIUM (latent) | Data-destructive |
+| F11 | `analytics.load_post_mortem_history`'s dormant positional slice — same class as F1 | LOW | Document only |
+| F12 | YTD calendar slice has no post-slice `<2` guard, where the numeric path returns `None` (`app.py:3332-3333` vs `analytics.py:1655-1656`) | LOW | Robustness |
 
-### Option (a) — Display-honesty fix — **RECOMMENDED, do this regardless**
+**Cleared negative findings** (recorded so a future cycle does not re-litigate):
 
-*Scope:* `app.py` `api_performance` response body + `static/performance.js` caption + `templates/performance.html`.
-
-Add a coverage field to the response (requested window, actual covered trading days, earliest available date), render requested-vs-actual in the caption, fix the `typeof win === 'number'` YTD gap (E-8), and annotate or disable windows exceeding coverage.
-
-| | |
-|---|---|
-| **Fixes** | The operator's stated complaint ("accurate and informational of restrictions to data length") in full |
-| **Cost** | Small. One route response extension + one JS render function + template copy |
-| **Risk** | Low. `window_days` currently has **zero** test assertions and `obs-caption` is only presence-tested (E-14) — nothing pins the current wording. New codepath ⇒ Toxic Pair TDD per project rules |
-| **Precedent** | Direct: mirror `coverage_days` (E-13) rather than inventing a new shape. **And note S-5** — `/api/hero-chart/<window>` already computes an `available_days` field of exactly this kind (`app.py:3386`) that nothing renders. The honesty signal is partly built already; the gap is a render layer, which makes this cheaper still |
-| **Caveat** | Does **not** give him more history. It stops the display lying about how much there is |
-
-### Option (b) — Data-depth fix — **(b1) RULED OUT; (b3) conditional on U-2**
-
-**U-1 is now RESOLVED, and it kills the cheap sub-option:**
-
-- **(b1) Raise `SHADOW_HISTORY_RETENTION_DAYS` — ❌ RULED OUT. Do not do this.** The cause is **genesis, not pruning** (E-18/E-20): data begins at the 2026-06-22 Guard-Alpha go-live floor, and the 180-day prune cutoff (~2026-03-07) sits *before* it, so retention has never deleted a single row. Raising it preserves nothing that isn't already preserved and buys the operator **zero** additional history. *(This also corrects the "retention" framing carried in `DE-RETIRE-CORE-001` and `feature-plans/retirement-approval-polish-2d.md:45` — see `DE-PERF-WINDOW-TRUTH-001` §"Corrected framing".)*
-- **(b2) Wait.** The only thing that deepens `shadow_history` is elapsed time. Coverage grows one trading day per trading day, with no engineering required.
-- **(b3) Source a genuinely longer LIVE series** (the operator's literal ask) → now *scopeable* rather than speculative: the endpoints exist, are documented, are account-scoped (hence realized, not simulated), and need **no new credential** (E-19). Still requires (i) a read-only probe confirming the series actually reaches back to inception — **`[Unverified]`**, §9 U-2 — (ii) a new client + ingestion path, (iii) a basis decision (`cumulative_twr_series` is TWR; the dashboard shows `simple_return`, and mixing them un-fixes `DE-AUDIT-BL5-12-001`/BL-12), and (iv) hard provenance separation per E-22. This is a **feature cycle, not a fix**. Do not scope it as a quick win.
-  - **Cheapest next step:** three read-only GETs on existing credentials to settle U-2 before any scoping. `composer-api-researcher` recommends probing `/symphonies/{symphony-id}` first (highest information per call; directly answers whether per-symphony history reaches the 2024-07-12 `invested_since`).
-  - **Explicitly NOT usable:** `/backtest`. It will happily return a dated 2024→today series that *looks* like the answer, on four independent structural grounds (no `account-id`, fictional `capital`, modeled costs, and it replays today's tree counterfactually). Named here so nobody reaches for it under time pressure.
-
-### Option (c) — Computation-bug fix — **CORRECTED: APPLICABLE, and it outranks (a)**
-
-> **This section originally read "NOT APPLICABLE."** That verdict was correct **for `/api/performance`** — actively hunted for and genuinely absent (D2/E-4/E-5) — but it was written before `perf-doc`/`perf-trace` reported two class-(c) findings on the **main dashboard**. The original wording is left visible here rather than quietly replaced, because "no computation bug" is exactly the kind of reassuring conclusion that should not be allowed to slip into the record unqualified.
-
-- **(c-i) `/api/strip/<window>`'s `max_drawdown` is never re-windowed — real, currently DORMANT.** `compute_windowed_portfolio_strip` threads `window=` into `cumulative_return` and `vol_bot`/`vol_held`, but passes `max_drawdown` straight through from `get_portfolio_max_drawdown(...)`, which has **no `window` parameter at all** (`analytics.py:1251-1272`) — contradicting the route's own docstring (`app.py:3414-3417`). Byte-identical across every window token. **Zero operator-visible impact today** (the sole consumer is gated on a `data_as_of` field this payload never carries), so it is a landmine, not a live symptom — but any future change that wires a consumer to it ships a silent lie. Fix or delete the field; do not leave it.
-- **(c-ii) Dashboard Bot-vs-Held Max DD compares a lifetime scalar to a 53-day one — LIVE, 5+ render sites, zero disclosure. ⭐ HIGHEST-SEVERITY FINDING OF THIS AUDIT.** (E-21.) **Disclosure alone is NOT sufficient here, and this is the one place in this audit where that is true.** Everywhere else the numbers are honest and merely under-explained, so a `title=`/caption fix is right. Here the row exists to answer *"is the bot helping?"* — and a tooltip on a lifetime-vs-53-day comparison only converts a confidently-wrong answer into an admittedly-useless one. **Required fix is a computation re-base:** recompute `if_held` MaxDD over the *same* `shadow_history`-anchored window as `dry_run`, keep Composer's lifetime scalar as a separate, separately-labelled figure (it is a real and useful number — just not this comparison's `if_held`), and apply the sibling disclosure pattern only to whatever short-horizon caveat *remains after* re-basing. The needed pattern already exists 24 lines away in the same template (`templates/index.html:961-962`, the Cumulative row's basis footnote) and was simply never extended to the MDD row.
-
-**Recommended sequencing:**
-
-1. **(c-ii) first** — it is live, wrong, and drives the operator's core "is the bot helping" judgement. Correctness outranks disclosure.
-2. **(a) next** — cheap, low-risk, always correct, and it is the literal answer to what he asked for.
-3. **(c-i)** — fix or delete the dormant field before something consumes it.
-4. **(b3) only after a read-only Composer probe settles U-2.** **(b1) is ruled out; do not authorize a retention bump.**
+- **`DE-MATH-R0-001` AC-5's shared-calendar-cutoff claim in `.claude/CLAUDE.md` / `docs/generated/app.md:309` is accurate, not overstated.** Verified by `perf-doc`.
+- **No `/api/performance` computation bug exists.** The `"(c) a genuine computation bug"` line in `HANDOFF.md` was a generic dispatch-time placeholder written before any findings existed — never a claim about this route.
+- **CLAUDE.md's gotcha "Composer's API is poorly documented" is out of date** — an official ~35-endpoint reference exists (E-19). Flagged as a doc correction.
 
 ---
 
-## 8. Secondary findings (real, but not the reported symptom)
+## 8. Remediation option set
 
-| ID | Finding | Severity | Evidence |
-|----|---------|----------|----------|
-| S-1 | **"1Y" means different things on two tabs.** Performance's 1Y sends `252` **trading** days; the History tab's 1Y was changed to `365` **calendar** days under `DE-GAS-COHERENCE-001`. This dual contract is **deliberate and documented**, not a bug — but it does mean the same label spans different periods on two surfaces, which matters for an audit about display truth | INFO (documented-deliberate) | `templates/performance.html:421-422`; design comment `app.py:4781-4783`; ruling `DECISIONS.md:5825-5828` |
-| S-2 | **`/api/settings/flush-resync` carries a stale hardcoded allowlist.** `_REAL_POST_MORTEM_DATES` is a frozenset of 11 dates "Verified 2026-05-21" (`app.py:5833-5850`), and Phase 1 deletes every `post_mortem_*.json` **not** in it. POSTed today it would delete every post-mortem produced since 2026-05-20 — i.e. it destroys history depth. Latent (requires an operator POST); **not** the cause of the reported symptom; flagged because this audit is about data depth | MEDIUM (latent, data-destructive) | `app.py:5833-5850`, `app.py:5877-5894` |
-| S-3 | The YTD calendar slice has no post-slice `<2` guard, so a 1-element series can reach the metrics layer where the numeric path would have returned `None` | LOW | `app.py:3332-3333` vs `analytics.py:1655-1656` |
-| S-4 | **A fourth, divergence-risked mechanism for the same "YTD" token.** The History tab reimplements the calendar cutoff **client-side** in local-timezone `Date` arithmetic instead of using the shared server-side `analytics._window_cutoff_date("ytd")` every other surface uses | LOW–MED | `static/history.js:389-395` (`perf-doc`) |
-| S-5 | **Two more fully-computed disclosure fields with zero render consumers** — `/api/hero-chart/<window>`'s `available_days` and `/api/history/<int:days>`'s `window_days`. Same defect class as `DE-AUDIT-BL4-001`: the backend already computes the honesty signal and the UI never shows it. Directly relevant here — `available_days` is *exactly* the coverage disclosure §6 asks for, already built | MEDIUM | `app.py:3386`, `app.py:4628`; grep-confirmed zero consumers (`perf-doc`) |
+**Ranked per the team-lead's rulings. Correctness outranks disclosure; a semantic change must not ship wearing a bug-fix label.**
+
+### 1. F7 — fix ALL THREE defects (period + metric definition + units). **RULED: both/all, not partial**
+
+*Not a disclosure fix.* Everywhere else in this audit a `title=`/caption disclosure is correct because the numbers are honest and merely under-explained. **F7 is the exception**: the row exists to answer *"is the bot helping on drawdown,"* and a tooltip on this comparison converts a confidently-wrong answer into an admittedly-useless one without answering it.
+
+**Required shape:**
+1. **Both legs recomputed as genuine peak-to-trough of the real compounded return path over the SAME window** — held from `current_return`, bot from `shadow_return`. Already computed: **held 10.5875%, bot 10.3622%** (53-day window, value-weighted with the strip's own `current_value` scheme).
+2. Composer's lifetime scalar retained as a **separate, clearly-labelled** figure — never a leg of this subtraction.
+3. One normalization convention, adopted explicitly and stated.
+4. Disclosure applies only to the residual short-horizon caveat **after** (1)–(3).
+
+**Partial fix explicitly considered and REJECTED.** Fixing only `if_held`'s period would move the display from 23.44 to ~10.59 and still show the bot winning by ~4.80 points — roughly **21× the truth (0.23)** — while the UI *looks* repaired. Replacing a 77× overstatement with a 21× one is worse than leaving it visibly broken: **it launders the error**, and it still compares two different quantities. *(Note: the "12.86pt / 72.8% artifact" figure originally quoted for this scenario has been **RETRACTED** — it mixed a normalized `if_held_matched` against the code's un-normalized `dry_run`. Do not quote it. The clean, fully apples-to-apples figures are 0.2253pt true gap / 98.7% artifact.)*
+
+> **MANDATORY PRE-CONDITION — the one thing that could make this ruling wrong.** `dry_run`/`mdd_bot` may have consumers beyond these 3 render sites. **Before redefining it, enumerate every consumer across the repo** (routes, templates, JS, post-mortems, Discord embeds, advisors) and state the blast radius. If any surface depends on the current divergence-residual semantics, introduce a **new correctly-shaped value alongside** rather than mutating a shared quantity in place. Letting an implementer redefine a shared quantity without that enumeration is how a display fix becomes an engine-adjacent regression.
+
+### 2. Display-honesty fix (F1/F2/F4/F8) — **cheap, correct regardless of everything else**
+
+Add a coverage field (requested window, actual covered days, earliest date), render requested-vs-actual, fix the YTD `typeof` gap, annotate or disable unbackable windows. Mirror `coverage_days`/`basis_label`; **`available_days` already exists and merely needs rendering** (`app.py:3386`). Low risk: `window_days` has zero test assertions, `obs-caption` is presence-tested only (E-14). New codepath ⇒ Toxic Pair TDD. **Per `DE-AUDIT-BL4-001`, this must be RENDERED — never a JSON-field-only fix.**
+
+### 3. F3 — fix or delete the dormant unwindowed strip field
+
+⚠️ **Threading `window` into F3 WITHOUT re-basing F7 is actively worse than nothing** — it makes a mismatched-basis comparison *look* responsive and trustworthy while remaining incomparable. Sequence after F7, or delete the field.
+
+### 4. Semantic-unification decision (F5/F6) — **a PRODUCT call, not a defect fix**
+
+> **Correcting a framing that propagated through this audit:** "port Performance onto the shared seam" is a **SEMANTIC CHANGE, not a bug fix.** Performance's `60d` means 60 **trading** days; returning all 53 is *arithmetically correct for that semantic* — undisclosed, but not wrong math. The shared seam's `60d` means 60 **calendar** days (~44 trading days). Porting **redefines what the button means**; the number changes as a consequence.
+
+The defensible argument for doing it: "60d" reads to a human as sixty calendar days, History already uses calendar, `_WINDOW_TRAILING_DAYS` is calendar — **Performance is the outlier.** That is a good argument for a product decision with a visible consequence (his 60d figure changes), and **he is entitled to know which he is getting.** It would genuinely fix his 60d→YTD click (60d becomes a real 44-day subset); 90d/125d/1y/YTD stay identical until data depth grows, so **disclosure remains mandatory and neither substitutes for the other.**
+
+**Open design question — do not resolve in a diagnosis document:** the shared vocabulary has **no `5y` token at all**, so porting requires deciding what 252 and 1260 become. Tradeoff: calendar days match how an operator reads "1 year"; trading days match how the math is computed.
+
+### 5. Data depth (F-none — capability, not defect)
+
+- **❌ `SHADOW_HISTORY_RETENTION_DAYS` — RULED OUT.** Genesis, not pruning (E-18/E-20). Retention has never deleted a row; raising it recovers **nothing**.
+- **✅ Sourcing longer live history is now UNLOCKED** — daily series confirmed to 2024-07-12 (E-24), existing credentials, no ToS delta. This also closes the retirement-recommender's 181-day gate immediately rather than waiting until 2027-03-10. Still a **feature cycle**: basis decision (TWR vs `simple_return` — mixing un-fixes `DE-AUDIT-BL5-12-001`/BL-12) plus hard provenance separation per E-22.
+- 🚨 **The `/backtest` trap, loudly.** `/backtest` accepts `start_date`/`end_date` and emits a dated 2024→today series that **looks exactly like realized history and is not** — counterfactual replay of today's tree, caller-supplied capital, modelled fills, and it accepts **no `account-id`** (the structural discriminator). Any implementation MUST provenance-tag the source, same discipline as `if_held_source` under `DE-POSTMORTEM-INTEGRITY-001`. Getting this wrong would inject fabricated history into the operator's real performance display — **a worse defect than anything in this audit.**
+
+### 6. Documentation corrections
+
+Annotate — **never rewrite** — `DECISIONS.md:10973` and `feature-plans/retirement-approval-polish-2d.md:45` with a dated `[correction, 2026-09-03]` pointer: both use "retention" framing for what is actually the go-live floor. Also correct CLAUDE.md's "Composer API is poorly documented" gotcha.
 
 ---
 
-## 9. What could NOT be determined, and why
+## 9. Audit provenance — where this audit was wrong
 
-Stated plainly rather than papered over. All four items were pursued; **three closed on team evidence, one remains genuinely open.** Statuses below reflect the post-integration state — the pre-integration draft listed all four as unresolved.
+Recorded at the team-lead's explicit direction: *"a verdict that hides where its authors were wrong is less trustworthy, not more."*
 
-| ID | Open question | Status | Detail |
-|----|---------------|--------|--------|
-| **U-1** | Retention pruning or genesis? | ✅ **RESOLVED — genesis** | `perf-data` verified against the live droplet: data begins 2026-06-22 (Guard-Alpha go-live floor), 53 trading days / 73 calendar days as of 2026-09-03. The 180-day prune cutoff (~2026-03-07) predates the floor, so retention has deleted nothing. **Option (b1) ruled out** (E-18/E-20) |
-| **U-2** | Does a longer live series exist to source from? | ⚠️ **PARTIALLY RESOLVED — existence YES, depth UNVERIFIED** | The premise that Composer exposes no dated series is **false**: three documented, account-scoped, date-indexed endpoints exist on the credentials already in use (E-19). **But whether they reach back to inception, and their true granularity, is `[Unverified]` — undocumented, and settleable only by a live read-only probe that was not performed.** This is now the single blocking unknown for option (b3), and it is a *narrower and more tractable* unknown than when this document was drafted |
-| **U-3** | Numeric confirmation that 60d/90d/125d/YTD/1Y/5Y return identical series on production data | ❌ **STILL UNRESOLVED** | The *mechanism* is proven from source (E-6/E-7) and the *history depth* is now measured (E-20), so the conclusion follows deductively — but the button-by-button sweep was never separately executed. **E-17 remains labelled `interpretation`, not fact.** A deduction from two verified facts is strong; it is still not a measurement, and is not promoted to one here |
-| **U-4** | Independent corroboration of the code trace | ✅ **RESOLVED — corroborated, and extended** | Teammate evidence landed via `perf-doc`, independently converging on the caption defect (E-8) and confirming D1/D2/D3. **It also went further than this document's original scope**, surfacing the two main-dashboard class-(c) findings that reversed §7(c). Recorded because it is the single most consequential outcome of cross-verification in this audit: the synthesis lead's solo trace was *correct but incomplete*, and would have shipped a reassuring "no computation bug" headline had it stood alone |
+| # | Claim | Corrected to | Falsified by |
+|---|-------|-------------|--------------|
+| 1 | Short history caused by **retention pruning** (carried in from a 2026-08-28 finding and stated to the operator twice) | **Go-live floor 2026-06-22.** Right counts, wrong cause — and it invited a remediation that recovers nothing | `perf-data` (`.env` + MIN/MAX query) |
+| 2 | Other surfaces are **"structurally immune"** to collapse | Immunity is **window-and-data dependent**, never structural | team-lead challenge |
+| 3 | The counter-challenge: the calendar seam **collapses too, so it buys only disclosure** | Over-broadened. Non-degenerate *inside* the span (60d genuinely subsets), degenerate beyond | `perf-trace` + `perf-data` boundary counts |
+| 4 | Seam port framed as a **bug fix** | **Semantic change** (trading→calendar redefinition) | team-lead self-correction |
+| 5 | **"No computation bug found"** (this document, v1) | True for `/api/performance` **only** — F3 and F7 are live on the dashboard | `perf-doc` / `perf-trace` |
+| 6 | **"No per-day Composer series exists anywhere"** | False — based on `symphony-stats-meta` alone; S-1/S-2 serve daily data to 2024-07-12 | `perf-data` live probe |
+| 7 | F7 remedy = **re-base the period** | Insufficient — also a metric-definition **and** units defect | `perf-data` force-injection (E-23) |
+| 8 | F7 partial-fix artifact = **12.86pt / 72.8%** | **Retracted** — mixed normalized against un-normalized units | team-lead, confirmed by `perf-data` |
+| 9 | F5 filed as **"documented-deliberate, not a bug"** (this document, v1/v2) | **Elevated to its own finding** — individually-documented ≠ deliberate joint decision | team-lead ruling |
 
-**Residual honesty note.** Two things in this document rest on deduction rather than measurement and are labelled as such throughout: **E-17** (the six-of-seven-buttons claim, §U-3) and the `[Unverified]` depth of the Composer endpoints (§U-2). Neither is load-bearing for the recommended sequencing — (c-ii), (a) and (c-i) are all justified without them — but neither should be quoted onward as a measured result.
-
-**Honest scoping note on the PM's adjacent-evidence warning.** The prior observation that droplet `shadow_history` holds only ~49 trading days was treated as a *hypothesis*, not a cause — and that discipline paid off twice. First, the count was approximately right but **the attributed cause was wrong**: it was never retention pruning, it is a go-live floor (E-18/E-20), and "extend retention" — the fix that hypothesis invites — would have bought the operator nothing. Second, the mechanism this audit establishes holds *independently* of the number: oversized windows collapse silently (E-6), held and bot are the same rows (E-1), and the caption misstates the window (E-8/E-9). The history length only determines *which* buttons collapse, not *whether* the display is dishonest when they do. **Causes genuinely stack here** — truncated data **and** silent collapse **and** a false window label **and**, on the dashboard, an invalid lifetime-vs-53-day comparison. The audit did not stop at the first sufficient explanation, and the finding it would have missed by doing so (c-ii) is the most severe one it found.
+**On the adjacent-evidence trap specifically:** the prior "~49-day retention" observation was treated as a hypothesis, not a cause, and that discipline paid off twice — the count was approximately right, the *cause* was wrong (reversal 1), and the mechanism established here holds independently of the number anyway. **Causes genuinely stack**: truncated data, silent collapse, a false window label, *and* an invalid winner-badged comparison. The audit did not stop at the first sufficient explanation — and the finding it would have missed by doing so (F7) is the most severe one it found.
 
 ---
 
-## 10. Bottom line for the PM
+## 10. Open items
 
-- **⭐ Fix the dashboard Max DD comparison first (c-ii).** It is live, it silently compares a lifetime figure to 53 days, and it drives the operator's "is the bot helping" judgement. **A tooltip is not enough here** — it needs a computation re-base. This outranks the tab he actually complained about.
-- **On the Performance tab the arithmetic is fine and the label is a lie.** Ship option (a) — cheap, low-risk, nothing pins the current wording (E-14).
-- **The operator's instinct was right on both counts, and the system fails it in opposite directions:** on Performance, live *should* reach further and doesn't (E-1); on the dashboard, live *does* reach further and is being subtracted from a 53-day bot figure as if commensurable (E-21).
-- **❌ Do NOT authorize a retention bump.** U-1 is settled: the cause is the 2026-06-22 go-live floor, not pruning. Retention has deleted nothing and raising it preserves nothing. *(This also corrects the framing in two prior entries — see `DE-PERF-WINDOW-TRUTH-001` §"Corrected framing".)*
-- **A longer live series is now scopeable but not yet justified.** The endpoints exist on existing credentials (E-19); their reach is unverified (U-2). Three read-only GETs settle it. **And even a "yes" extends only the live leg — a longer guard-alpha comparison is structurally unreachable at any price (E-22).**
-- **Do not quote E-17 as measured.** It is a sound deduction from two verified facts, and it is still not a measurement (U-3).
+| ID | Item | Status |
+|----|------|--------|
+| U-1 | Retention vs genesis | ✅ **CLOSED** — genesis (E-20) |
+| U-2 | Longer live series | ✅ **CLOSED** — exists, probed to 2024-07-12 (E-24) |
+| U-3 | Numeric confirmation of window collapse | ✅ **CLOSED** — E-17 promoted to FACT |
+| U-5 | **`dry_run` consumer enumeration** — blocking pre-condition on the F7 fix | ❌ **OPEN — assign before the fix cycle** |
+| U-6 | Units convention (`dry_run` un-normalized pp vs Composer normalized fraction) | ⚠️ **Flagged, non-blocking.** The two matched figures (10.5875 / 10.3622) share a convention, so the 0.23pt gap is internally consistent regardless. Resolve **in the fix plan**, not the diagnosis |
+| U-7 | Composer rate limits — two Tier-1 sources conflict (25/min reference vs 1/sec help-centre) | ⚠️ Unverified; let 429-handling be the authority |
+| U-8 | `tests/analytics/test_live_m1_helpers.py:66` hits an undocumented `/api/v2/…` path with bearer-only auth | Separate ticket, out of scope |
+| U-9 | **Minor unreconciled discrepancy:** the 53-day aggregate MDD_bot reads `-0.051671` via the positional path and `-0.051661` via the calendar path — same days, ~1e-5 apart | Trivial; recorded rather than smoothed. Likely an aggregation-path difference worth a glance during the fix |
+
+---
+
+## 11. Bottom line
+
+1. **⭐ Fix F7 first — all three defects, not one.** 98.7% of a winner-badged number on the operator's main dashboard is artifact. It has been unqualified for ~a month since the depth guard silently expired. **Enumerate `dry_run`'s consumers before redefining it.**
+2. **Ship the display-honesty fix.** Cheap, low-risk, and the literal answer to what he asked for. `available_days` is already computed — render it.
+3. **F3: fix or delete — but never before F7.** Threading the window without re-basing launders the error.
+4. **The semantic port is a product decision, not a fix.** It will change his 60d number. He is entitled to be told that, not to have it smuggled in.
+5. **❌ Do not touch retention.** Genesis, not pruning. It recovers nothing.
+6. **✅ Longer live history is real and reachable** (2024-07-12, existing credentials) — a feature cycle, with the `/backtest` trap called out loudly.
+7. **The honest bottom line on the strategy: over 53 measurable days, Guard Alpha shows a 0.23pp drawdown edge — effectively neutral.** Short window, noisy metric. State it; don't spin it either way.
