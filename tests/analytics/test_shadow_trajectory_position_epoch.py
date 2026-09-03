@@ -94,9 +94,13 @@ def _chain_link_pct(returns: list[float]) -> float:
 
 
 def _peak_to_trough_mdd(returns: list[float]) -> float:
-    """Peak-to-trough max drawdown of the cumulative series built from
-    per-day returns — positive-magnitude convention, matching
-    get_symphony_max_drawdown's dry_run computation."""
+    """[SUPERSEDED reference, DE-PERF-WINDOW-TRUTH-001]: un-normalized
+    (peak - value) peak-to-trough — this WAS get_symphony_max_drawdown's
+    dry_run formula pre-AC-1. Kept only for any test in this file still
+    exercising get_symphony_cumulative_return's dry_run (CR is untouched by
+    this cycle and still uses this chain-link shape for ITS OWN divergence
+    formula, distinct from MDD). Do not use this for a new MDD assertion —
+    see _normalized_peak_to_trough below."""
     cum: list[float] = []
     product = 1.0
     for r in returns:
@@ -111,6 +115,28 @@ def _peak_to_trough_mdd(returns: list[float]) -> float:
         if dd > max_dd:
             max_dd = dd
     return max_dd
+
+
+def _normalized_peak_to_trough(returns_pct: list[float]) -> float:
+    """[Added during review, DE-PERF-WINDOW-TRUTH-001]: independent
+    reference for get_symphony_max_drawdown's POST-AC-1 dry_run/if_held
+    formula — normalized peak-to-trough `(peak-value)/peak`, phantom
+    NAV=1.0 baseline before the first real observation (matches
+    quantstats.stats.max_drawdown's anchor mechanism; see
+    tests/analytics/test_mdd_window_truth.py for the full cross-check
+    against quantstats directly). Returns a POSITIVE percentage magnitude.
+    """
+    peak_nav = 1.0
+    nav = 1.0
+    max_dd = 0.0
+    for r in returns_pct:
+        nav *= 1.0 + r / 100.0
+        if nav > peak_nav:
+            peak_nav = nav
+        dd = (peak_nav - nav) / peak_nav
+        if dd > max_dd:
+            max_dd = dd
+    return max_dd * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -309,54 +335,67 @@ class TestDryRunConsumersUseCurrentEpochOnly:
             "Bug: current code computes absolute shadow chain-link, not divergence."
         )
 
-    def test_dry_run_mdd_reflects_current_epoch_only(self, tmp_path):
-        """dry_run MDD = 0.0 for the two-epoch fixture — derivation below.
+    def test_dry_run_mdd_reflects_the_full_continuous_series_not_current_epoch_only(
+        self, tmp_path
+    ):
+        """[Renamed + reformulated, DE-PERF-WINDOW-TRUTH-001]: this test's
+        ORIGINAL title/premise ("dry_run MDD reflects current-epoch-only")
+        is now ARCHITECTURALLY FALSE. Under the AC-1 remediation
+        (analytics.py @ 3ec97048), get_symphony_max_drawdown's dry_run/
+        if_held come from get_symphony_bot_and_held_daily_returns(...,
+        days=None) — a function whose OWN docstring states it is "NOT
+        epoch-scoped: this is the CONTINUOUS portfolio series", explicitly
+        DISTINCT from the per-symphony epoch-additive guard-alpha trajectory
+        (_get_shadow_cumulative_trajectory, which test_dry_run_cr_reflects_
+        current_epoch_only above correctly still pins as epoch-scoped for
+        CR). This is a deliberate, pre-existing architectural split, not a
+        regression this cycle introduced: risk metrics (Sharpe/vol/CAGR/
+        total_return, and now MDD) are properties of the bot's CONTINUOUS
+        observed path and already used this same non-epoch-scoped series for
+        the Performance tab; the guard-alpha COMPARISON metric (CR's
+        dry_run) is the one that specifically needs epoch-scoping to avoid
+        conflating an unrelated prior position's chained market returns.
 
-        DERIVATION (MDD anchor invariant: never-triggered → bot-MDD == 0 over
-        the shadow window):
-          _seed_two_epoch_shadow_db (lines 165-183) seeds every row with
-              current_return = shadow_return = ret  (same value, no trigger)
-          The corrected MDD formula (analytics.py:807-851) builds:
-              bot_equity[t] = if_held + (prod_shadow[0..t] - prod_current[0..t]) * 100
-          Since current_return == shadow_return on every day:
-              prod_shadow[0..t] == prod_current[0..t] for ALL t  (identical products)
-          Therefore:
-              bot_equity[t] = if_held + 0 = if_held  for all t  (flat series)
-          Peak-to-trough of a flat constant series is exactly 0:
-              MDD = max(peak - val) over flat series = 0.0
-          This is the NEVER-TRIGGERED MDD ANCHOR — the bot-path drawdown is 0
-          when the guard never diverged from the held path.
-
-          NOTE: the dry_run MDD is the drawdown of the bot's divergence-based
-          equity path over the SHADOW WINDOW, not the Composer lifetime MDD
-          (if_held). These measure different things. The anchor invariant only
-          applies to the shadow-window bot path.
-
-        Epoch-scoping for the trajectory is already covered by
-        TestTrajectoryScopedToCurrentEpoch (the trajectory-level tests assert that
-        only the current epoch's rows are returned). This test asserts the MDD
-        consumer uses the divergence-based equity path and produces 0.0 for
-        untriggered (shadow==current) rows.
+        This test now pins the OPPOSITE of its original premise: dry_run
+        MUST reflect the FULL 10-row continuous series (positions A+B
+        spliced in chronological order), NOT be confined to only the current
+        epoch's 5 rows. The original stale formula ('bot_equity = if_held +
+        divergence, flat at if_held for shadow==current -> 0.0') is
+        superseded — dry_run no longer references if_held at all.
         """
         db_file = _seed_two_epoch_shadow_db(tmp_path)
         sym_dict = {
             "id": _SYM_ID,
-            "max_drawdown": 0.05,  # Composer if_held 5% (lifetime held MDD, not tested here)
+            "max_drawdown": 0.05,  # Composer if_held_lifetime 5% (not tested here)
         }
-        # DERIVED (not captured from output):
-        #   current_return == shadow_return in _seed_two_epoch_shadow_db
-        #   → prod_shadow[0..t] == prod_current[0..t] at every step t
-        #   → bot_equity[t] = if_held + (0) = if_held  (constant)
-        #   → peak-to-trough of a flat series = 0.0
-        expected_mdd = 0.0
+        # DERIVED (not captured from output): both positions' rows have
+        # current_return == shadow_return, so if_held and dry_run compound the
+        # IDENTICAL continuous 10-row sequence (A's 5 rows then B's 5 rows,
+        # chronological) and must be equal to each other -- and to the
+        # independently-computed normalized peak-to-trough of that full
+        # sequence, not just position B's 5 rows.
+        full_continuous_returns = _POSITION_A_RETURNS + _POSITION_B_RETURNS
+        expected_full = _normalized_peak_to_trough(full_continuous_returns)
+        expected_current_epoch_only = _normalized_peak_to_trough(_POSITION_B_RETURNS)
+        assert expected_full != pytest.approx(expected_current_epoch_only, abs=1e-6), (
+            "test construction error: the full-series and current-epoch-only "
+            "peak-to-troughs must differ for this fixture, or this test cannot "
+            "discriminate between the two behaviors"
+        )
 
         result = get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
-        assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
-            f"dry_run MDD must be 0.0 (derived: shadow==current at every step "
-            f"→ prod_shadow==prod_current → bot equity flat → zero drawdown); "
-            f"got {result['dry_run']:.6f}. "
-            "A non-zero result means the MDD consumer is using the absolute "
-            "shadow series (old bug) instead of the divergence-based equity path."
+        assert result["dry_run"] is not None and result["if_held"] is not None
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-9), (
+            "dry_run must equal if_held -- both legs compound the identical "
+            "current_return==shadow_return continuous sequence"
+        )
+        assert result["dry_run"] == pytest.approx(expected_full, abs=1e-6), (
+            f"dry_run must reflect the FULL continuous series (all 10 rows, "
+            f"both epochs) = {expected_full:.6f}%; got {result['dry_run']:.6f}%. "
+            f"If this equals {expected_current_epoch_only:.6f}% (position B's "
+            f"5 rows alone), MDD is still epoch-scoped -- contradicting the "
+            f"confirmed AC-1 design, which deliberately sources MDD from the "
+            f"non-epoch-scoped continuous series."
         )
 
 

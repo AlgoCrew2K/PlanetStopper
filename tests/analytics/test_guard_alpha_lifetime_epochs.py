@@ -198,12 +198,18 @@ def _latest_epoch_rows(rows: list[dict], latest_label: str) -> list[dict]:
 
 
 def _lifetime_bot_equity_mdd(rows: list[dict], if_held_pct: float) -> float:
-    """Peak-to-trough of the bot's equity path over the EPOCH-ADDITIVE divergence chain.
-
-    bot_equity[t] = if_held + (cumulative epoch-additive divergence through step t) * 1.
-    Divergence accrues within each epoch from its own anchor; the running total carries
-    across epoch boundaries (the prior epoch's realized guard effect is locked in), but
-    each epoch's contribution is computed in its OWN frame (no market-return chaining).
+    """[SUPERSEDED, DE-PERF-WINDOW-TRUTH-001]: this was the reference for the
+    OLD if_held-anchored, epoch-additive-divergence MDD formula
+    (get_symphony_max_drawdown's PRIOR dry_run computation). Under the AC-1
+    remediation (analytics.py @ 3ec97048), dry_run is a normalized peak-to-
+    trough of the RAW shadow_return series alone — sourced via
+    get_symphony_bot_and_held_daily_returns(..., days=None), which is
+    explicitly documented as NOT epoch-scoped (the CONTINUOUS chronological
+    series, ignoring position_epoch entirely) — never anchored to if_held,
+    never epoch-additive. Kept here, unused by the fixed tests below, only
+    as a historical record of the formula this cycle retired; do not call it
+    from a new test. See _continuous_normalized_max_drawdown below for the
+    correct reference.
     """
     equity: list[float] = []
     running_alpha = 0.0
@@ -224,6 +230,31 @@ def _lifetime_bot_equity_mdd(rows: list[dict], if_held_pct: float) -> float:
         if peak - v > max_dd:
             max_dd = peak - v
     return max_dd
+
+
+def _continuous_normalized_max_drawdown(returns_pct: list[float]) -> float:
+    """[Added during review, DE-PERF-WINDOW-TRUTH-001]: independent reference
+    for the NEW dry_run/if_held formula — normalized peak-to-trough
+    `(peak-value)/peak`, phantom NAV=1.0 baseline before the first real
+    observation (matches quantstats.stats.max_drawdown's anchor mechanism,
+    see tests/analytics/test_mdd_window_truth.py for the full derivation +
+    cross-check against quantstats directly). Applied to the CONTINUOUS
+    chronological return series, ignoring position_epoch entirely — matches
+    get_symphony_bot_and_held_daily_returns' own documented "NOT epoch-
+    scoped" contract, which get_symphony_max_drawdown now sources from.
+    Returns a POSITIVE percentage magnitude.
+    """
+    peak_nav = 1.0
+    nav = 1.0
+    max_dd = 0.0
+    for r in returns_pct:
+        nav *= 1.0 + r / 100.0
+        if nav > peak_nav:
+            peak_nav = nav
+        dd = (peak_nav - nav) / peak_nav
+        if dd > max_dd:
+            max_dd = dd
+    return max_dd * 100.0
 
 
 # ===========================================================================
@@ -265,7 +296,17 @@ class TestNeverTriggeredLifetimeAlphaIsExactlyZero:
             "absolute market returns instead of the shadow-vs-current divergence."
         )
 
-    def test_never_triggered_lifetime_mdd_is_zero(self, fixture, tmp_path):
+    def test_never_triggered_lifetime_dry_run_equals_if_held(self, fixture, tmp_path):
+        """[Renamed + reformulated, DE-PERF-WINDOW-TRUTH-001]: under the AC-1
+        remediation, dry_run/if_held are independently computed normalized
+        peak-to-troughs of the CONTINUOUS (not epoch-scoped) shadow_return/
+        current_return series. For a never-triggered symphony (shadow ==
+        current on every row, across all epochs), both legs compound the
+        IDENTICAL sequence, so dry_run == if_held exactly — NOT necessarily
+        0.0 (that was an artifact of the superseded if_held-anchored
+        formula; it is only 0 here if this fixture's own return sequence
+        happens to have zero drawdown, verified below rather than assumed).
+        """
         scen = fixture["scenarios"]["never_triggered_n2ooA"]
         rows = scen["shadow_history_rows"]
         if_held = scen["if_held_pct"]
@@ -277,11 +318,23 @@ class TestNeverTriggeredLifetimeAlphaIsExactlyZero:
         assert result["dry_run"] is not None, (
             "dry_run MDD must not be None for a multi-epoch series with >= 2 days"
         )
-        # DERIVED: flat divergence every step -> bot equity flat at if_held -> MDD 0.
-        assert result["dry_run"] == pytest.approx(0.0, abs=1e-9), (
-            f"MDD ANCHOR FAIL: never-triggered '{sym_id}' lifetime bot-equity MDD "
-            f"= {result['dry_run']:.6f}% (must be exactly 0). When shadow == current "
-            "across all epochs the bot equity path is flat at if_held."
+        assert result["if_held"] is not None, (
+            "if_held MDD must not be None for a multi-epoch series with >= 2 days"
+        )
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-9), (
+            f"MDD ANCHOR FAIL: never-triggered '{sym_id}' has dry_run="
+            f"{result['dry_run']!r} != if_held={result['if_held']!r} despite "
+            f"shadow_return == current_return on every row across all epochs "
+            f"-- both legs must be computed from the identical continuous "
+            f"return sequence via the identical formula."
+        )
+        expected = _continuous_normalized_max_drawdown(
+            [r["current_return"] for r in rows]
+        )
+        assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
+            f"shared dry_run/if_held value {result['if_held']} does not match "
+            f"the independently-computed continuous normalized peak-to-trough "
+            f"{expected} for this fixture's own return sequence"
         )
 
 
@@ -433,27 +486,52 @@ class TestLifetimeIfHeldBaselineIsUnchanged:
 
 
 class TestLifetimeMddSpansEpochs:
-    """The bot-equity MDD must be peak-to-trough over the LIFETIME divergence equity path,
-    so a prior-epoch divergence drawdown is not lost when the epoch resets.
+    """[Reformulated, DE-PERF-WINDOW-TRUTH-001]: under the AC-1 remediation,
+    the bot-equity MDD is peak-to-trough over the CONTINUOUS shadow_return
+    series (get_symphony_bot_and_held_daily_returns, NOT epoch-scoped by its
+    own contract) -- position_epoch resets do not truncate or reset this
+    series at all; it always spans every row for the symphony regardless of
+    epoch boundaries. This is a DIFFERENT mechanism from the superseded
+    epoch-additive-divergence chain (which explicitly avoided chaining
+    market returns across a reset) -- the class name is kept (still proves
+    a prior-epoch drawdown is not lost), but the formula/reference is new.
     """
 
-    def test_triggered_lifetime_mdd_equals_cross_epoch_peak_to_trough(self, fixture, tmp_path):
+    def test_triggered_lifetime_mdd_reflects_full_continuous_series(self, fixture, tmp_path):
         scen = fixture["scenarios"]["triggered_iaSOO_saved_in_prior_epochs"]
         rows = scen["shadow_history_rows"]
         if_held = scen["if_held_pct"]
         sym_id = scen["symphony_id"]
 
-        expected_mdd = _lifetime_bot_equity_mdd(rows, if_held)
-        assert expected_mdd > 0.0, (
-            "fixture sanity: iaSOO's lifetime divergence path must have a real drawdown"
+        expected_dry_run = _continuous_normalized_max_drawdown(
+            [r["shadow_return"] for r in rows]
+        )
+        assert expected_dry_run > 0.0, (
+            "fixture sanity: iaSOO's continuous shadow_return series must have "
+            "a real drawdown"
         )
 
         db_file = _make_multi_epoch_db(tmp_path, sym_id, rows)
         result = get_symphony_max_drawdown(_sym(sym_id, if_held), None, db_path=db_file)
 
         assert result["dry_run"] is not None, "dry_run MDD must not be None for >= 2 days"
-        assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-6), (
+        assert result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-6), (
             f"MDD CROSS-EPOCH FAIL: '{sym_id}' lifetime MDD = {result['dry_run']:.6f}%, "
-            f"expected {expected_mdd:.6f}% (peak-to-trough over the ALL-epoch divergence "
-            "equity path). The latest-epoch-only scope loses the prior-epoch drawdown."
+            f"expected {expected_dry_run:.6f}% (normalized peak-to-trough over the "
+            f"CONTINUOUS shadow_return series, spanning every row regardless of "
+            f"position_epoch). A value confined to only the latest epoch's rows "
+            f"means the series isn't genuinely continuous."
         )
+        # Anti-regression: dry_run must NOT equal a computation confined to only
+        # the latest epoch's rows (the pre-C-1-fix bug class this fixture guards).
+        latest_label = rows[-1]["position_epoch"]
+        latest_only_rows = _latest_epoch_rows(rows, latest_label)
+        if len(latest_only_rows) < len(rows):
+            latest_only_dry_run = _continuous_normalized_max_drawdown(
+                [r["shadow_return"] for r in latest_only_rows]
+            )
+            assert result["dry_run"] != pytest.approx(latest_only_dry_run, abs=1e-6), (
+                f"'{sym_id}' dry_run equals the LATEST-EPOCH-ONLY MDD "
+                f"({latest_only_dry_run}) -- the series must span ALL epochs, "
+                f"not just the most recent one."
+            )

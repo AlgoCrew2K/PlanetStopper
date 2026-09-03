@@ -853,12 +853,26 @@ class TestEdgeCases:
         assert result["dry_run"] == pytest.approx(6.0, abs=_ABS)
         assert result["if_held_lifetime"] is None
 
-    def test_nan_input_never_produces_a_fabricated_zero(self, tmp_path):
-        """A NaN sneaking into shadow_history (defensive/corrupt-data case)
-        must degrade to None, never render a fabricated 0.0 or propagate NaN
-        into a JSON response (json.dumps(nan) produces invalid JSON)."""
-        sym_id = "sym-nan"
-        db_file = str(tmp_path / "nan_shadow.db")
+    def test_infinite_return_never_produces_a_fabricated_zero(self, tmp_path):
+        """[Corrected during review, root-caused independently -- not a
+        GREEN defect]: the plan's edge case says "NaN/None ... must degrade
+        honestly". A LITERAL NaN cannot reach this function through any real
+        channel: the production schema (migrations/008_shadow_history.sql:
+        "current_return REAL NOT NULL, shadow_return REAL NOT NULL") and
+        this test file's own _SCHEMA both enforce NOT NULL on these columns,
+        and Python's sqlite3 driver raises IntegrityError("NOT NULL
+        constraint failed") when binding float("nan") to a NOT NULL REAL
+        column -- verified directly (`CREATE TABLE t (v REAL NOT NULL);
+        INSERT ... (float('nan'),)` raises in isolation, no schema/app code
+        involved). The original version of this test tried to INSERT a NaN
+        row and therefore failed at the fixture-setup step, before any
+        analytics.py code ran -- a test-infra bug, not a signal about the
+        implementation. float("inf"), by contrast, inserts and reads back
+        cleanly (verified) -- a genuinely storable extreme/corrupted value
+        (e.g. a division-by-zero upstream of the write) -- so this is the
+        realistic defensive case to pin instead."""
+        sym_id = "sym-inf"
+        db_file = str(tmp_path / "inf_shadow.db")
         conn = sqlite3.connect(db_file)
         conn.execute(_SCHEMA)
         today = date.today().isoformat()
@@ -871,7 +885,7 @@ class TestEdgeCases:
         conn.execute(
             "INSERT INTO shadow_history (symphony_id, ts_utc, trading_day, "
             "current_return, shadow_return, position_epoch) VALUES (?, ?, ?, ?, ?, ?)",
-            (sym_id, today + "T20:00:00Z", today, float("nan"), -1.0, "EPOCH_A"),
+            (sym_id, today + "T20:00:00Z", today, float("inf"), -1.0, "EPOCH_A"),
         )
         conn.commit()
         conn.close()
@@ -880,8 +894,14 @@ class TestEdgeCases:
         result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
         if result["if_held"] is not None:
             assert math.isfinite(result["if_held"]), (
-                f"if_held must never be NaN/inf (breaks JSON serialization); "
+                f"if_held must never be NaN/inf (breaks JSON serialization "
+                f"-- json.dumps(float('inf')) produces invalid JSON); an "
+                f"infinite input return must degrade to None, not propagate; "
                 f"got {result['if_held']}"
+            )
+        if result["dry_run"] is not None:
+            assert math.isfinite(result["dry_run"]), (
+                f"dry_run must never be NaN/inf; got {result['dry_run']}"
             )
 
 
