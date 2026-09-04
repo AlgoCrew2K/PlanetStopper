@@ -18,6 +18,20 @@ false-negative surface. It is self-contained (no git subprocess / branch-state
 dependency), so it works identically whether run against the fork point, a
 mid-cycle commit, or the final cycle-complete commit.
 
+CRLF portability fix (2026-09-04, CI-red on branch head 788fee01): the pins
+below were originally computed from RAW file bytes on a Windows checkout
+(CRLF line endings). Linux CI checks out the same git-tracked content with LF
+line endings (git's default core.autocrlf-independent behavior for a repo
+with no .gitattributes forcing a line-ending policy -- confirmed absent at
+this repo's root) -- same logical content, different bytes, different SHA-256
+-- a FALSE "AC-7 VIOLATION" on CI even though `git diff <fork-point> --
+alpha_bot_execution.py math_engine.py` is genuinely empty. Fixed by
+normalizing CRLF -> LF on the read bytes BEFORE hashing (`_sha256` below),
+and re-pinning `_PINNED_HASHES` to the LF-normalized values -- this makes the
+guard platform-independent: identical hash whether the two engine files are
+checked out with CRLF (Windows local `-n0`) or LF (Linux CI) line endings,
+since both normalize to the same LF-only byte stream before hashing.
+
 This test MUST PASS both BEFORE and AFTER the GREEN implementation -- it is a
 self-guard, not a RED-to-GREEN test (there is no feature here to build; the
 feature IS these two files staying untouched). If either hash ever needs to
@@ -42,16 +56,27 @@ _ALPHA_BOT_EXECUTION = _REPO_ROOT / "alpha_bot_execution.py"
 _MATH_ENGINE = _REPO_ROOT / "math_engine.py"
 
 # Pinned at RED-phase HEAD bf5239ab724d05e676b0ef489ffb1b37a01f2c32
-# (branch fix/mdd-window-truth, 2026-09-03) -- computed via:
-#   python -c "import hashlib; print(hashlib.sha256(open('<file>','rb').read()).hexdigest())"
+# (branch fix/mdd-window-truth, 2026-09-03), content UNCHANGED since -- these
+# are LF-NORMALIZED hashes (CRLF -> LF applied to the raw bytes before
+# hashing, see _sha256 below and the CRLF-portability-fix module docstring
+# section), platform-independent by construction. Re-derived 2026-09-04 via:
+#   python -c "import hashlib; print(hashlib.sha256(open('<file>','rb').read().replace(b'\r\n', b'\n')).hexdigest())"
+# Confirmed byte-identical to what Linux CI independently computed on the
+# same content (CI-reported mismatch hashes on branch head 788fee01 were
+# 8bbb51ab.../772886ea..., matching these exactly) -- not a fresh/unverified
+# re-pin.
 _PINNED_HASHES = {
-    "alpha_bot_execution.py": "f74d458f059068c66f4aef141f86dd88e1d82d8175c5431ff8fd8d590f8d6f83",
-    "math_engine.py": "346a8e5d59666cbd5d844aa4047420d2acd67f7f52c9097c5231341cd3e0e7f4",
+    "alpha_bot_execution.py": "8bbb51aba6618d26a95b3b606d34bd84a0f8b157e93b771aca7e96576d1a886c",
+    "math_engine.py": "772886ead636e67e2c801339268608b39180d846a749fee924debd27c915de5e",
 }
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """LF-normalized content hash -- CRLF -> LF on the raw bytes before
+    hashing, so the result is identical whether the file is checked out with
+    CRLF (Windows) or LF (Linux CI) line endings. See the CRLF-portability-
+    fix module docstring section for why this normalization is required."""
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 class TestAC7EngineFilesByteFrozen:
