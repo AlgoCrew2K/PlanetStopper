@@ -91,37 +91,8 @@ class TestApiStateWaitingBranch:
     def test_exit_authority_value_is_valid(self, flask_client):
         resp = flask_client.get("/api/state")
         data = json.loads(resp.data)
-
-        # TEMPORARY CI DIAGNOSTIC (DE-PERF-WINDOW-TRUTH-001, 2026-09-04,
-        # team-lead instruction): CI reproduces `exit_authority == {}` under
-        # `-n2 --dist loadfile` (full-tree collection -- not reproducible
-        # locally without violating the OOM safety ceiling); this test
-        # PASSES at -n0 (this block is inert then). Captures decisive state
-        # to distinguish "get_api_state_dict was replaced/leaked" (a
-        # non-real function object, wrong __module__/__qualname__) from "the
-        # REAL function itself returns a dict lacking the key under this
-        # worker's polluted process state" (get_api_state_dict runs fine in
-        # isolation but the route's stored `_api_state` somehow differs).
-        # REVERT this block once the root cause is read from the CI
-        # failure log -- it is diagnostic-only, not a permanent assertion.
-        import app as app_module
-
-        _gasd = app_module.get_api_state_dict
-        _direct = _gasd()
-        _diag = (
-            f"_gasd type={type(_gasd).__name__!r} "
-            f"qualname={getattr(_gasd, '__qualname__', '?')!r} "
-            f"module={getattr(_gasd, '__module__', '?')!r} "
-            f"is_wrapped={getattr(_gasd, '__wrapped__', None) is not None} "
-            f"direct_keys={sorted(_direct.keys())!r} "
-            f"direct_exit_authority={_direct.get('exit_authority')!r} "
-            f"os_getenv_EXIT_AUTHORITY={os.getenv('EXIT_AUTHORITY')!r} "
-            f"route_exit_authority_type={type(data.get('exit_authority')).__name__!r}"
-        )
-
         assert data.get("exit_authority") in ("per_symphony", "port_level"), (
-            f"AC-P2.12.2: exit_authority must reflect the active EXIT_AUTHORITY "
-            f"env value. DIAGNOSTIC: {_diag}"
+            "AC-P2.12.2: exit_authority must reflect the active EXIT_AUTHORITY env value"
         )
 
     def test_daemon_started_at_is_iso8601(self, flask_client):
