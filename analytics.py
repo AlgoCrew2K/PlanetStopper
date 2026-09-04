@@ -1005,6 +1005,67 @@ def get_symphony_cumulative_return(
     return {"if_held": if_held, "dry_run": dry_run, "_twr_fallback": _twr_fallback}
 
 
+def _normalized_peak_to_trough_drawdown(pct_returns: list[float]) -> float | None:
+    """
+    NORMALIZED (peak-relative) max drawdown of a percent-scale daily-return series,
+    expressed as a POSITIVE percentage magnitude (D8 convention: operator-facing MDD
+    is canonically a positive magnitude, never signed).
+
+    dd = (peak - value) / peak, evaluated at every step of the compounded NAV path
+    and maxed — the industry-standard peak-to-trough convention, matching BOTH
+    Composer's own max_drawdown scalar (a normalized fraction) AND quantstats' own
+    metric. This is deliberately NOT the un-normalized percentage-point subtraction
+    (peak - value with no "/ peak") the pre-fix formula used — that alternative is
+    provably translation-invariant to any constant shift of the equity curve (a
+    normalized ratio cannot be, since its denominator moves with the shift) and
+    measures a divergence residual, not a drawdown. See
+    docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md's AC-0a/AC-0b sections
+    (DE-PERF-WINDOW-TRUTH-001) for the full derivation of the formula this replaces.
+
+    Delegates to quantstats.stats.max_drawdown() directly (lazy import, mirrors
+    compute_quantstats_metrics' own lazy-import pattern) rather than a hand-rolled
+    loop: quantstats prepends a phantom baseline of 1.0 one step before the first
+    real data point before computing the running-peak ratio, which a naive
+    un-anchored hand loop omits. Empirically proven this is load-bearing, not
+    cosmetic — a series where the single worst day is day 1 of the window yields
+    0.0 un-anchored vs the correct 5.0 anchored (same source doc). Reusing the
+    library call (adopt, don't invent — the SAME function already backs the
+    Performance tab's compute_quantstats_metrics, audit-confirmed correct) is the
+    only way to get this anchor behavior without re-deriving and re-verifying it.
+
+    Returns None on fewer than _MIN_QUANTSTATS_OBSERVATIONS finite values, or on a
+    non-finite result (mirrors compute_quantstats_metrics' own contract).
+    """
+    if not pct_returns:
+        return None
+    finite_vals: list[float] = []
+    for v in pct_returns:
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(fv):
+            finite_vals.append(fv)
+    if len(finite_vals) < _MIN_QUANTSTATS_OBSERVATIONS:
+        return None
+
+    import pandas as pd
+    import quantstats.stats as qs_stats
+
+    # quantstats/compute_quantstats_metrics convention: percent-scale input (e.g.
+    # -0.357 meaning -0.357%) is divided by 100 to fraction scale before compounding.
+    fraction_vals = [v / 100.0 for v in finite_vals]
+    idx = pd.date_range("2000-01-01", periods=len(fraction_vals), freq="D")
+    series = pd.Series(fraction_vals, index=idx, dtype=float)
+    try:
+        result = float(qs_stats.max_drawdown(series))
+    except Exception:
+        return None
+    if not math.isfinite(result):
+        return None
+    return abs(result) * 100.0
+
+
 def get_symphony_max_drawdown(
     sym_dict: dict,
     bot_state_entry: dict | None,
@@ -1013,73 +1074,74 @@ def get_symphony_max_drawdown(
     conn: sqlite3.Connection | None = None,
 ) -> dict:
     """
-    Per-symphony Max Drawdown.
+    Per-symphony Max Drawdown (AC-1/AC-2, DE-PERF-WINDOW-TRUTH-001 remediation).
 
-    if_held: max_drawdown from Composer (positive float, magnitude convention).
-    dry_run: peak-to-trough drawdown of the BOT's equity path (AC-M1F.3.3). The bot
-             equity at each EOD step t is the held baseline plus the cumulative
-             guard-alpha divergence up to that step:
-                 bot_equity[t] = if_held + (prod_shadow[0..t] - prod_current[0..t]) * 100
-             This is the divergence-based equity series, NOT the absolute shadow
-             cumulative — so for an untriggered symphony (shadow == current every day)
-             the bot equity is flat at if_held and MDD is exactly 0 (no phantom
-             drawdown). Once the guard triggers, the shadow series freezes while the
-             held (current) series keeps moving, and the divergence opens a real
-             drawdown that this peak-to-trough captures.
-             Falls back to if_held when no shadow trajectory exists and trading_day was
-             not explicitly provided — preserves pre-M1F semantics for old callers.
-             None when shadow_history is explicitly queried (trading_day present) but empty
-             (AC-M1F.3.5).
+    if_held / dry_run: a normalized, positive-percentage-magnitude (D8
+    convention) peak-to-trough drawdown — (peak-value)/peak, ×100 — via
+    _normalized_peak_to_trough_drawdown, over the SAME shared LIFETIME
+    shadow_history window: held compounds current_return, bot compounds
+    shadow_return (get_symphony_bot_and_held_daily_returns, days=None). Genuinely
+    comparable quantities — unlike the PRIOR formula, which paired an
+    un-normalized percentage-point subtraction (the old dry_run) against
+    Composer's own normalized fraction-scale scalar (the old if_held) over
+    MISMATCHED windows (Composer lifetime vs shadow-history-only). See
+    docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md's AC-0a/AC-0b sections for
+    the full derivation of both defects this replaces.
 
-    Returns {"if_held": None, "dry_run": None} when max_drawdown is None (missing data).
+    if_held_lifetime: Composer's own lifetime max_drawdown scalar — a normalized
+    fraction (peak-to-trough since invested_since, full holding history),
+    multiplied by 100 for percentage scale. This IS the function's OLD if_held
+    computation, preserved verbatim under this new key (AC-2) — render as its OWN
+    separate, clearly-labelled figure ("Lifetime Max Drawdown · since inception"),
+    never as a leg of the Bot-vs-Held comparison above. Independent of
+    shadow_history; None when sym_dict["max_drawdown"] is None (Composer data
+    missing for this symphony).
+
+    n_obs: count of trading days the if_held/dry_run peak-to-trough was computed
+    over (one count backs both legs — they share one window by construction).
+    Always an int, never None: 0 when no/insufficient shadow_history, so callers
+    can distinguish "no computation happened" from "computed on a thin, unstable
+    window" (n_obs below a statistical-sufficiency floor) without inferring it
+    from a None check on if_held/dry_run alone.
+
+    LATENT (accepted, not fixed this cycle — see docs/generated/analytics.md's
+    "Known latents" section): `trading_day` is accepted, for signature parity
+    with the sibling get_symphony_cumulative_return/get_symphony_today_change,
+    but is NOT referenced anywhere in this function's body — it always reads the
+    full CURRENT shadow_history table regardless of what date is passed.
 
     conn: F-1 — optional pre-opened read-only connection; reused instead of
     opening a fresh connect() per call (see _load_latest_shadow_row_for_analytics
     for the shared-connection rationale).
     """
-    if sym_dict.get("max_drawdown") is None:
-        return {"if_held": None, "dry_run": None}
-    if_held = float(sym_dict["max_drawdown"]) * 100.0
-
     symphony_id = sym_dict.get("id")
 
+    _raw_lifetime_mdd = sym_dict.get("max_drawdown")
+    if_held_lifetime: float | None = (
+        float(_raw_lifetime_mdd) * 100.0 if _raw_lifetime_mdd is not None else None
+    )
+
+    if_held: float | None = None
     dry_run: float | None = None
+    n_obs = 0
+
     if symphony_id:
         _db_file = db_path if db_path is not None else _get_shadow_db_file()
-        trajectory = _get_shadow_divergence_trajectory(symphony_id, _db_file, conn=conn)
-        if trajectory is not None:
-            # Build the bot's EPOCH-ADDITIVE divergence equity series, then
-            # peak-to-trough (semantic B). Divergence accrues within each epoch from
-            # its OWN anchor (products reset per epoch); the running realized alpha
-            # carries across epoch boundaries as the next epoch's starting level, so a
-            # prior epoch's locked-in guard effect is preserved WITHOUT chaining its
-            # market returns into the later epoch's products. Untriggered epochs add a
-            # flat segment at the running level (zero intra-epoch divergence).
-            bot_equity: list[float] = []
-            running_alpha = 0.0
-            for epoch_pairs in trajectory:
-                product_shadow = 1.0
-                product_current = 1.0
-                epoch_start_alpha = running_alpha
-                for shadow_r, current_r in epoch_pairs:
-                    product_shadow *= 1.0 + shadow_r / 100.0
-                    product_current *= 1.0 + current_r / 100.0
-                    bot_equity.append(
-                        if_held + epoch_start_alpha + (product_shadow - product_current) * 100.0
-                    )
-                running_alpha = epoch_start_alpha + (product_shadow - product_current) * 100.0
-            if len(bot_equity) >= 2:
-                peak = bot_equity[0]
-                max_dd = 0.0
-                for val in bot_equity:
-                    if val > peak:
-                        peak = val
-                    dd = peak - val
-                    if dd > max_dd:
-                        max_dd = dd
-                dry_run = max_dd
+        series = get_symphony_bot_and_held_daily_returns(
+            symphony_id, _db_file, days=None, conn=conn
+        )
+        if series is not None:
+            _dates, bot_returns, held_returns = series
+            n_obs = len(_dates)
+            if_held = _normalized_peak_to_trough_drawdown(held_returns)
+            dry_run = _normalized_peak_to_trough_drawdown(bot_returns)
 
-    return {"if_held": if_held, "dry_run": dry_run}
+    return {
+        "if_held": if_held,
+        "dry_run": dry_run,
+        "if_held_lifetime": if_held_lifetime,
+        "n_obs": n_obs,
+    }
 
 
 def _value_weighted_portfolio(
@@ -1248,6 +1310,19 @@ def get_portfolio_cumulative_return(
     )
 
 
+def _symphony_lifetime_mdd_for_vw(sym_dict: dict, bot_state_entry: dict | None) -> dict:
+    """Per-symphony Composer lifetime MDD scalar, shaped for _value_weighted_portfolio
+    (AC-2's portfolio-level if_held_lifetime aggregate, DE-PERF-WINDOW-TRUTH-001).
+    if_held and dry_run are set to the IDENTICAL lifetime value so the VW aggregate
+    collapses to one honest weighted-average scalar — _value_weighted_portfolio
+    requires this {"if_held", "dry_run"} shape from every per_sym_fn it calls, and
+    this is the minimal shape that satisfies it without touching that shared
+    function's own contract."""
+    _raw = sym_dict.get("max_drawdown")
+    lifetime = float(_raw) * 100.0 if _raw is not None else None
+    return {"if_held": lifetime, "dry_run": lifetime}
+
+
 def get_portfolio_max_drawdown(
     symphonies: list[dict],
     bot_state: dict,
@@ -1256,20 +1331,70 @@ def get_portfolio_max_drawdown(
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict:
-    """Value-weighted portfolio Max Drawdown across all symphonies.
+    """
+    Portfolio-level Max Drawdown (AC-1/AC-2/AC-3, DE-PERF-WINDOW-TRUTH-001
+    remediation).
+
+    if_held / dry_run: a normalized, positive-percentage-magnitude (D8
+    convention) peak-to-trough drawdown — (peak-value)/peak, ×100 — computed over
+    the value-weighted (bot_state current_value) AGGREGATE daily-return series
+    (get_portfolio_bot_and_held_daily_returns, days=None), NOT a value-weighted
+    average of per-symphony MDD scalars — that average is mathematically wrong at
+    the portfolio level (co-occurring declines can produce a portfolio drawdown
+    deeper than any single constituent's own MDD; see app.py's D-02 comment on
+    this exact point). held compounds current_return, bot compounds
+    shadow_return, over the SAME shared LIFETIME window — genuinely comparable,
+    unlike the PRIOR formula, which paired an un-normalized percentage-point
+    subtraction against Composer's own normalized fraction-scale scalar (see
+    get_symphony_max_drawdown's docstring and
+    docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md for the full defect
+    derivation this replaces).
+
+    if_held_lifetime: value-weighted (bot_state current_value) aggregate of each
+    symphony's OWN Composer lifetime max_drawdown scalar (a normalized fraction,
+    ×100 for percentage scale) — structurally the SAME computation this
+    function's OLD if_held performed, relocated under this new key (AC-2).
+    Render as its OWN separate, clearly-labelled figure, never as a leg of the
+    Bot-vs-Held comparison above. Distinct from (not a replacement for) the
+    account-level Composer scalar app.py caches from _refresh_account_totals
+    (_account_totals_cache["portfolio_mdd"]) — that field stays the preferred
+    AC-2 source when warm; this key is the cold-cache/per-symphony-composed
+    fallback.
+
+    n_obs: count of trading days the if_held/dry_run peak-to-trough was computed
+    over. Always an int, never None.
+
+    LATENT (accepted, not fixed this cycle): `trading_day` is accepted, for
+    signature parity with the sibling get_portfolio_cumulative_return/
+    get_portfolio_today_change, but is NOT used — see get_symphony_max_drawdown's
+    docstring and docs/generated/analytics.md's "Known latents" section.
 
     conn: F-1 — optional pre-opened read-only connection (see
     get_portfolio_today_change for the shared-connection rationale).
     """
-    return _value_weighted_portfolio(
-        symphonies,
-        bot_state,
-        get_symphony_max_drawdown,
-        none_on_empty=True,
-        trading_day=trading_day,
-        db_path=db_path,
-        conn=conn,
+    _db_file = db_path if db_path is not None else _get_shadow_db_file()
+
+    _lifetime_agg = _value_weighted_portfolio(
+        symphonies, bot_state, _symphony_lifetime_mdd_for_vw, none_on_empty=True
     )
+    if_held_lifetime = _lifetime_agg.get("if_held")
+
+    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None, conn=conn)
+    if_held: float | None = None
+    dry_run: float | None = None
+    n_obs = 0
+    if series is not None:
+        _dates, bot_returns, held_returns = series
+        n_obs = len(_dates)
+        if_held = _normalized_peak_to_trough_drawdown(held_returns)
+        dry_run = _normalized_peak_to_trough_drawdown(bot_returns)
+
+    return {
+        "if_held": if_held,
+        "dry_run": dry_run,
+        "if_held_lifetime": if_held_lifetime,
+        "n_obs": n_obs,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1584,6 +1709,7 @@ def get_portfolio_daily_returns_from_shadow(
 def get_portfolio_bot_and_held_daily_returns(
     db_file: str | None = None,
     days: int | None = 125,
+    conn: sqlite3.Connection | None = None,
 ) -> tuple[list[str], list[float], list[float]] | None:
     """Build BOTH the portfolio Bot and Held continuous daily-return series from
     shadow_history — the source for the hero chart's two distinct lines (AC-4b/F2-F3).
@@ -1614,6 +1740,11 @@ def get_portfolio_bot_and_held_daily_returns(
         db_file: shadow DB path override (tests); defaults to the live shadow DB.
         days:    cap on the most recent trading days to include. ``None`` = all
                  history (the "All Time" window).
+        conn:    F-1 — optional pre-opened read-only connection; reused instead of
+                 opening a fresh connect() per call (AC-1, DE-PERF-WINDOW-TRUTH-001 —
+                 threaded so get_portfolio_max_drawdown's per-poll call doesn't
+                 reintroduce the connects-per-poll class of defect F-1 fixed
+                 elsewhere in this file).
 
     Returns:
         (dates_ascending, bot_daily_returns_pct, held_daily_returns_pct), or None
@@ -1623,8 +1754,13 @@ def get_portfolio_bot_and_held_daily_returns(
 
     _db_file = db_file if db_file is not None else _get_shadow_db_file()
     try:
-        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
-        rows = conn.execute(
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        )
+        rows = _conn.execute(
             "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
             "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
@@ -1632,7 +1768,8 @@ def get_portfolio_bot_and_held_daily_returns(
             "                  AND s2.trading_day = shadow_history.trading_day) "
             "ORDER BY trading_day ASC, symphony_id ASC",
         ).fetchall()
-        conn.close()
+        if _owns_conn:
+            _conn.close()
     except Exception:
         return None
 
@@ -1690,6 +1827,7 @@ def get_symphony_bot_and_held_daily_returns(
     symphony_id: str,
     db_file: str | None = None,
     days: int | None = 125,
+    conn: sqlite3.Connection | None = None,
 ) -> tuple[list[str], list[float], list[float]] | None:
     """Per-symphony analogue of ``get_portfolio_bot_and_held_daily_returns`` — the
     canonical CONTINUOUS shadow_history series for ONE symphony (AC-3 / MA-6 /
@@ -1719,6 +1857,11 @@ def get_symphony_bot_and_held_daily_returns(
         db_file: shadow DB path override (tests); defaults to the live shadow DB.
         days:    cap on the most recent trading days to include. ``None`` = all
                  history.
+        conn:    F-1 — optional pre-opened read-only connection; reused instead of
+                 opening a fresh connect() per call (AC-1, DE-PERF-WINDOW-TRUTH-001 —
+                 threaded so get_symphony_max_drawdown's per-symphony-per-poll call
+                 doesn't reintroduce the connects-per-poll class of defect F-1 fixed
+                 elsewhere in this file).
 
     Returns:
         (dates_ascending, bot_daily_returns_pct, held_daily_returns_pct), or None
@@ -1730,8 +1873,13 @@ def get_symphony_bot_and_held_daily_returns(
 
     _db_file = db_file if db_file is not None else _get_shadow_db_file()
     try:
-        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
-        rows = conn.execute(
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        )
+        rows = _conn.execute(
             "SELECT trading_day, shadow_return, current_return "
             "FROM shadow_history "
             "WHERE symphony_id = ? "
@@ -1741,7 +1889,8 @@ def get_symphony_bot_and_held_daily_returns(
             "ORDER BY trading_day ASC",
             (symphony_id,),
         ).fetchall()
-        conn.close()
+        if _owns_conn:
+            _conn.close()
     except Exception:
         return None
 
@@ -2002,6 +2151,17 @@ def compute_windowed_portfolio_strip(
     F7 vol gate: vol_bot/vol_held are None and insufficient_history is True when the
     window's trading-day count is below _WINDOWED_VOL_MIN_DAYS (Bailey/de-Prado floor).
 
+    AC-3 (DE-PERF-WINDOW-TRUTH-001): max_drawdown is genuinely windowed — it is
+    NOT sourced from get_portfolio_max_drawdown (which stays a LIFETIME/full-
+    shadow_history computation by design, matching its own unchanged signature).
+    Instead it is computed directly over THIS function's own already-sliced
+    bot_pct/held_pct window arrays (the same ones vol_bot/vol_held already use),
+    via the same _normalized_peak_to_trough_drawdown helper, gated by the SAME
+    _WINDOWED_VOL_MIN_DAYS sufficiency floor as vol — both legs are None (not a
+    noisy real value) below that floor, mirroring vol_bot/vol_held's own
+    None-below-floor treatment rather than reporting a statistically meaningless
+    number alongside insufficient_history=True.
+
     conn: F-1 — optional pre-opened read-only connection, forwarded to every
     per-symphony call below (the 3 portfolio helpers plus the windowed
     guard-alpha loop) so the whole windowed strip shares ONE connection
@@ -2009,11 +2169,10 @@ def compute_windowed_portfolio_strip(
     """
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
 
-    # CR / MDD / TC reuse the existing per-symphony helpers via VW aggregation. The
+    # CR / TC reuse the existing per-symphony helpers via VW aggregation. The
     # windowed guard alpha is added to the (window-independent) if_held baseline so the
     # picker re-windows only the guard EFFECT, never the Composer lifetime anchor.
     cr = get_portfolio_cumulative_return(symphonies, bot_state, db_path=_db_file, conn=conn)
-    mdd = get_portfolio_max_drawdown(symphonies, bot_state, db_path=_db_file, conn=conn)
     # today_change is window-independent (today only). It needs last_percent_change,
     # which the live route supplies but a minimal caller may omit; degrade to a null
     # strip entry rather than failing the whole windowed strip.
@@ -2061,10 +2220,14 @@ def compute_windowed_portfolio_strip(
     if cr_if_held is not None and windowed_alpha is not None:
         cr_out = {"if_held": cr_if_held, "dry_run": cr_if_held + windowed_alpha}
 
-    # Windowed portfolio daily series -> annualized vol, gated by the day-count floor.
-    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None)
+    # Windowed portfolio daily series -> annualized vol + normalized MDD, both
+    # gated by the same day-count floor (AC-3: max_drawdown is genuinely windowed,
+    # not the lifetime get_portfolio_max_drawdown figure — see docstring above).
+    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None, conn=conn)
     vol_bot: float | None = None
     vol_held: float | None = None
+    mdd_bot: float | None = None
+    mdd_held: float | None = None
     window_day_count = 0
     if series is not None:
         all_dates, bot_pct, held_pct = series
@@ -2073,15 +2236,19 @@ def compute_windowed_portfolio_strip(
         idx = [i for i, d in enumerate(all_dates) if cutoff_iso is None or str(d) >= cutoff_iso]
         window_day_count = len(idx)
         if window_day_count >= _WINDOWED_VOL_MIN_DAYS:
-            vol_bot = compute_portfolio_annualized_vol([bot_pct[i] for i in idx])
-            vol_held = compute_portfolio_annualized_vol([held_pct[i] for i in idx])
+            _windowed_bot = [bot_pct[i] for i in idx]
+            _windowed_held = [held_pct[i] for i in idx]
+            vol_bot = compute_portfolio_annualized_vol(_windowed_bot)
+            vol_held = compute_portfolio_annualized_vol(_windowed_held)
+            mdd_bot = _normalized_peak_to_trough_drawdown(_windowed_bot)
+            mdd_held = _normalized_peak_to_trough_drawdown(_windowed_held)
 
     insufficient_history = window_day_count < _WINDOWED_VOL_MIN_DAYS
 
     return {
         "today_change": tc,
         "cumulative_return": cr_out,
-        "max_drawdown": mdd,
+        "max_drawdown": {"if_held": mdd_held, "dry_run": mdd_bot},
         "vol_bot": vol_bot,
         "vol_held": vol_held,
         "guard_alpha": windowed_alpha,

@@ -332,38 +332,37 @@ class TestTriggeredDivergenceGolden:
 
 class TestMddOnBotEquityPath:
     """
-    get_symphony_max_drawdown dry_run must reflect peak-to-trough on the BOT's
-    equity path, which is defined by the cumulative divergence:
+    [SUPERSEDED formula, DE-PERF-WINDOW-TRUTH-001 AC-1/AC-0b spec supersession]:
+    this class previously pinned dry_run as peak-to-trough on a DIVERGENCE-
+    anchored equity path (bot_equity[t] = if_held + cumulative divergence).
+    That formula IS the audit's #1 defect: because if_held is added UNIFORMLY
+    to every point, peak-to-trough cancels it by construction, making dry_run
+    provably translation-invariant to if_held's value — measured impact,
+    98.7% of the rendered Bot-vs-Held badge was basis artifact
+    (docs/audit/PERF-WINDOW-TRUTH-2026-09-03.md).
 
-      bot_equity[t] = if_held + (∏shadow[0..t] − ∏current[0..t]) × 100
-
-    The current code builds the MDD series from ∏shadow alone (analytics.py:733-737),
-    which is the ABSOLUTE shadow trajectory, not the relative guard effect.
-
-    For an untriggered symphony, the bot equity path is flat at if_held — MDD == 0.
-    For a triggered symphony, the bot equity series correctly captures the loss
-    incurred on the exit day.
+    NEW formula (docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md AC-0b,
+    "adopt, don't invent" — reuses quantstats.stats.max_drawdown()): dry_run
+    is the NORMALIZED peak-to-trough `(peak-value)/peak * 100` of the BOT'S
+    OWN shadow_return NAV path, computed entirely independently of if_held
+    and of current_return. if_held is the SAME normalized formula applied to
+    the HELD (current_return) NAV path — so for a never-triggered symphony
+    (shadow_return == current_return every day), dry_run and if_held are
+    computed from the IDENTICAL underlying return sequence and are therefore
+    EQUAL — but that shared value is NOT necessarily 0.0 (only true if the
+    market itself never drew down); 0.0 was an artifact of the superseded
+    if_held-anchored formula, not a property of a genuine market NAV path.
     """
 
-    def test_never_triggered_mdd_is_zero(self, tmp_path):
+    def test_never_triggered_dry_run_equals_if_held_not_necessarily_zero(self, tmp_path):
         """
-        MDD ANCHOR INVARIANT: never-triggered symphony → bot shadow-window MDD == 0.
-
-        DERIVATION:
-          shadow_return == current_return on every day (guard never acted).
-          Bot equity series: bot_equity[t] = if_held + (∏shadow[0..t] - ∏current[0..t])*100
-          Since shadow == current: ∏shadow[0..t] == ∏current[0..t] for all t.
-          Therefore bot_equity[t] = if_held + 0 = if_held  (constant, no movement).
-          Peak-to-trough of a constant series = 0.0 exactly.
-
-          This is the MDD counterpart to the CR 0-alpha invariant:
-            CR anchor:  Guard Alpha = dry_run_CR - if_held = 0 when guard never acted.
-            MDD anchor: dry_run_MDD = 0 (bot shadow-window drawdown) when guard never acted.
-          Both invariants must hold simultaneously for the fix to be correct.
-
-        NOTE: dry_run_MDD is the drawdown of the bot's divergence-based equity path
-        over the SHADOW WINDOW — it is not the Composer lifetime MDD (if_held).
-        The invariant is specifically about the shadow-window bot path.
+        [Renamed + reformulated] MDD ANCHOR INVARIANT (new formula): a
+        never-triggered symphony (shadow_return == current_return every day)
+        must have dry_run == if_held EXACTLY -- both legs compound the
+        identical return sequence through the identical normalized formula.
+        The 3-row series below has a genuine intra-window drawdown (peak
+        after day 1 at +1%, trough after day 2), so the shared value is
+        NON-zero -- proving this is a real equality, not a degenerate 0==0.
         """
         rows = [
             {
@@ -392,25 +391,36 @@ class TestMddOnBotEquityPath:
         result = get_symphony_max_drawdown(sym, bot_state_entry=None, db_path=db_file)
 
         assert result["dry_run"] is not None, "dry_run must not be None with 3 shadow rows"
-        # DERIVED: shadow==current → bot equity flat → MDD = 0 (not captured from output)
-        assert result["dry_run"] == pytest.approx(0.0, abs=1e-9), (
-            f"MDD ANCHOR FAIL: never-triggered symphony has bot shadow-window MDD "
-            f"= {result['dry_run']:.6f}% (derived: must be exactly 0%). "
-            "When shadow == current, bot equity is flat at if_held — no drawdown possible. "
-            "A non-zero value means the MDD consumer uses the absolute shadow series "
-            "(old bug) rather than the divergence-based equity path."
+        assert result["if_held"] is not None, "if_held must not be None with 3 shadow rows"
+        assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-9), (
+            f"MDD ANCHOR FAIL: never-triggered symphony (shadow==current every "
+            f"day) has dry_run={result['dry_run']!r} != if_held={result['if_held']!r} "
+            f"-- both legs must compound the identical return sequence through "
+            f"the identical normalized peak-to-trough formula."
+        )
+        expected_shared_value = _reference_normalized_max_drawdown_pct(
+            [r["current_return"] for r in rows]
+        )
+        assert result["if_held"] == pytest.approx(expected_shared_value, abs=1e-6), (
+            f"the shared dry_run/if_held value must equal the independently-"
+            f"computed normalized peak-to-trough of the return sequence "
+            f"({expected_shared_value}); got {result['if_held']}. This must be "
+            f"NON-zero for this 3-row series -- a 0.0 result here would mean "
+            f"the superseded if_held-anchored formula (which always yields 0 "
+            f"for shadow==current) is still in use."
+        )
+        assert result["if_held"] != pytest.approx(0.0, abs=1e-6), (
+            "test construction error: this 3-row series must have a genuine "
+            "non-zero drawdown so the assertion above is non-vacuous"
         )
 
     def test_never_triggered_mdd_anchor_multiple_market_scenarios(self, tmp_path):
         """
-        MDD ANCHOR PROPERTY: the zero-MDD invariant holds for ANY market scenario
-        where the guard never acted (shadow == current), including volatile paths
-        with large intraday swings that would produce non-zero MDD on the absolute
-        shadow series.
-
-        Tests 3 scenarios with distinct market profiles (rising, volatile, falling)
-        to confirm the invariant is not coincidentally true for one case.
-        Tolerance: abs=1e-9 — derived value is exactly 0.0.
+        MDD ANCHOR PROPERTY (new formula): dry_run == if_held holds for ANY
+        market scenario where the guard never acted (shadow == current),
+        regardless of the scenario's own drawdown depth -- the equality is
+        about the two legs sharing an identical INPUT sequence, not about the
+        drawdown being zero.
         """
         scenarios = [
             # Rising market — absolute shadow MDD would be near 0 (benign baseline)
@@ -491,30 +501,35 @@ class TestMddOnBotEquityPath:
 
             result = get_symphony_max_drawdown(sym, bot_state_entry=None, db_path=db_file)
             assert result["dry_run"] is not None, f"scenario {i}: dry_run is None"
-            # DERIVED: shadow==current in all rows → divergence==0 every step → MDD==0
-            assert result["dry_run"] == pytest.approx(0.0, abs=1e-9), (
-                f"MDD ANCHOR FAIL (scenario {i}): bot shadow-window MDD "
-                f"= {result['dry_run']:.6f}% (derived: must be 0.0 when shadow==current). "
-                "The absolute shadow series produces non-zero MDD in this scenario; "
-                "the divergence-based path does not."
+            assert result["if_held"] is not None, f"scenario {i}: if_held is None"
+            assert result["dry_run"] == pytest.approx(result["if_held"], abs=1e-9), (
+                f"MDD ANCHOR FAIL (scenario {i}): dry_run={result['dry_run']!r} != "
+                f"if_held={result['if_held']!r} despite shadow==current on every "
+                f"row -- both legs must be computed from the identical return "
+                f"sequence via the identical normalized formula."
+            )
+            expected = _reference_normalized_max_drawdown_pct([r["current_return"] for r in rows])
+            assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
+                f"scenario {i}: shared dry_run/if_held value {result['if_held']} "
+                f"does not match the independently-computed normalized "
+                f"peak-to-trough {expected}"
             )
 
-    def test_triggered_mdd_equals_peak_to_trough_on_divergence_series(self, tmp_path):
+    def test_triggered_mdd_dry_run_is_normalized_peak_to_trough_of_shadow_series_alone(
+        self, tmp_path
+    ):
         """
-        GOLDEN MDD: triggered symphony.
-
-        Bot equity series (from fixture):
-          day 1: if_held + (∏shadow[1] − ∏current[1])*100 = 5.0 + 0.0 = 5.0
-          day 2: if_held + (∏shadow[2] − ∏current[2])*100 = 5.0 + 0.0 = 5.0
-          day 3: if_held + (∏shadow[3] − ∏current[3])*100 = 5.0 + (−2.3346) = 2.6654
-
-        Peak = 5.0 (days 1-2), trough = 2.6654 (day 3).
-        MDD = 5.0 − 2.6654 = 2.3346%.
+        [Reformulated] GOLDEN MDD: triggered symphony. Under the NEW formula,
+        dry_run is the normalized peak-to-trough of the BOT's OWN shadow_return
+        NAV path -- computed with ZERO reference to if_held or current_return
+        (the old if_held-anchored formula this test previously pinned is the
+        exact translation-invariance defect the audit found). Expected value
+        is derived in-test directly from the fixture's shadow_return column
+        via an independent reference implementation, never hardcoded.
         """
         fixture = _load()["scenarios"]["triggered_guard_acted"]
         rows = fixture["shadow_history_rows"]
         if_held = fixture["if_held_pct"]
-        expected_mdd = fixture["expected_mdd_pct"]
         sym_id = "sym_mdd_triggered"
 
         db_file = _make_db(tmp_path, sym_id, rows)
@@ -522,9 +537,48 @@ class TestMddOnBotEquityPath:
 
         result = get_symphony_max_drawdown(sym, bot_state_entry=None, db_path=db_file)
 
-        assert result["dry_run"] == pytest.approx(expected_mdd, abs=1e-6), (
-            f"MDD GOLDEN FAIL: dry_run={result['dry_run']:.6f}%, "
-            f"expected {expected_mdd:.6f}% (peak-to-trough on bot equity path). "
-            "MDD must be built from the divergence-based equity series, "
-            "not the absolute shadow cumulative."
+        expected_dry_run = _reference_normalized_max_drawdown_pct(
+            [r["shadow_return"] for r in rows]
         )
+        assert result["dry_run"] == pytest.approx(expected_dry_run, abs=1e-6), (
+            f"MDD GOLDEN FAIL: dry_run={result['dry_run']!r}, expected "
+            f"{expected_dry_run!r} (normalized peak-to-trough of shadow_return "
+            f"alone). dry_run must be built from the bot's OWN NAV path, never "
+            f"anchored to if_held."
+        )
+        # Translation-invariance-done-right: dry_run must NOT depend on the
+        # fixture's if_held_pct / Composer max_drawdown scalar at all.
+        sym_different_scalar = _sym(sym_id, if_held_pct=if_held + 50.0, max_dd_pct=99.0)
+        result_different_scalar = get_symphony_max_drawdown(
+            sym_different_scalar, bot_state_entry=None, db_path=db_file
+        )
+        assert result_different_scalar["dry_run"] == pytest.approx(result["dry_run"], abs=1e-9), (
+            "dry_run must be identical regardless of if_held_pct/max_drawdown "
+            "injected into sym_dict -- it is computed purely from "
+            "shadow_history.shadow_return"
+        )
+
+
+def _reference_normalized_max_drawdown_pct(returns_pct: list[float]) -> float:
+    """Independent reference implementation of the CONFIRMED AC-0b units
+    convention (docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md): NORMALIZED
+    peak-to-trough `(peak-value)/peak`, with a phantom NAV=1.0 baseline
+    active before the first real observation (matches quantstats.stats.
+    max_drawdown's phantom-baseline-then-expanding-max mechanism -- verified
+    to agree with quantstats.stats.max_drawdown() to float-noise precision
+    across multiple hand-checked series, including a first-day-worst case
+    where a naive un-anchored loop would diverge). Returns a POSITIVE
+    percentage magnitude. Not imported from analytics.py -- an independent
+    formula, not a mirror of the implementation under test.
+    """
+    peak_nav = 1.0
+    nav = 1.0
+    max_dd = 0.0
+    for r in returns_pct:
+        nav *= 1.0 + r / 100.0
+        if nav > peak_nav:
+            peak_nav = nav
+        dd = (peak_nav - nav) / peak_nav
+        if dd > max_dd:
+            max_dd = dd
+    return max_dd * 100.0

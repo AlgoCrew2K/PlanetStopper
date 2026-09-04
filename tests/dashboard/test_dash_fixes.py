@@ -620,12 +620,34 @@ class TestChainLinkGoldenPerDayReturns:
             "Correct formula: dry_run = if_held + (prod_shadow - prod_current)*100."
         )
 
-        # MDD: bot equity flat at if_held (shadow==current → divergence==0 each step).
-        # MDD of a flat series == 0. Buggy code builds absolute shadow cum_series → non-zero.
-        expected_mdd = 0.0
-        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
+        # [SUPERSEDED formula, DE-PERF-WINDOW-TRUTH-001]: the OLD if_held-anchored
+        # divergence formula made the bot equity path flat at if_held whenever
+        # shadow==current (any divergence chain contributes exactly 0), so MDD
+        # was trivially 0.0 for THIS scenario regardless of the shadow_return
+        # values themselves. Under the AC-1 remediation (analytics.py @
+        # 3ec97048), dry_run is the NORMALIZED peak-to-trough of the
+        # shadow_return series alone -- computed with zero reference to
+        # if_held -- so a genuinely declining series like [-3.0, -3.0, -3.0]
+        # produces a real, non-zero drawdown. Since current_return ==
+        # shadow_return on every row here, if_held (also independently
+        # recomputed, normalized peak-to-trough of current_return) equals
+        # dry_run exactly -- both compound the identical sequence.
+        # Verified via quantstats.stats.max_drawdown() directly (matches
+        # tests/analytics/test_mdd_window_truth.py's cross-check convention),
+        # not hand-derived: 8.732700000000005.
+        expected_mdd = 8.732700000000005
+        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
             f"F-CHAIN-LINK-1 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
-            f"expected 0.0% (bot equity flat when shadow==current, no drawdown)."
+            f"expected {expected_mdd:.6f}% (normalized peak-to-trough of the "
+            f"shadow_return series [-3.0, -3.0, -3.0] alone -- NOT 0.0, which "
+            f"would mean dry_run is still anchored to a flat if_held-based "
+            f"equity path instead of being computed from shadow_return "
+            f"independently)."
+        )
+        assert mdd_result["if_held"] == pytest.approx(mdd_result["dry_run"], abs=1e-9), (
+            "if_held must equal dry_run here -- current_return == "
+            "shadow_return on every row, so both legs compound the identical "
+            "sequence through the identical normalized formula"
         )
 
     def test_mixed_per_day_returns_cr_and_mdd_match_formula(self, tmp_path):
@@ -672,11 +694,28 @@ class TestChainLinkGoldenPerDayReturns:
             f"expected if_held={expected_dry_run:.6f}% (divergence=0 when shadow==current)."
         )
 
-        # MDD: bot equity flat at if_held when shadow==current → MDD == 0.
-        expected_mdd = 0.0
-        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, abs=1e-9), (
+        # [SUPERSEDED formula, DE-PERF-WINDOW-TRUTH-001]: see test 1's comment
+        # above for the full rationale -- MDD is no longer anchored to a flat
+        # if_held-based equity path. This test's own ORIGINAL docstring
+        # ("Expected MDD: ... = 1.2036%") already computed the real
+        # peak-to-trough of this shadow_return series a few lines above the
+        # (superseded) 0.0 assertion below it -- an internal contradiction
+        # that is itself evidence the 0.0 pinned the retired formula, not a
+        # genuine property of this series. That 1.2036% figure was itself the
+        # OLD UN-NORMALIZED peak-to-trough (peak - value, no /peak) --
+        # verified via quantstats.stats.max_drawdown() directly (the
+        # confirmed AC-0b convention), the correct NORMALIZED value is
+        # 1.1999999999999966 (peak is NOT at the series start here -- day 1's
+        # +0.8% return makes the peak ~0.296% NAV, so normalizing by that peak
+        # genuinely differs from the un-normalized subtraction, by design).
+        expected_mdd = 1.1999999999999966
+        assert mdd_result["dry_run"] == pytest.approx(expected_mdd, rel=1e-9), (
             f"F-CHAIN-LINK-2 MDD FAIL: dry_run={mdd_result['dry_run']:.6f}%, "
-            f"expected 0.0% (bot equity flat when shadow==current)."
+            f"expected {expected_mdd:.6f}% (normalized peak-to-trough of "
+            f"shadow_return=[-0.5, 0.8, -1.2, 2.0] alone)."
+        )
+        assert mdd_result["if_held"] == pytest.approx(mdd_result["dry_run"], abs=1e-9), (
+            "if_held must equal dry_run here -- current_return == shadow_return on every row"
         )
 
     def test_portfolio_aggregate_dry_run_equals_value_weighted_per_symphony(self, tmp_path):

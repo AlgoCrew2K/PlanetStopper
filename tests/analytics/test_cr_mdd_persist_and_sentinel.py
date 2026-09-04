@@ -347,8 +347,13 @@ class TestApiStateWiringProducesNonZeroCRMDD:
         self, composer_symphony_with_nonzero_fields
     ):
         """
-        When bot_state[symphony_id] contains max_drawdown != 0, the symphonies_list
-        must pass that non-zero value through to get_symphony_max_drawdown.
+        [Updated, DE-PERF-WINDOW-TRUTH-001]: when bot_state[symphony_id] carries
+        max_drawdown != 0, the symphonies_list must pass that value through to
+        get_symphony_max_drawdown's 'if_held_lifetime' output (AC-2's separately-
+        rendered figure) -- if_held/dry_run no longer read this field at all
+        (that read IS the audit's #1 defect: pairing Composer's lifetime scalar
+        as if it were a genuine windowed comparison leg), so they are honestly
+        None here (no shadow_history DB backs this fixture-only call).
         """
         from analytics import get_symphony_max_drawdown
 
@@ -368,10 +373,20 @@ class TestApiStateWiringProducesNonZeroCRMDD:
 
         result = get_symphony_max_drawdown(symphonies_list_entry, bot_state_entry)
 
-        assert result["if_held"] != pytest.approx(0.0, abs=1e-6), (
-            f"MDD if_held must be non-zero when bot_state carries real max_drawdown="
-            f"{sym['max_drawdown']}; got {result['if_held']:.6f}. "
-            f"If 0.0: bot_state does not yet have max_drawdown persisted."
+        assert result["if_held_lifetime"] != pytest.approx(0.0, abs=1e-6), (
+            f"if_held_lifetime (AC-2) must be non-zero when bot_state carries "
+            f"real max_drawdown={sym['max_drawdown']}; got "
+            f"{result['if_held_lifetime']!r}. "
+            f"If 0.0 or None: bot_state does not yet have max_drawdown persisted, "
+            f"or the if_held_lifetime key was dropped."
+        )
+        assert result["if_held"] is None, (
+            f"if_held must be None (honest no-data) -- this fixture-only call "
+            f"has no shadow_history DB backing it, so there is no windowed "
+            f"current_return path to compute a genuine peak-to-trough from. "
+            f"If this equals {sym['max_drawdown'] * 100.0}, if_held is still "
+            f"reading the Composer scalar (the superseded defect). Got "
+            f"{result['if_held']!r}"
         )
 
     def test_portfolio_cr_nonzero_given_bot_state_with_composer_fields(
@@ -417,10 +432,18 @@ class TestApiStateWiringProducesNonZeroCRMDD:
         self, all_composer_symphonies
     ):
         """
-        Portfolio MDD must be non-zero when the symphonies_list is built from
-        bot_state entries that have max_drawdown from Composer.
+        [SUPERSEDED, DE-PERF-WINDOW-TRUTH-001, AC-1 spec supersession]:
+        portfolio MDD if_held/dry_run no longer derive from bot_state's
+        Composer max_drawdown field at all -- they are a genuine windowed
+        peak-to-trough of shadow_history.current_return/shadow_return, honestly
+        None when (as here) no shadow_history DB backs the fixture symphonies.
+        This test now pins that the value-weighted portfolio-level
+        'if_held_lifetime' contribution CAN still be derived per-symphony (AC-2)
+        even though the aggregate if_held/dry_run comparison legs are None.
+        See tests/analytics/test_mdd_window_truth.py for the DB-backed
+        portfolio-level golden pin of the NEW if_held/dry_run contract.
         """
-        from analytics import get_portfolio_max_drawdown
+        from analytics import get_portfolio_max_drawdown, get_symphony_max_drawdown
 
         symphonies_list = []
         bot_state: dict[str, Any] = {}
@@ -444,10 +467,27 @@ class TestApiStateWiringProducesNonZeroCRMDD:
 
         result = get_portfolio_max_drawdown(symphonies_list, bot_state)
 
-        assert result["if_held"] != pytest.approx(0.0, abs=1e-4), (
-            f"portfolio MDD must be non-zero when symphonies carry real max_drawdown; "
-            f"got {result['if_held']:.6f}. "
-            f"If 0.0: max_drawdown persist is not yet implemented."
+        assert result["if_held"] is None, (
+            f"portfolio MDD if_held must be None (honest no-data) when no "
+            f"shadow_history DB backs any symphony -- got {result['if_held']!r}. "
+            f"If this is a non-None VW-of-Composer-scalars value, if_held is "
+            f"still reading bot_state['max_drawdown'] (the superseded defect)."
+        )
+
+        # AC-2: the Composer max_drawdown IS still meaningfully non-zero, just
+        # as each symphony's SEPARATE if_held_lifetime figure, not the
+        # portfolio comparison leg.
+        at_least_one_nonzero_if_held_lifetime = False
+        for sym_entry, bot_state_entry in zip(symphonies_list, bot_state.values()):
+            per_sym = get_symphony_max_drawdown(sym_entry, bot_state_entry)
+            if per_sym["if_held_lifetime"] not in (None, 0.0):
+                at_least_one_nonzero_if_held_lifetime = True
+                break
+        assert at_least_one_nonzero_if_held_lifetime, (
+            "AC-2: at least one fixture symphony's if_held_lifetime must be "
+            "non-zero when bot_state carries real Composer max_drawdown data "
+            "-- if_held/dry_run no longer surface this figure, but it must "
+            "remain reachable via if_held_lifetime."
         )
 
 
@@ -604,40 +644,56 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             f"got {result['if_held']}"
         )
 
-    def test_portfolio_mdd_skips_none_sentinels(self):
+    def test_portfolio_mdd_skips_none_sentinels(self, tmp_path):
         """
-        _value_weighted_portfolio for MDD must skip None-sentinel symphonies.
-        One valid (max_drawdown=0.1495) + one None → result from valid only.
+        [Updated, DE-PERF-WINDOW-TRUTH-001]: _value_weighted_portfolio for MDD
+        must skip symphonies with no computable if_held. Under the AC-1
+        redefinition, MDD if_held is sourced from shadow_history rather than
+        bot_state['max_drawdown'] -- this test now backs ONE symphony with a
+        real shadow_history DB (the genuine "valid" contributor) and leaves
+        the OTHER with zero shadow_history rows (the genuine "missing"
+        contributor), and asserts the portfolio result equals the valid
+        symphony's OWN windowed value alone -- proving skip-on-missing-data
+        still works, on the new (DB-backed) data source.
         """
-        from analytics import get_portfolio_max_drawdown
+        import sqlite3
+        from datetime import date, timedelta
 
-        valid_sym = {
-            "id": "sym-valid",
-            "simple_return": 0.65976,
-            "net_deposits": 658.5,
-            "time_weighted_return": 0.65,
-            "last_percent_change": -0.02,
-            "max_drawdown": 0.1495,
-            "value": 1000.0,
-        }
-        missing_sym = {
-            "id": "sym-missing",
-            "simple_return": None,
-            "net_deposits": None,
-            "time_weighted_return": None,
-            "last_percent_change": 0.01,
-            "max_drawdown": None,
-            "value": 500.0,
-        }
+        from analytics import get_portfolio_max_drawdown, get_symphony_max_drawdown
 
-        result = get_portfolio_max_drawdown([valid_sym, missing_sym], bot_state={})
+        db_file = str(tmp_path / "skip_none_shadow.db")
+        conn = sqlite3.connect(db_file)
+        conn.execute(
+            "CREATE TABLE shadow_history (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "symphony_id TEXT NOT NULL, ts_utc TEXT NOT NULL, trading_day TEXT NOT NULL, "
+            "current_return REAL NOT NULL, shadow_return REAL NOT NULL, "
+            "is_post_trigger INTEGER NOT NULL DEFAULT 0, position_epoch TEXT)"
+        )
+        day0 = (date.today() - timedelta(days=3)).isoformat()
+        day1 = date.today().isoformat()
+        for trading_day, cr, sr in [(day0, 0.0, 0.0), (day1, -4.5, -4.5)]:
+            conn.execute(
+                "INSERT INTO shadow_history (symphony_id, ts_utc, trading_day, "
+                "current_return, shadow_return, position_epoch) VALUES (?, ?, ?, ?, ?, ?)",
+                ("sym-valid", trading_day + "T20:00:00Z", trading_day, cr, sr, "EPOCH_A"),
+            )
+        conn.commit()
+        conn.close()
+
+        valid_sym = {"id": "sym-valid", "value": 1000.0, "max_drawdown": 0.1495}
+        missing_sym = {"id": "sym-missing-shadow-rows", "value": 500.0, "max_drawdown": None}
+
+        result = get_portfolio_max_drawdown([valid_sym, missing_sym], bot_state={}, db_path=db_file)
+        valid_alone = get_symphony_max_drawdown(valid_sym, bot_state_entry=None, db_path=db_file)
 
         assert result["if_held"] is not None, (
-            "portfolio MDD must not produce None when at least one valid symphony exists"
+            "portfolio MDD must not produce None when at least one valid symphony "
+            "(real shadow_history rows) exists"
         )
-        assert result["if_held"] == pytest.approx(valid_sym["max_drawdown"] * 100.0, abs=1e-6), (
-            f"with one valid (MDD={valid_sym['max_drawdown'] * 100.0:.2f}%) and one None-sentinel, "
-            f"portfolio MDD must equal the valid symphony's MDD in percentage-scale; got {result['if_held']}"
+        assert result["if_held"] == pytest.approx(valid_alone["if_held"], abs=1e-9), (
+            f"with one shadow-history-backed symphony and one with zero rows, "
+            f"portfolio MDD if_held must equal the valid symphony's own windowed "
+            f"if_held ({valid_alone['if_held']}); got {result['if_held']}"
         )
 
     def test_real_zero_simple_return_still_produces_zero_cr_not_none(self):
@@ -669,10 +725,17 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
             f"got {result['if_held']} — check fallback does not fire on this case"
         )
 
-    def test_real_zero_max_drawdown_still_produces_zero_mdd_not_none(self):
+    def test_real_zero_max_drawdown_still_produces_zero_if_held_lifetime_not_none(self):
         """
-        max_drawdown=0.0 is a genuine 'no drawdown ever' result (e.g. monotonically rising
-        symphony). Must render '0.00%', not '---'.
+        [SUPERSEDED, DE-PERF-WINDOW-TRUTH-001, AC-1 spec supersession]:
+        previously this test asserted a genuine Composer max_drawdown=0.0
+        rendered as if_held=0.0. Under the AC-1 redefinition, if_held is no
+        longer sourced from this field at all -- it is the honest None
+        no-data sentinel here (no shadow_history DB backs this fixture-only
+        symphony). The "genuine zero, not missing data" distinction this test
+        was protecting now applies to the SEPARATE 'if_held_lifetime' key
+        (AC-2), which correctly renders 0.0 (not None) for a genuine
+        Composer max_drawdown=0.0 -- that is what this test now pins.
         """
         from analytics import get_symphony_max_drawdown
 
@@ -688,11 +751,19 @@ class TestNoneSentinelDistinguishesMissingFromRealZero:
 
         result = get_symphony_max_drawdown(sym_zero_mdd, bot_state_entry=None)
 
-        assert result["if_held"] is not None, (
-            "max_drawdown=0.0 is a genuine value; must produce 0.0, not None"
+        assert result["if_held_lifetime"] is not None, (
+            "AC-2: max_drawdown=0.0 is a genuine Composer value; "
+            "if_held_lifetime must produce 0.0, not None (missing-data != "
+            "real zero)"
         )
-        assert result["if_held"] == pytest.approx(0.0, abs=1e-9), (
-            f"real zero max_drawdown must yield MDD=0.0; got {result['if_held']}"
+        assert result["if_held_lifetime"] == pytest.approx(0.0, abs=1e-9), (
+            f"real zero Composer max_drawdown must yield if_held_lifetime=0.0; "
+            f"got {result['if_held_lifetime']}"
+        )
+        assert result["if_held"] is None, (
+            f"if_held must be the honest None no-data sentinel (no "
+            f"shadow_history DB backs this fixture-only symphony) -- it no "
+            f"longer echoes the Composer scalar; got {result['if_held']!r}"
         )
 
     def test_app_state_except_blocks_return_none_sentinel_not_zeros(self):

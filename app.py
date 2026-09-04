@@ -42,6 +42,17 @@ _ET = ZoneInfo("America/New_York")
 # `insufficient_history=True` so the UI can render a "not enough history yet"
 # banner instead of misleadingly precise but underpowered numbers.
 _PERFORMANCE_MIN_HISTORY_DAYS = 30
+
+# Bailey/de-Prado (2014) statistical-sufficiency floor for the main-dashboard
+# Bot-vs-Held Max Drawdown row/badges (DE-PERF-WINDOW-TRUTH-001 AC-1 re-scope,
+# 2026-09-03). A SEPARATE constant from _PERFORMANCE_MIN_HISTORY_DAYS above --
+# same underlying rationale, but a deliberately distinct name/binding so the
+# Performance-tab quantstats banner and the dashboard MDD row never silently
+# share one flag again (the AC-4 Decision-table mandate: these are two
+# different questions -- "are these metrics statistically stable?" vs "does
+# this window have the data it claims?" -- conflating them is what let the
+# original F-2 mitigation decay silently once shadow_history crossed 30 days).
+_MDD_MIN_OBS = 30
 _PERFORMANCE_VALID_SCOPES = ("aggregate", "symphony")
 _PERFORMANCE_METRIC_KEYS = (
     "total_return",
@@ -1554,8 +1565,19 @@ def dashboard():
                 coerce_none=False,
             )
         if "_mdd" not in _s:
+            # DE-PERF-WINDOW-TRUTH-001 (mdd-review BLOCK finding, 2026-09-03):
+            # same bug class as F-016 above -- _mdd feeds the per-card Bot/
+            # Held/Lifetime MDD cells (templates/index.html), which already
+            # have their own None-aware `is not none` guards. Coercing a
+            # genuine None (thin shadow-history <2 days, or no Composer
+            # max_drawdown scalar) to 0.0 here fabricated a false "0.0%"
+            # before the template's correct guard ever saw it.
             _s["_mdd"] = _safe_analytics(
-                analytics.get_symphony_max_drawdown, _sym_dict, _s, trading_day=_dash_today
+                analytics.get_symphony_max_drawdown,
+                _sym_dict,
+                _s,
+                trading_day=_dash_today,
+                coerce_none=False,
             )
 
     active_syms = [
@@ -1696,10 +1718,24 @@ def _build_meta(
     cr_data = ps.get("cumulative_return") or {}
     mdd_data = ps.get("max_drawdown") or {}
     _hist_dates = ps.get("hist_dates", [])
-    # Data-sufficiency: meaningful risk metrics require >= 30 trading days of history
-    # (Bailey/de-Prado 2014 threshold). Emit an explicit flag so the UI can show
-    # "N/A — insufficient history" rather than fabricated or misleading values.
-    _insufficient_history = len(_hist_dates) < 30
+    # AC-1 (DE-PERF-WINDOW-TRUTH-001, re-scope per team-lead ruling 2026-09-03):
+    # this flag's ONLY consumers are the Max-DD row/badges in
+    # templates/index.html (the hero vs-row + both per-symphony card blocks) --
+    # it PREVIOUSLY doubled as a BASIS-MISMATCH guard (bot MDD computed from a
+    # few days of shadow history vs held MDD from Composer's full-lifetime
+    # scalar) on top of its legitimate Bailey/de-Prado (2014)
+    # statistical-stability purpose, sourced from _hist_dates -- the UNRELATED
+    # hero-CHART series length, never guaranteed to track the MDD computation's
+    # own window. That decoupling is exactly the mechanism that let the
+    # original F-2 mitigation decay silently once shadow_history crossed 30
+    # trading days (see docs/audit/PERF-WINDOW-TRUTH-2026-09-03.md). The basis
+    # mismatch itself is now fixed AT THE SOURCE
+    # (analytics.get_portfolio_max_drawdown's if_held/dry_run are a genuine
+    # same-window pair) -- no basis guard is needed here at all. Only the
+    # stat-stability concern survives, re-scoped to read the MDD computation's
+    # OWN n_obs (the exact day-count that fed it) instead of _hist_dates.
+    _mdd_n_obs = mdd_data.get("n_obs") or 0
+    _insufficient_history = _mdd_n_obs < _MDD_MIN_OBS
     portfolio_meta = {
         "tc": tc_data.get("dry_run", 0.0),
         "tc_if_held": tc_data.get("if_held", 0.0),
@@ -1707,6 +1743,11 @@ def _build_meta(
         "cr_if_held": cr_data.get("if_held", 0.0),
         "mdd": mdd_data.get("dry_run", 0.0),
         "mdd_if_held": mdd_data.get("if_held", 0.0),
+        # AC-2: the Composer lifetime scalar, kept as its OWN clearly-labelled
+        # figure (see templates/index.html's "mdd-lifetime-scalar" render) --
+        # never a leg of the mdd/mdd_if_held comparison above.
+        "mdd_if_held_lifetime": mdd_data.get("if_held_lifetime"),
+        "mdd_n_obs": _mdd_n_obs,
         "hist_dates": _hist_dates,
         "hist_bot": ps.get("hist_bot", []),
         "hist_held": ps.get("hist_held", []),
@@ -1991,31 +2032,33 @@ def _compute_portfolio_strip(
                 # _project_today_change_floor's docstring).
                 today_change = _project_today_change_floor(_vw_tc_floor)
 
-        # D-02: use Composer portfolio-level MDD (peak-to-trough on aggregate equity
-        # curve) when available. The value-weighted average of per-symphony MDDs is
-        # mathematically wrong — portfolio drawdowns can exceed any constituent MDD
-        # when declines co-occur. Fall back to value-weighted only when cache is cold.
+        # AC-1 (DE-PERF-WINDOW-TRUTH-001, supersedes the old "D-02" warm-cache
+        # override): if_held/dry_run now come UNCONDITIONALLY from
+        # analytics.get_portfolio_max_drawdown, regardless of cache warmth --
+        # both legs are a genuine same-window, normalized peak-to-trough pair
+        # computed entirely from shadow_history (see that function's docstring).
+        # The warm-cache Composer lifetime scalar
+        # (_account_totals_cache["portfolio_mdd"]) must NEVER be a comparison
+        # leg again -- that was the #1 defect this cycle fixes (a lifetime
+        # scalar diffed against a few days of shadow history). It is REPURPOSED
+        # (kept, not deleted) as the PREFERRED source for the separate AC-2
+        # "Lifetime Max Drawdown" figure when warm, since it reflects Composer's
+        # true account-lifetime peak-to-trough more precisely than the
+        # value-weighted aggregate of per-symphony scalars
+        # (analytics.get_portfolio_max_drawdown's own if_held_lifetime, the
+        # cold-cache/fallback source for the same figure).
         #
-        # D8 sign convention: the operator-facing portfolio MDD is canonically a
-        # POSITIVE magnitude. The warm-cache portfolio_mdd is written in
-        # _refresh_account_totals from Composer's API metrics.max_drawdown field
-        # (app.py:272), which is conventionally NEGATIVE; abs()-convert it here at
-        # the consumer boundary so the operator-facing value is positive
-        # magnitude. The cold-cache path flows through
-        # analytics.get_portfolio_max_drawdown, already positive magnitude — both
-        # branches must agree on sign regardless of cache warmth.
+        # D8 sign convention preserved: abs()-convert the warm-cache scalar at
+        # this consumer boundary (Composer's raw field is conventionally
+        # NEGATIVE, app.py:272); analytics.get_portfolio_max_drawdown's own
+        # if_held_lifetime is already positive magnitude.
+        max_drawdown: dict = analytics.get_portfolio_max_drawdown(
+            symphonies_list, bot_state, trading_day=trading_day, conn=conn
+        )
         _cached_mdd = _account_totals_cache.get("portfolio_mdd")
         if _cached_mdd is not None:
-            max_drawdown: dict = {
-                "if_held": abs(_cached_mdd),
-                "dry_run": analytics.get_portfolio_max_drawdown(
-                    symphonies_list, bot_state, trading_day=trading_day, conn=conn
-                ).get("dry_run"),
-            }
-        else:
-            max_drawdown = analytics.get_portfolio_max_drawdown(
-                symphonies_list, bot_state, trading_day=trading_day, conn=conn
-            )
+            max_drawdown = dict(max_drawdown)
+            max_drawdown["if_held_lifetime"] = abs(_cached_mdd)
 
         # Phase 2b: portfolio-level annualized volatility from the COMBINED
         # portfolio return series (captures inter-symphony correlations — the
@@ -4626,6 +4669,23 @@ def resend_discord():
 def get_history(days):
     stats = analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)
     stats["window_days"] = days
+    # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
+    # "requested window" meaning (not redefined) -- these three fields are
+    # ADDITIVE honesty markers mirroring database.get_exit_turnover_stats'
+    # established `coverage_days = min(window, actual_days)` pattern
+    # (app.py:4329-4332's rationale). daily_dates is the sorted list of days a
+    # real post-mortem file was actually parsed for -- the honest count of
+    # trading days actually backing this response, independent of how many
+    # were requested. An empty base_dir (day-1 droplet) honestly reports 0,
+    # never a fabricated non-zero count.
+    _hist_daily_dates = stats.get("daily_dates") or []
+    _hist_actual_days = len(_hist_daily_dates)
+    stats["actual_days"] = _hist_actual_days
+    stats["coverage_days"] = min(days, _hist_actual_days)
+    stats["date_range"] = {
+        "start": _hist_daily_dates[0] if _hist_daily_dates else None,
+        "end": _hist_daily_dates[-1] if _hist_daily_dates else None,
+    }
 
     # AC-3 (Finding 3): todays_exits is empty every trading day until the 15:54 ET
     # post-mortem write — not just on a day-1 droplet.  Backfill from exit_triggers
@@ -4895,6 +4955,17 @@ def api_performance():
     live_returns_out = [float(r) for r in live_returns]
     shadow_returns_out = [float(r) for r in shadow_returns]
 
+    # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
+    # "requested window" meaning (not redefined) -- these three fields are
+    # ADDITIVE honesty markers mirroring database.get_exit_turnover_stats'
+    # established `coverage_days = min(window, actual_days)` pattern
+    # (app.py:4329-4332's rationale). actual_days mirrors the already-computed
+    # observation_count (both are len(dates)) -- kept as its own key rather
+    # than aliasing so the AC-5 contract doesn't implicitly depend on
+    # observation_count's name never changing. "ytd" has no fixed numeric
+    # request to cap against, so coverage_days is the actual count in that case
+    # (never a TypeError from min()'ing a string against an int).
+    _coverage_days = observation_count if is_ytd else min(days, observation_count)
     response_body = {
         "scope": scope,
         "dates": list(dates),
@@ -4905,6 +4976,12 @@ def api_performance():
         "observation_count": observation_count,
         "insufficient_history": insufficient_history,
         "window_days": days,
+        "actual_days": observation_count,
+        "coverage_days": _coverage_days,
+        "date_range": {
+            "start": dates[0] if len(dates) else None,
+            "end": dates[-1] if len(dates) else None,
+        },
     }
     if scope == "symphony":
         # AC-4 (F-023 / DE-PERFVIEW-ID-MISMATCH): distinguishes a genuine

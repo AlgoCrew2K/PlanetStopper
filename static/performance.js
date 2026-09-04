@@ -444,12 +444,41 @@
     function renderObsCount(payload) {
         // Observation count moved out of the headline strip into a caption
         // (ux-design-deliverable.md §Change 1). Window days included for context.
+        //
+        // AC-4/AC-6 (DE-PERF-WINDOW-TRUTH-001): two fixes to this caption.
+        //   AC-6 -- the old `if (typeof win === 'number')` gate was the SOLE
+        //   condition for appending window context at all, so the YTD button's
+        //   string token ("ytd") silently dropped it entirely (E-8 in the
+        //   audit). The `else if (win != null)` branch below covers any
+        //   non-number token generically -- not a hardcoded 'ytd' special-case,
+        //   which would regress for the next string token added.
+        //   AC-4 -- a rendered field with no render consumer does not satisfy
+        //   "accurate and informational of restrictions to data length" (see
+        //   DE-AUDIT-BL4-001). actualDays reads the AC-5 coverage_days/
+        //   actual_days fields the route now emits and, when it falls short of
+        //   the requested window, the caption states the honest shortfall
+        //   instead of silently implying full coverage (E-9 in the audit).
         var caption = document.getElementById('obs-caption');
         if (caption) {
             var n = payload.observation_count;
             var win = payload.window_days;
+            var actualDays = typeof payload.coverage_days === 'number' ? payload.coverage_days
+                : (typeof payload.actual_days === 'number' ? payload.actual_days : null);
             var txt = String(n) + (n === 1 ? ' observation' : ' observations');
-            if (typeof win === 'number') txt += ' · ' + win + 'd window';
+            if (typeof win === 'number') {
+                if (actualDays !== null && actualDays < win) {
+                    txt += ' · ' + win + 'd window requested · only ' + actualDays +
+                        ' trading day' + (actualDays === 1 ? '' : 's') + ' available';
+                    if (payload.date_range && payload.date_range.start) {
+                        txt += ' (history begins ' + payload.date_range.start + ')';
+                    }
+                } else {
+                    txt += ' · ' + win + 'd window';
+                }
+            } else if (win != null) {
+                var winLabel = typeof win === 'string' ? win.toUpperCase() : String(win);
+                txt += ' · ' + winLabel + ' window';
+            }
             caption.textContent = txt;
         }
         // Legacy element kept harmless if present in any cached template.

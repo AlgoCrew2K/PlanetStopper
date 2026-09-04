@@ -49,6 +49,7 @@ arithmetic; floating-point representation is the only error source.
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -93,6 +94,36 @@ def _minimal_bot_state_with_drawdown() -> dict:
     }
 
 
+def _seed_shadow_history_for_bot_state(tmp_path, bot_state: dict) -> str:
+    """[Added, DE-PERF-WINDOW-TRUTH-001]: post-AC-1, MDD if_held/dry_run are
+    genuine windowed peak-to-trough values sourced from shadow_history, NOT
+    bot_state['max_drawdown'] -- the D8 tests below need a real shadow_history
+    DB backing each symphony to produce a non-None if_held at all."""
+    import sqlite3
+    from datetime import date, timedelta
+
+    db_file = str(tmp_path / "d8_shadow.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "CREATE TABLE shadow_history (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "symphony_id TEXT NOT NULL, ts_utc TEXT NOT NULL, trading_day TEXT NOT NULL, "
+        "current_return REAL NOT NULL, shadow_return REAL NOT NULL, "
+        "is_post_trigger INTEGER NOT NULL DEFAULT 0, position_epoch TEXT)"
+    )
+    day0 = (date.today() - timedelta(days=3)).isoformat()
+    day1 = date.today().isoformat()
+    for sym_id in bot_state:
+        for trading_day, cr, sr in [(day0, 0.0, 0.0), (day1, -6.0, -6.0)]:
+            conn.execute(
+                "INSERT INTO shadow_history (symphony_id, ts_utc, trading_day, "
+                "current_return, shadow_return, position_epoch) VALUES (?, ?, ?, ?, ?, ?)",
+                (sym_id, trading_day + "T20:00:00Z", trading_day, cr, sr, "EPOCH_A"),
+            )
+    conn.commit()
+    conn.close()
+    return db_file
+
+
 # ---------------------------------------------------------------------------
 # Per-module convention pins (anti-flip guards).
 # ---------------------------------------------------------------------------
@@ -117,14 +148,26 @@ class TestGetSymphonyMaxDrawdownUsesPositiveMagnitude:
     """analytics.get_symphony_max_drawdown is operator-facing and uses the
     canonical POSITIVE magnitude convention (D8)."""
 
-    def test_if_held_drawdown_is_positive_magnitude(self):
+    def test_if_held_lifetime_drawdown_is_positive_magnitude(self):
+        """[Updated, DE-PERF-WINDOW-TRUTH-001]: the D8 positive-magnitude
+        convention now applies to BOTH if_held (a genuine windowed
+        peak-to-trough, honestly None here with no shadow_history DB) and
+        the separate 'if_held_lifetime' figure (AC-2) this test now pins --
+        the Composer scalar-to-percent conversion this test was originally
+        protecting."""
         sym_dict = {"id": "sym-sign", "max_drawdown": _DRAWDOWN_MAGNITUDE}
         result = get_symphony_max_drawdown(sym_dict, bot_state_entry=None)
-        assert result["if_held"] is not None
-        assert result["if_held"] > 0.0, (
-            "get_symphony_max_drawdown is operator-facing — D8 canonical is POSITIVE magnitude"
+        assert result["if_held"] is None, (
+            "if_held must be the honest None no-data sentinel — no "
+            "shadow_history DB backs this fixture-only symphony under the "
+            f"AC-1 redefinition; got {result['if_held']!r}"
         )
-        assert result["if_held"] == pytest.approx(_DRAWDOWN_MAGNITUDE * 100.0, rel=1e-9)
+        assert result["if_held_lifetime"] is not None
+        assert result["if_held_lifetime"] > 0.0, (
+            "get_symphony_max_drawdown's if_held_lifetime is operator-facing "
+            "— D8 canonical is POSITIVE magnitude"
+        )
+        assert result["if_held_lifetime"] == pytest.approx(_DRAWDOWN_MAGNITUDE * 100.0, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -140,14 +183,23 @@ class TestPortfolioStripDrawdownSignIsCacheWarmthInvariant:
     cold branch is positive (analytics) — a live sign flip on one operator
     field."""
 
-    def test_warm_cache_portfolio_mdd_if_held_is_positive_magnitude(self):
-        """WARM cache: app.py sets portfolio_mdd from the quantstats NEGATIVE
-        value. After the D8 fix the strip must still expose it as a POSITIVE
-        magnitude (abs() at the boundary). Currently RED — the warm value is
-        negative."""
+    def test_warm_cache_portfolio_mdd_if_held_is_positive_magnitude(self, tmp_path, monkeypatch):
+        """WARM cache. [Updated, DE-PERF-WINDOW-TRUTH-001 AC-1]: the exact-
+        value pin against the cached quantstats scalar is SUPERSEDED -- that
+        pin encoded the audit's #1 defect (pairing a Composer/quantstats
+        LIFETIME scalar as the if_held comparison leg). Post-fix, if_held
+        must come from analytics.get_portfolio_max_drawdown's genuine
+        windowed computation REGARDLESS of cache warmth -- this test now
+        asserts the warm-cache scalar has NO EFFECT on if_held (mirrors the
+        AC-1 translation-invariance-to-the-wrong-source-regression pattern in
+        tests/analytics/test_mdd_window_truth.py, applied at the app.py
+        boundary). The POSITIVE-magnitude sign convention itself (D8) is
+        still asserted -- that part of the D8 ruling survives the redefinition.
+        """
         bot_state = _minimal_bot_state_with_drawdown()
-        # Simulate what app.py:272 writes: quantstats max_drawdown is negative.
-        # A 20% drawdown -> compute_quantstats_metrics-style negative * 100.
+        db_file = _seed_shadow_history_for_bot_state(tmp_path, bot_state)
+        monkeypatch.setattr(analytics, "DB_FILE", db_file)
+
         quantstats_negative_mdd_pct = -_DRAWDOWN_MAGNITUDE * 100.0  # -20.0
         app_module._account_totals_cache["portfolio_mdd"] = quantstats_negative_mdd_pct
         app_module._account_totals_cache["portfolio_value"] = 2000.0
@@ -155,24 +207,32 @@ class TestPortfolioStripDrawdownSignIsCacheWarmthInvariant:
         strip = app_module._compute_portfolio_strip(bot_state)
         mdd = strip.get("max_drawdown")
         assert mdd is not None and mdd.get("if_held") is not None, (
-            "warm-cache portfolio strip must produce a max_drawdown.if_held"
+            "warm-cache portfolio strip must produce a max_drawdown.if_held "
+            "(a real shadow_history DB now backs both fixture symphonies)"
         )
         assert mdd["if_held"] > 0.0, (
             "D8: the operator-facing portfolio MDD if_held must be a POSITIVE "
-            "magnitude even on a warm cache. The warm branch currently passes "
-            "the quantstats NEGATIVE value straight through — the fix must "
-            "abs()-convert it at the app.py boundary."
+            "magnitude regardless of cache warmth."
         )
-        # Magnitude must be preserved by the abs() conversion.
-        assert mdd["if_held"] == pytest.approx(abs(quantstats_negative_mdd_pct), rel=1e-9), (
-            "abs() conversion must preserve the magnitude, only drop the sign"
+        assert mdd["if_held"] != pytest.approx(abs(quantstats_negative_mdd_pct), rel=1e-6), (
+            f"AC-1 VIOLATION: the warm-cache scalar (abs={abs(quantstats_negative_mdd_pct)}) "
+            f"still equals if_held ({mdd['if_held']}) -- per "
+            f"docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md's confirmed "
+            f"design, this cached scalar is REPURPOSED as AC-2's separate "
+            f"portfolio-level lifetime figure (it may still appear in source, "
+            f"just no longer assigned to the vs-row's if_held key); if_held "
+            f"always comes from analytics.get_portfolio_max_drawdown's "
+            f"genuine (redefined) value, regardless of cache warmth."
         )
 
-    def test_cold_cache_portfolio_mdd_if_held_is_positive_magnitude(self):
+    def test_cold_cache_portfolio_mdd_if_held_is_positive_magnitude(self, tmp_path, monkeypatch):
         """COLD cache: if_held flows through analytics.get_portfolio_max_drawdown
         which is already positive magnitude. Anti-regression — the D8 fix must
-        not disturb the already-correct cold path."""
+        not disturb the already-correct cold path. [Updated, DE-PERF-WINDOW-
+        TRUTH-001]: now DB-backed so if_held is genuinely non-None under AC-1."""
         bot_state = _minimal_bot_state_with_drawdown()
+        db_file = _seed_shadow_history_for_bot_state(tmp_path, bot_state)
+        monkeypatch.setattr(analytics, "DB_FILE", db_file)
         # cache is empty (cleared by autouse fixture) -> cold path
         strip = app_module._compute_portfolio_strip(bot_state)
         mdd = strip.get("max_drawdown")
@@ -184,31 +244,38 @@ class TestPortfolioStripDrawdownSignIsCacheWarmthInvariant:
             "must remain so after the D8 fix"
         )
 
-    def test_warm_and_cold_portfolio_mdd_agree_on_sign(self):
-        """THE defining D8 assertion: the SAME loss must yield the SAME sign on
-        both cache branches. Drive each branch with an equivalent 20% loss and
-        assert both if_held values are positive — no sign flip on cache
-        warmth."""
+    def test_warm_and_cold_portfolio_mdd_if_held_are_identical(self, tmp_path, monkeypatch):
+        """[Updated, DE-PERF-WINDOW-TRUTH-001, supersedes the D8 'agree on
+        sign' framing]: post-AC-1, MDD if_held no longer has TWO distinct
+        computation branches (warm-cache-scalar vs cold-cache-analytics) --
+        it is ALWAYS analytics.get_portfolio_max_drawdown's genuine value.
+        'Agreeing on sign' is now the WEAKER, subsumed half of a STRONGER
+        invariant: warm and cold must produce the IDENTICAL if_held value
+        (not merely the same sign), because cache warmth no longer feeds
+        this computation at all."""
         bot_state = _minimal_bot_state_with_drawdown()
+        db_file = _seed_shadow_history_for_bot_state(tmp_path, bot_state)
+        monkeypatch.setattr(analytics, "DB_FILE", db_file)
 
         # Cold branch.
         app_module._account_totals_cache.clear()
         cold = app_module._compute_portfolio_strip(bot_state)["max_drawdown"]["if_held"]
 
-        # Warm branch — same 20% loss, expressed in the quantstats negative form
-        # that app.py:272 caches.
+        # Warm branch — cache holds an arbitrary scalar that must now be inert
+        # for MDD purposes.
         app_module._account_totals_cache.clear()
         app_module._account_totals_cache["portfolio_mdd"] = -_DRAWDOWN_MAGNITUDE * 100.0
         app_module._account_totals_cache["portfolio_value"] = 2000.0
         warm = app_module._compute_portfolio_strip(bot_state)["max_drawdown"]["if_held"]
 
         assert cold is not None and warm is not None
-        assert (cold >= 0.0) == (warm >= 0.0), (
-            f"D8 VIOLATION: portfolio MDD if_held flips sign on cache warmth — "
-            f"cold={cold}, warm={warm}. The same operator-facing field must "
-            f"have one convention. Fix: abs() the warm-cache branch."
+        assert warm == pytest.approx(cold, abs=1e-9), (
+            f"AC-1 VIOLATION: portfolio MDD if_held differs between cold "
+            f"({cold}) and warm ({warm}) cache -- if_held must be IDENTICAL "
+            f"regardless of _account_totals_cache['portfolio_mdd'] warmth; "
+            f"that cache entry no longer feeds this computation at all."
         )
-        # Per D8 the agreed convention is POSITIVE magnitude.
+        # D8's positive-magnitude convention still holds.
         assert cold > 0.0 and warm > 0.0, (
             "D8 canonical convention is POSITIVE magnitude on both branches"
         )
@@ -233,17 +300,32 @@ class TestDrawdownConventionIsDocumentedAndCrossReferenced:
         )
 
     def test_app_portfolio_strip_documents_the_canonical_convention(self):
-        """The D8 fix at the app.py warm-cache boundary must carry a comment
-        naming the canonical positive-magnitude convention, so the abs()
-        conversion is not mistaken for a bug by a future reader."""
+        """[Updated, DE-PERF-WINDOW-TRUTH-001, aligned to the confirmed
+        design in docs/audit/MDD-CONSUMER-ENUMERATION-2026-09-03.md AC-0a
+        §C row 1]: the warm-cache `abs(_cached_mdd)` computation is
+        REPURPOSED, not deleted -- it becomes AC-2's separate portfolio-level
+        lifetime figure. What MUST change is its ROLE: it must no longer be
+        assigned to the vs-row's `if_held` key (the exact defect the audit
+        found). This test checks the PRECISE structural pattern -- the
+        literal `"if_held": abs(_cached_mdd)` dict-key assignment -- rather
+        than a blanket absence of `abs(_cached_mdd)` anywhere in source
+        (which would incorrectly fail a correct implementation that keeps
+        the expression under a new key name)."""
         src = inspect.getsource(app_module._compute_portfolio_strip)
         lowered = src.lower()
-        # The fix introduces an abs() on the warm-cache mdd branch.
-        assert "abs(" in src, (
-            "the D8 fix must abs()-convert the warm-cache portfolio_mdd at the "
-            "app.py boundary — no abs() found in _compute_portfolio_strip"
+        assert "max_drawdown" in lowered, (
+            "_compute_portfolio_strip must still assemble a max_drawdown "
+            "entry on the portfolio strip"
         )
         assert "magnitude" in lowered or "convention" in lowered or "sign" in lowered, (
-            "the D8 abs() conversion must be documented with a comment naming "
-            "the canonical positive-magnitude drawdown convention"
+            "the canonical positive-magnitude drawdown convention must still "
+            "be documented with a comment somewhere in _compute_portfolio_strip."
+        )
+        forbidden_assignment = re.search(r'"if_held"\s*:\s*abs\(\s*_cached_mdd\s*\)', src)
+        assert forbidden_assignment is None, (
+            'AC-1 VIOLATION: the literal `"if_held": abs(_cached_mdd)` '
+            "dict-key assignment is still present -- the warm-cache Composer/"
+            "quantstats lifetime scalar must no longer be assigned to the "
+            "vs-row's if_held key (it may still be COMPUTED for AC-2's "
+            "separate lifetime figure, just under a different key)."
         )

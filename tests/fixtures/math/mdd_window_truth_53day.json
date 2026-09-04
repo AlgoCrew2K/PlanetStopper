@@ -1,0 +1,280 @@
+{
+  "_provenance": "Constructed for feature-plans/mdd-window-truth.md AC-1 (DE-PERF-WINDOW-TRUTH-001). Not a literal capture of the real droplet 53-day series (that raw day-by-day series was not available to the test-writer) -- this is a SELF-CONSISTENT synthetic construction, independently verified in-test via a reference peak-to-trough loop, engineered to reproduce the two AUDIT-VERIFIED figures cited in docs/audit/PERF-WINDOW-TRUTH-2026-09-03.md Sec 0 (held 10.5875, bot 10.3622 on a 53-day window).",
+  "_purpose": "Golden-fixture pin for analytics.get_symphony_max_drawdown / get_portfolio_max_drawdown AC-1: peak-to-trough of the compounded return path over ONE shared window, held from current_return and bot from shadow_return.",
+  "_derivation": "Single symphony, single position-epoch (no position_epoch column -- legacy-schema fallback path), 53 consecutive trading days. Day 0 (oldest, days_ago=52) is the peak (0.0% cumulative). Day 1 (days_ago=51) is a single-day drop: current_return=-10.5875 (held leg) and shadow_return=-10.3622 (bot leg) -- because the peak is exactly 0.0%, a single-day drop from a zero-based peak yields a cumulative return numerically identical to that day return, so the peak-to-trough drawdown is exactly the injected value (verified independently in-test, not asserted circularly). Days 2..52 (days_ago 50..0) are flat 0.0% returns on BOTH legs -- the trough is never re-exceeded, so the drawdown holds for the rest of the window.",
+  "_tolerance": "pytest.approx(..., abs=1e-9) -- the held-leg reference computation in Python floats to 10.587499999999995 (~5e-14 off 10.5875) from repeated (1+r/100) multiplication; the bot leg is exact in float64. abs=1e-9 comfortably absorbs this while still catching any real formula error (the audit-cited figures differ by 0.2253, ~2.5e8x this tolerance).",
+  "symphony_id": "sym-mdd-golden-53d",
+  "current_value": 10000.0,
+  "n_days": 53,
+  "rows": [
+    {
+      "days_ago": 52,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 51,
+      "current_return": -10.5875,
+      "shadow_return": -10.3622
+    },
+    {
+      "days_ago": 50,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 49,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 48,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 47,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 46,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 45,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 44,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 43,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 42,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 41,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 40,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 39,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 38,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 37,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 36,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 35,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 34,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 33,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 32,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 31,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 30,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 29,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 28,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 27,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 26,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 25,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 24,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 23,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 22,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 21,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 20,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 19,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 18,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 17,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 16,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 15,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 14,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 13,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 12,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 11,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 10,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 9,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 8,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 7,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 6,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 5,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 4,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 3,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 2,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 1,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    },
+    {
+      "days_ago": 0,
+      "current_return": 0.0,
+      "shadow_return": 0.0
+    }
+  ],
+  "expected": {
+    "held_mdd_pct": 10.5875,
+    "bot_mdd_pct": 10.3622
+  }
+}
