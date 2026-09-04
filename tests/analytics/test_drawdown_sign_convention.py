@@ -323,7 +323,7 @@ class TestDrawdownConventionIsDocumentedAndCrossReferenced:
         )
         forbidden_assignment = re.search(r'"if_held"\s*:\s*abs\(\s*_cached_mdd\s*\)', src)
         assert forbidden_assignment is None, (
-            "AC-1 VIOLATION: the literal `\"if_held\": abs(_cached_mdd)` "
+            'AC-1 VIOLATION: the literal `"if_held": abs(_cached_mdd)` '
             "dict-key assignment is still present -- the warm-cache Composer/"
             "quantstats lifetime scalar must no longer be assigned to the "
             "vs-row's if_held key (it may still be COMPUTED for AC-2's "

@@ -521,7 +521,9 @@ def test_performance_aggregate_scope_response_shape_unchanged(client, monkeypatc
         f"keys. Got keys: {sorted(body.keys())}"
     )
     for key in ac5_coverage_disclosure_keys:
-        assert key in body, f"AC-5 coverage-disclosure field {key!r} missing from aggregate response"
+        assert key in body, (
+            f"AC-5 coverage-disclosure field {key!r} missing from aggregate response"
+        )
 
 
 def test_performance_aggregate_scope_never_has_symphony_id_recognized_key(client, monkeypatch):

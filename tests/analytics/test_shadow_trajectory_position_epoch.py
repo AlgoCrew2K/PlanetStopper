@@ -335,9 +335,7 @@ class TestDryRunConsumersUseCurrentEpochOnly:
             "Bug: current code computes absolute shadow chain-link, not divergence."
         )
 
-    def test_dry_run_mdd_reflects_the_full_continuous_series_not_current_epoch_only(
-        self, tmp_path
-    ):
+    def test_dry_run_mdd_reflects_the_full_continuous_series_not_current_epoch_only(self, tmp_path):
         """[Renamed + reformulated, DE-PERF-WINDOW-TRUTH-001]: this test's
         ORIGINAL title/premise ("dry_run MDD reflects current-epoch-only")
         is now ARCHITECTURALLY FALSE. Under the AC-1 remediation

@@ -91,7 +91,9 @@ class TestAC6YtdCaptionRegressionGuard:
             # something still gates the append on win being present at all
             # (never unconditionally appending window text for a genuinely
             # absent/undefined win).
-            assert re.search(r"win\s*!=\s*null|win\s*!==\s*undefined|if\s*\(\s*win\s*\)", fn_body), (
+            assert re.search(
+                r"win\s*!=\s*null|win\s*!==\s*undefined|if\s*\(\s*win\s*\)", fn_body
+            ), (
                 "the typeof-number gate was removed but no replacement "
                 "existence/non-null check was found -- window context must "
                 "still be conditionally appended (never unconditional), just "

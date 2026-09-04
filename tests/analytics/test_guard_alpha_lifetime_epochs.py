@@ -328,9 +328,7 @@ class TestNeverTriggeredLifetimeAlphaIsExactlyZero:
             f"-- both legs must be computed from the identical continuous "
             f"return sequence via the identical formula."
         )
-        expected = _continuous_normalized_max_drawdown(
-            [r["current_return"] for r in rows]
-        )
+        expected = _continuous_normalized_max_drawdown([r["current_return"] for r in rows])
         assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
             f"shared dry_run/if_held value {result['if_held']} does not match "
             f"the independently-computed continuous normalized peak-to-trough "
@@ -503,12 +501,9 @@ class TestLifetimeMddSpansEpochs:
         if_held = scen["if_held_pct"]
         sym_id = scen["symphony_id"]
 
-        expected_dry_run = _continuous_normalized_max_drawdown(
-            [r["shadow_return"] for r in rows]
-        )
+        expected_dry_run = _continuous_normalized_max_drawdown([r["shadow_return"] for r in rows])
         assert expected_dry_run > 0.0, (
-            "fixture sanity: iaSOO's continuous shadow_return series must have "
-            "a real drawdown"
+            "fixture sanity: iaSOO's continuous shadow_return series must have a real drawdown"
         )
 
         db_file = _make_multi_epoch_db(tmp_path, sym_id, rows)

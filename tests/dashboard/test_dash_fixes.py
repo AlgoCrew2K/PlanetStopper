@@ -715,8 +715,7 @@ class TestChainLinkGoldenPerDayReturns:
             f"shadow_return=[-0.5, 0.8, -1.2, 2.0] alone)."
         )
         assert mdd_result["if_held"] == pytest.approx(mdd_result["dry_run"], abs=1e-9), (
-            "if_held must equal dry_run here -- current_return == "
-            "shadow_return on every row"
+            "if_held must equal dry_run here -- current_return == shadow_return on every row"
         )
 
     def test_portfolio_aggregate_dry_run_equals_value_weighted_per_symphony(self, tmp_path):

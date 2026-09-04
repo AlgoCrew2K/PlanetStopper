@@ -212,12 +212,10 @@ class TestAC0bUnitsConventionDocumented:
             "own scalar is normalized)."
         )
         assert "percent" in doc, (
-            "AC-0b: the docstring must state the percentage-point scale "
-            "convention."
+            "AC-0b: the docstring must state the percentage-point scale convention."
         )
         assert "positive" in doc or "magnitude" in doc, (
-            "AC-0b: the docstring must state the POSITIVE-magnitude sign "
-            "convention (D8)."
+            "AC-0b: the docstring must state the POSITIVE-magnitude sign convention (D8)."
         )
 
     def test_get_portfolio_max_drawdown_docstring_states_normalized_convention(self):
@@ -313,7 +311,9 @@ class TestAC1GoldenFixture53DayWindow:
         db_file = _seed_db(tmp_path, {sym_id: golden_fixture["rows"]})
         sym_dict = _sym_dict(sym_id, golden_fixture["current_value"], max_drawdown=0.9999)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
 
         assert result["if_held"] == pytest.approx(
             golden_fixture["expected"]["held_mdd_pct"], abs=_ABS
@@ -390,12 +390,13 @@ class TestAC1GoldenFixtureAnchorDay1Worst:
         )
         # Proves this fixture is DISCRIMINATING (unlike the 53-day one): a
         # naive un-anchored loop must give the WRONG answer here.
-        assert _reference_normalized_max_drawdown_pct(
-            held_series
-        ) != self._NAIVE_UNANCHORED_WRONG_VALUE
-        assert _reference_normalized_max_drawdown_pct(
-            bot_series
-        ) != self._NAIVE_UNANCHORED_WRONG_VALUE
+        assert (
+            _reference_normalized_max_drawdown_pct(held_series)
+            != self._NAIVE_UNANCHORED_WRONG_VALUE
+        )
+        assert (
+            _reference_normalized_max_drawdown_pct(bot_series) != self._NAIVE_UNANCHORED_WRONG_VALUE
+        )
 
     def test_symphony_level_correctly_anchors_before_the_first_observation(
         self, anchor_fixture, tmp_path
@@ -411,7 +412,9 @@ class TestAC1GoldenFixtureAnchorDay1Worst:
         db_file = _seed_db(tmp_path, {sym_id: anchor_fixture["rows"]})
         sym_dict = _sym_dict(sym_id, anchor_fixture["current_value"], max_drawdown=0.4321)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
 
         assert result["if_held"] == pytest.approx(
             anchor_fixture["expected"]["held_mdd_pct"], abs=_ABS
@@ -521,7 +524,11 @@ class TestAC1TranslationInvarianceRegression:
 
         def _rows(shadow_series):
             return [
-                {"days_ago": 4 - i, "current_return": held_series[i], "shadow_return": shadow_series[i]}
+                {
+                    "days_ago": 4 - i,
+                    "current_return": held_series[i],
+                    "shadow_return": shadow_series[i],
+                }
                 for i in range(len(held_series))
             ]
 
@@ -533,7 +540,9 @@ class TestAC1TranslationInvarianceRegression:
         result_shallow = analytics.get_symphony_max_drawdown(
             sym_dict, bot_state_entry=None, db_path=db_shallow
         )
-        result_deep = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_deep)
+        result_deep = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_deep
+        )
 
         expected_shallow = _reference_normalized_max_drawdown_pct(shallow_shadow)
         expected_deep = _reference_normalized_max_drawdown_pct(deep_shadow)
@@ -571,7 +580,11 @@ class TestAC1TranslationInvarianceRegression:
 
         def _rows(held_series):
             return [
-                {"days_ago": 4 - i, "current_return": held_series[i], "shadow_return": shadow_series[i]}
+                {
+                    "days_ago": 4 - i,
+                    "current_return": held_series[i],
+                    "shadow_return": shadow_series[i],
+                }
                 for i in range(len(shadow_series))
             ]
 
@@ -582,7 +595,9 @@ class TestAC1TranslationInvarianceRegression:
         result_shallow = analytics.get_symphony_max_drawdown(
             sym_dict, bot_state_entry=None, db_path=db_shallow
         )
-        result_deep = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_deep)
+        result_deep = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_deep
+        )
 
         expected_shallow = _reference_normalized_max_drawdown_pct(shallow_held)
         expected_deep = _reference_normalized_max_drawdown_pct(deep_held)
@@ -613,7 +628,9 @@ class TestAC2LifetimeScalarSeparatelyAvailable:
         db_file = _seed_db(tmp_path, {sym_id: rows})
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=0.7331)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
 
         assert "if_held_lifetime" in result, (
             "AC-2: the result must carry an 'if_held_lifetime' key exposing "
@@ -641,7 +658,9 @@ class TestAC2LifetimeScalarSeparatelyAvailable:
         db_file = _seed_db(tmp_path, {sym_id: rows})
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=None)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         assert result["if_held_lifetime"] is None, (
             "if_held_lifetime must be None (honest missing-data), not 0.0, "
             "when sym_dict['max_drawdown'] is absent"
@@ -741,13 +760,20 @@ class TestAC3WindowedStripMddRespondsToWindow:
 class TestEdgeCases:
     def test_zero_shadow_history_rows_returns_none_not_zero(self, tmp_path):
         sym_id = "sym-zero-obs"
-        db_file = _seed_db(tmp_path, {"sym-other": [
-            {"days_ago": 3, "current_return": -1.0, "shadow_return": -1.0},
-            {"days_ago": 0, "current_return": 0.5, "shadow_return": 0.5},
-        ]})
+        db_file = _seed_db(
+            tmp_path,
+            {
+                "sym-other": [
+                    {"days_ago": 3, "current_return": -1.0, "shadow_return": -1.0},
+                    {"days_ago": 0, "current_return": 0.5, "shadow_return": 0.5},
+                ]
+            },
+        )
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=0.2)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         assert result["if_held"] is None, (
             f"zero shadow_history rows for this symphony must yield if_held="
             f"None (honest insufficient-data), never a fabricated 0.0; got "
@@ -767,7 +793,9 @@ class TestEdgeCases:
         db_file = _seed_db(tmp_path, {sym_id: rows})
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=0.2)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         assert result["if_held"] is None, (
             f"a single shadow_history row must yield if_held=None (mirrors "
             f"get_symphony_bot_and_held_daily_returns' own <2-day floor), not "
@@ -789,17 +817,19 @@ class TestEdgeCases:
         db_file = _seed_db(tmp_path, {sym_id: rows})
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=0.0)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
-        assert result["if_held"] is not None and result["if_held"] == pytest.approx(0.0, abs=_ABS), (
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
+        assert result["if_held"] is not None and result["if_held"] == pytest.approx(
+            0.0, abs=_ABS
+        ), (
             f"an all-positive-return series (every day a new high) must yield a "
             f"GENUINE 0.0 drawdown, not None; got {result['if_held']}"
         )
         assert result["dry_run"] is not None and result["dry_run"] == pytest.approx(0.0, abs=_ABS)
         assert result["n_obs"] == 5
 
-    def test_symphony_absent_from_shadow_history_returns_none_never_composer_scalar(
-        self, tmp_path
-    ):
+    def test_symphony_absent_from_shadow_history_returns_none_never_composer_scalar(self, tmp_path):
         """A symphony with ZERO shadow_history rows must yield if_held=None,
         dry_run=None -- critically, if_held must NOT silently fall back to
         sym_dict['max_drawdown']*100 (that fallback IS the defect this cycle
@@ -807,13 +837,20 @@ class TestEdgeCases:
         SEPARATE Composer-scalar figure, honestly available regardless of
         shadow_history coverage."""
         sym_id = "sym-no-shadow-rows"
-        db_file = _seed_db(tmp_path, {"sym-other": [
-            {"days_ago": 3, "current_return": -1.0, "shadow_return": -1.0},
-            {"days_ago": 0, "current_return": 0.5, "shadow_return": 0.5},
-        ]})
+        db_file = _seed_db(
+            tmp_path,
+            {
+                "sym-other": [
+                    {"days_ago": 3, "current_return": -1.0, "shadow_return": -1.0},
+                    {"days_ago": 0, "current_return": 0.5, "shadow_return": 0.5},
+                ]
+            },
+        )
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=0.42)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         assert result["if_held"] is None, (
             f"no shadow_history rows for this symphony: if_held must be None, "
             f"NEVER the Composer scalar (42.0) -- got {result['if_held']}"
@@ -825,9 +862,7 @@ class TestEdgeCases:
             "it's an independent data source"
         )
 
-    def test_missing_composer_scalar_does_not_suppress_genuine_shadow_computation(
-        self, tmp_path
-    ):
+    def test_missing_composer_scalar_does_not_suppress_genuine_shadow_computation(self, tmp_path):
         """CRITICAL: today's function has an early `if sym_dict.get("max_drawdown")
         is None: return {"if_held": None, "dry_run": None}` guard -- under AC-1,
         if_held/dry_run no longer derive from that field, so a symphony with
@@ -842,7 +877,9 @@ class TestEdgeCases:
         db_file = _seed_db(tmp_path, {sym_id: rows})
         sym_dict = _sym_dict(sym_id, 1000.0, max_drawdown=None)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         assert result["if_held"] == pytest.approx(6.0, abs=_ABS), (
             f"a symphony with real shadow_history but NO Composer max_drawdown "
             f"scalar must still produce a genuine windowed if_held (6.0 here) -- "
@@ -891,7 +928,9 @@ class TestEdgeCases:
         conn.close()
         sym_dict = _sym_dict(sym_id, 1000.0)
 
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         if result["if_held"] is not None:
             assert math.isfinite(result["if_held"]), (
                 f"if_held must never be NaN/inf (breaks JSON serialization "
@@ -963,9 +1002,10 @@ class TestPropertyInvariants:
         the observed drawdown."""
         short_window = suffix
         long_window = prefix + suffix
-        assert _reference_normalized_max_drawdown_pct(
-            long_window
-        ) >= _reference_normalized_max_drawdown_pct(short_window) - 1e-9, (
+        assert (
+            _reference_normalized_max_drawdown_pct(long_window)
+            >= _reference_normalized_max_drawdown_pct(short_window) - 1e-9
+        ), (
             f"long_window ({long_window}) drawdown "
             f"{_reference_normalized_max_drawdown_pct(long_window)} must be >= "
             f"short_window ({short_window}) drawdown "
@@ -984,6 +1024,8 @@ class TestPropertyInvariants:
         ]
         db_file = _seed_db(tmp_path, {sym_id: rows})
         sym_dict = _sym_dict(sym_id, 1000.0)
-        result = analytics.get_symphony_max_drawdown(sym_dict, bot_state_entry=None, db_path=db_file)
+        result = analytics.get_symphony_max_drawdown(
+            sym_dict, bot_state_entry=None, db_path=db_file
+        )
         assert result["if_held"] >= 0.0
         assert result["dry_run"] >= 0.0

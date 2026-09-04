@@ -163,8 +163,8 @@ class TestAC0aConsumerEnumerationArtifact:
         test cannot make on the implementer's behalf, but can verify was made
         explicitly rather than left implicit."""
         content = _read_artifact().lower()
-        decision_stated = ("mutate" in content) or ("alongside" in content) or (
-            "in place" in content
+        decision_stated = (
+            ("mutate" in content) or ("alongside" in content) or ("in place" in content)
         )
         assert decision_stated, (
             "AC-0a artifact does not state an explicit mutate-in-place-vs-"

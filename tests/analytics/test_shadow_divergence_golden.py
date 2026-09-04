@@ -508,9 +508,7 @@ class TestMddOnBotEquityPath:
                 f"row -- both legs must be computed from the identical return "
                 f"sequence via the identical normalized formula."
             )
-            expected = _reference_normalized_max_drawdown_pct(
-                [r["current_return"] for r in rows]
-            )
+            expected = _reference_normalized_max_drawdown_pct([r["current_return"] for r in rows])
             assert result["if_held"] == pytest.approx(expected, abs=1e-6), (
                 f"scenario {i}: shared dry_run/if_held value {result['if_held']} "
                 f"does not match the independently-computed normalized "
@@ -554,9 +552,7 @@ class TestMddOnBotEquityPath:
         result_different_scalar = get_symphony_max_drawdown(
             sym_different_scalar, bot_state_entry=None, db_path=db_file
         )
-        assert result_different_scalar["dry_run"] == pytest.approx(
-            result["dry_run"], abs=1e-9
-        ), (
+        assert result_different_scalar["dry_run"] == pytest.approx(result["dry_run"], abs=1e-9), (
             "dry_run must be identical regardless of if_held_pct/max_drawdown "
             "injected into sym_dict -- it is computed purely from "
             "shadow_history.shadow_return"

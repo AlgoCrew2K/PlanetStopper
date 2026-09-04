@@ -83,9 +83,9 @@ def _seed_shadow_db(path: Path, symphony_id: str, rows: list[dict]) -> str:
     conn = sqlite3.connect(db_file)
     conn.execute(_SHADOW_SCHEMA)
     for row in rows:
-        trading_day = row.get("trading_day") or (
-            date.today() - timedelta(days=row["days_ago"])
-        ).isoformat()
+        trading_day = (
+            row.get("trading_day") or (date.today() - timedelta(days=row["days_ago"])).isoformat()
+        )
         conn.execute(
             "INSERT INTO shadow_history (symphony_id, ts_utc, trading_day, current_return, "
             "shadow_return, is_post_trigger, position_epoch) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -471,7 +471,9 @@ class TestAC2LifetimeScalarRenderedSeparately:
         mock_database.load_state.return_value = _minimal_bot_state()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         analytics_mock = _analytics_mock_sufficient_history(
-            mdd_if_held=10.5875, mdd_dry_run=10.3622, mdd_if_held_lifetime=None,
+            mdd_if_held=10.5875,
+            mdd_dry_run=10.3622,
+            mdd_if_held_lifetime=None,
         )
         monkeypatch.setattr(app_module, "analytics", analytics_mock)
         _stub_get_api_state_dict_with_real_portfolio_strip(monkeypatch, _minimal_bot_state())
@@ -535,14 +537,20 @@ class TestSSRCoerceNoneFabricatesZeroForThinHistorySymphony:
         m.get_portfolio_today_change.return_value = {"if_held": 0.5, "dry_run": 0.4}
         m.get_portfolio_cumulative_return.return_value = {"if_held": 10.0, "dry_run": 9.5}
         m.get_portfolio_max_drawdown.return_value = {
-            "if_held": 10.5875, "dry_run": 10.3622, "if_held_lifetime": 12.0, "n_obs": 30,
+            "if_held": 10.5875,
+            "dry_run": 10.3622,
+            "if_held_lifetime": 12.0,
+            "n_obs": 30,
         }
         m.get_symphony_today_change.return_value = {"if_held": 1.2, "dry_run": 0.9}
         m.get_symphony_cumulative_return.return_value = {"if_held": 12.0, "dry_run": 12.0}
         # KEY: thin-history symphony. if_held_lifetime present (Composer scalar
         # IS available) to isolate this from test 1's scenario above.
         m.get_symphony_max_drawdown.return_value = {
-            "if_held": None, "dry_run": None, "if_held_lifetime": 12.0, "n_obs": 1,
+            "if_held": None,
+            "dry_run": None,
+            "if_held_lifetime": 12.0,
+            "n_obs": 1,
         }
         dates30 = [f"2026-05-{d:02d}" for d in range(1, 31)]
         m.get_portfolio_daily_returns_from_shadow.return_value = (dates30, [0.01] * 30)
@@ -629,12 +637,18 @@ class TestHeroCoerceNoneFabricatesZero:
         # default)-blind-spot shape. Distinguishes this from a "missing key"
         # bug, which .get(key, 0.0) WOULD correctly catch.
         m.get_portfolio_max_drawdown.return_value = {
-            "if_held": None, "dry_run": None, "if_held_lifetime": 12.0, "n_obs": 0,
+            "if_held": None,
+            "dry_run": None,
+            "if_held_lifetime": 12.0,
+            "n_obs": 0,
         }
         m.get_symphony_today_change.return_value = {"if_held": 1.2, "dry_run": 0.9}
         m.get_symphony_cumulative_return.return_value = {"if_held": 12.0, "dry_run": 12.0}
         m.get_symphony_max_drawdown.return_value = {
-            "if_held": None, "dry_run": None, "if_held_lifetime": None, "n_obs": 0,
+            "if_held": None,
+            "dry_run": None,
+            "if_held_lifetime": None,
+            "n_obs": 0,
         }
         m.get_portfolio_daily_returns_from_shadow.return_value = ([], [])
         m.get_portfolio_bot_and_held_daily_returns.return_value = None
@@ -685,8 +699,10 @@ class TestAC5PerformanceRouteCoverageFields:
         self, client, tmp_path, monkeypatch
     ):
         sym_id = "sym-perf-coverage"
-        rows = [{"days_ago": d, "current_return": 0.1 * (d % 3), "shadow_return": 0.1 * (d % 3)}
-                for d in range(20, -1, -1)]  # 21 real trading days
+        rows = [
+            {"days_ago": d, "current_return": 0.1 * (d % 3), "shadow_return": 0.1 * (d % 3)}
+            for d in range(20, -1, -1)
+        ]  # 21 real trading days
         db_file = _seed_shadow_db(tmp_path / "perf_shadow.db", sym_id, rows)
         monkeypatch.setattr(app_module.analytics, "DB_FILE", db_file)
 
@@ -730,8 +746,10 @@ class TestAC5PerformanceRouteCoverageFields:
         response's own numbers (coverage_days < requested), not silently
         collapsed to 'all the data there is' with no signal."""
         sym_id = "sym-perf-shortfall"
-        rows = [{"days_ago": d, "current_return": 0.05, "shadow_return": 0.05}
-                for d in range(20, -1, -1)]
+        rows = [
+            {"days_ago": d, "current_return": 0.05, "shadow_return": 0.05}
+            for d in range(20, -1, -1)
+        ]
         db_file = _seed_shadow_db(tmp_path / "perf_shadow2.db", sym_id, rows)
         monkeypatch.setattr(app_module.analytics, "DB_FILE", db_file)
 
@@ -875,7 +893,10 @@ class TestMddInsufficientRescopedToNObs:
             max_drawdown={"if_held": 5.0, "dry_run": 5.0, "if_held_lifetime": 20.0, "n_obs": 5},
         )
         meta_thin = app_module._build_meta(
-            state_data={}, next_run_seconds=0, market_state="closed", portfolio_strip=strip_thin_n_obs
+            state_data={},
+            next_run_seconds=0,
+            market_state="closed",
+            portfolio_strip=strip_thin_n_obs,
         )
         assert meta_thin["portfolio"]["insufficient_history"] is True, (
             "AC re-scope FAIL: hist_dates has 35 entries (old flag would say "
@@ -1050,17 +1071,17 @@ class TestJinjaCommentLeakRegressionGuard:
         html = resp.get_data(as_text=True)
 
         assert "{#" not in html, (
-            f"an unstripped Jinja comment OPEN delimiter '{{#' survived into "
-            f"the rendered dashboard -- a comment either failed to parse as "
-            f"a comment, or a literal '{{#' example inside a comment's own "
-            f"prose caused the real comment to close early, leaving a "
-            f"nested '{{#' rendered as literal text."
+            "an unstripped Jinja comment OPEN delimiter '{#' survived into "
+            "the rendered dashboard -- a comment either failed to parse as "
+            "a comment, or a literal '{#' example inside a comment's own "
+            "prose caused the real comment to close early, leaving a "
+            "nested '{#' rendered as literal text."
         )
         assert "#}" not in html, (
-            f"an unstripped Jinja comment CLOSE delimiter '#}}' survived "
-            f"into the rendered dashboard -- same defect class: a literal "
-            f"'#}}' example inside a comment's own prose closed the real "
-            f"comment early, leaving the orphaned '#}}' (and everything "
-            f"between it and the comment's intended close) rendered as "
-            f"literal text."
+            "an unstripped Jinja comment CLOSE delimiter '#}' survived "
+            "into the rendered dashboard -- same defect class: a literal "
+            "'#}' example inside a comment's own prose closed the real "
+            "comment early, leaving the orphaned '#}' (and everything "
+            "between it and the comment's intended close) rendered as "
+            "literal text."
         )
