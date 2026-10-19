@@ -118,6 +118,9 @@ No feature reaches `main` (local OR origin) by self-merge. EVERY feature passes 
 **Cross-cutting:**
 `security-auditor` · `synthesizer` · `verifier`
 
+**Planning (compiled from the global templates with PlanetStopper bindings):**
+`spec-writer` (Gate-1 spec author) · `spec-auditor` (Gate-1 spec reviewer) · `architect` (Gate-2 approach author). Contract tests live in `tests/harness/`; the compiler-check cases skip when the harness compiler is absent, as on CI.
+
 ## Project-Local Skills (`.claude/skills/`)
 `/backtest` · `/optuna-compare` · `/db-inspect` · `/api-fixture` · `/discord-test` · `/run-tests` · `/lint` · `/perf-snapshot` · `/symphony-diff`
 
@@ -125,7 +128,7 @@ No feature reaches `main` (local OR origin) by self-merge. EVERY feature passes 
 **All new codepaths — and bug fixes that introduce new codepaths — MUST be built via the Toxic Pair TDD composition of Agent Teams.** The PM may NOT approximate a team with sequential solo-agent RED → GREEN → review dispatches. Real Agent Teams only: shared worktree, one branch, `SendMessage` handoffs, autonomous Toxic Pair (test-writer ⇄ implementer) cycling with reviewers wrapped around it.
 
 **Skill-driven TDD is MANDATORY (not ad-hoc RED/GREEN).** Every dev cycle is driven through the TDD skills, and the kickoff prompt MUST say so explicitly:
-- Planning artifact first: each feature has a `/scaffold`-format plan in `feature-plans/<name>.md` with `Status: ready` (Summary / Acceptance Criteria as `AC-N` / Architecture / Edge Cases / Security Considerations / Testing Strategy / Scope Boundaries). Use the `/scaffold` skill to produce it — never hand-roll.
+- Planning artifact first: each feature has a plan in `feature-plans/<name>.md` with `Status: ready`. New plans follow the current `/scaffold` tier template, written by `spec-writer` and audited by `spec-auditor`, with the HOW (file and function naming) in a Gate-2 approach document by `architect`; older plans keep their legacy shape (Summary / Acceptance Criteria as `AC-N` / Architecture / Edge Cases / Security Considerations / Testing Strategy / Scope Boundaries). Use the `/scaffold` skill to produce it, never hand-roll.
 - **test-writer** runs `/tdd <feature-plan>` → writes RED tests + creates `.claude/tdd-handoff.md`.
 - **implementer** runs `/tdd-implement` → reads the handoff (NOT the plan — deliberately blind), writes minimal GREEN.
 - finalize the cycle with `/tdd-finalize` before cycle-complete.
