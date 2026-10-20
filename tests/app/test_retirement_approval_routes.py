@@ -439,10 +439,13 @@ class TestRefusalsLeaveTheEntryPending:
         _assert_entry_pending_and_nothing_written(client, review_store)
 
     def test_an_unauthenticated_approval_sent_as_the_panel_sends_it_redirects_to_login(
-        self, client, review_store, auth_client, _reenable_csrf, monkeypatch
+        self, client, review_store, _reenable_csrf, monkeypatch
     ):
-        token = _get_csrf_token(auth_client)
-        resp = auth_client.post(
+        monkeypatch.setenv("DASHBOARD_PASSWORD", "test-pass-retirement-route-abc123")
+        monkeypatch.setenv("SECRET_KEY", "test-secret-retirement-route-xyz789")
+        token = _get_csrf_token(client)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        resp = client.post(
             _APPROVE_URL,
             data=json.dumps({"candidate_id": _retire_id(review_store)}),
             headers={"Content-Type": "application/json", "X-CSRF-Token": token},

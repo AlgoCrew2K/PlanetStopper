@@ -757,7 +757,7 @@ class TestTheApiReadsOnlyTheStoredRun:
     def test_serving_the_run_writes_nothing(self, client, isolated_db):
         pb.store_full_run()
         before = pb.observation_count()
-        _get(client)
+        assert _get(client)["review_run"]["run_id"] == pb.RUN_ID_FIRST
         _get(client)
         assert pb.observation_count() == before
         assert db_module.get_retirement_decisions() == []

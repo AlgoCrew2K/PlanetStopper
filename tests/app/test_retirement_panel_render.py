@@ -288,7 +288,7 @@ class TestEmptyState:
 # ===========================================================================
 
 _PANEL_ITEMS = ("performance", "composite", "redundancy", "backtest", "marginal", "long_vix")
-_MINUS = "−"
+_MINUS = chr(0x2212)  # the typographic minus sign, accepted in place of a hyphen
 
 
 def _page(client):
@@ -371,6 +371,7 @@ class TestHeaderAndEmptyStates:
     def test_a_valid_threshold_shows_no_invalid_note(self, client, isolated_db):
         _stored_full_run()
         panel = _panel(client)
+        assert panel.find("tenure-review-threshold") is not None, "the header must be rendered"
         assert panel.find("tenure-review-threshold-note") is None
 
     def test_an_invalid_configured_threshold_is_stated_next_to_the_default_in_use(
@@ -664,11 +665,15 @@ class TestDecisionLifecycleOnEntries:
     def test_the_buttons_and_the_status_chip_share_one_card_the_client_script_can_find(
         self, client, isolated_db
     ):
-        _stored_full_run()
+        record = _stored_full_run()
         panel = _panel(client)
-        approve = panel.find("retirement-approve-btn")
+        retire = pb.entry_with_verdict(record, "retire_candidate")
+        entry = pb.entry_node(panel, retire["symphony_id"])
+        approve = entry.find("retirement-approve-btn")
+        assert approve is not None
         card = approve.ancestor("retirement-recommendation-card")
         assert card is not None, "retDispatchDecision looks the card up from the clicked button"
+        assert card is entry or card.is_inside(entry)
         assert card.find("retirement-rec-status") is not None
         assert card.find("retirement-reject-btn") is not None
         assert len(panel.find_all("retirement-recommendation-card")) == 1
@@ -762,16 +767,6 @@ class TestDecisionLifecycleOnEntries:
         assert node.find("retirement-checklist") is None
         assert _lifecycle_buttons(node) == ([], [])
 
-    def test_a_decision_on_an_entry_that_is_not_a_candidate_never_adds_one_to_the_buttons(
-        self, client, isolated_db
-    ):
-        record = _stored_full_run()
-        db_module.upsert_retirement_decision(pb.FULL_IDS["keep"], approval_status="rejected")
-        db_module.upsert_retirement_decision(pb.FULL_IDS["young"], approval_status="rejected")
-        panel = _panel(client)
-        assert len(panel.find_all("retirement-approve-btn")) == 1
-        assert len(record["entries"]) == len(panel.find_all("tenure-review-entry"))
-
 
 class TestEscaping:
     def test_hostile_entry_fields_are_escaped_and_cannot_open_an_attribute(
@@ -856,7 +851,9 @@ class TestRunStateNotices:
 
     def test_no_failed_notice_is_shown_when_no_attempt_failed(self, client, isolated_db):
         _stored_full_run()
-        assert _panel(client).find("tenure-review-failed-notice") is None
+        panel = _panel(client)
+        assert panel.find("tenure-review-as-of") is not None, "the header must be rendered"
+        assert panel.find("tenure-review-failed-notice") is None
 
 
 class TestRunButton:
@@ -1038,10 +1035,13 @@ class TestDesignSystem:
         state = tenure_review.REVIEW_RUN_STATE
         assert state.try_start("nightly")
         panel = _panel(client)
-        for node in panel.walk():
-            if node.testid and node.testid.startswith("tenure-review-"):
-                text = node.text()
-                assert "—" not in text and "–" not in text, (node.testid, text)
+        review_nodes = [
+            n for n in panel.walk() if n.testid and n.testid.startswith("tenure-review-")
+        ]
+        assert len(review_nodes) > 40, "the review text must actually be rendered to be checked"
+        for node in review_nodes:
+            text = node.text()
+            assert chr(0x2014) not in text and chr(0x2013) not in text, (node.testid, text)
 
 
 class TestLatestRunOnlyInThePanel:

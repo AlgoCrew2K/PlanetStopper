@@ -451,6 +451,14 @@ class Node:
             node = node.parent
         return None
 
+    def is_inside(self, other: Node) -> bool:
+        node = self.parent
+        while node is not None:
+            if node is other:
+                return True
+            node = node.parent
+        return False
+
     def classes(self) -> list[str]:
         return (self.attrs.get("class") or "").split()
 
