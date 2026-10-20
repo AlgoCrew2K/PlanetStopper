@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -350,3 +351,181 @@ def test_a_backtest_changes_only_its_own_item_and_what_depends_on_it():
     assert (
         b.entry_of(with_backtest, "leak-2")["evidence"] == b.entry_of(without, "leak-2")["evidence"]
     )
+
+
+# ---------------------------------------------------------------------------
+# The backtest leg is the shared metric function over percent returns
+# ---------------------------------------------------------------------------
+
+# Opens with a 10 percent loss and contains a day of +100 percent, with down days
+# around it, so the series is unambiguously a returns path.
+SHAPED_LEVELS = [100.0, 90.0, 95.0, 190.0, 171.0, 180.0]
+SHAPED_DAYS = b.last_n_nyse_days(b.AS_OF, len(SHAPED_LEVELS))
+
+
+def _window_over(days):
+    return {"first": days[0].isoformat(), "last": days[-1].isoformat(), "days": len(days)}
+
+
+def _pct_returns(levels):
+    return [(later / earlier - 1.0) * 100.0 for earlier, later in zip(levels, levels[1:])]
+
+
+def test_the_backtest_leg_is_the_shared_metric_function_over_the_percent_returns(monkeypatch):
+    """Expected values come from the metric function on percent returns derived from the
+    per-day values. A recorder proves the leg was computed by that function.
+
+    Rejects a hand-written total return and drawdown loop, and fraction-scale returns."""
+    returns = _pct_returns(SHAPED_LEVELS)
+    assert returns[0] < 0 < max(returns) - 100.0  # fixture sanity: first-day loss, +100 day
+    expected = b.quantstats_percent(returns)
+    calls = b.spy_on_quantstats_metrics(monkeypatch)
+
+    item = tr.backtest_comparison(
+        window=_window_over(SHAPED_DAYS),
+        realized_total_return=REALIZED_TOTAL,
+        realized_max_drawdown=REALIZED_DRAWDOWN,
+        backtest=b.backtest_over(SHAPED_DAYS, SHAPED_LEVELS),
+    )
+
+    assert item["status"] == "available"
+    assert b.was_called_with(calls, returns)
+    figs = item["figures"]
+    # the same function on the same inputs: 1e-9 relative absorbs only float summation order
+    assert figs["backtest_total_return"]["value"] == pytest.approx(
+        expected["total_return"], rel=1e-9
+    )
+    assert figs["backtest_max_drawdown"]["value"] == pytest.approx(
+        expected["max_drawdown"], rel=1e-9
+    )
+    assert figs["total_return_gap"]["value"] == pytest.approx(
+        REALIZED_TOTAL - expected["total_return"], rel=1e-9
+    )
+    assert figs["max_drawdown_gap"]["value"] == pytest.approx(
+        REALIZED_DRAWDOWN - expected["max_drawdown"], rel=1e-9
+    )
+
+
+def test_an_unusable_backtest_level_is_dropped_like_an_unusable_realized_one(monkeypatch):
+    """The move across the dropped day is kept (the realized series does the same), so
+    the returns are those of the remaining levels in order."""
+    levels = [100.0, 90.0, None, 190.0, 171.0, 180.0]
+    kept = [v for v in levels if v is not None]
+    returns = _pct_returns(kept)
+    expected = b.quantstats_percent(returns)
+    calls = b.spy_on_quantstats_metrics(monkeypatch)
+
+    item = tr.backtest_comparison(
+        window=_window_over(SHAPED_DAYS),
+        realized_total_return=REALIZED_TOTAL,
+        realized_max_drawdown=REALIZED_DRAWDOWN,
+        backtest=b.backtest_over(SHAPED_DAYS, levels),
+    )
+
+    assert b.was_called_with(calls, returns)
+    assert item["figures"]["backtest_total_return"]["value"] == pytest.approx(
+        expected["total_return"], rel=1e-9
+    )
+
+
+def test_two_values_in_the_window_give_figures_or_an_honest_unavailable_never_an_empty_item():
+    """Two values make one return, which the metric function cannot score. The item may
+    compute it another way or say it is unavailable; it must not claim to be available
+    with the backtest leg missing."""
+    days = SHAPED_DAYS[:2]
+    item = tr.backtest_comparison(
+        window=_window_over(days),
+        realized_total_return=REALIZED_TOTAL,
+        realized_max_drawdown=REALIZED_DRAWDOWN,
+        backtest=b.backtest_over(days, SHAPED_LEVELS[:2]),
+    )
+    if item["status"] == "available":
+        for name in ("backtest_total_return", "backtest_max_drawdown", "total_return_gap"):
+            assert item["figures"][name]["value"] is not None, name
+    else:
+        assert item["status"] == "unavailable"
+        assert item["reason"]
+        assert all(fig["value"] is None for fig in item["figures"].values())
+
+
+# ---------------------------------------------------------------------------
+# Through build_review: the realized legs are the entry's own performance figures
+# ---------------------------------------------------------------------------
+
+CASE_DAYS = b.last_n_nyse_days(b.AS_OF, 61)  # 60 returns: total and annualized return differ widely
+CASE_THRESHOLD = 30
+TRAILS = "trails its own backtest"
+
+
+def _case(realized_drift, shortfall_pp):
+    """One eligible symphony and a backtest whose total return exceeds the symphony's
+    realized total return by ``shortfall_pp`` percentage points, with a small wobble so
+    the backtest has a drawdown of its own. The backtest covers the realized window."""
+    returns = b.wave_returns(60, amp=0.4, drift=realized_drift)
+    realized = b.oracle_metrics(returns)
+    target_total = realized["total_return"] + shortfall_pp
+    wobble = [1.0 + 0.01 * math.sin(i) for i in range(len(CASE_DAYS))]
+    growth = ((1.0 + target_total / 100.0) / wobble[-1]) ** (1.0 / (len(CASE_DAYS) - 1))
+    levels = [100.0 * growth**i * wobble[i] for i in range(len(CASE_DAYS))]
+    symphony = b.composer_symphony(
+        "case-sym", "Case Symphony", CASE_DAYS, returns, backtest=b.backtest_over(CASE_DAYS, levels)
+    )
+    bt_total, bt_dd = _oracle(
+        {d.isoformat(): v for d, v in zip(CASE_DAYS, levels, strict=True)},
+        CASE_DAYS[0].isoformat(),
+        CASE_DAYS[-1].isoformat(),
+    )
+    return symphony, realized, bt_total, bt_dd
+
+
+def _backtest_figures(symphony):
+    result = b.review([symphony], as_of=b.AS_OF, threshold=CASE_THRESHOLD)
+    entry = b.entry_of(result, symphony.symphony_id)
+    perf = b.item_of(entry, "performance")["figures"]
+    item = b.item_of(entry, "backtest")
+    assert item["status"] == "available"
+    return entry, perf, item["figures"]
+
+
+@pytest.mark.parametrize(
+    ("drift", "shortfall", "verdict", "reasons"),
+    [(0.16, 12.0, "watch", [TRAILS]), (-0.18, 9.0, "keep", [])],
+    ids=["trails_by_12_points", "trails_by_9_points"],
+)
+def test_the_backtest_item_carries_the_entrys_own_realized_legs_and_gaps_from_the_per_day_values(
+    drift, shortfall, verdict, reasons
+):
+    """Both runs are chosen so the realized annualized return is more than the 10 point
+    margin away from the realized total return, on the side that would flip the verdict
+    if the annualized figure (or the drawdown) were wired into the comparison by mistake.
+
+    Rejects realized legs taken from another figure of the performance item, a gap
+    computed from anything but the realized and backtest legs, and a verdict that does
+    not follow the total-return shortfall."""
+    symphony, realized, bt_total, bt_dd = _case(drift, shortfall)
+    entry, perf, figs = _backtest_figures(symphony)
+    # fixture sanity: the wrong wiring would change the outcome
+    assert abs(realized["annualized_return"] - realized["total_return"]) > 10.0
+    assert abs(realized["max_drawdown"] - realized["total_return"]) > 1.0
+
+    # the entry's own performance figures, which the oracle confirms
+    assert perf["total_return"]["value"] == pytest.approx(realized["total_return"], rel=1e-9)
+    assert perf["max_drawdown"]["value"] == pytest.approx(realized["max_drawdown"], rel=1e-9)
+    # the same numbers reach the backtest item; 1e-12 relative: no arithmetic in between
+    assert figs["realized_total_return"]["value"] == pytest.approx(
+        perf["total_return"]["value"], rel=1e-12
+    )
+    assert figs["realized_max_drawdown"]["value"] == pytest.approx(
+        perf["max_drawdown"]["value"], rel=1e-12
+    )
+    # the backtest legs and both gaps come from the fixture's per-day values
+    assert figs["backtest_total_return"]["value"] == pytest.approx(bt_total, rel=1e-9)
+    assert figs["backtest_max_drawdown"]["value"] == pytest.approx(bt_dd, rel=1e-9)
+    assert figs["total_return_gap"]["value"] == pytest.approx(
+        perf["total_return"]["value"] - bt_total, rel=1e-9, abs=1e-9
+    )
+    assert figs["max_drawdown_gap"]["value"] == pytest.approx(
+        perf["max_drawdown"]["value"] - bt_dd, rel=1e-9, abs=1e-9
+    )
+    assert entry["verdict"] == verdict
+    assert entry["verdict_reasons"] == reasons

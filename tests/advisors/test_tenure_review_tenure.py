@@ -10,13 +10,18 @@ worked roster (85 trading days, 41 remaining) are the plan's own stated values.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
 
 import advisors.tenure_review as tr
+from advisors import composer_backtest_client as client
 from tests.advisors import _tenure_review_builders as b
+
+_REPO_ROOT = Path(tr.__file__).resolve().parents[1]
 
 _STATS_FIXTURE = (
     Path(__file__).resolve().parents[1] / "fixtures" / "composer" / "symphony_stats_meta.json"
@@ -344,3 +349,263 @@ def test_a_review_of_no_symphonies_has_no_entries_and_still_names_its_window():
     assert window["last"] == b.AS_OF.isoformat()
     assert window["days"] == 126
     assert b.oracle_count_trading_days(date.fromisoformat(window["first"]), b.AS_OF) == 126
+
+
+# ---------------------------------------------------------------------------
+# Unknown tenure is never described as a tenure that will pass
+# ---------------------------------------------------------------------------
+
+UNKNOWN = "tenure unavailable"
+NOT_YET = "not yet eligible"
+ROSTER_DAYS = b.last_n_nyse_days(b.AS_OF, 31)
+ROSTER_THRESHOLD = 30
+
+
+def _mixed_tenure_roster():
+    """Two eligible symphonies, one with no invested-since date (but a Composer series,
+    so it still takes part in pairs as a sibling) and one that is simply young."""
+    return [
+        b.composer_symphony("comp-a", "Comp A", ROSTER_DAYS, b.wave_returns(30, freq=0.4)),
+        b.composer_symphony("comp-c", "Comp C", ROSTER_DAYS, b.wave_returns(30, freq=1.3)),
+        b.composer_symphony(
+            "unk-u",
+            "Unknown Tenure",
+            ROSTER_DAYS,
+            b.wave_returns(30, freq=2.1),
+            invested_since=None,
+        ),
+        b.composer_symphony("young-y", "Young Why", ROSTER_DAYS[-10:], b.wave_returns(9, freq=0.8)),
+    ]
+
+
+def test_a_symphony_with_unknown_tenure_reads_tenure_unavailable_in_every_evidence_item():
+    """The six items of a symphony whose invested-since date is missing say so. A young
+    symphony keeps its own, different reason. Rejects 'not yet eligible' for the missing
+    date, which promises the symphony will qualify with time."""
+    result = b.review(_mixed_tenure_roster(), as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    unknown = b.entry_of(result, "unk-u")
+    young = b.entry_of(result, "young-y")
+    assert unknown["tenure_trading_days"] is None  # fixture sanity
+    for name in b.EVIDENCE_ITEMS:
+        item = b.item_of(unknown, name)
+        assert item["status"] == "unavailable", name
+        assert item["reason"] == UNKNOWN, name
+        assert all(fig["value"] is None for fig in item["figures"].values()), name
+        assert b.item_of(young, name)["reason"] == NOT_YET, name
+
+
+def test_unknown_tenure_outranks_having_no_history_as_the_reason():
+    """No invested-since date and no series at all: both are true, and the entry's own
+    eligibility text already says the tenure is unavailable."""
+    nothing = b.no_history_symphony("unk-void", "Unknown And Void", None)
+    entry = b.entry_of(b.review([nothing], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "unk-void")
+    assert entry["basis"]["kind"] == "none"
+    for name in b.EVIDENCE_ITEMS:
+        assert b.item_of(entry, name)["reason"] == UNKNOWN, name
+
+
+def test_every_marginal_item_lists_each_excluded_symphony_with_the_reason_that_applies_to_it():
+    """A symphony with an unknown tenure is excluded as 'tenure unavailable' and a young
+    one as 'not yet eligible', in the item of every entry that lists them."""
+    result = b.review(_mixed_tenure_roster(), as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    reasons = {
+        "Unknown Tenure": "excluded: tenure unavailable",
+        "Young Why": "excluded: not yet eligible",
+    }
+    for sid in ("comp-a", "comp-c"):
+        item = b.item_of(b.entry_of(result, sid), "marginal")
+        assert item["status"] == "available", sid  # fixture sanity: the two are compared
+        assert len(item["excluded"]) == len(reasons), sid
+        assert {r["display_name"]: r["reason"] for r in item["excluded"]} == reasons, sid
+    for entry in result.entries:
+        for record in b.item_of(entry, "marginal")["excluded"]:
+            assert record["reason"] == reasons[record["display_name"]], entry["symphony_id"]
+
+
+# ---------------------------------------------------------------------------
+# An invested-since date outside the calendar the module supports
+# ---------------------------------------------------------------------------
+
+# Run in a fresh interpreter with a timeout, because a walk over centuries of calendar
+# days does not return in any time a test could wait for.
+_CALENDAR_PROBE = """
+import json
+import sys
+from datetime import UTC, date, datetime, timedelta
+
+sys.path.insert(0, {root!r})
+import advisors.tenure_review as tr
+
+floor = tr.CALENDAR_FLOOR
+values = [
+    (floor - timedelta(days=1)).isoformat(),
+    "1500-01-01",
+    "0001-01-01",
+    floor.isoformat(),
+]
+inputs = tr.ReviewInputs(
+    run_id="calendar-probe",
+    trigger="nightly",
+    started_at=datetime(2026, 12, 31, 22, 0, tzinfo=UTC),
+    as_of=date(2026, 12, 31),
+    threshold=tr.ThresholdSetting(126, None),
+    symphonies=[
+        tr.SymphonyInput(symphony_id=f"probe-{{i}}", display_name=f"Probe {{i}}", invested_since=v)
+        for i, v in enumerate(values)
+    ],
+)
+result = tr.build_review(inputs)
+keys = ("invested_since", "tenure_trading_days", "eligible", "days_remaining",
+        "eligibility_text", "verdict")
+print(json.dumps({{"floor": floor.isoformat(), "entries": [{{k: e[k] for k in keys}} for e in result.entries]}}))
+"""
+
+
+def test_an_invested_since_date_before_the_supported_calendar_reads_tenure_unavailable_quickly():
+    """The floor is a named constant. A date before it (a day before, or centuries
+    before) gives an unknown tenure at once and never raises; a date on the floor is
+    still counted, from the independent calendar library.
+
+    Rejects walking every day since the date, a crash on an out-of-range year, and a
+    floor that excludes its own first day."""
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", _CALENDAR_PROBE.format(root=str(_REPO_ROOT))],
+        capture_output=True,
+        text=True,
+        timeout=240,
+        cwd=_REPO_ROOT,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    probe = json.loads(done.stdout.strip().splitlines()[-1])
+    before_floor, long_ago, year_one, on_floor = probe["entries"]
+    for entry in (before_floor, long_ago, year_one):
+        assert entry["tenure_trading_days"] is None, entry
+        assert entry["eligible"] is False, entry
+        assert entry["days_remaining"] is None, entry
+        assert entry["eligibility_text"].startswith(UNKNOWN), entry
+        assert entry["verdict"] is None, entry
+    floor = date.fromisoformat(probe["floor"])
+    assert on_floor["tenure_trading_days"] == len(b.nyse_days(floor, b.AS_OF))
+    assert on_floor["eligible"] is True
+
+
+@pytest.mark.parametrize("text", ["", "garbage", "2026-02-30", "0000-00-00"])
+def test_an_invested_since_text_that_is_not_a_date_reads_tenure_unavailable(text):
+    entry = b.entry_of(
+        b.review([b.make_symphony("bad-date", "Bad Date", text)], as_of=b.AS_OF, threshold=126),
+        "bad-date",
+    )
+    assert entry["tenure_trading_days"] is None
+    assert entry["eligible"] is False
+    assert entry["eligibility_text"].startswith(UNKNOWN)
+
+
+# ---------------------------------------------------------------------------
+# The qualifying window a runner asks for before it requests a backtest
+# ---------------------------------------------------------------------------
+
+
+def _qualifying_roster():
+    return [
+        b.composer_symphony(
+            "win-a", "Win A", ROSTER_DAYS, b.wave_returns(30, freq=0.4), definition_available=True
+        ),
+        b.composer_symphony("win-c", "Win C", ROSTER_DAYS, b.wave_returns(30, freq=1.3)),
+    ]
+
+
+def test_the_qualifying_window_of_an_eligible_symphony_is_the_window_its_review_uses():
+    """The same first and last dates the performance item reports, as a plain mapping of
+    ISO dates and a day count. A backtest requested over exactly these dates is accepted
+    by the review, not rejected as covering other dates."""
+    roster = _qualifying_roster()
+    window = tr.qualifying_window(roster[0], b.AS_OF, ROSTER_THRESHOLD)
+    entry = b.entry_of(
+        b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD),
+        "win-a",
+    )
+    assert window == b.item_of(entry, "performance")["window"]
+    assert set(window) == {"first", "last", "days"}
+
+    values = {d.isoformat(): 100.0 + i for i, d in enumerate(ROSTER_DAYS)}
+    roster[0].backtest = client.BacktestResult(
+        stats={},
+        data_warnings=[],
+        daily_portfolio_values=values,
+        first_day=window["first"],
+        last_market_day=window["last"],
+    )
+    item = b.item_of(
+        b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "win-a"),
+        "backtest",
+    )
+    assert item["status"] == "available"
+
+
+def test_the_qualifying_window_starts_where_a_late_series_starts():
+    late = ROSTER_DAYS[5:]
+    sym = b.composer_symphony(
+        "late-series",
+        "Late Series",
+        late,
+        b.wave_returns(len(late) - 1),
+        invested_since=ROSTER_DAYS[0].isoformat(),
+    )
+    window = tr.qualifying_window(sym, b.AS_OF, ROSTER_THRESHOLD)
+    assert window["first"] == late[0].isoformat()
+    assert window["last"] == b.AS_OF.isoformat()
+    assert window["days"] == len(late)
+
+
+def test_the_qualifying_window_of_a_shadow_basis_symphony_is_its_shadow_window():
+    sym = b.make_symphony(
+        "shadow-win",
+        "Shadow Win",
+        ROSTER_DAYS[0].isoformat(),
+        series_failure="unavailable",
+        shadow_returns=b.by_date(ROSTER_DAYS[1:], b.wave_returns(30)),
+    )
+    window = tr.qualifying_window(sym, b.AS_OF, ROSTER_THRESHOLD)
+    entry = b.entry_of(b.review([sym], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "shadow-win")
+    assert window == b.item_of(entry, "performance")["window"]
+    assert window["days"] == 30
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(
+            lambda: b.composer_symphony(
+                "short", "Short", ROSTER_DAYS[-10:], b.wave_returns(9), invested_since=None
+            ),
+            id="tenure_unknown",
+        ),
+        pytest.param(
+            lambda: b.composer_symphony("young", "Young", ROSTER_DAYS[-10:], b.wave_returns(9)),
+            id="below_the_threshold",
+        ),
+        pytest.param(
+            lambda: b.no_history_symphony("void", "Void", ROSTER_DAYS[0].isoformat()),
+            id="eligible_but_no_history",
+        ),
+        pytest.param(
+            lambda: b.make_symphony("future", "Future", "2027-01-04"), id="invested_after_as_of"
+        ),
+    ],
+)
+def test_there_is_no_qualifying_window_unless_the_symphony_is_eligible_and_has_history(build):
+    assert tr.qualifying_window(build(), b.AS_OF, ROSTER_THRESHOLD) is None
+
+
+def test_the_threshold_given_decides_whether_a_window_qualifies():
+    sym = b.composer_symphony("edge", "Edge", ROSTER_DAYS, b.wave_returns(30))
+    assert tr.qualifying_window(sym, b.AS_OF, len(ROSTER_DAYS)) is not None
+    assert tr.qualifying_window(sym, b.AS_OF, len(ROSTER_DAYS) + 1) is None
+
+
+def test_asking_for_a_qualifying_window_changes_nothing():
+    sym = b.composer_symphony("still", "Still", ROSTER_DAYS, b.wave_returns(30))
+    snapshot = dict(sym.composer_values)
+    tr.qualifying_window(sym, b.AS_OF, ROSTER_THRESHOLD)
+    assert sym.composer_values == snapshot

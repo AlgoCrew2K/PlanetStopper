@@ -13,6 +13,7 @@ not evaluated.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from datetime import date
@@ -425,18 +426,50 @@ def test_the_review_flags_the_same_candidate_and_composites_as_the_existing_reco
 # ---------------------------------------------------------------------------
 
 
-def test_a_symphony_with_no_screen_hit_reads_no_redundant_sibling_not_unavailable():
-    days = b.last_n_nyse_days(b.AS_OF, 20)
-    roster = [
-        b.composer_symphony(f"quiet-{k}", f"Quiet {k}", days, b.sine_returns(19, k))
-        for k in (1, 2, 3)
+ENOUGH_DAYS = retirement_recommender.MIN_OBS_FLOOR + 10  # aligned days for a trusted screen
+NO_SIBLING_TEXT = "no redundant sibling"
+
+
+def _quiet_roster(count=3):
+    """Mutually orthogonal series with enough aligned days for the screen to be trusted."""
+    days = b.last_n_nyse_days(b.AS_OF, ENOUGH_DAYS + 1)
+    return [
+        b.composer_symphony(f"quiet-{k}", f"Quiet {k}", days, b.sine_returns(ENOUGH_DAYS, k))
+        for k in range(1, count + 1)
     ]
-    result = b.review(roster, as_of=b.AS_OF, threshold=20)
+
+
+def test_a_symphony_with_no_screen_hit_reads_no_redundant_sibling_not_unavailable():
+    result = b.review(_quiet_roster(), as_of=b.AS_OF, threshold=20)
     for k in (1, 2, 3):
         item = b.item_of(b.entry_of(result, f"quiet-{k}"), "redundancy")
         assert item["status"] == "available", k
         assert item["pair"] is None, k
         assert item["retire_candidate"] is False, k
+
+
+def test_a_symphony_with_no_screen_hit_carries_the_text_no_redundant_sibling_in_its_record():
+    """The API returns the stored record as it is, so the words live in the record and
+    not in a renderer. Rejects an item that is available with nothing to read."""
+    result = b.review(_quiet_roster(), as_of=b.AS_OF, threshold=20)
+    record = json.loads(json.dumps(tr.run_record(result, b.et(2026, 12, 31, 17, 5))))
+    for entry in record["entries"]:
+        item = entry["evidence"]["redundancy"]
+        assert item["status"] == "available", entry["symphony_id"]
+        assert item["pair"] is None, entry["symphony_id"]
+        assert item["summary"] == NO_SIBLING_TEXT, entry["symphony_id"]
+
+
+def test_the_no_sibling_text_is_not_carried_by_an_item_that_shows_a_pair_or_has_no_result():
+    """Rejects stamping the text on every item."""
+    roster, threshold = b.roster_with_ineligible_correlated_sibling()
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold)
+    shown = b.item_of(b.entry_of(result, "keep-a"), "redundancy")
+    assert shown["pair"] is not None  # fixture sanity
+    assert shown.get("summary") != NO_SIBLING_TEXT
+    young = b.item_of(b.entry_of(result, "young-c"), "redundancy")
+    assert young["status"] == "unavailable"  # fixture sanity
+    assert young.get("summary") != NO_SIBLING_TEXT
 
 
 def test_a_correlated_sibling_that_is_not_yet_eligible_is_shown_but_never_flags_anyone():
@@ -500,3 +533,284 @@ def test_a_symphony_that_is_not_flagged_shows_its_strongest_hit_even_when_a_gate
     assert y2["retire_candidate"] is False
     assert y2["pair"]["sibling_id"] == "tail-x"
     assert y2["pair"]["structural_gate"]["state"] == "passed"
+
+
+# ---------------------------------------------------------------------------
+# A candidate with several passing pairs keeps the strongest, as the recommender does
+# ---------------------------------------------------------------------------
+
+
+def _oracle_pair_passes_both_gates(x, y):
+    n = len(x)
+    r = b.pearson(x, y)
+    stressed = b.oracle_stressed_correlation(x, y)
+    return (
+        b.oracle_ci(r, n)[0] >= b.SCREEN_THRESHOLD
+        and stressed is not None
+        and stressed >= b.SCREEN_THRESHOLD
+    )
+
+
+@pytest.mark.parametrize("stronger_sorts_first", [True, False], ids=["id_first", "id_last"])
+def test_a_candidate_with_two_passing_pairs_is_shown_with_the_more_correlated_one(
+    stronger_sorts_first,
+):
+    """weak-x is the lowest composite and both of its pairs pass both gates. The pair it
+    shows, and the sibling it names, are the ones with the higher correlation, whichever
+    sibling's id sorts first. Rejects choosing the weaker pair, the first pair found and
+    the last pair found."""
+    roster = b.roster_with_a_candidate_in_two_passing_pairs(
+        stronger_sorts_first=stronger_sorts_first
+    )
+    returns = {s.symphony_id: b.returns_from_values(s.composer_values) for s in roster}
+    r_a = b.pearson(returns["weak-x"], returns["sib-a"])
+    r_b = b.pearson(returns["weak-x"], returns["sib-b"])
+    stronger, weaker = ("sib-a", "sib-b") if r_a > r_b else ("sib-b", "sib-a")
+    # fixture sanity: both pairs pass both gates, weak-x scores lowest, and the stronger
+    # sibling's id is where the parameter says it is
+    assert abs(r_a - r_b) > 0.01
+    assert _oracle_pair_passes_both_gates(returns["weak-x"], returns[stronger])
+    assert _oracle_pair_passes_both_gates(returns["weak-x"], returns[weaker])
+    assert (stronger == "sib-a") == stronger_sorts_first
+    window = -(b.NOTE_THRESHOLD - 1)
+    composites = b.oracle_composites(
+        {sid: b.oracle_metrics(series[window:]) for sid, series in returns.items()}
+    )
+    assert composites["weak-x"] < min(composites["sib-a"], composites["sib-b"])
+
+    result = b.review(roster, as_of=b.AS_OF, threshold=b.NOTE_THRESHOLD)
+    item = b.item_of(b.entry_of(result, "weak-x"), "redundancy")
+    assert item["retire_candidate"] is True
+    assert item["pair"]["sibling_id"] == stronger
+    assert item["pair"]["correlation"]["value"] == pytest.approx(max(r_a, r_b), rel=1e-9)
+
+
+def test_the_pair_a_candidate_shows_is_the_pair_the_existing_recommender_keeps(
+    tmp_path, monkeypatch
+):
+    """The same series seeded as shadow rows for the existing recommender: for the
+    candidate with two passing pairs it keeps one recommendation, and the review's row
+    names the same sibling. The flagged set is the recommender's set."""
+    roster = b.roster_with_a_candidate_in_two_passing_pairs(stronger_sorts_first=False)
+    dates = sorted(roster[0].composer_values)
+    seed_state_db(tmp_path, monkeypatch, series_by_symphony=b.shadow_rows_of(roster))
+    recs = {r["candidate_id"]: r for r in retirement_recommender.build_recommendations(days=None)}
+    assert "weak-x" in recs  # fixture sanity
+
+    result = b.review(roster, as_of=b.AS_OF, threshold=len(dates))
+    flagged = {
+        e["symphony_id"] for e in result.entries if b.item_of(e, "redundancy")["retire_candidate"]
+    }
+    assert flagged == set(recs)
+    pair = b.item_of(b.entry_of(result, "weak-x"), "redundancy")["pair"]
+    assert pair["sibling_id"] == recs["weak-x"]["sibling_id"]
+    assert pair["correlation"]["value"] == pytest.approx(recs["weak-x"]["correlation"], rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# The structural gate is the recommender's gate
+# ---------------------------------------------------------------------------
+
+
+def test_the_structural_gate_state_follows_the_recommenders_gate_function(monkeypatch):
+    """Both pairs have a defined stressed correlation. With the recommender's gate
+    function inverted, the states invert with it, so the module asks it and does not
+    compare the number to the threshold itself. The module keeps calling it as
+    retirement_recommender.evaluate_structural_redundancy_gate.
+
+    Rejects a second copy of the comparison."""
+    redundant = b.block_pair(181, "redundant")
+    diverging = b.block_pair(265, "diverging")
+    assert _pair(*redundant)["structural_gate"]["state"] == "passed"  # fixture sanity
+    assert _pair(*diverging)["structural_gate"]["state"] == "not met"  # fixture sanity
+
+    real = retirement_recommender.evaluate_structural_redundancy_gate
+
+    def inverted(*args, **kwargs):
+        verdict = real(*args, **kwargs)
+        return dataclasses.replace(verdict, passed=not verdict.passed)
+
+    monkeypatch.setattr(retirement_recommender, "evaluate_structural_redundancy_gate", inverted)
+    assert _pair(*redundant)["structural_gate"]["state"] == "not met"
+    assert _pair(*diverging)["structural_gate"]["state"] == "passed"
+
+
+# ---------------------------------------------------------------------------
+# What a row says about a sibling that has no composite
+# ---------------------------------------------------------------------------
+
+NOTE_PREFIX = "sibling has no composite: "
+
+
+@pytest.mark.parametrize(
+    ("sibling", "reason_starts"),
+    [
+        ("tenure_unknown", "tenure unavailable"),
+        ("thin_coverage", "insufficient coverage in the common window"),
+        ("flat_window", "not computable"),
+    ],
+)
+def test_a_sibling_without_a_composite_is_shown_with_the_reason_it_has_none(sibling, reason_starts):
+    """The pair passes both gates and the subject is scored, but the sibling has no
+    composite, so nobody is flagged and the note carries the sibling's own reason. A
+    sibling with an unknown tenure is never described as one that will become eligible.
+
+    Rejects dropping the pair, a generic note, and a flag on a pair with an unscored
+    member."""
+    result = b.review(b.note_family_roster(sibling), as_of=b.AS_OF, threshold=b.NOTE_THRESHOLD)
+    subject = b.entry_of(result, "note-subject")
+    other = b.entry_of(result, "note-sibling")
+    reason = b.item_of(other, "composite")["reason"]
+    assert reason.startswith(reason_starts)  # fixture sanity: the intended branch
+    item = b.item_of(subject, "redundancy")
+    assert item["status"] == "available"
+    assert item["retire_candidate"] is False
+    assert item["pair"]["sibling_id"] == "note-sibling"
+    assert item["pair"]["uncertainty_gate"]["state"] == "passed"
+    assert item["pair"]["structural_gate"]["state"] == "passed"
+    assert item["pair"]["note"] == NOTE_PREFIX + reason
+    assert subject["verdict"] != "retire_candidate"
+    assert other["verdict"] != "retire_candidate"
+
+
+def test_a_sibling_with_unknown_tenure_is_not_described_as_not_yet_eligible():
+    """Its tenure may never be known, so a note that says it is not yet eligible promises
+    something nobody can keep."""
+    result = b.review(
+        b.note_family_roster("tenure_unknown"), as_of=b.AS_OF, threshold=b.NOTE_THRESHOLD
+    )
+    note = b.item_of(b.entry_of(result, "note-subject"), "redundancy")["pair"]["note"]
+    assert note == "sibling has no composite: tenure unavailable"
+    assert "not yet eligible" not in note
+
+
+def test_two_eligible_shadow_basis_symphonies_are_paired_with_the_basis_note_and_nobody_is_flagged():
+    """Same basis, so the pair is computed and passes both gates; neither has a
+    composite because the composite is Composer-basis only."""
+    result = b.review(b.shadow_pair_roster(), as_of=b.AS_OF, threshold=b.NOTE_THRESHOLD)
+    for sid, sibling in (("shadow-a", "shadow-b"), ("shadow-b", "shadow-a")):
+        entry = b.entry_of(result, sid)
+        assert entry["basis"]["kind"] == "shadow", sid  # fixture sanity
+        assert b.item_of(entry, "composite")["reason"] == "not comparable: basis differs", sid
+        item = b.item_of(entry, "redundancy")
+        assert item["status"] == "available", sid
+        assert item["retire_candidate"] is False, sid
+        assert item["pair"]["sibling_id"] == sibling, sid
+        assert item["pair"]["uncertainty_gate"]["state"] == "passed", sid
+        assert item["pair"]["structural_gate"]["state"] == "passed", sid
+        assert item["pair"]["n_obs"] == b.NOTE_RETURNS, sid
+        assert item["pair"]["note"] == "sibling has no composite: basis differs", sid
+        assert entry["verdict"] != "retire_candidate", sid
+
+
+# ---------------------------------------------------------------------------
+# When no pair can be evaluated, the item says so
+# ---------------------------------------------------------------------------
+
+SHORT_THRESHOLD = 20
+
+
+def _short_overlap_roster(*, correlated, third=False):
+    """short-a has 40 points, short-b 25 (tenure 25, so eligible at threshold 20): their
+    shared returns number 24, below the 30 an interpretable correlation needs."""
+    days = b.last_n_nyse_days(b.AS_OF, 40)
+    a_returns = b.wave_returns(39)
+    b_returns = [0.9 * r + 0.01 for r in a_returns[-24:]] if correlated else b.sine_returns(24, 3)
+    roster = [
+        b.composer_symphony("short-a", "Short A", days, a_returns),
+        b.composer_symphony("short-b", "Short B", days[-25:], b_returns),
+    ]
+    if third:
+        roster.append(b.composer_symphony("short-c", "Short C", days, b.sine_returns(39, 5)))
+    return roster
+
+
+@pytest.mark.parametrize("correlated", [True, False], ids=["correlated", "uncorrelated"])
+def test_when_every_pair_has_too_few_aligned_days_the_item_says_insufficient_data(correlated):
+    """Whether the short overlap looks correlated or not, it cannot support 'no
+    redundant sibling' or a shown pair. The item is unavailable with the gate's own
+    wording and the verdict lists it as missing."""
+    result = b.review(
+        _short_overlap_roster(correlated=correlated), as_of=b.AS_OF, threshold=SHORT_THRESHOLD
+    )
+    expected = f"insufficient data: needs {retirement_recommender.MIN_OBS_FLOOR} aligned days"
+    for sid in ("short-a", "short-b"):
+        entry = b.entry_of(result, sid)
+        item = b.item_of(entry, "redundancy")
+        assert item["status"] == "unavailable", sid
+        assert item["reason"] == expected, sid
+        assert item["pair"] is None, sid
+        assert item["retire_candidate"] is False, sid
+        assert "redundancy" in entry["missing_items"], sid
+
+
+def test_one_pair_with_enough_days_keeps_the_item_available():
+    """short-a also shares 39 days with short-c, so it has a pair that can be evaluated
+    (no hit). short-b shares 24 days with each, so every pair of its own is too short."""
+    result = b.review(
+        _short_overlap_roster(correlated=True, third=True),
+        as_of=b.AS_OF,
+        threshold=SHORT_THRESHOLD,
+    )
+    a = b.entry_of(result, "short-a")
+    assert b.item_of(a, "redundancy")["status"] == "available"
+    assert b.item_of(a, "redundancy")["summary"] == NO_SIBLING_TEXT
+    assert "redundancy" not in a["missing_items"]
+    short_b = b.entry_of(result, "short-b")
+    assert b.item_of(short_b, "redundancy")["status"] == "unavailable"
+    assert "redundancy" in short_b["missing_items"]
+
+
+# ---------------------------------------------------------------------------
+# A peer with no history, a peer on another basis, and a symphony with no peer
+# ---------------------------------------------------------------------------
+
+ROSTER_DAYS = b.last_n_nyse_days(b.AS_OF, 31)
+ROSTER_THRESHOLD = 30
+
+
+def _lone_composer():
+    return b.composer_symphony("lone-a", "Lone A", ROSTER_DAYS, b.wave_returns(30, freq=0.4))
+
+
+def test_a_symphony_with_no_other_symphony_reads_not_applicable_nothing_to_compare():
+    entry = b.entry_of(
+        b.review([_lone_composer()], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "lone-a"
+    )
+    item = b.item_of(entry, "redundancy")
+    assert item["status"] == "not_applicable"
+    assert item["reason"] == "no other symphonies to compare"
+
+
+def test_a_peer_with_no_history_is_named_as_the_reason_there_is_nothing_to_compare():
+    """The peer exists, so 'no other symphonies' is false; it has no basis, so 'bases
+    differ' is false. Rejects either of those two texts."""
+    void = b.no_history_symphony("void-peer", "Void Peer", ROSTER_DAYS[0].isoformat())
+    result = b.review([_lone_composer(), void], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    entry = b.entry_of(result, "lone-a")
+    item = b.item_of(entry, "redundancy")
+    assert item["status"] == "unavailable"
+    assert item["reason"] == "no history for any other symphony"
+    assert item["pair"] is None
+    assert item["retire_candidate"] is False
+    assert "redundancy" in entry["missing_items"]
+
+
+@pytest.mark.parametrize("peer_tenure_days", [30, 10], ids=["eligible_peer", "young_peer"])
+def test_a_peer_with_history_on_another_basis_reads_bases_differ_whether_or_not_it_is_eligible(
+    peer_tenure_days,
+):
+    """Whether the other symphony is eligible has no bearing on whether its basis
+    differs. Rejects letting eligibility decide this text."""
+    days = ROSTER_DAYS[-peer_tenure_days:]
+    peer = b.make_symphony(
+        "shadow-peer",
+        "Shadow Peer",
+        days[0].isoformat(),
+        series_failure="unavailable",
+        shadow_returns=b.by_date(days[1:], b.wave_returns(peer_tenure_days - 1, freq=1.4)),
+    )
+    result = b.review([_lone_composer(), peer], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    item = b.item_of(b.entry_of(result, "lone-a"), "redundancy")
+    assert item["status"] == "unavailable"
+    assert item["reason"] == "bases differ"

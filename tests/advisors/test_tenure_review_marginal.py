@@ -350,3 +350,156 @@ def test_a_composer_symphony_beside_a_fallback_symphony_reads_bases_differ_in_a_
     item = b.item_of(b.entry_of(result, "composer-sym"), "marginal")
     assert item["status"] == "unavailable"
     assert item["reason"] == "bases differ"
+
+
+# ---------------------------------------------------------------------------
+# Both legs come from the shared metric function
+# ---------------------------------------------------------------------------
+
+# Symphony A falls 30 percent on the first day and later quadruples in a day (+400
+# percent); B drifts. The summed portfolio therefore opens with a loss and contains a
+# day of more than +100 percent, the two shapes a second implementation tends to get
+# wrong. Both series also have down days, so the metric function reads them as returns.
+A_LEVELS = [100.0, 70.0, 80.0, 400.0, 380.0]
+B_LEVELS = [100.0, 101.0, 99.0, 102.0, 103.0]
+
+
+def _shaped_eligible():
+    iso = [d.isoformat() for d in DAYS[:5]]
+    return {
+        "sym-a": {"basis": "composer", "values": dict(zip(iso, A_LEVELS, strict=True))},
+        "sym-b": {"basis": "composer", "values": dict(zip(iso, B_LEVELS, strict=True))},
+    }, iso
+
+
+def _pct_returns(levels):
+    return [(later / earlier - 1.0) * 100.0 for earlier, later in zip(levels, levels[1:])]
+
+
+def test_the_with_and_without_legs_are_the_shared_metric_function_over_the_same_percent_returns(
+    monkeypatch,
+):
+    """Expected values come from the metric function itself on percent returns derived
+    from the level sums. A recorder proves both legs were computed by that function and
+    not by a second implementation of total return and drawdown.
+
+    Rejects a hand-written drawdown loop, fraction-scale returns and an average of
+    returns instead of a sum of levels."""
+    eligible, _iso = _shaped_eligible()
+    with_returns = _pct_returns([a + c for a, c in zip(A_LEVELS, B_LEVELS, strict=True)])
+    without_returns = _pct_returns(B_LEVELS)
+    assert with_returns[0] < 0 < max(with_returns) - 100.0  # fixture sanity: the shapes exist
+    expected_with = b.quantstats_percent(with_returns)
+    expected_without = b.quantstats_percent(without_returns)
+
+    calls = b.spy_on_quantstats_metrics(monkeypatch)
+    got = _figures(tr.marginal_contribution("sym-a", eligible))
+
+    assert b.was_called_with(calls, with_returns)
+    assert b.was_called_with(calls, without_returns)
+    # the same function on the same inputs: 1e-9 relative absorbs only float summation order
+    assert got["with_total_return"] == pytest.approx(expected_with["total_return"], rel=1e-9)
+    assert got["with_max_drawdown"] == pytest.approx(expected_with["max_drawdown"], rel=1e-9)
+    assert got["without_total_return"] == pytest.approx(expected_without["total_return"], rel=1e-9)
+    assert got["without_max_drawdown"] == pytest.approx(expected_without["max_drawdown"], rel=1e-9)
+    assert got["total_return_difference"] == pytest.approx(
+        expected_without["total_return"] - expected_with["total_return"], rel=1e-9
+    )
+    assert got["max_drawdown_difference"] == pytest.approx(
+        expected_without["max_drawdown"] - expected_with["max_drawdown"], rel=1e-9
+    )
+
+
+def test_two_shared_days_give_figures_or_an_honest_unavailable_never_an_empty_available_item():
+    """Two shared days make one return, which the metric function cannot score. The item
+    may compute it another way or say it is unavailable; it must not claim to be
+    available with nothing in it."""
+    eligible, iso = _shaped_eligible()
+    two_days = {
+        sid: {"basis": "composer", "values": {d: entry["values"][d] for d in iso[:2]}}
+        for sid, entry in eligible.items()
+    }
+    item = tr.marginal_contribution("sym-a", two_days)
+    if item["status"] == "available":
+        assert all(fig["value"] is not None for fig in item["figures"].values())
+    else:
+        assert item["status"] == "unavailable"
+        assert item["reason"]
+        assert all(fig["value"] is None for fig in item["figures"].values())
+
+
+# ---------------------------------------------------------------------------
+# A peer with no history is left out and listed, never read as a different basis
+# ---------------------------------------------------------------------------
+
+ROSTER_DAYS = b.last_n_nyse_days(b.AS_OF, 31)
+ROSTER_THRESHOLD = 30
+VOID = ("void-peer", "Void Peer")
+EXCLUDED_NO_HISTORY = {"display_name": VOID[1], "reason": "excluded: no history"}
+
+
+def _void_peer():
+    """Eligible by tenure (31 sessions, threshold 30) with no series and no shadow rows."""
+    return b.no_history_symphony(VOID[0], VOID[1], ROSTER_DAYS[0].isoformat())
+
+
+def _composer(sid, name, freq):
+    return b.composer_symphony(sid, name, ROSTER_DAYS, b.wave_returns(30, freq=freq))
+
+
+def test_an_eligible_peer_with_no_history_is_excluded_and_the_others_are_still_compared():
+    """A and C are compared exactly as they would be without the peer, and the peer is
+    listed with its own reason. Rejects reading its basis as different from theirs."""
+    with_void = b.review(
+        [_composer("comp-a", "Comp A", 0.4), _composer("comp-c", "Comp C", 1.3), _void_peer()],
+        as_of=b.AS_OF,
+        threshold=ROSTER_THRESHOLD,
+    )
+    without = b.review(
+        [_composer("comp-a", "Comp A", 0.4), _composer("comp-c", "Comp C", 1.3)],
+        as_of=b.AS_OF,
+        threshold=ROSTER_THRESHOLD,
+    )
+    item = b.item_of(b.entry_of(with_void, "comp-a"), "marginal")
+    baseline = b.item_of(b.entry_of(without, "comp-a"), "marginal")
+    assert baseline["status"] == "available"  # fixture sanity
+    assert item["status"] == "available"
+    assert item["reason"] is None
+    assert item["figures"] == baseline["figures"]
+    assert item["window"] == baseline["window"]
+    assert item["excluded"] == [EXCLUDED_NO_HISTORY]
+
+
+def test_the_only_comparable_symphony_beside_a_peer_with_no_history_is_not_applicable():
+    result = b.review(
+        [_composer("comp-a", "Comp A", 0.4), _void_peer()],
+        as_of=b.AS_OF,
+        threshold=ROSTER_THRESHOLD,
+    )
+    item = b.item_of(b.entry_of(result, "comp-a"), "marginal")
+    assert item["status"] == "not_applicable"
+    assert item["reason"] == "no other eligible symphonies"
+    assert item["excluded"] == [EXCLUDED_NO_HISTORY]
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+def test_a_shadow_basis_peer_still_makes_a_composer_symphony_read_bases_differ():
+    """The rule for a peer with no history must not swallow a peer that has history on
+    another basis. Rejects dropping every peer that is not on the subject's basis."""
+    days = ROSTER_DAYS
+    fallback = b.make_symphony(
+        "fallback-sym",
+        "Fallback Sym",
+        days[0].isoformat(),
+        series_failure="unavailable",
+        shadow_returns=b.by_date(days[1:], b.wave_returns(30, freq=1.4)),
+    )
+    result = b.review(
+        [_composer("comp-a", "Comp A", 0.4), fallback, _void_peer()],
+        as_of=b.AS_OF,
+        threshold=ROSTER_THRESHOLD,
+    )
+    item = b.item_of(b.entry_of(result, "comp-a"), "marginal")
+    assert item["status"] == "unavailable"
+    assert item["reason"] == "bases differ"

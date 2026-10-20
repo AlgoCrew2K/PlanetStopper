@@ -9,6 +9,7 @@ so M kept points give M minus 1 returns. Dropped days are never counted as 0%.
 
 from __future__ import annotations
 
+import itertools
 import math
 from datetime import date
 
@@ -138,6 +139,91 @@ def test_building_a_window_does_not_modify_the_input_mapping():
 
 
 # ---------------------------------------------------------------------------
+# One reading of a series' date keys
+# ---------------------------------------------------------------------------
+
+TIME_PARTS = ["T00:00:00", "T00:00:00Z", " 00:00:00", "T16:00:00-05:00"]
+
+
+@pytest.mark.parametrize("time_part", TIME_PARTS)
+def test_a_date_key_with_a_time_part_is_read_as_its_date(time_part):
+    plain = {d.isoformat(): 100.0 + i * i for i, d in enumerate(DAYS[:4])}
+    stamped = {k + time_part: v for k, v in plain.items()}
+    win = _window(stamped, DAYS[0], DAYS[3])
+    assert win["dates"] == sorted(plain)
+    assert win["days"] == 4
+    assert win["returns_pct"] == pytest.approx(b.returns_from_values(plain), rel=1e-12)
+
+
+def test_two_keys_for_one_date_resolve_to_the_greatest_key_whatever_the_mapping_order():
+    """Rule: among the keys that name one date, the greatest key (string order) whose
+    value is usable wins, so a time-stamped key beats the bare date and a later stamp
+    beats an earlier one. Every insertion order of the same keys gives the same window.
+
+    Rejects last-one-wins, first-one-wins and averaging, all of which depend on order."""
+    day = DAYS[1].isoformat()
+    entries = {
+        DAYS[0].isoformat(): 100.0,
+        day: 105.0,
+        day + "T00:00:00": 110.0,
+        day + "T16:00:00": 120.0,
+    }
+    for order in itertools.permutations(entries):
+        win = _window({k: entries[k] for k in order}, DAYS[0], DAYS[1])
+        assert win["dates"] == [DAYS[0].isoformat(), day], order
+        assert win["returns_pct"] == pytest.approx([20.0], rel=1e-12), order
+
+
+def test_an_unusable_value_under_the_greatest_key_does_not_hide_a_usable_one():
+    day = DAYS[1].isoformat()
+    entries = {DAYS[0].isoformat(): 100.0, day: 110.0, day + "T16:00:00": None}
+    for order in itertools.permutations(entries):
+        win = _window({k: entries[k] for k in order}, DAYS[0], DAYS[1])
+        assert win["days"] == 2, order
+        assert win["returns_pct"] == pytest.approx([10.0], rel=1e-12), order
+
+
+def test_a_series_keyed_with_time_parts_is_reviewed_exactly_like_the_same_series_keyed_by_date():
+    """The points the window keeps are the points the composite coverage check, the
+    pairs and the marginal comparison use. Rejects a second, stricter reading of the
+    keys that sees none of them."""
+
+    def roster(key_suffix):
+        out = []
+        for sid, freq in (("key-a", 0.3), ("key-b", 0.9), ("key-c", 1.7)):
+            symphony = b.composer_symphony(
+                sid, sid.upper(), WINDOW_DAYS, b.wave_returns(THRESHOLD - 1, freq=freq)
+            )
+            symphony.composer_values = {
+                k + key_suffix: v for k, v in symphony.composer_values.items()
+            }
+            out.append(symphony)
+        return out
+
+    plain = b.review(roster(""), as_of=b.AS_OF, threshold=THRESHOLD)
+    stamped = b.review(roster("T00:00:00Z"), as_of=b.AS_OF, threshold=THRESHOLD)
+    first = b.entry_of(plain, "key-a")
+    assert b.item_of(first, "composite")["status"] == "available"  # fixture sanity
+    assert b.item_of(first, "marginal")["status"] == "available"  # fixture sanity
+    assert stamped.entries == plain.entries
+
+
+def test_shadow_rows_resolve_duplicate_dates_by_the_same_rule_whatever_the_mapping_order():
+    rows = _shadow_rows()
+    winner = {f"{k}T00:00:00Z": v for k, v in rows.items()}
+    loser = {k: v + 25.0 for k, v in rows.items()}  # bare dates sort before the stamped keys
+
+    def total_return(mapping):
+        entry, _ = _entry(_subject(series_failure="unavailable", shadow_returns=mapping), _peer())
+        assert b.item_of(entry, "performance")["window"]["days"] == THRESHOLD
+        return b.value_of(entry, "performance", "total_return")
+
+    expected = total_return(rows)
+    assert total_return({**winner, **loser}) == pytest.approx(expected, rel=1e-12)
+    assert total_return({**loser, **winner}) == pytest.approx(expected, rel=1e-12)
+
+
+# ---------------------------------------------------------------------------
 # Basis selection through build_review
 # ---------------------------------------------------------------------------
 
@@ -203,12 +289,17 @@ def test_a_series_that_begins_after_the_tenure_states_both_start_dates():
 
 FAILURE_REASONS = [
     ("refused", "Composer refused the request"),
-    ("not_found", "Composer has no series for this symphony"),
+    # Composer answers 404 only for an unknown account, so the text states what was
+    # answered and never claims the symphony is missing
+    ("not_found", "Composer returned not found"),
     ("rate_limited", "Composer rate limit"),
     ("unavailable", "Composer unavailable"),
     ("empty", "Composer series empty"),
     ("unreadable", "Composer response unreadable"),
+    ("rejected", "Composer rejected the request"),
 ]
+UNRECOGNIZED_FAILURE_REASON = "Composer read failed"
+SHORT_SERIES_REASON = "Composer series has fewer than 2 usable points in the tenure"
 
 
 @pytest.mark.parametrize(
@@ -229,18 +320,54 @@ def test_every_series_failure_class_falls_back_to_shadow_history_with_its_reason
         assert b.item_of(entry, name)["label"] != COMPOSER_LABEL, name
 
 
-def test_an_empty_composer_series_without_a_failure_class_also_falls_back():
-    subject = _subject(composer_values={}, shadow_returns=_shadow_rows())
-    entry, _ = _entry(subject, _peer())
-    assert entry["basis"]["kind"] == "shadow"
-    assert entry["basis"]["fallback_reason"] == "Composer series empty"
+def _fallback_reason(**kwargs):
+    entry, _ = _entry(_subject(shadow_returns=_shadow_rows(), **kwargs), _peer())
+    assert entry["basis"]["kind"] == "shadow", "fixture sanity: the subject must fall back"
+    return entry["basis"]["fallback_reason"]
+
+
+@pytest.mark.parametrize("values", [{}, None], ids=["empty_mapping", "no_mapping"])
+def test_an_empty_composer_series_without_a_failure_class_also_falls_back(values):
+    assert _fallback_reason(composer_values=values) == "Composer series empty"
+
+
+def test_an_unrecognized_failure_class_reads_a_generic_reason_never_another_classs_text():
+    """A class the review does not know is reported as a failed read. Rejects falling
+    back to the empty-series text (a fact nobody observed) or to any other class's text."""
+    reason = _fallback_reason(series_failure="no-such-failure-class")
+    assert reason == UNRECOGNIZED_FAILURE_REASON
+    assert reason not in {text for _failure, text in FAILURE_REASONS}
+
+
+def test_every_failure_class_has_its_own_reason_text():
+    texts = [text for _failure, text in FAILURE_REASONS] + [UNRECOGNIZED_FAILURE_REASON]
+    assert len(set(texts)) == len(texts)
+
+
+def test_a_failure_class_decides_the_reason_even_when_a_usable_series_is_also_present():
+    """Rejects trusting a series that arrived beside a failure class."""
+    full = b.values_from_returns(list(WINDOW_DAYS), b.wave_returns(THRESHOLD - 1))
+    reason = _fallback_reason(composer_values=full, series_failure="unavailable")
+    assert reason == "Composer unavailable"
 
 
 def test_a_composer_series_with_a_single_usable_point_falls_back_to_shadow_history():
     one_point = {WINDOW_DAYS[-1].isoformat(): 100.0}
-    subject = _subject(composer_values=one_point, shadow_returns=_shadow_rows())
-    entry, _ = _entry(subject, _peer())
-    assert entry["basis"]["kind"] == "shadow"
+    assert _fallback_reason(composer_values=one_point) == SHORT_SERIES_REASON
+
+
+def test_a_composer_series_with_points_only_before_the_tenure_says_it_is_too_short_in_the_tenure():
+    """Twenty usable points that all precede the invested-since date (a redeployed
+    symphony). Composer did return a series, so 'empty' would be false."""
+    before = b.last_n_nyse_days(date(2026, 6, 30), 21)
+    old = b.values_from_returns(list(before), b.wave_returns(20))
+    assert _fallback_reason(composer_values=old) == SHORT_SERIES_REASON
+
+
+def test_a_composer_series_whose_values_are_all_unusable_is_not_an_empty_series():
+    """The mapping has dates, none of them with a usable value."""
+    unusable = {d.isoformat(): None for d in WINDOW_DAYS}
+    assert _fallback_reason(composer_values=unusable) == SHORT_SERIES_REASON
 
 
 def test_two_usable_composer_points_are_enough_for_the_composer_basis():

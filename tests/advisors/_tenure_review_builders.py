@@ -25,13 +25,18 @@ from zoneinfo import ZoneInfo
 import pandas_market_calendars as mcal
 
 import advisors.tenure_review as tr
-from advisors import correlation_diagnostic
+import analytics
+from advisors import composer_backtest_client, correlation_diagnostic
 from tests.advisors._retirement_recommender_reference import (
     reference_fisher_ci_lower,
     reference_fisher_ci_upper,
 )
 
 ET = ZoneInfo("America/New_York")
+
+# The shared metric function as it was before any test replaced it with a recorder, so an
+# expected value is never computed through the recorder.
+_REAL_QUANTSTATS_METRICS = analytics.compute_quantstats_metrics
 
 # Fixed run identity used by every builder so two runs differ only where a test
 # changes something on purpose.
@@ -489,3 +494,166 @@ def roster_with_two_redundant_candidates():
         ],
         250,
     )
+
+
+# ---------------------------------------------------------------------------
+# The shared metric function: expected values and a recorder
+# ---------------------------------------------------------------------------
+
+
+def quantstats_percent(returns_pct) -> dict[str, float]:
+    """Total return and max drawdown of percent returns, in percent, from the shared
+    metric function (which answers in fractions)."""
+    metrics = _REAL_QUANTSTATS_METRICS(list(returns_pct))
+    return {
+        "total_return": metrics["total_return"] * 100.0,
+        "max_drawdown": metrics["max_drawdown"] * 100.0,
+    }
+
+
+def spy_on_quantstats_metrics(monkeypatch) -> list[list[float]]:
+    """Record the input of every call to ``analytics.compute_quantstats_metrics`` while the
+    real function still runs. The module must keep calling it as an attribute of the
+    ``analytics`` module for the recorder to see the call."""
+    calls: list[list[float]] = []
+
+    def recording(returns_series, *args, **kwargs):
+        calls.append([float(v) for v in returns_series])
+        return _REAL_QUANTSTATS_METRICS(returns_series, *args, **kwargs)
+
+    monkeypatch.setattr(analytics, "compute_quantstats_metrics", recording)
+    return calls
+
+
+def was_called_with(calls: list[list[float]], expected_pct) -> bool:
+    """True when some recorded call received these percent returns (1e-9 relative
+    absorbs only the order of a level sum)."""
+    return any(
+        len(call) == len(expected_pct)
+        and all(
+            math.isclose(x, y, rel_tol=1e-9, abs_tol=1e-12)
+            for x, y in zip(call, expected_pct, strict=True)
+        )
+        for call in calls
+    )
+
+
+def no_history_symphony(symphony_id: str, display_name: str, invested_since: str):
+    """A symphony Composer has no series for and that has no shadow rows: basis none."""
+    return make_symphony(
+        symphony_id,
+        display_name,
+        invested_since,
+        series_failure="not_found",
+        shadow_returns=None,
+    )
+
+
+def backtest_over(days: list[date], levels: list[float | None]):
+    """A backtest result with one portfolio value per day, covering exactly ``days``."""
+    return composer_backtest_client.BacktestResult(
+        stats={},
+        data_warnings=[],
+        daily_portfolio_values={d.isoformat(): v for d, v in zip(days, levels, strict=True)},
+        first_day=days[0].isoformat(),
+        last_market_day=days[-1].isoformat(),
+    )
+
+
+def shadow_rows_of(roster) -> dict[str, dict[str, tuple[float, float]]]:
+    """The roster's Composer value series as shadow_history rows for seeding the state
+    database: {symphony id: {day: (bot return, held return)}}, percent returns, with the
+    held side zero because the recommender must read the bot side."""
+    return {
+        s.symphony_id: {
+            day: (ret, 0.0)
+            for day, ret in zip(
+                sorted(s.composer_values)[1:], returns_from_values(s.composer_values), strict=True
+            )
+        }
+        for s in roster
+    }
+
+
+# ---------------------------------------------------------------------------
+# Rosters for the pair a row shows, the sibling note family and the candidate rule
+# ---------------------------------------------------------------------------
+
+NOTE_THRESHOLD = 60
+NOTE_RETURNS = 265  # enough aligned days for both gates (the structural gate needs 181)
+
+
+def _redundant_pair_returns(*, stress_first: bool = True, stress_n: int = 15):
+    """Two percent-return series of NOTE_RETURNS days that follow each other closely in
+    calm days and in the stressed days, so a pair built from them passes both gates."""
+    ca, cb = calm_block(NOTE_RETURNS - stress_n)
+    sa, sb = stress_block(stress_n, "redundant")
+    return (sa + ca, sb + cb) if stress_first else (ca + sa, cb + sb)
+
+
+def note_family_roster(sibling: str):
+    """Two eligible-length Composer symphonies whose series pass both gates together.
+
+    ``note-subject`` is always scored. ``note-sibling`` has no composite for the reason
+    named by ``sibling``: ``tenure_unknown`` (no invested-since date), ``thin_coverage``
+    (one value missing inside the composite window) or ``flat_window`` (a constant
+    return over the whole composite window, so its Sharpe ratio is undefined)."""
+    subject_ret, sibling_ret = _redundant_pair_returns()
+    days = last_n_nyse_days(AS_OF, NOTE_RETURNS + 1)
+    if sibling == "flat_window":
+        sibling_ret = sibling_ret[:-NOTE_THRESHOLD] + [0.05] * NOTE_THRESHOLD
+    subject = composer_symphony("note-subject", "Note Subject", days, subject_ret)
+    kwargs = {"invested_since": None} if sibling == "tenure_unknown" else {}
+    other = composer_symphony("note-sibling", "Note Sibling", days, sibling_ret, **kwargs)
+    if sibling == "thin_coverage":
+        other.composer_values[days[-NOTE_THRESHOLD // 2].isoformat()] = None
+    return [subject, other]
+
+
+def shadow_pair_roster():
+    """Two symphonies on the shadow-history fallback basis whose series pass both gates."""
+    first, second = _redundant_pair_returns()
+    days = last_n_nyse_days(AS_OF, NOTE_RETURNS + 1)
+    return [
+        make_symphony(
+            sid,
+            name,
+            days[0].isoformat(),
+            series_failure="unavailable",
+            shadow_returns=by_date(days[1:], returns),
+        )
+        for sid, name, returns in (
+            ("shadow-a", "Shadow A", first),
+            ("shadow-b", "Shadow B", second),
+        )
+    ]
+
+
+def roster_with_a_candidate_in_two_passing_pairs(*, stronger_sorts_first: bool):
+    """Three eligible Composer symphonies. ``weak-x`` is the weakest performer and both
+    of its pairs pass both gates, so it is the retirement candidate in each. One sibling
+    follows it more closely than the other; ``stronger_sorts_first`` says whether that
+    sibling's id sorts before or after the other's (so neither a first-match nor a
+    last-match choice can pick the stronger pair by accident)."""
+    n_returns = NOTE_RETURNS
+    stress_n = 15
+    xc, _ = calm_block(n_returns - stress_n)
+    xs = [-0.5 + 0.05 * math.sin(0.9 * i) for i in range(stress_n)]
+    x = xc + xs
+    close = [0.99 * v + 0.002 * ((i % 5) - 2) + 0.05 for i, v in enumerate(x)]
+    # noisy in calm days, tight in the stressed days, so the pair still passes the stress gate
+    loose = [0.9 * v + 0.03 * ((i % 5) - 2) + 0.04 for i, v in enumerate(xc)] + [
+        0.9 * v + 0.004 * ((i % 5) - 2) + 0.04 for i, v in enumerate(xs)
+    ]
+    first_id, second_id = ("sib-a", "sib-b")
+    by_id = (
+        {first_id: close, second_id: loose}
+        if stronger_sorts_first
+        else {first_id: loose, second_id: close}
+    )
+    days = last_n_nyse_days(AS_OF, n_returns + 1)
+    return [
+        composer_symphony("weak-x", "Xenon Weak", days, x),
+        composer_symphony(first_id, "Sibling Alpha", days, by_id[first_id]),
+        composer_symphony(second_id, "Sibling Beta", days, by_id[second_id]),
+    ]

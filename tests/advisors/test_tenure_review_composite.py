@@ -425,3 +425,87 @@ def test_an_undefined_calmar_makes_the_composite_not_computable_but_leaves_other
         assert _composite_value(result, s.symphony_id) == pytest.approx(
             expected[s.symphony_id], abs=1e-9
         )
+
+
+# ---------------------------------------------------------------------------
+# A composite says how many symphonies it was normalized against
+# ---------------------------------------------------------------------------
+
+
+def _population_roster():
+    """Three scored Composer symphonies, one that cannot be scored (it never falls, so
+    its Calmar ratio is undefined), one below the threshold and one on the fallback
+    basis. Only the first three form the population."""
+    scored = [
+        b.composer_symphony(f"pop-{k}", f"Pop {k}", DAYS, b.wave_returns(30, amp=0.4 + 0.2 * k))
+        for k in (1, 2, 3)
+    ]
+    rising = b.composer_symphony(
+        "pop-rising", "Pop Rising", DAYS, [0.2 + 0.1 * ((i % 3) - 1) for i in range(30)]
+    )
+    young = b.composer_symphony("pop-young", "Pop Young", DAYS[-10:], b.wave_returns(9, freq=1.1))
+    fallback = b.make_symphony(
+        "pop-fallback",
+        "Pop Fallback",
+        DAYS[0].isoformat(),
+        series_failure="unavailable",
+        shadow_returns=b.by_date(DAYS[1:], b.wave_returns(30, freq=0.7)),
+    )
+    return [*scored, rising, young, fallback]
+
+
+def test_every_scored_composite_carries_the_size_of_the_population_it_was_normalized_over():
+    """The size is the number of symphonies whose five metrics are all defined on the
+    common window, counted here from the oracle. A composite normalized against one
+    other symphony is a different statement from one normalized against twenty.
+
+    Rejects counting every live symphony, the eligible ones only, or omitting it."""
+    roster = _population_roster()
+    composer_based = [
+        s for s in roster if s.symphony_id in {"pop-1", "pop-2", "pop-3", "pop-rising"}
+    ]
+    metrics = {
+        s.symphony_id: b.oracle_metrics(
+            b.returns_from_values(s.composer_values)[-(THRESHOLD - 1) :]
+        )
+        for s in composer_based
+    }
+    scored = {
+        sid
+        for sid, m in metrics.items()
+        if all(
+            m[k] is not None
+            for k in ("annualized_return", "sharpe", "sortino", "max_drawdown", "calmar")
+        )
+    }
+    assert scored == {"pop-1", "pop-2", "pop-3"}  # fixture sanity: the rising one is out
+
+    result = b.review(roster, as_of=b.AS_OF, threshold=THRESHOLD)
+    for sid in scored:
+        item = b.item_of(b.entry_of(result, sid), "composite")
+        assert item["status"] == "available", sid
+        assert item["population_size"] == len(scored), sid
+        assert type(item["population_size"]) is int, sid
+
+
+def test_a_symphony_scored_alone_says_the_population_was_one():
+    """With nobody to rank against every metric sits at the midpoint; the population
+    size is what tells a reader that 0.5 means no comparison was made."""
+    alone = b.composer_symphony("pop-alone", "Pop Alone", DAYS, b.wave_returns(30, amp=0.6))
+    item = b.item_of(
+        b.entry_of(b.review([alone], as_of=b.AS_OF, threshold=THRESHOLD), "pop-alone"),
+        "composite",
+    )
+    assert item["status"] == "available"
+    assert item["figures"]["composite"]["value"] == pytest.approx(0.5, abs=1e-12)  # midpoint
+    assert item["population_size"] == 1
+
+
+def test_the_population_size_is_the_same_on_every_composite_of_one_review():
+    result = b.review(_population_roster(), as_of=b.AS_OF, threshold=THRESHOLD)
+    sizes = {
+        b.item_of(e, "composite")["population_size"]
+        for e in result.entries
+        if b.item_of(e, "composite")["status"] == "available"
+    }
+    assert len(sizes) == 1
