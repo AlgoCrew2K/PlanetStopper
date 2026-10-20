@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import inspect
 import json
 import pathlib
 import sys
@@ -587,3 +588,190 @@ class TestArchitectureContracts:
             f"Importing advisors.composer_backtest_client triggered {call_count['n']} "
             "network call(s) at module load. No top-level network calls allowed."
         )
+
+
+# ---------------------------------------------------------------------------
+# Section 8 — Dated window and compact request body (keyword-only parameters)
+# ---------------------------------------------------------------------------
+
+_TENURE_FIXTURES = _REPO_ROOT / "tests" / "fixtures" / "composer" / "tenure-review"
+
+
+def _tenure_record(name: str) -> dict:
+    return json.loads((_TENURE_FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def _post_capturing(calls: list, response: MagicMock):
+    """A requests.post stand-in that records every keyword it was called with."""
+
+    def capture(url, *args, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return response
+
+    return capture
+
+
+def _day_to_iso(day_int: int) -> str:
+    import datetime as _dt
+
+    return (_dt.date(1970, 1, 1) + _dt.timedelta(days=day_int)).isoformat()
+
+
+class TestDatedCompactRequest:
+    """start_date, end_date and compact_body: opt-in, keyword-only, default behaviour kept."""
+
+    def test_new_parameters_are_keyword_only_and_default_to_the_existing_request(self):
+        client = _import_client()
+        params = inspect.signature(client.run_backtest).parameters
+
+        for name, default in (("start_date", None), ("end_date", None), ("compact_body", False)):
+            assert name in params, f"run_backtest must accept {name}"
+            assert params[name].kind is inspect.Parameter.KEYWORD_ONLY
+            assert params[name].default == default
+
+    def test_passing_the_defaults_explicitly_sends_the_unchanged_json_request(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            client.run_backtest(
+                raw_value=minimal_raw_value, start_date=None, end_date=None, compact_body=False
+            )
+
+        assert len(calls) == 1
+        assert calls[0].get("data") is None
+        body = calls[0]["json"]
+        assert "start_date" not in body
+        assert "end_date" not in body
+        assert body["symphony"]["raw_value"] == minimal_raw_value
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_keys"),
+        [
+            ({"start_date": "2026-07-20", "end_date": "2026-10-19"}, {"start_date", "end_date"}),
+            ({"start_date": "2026-07-20"}, {"start_date"}),
+            ({"end_date": "2026-10-19"}, {"end_date"}),
+        ],
+        ids=["both", "start_only", "end_only"],
+    )
+    def test_each_date_is_added_to_the_json_body_only_when_given(
+        self, minimal_raw_value, response_body, kwargs, expected_keys
+    ):
+        client = _import_client()
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            client.run_backtest(raw_value=minimal_raw_value, **kwargs)
+
+        body = calls[0]["json"]
+        assert calls[0].get("data") is None
+        assert {"start_date", "end_date"} & set(body) == expected_keys
+        for key in expected_keys:
+            assert body[key] == kwargs[key]
+
+    def test_compact_body_is_sent_as_data_with_compact_separators_and_the_json_header(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            client.run_backtest(
+                raw_value=minimal_raw_value,
+                start_date="2026-07-20",
+                end_date="2026-10-19",
+                compact_body=True,
+            )
+
+        call = calls[0]
+        assert call.get("json") is None, "a compact body is sent as data=, never json="
+        data = call["data"]
+        text = data.decode("utf-8") if isinstance(data, bytes) else data
+        parsed = json.loads(text)
+        assert text == json.dumps(parsed, separators=(",", ":"), allow_nan=False)
+        assert parsed["start_date"] == "2026-07-20"
+        assert parsed["end_date"] == "2026-10-19"
+        assert parsed["symphony"]["raw_value"] == minimal_raw_value
+        assert call["headers"].get("Content-Type") == "application/json"
+        assert len(text) < len(json.dumps(parsed))
+
+    def test_compact_body_stays_ascii_when_the_tree_holds_non_ascii_text(self, response_body):
+        client = _import_client()
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+        tree = {"id": "x", "step": "root", "name": "Café Münzen ✓", "children": []}
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            client.run_backtest(raw_value=tree, compact_body=True)
+
+        data = calls[0]["data"]
+        text = data.decode("ascii") if isinstance(data, bytes) else data
+        assert text.isascii(), "http.client encodes a str body as latin-1: keep it ASCII"
+        assert json.loads(text)["symphony"]["raw_value"]["name"] == tree["name"]
+
+    def test_compact_body_with_a_non_finite_number_returns_an_error_result_without_posting(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        calls: list = []
+        reply = _make_mock_response(200, body=response_body)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            result = client.run_backtest(
+                raw_value=minimal_raw_value, capital=float("nan"), compact_body=True
+            )
+
+        assert result.error
+        assert result.stats is None
+        assert calls == []
+
+    def test_the_captured_dated_compact_response_parses_to_the_requested_window(self):
+        client = _import_client()
+        record = _tenure_record("case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json")
+        symphony_id = record["_request"]["symphony_id"]
+        params = record["_request"]["body_params"]
+        body = record["response_body"]
+        calls: list = []
+        reply = _make_mock_response(200, body=body)
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            result = client.run_backtest(
+                raw_value={"id": symphony_id, "step": "root", "children": []},
+                symphony_id=symphony_id,
+                start_date=params["start_date"],
+                end_date=params["end_date"],
+                compact_body=True,
+            )
+
+        assert result.error is None
+        assert result.first_day == _day_to_iso(body["first_day"]) == params["start_date"]
+        assert result.last_market_day == _day_to_iso(body["last_market_day"]) == params["end_date"]
+        assert result.daily_portfolio_values
+        assert min(result.daily_portfolio_values) >= result.first_day
+        assert max(result.daily_portfolio_values) <= result.last_market_day
+
+    def test_a_413_with_a_compact_body_is_an_error_result_and_is_not_retried(
+        self, minimal_raw_value
+    ):
+        client = _import_client()
+        record = _tenure_record("case6_backtest_413_too_large.json")
+        calls: list = []
+        reply = MagicMock()
+        reply.status_code = record["response_status"]
+        reply.headers = {}
+        reply.text = record["response_body_text"]
+        reply.json.side_effect = ValueError("not json")
+
+        with patch("requests.post", side_effect=_post_capturing(calls, reply)):
+            result = client.run_backtest(
+                raw_value=minimal_raw_value, compact_body=True, max_retries=1
+            )
+
+        assert len(calls) == 1
+        assert result.stats is None
+        assert result.error.startswith("HTTP 413")
