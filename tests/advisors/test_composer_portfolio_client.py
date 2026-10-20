@@ -403,8 +403,9 @@ def test_holdings_result_is_date_then_symphony_then_ticker_to_value(router):
 
     assert result.failed_spans == []
     assert result.days == h.holdings_days(h.holdings_recent_body())
-    some_day = next(iter(result.days.values()))
-    assert any("USD" in tickers for tickers in some_day.values()), "cash rows are kept"
+    assert any(
+        "USD" in tickers for by_symphony in result.days.values() for tickers in by_symphony.values()
+    ), "cash rows are kept"
 
 
 @pytest.mark.parametrize("total_days", [1, 29, 30, 31, 59, 60, 61, 90, 830])
