@@ -112,6 +112,17 @@ def last_n_nyse_days(end: date, n: int) -> list[date]:
     return list(days[-n:])
 
 
+def session_before(day: date) -> date:
+    """The NYSE session immediately before ``day`` (which need not be a session itself),
+    from the calendar library."""
+    return nyse_days(day - timedelta(days=14), day - timedelta(days=1))[-1]
+
+
+def calendar_days(start: date, end: date) -> list[date]:
+    """Every calendar day in [start, end], sessions and closed days alike."""
+    return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+
 def et(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0):
     return datetime(year, month, day, hour, minute, second, tzinfo=ET)
 
@@ -574,6 +585,30 @@ def backtest_over(days: list[date], levels: list[float | None]):
         first_day=days[0].isoformat(),
         last_market_day=days[-1].isoformat(),
     )
+
+
+def shadow_symphony(
+    symphony_id: str,
+    display_name: str,
+    invested_since: str | None,
+    rows: dict,
+    *,
+    failure: str = "unavailable",
+):
+    """A symphony whose Composer read failed, so its basis is the shadow history ``rows``
+    ({day: percent return})."""
+    return make_symphony(
+        symphony_id, display_name, invested_since, series_failure=failure, shadow_returns=rows
+    )
+
+
+def replica_backtest(first: date, last: date, returns_pct: list[float]):
+    """A backtest over every NYSE session from ``first`` to ``last`` whose daily returns are
+    ``returns_pct`` (one fewer return than there are sessions)."""
+    sessions = list(nyse_days(first, last))
+    assert len(sessions) == len(returns_pct) + 1, "one return for each session after the first"
+    levels = values_from_returns(sessions, returns_pct)
+    return backtest_over(sessions, [levels[d.isoformat()] for d in sessions])
 
 
 def shadow_rows_of(roster) -> dict[str, dict[str, tuple[float, float]]]:

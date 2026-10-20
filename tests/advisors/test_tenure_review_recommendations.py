@@ -52,6 +52,21 @@ def _recommender_and_review(tmp_path, monkeypatch, *, stronger_sorts_first=False
     return legacy, result
 
 
+def test_the_rosters_compared_with_the_recommender_hold_no_day_of_plus_100_percent_or_more():
+    """The review reads a window with no down day as a drawdown of exactly zero, where the
+    recommender takes the raw answer of the shared metric function (about -90 percent once
+    a day reaches +100 percent). That difference is intended and the recommender is the
+    reference only where it cannot show, so no compared series may hold such a day."""
+    for stronger_sorts_first in (True, False):
+        roster = b.roster_with_a_candidate_in_two_passing_pairs(
+            stronger_sorts_first=stronger_sorts_first
+        )
+        for symphony in roster:
+            assert max(b.returns_from_values(symphony.composer_values)) < 100.0, (
+                symphony.symphony_id
+            )
+
+
 def test_the_review_hands_over_one_recommendation_for_each_candidate_the_recommender_names(
     tmp_path, monkeypatch
 ):

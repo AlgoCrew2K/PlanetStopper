@@ -23,7 +23,10 @@ import tokenize
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 import advisors.tenure_review as tr
+from advisors import retirement_recommender
 
 _MODULE_PATH = Path(tr.__file__).resolve()
 _REPO_ROOT = _MODULE_PATH.parents[1]
@@ -167,6 +170,102 @@ def test_importing_the_module_loads_no_engine_http_library_or_composer_client(tm
     )
     assert done.returncode == 0, done.stderr[-2000:]
     assert json.loads(done.stdout.strip().splitlines()[-1]) == []
+
+
+_IMPORT_SECONDS = 60  # a bare import takes about a second; a hang is what this bounds
+
+_STRESS_PROBE = """
+import sys
+
+sys.path.insert(0, {root!r})
+from advisors import retirement_recommender
+
+retirement_recommender.STRESS_WINDOW_FRACTION = {fraction!r}
+import advisors.tenure_review as tr
+
+print("imported", hasattr(tr, "build_review"))
+"""
+
+# A pair whose first series is a wave and whose second follows it at about 0.99, with
+# enough days for the uncertainty gate; the probe prints the structural gate for a pair one
+# day short of the days it needs and a pair with exactly that many.
+_NEEDS_PROBE = """
+import json
+import math
+import sys
+from datetime import date, timedelta
+
+sys.path.insert(0, {root!r})
+from advisors import retirement_recommender
+
+retirement_recommender.STRESS_WINDOW_FRACTION = {fraction!r}
+import advisors.tenure_review as tr
+
+
+def gate(days):
+    keys = [(date(2020, 1, 1) + timedelta(days=i)).isoformat() for i in range(days)]
+    first = [math.sin(0.37 * i) + 0.1 * math.sin(2.9 * i) for i in range(days)]
+    second = [0.95 * v + 0.05 * math.cos(1.3 * i) for i, v in enumerate(first)]
+    pair = tr.evaluate_redundancy({{"a": dict(zip(keys, first)), "b": dict(zip(keys, second))}})[0]
+    return pair["structural_gate"]
+
+
+print(json.dumps({{"short": gate({short}), "enough": gate({enough})}}))
+"""
+
+
+def _run_probe(code: str, tmp_path):
+    env = dict(os.environ)
+    env["DB_PATH"] = str(tmp_path / "fresh_interpreter_state.db")
+    try:
+        return subprocess.run(
+            [sys.executable, "-I", "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=_IMPORT_SECONDS,
+            env=env,
+            cwd=tmp_path,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"the interpreter did not finish within {_IMPORT_SECONDS} seconds")
+
+
+@pytest.mark.parametrize(
+    "fraction", [0.0, 0.004], ids=["zero_fraction", "fraction_that_rounds_to_zero_percent"]
+)
+def test_importing_the_module_returns_whatever_the_recommenders_stress_fraction_is(
+    fraction, tmp_path
+):
+    """The days a stressed window needs follow from the recommender's stress fraction. A
+    fraction that gives no stressed day at all has no such count, and finding that out must
+    not be a search with no end. Rejects an unbounded search at import, which never
+    returns, and a division that raises."""
+    done = _run_probe(_STRESS_PROBE.format(root=str(_REPO_ROOT), fraction=fraction), tmp_path)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.stdout.strip().splitlines()[-1] == "imported True"
+
+
+def test_the_days_the_structural_gate_needs_follow_the_recommenders_stress_fraction(tmp_path):
+    """At a fraction of 2 percent the stressed window reaches the recommender's minimum of
+    10 days at 451 aligned days (ceil of 2 percent of 451 is 10, of 450 is 9), found here
+    by a bounded search over integers. The pair one day short reads insufficient data and
+    names that count; the pair with exactly that many is evaluated. Rejects a count typed
+    for the default fraction."""
+    fraction = 0.02
+    percent = round(fraction * 100)
+    minimum = retirement_recommender.STRESS_MIN_OBS
+    limit = minimum * 100 // percent + 2
+    needed = next(n for n in range(1, limit) if -(-n * percent // 100) >= minimum)
+    code = _NEEDS_PROBE.format(
+        root=str(_REPO_ROOT), fraction=fraction, short=needed - 1, enough=needed
+    )
+    done = _run_probe(code, tmp_path)
+    assert done.returncode == 0, done.stderr[-2000:]
+    gates = json.loads(done.stdout.strip().splitlines()[-1])
+    assert gates["short"]["state"] == "insufficient data"
+    assert gates["short"]["text"] == f"insufficient data: needs {needed} aligned days"
+    assert gates["enough"]["state"] not in ("insufficient data", "not evaluated")
 
 
 # ---------------------------------------------------------------------------

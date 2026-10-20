@@ -421,6 +421,16 @@ def test_the_review_flags_the_same_candidate_and_composites_as_the_existing_reco
     )
 
 
+def test_the_recommender_parity_golden_holds_no_day_of_plus_100_percent_or_more():
+    """The review gives a window with no down day a drawdown of exactly zero, where the
+    recommender takes the raw answer of the shared metric function, which reads such a
+    series as prices once a day reaches +100 percent and reports about -90 percent. The
+    difference is intended, so no window of this golden may be able to show it."""
+    fixture = json.loads(_PARITY_FIXTURE.read_text(encoding="utf-8"))
+    for symphony, returns in fixture["returns_pct"].items():
+        assert max(returns) < 100.0, symphony
+
+
 # ---------------------------------------------------------------------------
 # The pair a row shows
 # ---------------------------------------------------------------------------
@@ -704,15 +714,21 @@ def test_two_eligible_shadow_basis_symphonies_are_paired_with_the_basis_note_and
 
 
 # ---------------------------------------------------------------------------
-# When no pair can be evaluated, the item says so
+# A pair on too few aligned days is shown, never hidden
 # ---------------------------------------------------------------------------
 
 SHORT_THRESHOLD = 20
+SHORT_OVERLAP = 24  # aligned returns of the short pair: below the 30 an interval needs
 
 
-def _short_overlap_roster(*, correlated, third=False):
+def _short_overlap_roster(*, correlated, third=None):
     """short-a has 40 points, short-b 25 (tenure 25, so eligible at threshold 20): their
-    shared returns number 24, below the 30 an interpretable correlation needs."""
+    shared returns number 24, below the 30 an interpretable correlation needs.
+
+    ``third`` adds short-c with 40 points: ``"unrelated"`` is uncorrelated with short-a
+    over 39 shared returns (an evaluable pair that is no screen hit); ``"close"``
+    follows short-a at about 0.93 over those 39 (an evaluable screen hit that is less
+    correlated than the short pair and, on so few days, cannot reach the structural gate)."""
     days = b.last_n_nyse_days(b.AS_OF, 40)
     a_returns = b.wave_returns(39)
     b_returns = [0.9 * r + 0.01 for r in a_returns[-24:]] if correlated else b.sine_returns(24, 3)
@@ -720,18 +736,25 @@ def _short_overlap_roster(*, correlated, third=False):
         b.composer_symphony("short-a", "Short A", days, a_returns),
         b.composer_symphony("short-b", "Short B", days[-25:], b_returns),
     ]
-    if third:
+    if third == "unrelated":
         roster.append(b.composer_symphony("short-c", "Short C", days, b.sine_returns(39, 5)))
+    elif third == "close":
+        noisy = [r + 0.2 * math.sin(2.9 * i + 1.0) for i, r in enumerate(a_returns)]
+        roster.append(b.composer_symphony("short-c", "Short C", days, noisy))
     return roster
 
 
-@pytest.mark.parametrize("correlated", [True, False], ids=["correlated", "uncorrelated"])
-def test_when_every_pair_has_too_few_aligned_days_the_item_says_insufficient_data(correlated):
-    """Whether the short overlap looks correlated or not, it cannot support 'no
-    redundant sibling' or a shown pair. The item is unavailable with the gate's own
-    wording and the verdict lists it as missing."""
+def _returns_of(roster, symphony_id):
+    symphony = next(s for s in roster if s.symphony_id == symphony_id)
+    return b.returns_from_values(symphony.composer_values)
+
+
+def test_when_every_pair_has_too_few_aligned_days_and_none_reaches_the_screen_the_item_says_so():
+    """A short overlap that shows no correlation cannot support 'no redundant sibling'
+    either: it is too short to say. The item is unavailable with the gate's own wording
+    and the verdict lists it as missing."""
     result = b.review(
-        _short_overlap_roster(correlated=correlated), as_of=b.AS_OF, threshold=SHORT_THRESHOLD
+        _short_overlap_roster(correlated=False), as_of=b.AS_OF, threshold=SHORT_THRESHOLD
     )
     expected = f"insufficient data: needs {retirement_recommender.MIN_OBS_FLOOR} aligned days"
     for sid in ("short-a", "short-b"):
@@ -744,21 +767,150 @@ def test_when_every_pair_has_too_few_aligned_days_the_item_says_insufficient_dat
         assert "redundancy" in entry["missing_items"], sid
 
 
+def test_a_screen_hit_on_too_few_aligned_days_is_shown_with_the_gate_reading_insufficient_data():
+    """The pair reaches the screen threshold on 24 days. It is shown with each gate's own
+    state, the uncertainty gate saying how many days it needs and the structural gate not
+    evaluated, and nobody is flagged. Rejects hiding the pair, and 'no redundant sibling'."""
+    roster = _short_overlap_roster(correlated=True)
+    short_a = _returns_of(roster, "short-a")[-SHORT_OVERLAP:]
+    oracle = b.pearson(short_a, _returns_of(roster, "short-b"))
+    assert oracle >= b.SCREEN_THRESHOLD  # fixture sanity: a screen hit
+    result = b.review(roster, as_of=b.AS_OF, threshold=SHORT_THRESHOLD)
+    for sid, sibling in (("short-a", "short-b"), ("short-b", "short-a")):
+        entry = b.entry_of(result, sid)
+        item = b.item_of(entry, "redundancy")
+        assert item["status"] == "available", sid
+        assert item["retire_candidate"] is False, sid
+        assert item.get("summary") != NO_SIBLING_TEXT, sid
+        assert "redundancy" not in entry["missing_items"], sid
+        pair = item["pair"]
+        assert pair["sibling_id"] == sibling, sid
+        assert pair["n_obs"] == SHORT_OVERLAP, sid
+        assert item["window"]["days"] == SHORT_OVERLAP, sid
+        assert pair["correlation"]["value"] == pytest.approx(oracle, rel=1e-9), sid
+        assert pair["uncertainty_gate"]["state"] == "insufficient data", sid
+        assert pair["uncertainty_gate"]["text"] == INSUFFICIENT_UNCERTAINTY, sid
+        assert pair["structural_gate"]["state"] == "not evaluated", sid
+
+
 def test_one_pair_with_enough_days_keeps_the_item_available():
-    """short-a also shares 39 days with short-c, so it has a pair that can be evaluated
-    (no hit). short-b shares 24 days with each, so every pair of its own is too short."""
+    """short-a also shares 39 days with short-c, an evaluable pair with no screen hit. The
+    item is available, and it shows the short pair that does reach the screen rather than
+    'no redundant sibling'. short-b shares 24 days with each, so every pair of its own is
+    short, and the one that reaches the screen is shown."""
     result = b.review(
-        _short_overlap_roster(correlated=True, third=True),
+        _short_overlap_roster(correlated=True, third="unrelated"),
         as_of=b.AS_OF,
         threshold=SHORT_THRESHOLD,
     )
-    a = b.entry_of(result, "short-a")
-    assert b.item_of(a, "redundancy")["status"] == "available"
-    assert b.item_of(a, "redundancy")["summary"] == NO_SIBLING_TEXT
-    assert "redundancy" not in a["missing_items"]
-    short_b = b.entry_of(result, "short-b")
-    assert b.item_of(short_b, "redundancy")["status"] == "unavailable"
-    assert "redundancy" in short_b["missing_items"]
+    for sid, sibling in (("short-a", "short-b"), ("short-b", "short-a")):
+        entry = b.entry_of(result, sid)
+        item = b.item_of(entry, "redundancy")
+        assert item["status"] == "available", sid
+        assert item["pair"]["sibling_id"] == sibling, sid
+        assert item.get("summary") != NO_SIBLING_TEXT, sid
+        assert "redundancy" not in entry["missing_items"], sid
+
+
+def test_an_unrelated_evaluable_peer_changes_neither_the_pair_a_short_hit_shows_nor_its_claim():
+    """Adding a third symphony that is uncorrelated with both and has enough days to be
+    evaluated must leave the row as it was. Rejects an item that shows the short pair
+    only until another pair can be evaluated, and one that then claims no sibling."""
+    alone = b.review(
+        _short_overlap_roster(correlated=True), as_of=b.AS_OF, threshold=SHORT_THRESHOLD
+    )
+    beside = b.review(
+        _short_overlap_roster(correlated=True, third="unrelated"),
+        as_of=b.AS_OF,
+        threshold=SHORT_THRESHOLD,
+    )
+    for sid in ("short-a", "short-b"):
+        before = b.item_of(b.entry_of(alone, sid), "redundancy")
+        after = b.item_of(b.entry_of(beside, sid), "redundancy")
+        assert before["pair"] is not None, sid  # fixture sanity
+        for key in ("status", "pair", "window", "retire_candidate"):
+            assert after[key] == before[key], (sid, key)
+        assert after.get("summary") == before.get("summary"), sid
+
+
+def test_a_screen_hit_on_too_few_days_outranks_an_evaluable_hit_of_lower_correlation():
+    """The row shows the highest-correlation pair at or above 0.65, whatever its day
+    count. short-a correlates 1.0 with short-b over 24 days and about 0.93 with short-c
+    over 39, an interval that passes; the structural gate cannot be reached on 39 days, so
+    nobody is flagged. Rejects preferring a pair that can be evaluated."""
+    roster = _short_overlap_roster(correlated=True, third="close")
+    short_a = _returns_of(roster, "short-a")
+    r_ab = b.pearson(short_a[-SHORT_OVERLAP:], _returns_of(roster, "short-b"))
+    r_ac = b.pearson(short_a, _returns_of(roster, "short-c"))
+    assert r_ab > r_ac >= b.SCREEN_THRESHOLD  # fixture sanity: the short pair is the stronger
+    assert b.oracle_ci(r_ac, len(short_a))[0] >= b.SCREEN_THRESHOLD  # fixture sanity: evaluable
+
+    result = b.review(roster, as_of=b.AS_OF, threshold=SHORT_THRESHOLD)
+    item = b.item_of(b.entry_of(result, "short-a"), "redundancy")
+    assert item["status"] == "available"
+    assert item["retire_candidate"] is False
+    pair = item["pair"]
+    assert pair["sibling_id"] == "short-b"
+    assert pair["n_obs"] == SHORT_OVERLAP
+    assert pair["correlation"]["value"] == pytest.approx(r_ab, rel=1e-9)
+    assert pair["uncertainty_gate"]["state"] == "insufficient data"
+    assert item.get("summary") != NO_SIBLING_TEXT
+
+
+def test_no_redundant_sibling_is_only_said_when_no_pair_reaches_the_screen():
+    """Across the rosters of this section, an item that carries the words has no pair at
+    or above 0.65 with any other symphony, from the oracle on their shared returns.
+    Rejects stamping the words on a row whose strongest pair was set aside."""
+    rosters = [
+        _short_overlap_roster(correlated=True),
+        _short_overlap_roster(correlated=True, third="unrelated"),
+        _short_overlap_roster(correlated=True, third="close"),
+        _quiet_roster(),
+    ]
+    said = 0
+    for roster in rosters:
+        result = b.review(roster, as_of=b.AS_OF, threshold=SHORT_THRESHOLD)
+        for entry in result.entries:
+            item = b.item_of(entry, "redundancy")
+            if item.get("summary") != NO_SIBLING_TEXT:
+                continue
+            said += 1
+            mine = _returns_of(roster, entry["symphony_id"])
+            for other in roster:
+                if other.symphony_id == entry["symphony_id"]:
+                    continue
+                theirs = _returns_of(roster, other.symphony_id)
+                shared = min(len(mine), len(theirs))
+                assert b.pearson(mine[-shared:], theirs[-shared:]) < b.SCREEN_THRESHOLD, (
+                    entry["symphony_id"],
+                    other.symphony_id,
+                )
+    assert said, "fixture sanity: at least one row says it"
+
+
+def test_no_row_shows_its_own_symphony_as_its_sibling():
+    """A pair always joins two symphonies. Across every roster that shows pairs, no row
+    and no recommendation names its own symphony as the sibling."""
+    rosters = [
+        (b.roster_with_two_redundant_candidates()[0], 250),
+        (b.roster_with_ineligible_correlated_sibling()[0], 250),
+        (
+            b.roster_with_a_candidate_in_two_passing_pairs(stronger_sorts_first=True),
+            b.NOTE_THRESHOLD,
+        ),
+        (_short_overlap_roster(correlated=True, third="close"), SHORT_THRESHOLD),
+    ]
+    shown = 0
+    for roster, threshold in rosters:
+        result = b.review(roster, as_of=b.AS_OF, threshold=threshold)
+        for entry in result.entries:
+            pair = b.item_of(entry, "redundancy")["pair"]
+            if pair is not None:
+                shown += 1
+                assert pair["sibling_id"] != entry["symphony_id"], entry["symphony_id"]
+        for rec in result.recommendations:
+            assert rec["sibling_id"] != rec["candidate_id"], rec["candidate_id"]
+    assert shown, "fixture sanity: some row shows a pair"
 
 
 # ---------------------------------------------------------------------------
