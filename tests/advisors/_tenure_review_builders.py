@@ -39,14 +39,17 @@ RUN_ID = "0123456789abcdef0123456789abcdef"
 
 # ---------------------------------------------------------------------------
 # Calendar: a holiday list that does not come from the module under test or from
-# market_calendar. Valid for 2025-02-01 .. 2027-01-01 (the range the tests use).
+# market_calendar. Valid for 2025-01-01 .. 2027-01-01 (the range the tests use).
 # ---------------------------------------------------------------------------
 
 _NYSE_HOLIDAYS = frozenset(
     date(*ymd)
     for ymd in (
-        # 2025 (Presidents Day, Good Friday, Memorial Day, Juneteenth, Independence
+        # 2025 (New Year, national day of mourning, MLK Day, Presidents Day, Good Friday, Memorial Day, Juneteenth, Independence
         # Day, Labor Day, Thanksgiving, Christmas)
+        (2025, 1, 1),
+        (2025, 1, 9),
+        (2025, 1, 20),
         (2025, 2, 17),
         (2025, 4, 18),
         (2025, 5, 26),
@@ -71,7 +74,7 @@ _NYSE_HOLIDAYS = frozenset(
         (2027, 1, 1),
     )
 )
-_ORACLE_RANGE = (date(2025, 2, 1), date(2027, 1, 1))
+_ORACLE_RANGE = (date(2025, 1, 1), date(2027, 1, 1))
 
 
 def oracle_count_trading_days(start: date, end: date) -> int:
