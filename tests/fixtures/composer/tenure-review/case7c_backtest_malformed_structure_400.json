@@ -1,0 +1,12 @@
+{
+"_fixture_provenance": "captured-from-producer: live Composer API response to a credentialed request, captured 2026-10-20. Only account id and user id are replaced by placeholders; every other value is verbatim except the trimming recorded in _trimmed.",
+"_case": "7c: backtest of a deliberately malformed definition (HTTP 400, malli request-coercion error)",
+"_capture_date": "2026-10-20",
+"_response_date_header": "Tue, 20 Oct 2026 18:32:19 GMT",
+"_endpoint": "POST /api/v0.1/backtest",
+"_request": {"method":"POST","url":"https://api.composer.trade/api/v0.1/backtest","query":{},"credentials":"valid Composer key pair from the repo .env (values not recorded)","body_encoding":"compact separators","body_params":{"symphony.raw_value":{"step":"root","name":"malformed-fixture","rebalance":"daily","children":"x"},"capital":10000.0,"apply_reg_fee":true,"apply_taf_fee":true,"slippage_percent":0.005,"broker":"alpaca","backtest_version":"v2","start_date":"2026-07-20","end_date":"2026-10-19"}},
+"_trimmed": {"kept":"complete response body","dropped":[]},
+"response_status": 400,
+"response_content_type": "application/json; charset=utf-8",
+"response_body": {"value":{"capital":10000.0,"end_date":"2026-10-19","broker":"alpaca","start_date":"2026-07-20","slippage_percent":0.005,"symphony":{"raw_value":{"children":"x","name":"malformed-fixture","rebalance":"daily","step":"root"}},"backtest_version":"v2","apply_reg_fee":true,"apply_taf_fee":true},"type":"reitit.coercion/request-coercion","coercion":"malli","in":["request","body-params"],"humanized":{"symphony":{"raw_value":{"description":["missing required key"],"children":["invalid type"],"malli/error":["disallowed key"],"id":["missing required key"]},"encoding_type":["missing required key"],"encoded_value":["missing required key"]}}}
+}

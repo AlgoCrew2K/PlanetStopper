@@ -1,0 +1,12 @@
+{
+"_fixture_provenance": "captured-from-producer: live Composer API response to a credentialed request, captured 2026-10-20. Only account id and user id are replaced by placeholders; every other value is verbatim except the trimming recorded in _trimmed.",
+"_case": "2: per-symphony value series (one of the youngest live symphonies)",
+"_capture_date": "2026-10-20",
+"_response_date_header": "Tue, 20 Oct 2026 18:29:53 GMT",
+"_endpoint": "GET /api/v0.1/portfolio/accounts/{account-id}/symphonies/{symphony-id}",
+"_request": {"method":"GET","url":"https://api.composer.trade/api/v0.1/portfolio/accounts/ACCOUNT_ID_REDACTED/symphonies/q7WQHwLzt49cMgFBzHsX","query":{},"credentials":"valid Composer key pair from the repo .env (values not recorded)","symphony_id":"q7WQHwLzt49cMgFBzHsX","symphony_name":"Planet of the Golden Age: Arrival of the NewRunners","invested_since_per_statistics":"2026-09-10"},
+"_trimmed": {"kept":["deposit_adjusted_series","epoch_ms","series"],"dropped":[],"points":28,"note":"complete series; the response has only these three parallel arrays"},
+"response_status": 200,
+"response_content_type": "application/json; charset=utf-8",
+"response_body": {"epoch_ms":[1788998400000,1789084800000,1789344000000,1789430400000,1789516800000,1789603200000,1789689600000,1789948800000,1790035200000,1790121600000,1790208000000,1790294400000,1790553600000,1790640000000,1790726400000,1790812800000,1790899200000,1791158400000,1791244800000,1791331200000,1791417600000,1791504000000,1791763200000,1791849600000,1791936000000,1792022400000,1792108800000,1792368000000],"series":[1049.82,989.17,1013.82,1025.53,1040.13,1009.48,1005.29,959.81,938.98,977.86,989.74,978.78,976.67,990.62,987.46,987.33,970.06,955.45,955.66,963.5,969.7,984.45,982.37,976.54,948.21,947.65,962.29,912.09],"deposit_adjusted_series":[1050.0,989.17,1013.82,1025.53,1040.13,1009.48,1005.29,959.81,938.98,977.86,989.74,978.78,976.67,990.62,987.46,987.33,970.06,955.45,955.66,963.5,969.7,984.45,982.37,976.54,948.21,947.65,962.29,912.09]}
+}
