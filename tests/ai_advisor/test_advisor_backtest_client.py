@@ -591,7 +591,7 @@ class TestArchitectureContracts:
 
 
 # ---------------------------------------------------------------------------
-# Section 8 — Dated window and compact request body (keyword-only parameters)
+# Section 8: dated window and compact request body (keyword-only parameters)
 # ---------------------------------------------------------------------------
 
 _TENURE_FIXTURES = _REPO_ROOT / "tests" / "fixtures" / "composer" / "tenure-review"
