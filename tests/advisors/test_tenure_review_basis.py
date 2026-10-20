@@ -4,7 +4,7 @@ Module under test: advisors.tenure_review.
 
 Returns are percent-scale. A value series is a deposit-adjusted level keyed by
 ISO date; a return is the move between consecutive kept points inside the window,
-so M kept points give M - 1 returns. Dropped days are never counted as 0%.
+so M kept points give M minus 1 returns. Dropped days are never counted as 0%.
 """
 
 from __future__ import annotations

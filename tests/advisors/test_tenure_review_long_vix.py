@@ -58,11 +58,11 @@ def test_long_vix_products_are_the_vix_family_without_the_short_products():
 # ---------------------------------------------------------------------------
 
 # Five days, three live symphonies. Totals are 300 every day.
-#   D1 subj holds VIXY 10; o2 holds UVXY 5          -> long-VIX 15
-#   D2 only o1 holds VIXM 20                        -> 20
-#   D3 subj holds UVXY 30; o1 holds VXX 10          -> 40
-#   D4 subj holds VIXY 50 and UVIX 10, nobody else  -> 60
-#   D5 nobody                                       -> 0
+#   D1 subj holds VIXY 10; o2 holds UVXY 5: long-VIX 15
+#   D2 only o1 holds VIXM 20: 20
+#   D3 subj holds UVXY 30; o1 holds VXX 10: 40
+#   D4 subj holds VIXY 50 and UVIX 10, nobody else: 60
+#   D5 nobody: 0
 SCENARIO = [
     {
         "subj": {"VIXY": 10.0, "SPY": 90.0},

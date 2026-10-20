@@ -358,7 +358,7 @@ def composer_symphony(
 ):
     """A Composer-basis symphony holding one value per date; its tenure starts on
     dates[0] unless ``invested_since`` says otherwise. len(returns_pct) is
-    len(dates) - 1: the return INTO each date after the first."""
+    len(dates) minus 1: the return INTO each date after the first."""
     start = dates[0].isoformat() if invested_since == "from-dates" else invested_since
     return make_symphony(
         symphony_id,

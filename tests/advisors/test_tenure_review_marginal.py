@@ -76,7 +76,7 @@ def _figures(item):
 def test_a_hand_worked_example_gives_the_expected_totals_drawdowns_and_signs():
     """A = 100, 110, 99 and B = 100, 100, 100 on three days.
 
-    With: 200, 210, 199 -> total -0.5 percent, drawdown 199/210 - 1 = -5.238095 percent.
+    With: 200, 210, 199, so total -0.5 percent, drawdown 199/210 minus 1 = -5.238095 percent.
     Without A (B alone): flat, total 0 and drawdown 0. Removing A raises the return by
     0.5 points and makes the drawdown 5.238095 points shallower."""
     days = DAYS[:3]

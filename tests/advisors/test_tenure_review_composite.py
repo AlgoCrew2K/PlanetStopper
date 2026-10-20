@@ -60,7 +60,7 @@ def test_metrics_match_textbook_formulas_in_percent_scale():
 
 
 def test_percent_returns_are_not_mistaken_for_fractions():
-    """252 returns of +1%: total return is (1.01^252 - 1) * 100 percent, not 252 percent
+    """252 returns of +1%: total return is (1.01^252 minus 1) times 100 percent, not 252 percent
     and not a fraction."""
     got = tr.performance_metrics([1.0] * 252)
     assert got["total_return"] == pytest.approx((1.01**252 - 1) * 100, rel=1e-9)
@@ -69,14 +69,14 @@ def test_percent_returns_are_not_mistaken_for_fractions():
 def test_annualized_return_equals_total_return_over_exactly_252_returns():
     """Annualization is len(returns) / 252: one year of trading days.
 
-    Rejects a 365 day basis and a basis of len(returns) - 1."""
+    Rejects a 365 day basis and a basis of len(returns) minus 1."""
     got = tr.performance_metrics(b.wave_returns(252, amp=0.8, drift=0.03))
     assert got["annualized_return"] == pytest.approx(got["total_return"], rel=1e-9)
 
 
 def test_max_drawdown_is_a_negative_percent_measured_from_the_running_peak():
     got = tr.performance_metrics([10.0, -20.0, 5.0])
-    assert got["max_drawdown"] == pytest.approx(-20.0, rel=1e-9)  # 1.1 -> 0.88
+    assert got["max_drawdown"] == pytest.approx(-20.0, rel=1e-9)  # peak 1.1, trough 0.88
 
 
 def test_a_first_day_loss_counts_as_a_drawdown_from_the_starting_level():
@@ -267,7 +267,7 @@ def test_performance_figures_carry_percent_and_ratio_units():
 
 def _oracle_for(symphonies, threshold=THRESHOLD):
     """Oracle composites of the given Composer-basis symphonies over their last
-    threshold - 1 returns (the common window of threshold points)."""
+    threshold minus 1 returns (the common window of threshold points)."""
     metrics = {}
     for s in symphonies:
         rets = b.returns_from_values(s.composer_values)[-(threshold - 1) :]
