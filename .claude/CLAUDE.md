@@ -121,22 +121,29 @@ No feature reaches `main` (local OR origin) by self-merge. EVERY feature passes 
 **Planning (compiled from the global templates with PlanetStopper bindings):**
 `spec-writer` (Gate-1 spec author) · `spec-auditor` (Gate-1 spec reviewer) · `architect` (Gate-2 approach author). Contract tests live in `tests/harness/`; the compiler-check cases skip when the harness compiler is absent, as on CI.
 
+**Build and review roles (compiled from the global templates with PlanetStopper bindings):**
+`test-writer` (RED author) · `test-writer-lite` (RED author for small, low-risk changes) · `implementer` (GREEN author) · `qa` (acceptance and test-strength verifier) · `code-reviewer` (diff reviewer) · `integration-auditor` (cross-surface contract auditor) · `api-expert` (API and route surface) · `pipelines-expert` (scheduler and data-pipeline surface) · `ux-expert` (templates and client JS surface) · `behavioral-evidence-capturer` (observes the rendered page in a real browser) · `doc-gen` (slice-tail documentation). Each is a compiled copy of its global template, so a change to a rule goes through the template and the compiler, never a hand edit of the compiled file. `quant-code-reviewer` stays the math-layer reviewer and reports to the PM.
+
+## MCP Dependencies
+| Agent | Server | Tools | Mandate |
+|-------|--------|-------|---------|
+| `behavioral-evidence-capturer` | `playwright` (the harness's shared Firefox, reached through the browser multiplexer) | the twelve `mcp__playwright__` tools its frontmatter lists: `browser_tabs`, `browser_navigate`, `browser_snapshot`, `browser_take_screenshot`, `browser_click`, `browser_hover`, `browser_select_option`, `browser_evaluate`, `browser_wait_for`, `browser_network_requests`, `browser_console_messages`, `browser_handle_dialog` | MUST |
+
+The capturer requires the operator's one-time shared-browser setup (`scripts/browser-sign-in`). Without it the capturer stops at its first browser call, because it has no other way to observe a rendered page.
+
 ## Project-Local Skills (`.claude/skills/`)
 `/backtest` · `/optuna-compare` · `/db-inspect` · `/api-fixture` · `/discord-test` · `/run-tests` · `/lint` · `/perf-snapshot` · `/symphony-diff`
 
 ## Agent Team Composition (HARD REQUIREMENT)
 **All new codepaths — and bug fixes that introduce new codepaths — MUST be built via the Toxic Pair TDD composition of Agent Teams.** The PM may NOT approximate a team with sequential solo-agent RED → GREEN → review dispatches. Real Agent Teams only: shared worktree, one branch, `SendMessage` handoffs, autonomous Toxic Pair (test-writer ⇄ implementer) cycling with reviewers wrapped around it.
 
-**Skill-driven TDD is MANDATORY (not ad-hoc RED/GREEN).** Every dev cycle is driven through the TDD skills, and the kickoff prompt MUST say so explicitly:
-- Planning artifact first: each feature has a plan in `feature-plans/<name>.md` with `Status: ready`. New plans follow the current `/scaffold` tier template, written by `spec-writer` and audited by `spec-auditor`, with the HOW (file and function naming) in a Gate-2 approach document by `architect`; older plans keep their legacy shape (Summary / Acceptance Criteria as `AC-N` / Architecture / Edge Cases / Security Considerations / Testing Strategy / Scope Boundaries). Use the `/scaffold` skill to produce it, never hand-roll.
-- **test-writer** runs `/tdd <feature-plan>` → writes RED tests + creates `.claude/tdd-handoff.md`.
-- **implementer** runs `/tdd-implement` → reads the handoff (NOT the plan — deliberately blind), writes minimal GREEN.
-- finalize the cycle with `/tdd-finalize` before cycle-complete.
-This requires the `Skill` tool in the agent's `tools:` frontmatter — all dev specialists (quant-test-writer, sqlite-specialist, risk-engine-specialist, optuna-specialist, flask-dashboard-specialist, composer-alpaca-integration) carry it. If a specialist lacks a needed capability, fix its frontmatter — never work around it.
+**The TDD round is driven by the agent files, not by skills.** Each feature has a plan in `feature-plans/<name>.md` with `Status: ready`. New plans follow the current `/scaffold` tier template, written by `spec-writer` and audited by `spec-auditor`, with the HOW (file and function naming) in a Gate-2 approach document by `architect`; older plans keep their legacy shape (Summary / Acceptance Criteria as `AC-N` / Architecture / Edge Cases / Security Considerations / Testing Strategy / Scope Boundaries). Use the `/scaffold` skill to produce a plan, never hand-roll.
+- The round procedure lives in the `test-writer` and `implementer` agent files, because the `/tdd`, `/tdd-implement` and `/tdd-finalize` skills are not model-invocable and the harness's doctrine tests flag them as retired. A kickoff prompt names the plan and the agents, never those skills.
+- The RED author writes the handoff at `.claude/review/<RED-sha12>/handoff.md` and the coverage record under `records/` in that folder. The implementer reads the handoff, not the plan (deliberately blind), and writes minimal GREEN.
+- The implementer reports GREEN to the closer the RED message names, and the closer verifies and sends one cycle-complete. The PM does not approximate this with sequential solo dispatches.
+- Shared worktree, one branch, `SendMessage` handoffs: the Toxic Pair (test author and implementer) cycles autonomously with reviewers around it.
 
-Standing TDD team: **Quint** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched + **doc-writer**).
-**A `doc-gen` doc-writer is a MANDATORY member of EVERY team (global hard rule) — added on top of the Quad/whatever composition.** It documents the cycle's changes into `docs/generated/` / `DECISIONS.md` / README and commits them on the shared branch before cycle-complete; the cycle is not complete until those updates are in. Never omit it (TDD, audit, or research teams alike).
+Standing TDD team: **Quint** (test-writer + implementer + `quant-code-reviewer` + domain specialist matched to the surface touched).
+**`doc-gen` is MANDATORY for every slice, run once at the slice tail and not as a member of each cycle team.** It runs after every reviewer has passed every head of the slice, because a round sent back changes the code the docs describe. It documents the slice into `docs/generated/` / `DECISIONS.md` / README / this file's Key Files table, commits them on the shared branch, and its docs-done is the PM's signal to create the PR. Bad documentation is a shippable defect.
 Math-layer changes always add `quant-test-writer` as the adversarial test author.
-**doc-writer goes on EVERY team** (TDD and non-TDD): owns feature-plans/ docs for the cycle, audits docstrings/constant comments (files findings to the owning teammate — never edits their files), and drafts CLAUDE.md key-files updates for PM approval. Bad documentation is a shippable defect.
-
 **Exceptions — no TDD required (but often still a team):** config/doc-only edits, one-line fixes to existing codepaths, behavior-preserving refactors fully covered by existing tests, and pure research/diagnosis tasks (no code written). These skip the Toxic Pair because there is no code to drive RED→GREEN — but a multi-surface diagnosis or audit should still run as a **non-TDD Agent Team** (communicating auditors + a synthesizing lead), not a swarm of disconnected solo agents. Reserve solo background agents for genuinely independent single-surface tasks. See `~/.claude/CLAUDE.md` §"Agent Teams" for the composition catalogue.
