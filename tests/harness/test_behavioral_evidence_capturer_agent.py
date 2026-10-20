@@ -402,6 +402,11 @@ BINDING_RULES: dict[str, str] = {
         "report on-screen figures verbatim, with `None`, a dash, `n/a`, blank and `0` kept as "
         "different observations"
     ),
+    "counterfactual-label-kept": (
+        "A figure the screen labels counterfactual (shadow history, if-held, backtest) is "
+        "reported with that label and never described as realized"
+    ),
+    "counterfactual-label-reason": "because an unlabeled hypothetical reads as a real result",
     "db-copy-values-structural-only": (
         "Dollar and percent values from a database copy are structural evidence only"
     ),
@@ -962,8 +967,9 @@ def test_compile_check_mutation_stale_provenance_fails(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
-# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# Required common rules. The rules live in tests/harness/_agent_contract.py and not in this
+# file, and each is carried only when one bullet holds all of its tokens, so a rule this agent
+# file never carries fails here even when no anchor above names it and other bullets share its words.
 # --------------------------------------------------------------------------
 
 REQUIRED_RULES_EXEMPT: frozenset[str] = contract.ENGINE_RULE_NAMES
@@ -978,13 +984,17 @@ def test_required_common_rules_are_carried():
 
 
 @pytest.mark.parametrize(
-    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+    "rule", [r for r in contract.COMMON_RULES if r not in REQUIRED_RULES_EXEMPT]
 )
-def test_required_common_rule_removal_is_detected(rule):
+def test_required_common_rule_bullet_removal_is_detected(rule):
     text = read_agent()
-    mutated = contract.without_bindings_needle(text, rule)
+    mutated, removed = contract.without_rule_bullets(text, rule)
+    assert removed
     assert mutated != text
-    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+    reported = contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT)
+    assert rule in reported
+    # A deleted bullet can only take away the rules that bullet itself carried.
+    assert all(any(contract.bullet_carries(b, r) for b in removed) for r in reported)
 
 
 def test_required_common_rules_do_not_count_the_template_body():
@@ -992,7 +1002,7 @@ def test_required_common_rules_do_not_count_the_template_body():
     head = text[: len(text) - len(contract.bindings_section(text))]
     stripped = head + "## Project bindings (PlanetStopper)\n"
     assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
-        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+        r for r in contract.COMMON_RULES if r not in REQUIRED_RULES_EXEMPT
     ]
 
 

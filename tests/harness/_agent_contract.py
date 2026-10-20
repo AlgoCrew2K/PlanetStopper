@@ -368,52 +368,83 @@ def check_checklist_matches_global(checklist_text: str | None, global_text: str)
 # Required common rules (external to each agent file)
 # ---------------------------------------------------------------------------
 
-# One needle per common rule every PlanetStopper specialization must carry in its bindings.
-# The needles are written here, not taken from any agent file, so a rule a builder never wrote
-# fails the check instead of becoming a missing anchor nobody notices. Each needle is a concept
-# token every role phrases in its own words, so an alternative lists the role phrasings. A rule
-# that appears only in the template body does not count: the check reads the bindings section.
+# Each rule every PlanetStopper specialization must carry is a set of token patterns, and the
+# rule is carried only when ONE bullet of the bindings holds every token of that rule together.
+# A single-token match anywhere in the bindings would let another bullet's words stand in for a
+# rule whose own bullet was deleted, so every rule here is bullet-scoped and each token names the
+# rule itself (a path, a flag, a phrase the rule is built from), not a word other bullets use.
+# The patterns are written here, not taken from any agent file, so a rule a builder never wrote
+# fails the check instead of becoming a missing anchor nobody notices. A rule that appears only
+# in the template body does not count: the check reads the bindings section.
 _CASE_SENSITIVE = 0
 _CASE_INSENSITIVE = re.I
 
-_COMMON_RULE_SPECS: dict[str, tuple[str, int]] = {
-    # Ground truth is the code at the brief's ref; cited locators are re-found, never copied.
-    "ground-truth-at-ref": (r"ground truth|code at the brief", _CASE_INSENSITIVE),
-    "no-copied-locators": (r"path:line", _CASE_INSENSITIVE),
-    # The two large guidance files are searched by symbol, never read whole.
-    "decisions-log-named": (r"DECISIONS\.md", _CASE_SENSITIVE),
-    "large-files-not-read-whole": (r"\bwhole\b|\bgrep(?:ped)?\b", _CASE_INSENSITIVE),
-    # The no-trade boundary is stated per surface, with the advisory surfaces named.
-    "no-trade-boundary": (r"no-trade", _CASE_INSENSITIVE),
-    "advisory-surfaces": (r"advisory", _CASE_INSENSITIVE),
-    # The 1-minute engine files stay unchanged and take no blocking I/O; a zero-diff claim needs
-    # a content pin.
-    "engine-files-unchanged": (
-        r"zero-diff|alpha_bot_execution\.py|math_engine\.py|engine files|blocking I/O",
-        _CASE_INSENSITIVE,
+_RuleSpec = tuple[tuple[str, int], ...]
+
+_COMMON_RULE_SPECS: dict[str, _RuleSpec] = {
+    # Ground truth is the code at the brief's ref; a cited locator is re-found, never copied.
+    "ground-truth-at-ref": (
+        (r"\bref\b|\bSHA\b|\bHEAD\b", _CASE_INSENSITIVE),
+        (r"path:line", _CASE_INSENSITIVE),
+        (r"re-?find|git rev-parse", _CASE_INSENSITIVE),
     ),
-    # Data honesty: None stays distinct from 0; counterfactual and unit scale are labelled.
-    "none-distinct-from-zero": (r"\bNone\b", _CASE_SENSITIVE),
-    "counterfactual-or-scale-labelled": (r"counterfactual|percent", _CASE_INSENSITIVE),
+    # The two large guidance files are searched by symbol, never read whole.
+    "large-files-not-read-whole": (
+        (r"CLAUDE\.md", _CASE_SENSITIVE),
+        (r"DECISIONS\.md", _CASE_SENSITIVE),
+        (r"(?:never|not|to) read\b[^\n]*?\bwhole\b", _CASE_INSENSITIVE),
+    ),
+    # The no-trade boundary is stated per surface, with the advisory surfaces and the one
+    # dashboard trade button named.
+    "no-trade-boundary": (
+        (r"no-trade", _CASE_INSENSITIVE),
+        (r"advisory only", _CASE_INSENSITIVE),
+        (r"panic-sell", _CASE_INSENSITIVE),
+    ),
+    # The 1-minute engine files stay unchanged and take no blocking I/O.
+    "engine-files-unchanged": (
+        (r"\bengine\b", _CASE_INSENSITIVE),
+        (r"alpha_bot_execution\.py|math_engine\.py|blocking I/O", _CASE_INSENSITIVE),
+        (r"unchanged|untouched|stay out|zero-diff", _CASE_INSENSITIVE),
+    ),
+    # Data honesty: None stays distinct from 0; a counterfactual figure is labelled, never
+    # presented as realized.
+    "none-distinct-from-zero": (
+        (r"\bNone\b", _CASE_SENSITIVE),
+        (r"(?<![\w.])0(?![\w.])|\bzero\b", _CASE_INSENSITIVE),
+    ),
+    "counterfactual-labelled": (
+        (r"counterfactual", _CASE_INSENSITIVE),
+        (r"realized", _CASE_INSENSITIVE),
+    ),
     # Production-data facts the code cannot settle are unconfirmed, with a settling query.
     "production-data-unconfirmed": (
-        r"unconfirmed|cannot be (?:confirmed|settled)",
-        _CASE_INSENSITIVE,
+        (r"unconfirmed|cannot be (?:confirmed|settled)", _CASE_INSENSITIVE),
+        (r"read-only (?:query|command)", _CASE_INSENSITIVE),
+        (r"\bproduction\b|row counts|history depth", _CASE_INSENSITIVE),
     ),
-    "production-data-settling-query": (r"read-only (?:query|command)", _CASE_INSENSITIVE),
     # Prose: no em dashes, en dashes or spaced hyphens; invented names only in examples.
-    "prose-no-em-dashes": (r"em dash", _CASE_INSENSITIVE),
-    "prose-no-spaced-hyphens": (r"spaced hyphen", _CASE_INSENSITIVE),
-    "prose-invented-names": (r"invented", _CASE_INSENSITIVE),
+    "prose-no-dashes": (
+        (r"em dash", _CASE_INSENSITIVE),
+        (r"en dash", _CASE_INSENSITIVE),
+        (r"spaced hyphen", _CASE_INSENSITIVE),
+    ),
+    "prose-invented-names": (
+        (r"\binvented names?\b", _CASE_INSENSITIVE),
+        (r"\bexamples?\b", _CASE_INSENSITIVE),
+    ),
     # Staging and test runs.
-    "stage-by-name": (r"git add -A", _CASE_SENSITIVE),
-    "tests-append-n0": (r"-n0", _CASE_SENSITIVE),
-    "tests-never-override-addopts": (re.escape("-o addopts="), _CASE_SENSITIVE),
-    "tests-worker-cap": (r"more than 4|4 workers", _CASE_INSENSITIVE),
+    "stage-by-name": (
+        (r"never[^\n]{0,30}git add -A|git add -A[^\n]{0,15}never", _CASE_INSENSITIVE),
+    ),
+    "tests-append-n0": ((r"-n0", _CASE_SENSITIVE),),
+    "tests-never-override-addopts": ((re.escape("-o addopts="), _CASE_SENSITIVE),),
+    "tests-worker-cap": ((r"more than 4|4 workers", _CASE_INSENSITIVE),),
 }
 
-COMMON_RULE_NEEDLES: dict[str, re.Pattern[str]] = {
-    name: re.compile(pattern, flags) for name, (pattern, flags) in _COMMON_RULE_SPECS.items()
+COMMON_RULES: dict[str, tuple[re.Pattern[str], ...]] = {
+    name: tuple(re.compile(pattern, flags) for pattern, flags in tokens)
+    for name, tokens in _COMMON_RULE_SPECS.items()
 }
 
 # The only rule a role may be exempt from: a role that cannot edit code and makes no zero-diff
@@ -421,25 +452,68 @@ COMMON_RULE_NEEDLES: dict[str, re.Pattern[str]] = {
 ENGINE_RULE_NAMES: frozenset[str] = frozenset({"engine-files-unchanged"})
 
 
+def bullet_spans(text: str) -> list[tuple[int, int]]:
+    """(start, end) offsets, in the LF-normalized file text, of each top-level bullet of the
+    bindings section. A bullet runs from a line starting ``- `` to the next such line, so its
+    indented sub-bullets belong to it. Text between the heading and the first bullet is not a
+    bullet and carries no rule."""
+    normalized = lf(text)
+    section = bindings_section(normalized)
+    if not section:
+        return []
+    base = len(normalized) - len(section)
+    spans: list[tuple[int, int]] = []
+    start: int | None = None
+    pos = 0
+    for line in section.split("\n"):
+        if line.startswith("- "):
+            if start is not None:
+                spans.append((base + start, base + pos))
+            start = pos
+        pos += len(line) + 1
+    if start is not None:
+        spans.append((base + start, base + len(section)))
+    return spans
+
+
+def binding_bullets(text: str) -> list[str]:
+    normalized = lf(text)
+    return [normalized[start:end] for start, end in bullet_spans(text)]
+
+
+def bullet_carries(bullet: str, rule: str) -> bool:
+    """True when this one bullet holds every token of the rule."""
+    return all(token.search(bullet) for token in COMMON_RULES[rule])
+
+
+def without_rule_bullets(text: str, rule: str) -> tuple[str, list[str]]:
+    """The LF-normalized file with every bullet that carries ``rule`` deleted, and the deleted
+    bullets. This is the mutation a builder who never wrote the rule produces."""
+    normalized = lf(text)
+    doomed = [
+        (start, end)
+        for start, end in bullet_spans(text)
+        if bullet_carries(normalized[start:end], rule)
+    ]
+    removed = [normalized[start:end] for start, end in doomed]
+    for start, end in reversed(doomed):
+        normalized = normalized[:start] + normalized[end:]
+    return normalized, removed
+
+
 def check_required_common_rules(text: str, exempt: frozenset[str] = frozenset()) -> list[str]:
-    """Names of the required common rules whose needle is absent from the bindings section.
+    """Names of the required common rules that no single bindings bullet carries in full.
 
     ``exempt`` lists rule names this role is allowed to omit; every name in it must be a known
     rule, so a typo cannot silently exempt nothing or everything."""
-    section = bindings_section(text)
-    if not section:
+    if not bindings_section(text):
         return ["bindings section missing"]
-    unknown = sorted(set(exempt) - set(COMMON_RULE_NEEDLES))
+    unknown = sorted(set(exempt) - set(COMMON_RULES))
     if unknown:
         return [f"unknown exempt rule {name!r}" for name in unknown]
+    bullets = binding_bullets(text)
     return [
         name
-        for name, needle in COMMON_RULE_NEEDLES.items()
-        if name not in exempt and not needle.search(section)
+        for name in COMMON_RULES
+        if name not in exempt and not any(bullet_carries(bullet, name) for bullet in bullets)
     ]
-
-
-def without_bindings_needle(text: str, rule: str) -> str:
-    """Remove every match of one rule's needle from the bindings section only."""
-    start = len(text) - len(bindings_section(text))
-    return text[:start] + COMMON_RULE_NEEDLES[rule].sub("REMOVED", text[start:])
