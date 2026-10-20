@@ -137,7 +137,13 @@ BINDING_ANCHORS: dict[str, str] = {
         "Plant faults in the engine files only when the plan's purpose is an engine change"
     ),
     "single-line-search": "Write each fault's search as one line occurring once",
-    "crlf-versus-lf": "The working tree is CRLF while the export holds LF content",
+    "export-line-endings-follow-autocrlf": (
+        "Line endings in a `git archive` export follow `core.autocrlf`"
+    ),
+    "one-line-search-matches-both-endings": "while a one-line search matches under both",
+    "lf-pins-normalize-line-endings": (
+        "The LF-normalized content pins hash after converting CRLF to LF"
+    ),
     "sensitive-needs-hidden-pass": (
         "A plan whose Sensitive marking is not none needs a hidden-mode pass after approval"
     ),
@@ -146,6 +152,12 @@ BINDING_ANCHORS: dict[str, str] = {
     "hidden-test-basis": "Cover security with the flag re-enabled",
     "sweep-uses-grep": "Sweep mode searches with grep and excludes stale worktree copies",
     "sweep-excludes-worktrees": "Leave out `.claude/worktrees/` and `.claude/audit-worktrees/`",
+    "prose-label": "**Prose in rows, artifacts and messages.**",
+    "prose-no-dashes": (
+        "No em dashes, en dashes or spaced hyphens in a verdict row, an artifact or any message"
+    ),
+    "prose-invented-names-only": "invented names only in examples",
+    "prose-real-name-copied": "a real name in an example is copied into code and commits",
 }
 
 # Repository paths the bindings name in backticks. Each must exist, so a rename or deletion
@@ -688,3 +700,43 @@ def test_compile_check_fails_without_provenance(tmp_path, agent_text):
     )
     result = _run_compiler_check(tampered)
     assert result.returncode != 0, "check must fail on a file without provenance"
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

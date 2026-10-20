@@ -273,27 +273,46 @@ BINDING_ANCHORS: dict[str, str] = {
         "marked unconfirmed with the settling command"
     ),
     "15-unless-pm-read": "unless the brief carries a PM read",
-    "16-findings-label": "**Findings format.**",
-    "16-contract-fields": (
+    "17-findings-label": "**Findings format.**",
+    "17-contract-fields": (
         "Each finding carries the review contract fields (id, class, trigger, scenario, "
         "sibling search)"
     ),
-    "16-blocking-basis": "with blocking only on a stated basis",
-    "16-pr-gate-reads-blocking": "because the PR gate reads the blocking field",
-    "17-tests-staging-label": "**Tests and staging.**",
-    "17-append-n0": "Test runs append `-n0` to the default addopts",
-    "17-never-replace-addopts": "never replace them with `-o addopts=`",
-    "17-deselection-reason": "which also drops the live, slow and perf deselection",
-    "17-worker-cap": "never use `-n auto` or more than 4 workers",
-    "17-stage-by-name": "Stage files by name and never `git add -A`",
-    "17-review-not-gitignored": "`.claude/review/` is not gitignored",
-    "17-hidden-qa-scenarios": (
+    "17-blocking-basis": "with blocking only on a stated basis",
+    "17-pr-gate-reads-blocking": "because the PR gate reads the blocking field",
+    "18-tests-staging-label": "**Tests and staging.**",
+    "18-append-n0": "Test runs append `-n0` to the default addopts",
+    "18-never-replace-addopts": "never replace them with `-o addopts=`",
+    "18-deselection-reason": "which also drops the live, slow and perf deselection",
+    "18-worker-cap": "never use `-n auto` or more than 4 workers",
+    "18-stage-by-name": "Stage files by name and never `git add -A`",
+    "18-review-not-gitignored": "`.claude/review/` is not gitignored",
+    "18-hidden-qa-scenarios": (
         "a broad add would commit review artifacts including the hidden qa scenarios"
     ),
-    "18-prose-label": "**Prose.**",
-    "18-prose": (
+    "19-prose-label": "**Prose.**",
+    "19-prose": (
         "No em dashes, en dashes or spaced hyphens in the review artifact or in anything you write"
     ),
+    "16-data-honesty-label": "**Data honesty in what a pipeline produces.**",
+    "16-number-states-basis-unit-window-subject-source": (
+        "Every number a stage writes or a report row carries states its basis, unit, window, "
+        "subject and source"
+    ),
+    "16-none-distinct-from-zero": "`None` stays distinct from `0` and an absent key from a null",
+    "16-counterfactual-labelled": (
+        "A counterfactual figure (shadow history, if-held, backtest) is labelled as such and "
+        "never shown as realized"
+    ),
+    "16-backtest-not-a-fill": "a backtest is not a realized fill",
+    "16-percent-versus-fraction": (
+        "Returns are percent-scale while Composer drawdown is a fraction"
+    ),
+    "16-check-scale-and-key-space": (
+        "check the scale and the key space at every hand-off from producer to reader"
+    ),
+    "19-prose-invented-names": "invented names only in examples",
+    "19-prose-real-name-copied": "a real name in an example is copied into code and commits",
 }
 
 
@@ -543,7 +562,7 @@ def test_deleting_any_binding_sentence_is_detected(agent_text, sentence):
 
 def test_binding_anchors_cover_all_binding_groups():
     groups = {int(k.split("-", 1)[0]) for k in BINDING_ANCHORS}
-    assert groups == set(range(1, 19))
+    assert groups == set(range(1, 20))
 
 
 def test_no_placeholder_in_bindings(agent_text):
@@ -645,3 +664,43 @@ def test_compile_check_flags_a_stale_copy(agent_text, tmp_path):
     assert result.returncode == 1, (
         f"stale copy should exit 1, got {result.returncode} stderr={result.stderr!r}"
     )
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

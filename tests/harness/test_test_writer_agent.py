@@ -202,7 +202,13 @@ BINDING_RULES: dict[str, str] = {
     "production-data-facts-row-counts-history": "**Production-data facts:** row counts, history",
     "a-criterion-that-needs-one-goes": "A criterion that needs one goes to `main` with the",
     "test-runs-run-only-the-named": "**Test runs:** run only the named spec files, one",
-    "never-use-o-addopts-or-p": "Never use `-o addopts=` or `-p no:xdist`, because",
+    "never-use-o-addopts": "Never use `-o addopts=`, because the live, slow and perf deselection",
+    "never-use-p-no-xdist": (
+        "never use `-p no:xdist`, because the default addopts carry `-n 2 --dist loadfile`"
+    ),
+    "no-xdist-run-stops-unrecognized-argument": (
+        "a run without the plugin stops with an unrecognized-argument error instead of running"
+    ),
     "never-use-n-auto-or-more": "Never use `-n auto` or more than 4 workers, because",
     "staging-stage-and-commit-by-pathspec": "**Staging:** stage and commit by pathspec and never",
     "route-tests-import-app-under-a": "**Route tests:** import `app` under a patched",
@@ -631,3 +637,43 @@ def test_compile_check_mutation_stale_provenance_fails(tmp_path):
     )
     result = run_compile_check(stale)
     assert result.returncode == 1, (result.returncode, result.stderr)
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

@@ -103,7 +103,7 @@ REQUIRED_BINDINGS = [
             "sibling search",
         ],
     ),
-    ("Test strength", ["advisory", "fault run", "survivor"]),
+    ("Test strength", ["advisory", "WEAK-TEST", "survivor"]),
     ("Production-data facts", ["unconfirmed", "read-only query"]),
     ("Overlap", ["security audit", "decision item"]),
     (
@@ -354,14 +354,24 @@ BINDING_RULES: dict[str, str] = {
     "opt-in-silent-omission": (
         "a design that needs each caller to opt in and fails silently on omission is a finding"
     ),
-    "test-strength-advisory": "**Test strength is advisory unless a planted fault survives.**",
+    "test-strength-blocking-only-with-weak-test": (
+        "**Test strength is blocking only where qa records a WEAK-TEST row.**"
+    ),
     "weak-test-examples-advisory": (
         "A tautological helper test, an aggregate asserted only `is not None`, and a mock "
-        "whose shape the production path stopped returning are advisory rows unless qa's "
-        "fault run shows a survivor"
+        "whose shape the production path stopped returning are advisory rows"
+    ),
+    "fault-survivor-blocking-only-as-weak-test": (
+        "A fault survivor is blocking only where qa records it as a WEAK-TEST row"
     ),
     "artifact-contract-keeps-it-non-blocking": (
-        "because the artifact contract keeps test strength non-blocking without one"
+        "because the artifact contract keeps test strength non-blocking without a surviving fault"
+    ),
+    "js-runtime-survivor-not-blocking": (
+        "A surviving JavaScript fault that changes only runtime behaviour is not blocking by itself"
+    ),
+    "js-covered-by-pins-and-node-stub-dom": (
+        "rendered JavaScript is covered by source-text pins and a few node tests against a stub DOM"
     ),
     "production-data-unconfirmed": "**Production-data facts are unconfirmed.**",
     "counts-depth-live-behavior": (
@@ -829,3 +839,43 @@ def test_compile_check_mutation_stale_provenance_fails(tmp_path):
     )
     result = run_compile_check(stale)
     assert result.returncode == 1, (result.returncode, result.stderr)
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

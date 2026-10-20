@@ -362,3 +362,84 @@ def check_checklist_matches_global(checklist_text: str | None, global_text: str)
     if lf(checklist_text) != lf(global_text):
         return ["project checklist copy differs from the global checklist"]
     return []
+
+
+# ---------------------------------------------------------------------------
+# Required common rules (external to each agent file)
+# ---------------------------------------------------------------------------
+
+# One needle per common rule every PlanetStopper specialization must carry in its bindings.
+# The needles are written here, not taken from any agent file, so a rule a builder never wrote
+# fails the check instead of becoming a missing anchor nobody notices. Each needle is a concept
+# token every role phrases in its own words, so an alternative lists the role phrasings. A rule
+# that appears only in the template body does not count: the check reads the bindings section.
+_CASE_SENSITIVE = 0
+_CASE_INSENSITIVE = re.I
+
+_COMMON_RULE_SPECS: dict[str, tuple[str, int]] = {
+    # Ground truth is the code at the brief's ref; cited locators are re-found, never copied.
+    "ground-truth-at-ref": (r"ground truth|code at the brief", _CASE_INSENSITIVE),
+    "no-copied-locators": (r"path:line", _CASE_INSENSITIVE),
+    # The two large guidance files are searched by symbol, never read whole.
+    "decisions-log-named": (r"DECISIONS\.md", _CASE_SENSITIVE),
+    "large-files-not-read-whole": (r"\bwhole\b|\bgrep(?:ped)?\b", _CASE_INSENSITIVE),
+    # The no-trade boundary is stated per surface, with the advisory surfaces named.
+    "no-trade-boundary": (r"no-trade", _CASE_INSENSITIVE),
+    "advisory-surfaces": (r"advisory", _CASE_INSENSITIVE),
+    # The 1-minute engine files stay unchanged and take no blocking I/O; a zero-diff claim needs
+    # a content pin.
+    "engine-files-unchanged": (
+        r"zero-diff|alpha_bot_execution\.py|math_engine\.py|engine files|blocking I/O",
+        _CASE_INSENSITIVE,
+    ),
+    # Data honesty: None stays distinct from 0; counterfactual and unit scale are labelled.
+    "none-distinct-from-zero": (r"\bNone\b", _CASE_SENSITIVE),
+    "counterfactual-or-scale-labelled": (r"counterfactual|percent", _CASE_INSENSITIVE),
+    # Production-data facts the code cannot settle are unconfirmed, with a settling query.
+    "production-data-unconfirmed": (
+        r"unconfirmed|cannot be (?:confirmed|settled)",
+        _CASE_INSENSITIVE,
+    ),
+    "production-data-settling-query": (r"read-only (?:query|command)", _CASE_INSENSITIVE),
+    # Prose: no em dashes, en dashes or spaced hyphens; invented names only in examples.
+    "prose-no-em-dashes": (r"em dash", _CASE_INSENSITIVE),
+    "prose-no-spaced-hyphens": (r"spaced hyphen", _CASE_INSENSITIVE),
+    "prose-invented-names": (r"invented", _CASE_INSENSITIVE),
+    # Staging and test runs.
+    "stage-by-name": (r"git add -A", _CASE_SENSITIVE),
+    "tests-append-n0": (r"-n0", _CASE_SENSITIVE),
+    "tests-never-override-addopts": (re.escape("-o addopts="), _CASE_SENSITIVE),
+    "tests-worker-cap": (r"more than 4|4 workers", _CASE_INSENSITIVE),
+}
+
+COMMON_RULE_NEEDLES: dict[str, re.Pattern[str]] = {
+    name: re.compile(pattern, flags) for name, (pattern, flags) in _COMMON_RULE_SPECS.items()
+}
+
+# The only rule a role may be exempt from: a role that cannot edit code and makes no zero-diff
+# claim (ux-expert, behavioral-evidence-capturer) carries no engine-files rule.
+ENGINE_RULE_NAMES: frozenset[str] = frozenset({"engine-files-unchanged"})
+
+
+def check_required_common_rules(text: str, exempt: frozenset[str] = frozenset()) -> list[str]:
+    """Names of the required common rules whose needle is absent from the bindings section.
+
+    ``exempt`` lists rule names this role is allowed to omit; every name in it must be a known
+    rule, so a typo cannot silently exempt nothing or everything."""
+    section = bindings_section(text)
+    if not section:
+        return ["bindings section missing"]
+    unknown = sorted(set(exempt) - set(COMMON_RULE_NEEDLES))
+    if unknown:
+        return [f"unknown exempt rule {name!r}" for name in unknown]
+    return [
+        name
+        for name, needle in COMMON_RULE_NEEDLES.items()
+        if name not in exempt and not needle.search(section)
+    ]
+
+
+def without_bindings_needle(text: str, rule: str) -> str:
+    """Remove every match of one rule's needle from the bindings section only."""
+    start = len(text) - len(bindings_section(text))
+    return text[:start] + COMMON_RULE_NEEDLES[rule].sub("REMOVED", text[start:])

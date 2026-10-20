@@ -171,9 +171,17 @@ BINDING_RULES: dict[str, str] = {
         "never invent a reference for dark theme, the settings page or newer panels"
     ),
     "label-assertable-rows": "**Assertable rows.**",
-    "suite-asserts-html-and-source-only": (
-        "can assert only server-rendered HTML through the Flask test client and source text"
+    "suite-asserts-html-source-and-node-stub-dom": (
+        "The default test suite asserts server-rendered HTML through the Flask test client, "
+        "source text, and the output of one extracted JavaScript function run under node "
+        "against a stub DOM"
     ),
+    "node-tests-skip-without-node": "they skip where node is absent",
+    "row-names-extractable-function-value": (
+        "the value a single extractable function renders from a given payload"
+    ),
+    "whole-page-criterion-is-judgment": "A criterion about a whole rendered page",
+    "only-a-capture-can-show-it": "because only a capture can show it",
     "no-browser-runner": "with no browser runner",
     "row-names-assertable-thing": "A row names a token or class used",
     "layout-only-is-judgment": "is a judgment finding to the PM and never a RED row",
@@ -639,3 +647,43 @@ def test_compile_check_mutation_stale_provenance_fails(tmp_path):
     )
     result = run_compile_check(stale)
     assert result.returncode == 1, (result.returncode, result.stderr)
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

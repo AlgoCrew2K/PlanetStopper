@@ -100,10 +100,21 @@ BINDING_ANCHORS: dict[str, str] = {
     "no-client-sets-xhr-header": "no client sets it",
     "csrf-token-process-lifetime": "The CSRF token lives for the daemon process, so a page open across a daemon restart posts a dead token",
     "token-refetch-only-when-empty": "refetching only when its cached value is empty",
-    "unset-secret-key-session": "an unset `SECRET_KEY` also regenerates the session key at restart",
+    "unset-secret-key-session": (
+        "the auth hook refuses every request while `SECRET_KEY` and `FLASK_SECRET_KEY` are "
+        "both unset"
+    ),
+    "only-csrf-token-goes-stale": "only the CSRF token goes stale",
     "never-restart-daemon-to-observe": "Never restart the daemon to observe this",
     "read-routes-free-of-composer": "Read routes must stay free of Composer requests where the plan says so",
-    "named-read-routes": "`GET /api/incubation` and `GET /api/retirement-recommendations` read stored rows",
+    "named-read-routes": (
+        "`GET /api/incubation` reads the stored ledger through `database.get_incubation_overview()`"
+    ),
+    "incubation-emits-no-display-name": "no display name and no `bot_state` read",
+    "retirement-route-resolves-names-from-bot-state": (
+        "`GET /api/retirement-recommendations` reads stored recommendation rows and resolves "
+        "display names from `bot_state`"
+    ),
     "browser-capture-hides-vendor-calls": "a browser capture shows only browser to daemon calls and never a vendor call",
     "composer-read-is-finding": "A read that reaches Composer is a finding; a path you cannot trace stays a QUESTION",
     "record-payload-panel-agree": "The job's run record, the API payload and the panel must agree field for field",
@@ -517,3 +528,43 @@ def test_compile_check_fails_without_provenance(tmp_path, agent_text):
     )
     result = _run_compiler_check(tampered)
     assert result.returncode != 0, "check must fail on a file without provenance"
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

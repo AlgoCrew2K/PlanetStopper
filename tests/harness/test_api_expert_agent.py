@@ -250,13 +250,19 @@ BINDING_RULES: dict[str, str] = {
     "json-routes-read-silent": "a route that must answer JSON reads with `silent=True`",
     "non-silent-read-415": "outside a try block answers an HTML 415",
     "translator-keys-on-substring": (
-        "the shared translator keys on the substring 413 or an HTML tag in the error text"
+        "the shared translator tests the error text for the substring 413"
+    ),
+    "translator-exact-bare-html-tag": (
+        "exact lowercased text of a bare html opening tag with no attributes"
     ),
     "upstream-string-shape": (
         "the upstream strings are the HTTP status plus the first 200 characters of the "
         "response body"
     ),
-    "html-error-reads-as-too-large": "Any HTML upstream error, such as a gateway page",
+    "html-error-reads-as-too-large": "Any error text holding 413 or that bare opening tag",
+    "attributed-html-tag-falls-through": (
+        "a page whose html tag carries attributes falls through unchanged"
+    ),
     "too-large-misclassification": "reads as a symphony that is too large",
     "structural-classification-only": (
         "A new case needs classification from a status carried on the result and never another "
@@ -761,3 +767,43 @@ def test_compile_check_mutation_stale_provenance_fails(tmp_path):
     )
     result = run_compile_check(stale)
     assert result.returncode == 1, (result.returncode, result.stderr)
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []

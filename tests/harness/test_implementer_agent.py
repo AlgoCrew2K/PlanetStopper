@@ -115,82 +115,92 @@ BINDING_ANCHORS: dict[str, str] = {
         "never present a counterfactual (shadow history, if-held, backtest) as realized"
     ),
     "10-units-and-key-spaces": "Returns are percent-scale while Composer drawdown is a fraction",
-    "11-label": "**Persistence seams.**",
-    "11-advisor-observation": "Advisory output goes through `database.insert_advisor_observation`",
-    "11-insert-or-ignore": "An idempotent append uses a UNIQUE constraint with `INSERT OR IGNORE`",
-    "11-upsert-form": "an upsert uses `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`",
-    "11-database-imports": "`database.py` never imports `advisors.*`",
-    "11-no-cross-database-joins": "app code never joins across the three SQLite files",
-    "12-label": "**`bot_state` has writers in two processes.**",
-    "12-no-new-writer": "Add no `bot_state` writer outside the engine",
-    "12-shape-check": "Iterate it only through the symphony-entry shape check",
-    "13-label": "**Migrations.**",
-    "13-numbering": "numbered one above the highest file in `migrations/` at the ref",
-    "13-list-append": "an entry appended at the end of `database._MIGRATION_FILES`",
-    "13-never-reorder": (
+    "12-label": "**Persistence seams.**",
+    "12-advisor-observation": "Advisory output goes through `database.insert_advisor_observation`",
+    "12-insert-or-ignore": "An idempotent append uses a UNIQUE constraint with `INSERT OR IGNORE`",
+    "12-upsert-form": "an upsert uses `ON CONFLICT DO UPDATE`, never `INSERT OR REPLACE`",
+    "12-database-imports": "`database.py` never imports `advisors.*`",
+    "12-no-cross-database-joins": "app code never joins across the three SQLite files",
+    "13-label": "**`bot_state` has writers in two processes.**",
+    "13-no-new-writer": "Add no `bot_state` writer outside the engine",
+    "13-shape-check": "Iterate it only through the symphony-entry shape check",
+    "14-label": "**Migrations.**",
+    "14-numbering": "numbered one above the highest file in `migrations/` at the ref",
+    "14-list-append": "an entry appended at the end of `database._MIGRATION_FILES`",
+    "14-never-reorder": (
         "Never reorder the list (it deliberately has 021 before 020), renumber, or edit an "
         "applied file"
     ),
-    "13-one-alter": "Keep one ALTER per file",
-    "13-additive-columns": "Columns are additive, NULLable, with a constant DEFAULT only",
-    "14-label": "**Scheduler work uses the two-function wrapper.**",
-    "14-worker": "A worker lazy-imports and catches everything, logging only the exception type",
-    "14-runner": "a runner spawns a daemon thread",
-    "14-register-staggered": "register the runner in `run_scheduler` at a slot staggered",
-    "14-schedule-does-not-catch": "The `schedule` library does not catch exceptions",
-    "14-host-local-time": "Daily slots run in host-local time",
-    "14-single-worker-executor": "A long on-demand run uses the single-worker executor that returns 202",
-    "15-label": "**Web layer.**",
-    "15-global-hooks": "Auth and CSRF are global `before_request` hooks",
-    "15-never-call-validator": "a new route inherits both and never calls the CSRF validator",
-    "15-auth-exempt": "An auth-exempt endpoint is a security-boundary change",
-    "15-settings-allowlist": "The settings write allowlist takes only `.env` settings keys",
-    "15-body-cap": "The request body cap is 64 KiB",
-    "15-ids-not-trees": "a route takes ids and resolves trees server-side",
-    "15-read-routes-degrade": "Read routes degrade to an honest empty 200",
-    "16-label": "**No code written to satisfy a test stand-in.**",
-    "16-no-mock-guards": (
+    "14-one-alter": "Keep one ALTER per file",
+    "14-additive-columns": "Columns are additive, NULLable, with a constant DEFAULT only",
+    "15-label": "**Scheduler work uses the two-function wrapper.**",
+    "15-worker": "A worker lazy-imports and catches everything, logging only the exception type",
+    "15-runner": "a runner spawns a daemon thread",
+    "15-register-staggered": "register the runner in `run_scheduler` at a slot staggered",
+    "15-schedule-does-not-catch": "The `schedule` library does not catch exceptions",
+    "15-host-local-time": "Daily slots run in host-local time",
+    "15-single-worker-executor": "A long on-demand run uses the single-worker executor that returns 202",
+    "16-label": "**Web layer.**",
+    "16-global-hooks": "Auth and CSRF are global `before_request` hooks",
+    "16-never-call-validator": "a new route inherits both and never calls the CSRF validator",
+    "16-auth-exempt": "An auth-exempt endpoint is a security-boundary change",
+    "16-settings-allowlist": "The settings write allowlist takes only `.env` settings keys",
+    "16-body-cap": "The request body cap is 64 KiB",
+    "16-ids-not-trees": "a route takes ids and resolves trees server-side",
+    "16-read-routes-degrade": "Read routes degrade to an honest empty 200",
+    "17-label": "**No code written to satisfy a test stand-in.**",
+    "17-no-mock-guards": (
         "Do not add an `isinstance` branch, a `getattr` default or any guard that exists only "
         "to survive a bare mock"
     ),
-    "16-ask-for-stand-in": "ask the test-writer for a `SimpleNamespace` or autospec stand-in",
-    "17-label": "**Module-level mutable state is reported.**",
-    "17-name-new-state": "Name every new cache, throttle or registry in the GREEN report",
-    "18-label": "**Logging carries no secrets.**",
-    "18-no-secrets": "Log no response bodies, account ids, webhook URLs or tokens",
-    "18-allowlist-fixture": "`tests/fixtures/log-redaction-allowlist.txt`",
-    "19-label": "**Resource bounds.**",
-    "19-bounded-resolvers": "bounded `n_jobs` resolvers",
-    "19-no-all-core": "never use `n_jobs=-1`",
-    "19-memory-cap": "cap `MemoryMax` at 3G on a 4 GB droplet",
-    "20-label": "**Templates and JS.**",
-    "20-autoescape": "Keep autoescape (no `| safe`)",
-    "20-is-defined": "guard possibly degraded dicts with `is defined and`",
-    "20-testid-names": "Use the exact `data-testid` names the tests pin",
-    "20-scripts-under-static": "put scripts under `static/`",
-    "21-label": "**The developer `.env` is real and is never written.**",
-    "21-set-key-writes": "`set_key` in the settings-save route writes to it",
-    "21-never-create-edit-print": "Never create, edit or print it",
-    "21-settings-save-patched": "never run a settings-save path unpatched",
-    "21-report-env-failure": "report an env-sensitive failure to the test-writer",
-    "22-label": "**Run discipline.**",
-    "22-named-files-one-pytest": "Run only the named spec files, one pytest at a time",
-    "22-append-n0": "`-n0` appended to the default addopts",
-    "22-no-addopts-override": "Never use `-o addopts=`",
-    "22-worker-cap": "never `-n auto` or more than 4 workers",
-    "22-consumer-suites": "also run the consumer directories the handoff names",
-    "22-report-separately": "report named-file, consumer-suite and lint results separately with the SHA",
-    "23-label": "**Style gates are CI gates.**",
-    "23-run-ruff": "Run `ruff format --check` and `ruff check` over the changed files",
-    "23-ruff-rules": "Ruff line length is 100 with rules E, F, I, B, UP and SIM",
-    "23-no-config-edit": "Never edit the ruff configuration",
-    "24-label": "**Stage files by name.**",
-    "24-pathspec": "Commit by pathspec and never `git add -A`",
-    "25-label": "**Names describe behaviour.**",
-    "25-no-copied-ids": "Do not copy the plan, acceptance-criterion or cycle identifiers",
-    "26-label": "**Prose.**",
-    "26-dashes": "No em dashes, en dashes or spaced hyphens in code comments",
-    "26-invented-names": "examples use invented names only",
+    "17-ask-for-stand-in": "ask the test-writer for a `SimpleNamespace` or autospec stand-in",
+    "18-label": "**Module-level mutable state is reported.**",
+    "18-name-new-state": "Name every new cache, throttle or registry in the GREEN report",
+    "19-label": "**Logging carries no secrets.**",
+    "19-no-secrets": "Log no response bodies, account ids, webhook URLs or tokens",
+    "19-allowlist-fixture": "`tests/fixtures/log-redaction-allowlist.txt`",
+    "20-label": "**Resource bounds.**",
+    "20-bounded-resolvers": "bounded `n_jobs` resolvers",
+    "20-no-all-core": "never use `n_jobs=-1`",
+    "20-memory-cap": "cap `MemoryMax` at 3G on a 4 GB droplet",
+    "21-label": "**Templates and JS.**",
+    "21-autoescape": "Keep autoescape (no `| safe`)",
+    "21-is-defined": "guard possibly degraded dicts with `is defined and`",
+    "21-testid-names": "Use the exact `data-testid` names the tests pin",
+    "21-scripts-under-static": "put scripts under `static/`",
+    "22-label": "**The developer `.env` is real and is never written.**",
+    "22-set-key-writes": "`set_key` in the settings-save route writes to it",
+    "22-never-create-edit-print": "Never create, edit or print it",
+    "22-settings-save-patched": "never run a settings-save path unpatched",
+    "22-report-env-failure": "report an env-sensitive failure to the test-writer",
+    "23-label": "**Run discipline.**",
+    "23-named-files-one-pytest": "Run only the named spec files, one pytest at a time",
+    "23-append-n0": "`-n0` appended to the default addopts",
+    "23-no-addopts-override": "Never use `-o addopts=`",
+    "23-worker-cap": "never `-n auto` or more than 4 workers",
+    "23-consumer-suites": "also run the consumer directories the handoff names",
+    "23-report-separately": "report named-file, consumer-suite and lint results separately with the SHA",
+    "24-label": "**Style gates are CI gates.**",
+    "24-run-ruff": "Run `ruff format --check` and `ruff check` over the changed files",
+    "24-ruff-rules": "Ruff line length is 100 with rules E, F, I, B, UP and SIM",
+    "24-no-config-edit": "Never edit the ruff configuration",
+    "25-label": "**Stage files by name.**",
+    "25-pathspec": "Commit by pathspec and never `git add -A`",
+    "26-label": "**Names describe behaviour.**",
+    "26-no-copied-ids": "Do not copy the plan, acceptance-criterion or cycle identifiers",
+    "27-label": "**Prose.**",
+    "27-dashes": "No em dashes, en dashes or spaced hyphens in code comments",
+    "27-invented-names": "examples use invented names only",
+    "11-production-data-label": "**Production-data facts.**",
+    "11-production-data-cannot-be-confirmed": (
+        "Row counts, history depth and live Composer behaviour cannot be confirmed from code"
+    ),
+    "11-report-unconfirmed-with-query": (
+        "marks any such fact the work relies on as unconfirmed with the read-only query that "
+        "would settle it"
+    ),
+    "11-no-assumed-production-fact": "no constant, branch or fallback assumes one",
+    "11-assumed-fact-ships-as-guess": "an assumed production fact ships as a guess",
 }
 
 
@@ -472,7 +482,7 @@ def test_every_sentence_is_anchored_control(agent_text):
 
 def test_binding_anchors_cover_all_binding_groups():
     groups = {int(k.split("-", 1)[0]) for k in BINDING_ANCHORS}
-    assert groups == set(range(1, 27))
+    assert groups == set(range(1, 28))
 
 
 def test_no_placeholder_in_bindings(agent_text):
@@ -574,3 +584,43 @@ def test_compile_check_flags_a_stale_copy(agent_text, tmp_path):
     assert result.returncode == 1, (
         f"stale copy should exit 1, got {result.returncode} stderr={result.stderr!r}"
     )
+
+
+# --------------------------------------------------------------------------
+# Required common rules. The needles live in tests/harness/_agent_contract.py and not in this
+# file, so a rule this agent file never carries fails here even when no anchor above names it.
+# --------------------------------------------------------------------------
+
+REQUIRED_RULES_EXEMPT: frozenset[str] = frozenset()
+
+
+def test_required_common_rules_exemption_is_only_the_engine_rule():
+    assert REQUIRED_RULES_EXEMPT <= contract.ENGINE_RULE_NAMES
+
+
+def test_required_common_rules_are_carried():
+    assert contract.check_required_common_rules(read_agent(), REQUIRED_RULES_EXEMPT) == []
+
+
+@pytest.mark.parametrize(
+    "rule", [r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT]
+)
+def test_required_common_rule_removal_is_detected(rule):
+    text = read_agent()
+    mutated = contract.without_bindings_needle(text, rule)
+    assert mutated != text
+    assert contract.check_required_common_rules(mutated, REQUIRED_RULES_EXEMPT) == [rule]
+
+
+def test_required_common_rules_do_not_count_the_template_body():
+    text = read_agent()
+    head = text[: len(text) - len(contract.bindings_section(text))]
+    stripped = head + "## Project bindings (PlanetStopper)\n"
+    assert contract.check_required_common_rules(stripped, REQUIRED_RULES_EXEMPT) == [
+        r for r in contract.COMMON_RULE_NEEDLES if r not in REQUIRED_RULES_EXEMPT
+    ]
+
+
+def test_required_common_rules_report_a_missing_bindings_section():
+    broken = read_agent().replace("## Project bindings (PlanetStopper)", "## Something else")
+    assert contract.check_required_common_rules(broken, REQUIRED_RULES_EXEMPT) != []
