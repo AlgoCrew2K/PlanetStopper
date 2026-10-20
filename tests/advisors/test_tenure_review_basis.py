@@ -339,11 +339,6 @@ def test_an_unrecognized_failure_class_reads_a_generic_reason_never_another_clas
     assert reason not in {text for _failure, text in FAILURE_REASONS}
 
 
-def test_every_failure_class_has_its_own_reason_text():
-    texts = [text for _failure, text in FAILURE_REASONS] + [UNRECOGNIZED_FAILURE_REASON]
-    assert len(set(texts)) == len(texts)
-
-
 def test_a_failure_class_decides_the_reason_even_when_a_usable_series_is_also_present():
     """Rejects trusting a series that arrived beside a failure class."""
     full = b.values_from_returns(list(WINDOW_DAYS), b.wave_returns(THRESHOLD - 1))

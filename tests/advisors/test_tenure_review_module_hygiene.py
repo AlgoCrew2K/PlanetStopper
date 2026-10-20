@@ -310,6 +310,41 @@ def test_no_cache_decorator_takes_a_bare_integer_size():
 
 
 # ---------------------------------------------------------------------------
+# Nothing is carried that nothing reads
+# ---------------------------------------------------------------------------
+
+
+def _is_dataclass(node: ast.ClassDef) -> bool:
+    for decorator in node.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+        if name == "dataclass":
+            return True
+    return False
+
+
+def test_every_field_of_a_private_dataclass_is_read_somewhere_in_the_module():
+    """A field set at construction and never read is dead weight that later work must
+    read around. Public dataclasses are the module's interface and are left alone."""
+    tree = _tree()
+    read = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+    }
+    unread = [
+        f"{cls.name}.{item.target.id}"
+        for cls in ast.walk(tree)
+        if isinstance(cls, ast.ClassDef) and cls.name.startswith("_") and _is_dataclass(cls)
+        for item in cls.body
+        if isinstance(item, ast.AnnAssign)
+        and isinstance(item.target, ast.Name)
+        and item.target.id not in read
+    ]
+    assert not unread, f"fields never read: {unread}"
+
+
+# ---------------------------------------------------------------------------
 # Comments describe the code, not the work that produced it
 # ---------------------------------------------------------------------------
 

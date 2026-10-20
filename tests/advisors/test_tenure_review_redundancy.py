@@ -782,10 +782,16 @@ def test_a_symphony_with_no_other_symphony_reads_not_applicable_nothing_to_compa
     assert item["reason"] == "no other symphonies to compare"
 
 
-def test_a_peer_with_no_history_is_named_as_the_reason_there_is_nothing_to_compare():
+@pytest.mark.parametrize("void_tenure_days", [31, 5], ids=["eligible_peer", "young_peer"])
+def test_a_peer_with_no_history_is_named_as_the_reason_there_is_nothing_to_compare(
+    void_tenure_days,
+):
     """The peer exists, so 'no other symphonies' is false; it has no basis, so 'bases
-    differ' is false. Rejects either of those two texts."""
-    void = b.no_history_symphony("void-peer", "Void Peer", ROSTER_DAYS[0].isoformat())
+    differ' is false. Eligibility of the peer does not change that. Rejects either of
+    those two texts."""
+    void = b.no_history_symphony(
+        "void-peer", "Void Peer", ROSTER_DAYS[-void_tenure_days].isoformat()
+    )
     result = b.review([_lone_composer(), void], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
     entry = b.entry_of(result, "lone-a")
     item = b.item_of(entry, "redundancy")

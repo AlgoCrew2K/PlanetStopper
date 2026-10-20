@@ -377,7 +377,7 @@ def test_the_backtest_leg_is_the_shared_metric_function_over_the_percent_returns
 
     Rejects a hand-written total return and drawdown loop, and fraction-scale returns."""
     returns = _pct_returns(SHAPED_LEVELS)
-    assert returns[0] < 0 < max(returns) - 100.0  # fixture sanity: first-day loss, +100 day
+    assert returns[0] < 0 and max(returns) >= 100.0  # fixture sanity: first-day loss, +100 day
     expected = b.quantstats_percent(returns)
     calls = b.spy_on_quantstats_metrics(monkeypatch)
 
