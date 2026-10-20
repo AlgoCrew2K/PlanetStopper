@@ -50,10 +50,6 @@ def _pair(a, b_, tickers=None):
     return out[0]
 
 
-def test_oracle_agrees_that_181_is_the_first_length_with_enough_stressed_days():
-    assert b.days_needed_for_structural_gate() == NEEDED_DAYS
-
-
 # ---------------------------------------------------------------------------
 # Shape of the result
 # ---------------------------------------------------------------------------
@@ -276,8 +272,12 @@ def test_a_zero_variance_stressed_window_reads_undefined_not_zero_and_not_insuff
 
 
 def test_the_day_count_in_the_insufficient_message_is_derived_from_the_constants():
+    """The message names the shortest history that yields 10 stressed days (5% of n,
+    rounded up), whatever length the pair actually has."""
+    assert b.days_needed_for_structural_gate() == NEEDED_DAYS  # oracle agrees with the plan
     a, c = b.block_pair(150, "redundant")
     pair = _pair(a, c)
+    assert pair["structural_gate"]["state"] == "insufficient data"
     assert pair["structural_gate"]["text"] == (
         f"insufficient data: needs {b.days_needed_for_structural_gate()} aligned days"
     )

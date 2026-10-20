@@ -302,7 +302,7 @@ def test_a_composer_symphony_and_a_shadow_symphony_are_never_combined_in_a_pair(
         assert b.entry_of(result, sid)["verdict"] != "retire_candidate", sid
 
 
-def test_earliest_usable_first_date_is_not_older_than_the_tenure_start():
+def test_a_shadow_series_never_reaches_back_before_the_tenure_starts():
     """A shadow series never reaches back before the symphony's own tenure."""
     rows = b.by_date(DAYS, b.wave_returns(len(DAYS)))  # 25 rows, 5 before the tenure
     subject = _subject(series_failure="unavailable", shadow_returns=rows)

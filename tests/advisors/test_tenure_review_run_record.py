@@ -71,8 +71,7 @@ def _roster():
     ]
 
 
-@pytest.fixture(scope="module")
-def result():
+def _result():
     return b.review(_roster(), as_of=b.AS_OF, threshold=20)
 
 
@@ -85,7 +84,8 @@ def test_role_constant_names_the_run_row():
     assert tr.TENURE_REVIEW_RUN_ROLE == "TENURE_REVIEW_RUN"
 
 
-def test_the_record_carries_the_run_identity_times_and_threshold(result):
+def test_the_record_carries_the_run_identity_times_and_threshold():
+    result = _result()
     rec = tr.run_record(result, COMPLETED_AT)
     assert set(rec) >= RECORD_KEYS
     assert rec["run_id"] == b.RUN_ID
@@ -103,7 +103,8 @@ def test_the_trigger_is_recorded_as_given():
     assert rec["trigger"] == "on_demand"
 
 
-def test_times_are_iso_strings_with_their_offset_whatever_zone_they_arrive_in(result):
+def test_times_are_iso_strings_with_their_offset_whatever_zone_they_arrive_in():
+    result = _result()
     utc_done = datetime(2026, 12, 31, 22, 12, 30, tzinfo=UTC)
     rec = tr.run_record(result, utc_done)
     assert isinstance(rec["completed_at"], str)
@@ -111,7 +112,8 @@ def test_times_are_iso_strings_with_their_offset_whatever_zone_they_arrive_in(re
     assert datetime.fromisoformat(rec["completed_at"]).utcoffset() is not None
 
 
-def test_the_composite_window_is_the_threshold_many_sessions_ending_on_the_as_of_day(result):
+def test_the_composite_window_is_the_threshold_many_sessions_ending_on_the_as_of_day():
+    result = _result()
     window = tr.run_record(result, COMPLETED_AT)["composite_window"]
     assert window["last"] == "2026-12-31"
     assert window["days"] == 20
@@ -119,7 +121,8 @@ def test_the_composite_window_is_the_threshold_many_sessions_ending_on_the_as_of
     assert set(window) == {"first", "last", "days"}
 
 
-def test_entries_are_the_reviews_entries_one_per_symphony(result):
+def test_entries_are_the_reviews_entries_one_per_symphony():
+    result = _result()
     rec = tr.run_record(result, COMPLETED_AT)
     assert rec["entries"] == result.entries
     assert sorted(e["symphony_id"] for e in rec["entries"]) == sorted(
@@ -167,7 +170,8 @@ def test_the_threshold_in_effect_and_its_note_reach_the_record(raw, value, note)
 # ---------------------------------------------------------------------------
 
 
-def test_the_record_of_a_full_review_is_strict_json_and_round_trips(result):
+def test_the_record_of_a_full_review_is_strict_json_and_round_trips():
+    result = _result()
     rec = tr.run_record(result, COMPLETED_AT)
     text = json.dumps(rec, allow_nan=False)
     assert json.loads(text) == rec
@@ -220,7 +224,8 @@ def test_building_a_record_does_not_modify_the_review():
 # ---------------------------------------------------------------------------
 
 
-def test_every_entry_has_the_documented_fields_and_six_evidence_items(result):
+def test_every_entry_has_the_documented_fields_and_six_evidence_items():
+    result = _result()
     for entry in tr.run_record(result, COMPLETED_AT)["entries"]:
         assert set(entry) >= ENTRY_KEYS, entry["symphony_id"]
         assert set(entry["evidence"]) == set(b.EVIDENCE_ITEMS)
@@ -237,7 +242,8 @@ def test_every_entry_has_the_documented_fields_and_six_evidence_items(result):
         assert type(entry["eligible"]) is bool
 
 
-def test_every_item_states_its_status_label_window_subject_and_source(result):
+def test_every_item_states_its_status_label_window_subject_and_source():
+    result = _result()
     for entry in result.entries:
         for name in b.EVIDENCE_ITEMS:
             item = b.item_of(entry, name)
@@ -253,7 +259,8 @@ def test_every_item_states_its_status_label_window_subject_and_source(result):
                     assert fig["value"] is None, where
 
 
-def test_every_number_is_a_figure_with_a_unit_and_never_nan_or_a_bare_zero_for_unknown(result):
+def test_every_number_is_a_figure_with_a_unit_and_never_nan_or_a_bare_zero_for_unknown():
+    result = _result()
     count = 0
     for entry in result.entries:
         for fig in b.iter_figures(entry["evidence"]):
@@ -270,7 +277,8 @@ def test_every_number_is_a_figure_with_a_unit_and_never_nan_or_a_bare_zero_for_u
     assert count > 0
 
 
-def test_unknown_tenure_is_none_and_zero_is_reserved_for_a_computed_zero(result):
+def test_unknown_tenure_is_none_and_zero_is_reserved_for_a_computed_zero():
+    result = _result()
     undated = b.entry_of(result, "undated-6")
     assert undated["tenure_trading_days"] is None
     assert undated["invested_since"] is None
@@ -278,7 +286,8 @@ def test_unknown_tenure_is_none_and_zero_is_reserved_for_a_computed_zero(result)
     assert isinstance(scored["tenure_trading_days"], int) and scored["tenure_trading_days"] == 21
 
 
-def test_a_symphony_with_a_verdict_is_eligible_and_one_without_is_explained(result):
+def test_a_symphony_with_a_verdict_is_eligible_and_one_without_is_explained():
+    result = _result()
     for entry in result.entries:
         if entry["verdict"] is not None:
             assert entry["eligible"] is True, entry["symphony_id"]

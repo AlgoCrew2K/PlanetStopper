@@ -287,8 +287,7 @@ def _worked_symphony(spec, *, drift, freq, amp=0.8):
     )
 
 
-@pytest.fixture(scope="module")
-def worked_roster():
+def _worked_roster():
     return [
         _worked_symphony(COPPER, drift=0.03, freq=0.31),
         _worked_symphony(HARBOR, drift=0.05, freq=0.83),
@@ -296,10 +295,8 @@ def worked_roster():
     ]
 
 
-def test_the_comparison_runs_from_the_later_eligible_start_and_excludes_the_young_symphony(
-    worked_roster,
-):
-    result = b.review(worked_roster, as_of=b.AS_OF, threshold=126)
+def test_the_comparison_runs_from_the_later_eligible_start_and_excludes_the_young_symphony():
+    result = b.review(_worked_roster(), as_of=b.AS_OF, threshold=126)
     item = b.item_of(b.entry_of(result, COPPER[0]), "marginal")
     assert item["status"] == "available"
     assert item["window"]["first"] == "2025-03-03"
@@ -311,9 +308,10 @@ def test_the_comparison_runs_from_the_later_eligible_start_and_excludes_the_youn
     assert item["label"] == LABEL
 
 
-def test_the_young_symphony_contributes_to_neither_leg(worked_roster):
-    with_young = b.review(worked_roster, as_of=b.AS_OF, threshold=126)
-    without_young = b.review(worked_roster[:2], as_of=b.AS_OF, threshold=126)
+def test_the_young_symphony_contributes_to_neither_leg():
+    roster = _worked_roster()
+    with_young = b.review(roster, as_of=b.AS_OF, threshold=126)
+    without_young = b.review(roster[:2], as_of=b.AS_OF, threshold=126)
     for sid in (COPPER[0], HARBOR[0]):
         a = b.item_of(b.entry_of(with_young, sid), "marginal")
         c = b.item_of(b.entry_of(without_young, sid), "marginal")
