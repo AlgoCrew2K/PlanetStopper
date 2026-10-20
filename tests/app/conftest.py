@@ -84,3 +84,26 @@ def _stub_community_strats_offline():
         return_value=_COMMUNITY_STRATS_OFFLINE_STUB,
     ) as mock_load:
         yield mock_load
+
+
+@pytest.fixture(autouse=True)
+def _reset_review_run_state():
+    """Bring the review run state to idle, with no remembered failed attempt, before and
+    after every tests/app/ test.
+
+    The state is one module-level singleton shared by the nightly tick, the on-demand
+    route and the panel, so a test that takes it (or records a failed attempt) would
+    otherwise change what the next test's page and API report. Starting and finishing a
+    run is the only public way to clear the failed-attempt record.
+    """
+    import advisors.tenure_review as tenure_review
+
+    def reset():
+        state = tenure_review.REVIEW_RUN_STATE
+        state.release()
+        if state.try_start("nightly"):
+            state.finish_success()
+
+    reset()
+    yield
+    reset()

@@ -19,11 +19,17 @@ ai_advisor_retirement_reject (pinned names, .claude/tdd-handoff.md).
 
 from __future__ import annotations
 
+import json
+import sqlite3
+import threading
 from unittest.mock import patch
 
 import pytest
 
 import app as app_module
+import database as db_module
+from database import init_db, run_migrations
+from tests.app import _tenure_review_panel_builders as pb
 
 _APPROVE_URL = "/ai-advisor/retirement/approve"
 _REJECT_URL = "/ai-advisor/retirement/reject"
@@ -350,3 +356,170 @@ def test_settings_write_allowlist_does_not_contain_retirement_routes_or_live_exe
     forbidden = {"retirement", _APPROVE_URL, _REJECT_URL, "LIVE_EXECUTION", "candidate_id"}
     hit = forbidden & set(allowlist)
     assert not hit, f"_SETTINGS_WRITE_ALLOWLIST must not contain any of {forbidden}. Found: {hit}"
+
+
+# ===========================================================================
+# Decisions on symphony review entries
+#
+# The decision routes are unchanged; what a review run adds is a panel entry per live
+# symphony keyed by its Composer hash. Each test stores a real review run, sends a
+# request to the unchanged route and then reads the panel back, so a refusal is proven
+# to leave the entry pending and a success is proven to reach the entry.
+# ===========================================================================
+
+
+@pytest.fixture()
+def review_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(db_module, "DB_FILE", str(tmp_path / "approval_review.db"))
+    init_db()
+    run_migrations()
+    pb.seed_bot_state()
+    return pb.store_full_run()
+
+
+def _retire_id(record) -> str:
+    return pb.entry_with_verdict(record, "retire_candidate")["symphony_id"]
+
+
+def _panel_entry(client, symphony_id):
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+    return pb.entry_node(pb.panel_of(resp.get_data(as_text=True)), symphony_id)
+
+
+def _assert_entry_pending_and_nothing_written(client, record):
+    assert pb.decisions_by_id() == {}, "a refused request must write no decision row"
+    node = _panel_entry(client, _retire_id(record))
+    assert node.find("retirement-rec-status").text() == "Pending"
+    assert len(node.find_all("retirement-approve-btn")) == 1
+    assert len(node.find_all("retirement-reject-btn")) == 1
+
+
+class TestSimultaneousApprovals:
+    def test_two_approvals_for_one_hash_leave_one_decision_row_and_the_entry_reads_approved(
+        self, client, review_store
+    ):
+        record = review_store
+        retire_id = _retire_id(record)
+        barrier = threading.Barrier(2)
+        statuses = []
+
+        def send():
+            with app_module.app.test_client() as own:
+                barrier.wait(timeout=10)
+                resp = own.post(_APPROVE_URL, json={"candidate_id": retire_id})
+                statuses.append((resp.status_code, resp.get_json()["success"]))
+
+        threads = [threading.Thread(target=send) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert statuses == [(200, True), (200, True)]
+        decisions = pb.decisions_by_id()
+        assert list(decisions) == [retire_id]
+        assert decisions[retire_id]["approval_status"] == "approved"
+        node = _panel_entry(client, retire_id)
+        assert node.find("retirement-rec-status").text() == "Approved"
+
+
+class TestRefusalsLeaveTheEntryPending:
+    def test_an_approval_without_the_csrf_token_is_refused(
+        self, client, review_store, _reenable_csrf
+    ):
+        resp = client.post(_APPROVE_URL, json={"candidate_id": _retire_id(review_store)})
+        assert resp.status_code == 403
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    def test_a_rejection_without_the_csrf_token_is_refused(
+        self, client, review_store, _reenable_csrf
+    ):
+        resp = client.post(_REJECT_URL, json={"candidate_id": _retire_id(review_store)})
+        assert resp.status_code == 403
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    def test_an_unauthenticated_approval_sent_as_the_panel_sends_it_redirects_to_login(
+        self, client, review_store, auth_client, _reenable_csrf, monkeypatch
+    ):
+        token = _get_csrf_token(auth_client)
+        resp = auth_client.post(
+            _APPROVE_URL,
+            data=json.dumps({"candidate_id": _retire_id(review_store)}),
+            headers={"Content-Type": "application/json", "X-CSRF-Token": token},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert "/login" in resp.headers["Location"]
+        monkeypatch.setattr(app_module, "_auth_check_enabled", False)
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    @pytest.mark.parametrize(
+        "bad_id",
+        ["", "x" * 301, 12345, None, ["a"], {"a": 1}, True],
+        ids=["empty", "301 chars", "integer", "null", "list", "object", "boolean"],
+    )
+    @pytest.mark.parametrize("url", [_APPROVE_URL, _REJECT_URL], ids=["approve", "reject"])
+    def test_an_invalid_candidate_id_gets_the_existing_refusal_and_writes_nothing(
+        self, client, review_store, url, bad_id
+    ):
+        resp = client.post(url, json={"candidate_id": bad_id})
+        assert resp.status_code == 200
+        assert resp.get_json() == {
+            "success": False,
+            "approval_status": None,
+            "error": "invalid candidate_id",
+        }
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    def test_a_missing_candidate_id_gets_the_same_refusal(self, client, review_store):
+        resp = client.post(_APPROVE_URL, json={})
+        assert resp.get_json()["error"] == "invalid candidate_id"
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    def test_a_failed_decision_write_reports_the_exception_type_only_and_the_chip_stays_pending(
+        self, client, review_store, monkeypatch
+    ):
+        def fail(*args, **kwargs):
+            raise sqlite3.OperationalError("unable to open database file /srv/state/secret.db")
+
+        monkeypatch.setattr(db_module, "upsert_retirement_decision", fail)
+        resp = client.post(_REJECT_URL, json={"candidate_id": _retire_id(review_store)})
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body == {"success": False, "approval_status": None, "error": "OperationalError"}
+        assert "secret.db" not in resp.get_data(as_text=True)
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    @pytest.mark.parametrize("url", [_APPROVE_URL, _REJECT_URL], ids=["approve", "reject"])
+    def test_a_body_one_byte_over_the_cap_is_refused_with_413(self, client, review_store, url):
+        resp = client.post(
+            url,
+            data=_body_of_exactly(65537, _retire_id(review_store)),
+            content_type="application/json",
+        )
+        assert resp.status_code == 413
+        _assert_entry_pending_and_nothing_written(client, review_store)
+
+    def test_a_body_exactly_at_the_cap_is_still_accepted(self, client, review_store):
+        retire_id = _retire_id(review_store)
+        resp = client.post(
+            _APPROVE_URL,
+            data=_body_of_exactly(65536, retire_id),
+            content_type="application/json",
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["success"] is True
+        assert pb.decisions_by_id()[retire_id]["approval_status"] == "approved"
+        node = _panel_entry(client, retire_id)
+        assert node.find("retirement-rec-status").text() == "Approved"
+
+
+def _body_of_exactly(size: int, candidate_id: str) -> bytes:
+    """A JSON object of exactly ``size`` bytes carrying the candidate id, padded with
+    one extra field."""
+    shell = json.dumps({"candidate_id": candidate_id, "pad": ""}).encode()
+    pad = size - len(shell)
+    assert pad > 0
+    body = json.dumps({"candidate_id": candidate_id, "pad": "a" * pad}).encode()
+    assert len(body) == size
+    return body

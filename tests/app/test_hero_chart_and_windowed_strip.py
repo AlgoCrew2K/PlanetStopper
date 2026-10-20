@@ -262,3 +262,73 @@ class TestWindowedStripValueRespectsPicker:
             f"AC-3 FAIL: windowed strip did not echo the resolved window ('all'); got "
             f"{window_field!r}. The label must reflect the actual window driving the value."
         )
+
+
+# ---------------------------------------------------------------------------
+# Counterfactual with/without figures never appear as realized performance
+# ---------------------------------------------------------------------------
+
+
+class TestWithoutSymphonyFiguresStayOffRealizedSurfaces:
+    _URLS = (
+        "/",
+        "/performance",
+        "/history",
+        "/api/performance?scope=aggregate&days=30",
+        "/api/performance/symphonies",
+        "/api/history/30",
+        "/api/hero-chart/30d",
+        "/api/hero-chart/all",
+        "/api/strip/30d",
+        "/api/strip/all",
+        "/api/guard-alpha-summary",
+    )
+
+    def _bodies(self, client):
+        bodies = {}
+        for url in self._URLS:
+            resp = client.get(url)
+            assert resp.status_code == 200, url
+            bodies[url] = resp.get_data(as_text=True)
+        return bodies
+
+    def test_distinctive_with_and_without_figures_of_a_stored_run_appear_on_none_of_them(
+        self, client, tmp_path, monkeypatch
+    ):
+        import datetime
+
+        from tests.advisors._retirement_recommender_reference import seed_state_db
+        from tests.app import _tenure_review_panel_builders as pb
+
+        today = datetime.date.today()
+        days = [(today - datetime.timedelta(days=i)).isoformat() for i in range(40, 0, -1)]
+        seed_state_db(
+            tmp_path,
+            monkeypatch,
+            series_by_symphony={"sym-a": {d: (0.08 * i, 0.10 * i) for i, d in enumerate(days)}},
+            filename="hero_with_review.db",
+        )
+        baseline = self._bodies(client)
+
+        record = pb.small_record()
+        pb.store_run(record)
+        served = pb.strict_json(client.get("/api/retirement-recommendations"))
+        entry = next(
+            e for e in served["review_entries"] if e["symphony_id"] == pb.SMALL_IDS["first"]
+        )
+        marginal = entry["evidence"]["marginal"]
+        assert marginal["status"] == "available", "the stored run must carry the figures to hide"
+
+        probes = {marginal["label"]}
+        for fig in marginal["figures"].values():
+            value = fig["value"]
+            probes.add(repr(value)[:9])
+            probes.add(f"{value:.2f}")
+        everything_before = " ".join(baseline.values())
+        probes = {p for p in probes if p not in everything_before}
+        assert len(probes) >= 7, "each distinctive figure and the label must be probed"
+
+        after = self._bodies(client)
+        for url, body in after.items():
+            leaked = sorted(p for p in probes if p in body)
+            assert not leaked, f"{url} shows a with/without review figure as performance: {leaked}"
