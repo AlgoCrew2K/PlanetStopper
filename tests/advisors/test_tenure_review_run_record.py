@@ -294,3 +294,28 @@ def test_a_symphony_with_a_verdict_is_eligible_and_one_without_is_explained():
         if not entry["eligible"]:
             assert entry["verdict"] is None, entry["symphony_id"]
             assert entry["verdict_text"].startswith("no verdict"), entry["symphony_id"]
+
+
+# ---------------------------------------------------------------------------
+# Every item says whose it is
+# ---------------------------------------------------------------------------
+
+
+def test_every_item_of_every_entry_names_its_own_symphony_in_its_subject():
+    """A panel row shows an item beside others from many symphonies; an item whose
+    subject does not name its symphony cannot be told apart from a peer's once it is
+    copied out of its entry. Covers available and unavailable items of scored, fallback,
+    no-history, young and undated symphonies."""
+    for entry in _result().entries:
+        for name in b.EVIDENCE_ITEMS:
+            subject = b.item_of(entry, name)["subject"]
+            assert entry["display_name"] in subject, (entry["symphony_id"], name, subject)
+
+
+def test_the_subject_of_an_available_backtest_item_names_its_symphony():
+    roster = _roster()
+    roster[0].backtest = b.backtest_over(DAYS, [100.0 * 1.001**i for i in range(len(DAYS))])
+    entry = b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=20), "scored-1")
+    item = b.item_of(entry, "backtest")
+    assert item["status"] == "available"  # fixture sanity
+    assert entry["display_name"] in item["subject"]
