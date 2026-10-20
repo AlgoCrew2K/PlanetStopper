@@ -37,9 +37,13 @@ Contract under test (pinned in .claude/tdd-handoff.md "app.py -- route"):
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import math
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -470,9 +474,14 @@ class TestNoRunYet:
             verdict="completed",
             raw_response="this is not json {",
         )
+        _seed_recommendation("legacy-cand", "legacy-sib")
         data = _get(client)
         assert isinstance(data["review_entries"], list)
         assert "review_run" in data
+        assert data["recommendations"] == [], (
+            "a run row exists but cannot be read, so which recommendations belong to it is "
+            "unknown: the list must be empty, never the latest-date list"
+        )
 
     def test_a_read_failure_degrades_every_review_field_and_never_500s(
         self, client, isolated_db, monkeypatch
@@ -865,3 +874,221 @@ class TestMalformedStoredData:
         data = _get(client)
         assert data["review_run"] is None
         assert data["review_entries"] == []
+        assert data["recommendations"] == [], (
+            "the run's own recommendation rows cannot be told from an unfinished run's when "
+            "the run cannot be read"
+        )
+
+
+# ---------------------------------------------------------------------------
+# A run that cannot be read fails closed: which recommendation rows belong to it is
+# unknown, so none are listed (the latest-date list can include the rows of a run that
+# never finished, and it is only right when no run was ever stored).
+# ---------------------------------------------------------------------------
+
+
+def _seed_unrelated_recommendation_of_another_run(record) -> None:
+    candidate = pb.entry_of(record, pb.FULL_IDS["retire"])
+    body = pb.recommendation_for(record, candidate)
+    pb.store_recommendation(
+        dict(body, candidate_id="orphan-of-unfinished-run", review_run_id=pb.RUN_ID_THIRD)
+    )
+
+
+class TestFailClosedWhenTheLatestRunIsUnusable:
+    def test_a_failed_read_of_the_run_lists_no_recommendation_of_an_unfinished_run(
+        self, client, isolated_db, monkeypatch
+    ):
+        record = pb.store_full_run()
+        _seed_unrelated_recommendation_of_another_run(record)
+        real = db_module.get_advisor_observations_for_role
+
+        def selective(role, *args, **kwargs):
+            if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+                raise RuntimeError("simulated run read failure")
+            return real(role, *args, **kwargs)
+
+        monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+        data = _get(client)
+        assert data["recommendations"] == [], (
+            "a list that falls back to the latest-date filter shows an unfinished run's rows"
+        )
+        assert data["review_run"] is None and data["review_entries"] == []
+
+    @pytest.mark.parametrize(
+        "stored",
+        ["this is not json {", ["not", "a", "record"], 42],
+        ids=["text", "list", "number"],
+    )
+    def test_a_stored_record_that_is_not_a_dict_lists_no_recommendation(
+        self, client, isolated_db, stored
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        db_module.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=pb.RUN_ID_FIRST,
+            verdict="completed",
+            raw_response=stored,
+        )
+        data = _get(client)
+        assert data["recommendations"] == []
+        assert data["review_run"] is None and data["review_entries"] == []
+
+    def test_a_stored_record_with_no_run_id_matches_no_recommendation(self, client, isolated_db):
+        """A recommendation row written before reviews existed carries no run id at all, so
+        a record whose run id is also missing must not be taken to own it."""
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        db_module.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=pb.RUN_ID_FIRST,
+            verdict="completed",
+            raw_response={"trigger": "nightly", "entries": []},
+        )
+        assert _get(client)["recommendations"] == []
+
+    def test_with_no_run_row_at_all_the_latest_date_list_still_applies(self, client, isolated_db):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        data = _get(client)
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
+
+
+# ---------------------------------------------------------------------------
+# The shared review fetch never raises; any failure is an honest empty answer.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def review_module_unimportable(monkeypatch):
+    """Make ``from advisors import tenure_review`` raise ImportError inside the app: the
+    package attribute is removed (a from-import reads it first) and the module entry is
+    set to None (which makes the fallback import fail)."""
+    import advisors
+
+    monkeypatch.delattr(advisors, "tenure_review")
+    monkeypatch.setitem(sys.modules, "advisors.tenure_review", None)
+
+
+class TestTheReviewFetchNeverRaises:
+    def test_a_review_module_that_cannot_be_imported_still_answers_200(
+        self, client, isolated_db, review_module_unimportable
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200, "an import failure became a server error"
+        data = pb.strict_json(resp)
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert isinstance(data["review_status"], dict) and "running" in data["review_status"]
+        assert data["recommendations"] == [], (
+            "the run that owns the rows is unknown, so no row may be listed"
+        )
+
+    def test_a_run_state_snapshot_that_raises_still_answers_200(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise RuntimeError("simulated run state failure")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200, "a run state failure became a server error"
+        data = pb.strict_json(resp)
+        assert isinstance(data["review_status"], dict) and "running" in data["review_status"]
+
+
+# ---------------------------------------------------------------------------
+# One join of retirement decisions serves recommendations and review entries.
+# ---------------------------------------------------------------------------
+
+
+class TestOneDecisionJoin:
+    def test_the_join_takes_the_id_key_and_the_absent_status_as_keyword_only_options(self):
+        params = inspect.signature(app_module._join_retirement_approval_status).parameters
+        assert params["id_key"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["id_key"].default == "candidate_id"
+        assert params["absent_status"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["absent_status"].default == "pending"
+
+    def test_one_function_stamps_entries_by_symphony_id_and_recommendations_by_candidate_id(
+        self, isolated_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            db_module,
+            "get_retirement_decisions",
+            lambda: [
+                {"candidate_id": "hash-a", "approval_status": "approved"},
+                {"candidate_id": "hash-b", "approval_status": "pending"},
+            ],
+        )
+        entries = [{"symphony_id": "hash-a"}, {"symphony_id": "hash-b"}, {"symphony_id": "hash-c"}]
+        app_module._join_retirement_approval_status(
+            entries, id_key="symphony_id", absent_status=None
+        )
+        assert [e["approval_status"] for e in entries] == ["approved", "pending", None]
+        recs = [{"candidate_id": "hash-a"}, {"candidate_id": "hash-c"}]
+        app_module._join_retirement_approval_status(recs)
+        assert [r["approval_status"] for r in recs] == ["approved", "pending"], (
+            "the call the recommendation list already makes must keep its meaning"
+        )
+
+    def test_a_failed_read_leaves_each_list_at_its_own_absent_status(
+        self, isolated_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            db_module,
+            "get_retirement_decisions",
+            lambda: (_ for _ in ()).throw(RuntimeError("simulated decision read failure")),
+        )
+        entries = [{"symphony_id": "hash-a"}]
+        app_module._join_retirement_approval_status(
+            entries, id_key="symphony_id", absent_status=None
+        )
+        recs = [{"candidate_id": "hash-a"}]
+        app_module._join_retirement_approval_status(recs)
+        assert entries[0]["approval_status"] is None
+        assert recs[0]["approval_status"] == "pending"
+
+    def test_no_second_function_in_the_app_reads_the_decisions_table(self):
+        source = (Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+        readers = []
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "get_retirement_decisions"
+                ):
+                    readers.append(node.name)
+                    break
+        assert readers == ["_join_retirement_approval_status"], (
+            f"the decisions table is read by {readers}; a second join can drift from the first"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The route and the fetch helper document what they now return and filter.
+# ---------------------------------------------------------------------------
+
+
+class TestDocstringsNameWhatChanged:
+    @staticmethod
+    def _flat(fn) -> str:
+        return " ".join((fn.__doc__ or "").split())
+
+    @pytest.mark.parametrize("key", ["review_run", "review_entries", "review_status"])
+    def test_the_route_docstring_names_each_new_response_key(self, key):
+        assert key in self._flat(app_module.api_retirement_recommendations)
+
+    def test_the_route_docstring_states_that_the_list_follows_the_latest_run(self):
+        doc = self._flat(app_module.api_retirement_recommendations)
+        assert "review_run_id" in doc or "latest run" in doc.lower()
+
+    def test_the_fetch_helper_docstring_names_the_run_id_filter(self):
+        doc = self._flat(app_module._fetch_retirement_recommendations)
+        assert "review_run_id" in doc

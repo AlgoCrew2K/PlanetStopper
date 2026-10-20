@@ -423,20 +423,63 @@ class TestSimultaneousApprovals:
         assert node.find("retirement-rec-status").text() == "Approved"
 
 
-class TestRefusalsLeaveTheEntryPending:
-    def test_an_approval_without_the_csrf_token_is_refused(
-        self, client, review_store, _reenable_csrf
-    ):
-        resp = client.post(_APPROVE_URL, json={"candidate_id": _retire_id(review_store)})
-        assert resp.status_code == 403
-        _assert_entry_pending_and_nothing_written(client, review_store)
+_REVIEW_PASSWORD = "test-pass-retirement-review-abc123"
+_REVIEW_SECRET_KEY = "test-secret-retirement-review-xyz789"
 
-    def test_a_rejection_without_the_csrf_token_is_refused(
-        self, client, review_store, _reenable_csrf
+
+@pytest.fixture()
+def signed_in_with_both_checks_on(client, monkeypatch):
+    """A client that is signed in while authentication AND CSRF checks are both enabled.
+
+    The sign-in happens first, with the CSRF check still off (the login form is not under
+    test), and the CSRF check is switched on afterwards; a request from this client that
+    is refused with 403 was therefore refused by the CSRF check and not by the gate.
+    """
+    monkeypatch.setenv("DASHBOARD_PASSWORD", _REVIEW_PASSWORD)
+    monkeypatch.setenv("SECRET_KEY", _REVIEW_SECRET_KEY)
+    monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+    login = client.post("/login", data={"password": _REVIEW_PASSWORD}, follow_redirects=False)
+    assert login.status_code in (302, 303)
+    with client.session_transaction() as session:
+        assert session.get("authenticated"), "the sign-in did not take"
+    monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+    return client
+
+
+def _assert_the_gate_is_live(url: str, candidate_id: str) -> None:
+    """A client with no session is turned away to the login page by the same gate."""
+    with app_module.app.test_client() as stranger:
+        resp = stranger.post(url, json={"candidate_id": candidate_id}, follow_redirects=False)
+    assert resp.status_code == 302 and "/login" in resp.headers["Location"]
+
+
+class TestRefusalsLeaveTheEntryPending:
+    @pytest.mark.parametrize("url", [_APPROVE_URL, _REJECT_URL], ids=["approve", "reject"])
+    def test_a_decision_without_the_csrf_token_is_refused_for_a_signed_in_operator(
+        self, signed_in_with_both_checks_on, review_store, url
     ):
-        resp = client.post(_REJECT_URL, json={"candidate_id": _retire_id(review_store)})
+        retire_id = _retire_id(review_store)
+        resp = signed_in_with_both_checks_on.post(url, json={"candidate_id": retire_id})
         assert resp.status_code == 403
-        _assert_entry_pending_and_nothing_written(client, review_store)
+        assert app_module._auth_check_enabled is True and app_module._csrf_check_enabled is True
+        _assert_the_gate_is_live(url, retire_id)
+        _assert_entry_pending_and_nothing_written(signed_in_with_both_checks_on, review_store)
+
+    @pytest.mark.parametrize("url", [_APPROVE_URL, _REJECT_URL], ids=["approve", "reject"])
+    def test_a_signed_in_operator_with_the_right_token_is_not_refused(
+        self, signed_in_with_both_checks_on, review_store, url
+    ):
+        """Control: the refusals above come from the missing token, since the same session
+        with the token gets through both checks."""
+        client = signed_in_with_both_checks_on
+        token = _get_csrf_token(client)
+        resp = client.post(
+            url,
+            json={"candidate_id": _retire_id(review_store)},
+            headers={"X-CSRF-Token": token},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["success"] is True
 
     def test_an_unauthenticated_approval_sent_as_the_panel_sends_it_redirects_to_login(
         self, client, review_store, _reenable_csrf, monkeypatch

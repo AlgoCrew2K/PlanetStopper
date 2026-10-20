@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -272,7 +273,7 @@ class TestEmptyState:
     def test_empty_recommendations_renders_no_buttons_or_checklist(self, client, isolated_db):
         resp = client.get("/ai-advisor")
         body = resp.get_data(as_text=True)
-        assert 'data-testid="retirement-recommendations-empty"' in body
+        assert 'data-testid="tenure-review-empty"' in body
         assert 'data-testid="retirement-approve-btn"' not in body
         assert 'data-testid="retirement-reject-btn"' not in body
         assert 'data-testid="retirement-checklist"' not in body
@@ -365,7 +366,10 @@ class TestHeaderAndEmptyStates:
         record = _stored_full_run()
         panel = _panel(client)
         assert record["as_of_trading_day"] in panel.find("tenure-review-as-of").text()
-        assert record["completed_at"][:10] in panel.find("tenure-review-run-time").text()
+        run_time = panel.find("tenure-review-run-time").text()
+        assert record["completed_at"][:10] in run_time
+        assert "17:05" in run_time, "the time of day, not only the date"
+        assert re.search(r"\bET\b", run_time), "the zone the time is shown in"
         assert str(record["threshold_in_effect"]) in panel.find("tenure-review-threshold").text()
 
     def test_a_valid_threshold_shows_no_invalid_note(self, client, isolated_db):
@@ -1017,6 +1021,13 @@ class TestDesignSystem:
         for token in ("--studio-pos", "--studio-neg", "--studio-ink-dim", "--studio-border"):
             assert token in css, f"verdict chip styles never use {token}"
 
+    @staticmethod
+    def _css_of_exact_classes(rules, classes) -> str:
+        """The bodies of the rules whose selector names one of ``classes`` as a whole
+        class (``.tenure-review-notice`` does not match ``.tenure-review-notice--failed``)."""
+        patterns = [re.compile(rf"\.{re.escape(c)}(?![\w-])") for c in classes]
+        return " ".join(body for sel, body in rules if any(pat.search(sel) for pat in patterns))
+
     def test_the_failed_attempt_notice_is_styled_with_the_negative_token(self, client, isolated_db):
         _stored_full_run()
         state = tenure_review.REVIEW_RUN_STATE
@@ -1025,10 +1036,22 @@ class TestDesignSystem:
         notice = _panel(client).find("tenure-review-failed-notice")
         classes = notice.classes()
         assert classes
-        css = " ".join(
-            body for sel, body in self._css_rules() if any(f".{c}" in sel for c in classes)
-        )
+        css = self._css_of_exact_classes(self._css_rules(), classes)
         assert "--studio-neg" in css
+
+    def test_the_exact_class_check_does_not_credit_a_base_class_with_its_modifier_rule(self):
+        """Mutation proof of the check itself: a notice that lost its modifier class keeps
+        only the base class, whose own rule is not negative, so the check must then fail."""
+        rules = [
+            (".tenure-review-notice ", "color: var(--studio-ink-dim);"),
+            (".tenure-review-notice--failed ", "color: var(--studio-neg);"),
+        ]
+        with_modifier = self._css_of_exact_classes(
+            rules, ["tenure-review-notice", "tenure-review-notice--failed"]
+        )
+        assert "--studio-neg" in with_modifier
+        base_only = self._css_of_exact_classes(rules, ["tenure-review-notice"])
+        assert "--studio-neg" not in base_only
 
     def test_no_dash_characters_appear_in_the_new_review_text(self, client, isolated_db):
         _stored_full_run()
@@ -1111,7 +1134,7 @@ class TestMalformedStoredRun:
         panel = _panel(client)
         assert pb.entry_node(panel, pb.FULL_IDS["keep"]).find("tenure-review-name") is not None
 
-    def test_a_failed_read_of_the_run_alone_leaves_a_working_page_that_says_no_review_yet(
+    def test_a_failed_read_of_the_run_alone_leaves_a_working_page_that_says_the_review_is_unreadable(
         self, client, isolated_db, monkeypatch
     ):
         _stored_full_run()
@@ -1124,6 +1147,695 @@ class TestMalformedStoredRun:
 
         monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
         panel = _panel(client)
-        assert panel.find("tenure-review-empty") is not None
+        assert panel.find("tenure-review-read-failed") is not None
+        assert panel.find("tenure-review-empty") is None, (
+            "a run that could not be read is not 'no review yet'"
+        )
         assert panel.find_all("tenure-review-entry") == []
         assert panel.find("tenure-review-run-btn") is not None
+
+
+# ===========================================================================
+# Findings round: what the panel must show for the figures a record stores.
+#
+# The edge record (tests/app/_tenure_review_panel_builders.py) is produced by the real
+# review compute over four invented symphonies chosen so that figures are null, a pair
+# is absent, two gates carry different texts and a series begins after the tenure does.
+# ===========================================================================
+
+_DECIMAL = re.compile(r"\d+\.\d+")
+_PAIR_FIGURES = ("correlation", "ci_lower", "ci_upper", "stressed_correlation", "holdings_overlap")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _store_edge_run(**kwargs):
+    pb.seed_edge_bot_state()
+    record = pb.edge_record(**kwargs)
+    pb.store_run(record)
+    return record
+
+
+def _null_figures(item: dict) -> list[tuple[str, str]]:
+    """(figure name, stored reason) of every null figure an item holds, pair figures
+    included."""
+    found = [(n, f["reason"]) for n, f in (item.get("figures") or {}).items() if f["value"] is None]
+    pair = item.get("pair")
+    if pair:
+        found += [(n, pair[n]["reason"]) for n in _PAIR_FIGURES if pair[n]["value"] is None]
+    return found
+
+
+class TestNullFiguresKeepTheirStoredReason:
+    def test_every_null_figure_of_an_available_item_is_named_with_its_stored_reason(
+        self, client, isolated_db
+    ):
+        record = _store_edge_run()
+        panel = _panel(client)
+        checked = []
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            for name in _PANEL_ITEMS:
+                item = stored["evidence"][name]
+                if item["status"] != "available":
+                    continue
+                block = node.find(f"tenure-review-evidence-{name}")
+                for fig_name, reason in _null_figures(item):
+                    where = f"{stored['display_name']} / {name} / {fig_name}"
+                    lines = pb.leaf_nodes_containing(block, fig_name.replace("_", " "))
+                    assert lines, f"{where}: the figure is dropped from the panel"
+                    shown = [line.text() for line in lines if reason in line.text()]
+                    assert shown, f"{where}: the stored reason {reason!r} is not beside it"
+                    assert not any(_DECIMAL.search(text) for text in shown), (
+                        f"{where}: a null figure is shown with a number: {shown}"
+                    )
+                    checked.append(where)
+        assert len(checked) >= 10, f"the record must exercise many null figures, got {checked}"
+
+    def test_the_figures_that_are_defined_beside_a_null_one_still_show_their_values(
+        self, client, isolated_db
+    ):
+        record = _store_edge_run()
+        panel = _panel(client)
+        steady = pb.entry_of(record, pb.EDGE_IDS["steady"])
+        block = pb.entry_node(panel, steady["symphony_id"]).find(
+            "tenure-review-evidence-performance"
+        )
+        figures = steady["evidence"]["performance"]["figures"]
+        assert _shows(block, figures["total_return"]["value"])
+        assert _shows(block, figures["sharpe"]["value"])
+
+
+class TestTenureAndSeriesBeginningAreBothStated:
+    def test_a_series_that_begins_after_the_tenure_states_both_dates(self, client, isolated_db):
+        record = _store_edge_run()
+        late = pb.entry_of(record, pb.EDGE_IDS["late"])
+        basis = pb.entry_node(_panel(client), late["symphony_id"]).find("tenure-review-basis")
+        text = basis.text()
+        assert f"series begins {late['basis']['series_begins']}" in text
+        assert f"tenure begins {late['basis']['tenure_begins']}" in text
+        assert late["invested_since"] in text
+
+    def test_every_entry_with_a_known_tenure_start_states_it_in_its_basis_line(
+        self, client, isolated_db
+    ):
+        record = _stored_full_run()
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            if stored["basis"]["tenure_begins"] is None:
+                continue
+            text = pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-basis").text()
+            assert f"tenure begins {stored['basis']['tenure_begins']}" in text, stored[
+                "display_name"
+            ]
+            checked += 1
+        assert checked >= 5
+
+    def test_an_unknown_tenure_start_is_never_printed_as_a_value(self, client, isolated_db):
+        record = _stored_full_run()
+        dateless = pb.entry_of(record, pb.FULL_IDS["dateless"])
+        assert dateless["basis"]["tenure_begins"] is None
+        text = (
+            pb.entry_node(_panel(client), dateless["symphony_id"])
+            .find("tenure-review-basis")
+            .text()
+        )
+        assert not re.search(r"\bNone\b|\bnull\b", text), text
+        for stated in re.findall(r"tenure begins (\S+)", text):
+            assert _DATE.fullmatch(stated), f"'tenure begins' is followed by {stated!r}"
+
+
+class TestNoRedundantSiblingIsStated:
+    def test_an_eligible_symphony_with_no_screen_hit_says_there_is_no_redundant_sibling(
+        self, client, isolated_db
+    ):
+        record = _store_edge_run()
+        steady = pb.entry_of(record, pb.EDGE_IDS["steady"])
+        item = steady["evidence"]["redundancy"]
+        assert item["status"] == "available" and item["pair"] is None
+        block = pb.entry_node(_panel(client), steady["symphony_id"]).find(
+            "tenure-review-evidence-redundancy"
+        )
+        assert item["summary"] in block.text()
+        assert "no redundant sibling" in block.text()
+        assert "unavailable" not in block.text().lower(), (
+            "a symphony that was checked and has no redundant sibling is not 'unavailable'"
+        )
+
+    def test_both_eligible_symphonies_of_the_small_run_say_so(self, client, isolated_db):
+        pb.seed_bot_state(include_small=True)
+        record = pb.small_record()
+        pb.store_run(record)
+        panel = _panel(client)
+        for key in ("first", "second"):
+            stored = pb.entry_of(record, pb.SMALL_IDS[key])
+            block = pb.entry_node(panel, stored["symphony_id"]).find(
+                "tenure-review-evidence-redundancy"
+            )
+            assert stored["evidence"]["redundancy"]["summary"] in block.text(), key
+
+    def test_a_symphony_with_a_pair_does_not_claim_there_is_no_sibling(self, client, isolated_db):
+        record = _stored_full_run()
+        retire = pb.entry_with_verdict(record, "retire_candidate")
+        block = pb.entry_node(_panel(client), retire["symphony_id"]).find(
+            "tenure-review-evidence-redundancy"
+        )
+        assert "no redundant sibling" not in block.text()
+
+
+def _gate_problems(block: pb.Node, pair: dict) -> list[str]:
+    """Each gate's stored result must follow its own label; one that sits beside the other
+    gate's label, or nowhere, is a problem."""
+    text = block.text().lower()
+    problems = []
+    for label, gate in (
+        ("uncertainty gate", pair["uncertainty_gate"]),
+        ("structural redundancy gate", pair["structural_gate"]),
+    ):
+        pattern = rf"{re.escape(label)}\W*{re.escape(gate['text'].lower())}"
+        if not re.search(pattern, text):
+            problems.append(f"{label} is not followed by {gate['text']!r}")
+    return problems
+
+
+def _paired_entries() -> list[tuple[str, dict]]:
+    """(name, entry) of every entry holding a redundancy pair, over both records."""
+    return [
+        (stored["display_name"], stored)
+        for record in (pb.full_record(), pb.edge_record())
+        for stored in record["entries"]
+        if stored["evidence"]["redundancy"]["pair"]
+    ]
+
+
+class TestEachGateResultSitsBesideItsOwnLabel:
+    def _render_both(self, client):
+        """Store the full run, read its page, then store the edge run and read that: the
+        newest run is the one shown."""
+        pb.seed_bot_state()
+        full = pb.full_record(pb.RUN_ID_FIRST)
+        pb.store_run(full)
+        full_panel = _panel(client)
+        pb.seed_edge_bot_state()
+        edge = pb.edge_record(pb.RUN_ID_SECOND)
+        pb.store_run(edge)
+        return (full, full_panel), (edge, _panel(client))
+
+    def test_the_two_gates_of_every_pair_are_each_stated_after_their_own_label(
+        self, client, isolated_db
+    ):
+        checked = 0
+        for record, panel in self._render_both(client):
+            for stored in record["entries"]:
+                pair = stored["evidence"]["redundancy"]["pair"]
+                if not pair:
+                    continue
+                block = pb.entry_node(panel, stored["symphony_id"]).find(
+                    "tenure-review-evidence-redundancy"
+                )
+                assert _gate_problems(block, pair) == [], stored["display_name"]
+                checked += 1
+        assert checked >= 5
+
+    def test_the_fixtures_include_pairs_whose_two_gates_read_differently(self):
+        paired = _paired_entries()
+        differing = [
+            name
+            for name, stored in paired
+            if stored["evidence"]["redundancy"]["pair"]["uncertainty_gate"]["text"]
+            != stored["evidence"]["redundancy"]["pair"]["structural_gate"]["text"]
+        ]
+        assert len(differing) >= 3, "a swapped or missing gate line must change some text"
+
+    def test_the_check_rejects_a_panel_whose_uncertainty_gate_line_is_missing(
+        self, client, isolated_db
+    ):
+        """Mutation proof: delete the uncertainty gate line from the parsed panel and the
+        same check must fail, even though the bare word 'passed' is still on the page."""
+        pb.seed_bot_state()
+        record = pb.full_record()
+        pb.store_run(record)
+        watch = pb.entry_with_verdict(record, "watch")
+        pair = watch["evidence"]["redundancy"]["pair"]
+        assert pair["uncertainty_gate"]["text"] == "passed"
+        block = pb.entry_node(_panel(client), watch["symphony_id"]).find(
+            "tenure-review-evidence-redundancy"
+        )
+        assert _gate_problems(block, pair) == []
+        line = pb.leaf_nodes_containing(block, "uncertainty gate")[0]
+        line.parent.children.remove(line)
+        assert _gate_problems(block, pair), "a deleted uncertainty gate line went unnoticed"
+
+    def test_the_check_rejects_a_panel_whose_gate_results_are_swapped(self, client, isolated_db):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        pb.store_run(record)
+        watch = pb.entry_with_verdict(record, "watch")
+        pair = watch["evidence"]["redundancy"]["pair"]
+        swapped = dict(
+            pair,
+            uncertainty_gate=pair["structural_gate"],
+            structural_gate=pair["uncertainty_gate"],
+        )
+        block = pb.entry_node(_panel(client), watch["symphony_id"]).find(
+            "tenure-review-evidence-redundancy"
+        )
+        assert _gate_problems(block, pair) == []
+        assert _gate_problems(block, swapped), "swapped gate results went unnoticed"
+
+
+class TestDayCountsAreWholeNumbers:
+    def test_the_long_vix_day_counts_read_as_counts_not_as_decimals(self, client, isolated_db):
+        record = _store_edge_run()
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            item = stored["evidence"]["long_vix"]
+            if item["status"] != "available":
+                continue
+            block = pb.entry_node(panel, stored["symphony_id"]).find(
+                "tenure-review-evidence-long_vix"
+            )
+            for fig_name, fig in item["figures"].items():
+                if fig["unit"] != "days":
+                    continue
+                label = fig_name.replace("_", " ")
+                lines = [
+                    n
+                    for n in pb.leaf_nodes_containing(block, label)
+                    if n.text().lower().startswith(label)
+                ]
+                where = f"{stored['display_name']} / {fig_name}"
+                assert len(lines) == 1, where
+                text = lines[0].text()
+                whole = int(fig["value"])
+                assert re.search(rf"(?<![\d.]){whole}(?![\d.])", text), (where, text)
+                assert not re.search(rf"{whole}\.\d", text), (
+                    f"{where}: a count of days is shown with decimals: {text!r}"
+                )
+                checked += 1
+        assert checked >= 6
+        zero_counts = [
+            f
+            for s in record["entries"]
+            for f in s["evidence"]["long_vix"]["figures"].values()
+            if f["unit"] == "days" and f["value"] == 0
+        ]
+        assert zero_counts, "the record must hold a zero count, a computed value shown as 0"
+
+
+class TestEvidenceBlocksHaveDistinctHeadings:
+    def test_each_block_opens_with_a_heading_and_no_two_headings_are_alike(
+        self, client, isolated_db
+    ):
+        record = _stored_full_run()
+        panel = _panel(client)
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            headings = {}
+            for name in _PANEL_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                found = block.find_all("tenure-review-evidence-heading")
+                where = f"{stored['display_name']} / {name}"
+                assert len(found) == 1, f"{where}: expected one heading, got {len(found)}"
+                headings[name] = found[0].text().strip().lower()
+                assert headings[name], where
+            assert len(set(headings.values())) == len(headings), (
+                f"{stored['display_name']}: two blocks share a heading: {headings}"
+            )
+            for name in ("performance", "composite", "redundancy"):
+                assert name in headings[name], (
+                    f"{stored['display_name']}: the {name} heading does not say which item it is"
+                )
+
+    def test_the_basis_label_is_still_shown_in_each_block(self, client, isolated_db):
+        record = _stored_full_run()
+        panel = _panel(client)
+        keep = pb.entry_with_verdict(record, "keep")
+        node = pb.entry_node(panel, keep["symphony_id"])
+        for name in _PANEL_ITEMS:
+            assert (
+                keep["evidence"][name]["label"]
+                in node.find(f"tenure-review-evidence-{name}").text()
+            ), name
+
+
+class TestAnUnavailableItemStillShowsItsWindow:
+    def test_a_window_the_record_carries_is_rendered_beside_the_reason(self, client, isolated_db):
+        record = _stored_full_run()
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            for name in _PANEL_ITEMS:
+                item = stored["evidence"][name]
+                window = item["window"]
+                if item["status"] == "available" or not window:
+                    continue
+                text = node.find(f"tenure-review-evidence-{name}").text()
+                where = f"{stored['display_name']} / {name}"
+                assert item["reason"] in text, where
+                assert window["first"] in text and window["last"] in text, where
+                assert str(window["days"]) in text, where
+                checked += 1
+        assert checked >= 3, "the record must hold unavailable items that carry a window"
+
+
+class TestExcludedSymphoniesKeepTheirOwnReason:
+    def test_each_left_out_symphony_is_listed_with_the_reason_stored_for_it(
+        self, client, isolated_db
+    ):
+        record = _stored_full_run()
+        retire = pb.entry_with_verdict(record, "retire_candidate")
+        excluded = retire["evidence"]["marginal"]["excluded"]
+        assert len({x["reason"] for x in excluded}) >= 2, "the fixture must hold distinct reasons"
+        block = pb.entry_node(_panel(client), retire["symphony_id"]).find(
+            "tenure-review-evidence-marginal"
+        )
+        for ex in excluded:
+            lines = pb.leaf_nodes_containing(block, ex["display_name"])
+            assert any(ex["reason"] in line.text() for line in lines), ex
+
+
+class TestExplanationUnavailableIsOnlyForRetireCandidates:
+    def test_a_decided_entry_that_is_not_a_retire_candidate_claims_no_missing_explanation(
+        self, client, isolated_db
+    ):
+        record = _stored_full_run()
+        watch = pb.entry_with_verdict(record, "watch")
+        keep = pb.entry_with_verdict(record, "keep")
+        db_module.upsert_retirement_decision(watch["symphony_id"], approval_status="approved")
+        db_module.upsert_retirement_decision(keep["symphony_id"], approval_status="rejected")
+        panel = _panel(client)
+        for stored in (watch, keep):
+            node = pb.entry_node(panel, stored["symphony_id"])
+            assert node.find("retirement-rec-status") is not None, "the decision must still show"
+            assert "explanation unavailable" not in node.text(), stored["display_name"]
+
+    def test_a_retire_candidate_without_an_explanation_still_says_so(self, client, isolated_db):
+        record = _stored_full_run(explanation=None, written_on=None)
+        retire = pb.entry_with_verdict(record, "retire_candidate")
+        node = pb.entry_node(_panel(client), retire["symphony_id"])
+        assert "explanation unavailable" in node.text()
+
+
+class TestAFreshInstallShowsOneEmptyStateLine:
+    def test_with_no_run_and_no_recommendation_there_is_one_empty_line_and_it_is_the_reviews(
+        self, client, isolated_db
+    ):
+        panel = _panel(client)
+        lines = [n for n in panel.walk() if "prism-empty" in n.classes()]
+        assert len(lines) == 1, f"expected one empty-state line, got {[n.text() for n in lines]}"
+        assert lines[0].testid == "tenure-review-empty"
+        assert "No review yet" in lines[0].text()
+        assert "No retirement recommendations yet" not in panel.text()
+
+    def test_with_no_run_but_a_recommendation_the_card_follows_the_review_notice(
+        self, client, isolated_db
+    ):
+        _seed_symphony_roster("cand-legacy", "sib-legacy")
+        _seed_recommendation(candidate_id="cand-legacy", sibling_id="sib-legacy")
+        panel = _panel(client)
+        assert panel.find("tenure-review-empty") is not None
+        assert len(panel.find_all("retirement-recommendation-card")) == 1
+        assert "No retirement recommendations yet" not in panel.text()
+
+
+class TestRunHeaderIsInEasternTime:
+    _CASES = [
+        ("2026-12-31T22:04:00+00:00", "2026-12-31", "17:04"),
+        ("2026-07-15T02:30:00+00:00", "2026-07-14", "22:30"),
+        ("2026-12-31T17:05:00-05:00", "2026-12-31", "17:05"),
+    ]
+
+    @pytest.mark.parametrize(
+        "completed_at, et_date, et_time",
+        _CASES,
+        ids=["standard time", "daylight time, previous Eastern day", "already Eastern"],
+    )
+    def test_the_run_time_is_shown_in_us_eastern_with_its_zone(
+        self, client, isolated_db, completed_at, et_date, et_time
+    ):
+        pb.seed_bot_state()
+        pb.store_run(pb.full_record(completed_at=completed_at))
+        text = _panel(client).find("tenure-review-run-time").text()
+        assert et_date in text and et_time in text, text
+        assert re.search(r"\bET\b", text), f"the zone is not stated: {text!r}"
+        raw_date, raw_time = completed_at[:10], completed_at[11:16]
+        if raw_date != et_date:
+            assert raw_date not in text, "the UTC date is shown as if it were Eastern"
+        if raw_time != et_time:
+            assert raw_time not in text, "the stored UTC time is shown as if it were Eastern"
+
+    @pytest.mark.parametrize(
+        "trigger, words",
+        [("nightly", "nightly"), ("on_demand", "on demand")],
+        ids=["nightly", "on demand"],
+    )
+    def test_the_trigger_of_the_run_is_stated(self, client, isolated_db, trigger, words):
+        pb.seed_bot_state()
+        pb.store_run(pb.full_record(trigger=trigger))
+        text = _panel(client).find("tenure-review-trigger").text()
+        assert words in text
+        assert "on_demand" not in text, "an identifier is shown instead of words"
+
+    def test_the_as_of_day_the_run_time_and_the_trigger_sit_side_by_side(self, client, isolated_db):
+        _stored_full_run()
+        panel = _panel(client)
+        as_of = panel.find("tenure-review-as-of")
+        run_time = panel.find("tenure-review-run-time")
+        trigger = panel.find("tenure-review-trigger")
+        assert as_of.parent is run_time.parent is trigger.parent
+
+    def test_a_nightly_run_and_a_later_on_demand_run_of_one_day_read_differently(
+        self, client, isolated_db
+    ):
+        pb.seed_bot_state()
+        pb.store_run(pb.full_record(pb.RUN_ID_FIRST, completed_at="2026-12-31T08:50:00+00:00"))
+        first = _panel(client)
+        first_time = first.find("tenure-review-run-time").text()
+        first_trigger = first.find("tenure-review-trigger").text()
+        pb.store_run(
+            pb.full_record(
+                pb.RUN_ID_SECOND, trigger="on_demand", completed_at="2026-12-31T21:10:00+00:00"
+            )
+        )
+        second = _panel(client)
+        second_time = second.find("tenure-review-run-time").text()
+        second_trigger = second.find("tenure-review-trigger").text()
+        assert first_time != second_time
+        assert "03:50" in first_time and "16:10" in second_time
+        assert "nightly" in first_trigger and "on demand" in second_trigger
+
+    @pytest.mark.parametrize(
+        "unusable", [None, "not a timestamp", 12345], ids=["missing", "text", "number"]
+    )
+    def test_a_run_time_that_cannot_be_read_does_not_break_the_page(
+        self, client, isolated_db, unusable
+    ):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        record["completed_at"] = unusable
+        pb.store_run(record)
+        panel = _panel(client)
+        header = panel.find("tenure-review-as-of").parent
+        assert not re.search(r"\bNone\b", header.text()), header.text()
+        assert len(panel.find_all("tenure-review-entry")) == len(record["entries"])
+
+
+class TestMalformedEntriesDegradeOnlyThatEntry:
+    _POISON = [
+        ("evidence.performance.figures", ["not", "a", "dict"]),
+        ("evidence.performance.figures", "text"),
+        ("evidence.performance.figures", 7),
+        ("evidence.marginal.excluded", 7),
+        ("evidence.marginal.excluded", "text"),
+        ("evidence.marginal.excluded", {"a": 1}),
+        ("missing_items", 5),
+        ("missing_items", {"a": 1}),
+        ("verdict_reasons", 5),
+        ("evidence.redundancy.pair", ["x"]),
+        ("evidence.performance.window", "text"),
+        ("evidence.performance.window", 5),
+        ("display_name", 5),
+        ("eligibility_text", None),
+    ]
+
+    @pytest.mark.parametrize(
+        "path, value",
+        _POISON,
+        ids=[f"{p} = {v!r}" for p, v in _POISON],
+    )
+    def test_a_malformed_field_never_takes_the_page_or_the_other_entries_down(
+        self, client, isolated_db, path, value
+    ):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        victim = pb.entry_with_verdict(record, "keep")
+        *parents, leaf = path.split(".")
+        target = victim
+        for key in parents:
+            target = target[key]
+        target[leaf] = value
+        pb.store_run(record)
+        panel = _panel(client)
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            assert node.find("tenure-review-name") is not None, stored["symphony_id"]
+            if stored is victim:
+                continue
+            for name in _PANEL_ITEMS:
+                assert node.find(f"tenure-review-evidence-{name}") is not None, (
+                    f"{stored['display_name']} lost its {name} block"
+                )
+
+
+class TestAReviewThatCannotBeReadSaysSo:
+    """The panel distinguishes 'no review yet' (nothing stored) from 'the review cannot be
+    read' (a row exists or the read failed): the second shows no recommendation of any run,
+    because which run owns them is unknown."""
+
+    @pytest.fixture(params=["read raises", "record is not a dict", "module cannot be imported"])
+    def unreadable_review(self, request, isolated_db, monkeypatch):
+        _seed_symphony_roster("cand-legacy", "sib-legacy")
+        _seed_recommendation(candidate_id="cand-legacy", sibling_id="sib-legacy")
+        if request.param == "read raises":
+            real = db_module.get_advisor_observations_for_role
+
+            def selective(role, *args, **kwargs):
+                if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+                    raise RuntimeError("simulated run read failure")
+                return real(role, *args, **kwargs)
+
+            monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+        elif request.param == "record is not a dict":
+            db_module.insert_advisor_observation(
+                advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+                subject_type="tenure_review_run",
+                subject_id=pb.RUN_ID_FIRST,
+                verdict="completed",
+                raw_response="this is not json {",
+            )
+        else:
+            import advisors
+
+            monkeypatch.delattr(advisors, "tenure_review")
+            monkeypatch.setitem(sys.modules, "advisors.tenure_review", None)
+        return request.param
+
+    def test_the_page_answers_200_with_a_read_failure_notice_and_no_review_content(
+        self, client, unreadable_review
+    ):
+        panel = _panel(client)
+        failed = panel.find("tenure-review-read-failed")
+        assert failed is not None, "the panel must say the review could not be read"
+        assert "review unavailable" in failed.text().lower()
+        assert panel.find("tenure-review-empty") is None
+        assert panel.find_all("tenure-review-entry") == []
+        assert panel.find_all("retirement-recommendation-card") == [], (
+            "a recommendation of an unknown run must not be listed"
+        )
+        assert panel.find("tenure-review-run-btn") is not None
+
+    def test_nothing_stored_is_still_no_review_yet_and_not_a_read_failure(
+        self, client, isolated_db
+    ):
+        panel = _panel(client)
+        assert panel.find("tenure-review-empty") is not None
+        assert panel.find("tenure-review-read-failed") is None
+
+    def test_a_run_state_snapshot_that_raises_leaves_the_page_working(
+        self, client, isolated_db, monkeypatch
+    ):
+        _stored_full_run()
+
+        def broken():
+            raise RuntimeError("simulated run state failure")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        panel = _panel(client)
+        assert panel.find("tenure-review-run-btn") is not None
+
+
+class TestOneChecklistLoopServesEveryList:
+    @staticmethod
+    def _page_function():
+        source = (Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+        return next(
+            n
+            for n in ast.walk(ast.parse(source))
+            if isinstance(n, ast.FunctionDef) and n.name == "ai_advisor_tab"
+        )
+
+    def test_the_page_function_imports_and_calls_the_checklist_builder_once(self):
+        page = self._page_function()
+        names = set()
+        imports = 0
+        for node in ast.walk(page):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "build_checklist":
+                        names.add(alias.asname or alias.name)
+                        imports += 1
+        calls = [
+            n
+            for n in ast.walk(page)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in names
+        ]
+        assert imports == 1, f"build_checklist is imported {imports} times in the page function"
+        assert len(calls) == 1, (
+            f"build_checklist is called from {len(calls)} places in the page function; "
+            "one loop must serve the recommendation list and the review entries"
+        )
+
+
+class TestChecklistWorkIsDoneOnlyForWhatThePanelRenders:
+    def test_a_completed_run_builds_a_checklist_only_for_its_approved_entry(
+        self, client, isolated_db, monkeypatch
+    ):
+        record = _stored_full_run()
+        retire = pb.entry_with_verdict(record, "retire_candidate")
+        db_module.upsert_retirement_decision(retire["symphony_id"], approval_status="approved")
+        import advisors.retirement_checklist as checklist_module
+
+        real = checklist_module.build_checklist
+        calls = []
+
+        def spy(recommendation, bot_state):
+            calls.append(recommendation.get("candidate_id"))
+            return real(recommendation, bot_state)
+
+        monkeypatch.setattr(checklist_module, "build_checklist", spy)
+        node = pb.entry_node(_panel(client), retire["symphony_id"])
+        assert node.find("retirement-checklist") is not None
+        assert calls == [retire["symphony_id"]], (
+            "the recommendation row of the same run is not rendered, so it needs no checklist"
+        )
+
+    def test_with_no_run_the_approved_recommendation_card_still_gets_its_checklist(
+        self, client, isolated_db
+    ):
+        _seed_symphony_roster("cand-legacy", "sib-legacy")
+        _seed_recommendation(candidate_id="cand-legacy", sibling_id="sib-legacy")
+        db_module.upsert_retirement_decision("cand-legacy", approval_status="approved")
+        panel = _panel(client)
+        assert panel.find("retirement-checklist") is not None
+
+
+class TestApprovedEntryChecklistNamesTheSymphonyAsItsRowDoes:
+    def test_a_name_the_engine_state_still_holds_differently_does_not_reach_the_checklist(
+        self, client, isolated_db
+    ):
+        record = _stored_full_run()
+        watch = pb.entry_with_verdict(record, "watch")
+        state = db_module.load_state()
+        state[watch["symphony_id"]]["name"] = "Name Held In Engine State"
+        db_module.save_state(state)
+        db_module.upsert_retirement_decision(watch["symphony_id"], approval_status="approved")
+        node = pb.entry_node(_panel(client), watch["symphony_id"])
+        row_name = node.find("tenure-review-name").text()
+        checklist = node.find("retirement-checklist").text()
+        assert row_name == watch["display_name"]
+        assert row_name in checklist
+        assert "Name Held In Engine State" not in checklist
+        assert "NVDA" in checklist, "the holdings still come from the engine state of that hash"

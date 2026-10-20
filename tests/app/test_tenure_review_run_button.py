@@ -11,12 +11,16 @@ What the client must do, from the operator's side:
 * send one POST with no body, the `X-Requested-With: XMLHttpRequest` header (so the
   authentication gate answers 401 JSON instead of redirecting to an HTML page) and the
   CSRF token (the one the page already holds, else fetched from /api/csrf-token);
-* read the HTTP status before it tries to parse a body, because a refusal from the
-  global hooks is an HTML page and a JSON parse of it throws;
+* read the HTTP status before it tries to parse a body, because the refusals differ in
+  shape (an unauthenticated XHR gets 401 JSON from the authentication hook, a missing
+  CSRF token gets a 403 HTML error page) and a JSON parse of the second throws;
 * keep the button disabled from the click until the response arrives and send nothing
   for a second click in that time;
 * show a readable message for every outcome, built from fixed text and never from the
-  response body, so a hostile body cannot inject markup.
+  response body or from the text of an error thrown on the way, so neither a hostile body
+  nor an error quoting a body can reach the panel;
+* style a refusal (session expired, request refused, request failed) with the negative
+  design token and an acknowledgement or an already-running notice without it.
 
 The script's JS syntax is covered only by tests/js_syntax/test_js_syntax.py.
 """
@@ -78,10 +82,21 @@ function __lookup(sel) {
 
 function __makeElement() {
   var el = {
-    textContent: '', hidden: false, dataset: {}, style: {}, attributes: {}, _disabled: false,
-    classList: { add: function () {}, remove: function () {}, toggle: function () {}, contains: function () { return false; } },
-    setAttribute: function (k, v) { this.attributes[k] = v; if (k === 'disabled') { this._disabled = true; } },
-    removeAttribute: function (k) { delete this.attributes[k]; if (k === 'disabled') { this._disabled = false; } },
+    textContent: '', hidden: false, dataset: {}, attributes: {}, _disabled: false, _classes: {},
+    style: {
+      setProperty: function (k, v) { this[k] = v; },
+      removeProperty: function (k) { delete this[k]; }
+    },
+    setAttribute: function (k, v) {
+      this.attributes[k] = v;
+      if (k === 'disabled') { this._disabled = true; }
+      if (k === 'class') { this.className = v; }
+    },
+    removeAttribute: function (k) {
+      delete this.attributes[k];
+      if (k === 'disabled') { this._disabled = false; }
+      if (k === 'class') { this.className = ''; }
+    },
     getAttribute: function (k) { return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null; },
     addEventListener: function () {},
     closest: function () { return __panel; },
@@ -91,6 +106,20 @@ function __makeElement() {
   Object.defineProperty(el, 'disabled', {
     get: function () { return this._disabled; },
     set: function (v) { this._disabled = !!v; }
+  });
+  el.classList = {
+    add: function () { for (var i = 0; i < arguments.length; i++) { el._classes[arguments[i]] = true; } },
+    remove: function () { for (var i = 0; i < arguments.length; i++) { delete el._classes[arguments[i]]; } },
+    toggle: function (c, force) {
+      var on = force === undefined ? !el._classes[c] : !!force;
+      if (on) { el._classes[c] = true; } else { delete el._classes[c]; }
+      return on;
+    },
+    contains: function (c) { return !!el._classes[c]; }
+  };
+  Object.defineProperty(el, 'className', {
+    get: function () { return Object.keys(el._classes).join(' '); },
+    set: function (v) { el._classes = {}; String(v).split(/\s+/).forEach(function (c) { if (c) { el._classes[c] = true; } }); }
   });
   Object.defineProperty(el, 'innerHTML', {
     get: function () { return ''; },
@@ -134,7 +163,7 @@ function __response(spec) {
     headers: { get: function () { return spec.kind === 'html' ? 'text/html' : 'application/json'; } },
     json: function () {
       if (spec.kind === 'html') {
-        return Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0'));
+        return Promise.reject(new SyntaxError(__scenario.errorText || 'Unexpected token < in JSON at position 0'));
       }
       return Promise.resolve(spec.body);
     },
@@ -144,19 +173,29 @@ function __response(spec) {
   };
 }
 
+var __runIndex = 0;
+function __nextRun() {
+  if (Array.isArray(__scenario.run)) {
+    return __scenario.run[Math.min(__runIndex++, __scenario.run.length - 1)];
+  }
+  return __scenario.run;
+}
+
 function fetch(url, opts) {
   __log.fetches.push({ url: String(url), opts: opts || null });
   if (String(url) === '__CSRF_URL__') {
     if (__scenario.csrf === 'fail') { return Promise.resolve(__response({ status: 500, kind: 'html' })); }
+    if (__scenario.csrf === 'unparsable') { return Promise.resolve(__response({ status: 200, kind: 'html' })); }
     return Promise.resolve(__response({ status: 200, kind: 'json', body: { csrf_token: 'fetched-token' } }));
   }
-  if (__scenario.run.mode === 'network-error') {
-    return Promise.reject(new TypeError('Failed to fetch'));
+  var spec = __nextRun();
+  if (spec.mode === 'network-error') {
+    return Promise.reject(new TypeError(__scenario.errorText || 'Failed to fetch'));
   }
-  if (__scenario.run.mode === 'pending') {
-    return new Promise(function (resolve) { __pendingRun = function () { resolve(__response(__scenario.run)); }; });
+  if (spec.mode === 'pending') {
+    return new Promise(function (resolve) { __pendingRun = function () { resolve(__response(spec)); }; });
   }
-  return Promise.resolve(__response(__scenario.run));
+  return Promise.resolve(__response(spec));
 }
 
 __FUNCTION__
@@ -164,7 +203,13 @@ __FUNCTION__
 async function __flush() { for (var i = 0; i < 8; i++) { await new Promise(function (r) { setTimeout(r, 2); }); } }
 function __runCalls() { return __log.fetches.filter(function (f) { return f.url === '__RUN_URL__'; }); }
 function __state() {
-  return { disabled: __button.disabled, message: __message.textContent, runCalls: __runCalls().length };
+  return {
+    disabled: __button.disabled,
+    message: __message.textContent,
+    runCalls: __runCalls().length,
+    classes: Object.keys(__message._classes),
+    style: JSON.stringify(__message.style)
+  };
 }
 
 (async function () {
@@ -176,7 +221,14 @@ function __state() {
 """
 
 
-def _run(driver: str, *, run: dict, csrf_preset: str | None = None, csrf: str = "ok") -> dict:
+def _run(
+    driver: str,
+    *,
+    run: dict | list[dict],
+    csrf_preset: str | None = None,
+    csrf: str = "ok",
+    error_text: str | None = None,
+) -> dict:
     if shutil.which("node") is None:
         pytest.skip("node not installed: the run button client cannot be executed")
     function = _extract_function(_source(), "retRunReview")
@@ -184,7 +236,7 @@ def _run(driver: str, *, run: dict, csrf_preset: str | None = None, csrf: str = 
         _HARNESS.replace("__BUTTON__", BUTTON_TESTID)
         .replace("__MESSAGE__", MESSAGE_TESTID)
         .replace("__CSRF_PRESET__", json.dumps(csrf_preset))
-        .replace("__SCENARIO__", json.dumps({"run": run, "csrf": csrf}))
+        .replace("__SCENARIO__", json.dumps({"run": run, "csrf": csrf, "errorText": error_text}))
         .replace("__CSRF_URL__", CSRF_URL)
         .replace("__RUN_URL__", RUN_URL)
         .replace("__FUNCTION__", function)
@@ -388,3 +440,141 @@ class TestOneRequestAtATime:
             csrf_preset="tok",
         )
         assert out["state"]["runCalls"] == 0
+
+
+# ---------------------------------------------------------------------------
+# The message never carries the text of an error thrown on the way.
+# ---------------------------------------------------------------------------
+
+LEAKY_ERROR = "Unexpected token < in JSON: <html>secret-path /srv/state key=abc123</html>"
+
+
+class TestThrownErrorsAreNeverShown:
+    def test_a_network_error_shows_fixed_text_and_not_the_error_message(self):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "network-error"},
+            csrf_preset="tok",
+            error_text=LEAKY_ERROR,
+        )
+        message = out["state"]["message"]
+        assert message.startswith("Request failed")
+        for fragment in ("secret-path", "abc123", "<html>", "Unexpected token"):
+            assert fragment not in message, f"the thrown error leaked into the panel: {message!r}"
+        assert out["state"]["disabled"] is False
+
+    def test_a_token_reply_that_cannot_be_parsed_shows_fixed_text_and_not_the_parser_message(self):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 202, "kind": "json", "body": {}},
+            csrf_preset=None,
+            csrf="unparsable",
+            error_text=LEAKY_ERROR,
+        )
+        message = out["state"]["message"]
+        assert out["state"]["runCalls"] == 0, "nothing is posted without a token"
+        assert message.startswith("Request failed")
+        for fragment in ("secret-path", "abc123", "<html>", "Unexpected token"):
+            assert fragment not in message, f"the parser error leaked into the panel: {message!r}"
+        assert out["state"]["disabled"] is False
+
+    def test_the_block_comment_states_the_refusal_shapes_the_global_hooks_really_answer(self):
+        source = _source()
+        start = re.search(r"function\s+retRunReview\s*\(", source).start()
+        lines = source[:start].splitlines()
+        comment = []
+        for line in reversed(lines):
+            if line.strip().startswith("//"):
+                comment.append(line.strip())
+            elif comment or line.strip():
+                break
+        text = " ".join(reversed(comment))
+        assert text, "retRunReview has no comment above it"
+        assert "401" in text and "JSON" in text, (
+            "the comment must say an unauthenticated XHR is answered with 401 JSON"
+        )
+        assert "403" in text, "the comment must name the 403 refusal of a missing CSRF token"
+        assert "refusal from the global hooks is an HTML page" not in text, (
+            "the comment still claims every refusal is an HTML page"
+        )
+
+
+# ---------------------------------------------------------------------------
+# A refusal is styled with the negative design token; an acknowledgement is not.
+# ---------------------------------------------------------------------------
+
+
+def _template_css_rules():
+    source = (REPO_ROOT / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
+    style = "\n".join(re.findall(r"<style[^>]*>(.*?)</style>", source, flags=re.DOTALL))
+    return re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+
+
+def _is_negative(state: dict) -> bool:
+    """True when the message element carries the negative token inline or through a class
+    whose own rule (matched as a whole class) uses it."""
+    if "--studio-neg" in state["style"]:
+        return True
+    rules = _template_css_rules()
+    for cls in state["classes"]:
+        pattern = re.compile(rf"\.{re.escape(cls)}(?![\w-])")
+        if any(pattern.search(sel) and "--studio-neg" in body for sel, body in rules):
+            return True
+    return False
+
+
+class TestRefusalsAreStyledNegative:
+    @pytest.mark.parametrize(
+        "run",
+        [
+            {"mode": "status", "status": 401, "kind": "json", "body": {"error": "unauthenticated"}},
+            {"mode": "status", "status": 403, "kind": "html"},
+            {"mode": "status", "status": 500, "kind": "html"},
+            {"mode": "network-error"},
+        ],
+        ids=["session expired", "request refused", "request failed", "network error"],
+    )
+    def test_a_refusal_uses_the_negative_token(self, run):
+        out = _run(_CLICK_AND_SETTLE, run=run, csrf_preset="tok")
+        assert _is_negative(out["state"]), (
+            f"the message {out['state']['message']!r} is not styled negative: {out['state']}"
+        )
+
+    @pytest.mark.parametrize(
+        "run",
+        [
+            {"mode": "status", "status": 202, "kind": "json", "body": {"status": "started"}},
+            {
+                "mode": "status",
+                "status": 409,
+                "kind": "json",
+                "body": {"status": "already_running"},
+            },
+        ],
+        ids=["started", "already running"],
+    )
+    def test_an_acknowledgement_or_an_already_running_notice_is_not_styled_negative(self, run):
+        out = _run(_CLICK_AND_SETTLE, run=run, csrf_preset="tok")
+        assert out["state"]["message"], "the message must be set for the check to mean anything"
+        assert not _is_negative(out["state"])
+
+    def test_a_refusal_styling_does_not_stay_on_the_message_of_the_next_success(self):
+        driver = """
+        retRunReview(__button);
+        await __flush();
+        out.afterRefusal = __state();
+        retRunReview(__button);
+        await __flush();
+        out.afterSuccess = __state();
+        """
+        out = _run(
+            driver,
+            run=[
+                {"mode": "status", "status": 403, "kind": "html"},
+                {"mode": "status", "status": 202, "kind": "json", "body": {"status": "started"}},
+            ],
+            csrf_preset="tok",
+        )
+        assert _is_negative(out["afterRefusal"])
+        assert out["afterSuccess"]["message"] == MESSAGES[202]
+        assert not _is_negative(out["afterSuccess"]), "the refusal's styling is still on"

@@ -599,11 +599,20 @@ _RETIREMENT_APPROVAL_JOIN_FN_NAME = "_join_retirement_approval_status"
 # just today's instance).
 _RETIREMENT_FETCH_FN_NAME = "_fetch_retirement_recommendations"
 
+# Symphony tenure review read surfaces (the review round of cycle C3): the shared
+# fetch the panel and the API both call, and the API route that returns its answer.
+# The decisions join they share is _RETIREMENT_APPROVAL_JOIN_FN_NAME above, so it is
+# reached from both and covered once.
+_TENURE_REVIEW_FETCH_FN_NAME = "_fetch_tenure_review"
+_RETIREMENT_API_ROUTE_FN_NAME = "api_retirement_recommendations"
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
     _RETIREMENT_APPROVAL_JOIN_FN_NAME,
     _RETIREMENT_FETCH_FN_NAME,
+    _TENURE_REVIEW_FETCH_FN_NAME,
+    _RETIREMENT_API_ROUTE_FN_NAME,
 ]
 
 # Team-lead named this explicitly alongside composer_draft_client -- checked
@@ -615,6 +624,50 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
 # shape (`composer_draft_client.save_symphony(...)`, already also caught by
 # the substring check below -- deliberate overlap, defense-in-depth).
 _SAVE_SYMPHONY_ATTR = "save_symphony"
+
+
+def _hits_composer_draft_client(subtrees) -> list[str]:
+    return [
+        f"composer_draft_client via {getattr(t, 'name', '?')}"
+        for t in subtrees
+        if "composer_draft_client" in _unparse_without_docstrings(t)
+    ]
+
+
+def _hits_save_symphony(subtrees) -> list[str]:
+    return [
+        f"{_SAVE_SYMPHONY_ATTR} via {getattr(t, 'name', '?')}"
+        for t in subtrees
+        if _references_name_or_attr(t, _SAVE_SYMPHONY_ATTR)
+    ]
+
+
+def _hits_alpha_bot_execution(subtrees) -> list[str]:
+    return [
+        f"alpha_bot_execution via {getattr(t, 'name', '?')}"
+        for t in subtrees
+        if "alpha_bot_execution" in _unparse_without_docstrings(t)
+    ]
+
+
+def _hits_live_execution(subtrees) -> list[str]:
+    return [
+        f"LIVE_EXECUTION via {getattr(t, 'name', '?')}"
+        for t in subtrees
+        if "LIVE_EXECUTION" in _unparse_without_docstrings(t)
+    ]
+
+
+def _exec_seam_hits(tree: ast.Module, fn_name: str) -> list[str]:
+    """Every forbidden reference in the transitive call graph of ``fn_name``, by the same
+    four predicates the entry point tests below apply one at a time."""
+    subtrees = _collect_transitive_local_call_subtrees(tree, fn_name)
+    return (
+        _hits_composer_draft_client(subtrees)
+        + _hits_save_symphony(subtrees)
+        + _hits_alpha_bot_execution(subtrees)
+        + _hits_live_execution(subtrees)
+    )
 
 
 class TestCycle2cCallPathsNeverReachExecSeam:
@@ -665,45 +718,93 @@ class TestCycle2cCallPathsNeverReachExecSeam:
 
     @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
     def test_entry_point_never_references_composer_draft_client(self, fn_name):
-        subtrees = self._get_transitive_subtrees(fn_name)
-        for subtree in subtrees:
-            source_segment = _unparse_without_docstrings(subtree)
-            assert "composer_draft_client" not in source_segment, (
-                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
-                "references composer_draft_client -- no Cycle 2c retirement call path "
-                "may create a real Composer symphony (that remains the frontrunner "
-                "/proposal/approve route's exclusive province)."
-            )
+        hits = _hits_composer_draft_client(self._get_transitive_subtrees(fn_name))
+        assert hits == [], (
+            f"{fn_name}'s transitive call graph references composer_draft_client ({hits}) "
+            "-- no Cycle 2c retirement call path may create a real Composer symphony "
+            "(that remains the frontrunner /proposal/approve route's exclusive province)."
+        )
 
     @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
     def test_entry_point_never_references_save_symphony(self, fn_name):
-        subtrees = self._get_transitive_subtrees(fn_name)
-        for subtree in subtrees:
-            assert not _references_name_or_attr(subtree, _SAVE_SYMPHONY_ATTR), (
-                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
-                f"references {_SAVE_SYMPHONY_ATTR} -- no Cycle 2c retirement call path "
-                "may create a real Composer symphony."
-            )
+        hits = _hits_save_symphony(self._get_transitive_subtrees(fn_name))
+        assert hits == [], (
+            f"{fn_name}'s transitive call graph references {_SAVE_SYMPHONY_ATTR} ({hits}) "
+            "-- no Cycle 2c retirement call path may create a real Composer symphony."
+        )
 
     @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
     def test_entry_point_never_references_alpha_bot_execution(self, fn_name):
-        subtrees = self._get_transitive_subtrees(fn_name)
-        for subtree in subtrees:
-            source_segment = _unparse_without_docstrings(subtree)
-            assert "alpha_bot_execution" not in source_segment, (
-                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
-                "references alpha_bot_execution (the live execution engine)."
-            )
+        hits = _hits_alpha_bot_execution(self._get_transitive_subtrees(fn_name))
+        assert hits == [], (
+            f"{fn_name}'s transitive call graph references alpha_bot_execution "
+            f"(the live execution engine): {hits}"
+        )
 
     @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
     def test_entry_point_never_references_live_execution(self, fn_name):
-        subtrees = self._get_transitive_subtrees(fn_name)
-        for subtree in subtrees:
-            source_segment = _unparse_without_docstrings(subtree)
-            assert "LIVE_EXECUTION" not in source_segment, (
-                f"{fn_name}'s transitive call graph (via {getattr(subtree, 'name', '?')}) "
-                "reads/writes LIVE_EXECUTION."
-            )
+        hits = _hits_live_execution(self._get_transitive_subtrees(fn_name))
+        assert hits == [], f"{fn_name}'s transitive call graph reads/writes LIVE_EXECUTION: {hits}"
+
+
+# ---------------------------------------------------------------------------
+# Mutation proof for Group E: a scan that cannot fail proves nothing. Each test plants
+# a Composer symphony creation call into one entry point of the real app.py syntax tree
+# (in memory, the file is untouched) and shows the scan reports it; the same scan over
+# the unplanted tree reports nothing, so the report is the plant's doing.
+# ---------------------------------------------------------------------------
+
+_PLANTED_CALLS = {
+    "attribute call": "composer_draft_client.save_symphony(planted_argument)",
+    "bare call": "save_symphony(planted_argument)",
+}
+
+
+def _tree_with_planted_call(fn_name: str, statement: str) -> ast.Module:
+    tree = _parse_app_py()
+    node = _find_function_def(tree, fn_name)
+    if node is None:
+        pytest.fail(f"app.py has no function named {fn_name!r}")
+    node.body.append(ast.parse(statement).body[0])
+    ast.fix_missing_locations(tree)
+    return tree
+
+
+class TestGroupEScanReportsAPlantedSymphonyCreation:
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_the_unplanted_tree_is_clean_for_every_entry_point(self, fn_name):
+        assert _exec_seam_hits(_parse_app_py(), fn_name) == []
+
+    @pytest.mark.parametrize("form", list(_PLANTED_CALLS))
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_a_creation_call_planted_in_an_entry_point_is_reported(self, fn_name, form):
+        tree = _tree_with_planted_call(fn_name, _PLANTED_CALLS[form])
+        hits = _exec_seam_hits(tree, fn_name)
+        assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), (
+            f"a {form} planted in {fn_name} was not reported; hits: {hits}"
+        )
+
+    @pytest.mark.parametrize(
+        "planted_in, entry_point",
+        [
+            (_TENURE_REVIEW_FETCH_FN_NAME, _RETIREMENT_API_ROUTE_FN_NAME),
+            (_RETIREMENT_APPROVAL_JOIN_FN_NAME, _TENURE_REVIEW_FETCH_FN_NAME),
+            (_RETIREMENT_APPROVAL_JOIN_FN_NAME, _RETIREMENT_API_ROUTE_FN_NAME),
+        ],
+        ids=[
+            "fetch reached from the route",
+            "decisions join reached from the review fetch",
+            "decisions join reached from the route",
+        ],
+    )
+    def test_a_creation_call_planted_in_a_callee_is_reported_from_the_entry_point(
+        self, planted_in, entry_point
+    ):
+        tree = _tree_with_planted_call(planted_in, _PLANTED_CALLS["attribute call"])
+        hits = _exec_seam_hits(tree, entry_point)
+        assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), (
+            f"{planted_in} is not on the call graph of {entry_point}; hits: {hits}"
+        )
 
 
 # ===========================================================================

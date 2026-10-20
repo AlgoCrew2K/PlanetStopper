@@ -12,7 +12,7 @@ prove escaping; those edits are named at the call site.
 
 Three groups live here:
 
-1. Rosters and run records (``full_record``, ``small_record``).
+1. Rosters and run records (``full_record``, ``small_record``, ``edge_record``).
 2. Storage helpers that write rows exactly as the pipeline does
    (``store_run``, ``store_recommendation``, ``seed_bot_state``).
 3. A tolerant stdlib HTML tree (``parse_html``) so panel tests can scope assertions to
@@ -66,6 +66,19 @@ SMALL_NAMES = {
     "first": "Cedar Fold Rotation",
     "second": "Quartz Bay Momentum",
     "young": "Willow Gate Hedge",
+}
+
+EDGE_IDS = {
+    "steady": "Rs1Aa2Bb3Cc4Dd5Ee6Ff",
+    "twin_one": "Wv1Aa2Bb3Cc4Dd5Ee6Gg",
+    "twin_two": "Wv2Aa2Bb3Cc4Dd5Ee6Hh",
+    "late": "Lt1Aa2Bb3Cc4Dd5Ee6Ii",
+}
+EDGE_NAMES = {
+    "steady": "Steady Climb",
+    "twin_one": "Twin Wave One",
+    "twin_two": "Twin Wave Two",
+    "late": "Late Series",
 }
 
 SMALL_THRESHOLD = 30
@@ -183,6 +196,62 @@ def _small_base_record() -> dict:
     return record
 
 
+@lru_cache(maxsize=1)
+def _edge_base_record() -> dict:
+    """Four live symphonies, threshold 30, as of 2026-12-31, chosen for the figures a
+    renderer is tempted to drop:
+
+    * steady: only rising days, so Sortino and Calmar are undefined and the composite
+      cannot be scored; no other symphony is correlated with it ("no redundant
+      sibling"); long-VIX holdings are available (whole-number day counts)
+    * twin_one, twin_two: identical return series, so the correlation is exactly 1,
+      the interval and the stressed-window correlation are not computed, the holdings
+      overlap is unavailable, and the two gates carry different texts
+    * late: its Composer series begins well after its invested-since date
+    """
+    days = b.last_n_nyse_days(b.AS_OF, 31)
+    iso = [d.isoformat() for d in days]
+    ids = EDGE_IDS
+    names = EDGE_NAMES
+    steady = b.composer_symphony(
+        ids["steady"], names["steady"], days, [0.10 + 0.02 * (i % 5) for i in range(30)]
+    )
+    wave = b.wave_returns(30, amp=0.5, freq=0.37)
+    twin_one = b.composer_symphony(ids["twin_one"], names["twin_one"], days, wave)
+    twin_two = b.composer_symphony(ids["twin_two"], names["twin_two"], days, list(wave))
+    late = b.make_symphony(
+        ids["late"],
+        names["late"],
+        iso[0],
+        composer_values=b.values_from_returns(days[-20:], b.wave_returns(19, amp=0.4, freq=0.91)),
+    )
+    holdings = tr.HoldingsInput(
+        days={
+            iso[-5 + i]: {
+                ids["steady"]: {"VIXY": 10.0 if i < 3 else 0.0, "SPY": 90.0},
+                ids["twin_one"]: {"SPY": 100.0},
+                ids["twin_two"]: {"VIXY": 20.0, "SPY": 80.0},
+                ids["late"]: {"SPY": 100.0},
+            }
+            for i in range(5)
+        }
+    )
+    result = b.review(
+        [steady, twin_one, twin_two, late], as_of=b.AS_OF, threshold=30, holdings=holdings
+    )
+    record = tr.run_record(result, b.et(2026, 12, 31, 17, 5))
+    steady_entry = _entry(record, ids["steady"])
+    perf = steady_entry["evidence"]["performance"]["figures"]
+    assert perf["calmar"]["value"] is None and perf["sortino"]["value"] is None
+    assert steady_entry["evidence"]["redundancy"]["pair"] is None
+    assert steady_entry["evidence"]["long_vix"]["status"] == "available"
+    pair = _entry(record, ids["twin_one"])["evidence"]["redundancy"]["pair"]
+    assert pair["ci_lower"]["value"] is None and pair["stressed_correlation"]["value"] is None
+    late_basis = _entry(record, ids["late"])["basis"]
+    assert late_basis["series_begins"] != late_basis["tenure_begins"]
+    return record
+
+
 def _entry(record: dict, symphony_id: str) -> dict:
     matches = [e for e in record["entries"] if e["symphony_id"] == symphony_id]
     assert len(matches) == 1, f"expected one entry for {symphony_id}"
@@ -208,6 +277,14 @@ def full_record(
 
 def small_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
     record = copy.deepcopy(_small_base_record())
+    record["run_id"] = run_id
+    record["trigger"] = trigger
+    return record
+
+
+def edge_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record whose figures are null, undefined or unpaired."""
+    record = copy.deepcopy(_edge_base_record())
     record["run_id"] = run_id
     record["trigger"] = trigger
     return record
@@ -341,6 +418,16 @@ def seed_bot_state(include_small: bool = False) -> None:
         for key, sid in SMALL_IDS.items():
             state[sid] = {"name": SMALL_NAMES[key], "logic_holdings": {"QQQ": 1.0}}
     db_module.save_state(state)
+
+
+def seed_edge_bot_state() -> None:
+    """The live roster of the edge record: display names and holdings per symphony."""
+    db_module.save_state(
+        {
+            sid: {"name": EDGE_NAMES[key], "logic_holdings": {"QQQ": 1.0}}
+            for key, sid in EDGE_IDS.items()
+        }
+    )
 
 
 def decisions_by_id() -> dict:
@@ -523,3 +610,21 @@ def strict_json(response) -> dict:
         raise AssertionError(f"response body carries the non-JSON token {token}")
 
     return json.loads(response.get_data(as_text=True), parse_constant=refuse)
+
+
+def leaf_nodes_containing(node: Node, needle: str) -> list[Node]:
+    """The innermost elements below ``node`` whose own visible text contains ``needle``
+    (case-insensitive): a figure's name and its value sit in one such element, so a
+    claim about "next to" is a claim about one of these."""
+    needle = needle.lower()
+    found = []
+    for candidate in node.walk():
+        if needle not in candidate.text().lower():
+            continue
+        if any(
+            isinstance(child, Node) and needle in child.text().lower()
+            for child in candidate.children
+        ):
+            continue
+        found.append(candidate)
+    return found
