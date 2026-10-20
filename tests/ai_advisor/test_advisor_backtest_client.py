@@ -775,3 +775,177 @@ class TestDatedCompactRequest:
         assert len(calls) == 1
         assert result.stats is None
         assert result.error.startswith("HTTP 413")
+
+
+# ---------------------------------------------------------------------------
+# Retry-After handling and what the client logs (the tenure review calls it)
+# ---------------------------------------------------------------------------
+
+_ABSENT = object()
+# Longest wait the client may take on a server's say-so: the length of Composer's per-minute
+# rate-limit window, so a hostile or mistaken header cannot stall a caller for hours.
+_MAX_RETRY_AFTER_SECONDS = 60.0
+_LEAK = "LEAKMARK-backtest-reply-3318"
+_KEY_ID = "test-key-id-7c41e0aa"
+_SECRET = "test-secret-5b93d2f1-not-a-real-credential"
+
+
+def _sleeps_after_a_429_with(retry_after, minimal_raw_value, response_body, *, max_retries=1):
+    """The sleep lengths and the result of one call whose first reply is a 429 carrying the
+    given Retry-After value (or none) and whose second reply is a 200."""
+    client = _import_client()
+    replies: list = []
+
+    def post(url, **kwargs):
+        replies.append(url)
+        if len(replies) == 1:
+            headers = {} if retry_after is _ABSENT else {"Retry-After": retry_after}
+            return _make_mock_response(429, headers=headers)
+        return _make_mock_response(200, body=response_body)
+
+    with patch("requests.post", side_effect=post), patch("time.sleep") as sleep:
+        result = client.run_backtest(raw_value=minimal_raw_value, max_retries=max_retries)
+    return [call.args[0] for call in sleep.call_args_list], result
+
+
+class TestRetryAfterHandling:
+    """A seconds value is honoured, anything else falls back to the existing backoff, nothing
+    raises, and no wait is longer than the clamp."""
+
+    @pytest.mark.parametrize(("header", "seconds"), [("7", 7.0), ("2.5", 2.5), ("0", 0.0)])
+    def test_a_seconds_value_is_the_wait(self, minimal_raw_value, response_body, header, seconds):
+        sleeps, result = _sleeps_after_a_429_with(header, minimal_raw_value, response_body)
+
+        assert sleeps == [pytest.approx(seconds)]
+        assert result.error is None
+
+    @pytest.mark.parametrize(
+        "header",
+        ["Wed, 21 Oct 2026 07:28:00 GMT", "soon", "", "   ", "7 seconds", "0x10"],
+        ids=["http_date", "word", "empty", "blank", "unit_suffix", "hex"],
+    )
+    def test_a_value_that_is_not_a_number_of_seconds_falls_back_to_the_existing_backoff(
+        self, minimal_raw_value, response_body, header
+    ):
+        baseline, _ = _sleeps_after_a_429_with(_ABSENT, minimal_raw_value, response_body)
+
+        sleeps, result = _sleeps_after_a_429_with(header, minimal_raw_value, response_body)
+
+        assert len(baseline) == 1
+        assert sleeps == baseline
+        assert result.error is None
+
+    @pytest.mark.parametrize("header", ["86400", "999999999", "1e9"])
+    def test_a_wait_longer_than_the_clamp_is_clamped_and_not_dropped(
+        self, minimal_raw_value, response_body, header
+    ):
+        sleeps, result = _sleeps_after_a_429_with(header, minimal_raw_value, response_body)
+
+        assert len(sleeps) == 1
+        assert 0 < sleeps[0] <= _MAX_RETRY_AFTER_SECONDS
+        assert result.error is None
+
+    @pytest.mark.parametrize("header", ["-3", "-0.5", "nan", "inf", "-inf", "1e999"])
+    def test_a_negative_or_non_finite_value_never_raises_and_never_yields_an_invalid_wait(
+        self, minimal_raw_value, response_body, header
+    ):
+        sleeps, result = _sleeps_after_a_429_with(header, minimal_raw_value, response_body)
+
+        assert len(sleeps) == 1
+        assert 0 <= sleeps[0] <= _MAX_RETRY_AFTER_SECONDS
+        assert result.error is None
+
+    @pytest.mark.parametrize("header", ["Wed, 21 Oct 2026 07:28:00 GMT", "soon", "-3", "nan"])
+    def test_a_last_attempt_with_an_unusable_value_returns_the_429_error_and_does_not_raise(
+        self, minimal_raw_value, response_body, header
+    ):
+        sleeps, result = _sleeps_after_a_429_with(
+            header, minimal_raw_value, response_body, max_retries=0
+        )
+
+        assert sleeps == []
+        assert result.stats is None
+        assert "429" in result.error
+
+
+class TestRunBacktestLogs:
+    """No log line of run_backtest carries a credential, a response body or text, or an
+    exception message; exceptions appear by type name."""
+
+    @pytest.fixture(autouse=True)
+    def _credentials(self, monkeypatch):
+        import alpha_bot_execution  # noqa: PLC0415
+
+        monkeypatch.setattr(alpha_bot_execution, "COMPOSER_KEY_ID", _KEY_ID)
+        monkeypatch.setattr(alpha_bot_execution, "COMPOSER_SECRET", _SECRET)
+
+    @staticmethod
+    def _run(client, minimal_raw_value, post, **kwargs):
+        with patch("requests.post", side_effect=post), patch("time.sleep"):
+            return client.run_backtest(raw_value=minimal_raw_value, **kwargs)
+
+    @staticmethod
+    def _assert_clean(caplog):
+        assert caplog.records, "the capture saw the client"
+        for secret in (_KEY_ID, _SECRET, f"Bearer {_SECRET}"):
+            assert secret not in caplog.text
+        assert "LEAKMARK" not in caplog.text
+
+    @pytest.mark.parametrize("compact_body", [False, True])
+    def test_a_successful_call_logs_no_credential(
+        self, caplog, minimal_raw_value, response_body, compact_body
+    ):
+        caplog.set_level("DEBUG")
+        client = _import_client()
+
+        result = self._run(
+            client,
+            minimal_raw_value,
+            lambda url, **kwargs: _make_mock_response(200, body=response_body),
+            compact_body=compact_body,
+        )
+
+        assert result.error is None
+        self._assert_clean(caplog)
+
+    @pytest.mark.parametrize("status", [400, 401, 413, 429, 500, 503])
+    def test_an_error_reply_logs_neither_its_body_nor_a_credential(
+        self, caplog, minimal_raw_value, status
+    ):
+        caplog.set_level("DEBUG")
+        client = _import_client()
+        body = {"marker": _LEAK, "errors": [{"status": status}]}
+
+        result = self._run(
+            client,
+            minimal_raw_value,
+            lambda url, **kwargs: _make_mock_response(status, body=body),
+            max_retries=1,
+        )
+
+        assert result.error is not None
+        self._assert_clean(caplog)
+
+    @pytest.mark.parametrize(
+        "make_exc",
+        [
+            pytest.param(lambda: requests.Timeout(_LEAK), id="Timeout"),
+            pytest.param(lambda: requests.ConnectionError(_LEAK), id="ConnectionError"),
+            pytest.param(lambda: requests.exceptions.ChunkedEncodingError(_LEAK), id="Chunked"),
+        ],
+    )
+    def test_a_raised_exception_is_logged_by_type_name_and_never_by_message(
+        self, caplog, minimal_raw_value, make_exc
+    ):
+        caplog.set_level("DEBUG")
+        client = _import_client()
+        exc = make_exc()
+
+        def post(url, **kwargs):
+            raise exc
+
+        result = self._run(client, minimal_raw_value, post, max_retries=1)
+
+        assert result.error is not None
+        self._assert_clean(caplog)
+        assert type(exc).__name__ in caplog.text

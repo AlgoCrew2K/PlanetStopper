@@ -19,16 +19,33 @@ Contract pinned here (the implementer reads this file, not the plan):
 - Reads are not retried, each carries the engine credential headers and a 15 second timeout,
   and each HTTP reply is followed by one sleep of COMPOSER_READ_SPACING_SECONDS (via
   ``time.sleep``, called as ``time.sleep(...)`` so the tests' patch of the ``time`` module
-  attribute holds).
-- Logs carry the exception type name only: never an exception message, a URL or a credential.
+  attribute holds). COMPOSER_READ_SPACING_SECONDS is 3.0: 20 requests a minute, under the 25
+  a minute Composer documents, which leaves room for the engine's own per-minute read.
+- Reads never follow a redirect (``allow_redirects=False``: a followed redirect would carry the
+  key header to another host), so a 3xx reply is a rejected read. The account id, the symphony
+  id and nothing else in a URL path are percent-quoted with no safe characters, so an id
+  holding "/", "?" or "#" stays one path segment.
+- After a holdings span answered 429 no further span is requested; that span and every later
+  span of the range are listed as failed spans of class rate_limited, in order, without a gap.
+- A holdings row whose ``symbol`` is not a string (a list, an object, a number or null) makes
+  its span unreadable; nothing raises out of the client.
+- Every reply, whatever its status, logs one INFO line on this module's logger carrying the
+  endpoint kind (statistics, series or holdings) and the HTTP status and nothing else: no
+  account or symphony id, no response body, no header. A request that raised logs a WARNING
+  with the exception type name only. No log line at any level carries an exception message, a
+  response body, a URL or a credential.
+- Every public function has a docstring and fully annotated parameters and return.
 """
 
 from __future__ import annotations
 
 import ast
+import inspect
 import logging
+import re
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import requests
@@ -52,6 +69,9 @@ STATUS_CLASSES = [
     (400, "rejected"),
     (409, "rejected"),
     (422, "rejected"),
+    (301, "rejected"),
+    (302, "rejected"),
+    (307, "rejected"),
 ]
 EXCEPTION_FACTORIES = [
     pytest.param(lambda: requests.Timeout("LEAKMARK-timeout"), id="Timeout"),
@@ -80,8 +100,25 @@ _MISSING = object()
 
 def test_read_constants_match_the_documented_limits():
     assert cpc.COMPOSER_READ_TIMEOUT_SECONDS == 15
-    assert cpc.COMPOSER_READ_SPACING_SECONDS == 2.5
+    assert cpc.COMPOSER_READ_SPACING_SECONDS == 3.0
     assert cpc.HOLDINGS_REQUEST_SPAN_DAYS == 30
+
+
+def test_the_spacing_constant_cites_the_per_minute_limit_and_not_a_per_second_one():
+    lines = (REPO / "advisors" / "composer_portfolio_client.py").read_text("utf-8").splitlines()
+    index = next(
+        i for i, line in enumerate(lines) if line.startswith("COMPOSER_READ_SPACING_SECONDS")
+    )
+    comment: list[str] = []
+    for line in reversed(lines[:index]):
+        if not line.startswith("#"):
+            break
+        comment.append(line)
+    text = " ".join(reversed(comment))
+
+    assert comment, "the constant carries a comment"
+    assert "25" in text and "per minute" in text
+    assert "per second" not in text, "Composer's stricter documented limit is per minute"
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +136,7 @@ def test_statistics_request_shape(router):
     assert request.match["account"] == h.ACCOUNT_ID
     assert request.headers == alpha_bot_execution.get_composer_headers()
     assert request.timeout == cpc.COMPOSER_READ_TIMEOUT_SECONDS
+    assert request.kwargs.get("allow_redirects") is False
 
 
 def test_statistics_success_keeps_every_captured_symphony_with_its_id_name_and_start(router):
@@ -106,8 +144,8 @@ def test_statistics_success_keeps_every_captured_symphony_with_its_id_name_and_s
 
     assert result.failure is None
     expected = {e["id"]: e for e in h.statistics_body()["symphonies"]}
-    assert len(expected) == 11
     got = {e["id"]: e for e in result.symphonies}
+    assert len(result.symphonies) == len(expected)
     assert set(got) == set(expected)
     for sid, entry in expected.items():
         assert got[sid]["name"] == entry["name"]
@@ -214,6 +252,7 @@ def test_series_request_shape(router):
     assert request.match == {"account": h.ACCOUNT_ID, "sid": h.MID_ID}
     assert request.headers == alpha_bot_execution.get_composer_headers()
     assert request.timeout == cpc.COMPOSER_READ_TIMEOUT_SECONDS
+    assert request.kwargs.get("allow_redirects") is False
 
 
 @pytest.mark.parametrize("symphony_id", h.CAPTURED_SERIES_IDS)
@@ -394,6 +433,7 @@ def test_holdings_one_span_request_shape_matches_the_captured_request(router):
     assert request.query["include_aggregate_account_holdings"] == "false"
     assert request.headers == alpha_bot_execution.get_composer_headers()
     assert request.timeout == cpc.COMPOSER_READ_TIMEOUT_SECONDS
+    assert request.kwargs.get("allow_redirects") is False
 
 
 def test_holdings_result_is_date_then_symphony_then_ticker_to_value(router):
@@ -456,6 +496,12 @@ def test_holdings_spans_are_merged_without_filtering_the_days_a_response_returns
         expected[day] = by_symphony
     assert result.days == expected
     assert result.failed_spans == []
+    in_older = {sid for by_symphony in h.holdings_days(older).values() for sid in by_symphony}
+    for day, by_symphony in h.holdings_days(recent).items():
+        assert set(result.days[day]) == set(by_symphony), "each span keeps its own membership"
+    assert set(h.holdings_days(recent)[sorted(h.holdings_days(recent))[0]]) - in_older, (
+        "fixture sanity: the recent span lists a symphony the older span does not"
+    )
 
 
 def test_holdings_a_failed_middle_span_is_listed_and_the_other_spans_are_kept(router):
@@ -563,6 +609,125 @@ def test_every_holdings_span_is_followed_by_the_spacing_sleep(router):
     assert router.sleeps == [cpc.COMPOSER_READ_SPACING_SECONDS] * 3
 
 
+def test_holdings_after_a_429_span_make_no_further_request_and_list_every_remaining_span(router):
+    older = h.holdings_older_body()
+    replies = {0: h.Reply(body=older), 1: h.error_reply(429)}
+    router.holdings_handler = lambda req, i: replies[i]
+    start = date(2026, 4, 6)
+    span = cpc.HOLDINGS_REQUEST_SPAN_DAYS
+
+    result = cpc.read_daily_holdings(h.ACCOUNT_ID, start, start + timedelta(days=3 * span - 1))
+
+    assert len(router.requests) == 2, "nothing is requested after a 429"
+    assert result.days == h.holdings_days(older)
+    assert [(s.start, s.end, s.failure) for s in result.failed_spans] == [
+        (start + timedelta(days=span), start + timedelta(days=2 * span - 1), "rate_limited"),
+        (start + timedelta(days=2 * span), start + timedelta(days=3 * span - 1), "rate_limited"),
+    ]
+
+
+def test_holdings_a_429_on_the_first_span_fails_the_whole_range_after_one_request(router):
+    router.set_all_holdings(h.error_reply(429))
+    start = date(2026, 4, 6)
+
+    result = cpc.read_daily_holdings(h.ACCOUNT_ID, start, start + timedelta(days=89))
+
+    assert len(router.requests) == 1
+    assert result.days == {}
+    assert [s.failure for s in result.failed_spans] == ["rate_limited"] * 3
+    assert result.failed_spans[0].start == start
+    assert result.failed_spans[-1].end == start + timedelta(days=89)
+
+
+NON_STRING_SYMBOLS = [
+    pytest.param(["VIXY"], id="list"),
+    pytest.param({"ticker": "VIXY"}, id="object"),
+    pytest.param(5, id="integer"),
+    pytest.param(1.5, id="float"),
+    pytest.param(True, id="boolean"),
+    pytest.param(None, id="null"),
+]
+
+
+@pytest.mark.parametrize("symbol", NON_STRING_SYMBOLS)
+def test_holdings_a_symbol_that_is_not_a_string_makes_the_span_unreadable_and_never_raises(
+    router, symbol
+):
+    body = h.holdings_recent_body()
+    first = next(iter(body["by_symphony"].values()))
+    first[next(iter(first))][0]["symbol"] = symbol  # a type edge of one captured holding row
+    router.set_all_holdings(h.Reply(body=body))
+
+    result = cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END)
+
+    assert result.days == {}
+    assert [(s.start, s.end, s.failure) for s in result.failed_spans] == [
+        (RECENT_START, RECENT_END, "unreadable")
+    ]
+
+
+def test_holdings_a_string_symbol_in_the_long_form_is_kept_as_it_is(router):
+    body = h.holdings_recent_body()
+    first = next(iter(body["by_symphony"].values()))
+    first[next(iter(first))][0]["symbol"] = "EQUITIES::VIXY//USD"  # the long form statistics use
+    router.set_all_holdings(h.Reply(body=body))
+
+    result = cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END)
+
+    assert result.failed_spans == []
+    assert result.days == h.holdings_days(body)
+
+
+# ---------------------------------------------------------------------------
+# URL paths and redirects
+# ---------------------------------------------------------------------------
+
+AWKWARD_ID = "ab/../cd?x=1 #frag%2F"
+
+
+def test_the_account_id_is_one_percent_quoted_path_segment_on_all_three_reads(router):
+    router.set_all_holdings(h.Reply(body=h.holdings_emptied_body()))
+
+    cpc.read_symphony_statistics(AWKWARD_ID)
+    cpc.read_symphony_value_series(AWKWARD_ID, h.OLDEST_ID)
+    cpc.read_daily_holdings(AWKWARD_ID, RECENT_START, RECENT_END)
+
+    assert router.violations == [], "an unquoted id splits the path into another route"
+    assert [r.kind for r in router.requests] == ["statistics", "series", "holdings"]
+    for request in router.requests:
+        assert request.match["account"] == quote(AWKWARD_ID, safe="")
+        assert request.query.get("x") is None, "a raw ? would start a query string"
+
+
+def test_the_symphony_id_is_one_percent_quoted_path_segment(router):
+    router.set_series(AWKWARD_ID, h.error_reply(404))
+
+    cpc.read_symphony_value_series(h.ACCOUNT_ID, AWKWARD_ID)
+
+    assert router.violations == []
+    assert [r.kind for r in router.requests] == ["series"]
+    assert router.requests[0].match == {
+        "account": h.ACCOUNT_ID,
+        "sid": quote(AWKWARD_ID, safe=""),
+    }
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_a_redirect_answer_is_a_rejected_read_that_is_neither_followed_nor_retried(router, status):
+    router.statistics_default = h.redirect_reply(status)
+    router.set_series(h.OLDEST_ID, h.redirect_reply(status))
+    router.set_all_holdings(h.redirect_reply(status))
+
+    stats = cpc.read_symphony_statistics(h.ACCOUNT_ID)
+    series = cpc.read_symphony_value_series(h.ACCOUNT_ID, h.OLDEST_ID)
+    holdings = cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END)
+
+    assert stats.failure == series.failure == "rejected"
+    assert [s.failure for s in holdings.failed_spans] == ["rejected"]
+    assert len(router.requests) == 3
+    assert all(r.kwargs.get("allow_redirects") is False for r in router.requests)
+
+
 # ---------------------------------------------------------------------------
 # Logging and import boundary
 # ---------------------------------------------------------------------------
@@ -583,6 +748,126 @@ def test_logs_carry_the_exception_type_and_never_its_message_or_a_credential(rou
     assert h.SERVICE_KEY_ID not in caplog.text
     for name in ("ConnectionError", "Timeout", "ReadTimeout"):
         assert name in caplog.text
+
+
+LEAK = "LEAKMARK-reply-body-5521"
+CLIENT_LOGGER = "advisors.composer_portfolio_client"
+
+READ_CALLS = {
+    "statistics": lambda: cpc.read_symphony_statistics(h.ACCOUNT_ID),
+    "series": lambda: cpc.read_symphony_value_series(h.ACCOUNT_ID, h.OLDEST_ID),
+    "holdings": lambda: cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END),
+}
+
+
+def _serve(router, kind, reply):
+    """Answer every request of one read kind with ``reply``."""
+    if kind == "statistics":
+        router.statistics_default = reply
+    elif kind == "series":
+        router.set_series(h.OLDEST_ID, reply)
+    else:
+        router.set_all_holdings(reply)
+
+
+@pytest.mark.parametrize("status", [200, 400, 401, 404, 429, 500])
+@pytest.mark.parametrize("kind", sorted(READ_CALLS))
+def test_every_reply_logs_one_info_line_with_the_endpoint_kind_and_the_status_only(
+    router, caplog, kind, status
+):
+    caplog.set_level(logging.INFO)
+    if status != 200:
+        _serve(router, kind, h.marked_error_reply(status, LEAK))
+
+    READ_CALLS[kind]()
+
+    records = [r for r in caplog.records if r.name == CLIENT_LOGGER and r.levelno == logging.INFO]
+    assert len(router.requests) == 1
+    assert len(records) == 1, f"one INFO line per reply, got {len(records)}"
+    line = records[0].getMessage()
+    assert kind in line.lower()
+    assert re.search(rf"\b{status}\b", line), line
+    for forbidden in (
+        h.ACCOUNT_ID,
+        h.OLDEST_ID,
+        LEAK,
+        h.SERVICE_KEY_ID,
+        h.SERVICE_SECRET,
+        "authorization",
+    ):
+        assert forbidden.lower() not in line.lower(), line
+
+
+def test_each_holdings_span_reply_logs_its_own_info_line(router, caplog):
+    caplog.set_level(logging.INFO)
+    router.set_all_holdings(h.Reply(body=h.holdings_emptied_body()))
+
+    cpc.read_daily_holdings(h.ACCOUNT_ID, date(2026, 4, 6), date(2026, 6, 19))
+
+    info = [r for r in caplog.records if r.name == CLIENT_LOGGER and r.levelno == logging.INFO]
+    assert len(router.requests) == 3
+    assert len(info) == 3
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 429, 500, 502, 400, 422])
+def test_no_log_line_of_an_error_reply_carries_its_body_a_credential_or_an_id(
+    router, caplog, status
+):
+    caplog.set_level(logging.DEBUG)
+    for kind in READ_CALLS:
+        _serve(router, kind, h.marked_error_reply(status, LEAK))
+
+    for call in READ_CALLS.values():
+        call()
+
+    assert len(router.requests) == len(READ_CALLS)
+    assert any(r.name == CLIENT_LOGGER for r in caplog.records), "the capture saw the client"
+    text = caplog.text
+    assert "LEAKMARK" not in text
+    for secret in (
+        h.SERVICE_SECRET,
+        h.SERVICE_KEY_ID,
+        alpha_bot_execution.get_composer_headers()["authorization"],
+        h.ACCOUNT_ID,
+        h.OLDEST_ID,
+    ):
+        assert secret not in text
+
+
+def test_a_200_reply_that_is_not_json_logs_neither_its_text_nor_a_credential(router, caplog):
+    caplog.set_level(logging.DEBUG)
+    for kind in READ_CALLS:
+        _serve(router, kind, h.Reply(status=200, body=f"<html>{LEAK}</html>"))
+
+    for call in READ_CALLS.values():
+        call()
+
+    assert len(router.requests) == len(READ_CALLS)
+    assert "LEAKMARK" not in caplog.text
+    assert h.SERVICE_SECRET not in caplog.text
+    assert h.SERVICE_KEY_ID not in caplog.text
+
+
+def test_every_public_function_has_a_docstring_and_annotated_parameters_and_return():
+    public = [
+        fn
+        for name, fn in inspect.getmembers(cpc, inspect.isfunction)
+        if not name.startswith("_") and fn.__module__ == cpc.__name__
+    ]
+
+    assert {fn.__name__ for fn in public} >= {
+        "read_symphony_statistics",
+        "read_symphony_value_series",
+        "read_daily_holdings",
+    }
+    for fn in public:
+        assert (fn.__doc__ or "").strip(), f"{fn.__name__} needs a docstring"
+        signature = inspect.signature(fn)
+        assert signature.return_annotation is not inspect.Signature.empty, fn.__name__
+        for parameter in signature.parameters.values():
+            assert parameter.annotation is not inspect.Parameter.empty, (
+                f"{fn.__name__}({parameter.name}) needs an annotation"
+            )
 
 
 def test_the_client_imports_exactly_the_base_url_and_the_header_builder_from_the_engine():

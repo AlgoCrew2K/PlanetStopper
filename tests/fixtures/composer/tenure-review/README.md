@@ -35,13 +35,13 @@ Each `.json` file is one record with these keys: `_fixture_provenance`, `_case`,
 
 | File | Case | Endpoint | Request parameters | Status | Kept |
 |---|---|---|---|---|---|
-| `case1_statistics_roth.json` | 1 | `GET /portfolio/accounts/{account-id}/symphony-stats-meta` | none | 200 | all 11 symphonies; fields `id`, `name`, `invested_since`, `asset_class`, `value`, `deposit_adjusted_value`; the other 34 per-entry keys are listed in `_trimmed` |
+| `case1_statistics_roth.json` | 1 | `GET /portfolio/accounts/{account-id}/symphony-stats-meta` | none | 200 | 6 of the 11 symphonies (see Trims); fields `id`, `name`, `invested_since`, `asset_class`, `value`, `deposit_adjusted_value`; the other 34 per-entry keys are listed in `_trimmed` |
 | `case2_series_n2ooAZTvBRN6ZzpMmWmU.json` | 2 | `GET /portfolio/accounts/{account-id}/symphonies/{symphony-id}` | none | 200 | complete series (oldest live symphony, 570 points) |
 | `case2_series_q7WQHwLzt49cMgFBzHsX.json` | 2 | same | none | 200 | complete series (youngest live symphony, 28 points) |
 | `case2_series_nOyb55RMGVCKPiYXv7TI.json` | 2 extra | same | none | 200 | complete series (148 points); subject of cases 4 and 5 |
 | `case2_series_8FAXAnQmYi1INDubazeC.json` | 2 extra | same | none | 200 | complete series (233 points); `series` and `deposit_adjusted_series` differ on every point |
-| `case3_holdings_recent_2026-09-20_2026-10-19.json` | 3 | `GET /portfolio/accounts/{account-id}/symphony-historical-holdings` | `start_date=2026-09-20`, `end_date=2026-10-19`, `include_aggregate_account_holdings=false` | 200 | every symphony and day; per holding `symbol` and `value` (`quantity` dropped) |
-| `case3_holdings_older_2026-04-06_2026-05-05.json` | 3 | same | `start_date=2026-04-06`, `end_date=2026-05-05`, `include_aggregate_account_holdings=false` | 200 | same trimming |
+| `case3_holdings_recent_2026-09-20_2026-10-19.json` | 3 | `GET /portfolio/accounts/{account-id}/symphony-historical-holdings` | `start_date=2026-09-20`, `end_date=2026-10-19`, `include_aggregate_account_holdings=false` | 200 | 6 symphonies on 6 of the 30 days (see Trims); per holding `symbol` and `value` (`quantity` dropped) |
+| `case3_holdings_older_2026-04-06_2026-05-05.json` | 3 | same | `start_date=2026-04-06`, `end_date=2026-05-05`, `include_aggregate_account_holdings=false` | 200 | 5 symphonies on 4 of the 30 days (see Trims); same per-holding trimming |
 | `case4_definition_nOyb55RMGVCKPiYXv7TI.json` | 4 | `GET /symphonies/{symphony-id}/score` | none | 200 | complete body of the smallest live definition (100,906 bytes as received) |
 | `case4_definition_sizes.json` | 4 | derived from 11 `/score` responses | none | n/a | measured byte sizes of all 11 live definitions; only the smallest definition is stored |
 | `case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json` | 5 | `POST /backtest` | body: `start_date=2026-07-20`, `end_date=2026-10-19`, `capital=10000.0`, `apply_reg_fee=true`, `apply_taf_fee=true`, `slippage_percent=0.005`, `broker=alpaca`, `backtest_version=v2`; compact separators | 200 | `first_day`, `last_market_day`, `data_warnings`, `costs`, `dvm_capital`, `stats`; six other keys dropped (sizes in `_trimmed`) |
@@ -58,6 +58,35 @@ Case 2 rows marked "extra" were not in the requested list. They exist because th
 two series with at least 181 points plus one younger than the 126-day threshold, and S-5.1 needs a realized
 series for the same symphony as the dated backtest.
 
+## Trims
+
+The statistics and holdings records are subsets of the captured responses, made by selecting entries of the
+captured data and copying them unchanged (no value is typed or edited; each file's `_trimmed` records the
+same). The request metadata of a holdings record (`_request`) is that of the full 30-day request the capture
+made. A test never asserts a count taken from the capture: every count is derived from the committed record.
+
+Symphonies kept (statistics record, in captured order): `8FAXAnQmYi1INDubazeC`, `lW4ZzWuqR8tEO2DhXbil`,
+`q7WQHwLzt49cMgFBzHsX`, `nOyb55RMGVCKPiYXv7TI`, `Gpaw3IhZghQPRE6AdEKx`, `n2ooAZTvBRN6ZzpMmWmU`. Each covers a case:
+
+- `n2ooAZTvBRN6ZzpMmWmU`, `8FAXAnQmYi1INDubazeC`, `nOyb55RMGVCKPiYXv7TI`: the three eligible symphonies with a
+  captured series; the oldest holds a long-volatility product on the last days and cash on the first; the
+  third is the subject of the definition and backtest records.
+- `q7WQHwLzt49cMgFBzHsX`: the youngest symphony (below the default threshold), absent from the older holdings.
+- `Gpaw3IhZghQPRE6AdEKx`: a symphony with no series record that holds a long-volatility product on every kept
+  recent day (the co-holder), so the empty-series answer is exercised for an old symphony.
+- `lW4ZzWuqR8tEO2DhXbil`: a symphony with no series record that holds no long-volatility product on the
+  kept recent days.
+
+Dropped: `qF5ZU7ALjrlhxrGEwsyJ`, `iaSOOUsmnCJHiZvbrWfs`, `hvPiGP1O7AHfutHE3Fjy`, `5XjzXjdGnjh99MIsdM97`,
+`MoAkUHnavSYw3oONiUxe` (no test distinguishes them), and from the older holdings the one id that is not in the
+statistics record (`INfCn3eKsu6i4oTTqdUp`).
+
+Days kept, recent holdings: 2026-09-21 (cash rows for two symphonies), 2026-10-14, 2026-10-15 (the oldest starts
+holding a long-volatility product beside the co-holder), 2026-10-16 (every symphony holds one), 2026-10-17 (a
+Saturday: a non-session day that carries holdings) and 2026-10-19 (the as-of day). Days kept, older holdings:
+2026-04-06, 2026-04-14 (cash rows and long-volatility holdings), 2026-04-23 (a day only the co-holder holds
+one) and 2026-04-25 (a Saturday). The two sets share no date.
+
 ## Synthetic file
 
 `synthetic_non_json_200.txt` is hand-written. It is not a Composer response. No read-only request provokes a
@@ -66,7 +95,7 @@ file text says it is synthetic.
 
 ## Measured facts about the captured data
 
-Statistics:
+Statistics (the capture; the committed record keeps 6 entries, see Trims):
 - Top-level keys: `symphonies` only. 11 entries, 40 keys each. `invested_since` is non-null on all 11;
   `asset_class` is `EQUITIES` on all 11. Each entry's `tickers[].symbol` uses the `EQUITIES::SYM//USD` form.
 
@@ -81,7 +110,7 @@ Series:
 - A symphony id that does not exist returns HTTP 200 with three empty arrays, not 404. An account id that does
   not exist returns 404 `broker-account-not-found`.
 
-Holdings:
+Holdings (the capture; the committed records keep the days and symphonies listed under Trims):
 - With `include_aggregate_account_holdings=false` the response has only `by_symphony`
   (no `total_symphony_holdings` key).
 - A 30-inclusive-day span returns 30 date keys per symphony, weekends included; weekend days carry holdings.

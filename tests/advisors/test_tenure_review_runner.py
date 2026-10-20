@@ -1,7 +1,7 @@
 """The tenure review runner: Composer reads, shadow fallback, dated backtest, holdings, one run.
 
 Module under test: advisors.tenure_review_runner (and, through it, advisors.composer_portfolio_client,
-symphony_logic.fetch_symphony_score and advisors.composer_backtest_client.run_backtest).
+the definition read and advisors.composer_backtest_client.run_backtest).
 
 Every Composer request is served by tests/advisors/_composer_http_router.py from the captured
 records under tests/fixtures/composer/tenure-review/; the router also replaces every other
@@ -21,28 +21,56 @@ Contract pinned here (the implementer reads this file, not the plan):
   An unexpected exception ends the run uncompleted with a reason naming the exception type only.
 - Threshold and as-of day come from ``tenure_review.parse_threshold(threshold_raw)`` and
   ``tenure_review.as_of_trading_day(now_et)``, with ``now_et`` passed through as given.
+- A display name is trimmed; a missing, null or blank name is the Composer id, everywhere the
+  review shows a name.
 - Every live symphony gets one series read against the account that listed it. A series failure
-  becomes ``SymphonyInput.series_failure`` (the failure class string of the client) with the
-  fallback ``shadow_returns`` read as ``analytics.get_symphony_bot_and_held_daily_returns(id,
-  days=None)`` element [1] keyed by Composer id; a usable series becomes ``composer_values``.
-- Only a symphony with a usable realized window and tenure at least the threshold gets a
-  definition read (``symphony_logic.fetch_symphony_score``, one GET) and, when the definition is
+  becomes ``SymphonyInput.series_failure`` (the failure class string of the client) and each
+  failure class reads its own reason in the entry. The fallback ``shadow_returns`` are read as
+  ``analytics.get_symphony_bot_and_held_daily_returns(id, days=None)`` element [1] keyed by
+  Composer id whenever the Composer series is not usable: when its read failed, and also when it
+  was read but leaves fewer than 2 usable points between the invested-since date and the as-of
+  day. A usable series becomes ``composer_values``.
+- ``SymphonyInput.current_tickers`` are the keys of the symphony's own ``logic_holdings`` in the
+  state returned by ``database.load_state()`` (called as ``database.load_state()`` so a patch of
+  that module attribute holds); left ``None`` when the state has no entry for the Composer id,
+  no ``logic_holdings`` or a null one, or when the state cannot be read.
+- The window of a symphony is asked of ``tenure_review.qualifying_window`` (called as
+  ``tenure_review.qualifying_window(symphony, as_of, threshold)`` so a patch of that module
+  attribute holds); the runner uses no private name of ``advisors.tenure_review``.
+- The run reads in phases: statistics, then every series, then for each symphony with a usable
+  window and tenure at least the threshold one definition read and, when the definition is
   non-empty, one dated compact backtest (``run_backtest(..., start_date=<window first>,
-  end_date=<window last>, compact_body=True, max_retries=1)``). An empty definition sets
+  end_date=<window last>, compact_body=True, ...)``), then holdings. An empty definition sets
   ``definition_available=False`` and requests no backtest.
-- Holdings are read per account in client spans from the earliest realized window first date
-  among symphonies in that account to the as-of day, merged across accounts by date and
-  symphony id. All spans failing sets ``HoldingsInput.failure`` to the first failed span's class;
-  a partial read leaves it ``None``. A holdings failure never fails the run.
-- Reads from the client are followed by the client's spacing sleep; the runner adds no request
-  beyond statistics, series, holdings, definition and backtest.
+- Holdings are read for every account in client spans, each from the single earliest window
+  first date over all symphonies (not each account's own) to the as-of day, merged across
+  accounts by date and symphony id, keeping only NYSE trading days. When every read fails,
+  ``HoldingsInput.failure`` is the first failed span's class. When some accounts could not be
+  read in full (any failed span), the days that were read still feed the review, and the
+  long-VIX item of a symphony names the accounts that are missing: its portfolio-wide shares
+  (``peak_share_with``, ``peak_share_without``) read ``value`` None with a reason naming each
+  missing account id and no readable one, its own counts (``held_days``, ``co_held_days``) are
+  computed from the days that were read, and a symphony whose own account is missing reads
+  unavailable naming that account. A holdings failure never fails the run.
+- Pacing: at least 3.0 seconds of sleep separate any two consecutive Composer requests of the
+  run, whatever their kinds, a retry of the backtest included. The first reply answered 429
+  ends the run's Composer requests: nothing is requested after it (the backtest is not retried
+  after a 429), and every item that would have needed a later request reads "Composer rate
+  limit". The runner adds no request beyond statistics, series, holdings, definition and
+  backtest; the three portfolio reads do not follow redirects.
+- An exception inside the definition read or the backtest call makes only that symphony's
+  backtest item unavailable; the run still completes.
+- Logs name exception types only: no log line at any level carries a credential header, a
+  response body or text, or an exception message.
 """
 
 from __future__ import annotations
 
 import ast
 import json
+import logging
 import sqlite3
+from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -52,6 +80,8 @@ import requests
 import advisors.tenure_review as tr
 import alpha_bot_execution
 import analytics
+import database
+from advisors import composer_backtest_client as cbc
 from advisors import composer_portfolio_client as cpc
 from advisors import tenure_review_runner as runner
 from tests.advisors import _composer_http_router as h
@@ -63,6 +93,10 @@ REPO = Path(__file__).resolve().parents[2]
 NOW = b.et(2026, 10, 20, 3, 45)  # a Tuesday before the open: the as-of day is Monday 2026-10-19
 AS_OF = date(2026, 10, 19)  # the last point of every captured series
 LONG_VIX = {"VIXY", "VIXM", "UVXY", "UVIX", "VXX"}
+SPACING_SECONDS = 3.0  # 20 requests a minute, under the 25 a minute Composer documents
+RATE_LIMIT_REASON = "Composer rate limit"
+LEAK = "LEAKMARK-reply-body-5521"
+SHORT_SERIES_REASON = "Composer series has fewer than 2 usable points in the tenure"
 COMPOSER_BASIS = "realized: Composer account, deposit-adjusted"
 SHADOW_BASIS = "PlanetStopper shadow history from the 2026-06-22 go-live floor"
 
@@ -151,10 +185,11 @@ def edit_statistics(router, edits):
     router.statistics_default = h.Reply(body=body)
 
 
-def split_roster(router, first_count=5):
-    """Two accounts: the first lists the first ``first_count`` captured symphonies, the second
-    the rest (subsets of the one captured statistics record)."""
+def split_roster(router, first_count=None):
+    """Two accounts: the first lists the first ``first_count`` captured symphonies (half of them
+    by default), the second the rest (subsets of the one captured statistics record)."""
     entries = h.statistics_body()["symphonies"]
+    first_count = len(entries) // 2 if first_count is None else first_count
     mine, theirs = entries[:first_count], entries[first_count:]
     router.statistics_by_account = {
         h.ACCOUNT_ID: h.Reply(body={"symphonies": mine}),
@@ -177,6 +212,30 @@ def seed_shadow(tmp_path, monkeypatch, symphony_id, count=140, *, roster_extra=(
     return dict(zip(days, bot, strict=True)), db_file
 
 
+def seed_shadow_many(tmp_path, monkeypatch, symphony_ids, count=140):
+    """The same shadow rows (bot and held differ on every day) for each listed Composer id."""
+    days = [d.isoformat() for d in b.last_n_nyse_days(AS_OF, count)]
+    bot = b.sine_returns(count, 3, amp=0.4, drift=0.08)
+    held = b.sine_returns(count, 5, amp=0.9, drift=-0.04)
+    rows = {
+        sid: {d: (s, c) for d, s, c in zip(days, bot, held, strict=True)} for sid in symphony_ids
+    }
+    db_file = seed_state_db(tmp_path, monkeypatch, series_by_symphony=rows)
+    monkeypatch.setattr(analytics, "DB_FILE", db_file)
+    return dict(zip(days, bot, strict=True)), db_file
+
+
+def seed_logic_holdings(tmp_path, monkeypatch, logic_holdings_by_key):
+    """A state with one entry per key, each holding ``logic_holdings`` as given (None allowed)."""
+    seed_state_db(
+        tmp_path, monkeypatch, series_by_symphony={key: {} for key in logic_holdings_by_key}
+    )
+    state = database.load_state()
+    for key, logic_holdings in logic_holdings_by_key.items():
+        state[key]["logic_holdings"] = logic_holdings
+    database.save_state(state)
+
+
 def table_count(db_file, table):
     conn = sqlite3.connect(db_file)
     try:
@@ -187,6 +246,64 @@ def table_count(db_file, table):
 
 def backtest_posts(router):
     return router.of_kind("backtest")
+
+
+def captured_definition_for(router, *symphony_ids):
+    """Serve the captured definition record as the definition of each listed symphony (its
+    tree content is irrelevant to the read path and the request body)."""
+    for sid in symphony_ids:
+        router.definition_by_symphony[sid] = h.reply_from_record(
+            "case4_definition_nOyb55RMGVCKPiYXv7TI.json"
+        )
+
+
+def trading_day_holdings(body):
+    """The days of a holdings body that are NYSE sessions (weekend days dropped)."""
+    days = h.holdings_days(body)
+    sessions = {
+        d.isoformat()
+        for d in b.nyse_days(date.fromisoformat(min(days)), date.fromisoformat(max(days)))
+    }
+    return {day: by_symphony for day, by_symphony in days.items() if day in sessions}
+
+
+def long_vix_counts(days, subject, live_ids):
+    """(days the subject held a long-VIX product, of those days the ones another did too)."""
+    held = co_held = 0
+    for by_symphony in days.values():
+        if subject in by_symphony and LONG_VIX & set(by_symphony[subject]):
+            held += 1
+            co_held += any(
+                LONG_VIX & set(by_symphony[other])
+                for other in live_ids
+                if other != subject and other in by_symphony
+            )
+    return held, co_held
+
+
+def long_vix_peak_shares(days, subject, live_ids):
+    """(peak long-VIX percent of the portfolio with the subject, without it) over the days the
+    subject has holdings; None for a side with no value on any day."""
+    peaks = {"with": None, "without": None}
+    for by_symphony in days.values():
+        if subject not in by_symphony:
+            continue
+        for side, ids in (
+            ("with", live_ids),
+            ("without", [sid for sid in live_ids if sid != subject]),
+        ):
+            total = sum(sum(by_symphony[sid].values()) for sid in ids if sid in by_symphony)
+            long_value = sum(
+                v
+                for sid in ids
+                if sid in by_symphony
+                for k, v in by_symphony[sid].items()
+                if k in LONG_VIX
+            )
+            if total > 0:
+                share = long_value / total * 100.0
+                peaks[side] = share if peaks[side] is None else max(peaks[side], share)
+    return peaks["with"], peaks["without"]
 
 
 def assert_compact_dated_body(request, *, start, end, definition):
@@ -251,7 +368,6 @@ def test_runner_imports_its_collaborators_and_never_the_execution_engine():
         "advisors.composer_portfolio_client",
         "advisors.composer_backtest_client",
         "advisors.tenure_review",
-        "symphony_logic",
     ):
         assert any(name == needed or name.startswith(f"{needed}.") for name in imported), needed
 
@@ -267,10 +383,13 @@ def test_a_completed_run_has_one_entry_per_symphony_in_the_statistics_response(r
     assert isinstance(outcome.result, tr.ReviewResult)
     ids = [e["symphony_id"] for e in outcome.result.entries]
     assert sorted(ids) == sorted(h.statistics_ids())
-    assert len(ids) == len(set(ids)) == 11
+    assert len(ids) == len(set(ids)) == len(h.statistics_ids())
     by_id = {e["id"]: e for e in h.statistics_body()["symphonies"]}
+    assert any(e["name"] != e["name"].strip() for e in by_id.values()), (
+        "fixture sanity: a captured name carries surrounding whitespace"
+    )
     for e in outcome.result.entries:
-        assert e["display_name"] == by_id[e["symphony_id"]]["name"]
+        assert e["display_name"] == by_id[e["symphony_id"]]["name"].strip()
         assert e["invested_since"] == by_id[e["symphony_id"]]["invested_since"]
 
 
@@ -401,8 +520,10 @@ def test_no_configured_account_ends_the_run_without_a_single_request(router):
 
 
 def test_an_unexpected_error_ends_the_run_uncompleted_naming_only_the_exception_type(
-    router, monkeypatch
+    router, monkeypatch, caplog
 ):
+    caplog.set_level(logging.DEBUG)
+
     def boom(inputs):
         raise RuntimeError("boom-secret-7731")
 
@@ -414,6 +535,8 @@ def test_an_unexpected_error_ends_the_run_uncompleted_naming_only_the_exception_
     assert outcome.result is None
     assert "RuntimeError" in outcome.failure_reason
     assert "boom-secret-7731" not in outcome.failure_reason
+    assert "RuntimeError" in caplog.text, "the failure is logged, by type"
+    assert "boom-secret-7731" not in caplog.text
 
 
 def test_the_roster_is_the_statistics_response_and_a_state_only_symphony_is_not_reviewed(
@@ -454,10 +577,11 @@ def test_two_accounts_are_each_read_once_and_each_symphony_is_read_from_its_own_
     stats = router.of_kind("statistics")
     assert sorted(r.match["account"] for r in stats) == sorted([h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
     owner = {sid: h.ACCOUNT_ID for sid in mine} | {sid: h.SECOND_ACCOUNT_ID for sid in theirs}
-    assert len(router.of_kind("series")) == 11
+    assert len(owner) == len(h.statistics_ids())
+    assert len(router.of_kind("series")) == len(h.statistics_ids())
     for r in router.of_kind("series"):
         assert r.match["account"] == owner[r.match["sid"]]
-    assert len(outcome.result.entries) == 11
+    assert len(outcome.result.entries) == len(h.statistics_ids())
 
 
 def test_an_invested_since_date_composer_does_not_report_leaves_the_tenure_unknown(
@@ -576,8 +700,14 @@ SERIES_FALLBACKS = [
     pytest.param(
         lambda: h.reply_from_record("case7a_series_nonexistent_account_404.json"),
         "not_found",
-        "Composer has no series for this symphony",
+        "Composer returned not found",
         id="404",
+    ),
+    pytest.param(lambda: h.error_reply(400), "rejected", "Composer rejected the request", id="400"),
+    pytest.param(lambda: h.error_reply(409), "rejected", "Composer rejected the request", id="409"),
+    pytest.param(lambda: h.error_reply(422), "rejected", "Composer rejected the request", id="422"),
+    pytest.param(
+        lambda: h.redirect_reply(302), "rejected", "Composer rejected the request", id="302"
     ),
     pytest.param(lambda: h.error_reply(429), "rate_limited", "Composer rate limit", id="429"),
     pytest.param(lambda: h.error_reply(500), "unavailable", "Composer unavailable", id="500"),
@@ -646,17 +776,38 @@ def test_a_series_failure_falls_back_to_shadow_history_labelled_with_its_reason(
     assert entry(outcome, h.MID_ID)["basis"]["kind"] == "composer"
 
 
-@pytest.mark.parametrize("status", [400, 422])
-def test_a_rejected_series_request_also_falls_back_to_shadow_history(
-    router, inputs_seen, tmp_path, monkeypatch, status
+SERIES_CLASS_CASES = [
+    (lambda: h.error_reply(401), "refused", "Composer refused the request"),
+    (lambda: h.error_reply(404), "not_found", "Composer returned not found"),
+    (lambda: h.error_reply(503), "unavailable", "Composer unavailable"),
+    (h.non_json_200, "unreadable", "Composer response unreadable"),
+    (lambda: h.error_reply(422), "rejected", "Composer rejected the request"),
+    (
+        lambda: h.reply_from_record("case7a_series_nonexistent_symphony_200_empty.json"),
+        "empty",
+        "Composer series empty",
+    ),
+]
+
+
+def test_each_series_failure_class_reads_its_own_reason_when_all_sit_side_by_side(
+    router, inputs_seen
 ):
-    seed_shadow(tmp_path, monkeypatch, h.OLDEST_ID)
-    router.set_series(h.OLDEST_ID, h.error_reply(status))
+    """One run, one class per symphony: every class the client returns except rate_limited (a
+    429 stops the run's requests, so it is exercised on its own), so a reason taken from another
+    class's text cannot hide behind a shared default."""
+    assigned = dict(zip(h.statistics_ids(), SERIES_CLASS_CASES, strict=False))
+    assert len(assigned) == len(SERIES_CLASS_CASES), "the fixture roster covers every class"
+    for sid, (make_reply, _, _) in assigned.items():
+        router.set_series(sid, make_reply())
 
     outcome = completed_run()
 
-    assert input_of(inputs_seen, h.OLDEST_ID).series_failure == "rejected"
-    assert entry(outcome, h.OLDEST_ID)["basis"]["kind"] == "shadow"
+    for sid, (_, failure, reason) in assigned.items():
+        assert input_of(inputs_seen, sid).series_failure == failure, sid
+        assert entry(outcome, sid)["basis"]["fallback_reason"] == reason, sid
+    reasons = [entry(outcome, sid)["basis"]["fallback_reason"] for sid in assigned]
+    assert len(set(reasons)) == len(reasons), "no two classes share a reason"
 
 
 def test_no_series_and_no_shadow_rows_leaves_every_figure_unavailable_and_none(router):
@@ -668,7 +819,7 @@ def test_no_series_and_no_shadow_rows_leaves_every_figure_unavailable_and_none(r
 
     e = entry(outcome, h.OLDEST_ID)
     assert e["basis"]["kind"] == "none"
-    assert e["basis"]["fallback_reason"] == "Composer has no series for this symphony"
+    assert e["basis"]["fallback_reason"] == "Composer returned not found"
     perf = e["evidence"]["performance"]
     assert perf["status"] == "unavailable"
     assert perf["reason"] == "no history"
@@ -784,7 +935,7 @@ BACKTEST_FAILURES = [
         (1, 1),
         id="422",
     ),
-    pytest.param(lambda: h.error_reply(429), "Composer rate limit", (2, 2), id="429_twice"),
+    pytest.param(lambda: h.error_reply(429), "Composer rate limit", (1, 1), id="429_not_retried"),
     pytest.param(
         lambda: h.reply_from_record("case7c_backtest_unknown_ticker_500.json"),
         "Composer unavailable",
@@ -882,30 +1033,26 @@ def test_holdings_are_read_in_contiguous_spans_from_the_earliest_window_to_the_a
     assert all(r.query["include_aggregate_account_holdings"] == "false" for r in requests_)
 
 
-def test_holdings_reach_the_review_and_feed_the_long_vix_item(router, inputs_seen):
+def test_holdings_reach_the_review_on_trading_days_only_and_feed_the_long_vix_item(
+    router, inputs_seen
+):
     recent = h.holdings_recent_body()
     outcome = completed_run()
 
     assert inputs_seen[0].holdings.failure is None
-    expected = h.holdings_days(recent)
+    expected = trading_day_holdings(recent)
+    assert len(expected) < len(h.holdings_days(recent)), "fixture sanity: a weekend day is dropped"
     assert inputs_seen[0].holdings.days == expected
     item = entry(outcome, h.OLDEST_ID)["evidence"]["long_vix"]
-    held = sum(
-        1 for by in expected.values() if h.OLDEST_ID in by and LONG_VIX & set(by[h.OLDEST_ID])
-    )
-    others = set(h.statistics_ids()) - {h.OLDEST_ID}
-    co_held = sum(
-        1
-        for by in expected.values()
-        if h.OLDEST_ID in by
-        and LONG_VIX & set(by[h.OLDEST_ID])
-        and any(LONG_VIX & set(by[o]) for o in others if o in by)
-    )
+    held, co_held = long_vix_counts(expected, h.OLDEST_ID, h.statistics_ids())
+    peak_with, peak_without = long_vix_peak_shares(expected, h.OLDEST_ID, h.statistics_ids())
     assert held > 0, "the capture must hold a long-VIX product for this symphony"
     assert item["status"] == "available"
     assert item["window"]["days"] == sum(1 for by in expected.values() if h.OLDEST_ID in by)
     assert item["figures"]["held_days"]["value"] == held
     assert item["figures"]["co_held_days"]["value"] == co_held
+    assert item["figures"]["peak_share_with"]["value"] == pytest.approx(peak_with, rel=1e-9)
+    assert item["figures"]["peak_share_without"]["value"] == pytest.approx(peak_without, rel=1e-9)
 
 
 def test_holdings_of_two_accounts_are_merged_by_date_and_symphony(router, inputs_seen):
@@ -921,22 +1068,38 @@ def test_holdings_of_two_accounts_are_merged_by_date_and_symphony(router, inputs
     completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
 
     assert router.holdings_requests(h.ACCOUNT_ID) and router.holdings_requests(h.SECOND_ACCOUNT_ID)
-    assert inputs_seen[0].holdings.days == h.holdings_days(h.holdings_recent_body())
+    assert inputs_seen[0].holdings.days == trading_day_holdings(h.holdings_recent_body())
 
 
-def test_a_partly_failed_holdings_read_still_feeds_the_days_it_got(router, inputs_seen):
+def test_a_partly_failed_holdings_read_feeds_the_days_it_got_and_names_the_account_for_the_shares(
+    router, inputs_seen
+):
     replies = {0: h.error_reply(500), 1: h.Reply(body=h.holdings_recent_body())}
     router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
 
     outcome = completed_run()
 
+    got = trading_day_holdings(h.holdings_recent_body())
     assert inputs_seen[0].holdings.failure is None
-    assert inputs_seen[0].holdings.days == h.holdings_days(h.holdings_recent_body())
-    assert entry(outcome, h.OLDEST_ID)["evidence"]["long_vix"]["status"] == "available"
+    assert inputs_seen[0].holdings.days == got
+    item = entry(outcome, h.OLDEST_ID)["evidence"]["long_vix"]
+    held, co_held = long_vix_counts(got, h.OLDEST_ID, h.statistics_ids())
+    assert item["status"] == "available"
+    assert item["figures"]["held_days"]["value"] == held
+    assert item["figures"]["co_held_days"]["value"] == co_held
+    for name in ("peak_share_with", "peak_share_without"):
+        figure = item["figures"][name]
+        assert figure["value"] is None, "a share over an incomplete read is not shown"
+        assert h.ACCOUNT_ID in figure["reason"]
 
 
 HOLDINGS_FAILURES = [
+    pytest.param(lambda: h.error_reply(401), "refused", "Composer refused the request", id="401"),
     pytest.param(lambda: h.error_reply(403), "refused", "Composer refused the request", id="403"),
+    pytest.param(lambda: h.error_reply(404), "not_found", "Composer returned not found", id="404"),
+    pytest.param(lambda: h.error_reply(400), "rejected", "Composer rejected the request", id="400"),
+    pytest.param(lambda: h.error_reply(409), "rejected", "Composer rejected the request", id="409"),
+    pytest.param(lambda: h.error_reply(422), "rejected", "Composer rejected the request", id="422"),
     pytest.param(lambda: h.error_reply(429), "rate_limited", "Composer rate limit", id="429"),
     pytest.param(lambda: h.error_reply(500), "unavailable", "Composer unavailable", id="500"),
     pytest.param(
@@ -991,9 +1154,12 @@ def test_a_complete_run_makes_only_reads_and_backtests_and_never_the_engine_stat
         assert r.url.startswith(h.BASE_URL)
     assert {r.path for r in backtest_posts(router)} == {"/backtest"}
     assert len(router.of_kind("statistics")) == 1
-    assert len(router.of_kind("series")) == 11
+    assert len(router.of_kind("series")) == len(h.statistics_ids())
     assert len(backtest_posts(router)) <= len(router.of_kind("score"))
     assert engine_stats_calls == []
+    for r in router.requests:
+        if r.kind in h.READ_KINDS:
+            assert r.kwargs.get("allow_redirects") is False, f"{r.kind} must not follow redirects"
 
 
 def test_every_request_carries_the_engine_credential_headers(router):
@@ -1010,10 +1176,11 @@ def test_every_statistics_series_and_holdings_read_is_followed_by_the_spacing_sl
     completed_run()
 
     h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
+    assert cpc.COMPOSER_READ_SPACING_SECONDS == SPACING_SECONDS
 
 
 def test_a_run_with_failures_still_makes_no_request_outside_the_allowlist(router):
-    router.set_series(h.OLDEST_ID, h.error_reply(429))
+    router.set_series(h.OLDEST_ID, h.error_reply(500))
     router.set_all_holdings(h.error_reply(500))
     router.set_backtest(h.error_reply(503))
 
@@ -1021,3 +1188,627 @@ def test_a_run_with_failures_still_makes_no_request_outside_the_allowlist(router
 
     assert router.violations == []
     assert all((r.method, r.kind) in ALLOWED for r in router.requests)
+
+
+def statistics_other_ids():
+    """The roster symphonies without a captured series record."""
+    return [sid for sid in h.statistics_ids() if sid not in h.CAPTURED_SERIES_IDS]
+
+
+# ---------------------------------------------------------------------------
+# Series read but not usable: the shadow fallback applies to it too
+# ---------------------------------------------------------------------------
+
+SERIES_SHAPES = ["all_null", "one_point", "after_as_of"]
+_DAYS_PAST_THE_SERIES_MS = 900 * 86_400_000  # moves every captured point after the as-of day
+
+
+def _reshaped_series(shape):
+    """The captured oldest series with its levels or dates edited so that fewer than two
+    points fall inside [invested-since, as-of] (derived edge forms of one captured record)."""
+    body = h.record_body(h.series_record_name(h.OLDEST_ID))
+    count = len(body["epoch_ms"])
+    if shape == "all_null":
+        body["deposit_adjusted_series"] = [None] * count
+    elif shape == "one_point":
+        body["deposit_adjusted_series"] = [None] * (count - 1) + [
+            body["deposit_adjusted_series"][-1]
+        ]
+    elif shape == "after_as_of":
+        body["epoch_ms"] = [ms + _DAYS_PAST_THE_SERIES_MS for ms in body["epoch_ms"]]
+    else:
+        raise AssertionError(shape)
+    return h.Reply(body=body)
+
+
+@pytest.mark.parametrize("shape", SERIES_SHAPES)
+def test_a_series_read_that_leaves_fewer_than_two_usable_points_falls_back_to_shadow_history(
+    router, inputs_seen, tmp_path, monkeypatch, shape
+):
+    bot_by_day, _ = seed_shadow(tmp_path, monkeypatch, h.OLDEST_ID, count=140)
+    router.set_series(h.OLDEST_ID, _reshaped_series(shape))
+
+    outcome = completed_run()
+
+    sym = input_of(inputs_seen, h.OLDEST_ID)
+    assert dict(sym.shadow_returns) == bot_by_day
+    e = entry(outcome, h.OLDEST_ID)
+    assert e["basis"]["kind"] == "shadow"
+    assert e["basis"]["label"] == SHADOW_BASIS
+    assert e["basis"]["fallback_reason"] == SHORT_SERIES_REASON
+    perf = e["evidence"]["performance"]
+    assert perf["label"] == SHADOW_BASIS
+    assert perf["window"]["days"] == len(bot_by_day)
+    assert perf["figures"]["total_return"]["value"] == pytest.approx(
+        b.oracle_metrics(list(bot_by_day.values()))["total_return"], rel=1e-9
+    )
+
+
+@pytest.mark.parametrize("shape", SERIES_SHAPES)
+def test_a_series_read_that_leaves_fewer_than_two_usable_points_and_no_shadow_rows_has_no_basis(
+    router, shape
+):
+    router.set_series(h.OLDEST_ID, _reshaped_series(shape))
+
+    outcome = completed_run()
+
+    e = entry(outcome, h.OLDEST_ID)
+    assert e["basis"]["kind"] == "none"
+    assert e["basis"]["fallback_reason"] == SHORT_SERIES_REASON
+    perf = e["evidence"]["performance"]
+    assert perf["status"] == "unavailable"
+    assert perf["reason"] == "no history"
+
+
+# ---------------------------------------------------------------------------
+# Pacing and the number of requests
+# ---------------------------------------------------------------------------
+
+PHASE_OF = {"statistics": 0, "series": 1, "score": 2, "backtest": 2, "holdings": 3}
+
+
+def _expected_request_counts(router, account_count, threshold=126):
+    """The requests a run over the fixture roster calls for, derived from the fixtures: one
+    statistics read per account; one series read per symphony; a definition read per symphony
+    that has a captured series and a tenure of at least the threshold; a backtest per such
+    symphony whose definition is served; and holdings spans from the earliest window start to
+    the as-of day, once per account."""
+    invested = {e["id"]: e["invested_since"] for e in h.statistics_body()["symphonies"]}
+    ids = h.statistics_ids()
+    windowed = [
+        sid
+        for sid in ids
+        if sid in h.CAPTURED_SERIES_IDS
+        and b.oracle_count_trading_days(date.fromisoformat(invested[sid]), AS_OF) >= threshold
+    ]
+    assert windowed, "fixture sanity: some symphony qualifies"
+    assert h.YOUNGEST_ID not in windowed
+    with_definition = [
+        sid
+        for sid in windowed
+        if sid in router.definition_by_symphony and router.definition_by_symphony[sid].status == 200
+    ]
+    earliest = min(date.fromisoformat(h.series_dates(sid)[0]) for sid in windowed)
+    spans = -(-((AS_OF - earliest).days + 1) // cpc.HOLDINGS_REQUEST_SPAN_DAYS)
+    return {
+        "statistics": account_count,
+        "series": len(ids),
+        "score": len(windowed),
+        "backtest": len(with_definition),
+        "holdings": spans * account_count,
+    }
+
+
+@pytest.mark.parametrize(
+    ("account_count", "extra_definitions"),
+    [(1, ()), (2, (h.MID_ID, h.OLDEST_ID))],
+    ids=["one_account_one_backtest", "two_accounts_three_backtests"],
+)
+def test_a_full_run_makes_exactly_the_requests_the_fixture_roster_calls_for(
+    router, account_count, extra_definitions
+):
+    accounts = [h.ACCOUNT_ID]
+    if account_count == 2:
+        split_roster(router)
+        accounts.append(h.SECOND_ACCOUNT_ID)
+    captured_definition_for(router, *extra_definitions)
+    expected = _expected_request_counts(router, account_count)
+
+    completed_run(account_ids=accounts)
+
+    assert Counter(r.kind for r in router.requests) == Counter(expected)
+    assert len(router.requests) == sum(expected.values())
+    assert router.violations == []
+
+
+def test_requests_come_in_phases_statistics_then_series_then_definitions_and_backtests_then_holdings(
+    router,
+):
+    captured_definition_for(router, h.MID_ID)
+
+    completed_run()
+
+    phases = [PHASE_OF[r.kind] for r in router.requests]
+    assert phases == sorted(phases)
+    assert len(router.of_kind("score")) >= 2 and len(backtest_posts(router)) >= 2
+
+
+def test_at_least_the_spacing_separates_any_two_consecutive_requests_of_a_run(router):
+    captured_definition_for(router, h.MID_ID)
+
+    completed_run()
+
+    assert len(router.of_kind("score")) >= 2 and len(backtest_posts(router)) >= 2
+    h.assert_requests_spaced(router, SPACING_SECONDS)
+
+
+def test_the_spacing_also_separates_a_backtest_from_its_own_retry(router):
+    router.set_backtest(h.error_reply(500))
+
+    completed_run()
+
+    assert len(backtest_posts(router)) == 2, "fixture sanity: the 500 is retried once"
+    h.assert_requests_spaced(router, SPACING_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# The first 429 ends the run's requests
+# ---------------------------------------------------------------------------
+
+
+def _assert_run_ended_at(router, limited_request):
+    assert router.requests[-1] is limited_request, "nothing is requested after the 429"
+
+
+def _assert_remaining_items_read_rate_limited(outcome, symphony_ids):
+    for sid in symphony_ids:
+        e = entry(outcome, sid)
+        assert e["eligible"] is True, sid
+        for item in ("backtest", "long_vix"):
+            evidence = e["evidence"][item]
+            assert evidence["status"] == "unavailable", (sid, item)
+            assert evidence["reason"] == RATE_LIMIT_REASON, (sid, item)
+
+
+def test_a_429_on_the_first_accounts_statistics_requests_nothing_further(router):
+    split_roster(router)
+    router.statistics_by_account[h.ACCOUNT_ID] = h.error_reply(429)
+
+    outcome = run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+
+    assert outcome.completed is False
+    assert [r.match["account"] for r in router.requests] == [h.ACCOUNT_ID]
+
+
+def test_a_429_on_a_series_read_ends_the_requests_and_every_later_item_reads_rate_limited(
+    router, inputs_seen, tmp_path, monkeypatch
+):
+    ids = h.statistics_ids()
+    position = ids.index(h.BACKTEST_ID)
+    assert ids.index(h.MID_ID) < position < ids.index(h.OLDEST_ID), "fixture sanity: roster order"
+    seed_shadow_many(tmp_path, monkeypatch, [h.BACKTEST_ID, h.OLDEST_ID])
+    router.set_series(h.BACKTEST_ID, h.error_reply(429))
+
+    outcome = completed_run()
+
+    limited = router.series_requests(h.BACKTEST_ID)
+    assert len(limited) == 1
+    _assert_run_ended_at(router, limited[0])
+    assert {r.match["sid"] for r in router.of_kind("series")} == set(ids[: position + 1])
+    for sid in ids[position:]:
+        assert input_of(inputs_seen, sid).series_failure == "rate_limited", sid
+        assert entry(outcome, sid)["basis"]["fallback_reason"] == RATE_LIMIT_REASON, sid
+    assert input_of(inputs_seen, h.MID_ID).series_failure is None
+    assert entry(outcome, h.BACKTEST_ID)["basis"]["kind"] == "shadow"
+    _assert_remaining_items_read_rate_limited(outcome, [h.MID_ID, h.BACKTEST_ID, h.OLDEST_ID])
+
+
+def test_a_429_on_a_definition_read_ends_the_requests_and_every_later_item_reads_rate_limited(
+    router,
+):
+    router.definition_by_symphony[h.MID_ID] = h.error_reply(429)
+
+    outcome = completed_run()
+
+    scores = router.of_kind("score")
+    assert [r.match["sid"] for r in scores] == [h.MID_ID]
+    _assert_run_ended_at(router, scores[0])
+    assert backtest_posts(router) == []
+    _assert_remaining_items_read_rate_limited(outcome, [h.MID_ID, h.BACKTEST_ID, h.OLDEST_ID])
+
+
+def test_a_429_on_a_backtest_is_not_retried_and_ends_the_requests(router):
+    captured_definition_for(router, h.MID_ID)
+    router.set_backtest(h.error_reply(429))
+
+    outcome = completed_run()
+
+    posts = backtest_posts(router)
+    assert len(posts) == 1
+    _assert_run_ended_at(router, posts[0])
+    assert [r.match["sid"] for r in router.of_kind("score")] == [h.MID_ID]
+    _assert_remaining_items_read_rate_limited(outcome, [h.MID_ID, h.BACKTEST_ID, h.OLDEST_ID])
+
+
+@pytest.mark.parametrize("two_accounts", [False, True], ids=["one_account", "two_accounts"])
+def test_a_429_on_a_holdings_read_ends_the_requests_and_the_item_reads_rate_limited(
+    router, two_accounts
+):
+    accounts = [h.ACCOUNT_ID]
+    if two_accounts:
+        split_roster(router)
+        accounts.append(h.SECOND_ACCOUNT_ID)
+    router.set_all_holdings(h.error_reply(429))
+
+    outcome = completed_run(account_ids=accounts)
+
+    holdings = router.of_kind("holdings")
+    assert len(holdings) == 1, "the other spans and the other account are never requested"
+    _assert_run_ended_at(router, holdings[0])
+    for sid in (h.MID_ID, h.BACKTEST_ID, h.OLDEST_ID):
+        item = entry(outcome, sid)["evidence"]["long_vix"]
+        assert item["status"] == "unavailable"
+        assert item["reason"] == RATE_LIMIT_REASON
+
+
+# ---------------------------------------------------------------------------
+# Holdings: every account from the one earliest start; an unreadable account is named
+# ---------------------------------------------------------------------------
+
+
+def test_every_account_is_read_from_the_single_earliest_window_start(router):
+    mine, theirs = split_roster(router)
+
+    completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+
+    earliest = date.fromisoformat(h.series_dates(h.OLDEST_ID)[0])
+    own_earliest = min(
+        date.fromisoformat(h.series_dates(sid)[0]) for sid in mine if sid in h.CAPTURED_SERIES_IDS
+    )
+    assert h.OLDEST_ID in theirs and own_earliest > earliest, "fixture sanity"
+    for account in (h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID):
+        spans = [_span_params(r) for r in router.holdings_requests(account)]
+        assert spans[0][0] == earliest, account
+        assert spans[-1][1] == AS_OF, account
+
+
+def test_an_account_whose_holdings_cannot_be_read_is_named_in_the_shares_and_the_counts_stay(
+    router, inputs_seen
+):
+    mine, theirs = split_roster(router)
+    readable = h.holdings_subset_body(mine)
+
+    def handler(request, index):
+        if request.match["account"] == h.SECOND_ACCOUNT_ID:
+            return h.error_reply(500)
+        return h.Reply(body=readable if index == 0 else h.holdings_emptied_body())
+
+    router.holdings_handler = handler
+
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+
+    got = trading_day_holdings(readable)
+    assert inputs_seen[0].holdings.days == got
+    held, co_held = long_vix_counts(got, h.MID_ID, h.statistics_ids())
+    assert held > 0 and co_held > 0, "fixture sanity: the readable account has the cases"
+    item = entry(outcome, h.MID_ID)["evidence"]["long_vix"]
+    assert item["status"] == "available"
+    assert item["figures"]["held_days"]["value"] == held
+    assert item["figures"]["co_held_days"]["value"] == co_held
+    for name in ("peak_share_with", "peak_share_without"):
+        figure = item["figures"][name]
+        assert figure["value"] is None, name
+        assert h.SECOND_ACCOUNT_ID in figure["reason"], name
+        assert h.ACCOUNT_ID not in figure["reason"], name
+    for sid in (h.BACKTEST_ID, h.OLDEST_ID):
+        assert sid in theirs
+        missing = entry(outcome, sid)["evidence"]["long_vix"]
+        assert missing["status"] == "unavailable", sid
+        assert h.SECOND_ACCOUNT_ID in missing["reason"], sid
+        assert "no holdings for this symphony" not in missing["reason"], sid
+        assert all(fig["value"] is None for fig in missing["figures"].values()), sid
+
+
+def test_when_every_account_is_readable_the_shares_have_values(router):
+    mine, theirs = split_roster(router)
+    subsets = {
+        h.ACCOUNT_ID: h.holdings_subset_body(mine),
+        h.SECOND_ACCOUNT_ID: h.holdings_subset_body(theirs),
+    }
+    router.holdings_handler = lambda req, i: h.Reply(
+        body=subsets[req.match["account"]] if i == 0 else h.holdings_emptied_body()
+    )
+
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+
+    for sid in (h.MID_ID, h.BACKTEST_ID, h.OLDEST_ID):
+        item = entry(outcome, sid)["evidence"]["long_vix"]
+        assert item["status"] == "available", sid
+        for name in ("peak_share_with", "peak_share_without"):
+            assert item["figures"][name]["value"] is not None, (sid, name)
+
+
+# ---------------------------------------------------------------------------
+# Current tickers
+# ---------------------------------------------------------------------------
+
+
+def test_current_tickers_are_the_logic_holdings_keys_of_the_symphonys_own_state_entry(
+    router, inputs_seen, tmp_path, monkeypatch
+):
+    seed_logic_holdings(
+        tmp_path,
+        monkeypatch,
+        {
+            h.OLDEST_ID: {"VIXY": 120.5, "SPY": 44.0},
+            h.MID_ID: {"QQQ": 9.0},
+            h.BACKTEST_ID: {},
+            h.YOUNGEST_ID: None,
+        },
+    )
+
+    completed_run()
+
+    assert sorted(input_of(inputs_seen, h.OLDEST_ID).current_tickers) == ["SPY", "VIXY"]
+    assert sorted(input_of(inputs_seen, h.MID_ID).current_tickers) == ["QQQ"]
+    assert not input_of(inputs_seen, h.BACKTEST_ID).current_tickers
+    for sid in (h.YOUNGEST_ID, *statistics_other_ids()):
+        assert input_of(inputs_seen, sid).current_tickers is None, sid
+
+
+def test_a_state_entry_kept_under_the_display_name_is_not_the_symphonys_holdings(
+    router, inputs_seen, tmp_path, monkeypatch
+):
+    display_name = {e["id"]: e["name"] for e in h.statistics_body()["symphonies"]}[h.MID_ID]
+    seed_logic_holdings(
+        tmp_path,
+        monkeypatch,
+        {display_name.strip(): {"SPY": 3.0}, h.MID_ID: {"QQQ": 9.0}, h.OLDEST_ID: None},
+    )
+
+    completed_run()
+
+    assert sorted(input_of(inputs_seen, h.MID_ID).current_tickers) == ["QQQ"]
+    assert input_of(inputs_seen, h.OLDEST_ID).current_tickers is None
+
+
+def test_a_state_that_cannot_be_read_leaves_every_ticker_set_unset_and_the_run_completes(
+    router, inputs_seen, monkeypatch, caplog
+):
+    caplog.set_level(logging.DEBUG)
+
+    def unreadable():
+        raise RuntimeError("LEAKMARK-state")
+
+    monkeypatch.setattr(database, "load_state", unreadable)
+
+    completed_run()
+
+    assert all(sym.current_tickers is None for sym in inputs_seen[0].symphonies)
+    assert "LEAKMARK" not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Display names
+# ---------------------------------------------------------------------------
+
+_USE_ID = object()
+NAME_CASES = [
+    pytest.param("  Padded Name \t", "Padded Name", id="padded"),
+    pytest.param(_DROP, _USE_ID, id="missing"),
+    pytest.param(None, _USE_ID, id="null"),
+    pytest.param("", _USE_ID, id="empty"),
+    pytest.param(" \t\n ", _USE_ID, id="blank"),
+]
+
+
+@pytest.mark.parametrize(("raw", "shown"), NAME_CASES)
+def test_a_display_name_is_trimmed_and_a_blank_one_is_the_composer_id_wherever_it_appears(
+    router, inputs_seen, raw, shown
+):
+    expected = h.YOUNGEST_ID if shown is _USE_ID else shown
+    edit_statistics(router, {h.YOUNGEST_ID: {"name": raw}})
+
+    outcome = completed_run()
+
+    assert input_of(inputs_seen, h.YOUNGEST_ID).display_name == expected
+    assert entry(outcome, h.YOUNGEST_ID)["display_name"] == expected
+    marginal = b.item_of(entry(outcome, h.OLDEST_ID), "marginal")
+    assert marginal["status"] == "available", "fixture sanity: the comparison is made"
+    assert expected in {record["display_name"] for record in marginal["excluded"]}
+
+
+# ---------------------------------------------------------------------------
+# The window comes from the review module's public function
+# ---------------------------------------------------------------------------
+
+
+def test_the_windows_come_from_the_review_modules_public_qualifying_window(router, monkeypatch):
+    seen: list[tuple] = []
+    real = tr.qualifying_window
+    backtest_first, backtest_last = (
+        h.series_dates(h.BACKTEST_ID)[10],
+        h.series_dates(h.BACKTEST_ID)[-3],
+    )
+    oldest_first = h.series_dates(h.OLDEST_ID)[300]
+    mid_first = h.series_dates(h.MID_ID)[0]
+    assert oldest_first < mid_first, "fixture sanity: the patched start is the earliest"
+
+    def patched(symphony, as_of, threshold):
+        seen.append((symphony.symphony_id, as_of, threshold))
+        if symphony.symphony_id == h.BACKTEST_ID:
+            return {"first": backtest_first, "last": backtest_last, "days": 7}
+        if symphony.symphony_id == h.OLDEST_ID:
+            window = real(symphony, as_of, threshold)
+            return {**window, "first": oldest_first}
+        return real(symphony, as_of, threshold)
+
+    monkeypatch.setattr(tr, "qualifying_window", patched)
+
+    completed_run()
+
+    assert {sid for sid, _, _ in seen} == set(h.statistics_ids())
+    assert all(as_of == AS_OF and threshold == 126 for _, as_of, threshold in seen)
+    posts = backtest_posts(router)
+    assert len(posts) == 1
+    assert posts[0].body_json()["start_date"] == backtest_first
+    assert posts[0].body_json()["end_date"] == backtest_last
+    holdings_start = _span_params(router.holdings_requests(h.ACCOUNT_ID)[0])[0]
+    assert holdings_start == date.fromisoformat(oldest_first)
+
+
+def test_the_runner_uses_no_private_name_of_another_module():
+    tree = ast.parse((REPO / "advisors" / "tenure_review_runner.py").read_text("utf-8"))
+    private: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr.startswith("_")
+            and not node.attr.startswith("__")
+            and not (isinstance(node.value, ast.Name) and node.value.id in {"self", "cls"})
+        ):
+            private.append(node.attr)
+        if isinstance(node, ast.ImportFrom):
+            private += [
+                alias.name
+                for alias in node.names
+                if alias.name.startswith("_") and not alias.name.startswith("__")
+            ]
+    assert private == []
+
+
+# ---------------------------------------------------------------------------
+# An exception in one symphony's definition or backtest never ends the run
+# ---------------------------------------------------------------------------
+
+
+def test_an_exception_inside_the_backtest_call_makes_only_that_symphonys_item_unavailable(
+    router, inputs_seen, monkeypatch, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    captured_definition_for(router, h.MID_ID)
+    real = cbc.run_backtest
+    calls: list = []
+
+    def flaky(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise RuntimeError(LEAK)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(cbc, "run_backtest", flaky)
+
+    outcome = completed_run()
+
+    assert len(calls) == 2, "the next symphony is still backtested"
+    broken = entry(outcome, h.MID_ID)
+    assert broken["evidence"]["backtest"]["status"] == "unavailable"
+    assert broken["evidence"]["backtest"]["reason"]
+    assert "backtest" in broken["missing_items"]
+    sibling = input_of(inputs_seen, h.BACKTEST_ID).backtest
+    assert sibling is not None and sibling.error is None and sibling.first_day
+    assert LEAK not in caplog.text
+    assert LEAK not in json.dumps(outcome.result.entries, default=str)
+
+
+def test_an_unexpected_exception_from_the_backtest_request_is_isolated_to_each_symphony(
+    router, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    captured_definition_for(router, h.MID_ID)
+    router.set_backtest(h.raising(ValueError(LEAK)))
+
+    outcome = completed_run()
+
+    assert len(backtest_posts(router)) == 2
+    for sid in (h.MID_ID, h.BACKTEST_ID):
+        item = entry(outcome, sid)["evidence"]["backtest"]
+        assert item["status"] == "unavailable", sid
+        assert LEAK not in item["reason"], sid
+    assert LEAK not in caplog.text
+
+
+def test_an_unexpected_exception_from_a_definition_read_is_isolated_to_that_symphony(
+    router, inputs_seen, caplog
+):
+    caplog.set_level(logging.DEBUG)
+    router.definition_by_symphony[h.MID_ID] = h.raising(RuntimeError(LEAK))
+
+    outcome = completed_run()
+
+    item = entry(outcome, h.MID_ID)["evidence"]["backtest"]
+    assert item["status"] == "unavailable"
+    assert LEAK not in item["reason"]
+    assert len(backtest_posts(router)) == 1
+    assert input_of(inputs_seen, h.BACKTEST_ID).backtest is not None
+    assert LEAK not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Logs: no credential, response body or exception message
+# ---------------------------------------------------------------------------
+
+
+def _marked_backtest_400():
+    body = h.record_body("case7c_backtest_malformed_structure_400.json")
+    return h.Reply(status=400, body={"marker": LEAK, **body})
+
+
+def _marked_backtest_413():
+    text = h.record_body("case6_backtest_413_too_large.json")
+    return h.Reply(status=413, body=f"<!-- {LEAK} -->{text}", content_type="text/html")
+
+
+BACKTEST_LEAK_REPLIES = [
+    pytest.param(
+        lambda: h.reply_from_record("case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json"),
+        id="success",
+    ),
+    pytest.param(_marked_backtest_400, id="400"),
+    pytest.param(_marked_backtest_413, id="413"),
+    pytest.param(lambda: h.marked_error_reply(429, LEAK), id="429"),
+    pytest.param(lambda: h.marked_error_reply(500, LEAK), id="500"),
+    pytest.param(lambda: h.raising(requests.Timeout(LEAK)), id="Timeout"),
+    pytest.param(lambda: h.raising(requests.ConnectionError(LEAK)), id="ConnectionError"),
+    pytest.param(lambda: h.raising(ValueError(LEAK)), id="unexpected"),
+    pytest.param(lambda: h.Reply(status=200, body=f"<html>{LEAK}</html>"), id="non_json_200"),
+]
+
+
+@pytest.mark.parametrize("make_reply", BACKTEST_LEAK_REPLIES)
+def test_no_log_line_of_a_run_carries_a_credential_a_response_body_or_an_exception_message(
+    router, caplog, make_reply
+):
+    caplog.set_level(logging.DEBUG)
+    captured_definition_for(router, h.MID_ID)
+    router.set_series(h.OLDEST_ID, h.marked_error_reply(500, LEAK))
+    router.set_all_holdings(h.marked_error_reply(500, LEAK))
+    router.set_backtest(make_reply())
+
+    outcome = completed_run()
+
+    assert backtest_posts(router), "fixture sanity: the backtest path ran"
+    assert any(r.name.startswith("advisors.") for r in caplog.records), "the capture saw the run"
+    assert "LEAKMARK" not in caplog.text
+    for secret in (
+        h.SERVICE_SECRET,
+        h.SERVICE_KEY_ID,
+        alpha_bot_execution.get_composer_headers()["authorization"],
+    ):
+        assert secret not in caplog.text
+    assert "LEAKMARK" not in json.dumps(outcome.result.entries, default=str)
+
+
+@pytest.mark.parametrize("status", [401, 404, 500])
+def test_no_log_line_carries_a_read_reply_body_when_a_series_and_a_definition_fail(
+    router, caplog, status
+):
+    caplog.set_level(logging.DEBUG)
+    router.set_series(h.MID_ID, h.marked_error_reply(status, LEAK))
+    router.definition_by_symphony[h.BACKTEST_ID] = h.marked_error_reply(status, LEAK)
+
+    completed_run()
+
+    assert "LEAKMARK" not in caplog.text
+    assert h.SERVICE_SECRET not in caplog.text
+    assert h.SERVICE_KEY_ID not in caplog.text

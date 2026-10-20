@@ -8,10 +8,11 @@ and ``time.sleep``. A request that is not one of the five read or backtest shape
 recorded as a violation and answered 404, so a hidden write path shows up in the request
 ledger instead of in a swallowed exception.
 
-Fixtures this module builds replies from are captured producer output. Two derived forms
-are used and labelled where they are made: a record with an array emptied or a key removed
-(the empty-result and missing-field edges of a captured record), and the holdings record
-with its ``by_symphony`` map emptied or filtered to a subset of its own symphonies.
+Fixtures this module builds replies from are captured producer output. Derived forms are
+used and labelled where they are made: a record with an array emptied or a key removed (the
+empty-result and missing-field edges of a captured record), the holdings record with its
+``by_symphony`` map emptied or filtered to a subset of its own symphonies, and a captured
+error body with a marker string appended.
 
 Not imported by production code.
 """
@@ -57,6 +58,9 @@ _SCORE_RE = re.compile(r"^/symphonies/(?P<sid>[^/]+)/score$")
 _BACKTEST_RE = re.compile(r"^/backtest$")
 
 READ_KINDS = ("statistics", "series", "holdings")
+# Every kind of request a review run may make: the three portfolio reads, the definition
+# read and the backtest.
+COMPOSER_KINDS = (*READ_KINDS, "score", "backtest")
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +206,27 @@ def reply_from_record(name: str, *, status: int | None = None) -> Reply:
 
 def error_reply(status: int) -> Reply:
     return Reply(status=status, body=error_body_for(status))
+
+
+def marked_error_reply(status: int, marker: str) -> Reply:
+    """A captured error reply for ``status`` whose body also carries ``marker`` near its start
+    (a derived form, labelled here): the captured body with the marker put in front of its
+    first title, or in front of a text body. A test then proves that no log line repeats a
+    response body, even a body cut to its first 200 characters."""
+    body = error_body_for(status)
+    if isinstance(body, str):
+        body = f"<!-- {marker} -->{body}"
+    elif isinstance(body, dict) and isinstance(body.get("errors"), list) and body["errors"]:
+        first = body["errors"][0]
+        first["title"] = f"{marker} {first.get('title', '')}".strip()
+    else:
+        body = {"marker": marker, **(body if isinstance(body, dict) else {})}
+    return Reply(status=status, body=body)
+
+
+def redirect_reply(status: int = 302) -> Reply:
+    """A redirect answer: no captured body, the Location header is a placeholder host."""
+    return Reply(status=status, body="", headers={"Location": "https://redirect.invalid/elsewhere"})
 
 
 def raising(exc: BaseException) -> Reply:
@@ -427,3 +452,26 @@ def assert_reads_paced(router: ComposerRouter, spacing: float) -> None:
                 f"{event[1].method} {event[1].path} is not followed by a {spacing} second sleep "
                 f"(next event: {following!r})"
             )
+
+
+def assert_requests_spaced(
+    router: ComposerRouter, spacing: float, *, tolerance: float = 0.01
+) -> None:
+    """Between any two consecutive Composer requests of the run, whatever their kinds, the
+    sleeps recorded add up to at least ``spacing`` seconds (a tolerance covers a pause
+    computed from a clock reading)."""
+    pending: float | None = None
+    for event in router.events:
+        if event[0] == "sleep":
+            if pending is not None:
+                pending += float(event[1])
+            continue
+        request = event[1]
+        if request.kind not in COMPOSER_KINDS:
+            continue
+        if pending is not None:
+            assert pending >= spacing - tolerance, (
+                f"{request.method} {request.path} follows the previous request after only "
+                f"{pending} seconds of sleep (needs {spacing})"
+            )
+        pending = 0.0
