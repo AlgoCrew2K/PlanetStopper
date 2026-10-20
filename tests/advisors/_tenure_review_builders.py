@@ -511,6 +511,22 @@ def quantstats_percent(returns_pct) -> dict[str, float]:
     }
 
 
+# The shared metric function scores a series only from this many returns, so a series of
+# levels needs one more value than that.
+MIN_RETURNS_TO_SCORE = analytics._MIN_QUANTSTATS_OBSERVATIONS
+MIN_VALUES_TO_SCORE = MIN_RETURNS_TO_SCORE + 1
+
+# The five metrics the existing recommender stores for a symphony.
+LEGACY_METRIC_KEYS = ("annualized_return", "sharpe", "sortino", "max_drawdown", "calmar")
+
+
+def quantstats_raw_metrics(returns_pct) -> dict[str, float | None]:
+    """The five metrics of percent returns exactly as the shared metric function answers
+    them: annualized return and max drawdown as fractions, the rest as ratios."""
+    metrics = _REAL_QUANTSTATS_METRICS(list(returns_pct))
+    return {key: metrics[key] for key in LEGACY_METRIC_KEYS}
+
+
 def spy_on_quantstats_metrics(monkeypatch) -> list[list[float]]:
     """Record the input of every call to ``analytics.compute_quantstats_metrics`` while the
     real function still runs. The module must keep calling it as an attribute of the

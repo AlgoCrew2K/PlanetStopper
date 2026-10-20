@@ -189,15 +189,21 @@ def test_a_different_last_day_makes_the_item_unavailable_with_no_gap(parsed):
         assert fig["value"] is None
 
 
-def test_fewer_than_two_values_in_the_window_is_a_series_too_short(matched):
+@pytest.mark.parametrize("kept", [1, 2], ids=["one_value", "two_values"])
+def test_a_window_with_too_few_values_to_score_is_unavailable_and_names_the_minimum(matched, kept):
+    """The shared metric function scores a series from two returns, which is three
+    values, so one value and two values are both too short. The reason says so and names
+    the minimum, which is read from the function. Rejects an available item with its
+    backtest legs empty and a reason that does not say how many values are needed."""
     window = _window_of(matched)
-    one = dataclasses.replace(
-        matched,
-        daily_portfolio_values={window["first"]: matched.daily_portfolio_values[window["first"]]},
-    )
-    item = _compare(window, one)
+    values = {
+        day: matched.daily_portfolio_values[day] for day in [window["first"], window["last"]][:kept]
+    }
+    item = _compare(window, dataclasses.replace(matched, daily_portfolio_values=values))
     assert item["status"] == "unavailable"
-    assert item["reason"] == "backtest series too short"
+    assert item["reason"] == (
+        f"backtest series too short to score: needs at least {b.MIN_VALUES_TO_SCORE} values"
+    )
     for fig in item["figures"].values():
         assert fig["value"] is None
 
@@ -428,24 +434,37 @@ def test_an_unusable_backtest_level_is_dropped_like_an_unusable_realized_one(mon
     )
 
 
-def test_two_values_in_the_window_give_figures_or_an_honest_unavailable_never_an_empty_item():
-    """Two values make one return, which the metric function cannot score. The item may
-    compute it another way or say it is unavailable; it must not claim to be available
-    with the backtest leg missing."""
-    days = SHAPED_DAYS[:2]
+# A window with no negative daily return has no decline, so its max drawdown is zero by
+# definition. The shared function would read such a series as prices when a day is +100
+# percent or more and report a false drawdown of about -90 percent, so the module does not
+# ask it. A zero return is not a decline either.
+NO_DOWN_DAY_LEVELS = [
+    pytest.param([100.0, 200.0, 220.0, 240.0], id="plus_100_percent_then_rises"),
+    pytest.param([100.0, 100.0, 200.0, 220.0], id="a_flat_day_then_plus_100_percent"),
+]
+
+
+@pytest.mark.parametrize("levels", NO_DOWN_DAY_LEVELS)
+def test_a_backtest_window_with_no_down_day_has_a_drawdown_of_exactly_zero(levels):
+    days = SHAPED_DAYS[: len(levels)]
+    returns = _pct_returns(levels)
+    assert min(returns) >= 0.0 and max(returns) >= 100.0  # fixture sanity: the trap shape
     item = tr.backtest_comparison(
         window=_window_over(days),
         realized_total_return=REALIZED_TOTAL,
         realized_max_drawdown=REALIZED_DRAWDOWN,
-        backtest=b.backtest_over(days, SHAPED_LEVELS[:2]),
+        backtest=b.backtest_over(days, levels),
     )
-    if item["status"] == "available":
-        for name in ("backtest_total_return", "backtest_max_drawdown", "total_return_gap"):
-            assert item["figures"][name]["value"] is not None, name
-    else:
-        assert item["status"] == "unavailable"
-        assert item["reason"]
-        assert all(fig["value"] is None for fig in item["figures"].values())
+    assert item["status"] == "available"
+    figs = item["figures"]
+    assert figs["backtest_max_drawdown"]["value"] == 0.0  # a computed zero, not None
+    assert figs["max_drawdown_gap"]["value"] == pytest.approx(REALIZED_DRAWDOWN, abs=1e-12)
+    expected = b.quantstats_percent(returns)["total_return"]
+    # the total return still comes from the shared function; its answer is right here
+    assert figs["backtest_total_return"]["value"] == pytest.approx(expected, rel=1e-9)
+    assert figs["backtest_total_return"]["value"] == pytest.approx(
+        (levels[-1] / levels[0] - 1.0) * 100.0, rel=1e-9
+    )
 
 
 # ---------------------------------------------------------------------------

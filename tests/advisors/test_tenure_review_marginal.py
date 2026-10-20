@@ -410,22 +410,56 @@ def test_the_with_and_without_legs_are_the_shared_metric_function_over_the_same_
     )
 
 
-def test_two_shared_days_give_figures_or_an_honest_unavailable_never_an_empty_available_item():
-    """Two shared days make one return, which the metric function cannot score. The item
-    may compute it another way or say it is unavailable; it must not claim to be
-    available with nothing in it."""
+@pytest.mark.parametrize("shared", [0, 1, 2])
+def test_too_few_shared_days_to_score_reads_unavailable_and_names_the_minimum(shared):
+    """The shared metric function scores a portfolio from two returns, which is three
+    shared days. Fewer is unavailable with a reason that says how many are needed, read
+    from the function. Rejects an available item with empty legs."""
     eligible, iso = _shaped_eligible()
-    two_days = {
-        sid: {"basis": "composer", "values": {d: entry["values"][d] for d in iso[:2]}}
-        for sid, entry in eligible.items()
+    a_days = iso[:2] if shared == 0 else iso[:shared]
+    b_days = iso[2:4] if shared == 0 else iso[:shared]
+    thin = {
+        "sym-a": {
+            "basis": "composer",
+            "values": {d: eligible["sym-a"]["values"][d] for d in a_days},
+        },
+        "sym-b": {
+            "basis": "composer",
+            "values": {d: eligible["sym-b"]["values"][d] for d in b_days},
+        },
     }
-    item = tr.marginal_contribution("sym-a", two_days)
-    if item["status"] == "available":
-        assert all(fig["value"] is not None for fig in item["figures"].values())
-    else:
-        assert item["status"] == "unavailable"
-        assert item["reason"]
-        assert all(fig["value"] is None for fig in item["figures"].values())
+    item = tr.marginal_contribution("sym-a", thin)
+    assert item["status"] == "unavailable"
+    assert item["reason"] == (
+        f"shared days too short to score: needs at least {b.MIN_VALUES_TO_SCORE} days"
+    )
+    assert all(fig["value"] is None for fig in item["figures"].values())
+
+
+def test_a_portfolio_with_no_down_day_has_a_drawdown_of_exactly_zero_with_and_without():
+    """A quadruples in a day and B creeps up, so the portfolio with A rises 100 percent in
+    a day and never falls, the shape the shared function misreads as prices (about -90
+    percent). Rejects the false drawdown. The totals still match the dollar-sum oracle."""
+    iso = [d.isoformat() for d in DAYS[:3]]
+    eligible = {
+        "sym-a": {
+            "basis": "composer",
+            "values": dict(zip(iso, (100.0, 300.0, 330.0), strict=True)),
+        },
+        "sym-b": {
+            "basis": "composer",
+            "values": dict(zip(iso, (100.0, 100.5, 101.0), strict=True)),
+        },
+    }
+    expected = _oracle(eligible, "sym-a")
+    assert expected["with_max_drawdown"] == 0.0 and expected["without_max_drawdown"] == 0.0
+    got = _figures(tr.marginal_contribution("sym-a", eligible))
+    assert got["with_max_drawdown"] == 0.0
+    assert got["without_max_drawdown"] == 0.0
+    assert got["max_drawdown_difference"] == 0.0
+    # sums and compounding in another order than the module: 1e-9 relative
+    assert got["with_total_return"] == pytest.approx(expected["with_total_return"], rel=1e-9)
+    assert got["without_total_return"] == pytest.approx(expected["without_total_return"], rel=1e-9)
 
 
 # ---------------------------------------------------------------------------

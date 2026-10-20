@@ -8,9 +8,11 @@ emits, so persist_recommendations and the explanation loop accept it unchanged, 
 the window keys a later night's reuse comparison needs. The explanation, its date and
 the run id are added by the caller that writes the run, not here.
 
-Metrics inside a recommendation are in percent (a total return of 8 means +8 percent),
-the scale every figure of the review uses and the one the explanation is grounded in;
-the existing recommender's own metrics are fractions.
+Metrics inside a recommendation keep the existing recommender's key names and its scale
+(whatever compute_quantstats_metrics returns, so annualized return and max drawdown are
+fractions), because legacy and new rows of one role must never use one key in two units and
+the explainer prompt embeds the whole dict. A percent figure may be added only under a new
+key whose name ends in _pct.
 """
 
 from __future__ import annotations
@@ -36,9 +38,6 @@ ADDED_KEYS = {
     "composite_window_days",
 }
 ADDED_LATER_KEYS = {"review_run_id", "explanation", "explanation_written_on"}
-SCALE_DEPENDENT_METRICS = ("annualized_return", "max_drawdown")
-RATIO_METRICS = ("sharpe", "sortino", "calmar")
-PERCENT = 100.0
 
 
 def _recommender_and_review(tmp_path, monkeypatch, *, stronger_sorts_first=False):
@@ -73,7 +72,9 @@ def test_each_recommendation_has_the_recommenders_keys_and_evidence_plus_the_win
     for rec in result.recommendations:
         old = legacy[rec["candidate_id"]]
         assert set(old) <= set(rec)
-        assert set(rec) - set(old) == ADDED_KEYS
+        assert set(rec) >= ADDED_KEYS
+        extra = set(rec) - set(old) - ADDED_KEYS
+        assert all(key.endswith("_pct") for key in extra), extra  # percent only under new keys
         assert not set(rec) & ADDED_LATER_KEYS
         for key in ("candidate_id", "sibling_id", "n_obs"):
             assert rec[key] == old[key], key
@@ -92,20 +93,37 @@ def test_each_recommendation_has_the_recommenders_keys_and_evidence_plus_the_win
         assert rec["holdings_overlap"] == old["holdings_overlap"]  # no tickers on either side
 
 
-def test_recommendation_metrics_are_the_scored_metrics_in_percent(tmp_path, monkeypatch):
+def test_recommendation_metrics_are_the_recommenders_own_values_at_its_own_scale(
+    tmp_path, monkeypatch
+):
+    """Same keys, same units: annualized return and max drawdown stay fractions, so a
+    legacy row and a new row of the same role never use one key in two units. Rejects a
+    percent-scale value under an existing key."""
     legacy, result = _recommender_and_review(tmp_path, monkeypatch)
     for rec in result.recommendations:
         old = legacy[rec["candidate_id"]]
         for side in ("candidate_metrics", "sibling_metrics"):
             assert set(rec[side]) == set(old[side]), side
-            for key in RATIO_METRICS:
-                assert rec[side][key] == pytest.approx(old[side][key], rel=1e-9), (side, key)
-            for key in SCALE_DEPENDENT_METRICS:
-                # the recommender's fractions times 100, in the same percent as every figure
-                assert rec[side][key] == pytest.approx(old[side][key] * PERCENT, rel=1e-9), (
-                    side,
-                    key,
-                )
+            for key, value in old[side].items():
+                # the same function on the same returns: 1e-9 relative absorbs summation order
+                assert rec[side][key] == pytest.approx(value, rel=1e-9), (side, key)
+
+
+def test_recommendation_metrics_are_computed_over_the_composite_window():
+    """With a composite window shorter than the history, the metrics are those of the last
+    window returns, from the shared metric function, not of the whole tenure."""
+    roster = b.roster_with_a_candidate_in_two_passing_pairs(stronger_sorts_first=False)
+    result = b.review(roster, as_of=b.AS_OF, threshold=b.NOTE_THRESHOLD)
+    assert result.recommendations  # fixture sanity
+    returns = {s.symphony_id: b.returns_from_values(s.composer_values) for s in roster}
+    window = b.NOTE_THRESHOLD - 1
+    for rec in result.recommendations:
+        for side, sid in (
+            ("candidate_metrics", rec["candidate_id"]),
+            ("sibling_metrics", rec["sibling_id"]),
+        ):
+            expected = b.quantstats_raw_metrics(returns[sid][-window:])
+            assert rec[side] == pytest.approx(expected, rel=1e-9), (side, sid)
 
 
 def test_the_basis_of_a_recommendation_is_the_composer_basis_label(tmp_path, monkeypatch):
