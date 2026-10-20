@@ -3,9 +3,10 @@
 from dataclasses import dataclass, field
 from datetime import date
 
-COMPOSER_READ_TIMEOUT_SECONDS = 15
-COMPOSER_READ_SPACING_SECONDS = 2.5
-HOLDINGS_REQUEST_SPAN_DAYS = 30
+# Trivially wrong placeholders: the implementer sets the real values.
+COMPOSER_READ_TIMEOUT_SECONDS = 0
+COMPOSER_READ_SPACING_SECONDS = 0.0
+HOLDINGS_REQUEST_SPAN_DAYS = 0
 
 
 @dataclass(frozen=True)
