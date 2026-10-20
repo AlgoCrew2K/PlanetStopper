@@ -34,6 +34,7 @@ does not sleep between separate ``run_backtest`` calls.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -254,6 +255,9 @@ def run_backtest(
     broker: str = _DEFAULT_BROKER,
     backtest_version: str = _DEFAULT_BACKTEST_VERSION,
     max_retries: int = 4,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    compact_body: bool = False,
 ) -> BacktestResult:
     """Submit an inline symphony tree to ``POST /api/v0.1/backtest`` and parse the result.
 
@@ -281,6 +285,11 @@ def run_backtest(
         Maximum number of retry attempts after transient failures.  A value of
         0 means no retries (first attempt only).  Bounded retry loops only —
         never unbounded.
+    start_date / end_date:
+        ISO dates added to the request body only when given.
+    compact_body:
+        Send the body as compact ASCII JSON text (``data=``) instead of
+        ``json=``; a large tree otherwise exceeds the request size limit (413).
 
     Returns
     -------
@@ -302,7 +311,19 @@ def run_backtest(
         "broker": broker,
         "backtest_version": backtest_version,
     }
+    if start_date is not None:
+        body["start_date"] = start_date
+    if end_date is not None:
+        body["end_date"] = end_date
     headers = get_composer_headers()
+    post_kwargs: dict[str, Any] = {"json": body}
+    if compact_body:
+        try:
+            payload = json.dumps(body, separators=(",", ":"), allow_nan=False)
+        except (ValueError, TypeError) as exc:
+            return _error_result(f"request body not serializable: {type(exc).__name__}")
+        post_kwargs = {"data": payload}
+        headers = {**headers, "Content-Type": "application/json"}
 
     logger.debug(
         "run_backtest: POST %s | symphony_id=%s capital=%.0f broker=%s version=%s",
@@ -320,7 +341,7 @@ def run_backtest(
     for attempt in range(max_retries + 1):
         try:
             response = requests.post(
-                url, json=body, headers=headers, timeout=_BACKTEST_REQUEST_TIMEOUT
+                url, headers=headers, timeout=_BACKTEST_REQUEST_TIMEOUT, **post_kwargs
             )
             logger.info(
                 "run_backtest: POST /backtest HTTP %d (attempt %d/%d)",
