@@ -10,6 +10,8 @@ day, taken across the live symphonies only.
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 import advisors.tenure_review as tr
@@ -188,6 +190,65 @@ def test_days_outside_the_symphonys_window_are_ignored():
 
 
 # ---------------------------------------------------------------------------
+# An unknown holding value is a missing day, never a zero
+# ---------------------------------------------------------------------------
+
+UNKNOWN_VALUES = [None, float("nan"), float("inf"), float("-inf"), "n/a"]
+UNKNOWN_IDS = ["null", "nan", "inf", "neg_inf", "text"]
+# (symphony id, ticker) cells of the first scenario day: a long-VIX holding and another
+# holding, each of the subject and of two peers
+UNKNOWN_CELLS = [("subj", "VIXY"), ("subj", "SPY"), ("o1", "SPY"), ("o2", "UVXY")]
+
+
+@pytest.mark.parametrize("unknown", UNKNOWN_VALUES, ids=UNKNOWN_IDS)
+@pytest.mark.parametrize(("symphony", "ticker"), UNKNOWN_CELLS)
+def test_a_day_carrying_an_unknown_holding_value_is_treated_as_a_missing_day(
+    unknown, symphony, ticker
+):
+    """The portfolio total of that day is unknown, so every share and count that would
+    read it is left out: the item equals the item for the same holdings with that day
+    absent. Rejects counting the value as zero (which shrinks the total and can mark the
+    day as held), and a partial sum shown as a real percent."""
+    day = copy.deepcopy(SCENARIO[0])
+    day[symphony][ticker] = unknown
+    item = _cofire(_holdings([day, *SCENARIO[1:]]))
+    absent = _cofire(_holdings([None, *SCENARIO[1:]]))
+    assert item == absent
+    assert item["window"]["days"] == 4  # fixture sanity: the day was dropped, not kept
+
+
+def test_a_partial_day_never_sets_a_peak_share():
+    """With the peer's SPY value unknown, the day's visible total is 210 and 40 of it is
+    long-VIX, which would read 19 percent. The other days peak at 20/300 with the subject
+    and 10 percent without it."""
+    partial = {
+        "subj": {"UVXY": 30.0, "SPY": 70.0},
+        "o1": {"VXX": 10.0, "SPY": None},
+        "o2": {"TLT": 100.0},
+    }
+    got = _figures(_cofire(_holdings([partial, SCENARIO[1], None, None, SCENARIO[4]])))
+    assert got["held_days"] == 0
+    assert got["co_held_days"] == 0
+    assert got["peak_share_with"] == pytest.approx(20 / 300 * 100, rel=1e-9)
+    assert got["peak_share_without"] == pytest.approx(20 / 200 * 100, rel=1e-9)
+
+
+def test_an_unknown_value_in_a_symphony_outside_the_live_set_does_not_drop_the_day():
+    """A retired symphony's holdings enter no figure, so what they hold is irrelevant."""
+    with_ghost = [dict(day, **{"retired-ghost": {"VIXY": None}}) for day in SCENARIO]
+    assert _cofire(_holdings(with_ghost)) == _cofire(_holdings(SCENARIO))
+
+
+def test_when_every_day_with_holdings_carries_an_unknown_value_the_item_is_unavailable():
+    unknown_day = copy.deepcopy(SCENARIO[0])
+    unknown_day["subj"]["VIXY"] = None
+    item = _cofire(_holdings([unknown_day] * 5))
+    assert item["status"] == "unavailable"
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+# ---------------------------------------------------------------------------
 # Missing data is unavailable or reduced, never zero
 # ---------------------------------------------------------------------------
 
@@ -207,6 +268,48 @@ def test_a_holdings_read_that_failed_outright_reads_unavailable_with_its_reason(
     assert item["reason"] == reason
     for fig in item["figures"].values():
         assert fig["value"] is None
+
+
+FAILURE_CLASSES = (
+    "refused",
+    "not_found",
+    "rate_limited",
+    "unavailable",
+    "empty",
+    "unreadable",
+    "rejected",
+    "no-such-failure-class",
+)
+
+
+def _series_reason(failure):
+    """The reason the series path gives a failure class, read from a real review."""
+    days = b.last_n_nyse_days(b.AS_OF, 21)
+    probe = b.make_symphony(
+        "reason-probe",
+        "Reason Probe",
+        days[0].isoformat(),
+        series_failure=failure,
+        shadow_returns=b.by_date(days[1:], b.wave_returns(20)),
+    )
+    entry = b.entry_of(b.review([probe], as_of=b.AS_OF, threshold=20), "reason-probe")
+    return entry["basis"]["fallback_reason"]
+
+
+@pytest.mark.parametrize("failure", FAILURE_CLASSES)
+def test_a_failed_holdings_read_gives_the_reason_the_series_path_gives_the_same_class(failure):
+    """One mapping from failure class to reason serves both reads, including a class the
+    review does not know. Rejects a second table, or a default that names another class."""
+    item = _cofire(tr.HoldingsInput(days={}, failure=failure))
+    assert item["status"] == "unavailable"
+    assert item["reason"] == _series_reason(failure)
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+def test_every_failure_class_gives_a_holdings_reason_of_its_own():
+    reasons = [_cofire(tr.HoldingsInput(days={}, failure=f))["reason"] for f in FAILURE_CLASSES]
+    assert len(set(reasons)) == len(reasons)
 
 
 def test_no_holdings_input_at_all_reads_unavailable_never_zero():
@@ -292,3 +395,12 @@ def test_a_review_without_any_holdings_input_gets_the_same_verdicts():
     for sid in ("vix-1", "vix-2", "vix-3"):
         assert b.entry_of(with_holdings, sid)["verdict"] == b.entry_of(without, sid)["verdict"]
         assert b.item_of(b.entry_of(without, sid), "long_vix")["status"] == "unavailable"
+
+
+def test_the_subject_of_an_available_long_vix_item_names_its_symphony():
+    result = _review_with({"vix-1": {"VIXY": 90.0, "SPY": 10.0}, "vix-2": {"SPY": 100.0}})
+    for sid in ("vix-1", "vix-2"):
+        entry = b.entry_of(result, sid)
+        item = b.item_of(entry, "long_vix")
+        assert item["status"] == "available", sid  # fixture sanity
+        assert entry["display_name"] in item["subject"], sid

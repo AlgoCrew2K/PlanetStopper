@@ -1,4 +1,4 @@
-"""Symphony tenure review: advisory compute (cycle C1).
+"""Symphony tenure review: advisory compute.
 
 For every live symphony this module assembles six labelled evidence items
 (performance, composite, redundancy, backtest, marginal, long-VIX co-firing) and
@@ -8,7 +8,10 @@ liquidation path. Callers fetch the inputs and persist the run record.
 
 Percent scale everywhere: a return of 0.5 means +0.5 percent. Max drawdown is a
 percent number that is <= 0. ``None`` means unknown or not computable and is never
-replaced by 0; a computed 0 stays 0.
+replaced by 0; a computed 0 stays 0. The one exception to percent scale is the
+metrics inside a retire-candidate recommendation, which keep the scale of
+``analytics.compute_quantstats_metrics`` (fractions) so that rows written by the
+existing recommender and rows written from a review share one meaning per key.
 """
 
 from __future__ import annotations
@@ -20,22 +23,24 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from functools import lru_cache
+from functools import cache
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 import analytics
 import market_calendar
 from advisors import frontrunner_detector, retirement_recommender
-from advisors.composer_backtest_client import BacktestResult
 from advisors.correlation_diagnostic import PairResult, _extract_aligned_pairs, _pearson_r
+
+if TYPE_CHECKING:
+    from advisors.composer_backtest_client import BacktestResult
 
 # Default minimum tenure, in NYSE trading days, before a symphony gets a verdict
 # (about six months of sessions: 126 = 252 / 2, half of a 252-session trading year).
 DEFAULT_MIN_TENURE_TRADING_DAYS: int = 126
 
 # Environment key an operator sets to override the default tenure threshold.
-TENURE_REVIEW_MIN_TRADING_DAYS_ENV_NAME = "TENURE_REVIEW_MIN_TRADING_DAYS"
-TENURE_THRESHOLD_ENV_KEY: str = TENURE_REVIEW_MIN_TRADING_DAYS_ENV_NAME
+TENURE_THRESHOLD_ENV_KEY: str = "TENURE_REVIEW_MIN_TRADING_DAYS"
 
 # A symphony whose backtest of today's definition beats its realized total return
 # by more than this many percentage points is flagged "watch" (operator decision;
@@ -49,40 +54,89 @@ LONG_VIX_TICKERS: frozenset[str] = frontrunner_detector.VIX_FAMILY_TICKERS - {"S
 # advisor_role of the persisted run record row.
 TENURE_REVIEW_RUN_ROLE: str = "TENURE_REVIEW_RUN"
 
-# Trading sessions per year, the annualization basis used by quantstats (unit: days).
-_FRACTION_TO_PERCENT: float = 100.0
+# Multiplier that converts a fraction to percent (0.01 is 1 percent) and the integer
+# denominator of a share given in whole percent.
+_FRACTION_TO_PERCENT: int = 100
 
-# Earliest date the calendar walk goes back to, bounding an absurd threshold setting.
-_CALENDAR_FLOOR: date = date(1990, 1, 1)
+# Earliest invested-since date the calendar walk supports; an earlier date, or text
+# that is not a date, leaves the tenure unknown instead of walking centuries of days.
+CALENDAR_FLOOR: date = date(1990, 1, 1)
 
+# Exchange time zone in which a session closes and the as-of day is read.
 _ET = ZoneInfo("America/New_York")
 
-INVALID_THRESHOLD_NOTE = "configured threshold invalid; 126 in use"
+# Note shown beside the threshold when the configured value cannot be used; derived
+# from the default so the two never disagree.
+INVALID_THRESHOLD_NOTE = f"configured threshold invalid; {DEFAULT_MIN_TENURE_TRADING_DAYS} in use"
 
+# Characters of an ISO timestamp that name its calendar date (YYYY-MM-DD).
+_ISO_DATE_LENGTH: int = 10
+
+# Fewest usable points a Composer series needs to serve as the realized basis.
+_MIN_COMPOSER_POINTS: int = 2
+
+# Fewest values the shared metric function can score: it needs a minimum number of
+# returns, and n returns need n + 1 values.
+_MIN_VALUES_TO_SCORE: int = analytics._MIN_QUANTSTATS_OBSERVATIONS + 1
+
+# Label of the basis built from Composer's deposit-adjusted account history.
 COMPOSER_BASIS_LABEL = "realized: Composer account, deposit-adjusted"
+
+# Label of the basis built from PlanetStopper's own shadow history.
 SHADOW_BASIS_LABEL = "PlanetStopper shadow history from the 2026-06-22 go-live floor"
-_NO_BASIS_LABEL = "no history"
+
+# Label of the counterfactual backtest item.
 BACKTEST_LABEL = "counterfactual: Composer backtest of today's definition"
+
+# Label of the counterfactual portfolio-without-this-symphony item.
 MARGINAL_LABEL = "counterfactual: portfolio without this symphony"
+
+# Label of the long-VIX item, which never feeds the verdict.
 LONG_VIX_LABEL = "informational: not used in the verdict"
 
+# Source text of a figure built from Composer's account history.
 _COMPOSER_SOURCE = "Composer account portfolio history (deposit-adjusted)"
+
+# Source text of a figure built from the shadow history table.
 _SHADOW_SOURCE = "PlanetStopper shadow_history"
 
+# Source text of an item with no series behind it.
+_NO_SOURCE = "no history available"
+
+# Basis kind of a symphony measured on Composer's account history.
+_KIND_COMPOSER = "composer"
+
+# Basis kind of a symphony measured on PlanetStopper's shadow history.
+_KIND_SHADOW = "shadow"
+
+# Basis kind of a symphony with no series on either basis.
+_KIND_NONE = "none"
+
+# Reason for each series failure class, shared by the series fallback and the
+# holdings read so that one class always reads one way.
 _FAILURE_REASONS: dict[str, str] = {
     "refused": "Composer refused the request",
-    "not_found": "Composer has no series for this symphony",
+    "not_found": "Composer returned not found",
     "rate_limited": "Composer rate limit",
     "unavailable": "Composer unavailable",
     "empty": "Composer series empty",
     "unreadable": "Composer response unreadable",
+    "rejected": "Composer rejected the request",
 }
-_EMPTY_SERIES_REASON = _FAILURE_REASONS["empty"]
 
-# The share of aligned days forming the stressed window, as an integer percent so the
+# Reason for a failure class this module does not know.
+_UNRECOGNIZED_FAILURE_REASON = "Composer read failed"
+
+# Reason when Composer answered with points but fewer than a basis needs in the tenure.
+_SHORT_SERIES_REASON = (
+    f"Composer series has fewer than {_MIN_COMPOSER_POINTS} usable points in the tenure"
+)
+
+# Share of aligned days forming the stressed window, as an integer percent so the
 # day count is exact (a float product can land on the wrong side of an integer).
-_STRESS_PERCENT: int = round(retirement_recommender.STRESS_WINDOW_FRACTION * 100)
+_STRESS_PERCENT: int = round(retirement_recommender.STRESS_WINDOW_FRACTION * _FRACTION_TO_PERCENT)
 
+# Names of the six evidence items, in display order.
 EVIDENCE_ITEM_ORDER: tuple[str, ...] = (
     "performance",
     "composite",
@@ -92,31 +146,49 @@ EVIDENCE_ITEM_ORDER: tuple[str, ...] = (
     "long_vix",
 )
 
+# Unit of a difference between two percent figures.
+_POINTS_UNIT = "percentage points"
+
+# Unit of a daily, non-annualized ratio such as Sharpe or Sortino.
+_DAILY_RATIO_UNIT = "ratio (daily, non-annualized)"
+
+# Unit of the fleet-normalized composite score.
+_COMPOSITE_UNIT = "score (0 to 1, fleet-normalized)"
+
+# Figures of the performance item and their units.
 _PERF_FIGURES = (
     ("total_return", "percent"),
     ("annualized_return", "percent"),
     ("max_drawdown", "percent"),
-    ("sharpe", "ratio (daily, non-annualized)"),
-    ("sortino", "ratio (daily, non-annualized)"),
+    ("sharpe", _DAILY_RATIO_UNIT),
+    ("sortino", _DAILY_RATIO_UNIT),
     ("calmar", "ratio"),
 )
-_COMPOSITE_FIGURES = (("composite", "score (0 to 1, fleet-normalized)"),)
+
+# Figure of the composite item and its unit.
+_COMPOSITE_FIGURES = (("composite", _COMPOSITE_UNIT),)
+
+# Figures of the backtest item and their units.
 _BACKTEST_FIGURES = (
     ("realized_total_return", "percent"),
     ("realized_max_drawdown", "percent"),
     ("backtest_total_return", "percent"),
     ("backtest_max_drawdown", "percent"),
-    ("total_return_gap", "percentage points"),
-    ("max_drawdown_gap", "percentage points"),
+    ("total_return_gap", _POINTS_UNIT),
+    ("max_drawdown_gap", _POINTS_UNIT),
 )
+
+# Figures of the marginal item and their units.
 _MARGINAL_FIGURES = (
     ("with_total_return", "percent"),
     ("with_max_drawdown", "percent"),
     ("without_total_return", "percent"),
     ("without_max_drawdown", "percent"),
-    ("total_return_difference", "percentage points"),
-    ("max_drawdown_difference", "percentage points"),
+    ("total_return_difference", _POINTS_UNIT),
+    ("max_drawdown_difference", _POINTS_UNIT),
 )
+
+# Figures of the long-VIX item and their units.
 _LONG_VIX_FIGURES = (
     ("held_days", "days"),
     ("co_held_days", "days"),
@@ -124,9 +196,102 @@ _LONG_VIX_FIGURES = (
     ("peak_share_without", "percent"),
 )
 
+# Reason an item is withheld for a symphony younger than the threshold.
 REASON_NOT_YET_ELIGIBLE = "not yet eligible"
+
+# Reason an item is withheld for a symphony with no series on any basis; it is also
+# the basis label such a symphony shows.
 REASON_NO_HISTORY = "no history"
+
+# Reason an item is withheld for a symphony whose invested-since date is unknown.
+REASON_TENURE_UNAVAILABLE = "tenure unavailable"
+
+# Reason a figure has no value when nothing more specific applies.
+_NOT_COMPUTABLE = "not computable"
+
+# Verdict text when no evidence item is available.
 _NO_EVIDENCE_TEXT = "no verdict: no evidence available"
+
+# Prefix of the reason a symphony is left out of the marginal comparison.
+_EXCLUDED_PREFIX = "excluded: "
+
+# Text of a redundancy item that was evaluated and found no redundant sibling.
+_NO_SIBLING_TEXT = "no redundant sibling"
+
+# Gate state of a pair that met the gate.
+_GATE_PASSED = "passed"
+
+# Gate state of a pair that was evaluated and fell short.
+_GATE_NOT_MET = "not met"
+
+# Gate state of a pair with too few aligned days to evaluate.
+_GATE_INSUFFICIENT = "insufficient data"
+
+# Gate state of a pair whose statistic cannot be computed.
+_GATE_UNDEFINED = "undefined"
+
+# Gate state of a gate that was not reached because an earlier gate was not met.
+_GATE_NOT_EVALUATED = "not evaluated"
+
+# Composite reason of a symphony on the fallback basis.
+_BASIS_DIFFERS_REASON = "not comparable: basis differs"
+
+# Shorter note a sibling row shows for a sibling on the fallback basis.
+_BASIS_DIFFERS_NOTE = "basis differs"
+
+# Prefix of the note shown beside a sibling that has no composite.
+_SIBLING_NOTE_PREFIX = "sibling has no composite: "
+
+# Reason shown by items that compare symphonies across different bases.
+_BASES_DIFFER_REASON = "bases differ"
+
+# Reason of the marginal item on the shadow basis, which carries no position values.
+_NO_POSITION_VALUES_REASON = "no position values on the shadow-history basis"
+
+# Reason a figure of an item is missing because the realized side is unknown.
+_REALIZED_UNAVAILABLE_REASON = "realized figure unavailable"
+
+# What the performance item measures; the review prefixes the symphony's name.
+_PERFORMANCE_SUBJECT = "realized performance over the tenure"
+
+# What the composite item measures; the review prefixes the symphony's name.
+_COMPOSITE_SUBJECT = "performance score ranked against the other live symphonies"
+
+# What the redundancy item measures; the review prefixes the symphony's name.
+_REDUNDANCY_SUBJECT = "return correlation with the other live symphonies"
+
+# Where the redundancy item's figures come from.
+_REDUNDANCY_SOURCE = "pairwise return correlation across live symphonies"
+
+# What the backtest item measures; the review prefixes the symphony's name.
+_BACKTEST_SUBJECT = "today's definition against the realized history"
+
+# Where the backtest item's figures come from.
+_BACKTEST_SOURCE = "Composer backtest (POST /api/v0.1/backtest)"
+
+# What the marginal item measures; the review prefixes the symphony's name.
+_MARGINAL_SUBJECT = "portfolio of eligible symphonies with and without this symphony"
+
+# What the long-VIX item measures; the review prefixes the symphony's name.
+_LONG_VIX_SUBJECT = "long-volatility (VIX) exposure beside the rest of the portfolio"
+
+# Where the long-VIX item's figures come from.
+_LONG_VIX_SOURCE = "Composer account holdings by day"
+
+# Reason shown for a figure that needs account holdings the caller did not supply.
+_HOLDINGS_UNAVAILABLE_REASON = "holdings unavailable"
+
+# Reason shown for an interval bound that was not computed.
+_INTERVAL_NOT_COMPUTED_REASON = "interval not computed"
+
+# Matches the status code at the start of a backtest client error text.
+_HTTP_CODE = re.compile(r"^HTTP (\d{3})")
+
+# Verdict reason when the backtest of today's definition beats the realized return.
+_TRAILS_REASON = "trails its own backtest"
+
+# Verdict reason when the portfolio would have done better without the symphony.
+_DRAGS_REASON = "drags portfolio return and drawdown"
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +301,21 @@ _NO_EVIDENCE_TEXT = "no verdict: no evidence available"
 
 @dataclass(frozen=True)
 class ThresholdSetting:
+    """The minimum tenure in effect and a note when the configured value was unusable."""
+
     value: int
     note: str | None
 
 
 @dataclass
 class SymphonyInput:
+    """Everything the review needs to know about one live symphony.
+
+    ``composer_values`` maps a date key to a deposit-adjusted portfolio value;
+    ``series_failure`` names the failure class of the Composer read, if it failed;
+    ``shadow_returns`` maps a date key to a percent return from the shadow history.
+    """
+
     symphony_id: str
     display_name: str
     invested_since: str | None = None
@@ -155,12 +329,16 @@ class SymphonyInput:
 
 @dataclass
 class HoldingsInput:
+    """Account holdings as ``{day: {symphony id: {ticker: market value}}}``."""
+
     days: Mapping[str, Mapping[str, Mapping[str, float]]]
     failure: str | None = None
 
 
 @dataclass
 class ReviewInputs:
+    """One review run: its identity, the as-of session, the threshold and the symphonies."""
+
     run_id: str
     trigger: str
     started_at: datetime
@@ -172,6 +350,8 @@ class ReviewInputs:
 
 @dataclass
 class ReviewResult:
+    """The entries of one review, the composite window and the retire-candidate recommendations."""
+
     run_id: str
     trigger: str
     started_at: datetime
@@ -179,6 +359,7 @@ class ReviewResult:
     threshold: ThresholdSetting
     composite_window: dict
     entries: list[dict] = field(default_factory=list)
+    recommendations: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +367,7 @@ class ReviewResult:
 # ---------------------------------------------------------------------------
 
 
-def parse_threshold(raw) -> ThresholdSetting:
+def parse_threshold(raw: object) -> ThresholdSetting:
     """Parse the configured minimum tenure. Never raises."""
     if raw is None:
         return ThresholdSetting(DEFAULT_MIN_TENURE_TRADING_DAYS, None)
@@ -202,7 +383,7 @@ def parse_threshold(raw) -> ThresholdSetting:
     return ThresholdSetting(DEFAULT_MIN_TENURE_TRADING_DAYS, INVALID_THRESHOLD_NOTE)
 
 
-@lru_cache(maxsize=64)
+@cache
 def _sessions_in_year(year: int) -> frozenset[date]:
     first = date(year, 1, 1)
     days = (date(year + 1, 1, 1) - first).days
@@ -224,7 +405,7 @@ def as_of_trading_day(now_et: datetime) -> date:
     if _is_session(today) and now.time() >= market_calendar.session_close(today):
         return today
     d = today - timedelta(days=1)
-    while not _is_session(d) and d > _CALENDAR_FLOOR:
+    while not _is_session(d) and d > CALENDAR_FLOOR:
         d -= timedelta(days=1)
     return d
 
@@ -242,7 +423,7 @@ def count_trading_days(start: date, end: date) -> int:
 def _last_sessions(end: date, count: int) -> list[date]:
     out: list[date] = []
     d = end
-    while len(out) < count and d > _CALENDAR_FLOOR:
+    while len(out) < count and d > CALENDAR_FLOOR:
         if _is_session(d):
             out.append(d)
         d -= timedelta(days=1)
@@ -255,54 +436,76 @@ def _last_sessions(end: date, count: int) -> list[date]:
 # ---------------------------------------------------------------------------
 
 
-def _finite(value) -> float | None:
+def _finite(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     try:
-        f = float(value)
+        f = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
     return f if math.isfinite(f) else None
 
 
-def _usable_level(value) -> float | None:
+def _usable_level(value: object) -> float | None:
     f = _finite(value)
     return f if f is not None and f > 0 else None
 
 
-def _parse_date(text) -> date | None:
+def _parse_date(text: object) -> date | None:
     try:
-        return date.fromisoformat(str(text)[:10])
+        return date.fromisoformat(str(text)[:_ISO_DATE_LENGTH])
     except ValueError:
         return None
 
 
+def _points_by_date(values: Mapping, start: date, end: date, usable) -> dict[date, float]:
+    """Usable values in [start, end] by date. A key is read as the date in its first ten
+    characters; among keys naming one date the greatest key with a usable value wins,
+    whatever the order of the mapping."""
+    points: dict[date, float] = {}
+    for key in sorted(values, key=str):
+        d = _parse_date(key)
+        value = usable(values[key])
+        if d is not None and value is not None and start <= d <= end:
+            points[d] = value
+    return points
+
+
+def _percent_changes(levels: Sequence[float]) -> list[float]:
+    return [
+        (later / earlier - 1.0) * _FRACTION_TO_PERCENT
+        for earlier, later in itertools.pairwise(levels)
+    ]
+
+
 def realized_window(values: Mapping, start: date, end: date) -> dict:
     """Usable points in [start, end] and the percent returns between consecutive ones."""
-    points: dict[date, float] = {}
-    for key, raw in values.items():
-        d = _parse_date(key)
-        level = _usable_level(raw)
-        if d is not None and level is not None and start <= d <= end:
-            points[d] = level
+    points = _points_by_date(values, start, end, _usable_level)
     ordered = sorted(points)
-    returns = [
-        (points[b] / points[a] - 1.0) * _FRACTION_TO_PERCENT for a, b in itertools.pairwise(ordered)
-    ]
     return {
         "first": ordered[0].isoformat() if ordered else None,
         "last": ordered[-1].isoformat() if ordered else None,
         "days": len(ordered),
         "dates": [d.isoformat() for d in ordered],
-        "returns_pct": returns,
+        "returns_pct": _percent_changes([points[d] for d in ordered]),
     }
 
 
-def performance_metrics(returns_pct) -> dict:
-    """The six performance figures from percent returns (see module docstring)."""
-    qs = analytics.compute_quantstats_metrics(list(returns_pct))
+def _scored_metrics(returns_pct: Sequence[float]) -> dict:
+    """The shared metric function's answer (fractions), except that a window with no
+    negative return has a max drawdown of exactly 0 and so no Calmar ratio: the function
+    reads such a series as prices when a day is +100 percent or more."""
+    metrics = analytics.compute_quantstats_metrics(list(returns_pct))
+    if returns_pct and min(returns_pct) >= 0 and metrics.get("max_drawdown") is not None:
+        return {**metrics, "max_drawdown": 0.0, "calmar": None}
+    return metrics
 
-    def pct(key):
+
+def performance_metrics(returns_pct: Sequence[float]) -> dict:
+    """The six performance figures from percent returns (see module docstring)."""
+    qs = _scored_metrics(returns_pct)
+
+    def pct(key: str) -> float | None:
         value = qs.get(key)
         return None if value is None else value * _FRACTION_TO_PERCENT
 
@@ -316,20 +519,11 @@ def performance_metrics(returns_pct) -> dict:
     }
 
 
-def _levels_total_return_and_drawdown(levels: Sequence[float]) -> tuple[float, float]:
-    """Percent total return and max drawdown of a level series (first level is a peak)."""
-    peak = levels[0]
-    worst = 0.0
-    for level in levels:
-        peak = max(peak, level)
-        worst = min(worst, level / peak - 1.0)
-    return (
-        (levels[-1] / levels[0] - 1.0) * _FRACTION_TO_PERCENT,
-        worst * _FRACTION_TO_PERCENT,
-    )
+def _difference(minuend: float | None, subtrahend: float | None) -> float | None:
+    return None if minuend is None or subtrahend is None else minuend - subtrahend
 
 
-def _window_dict(first, last, days) -> dict:
+def _window_dict(first: str | None, last: str | None, days: int) -> dict:
     return {"first": first, "last": last, "days": days}
 
 
@@ -338,10 +532,10 @@ def _window_dict(first, last, days) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _figure(value, unit: str, reason: str | None = None) -> dict:
+def _figure(value: object, unit: str, reason: str | None = None) -> dict:
     number = _finite(value)
     if number is None:
-        return {"value": None, "unit": unit, "reason": reason or "not computable"}
+        return {"value": None, "unit": unit, "reason": reason or _NOT_COMPUTABLE}
     return {"value": number, "unit": unit}
 
 
@@ -378,15 +572,24 @@ def _unavailable(
 # Redundancy
 # ---------------------------------------------------------------------------
 
+
+def _stressed_day_count(aligned_days: int) -> int:
+    """Days in the stressed window: the share of aligned days, rounded up."""
+    return -(-aligned_days * _STRESS_PERCENT // _FRACTION_TO_PERCENT)
+
+
+# Aligned days at which the stressed window first reaches the recommender's minimum.
 _STRUCTURAL_NEEDS_DAYS = next(
-    n
-    for n in itertools.count(1)
-    if -(-n * _STRESS_PERCENT // 100) >= retirement_recommender.STRESS_MIN_OBS
+    n for n in itertools.count(1) if _stressed_day_count(n) >= retirement_recommender.STRESS_MIN_OBS
 )
 
 
-def _gate(state: str, text: str) -> dict:
-    return {"state": state, "text": text}
+def _insufficient_text(days: int) -> str:
+    return f"{_GATE_INSUFFICIENT}: needs {days} aligned days"
+
+
+def _gate(state: str, text: str | None = None) -> dict:
+    return {"state": state, "text": text or state}
 
 
 def _evaluate_pair(a: str, b: str, series: Mapping, tickers: Mapping | None) -> dict:
@@ -397,46 +600,45 @@ def _evaluate_pair(a: str, b: str, series: Mapping, tickers: Mapping | None) -> 
     pair_result = PairResult(
         sym_a=a, sym_b=b, n_obs=n_obs, correlation=r, thin_data=False, window=win
     )
-
-    ci_lower = ci_upper = None
-    if n_obs < retirement_recommender.MIN_OBS_FLOOR:
-        uncertainty = _gate(
-            "insufficient data",
-            f"insufficient data: needs {retirement_recommender.MIN_OBS_FLOOR} aligned days",
-        )
-    elif r is None or abs(r) >= 1.0:
-        uncertainty = _gate("undefined", "undefined: correlation interval cannot be computed")
-    else:
-        verdict = retirement_recommender.evaluate_uncertainty_gate(pair_result)
-        ci_lower, ci_upper = verdict.ci_lower, verdict.ci_upper
-        uncertainty = (
-            _gate("passed", "passed")
-            if verdict.passed
-            else _gate("not met", "not met: interval lower bound below the screen threshold")
-        )
-
-    stressed = None
-    if uncertainty["state"] != "passed":
-        structural = _gate("not evaluated", "not evaluated: uncertainty gate not met")
-    elif -(-n_obs * _STRESS_PERCENT // 100) < retirement_recommender.STRESS_MIN_OBS:
-        structural = _gate(
-            "insufficient data", f"insufficient data: needs {_STRUCTURAL_NEEDS_DAYS} aligned days"
-        )
-    else:
-        stressed = retirement_recommender._compute_stressed_correlation(vals_a, vals_b)
-        if stressed is None:
-            structural = _gate(
-                "undefined", "undefined: stressed-window correlation cannot be computed"
-            )
-        elif stressed >= retirement_recommender.STRESS_REDUNDANCY_THRESHOLD:
-            structural = _gate("passed", "passed")
-        else:
-            structural = _gate("not met", "not met: stressed correlation below the threshold")
-
     tickers = tickers or {}
     overlap = retirement_recommender._compute_holdings_overlap(
         tickers.get(a) or {}, tickers.get(b) or {}
     )
+
+    ci_lower = ci_upper = None
+    if n_obs < retirement_recommender.MIN_OBS_FLOOR:
+        uncertainty = _gate(
+            _GATE_INSUFFICIENT, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR)
+        )
+    elif r is None or abs(r) >= 1.0:
+        uncertainty = _gate(_GATE_UNDEFINED, "undefined: correlation interval cannot be computed")
+    else:
+        verdict = retirement_recommender.evaluate_uncertainty_gate(pair_result)
+        ci_lower, ci_upper = verdict.ci_lower, verdict.ci_upper
+        uncertainty = (
+            _gate(_GATE_PASSED)
+            if verdict.passed
+            else _gate(_GATE_NOT_MET, "not met: interval lower bound below the screen threshold")
+        )
+
+    stressed = None
+    if uncertainty["state"] != _GATE_PASSED:
+        structural = _gate(_GATE_NOT_EVALUATED, "not evaluated: uncertainty gate not met")
+    elif _stressed_day_count(n_obs) < retirement_recommender.STRESS_MIN_OBS:
+        structural = _gate(_GATE_INSUFFICIENT, _insufficient_text(_STRUCTURAL_NEEDS_DAYS))
+    else:
+        stressed = retirement_recommender._compute_stressed_correlation(vals_a, vals_b)
+        if stressed is None:
+            structural = _gate(
+                _GATE_UNDEFINED, "undefined: stressed-window correlation cannot be computed"
+            )
+        elif retirement_recommender.evaluate_structural_redundancy_gate(
+            pair_result, stressed, overlap
+        ).passed:
+            structural = _gate(_GATE_PASSED)
+        else:
+            structural = _gate(_GATE_NOT_MET, "not met: stressed correlation below the threshold")
+
     return {
         "sym_a": a,
         "sym_b": b,
@@ -454,9 +656,10 @@ def _evaluate_pair(a: str, b: str, series: Mapping, tickers: Mapping | None) -> 
 
 
 def evaluate_redundancy(
-    series_by_symphony: Mapping, current_tickers_by_symphony=None
+    series_by_symphony: Mapping, current_tickers_by_symphony: Mapping | None = None
 ) -> list[dict]:
-    """One result per unordered pair of symphonies (see the handoff for the keys)."""
+    """One result per unordered pair of symphonies: correlation, interval, both gate
+    states, the stressed-window correlation and the holdings overlap."""
     ids = sorted(series_by_symphony)
     return [
         _evaluate_pair(a, b, series_by_symphony, current_tickers_by_symphony)
@@ -466,16 +669,14 @@ def evaluate_redundancy(
 
 def _passes_both_gates(pair: dict) -> bool:
     return (
-        pair["uncertainty_gate"]["state"] == "passed"
-        and pair["structural_gate"]["state"] == "passed"
+        pair["uncertainty_gate"]["state"] == _GATE_PASSED
+        and pair["structural_gate"]["state"] == _GATE_PASSED
     )
 
 
 # ---------------------------------------------------------------------------
 # Backtest item
 # ---------------------------------------------------------------------------
-
-_HTTP_CODE = re.compile(r"^HTTP (\d{3})")
 
 
 def _backtest_error_reason(error: str) -> str:
@@ -488,74 +689,85 @@ def _backtest_error_reason(error: str) -> str:
         if code in ("400", "422"):
             return f"Composer rejected the backtest (HTTP {code})"
         if code == "429":
-            return "Composer rate limit"
+            return _FAILURE_REASONS["rate_limited"]
         if code.startswith("5"):
-            return "Composer unavailable"
+            return _FAILURE_REASONS["unavailable"]
     lowered = text.lower()
     if lowered.startswith(("request timed out", "transport error")):
-        return "Composer unavailable"
+        return _FAILURE_REASONS["unavailable"]
     if lowered.startswith("invalid json in 200 response"):
-        return "Composer response unreadable"
+        return _FAILURE_REASONS["unreadable"]
     return "backtest unavailable"
+
+
+def _backtest_unavailable(reason: str, window: dict | None = None) -> dict:
+    return _unavailable(
+        _BACKTEST_FIGURES,
+        reason,
+        BACKTEST_LABEL,
+        _BACKTEST_SUBJECT,
+        _BACKTEST_SOURCE,
+        window=window,
+    )
 
 
 def backtest_comparison(
     *,
     window: dict | None,
-    realized_total_return,
-    realized_max_drawdown,
+    realized_total_return: float | None,
+    realized_max_drawdown: float | None,
     backtest: BacktestResult | None,
     definition_available: bool = True,
 ) -> dict:
-    subject = "today's definition against the realized history"
-    source = "Composer backtest (POST /api/v0.1/backtest)"
-
-    def unavailable(reason):
-        return _unavailable(
-            _BACKTEST_FIGURES, reason, BACKTEST_LABEL, subject, source, window=window
+    """Realized total return and drawdown beside those of a Composer backtest of today's
+    definition over the same dates, with the gaps (realized minus backtest)."""
+    if not definition_available:
+        return _backtest_unavailable("definition unavailable", window)
+    if backtest is None:
+        return _backtest_unavailable("backtest not run", window)
+    if backtest.error:
+        return _backtest_unavailable(_backtest_error_reason(backtest.error), window)
+    first = _parse_date(window.get("first")) if window else None
+    last = _parse_date(window.get("last")) if window else None
+    if (
+        first is None
+        or last is None
+        or backtest.first_day != window["first"]
+        or backtest.last_market_day != window["last"]
+    ):
+        return _backtest_unavailable("backtest dates do not match the realized window", window)
+    levels = _points_by_date(backtest.daily_portfolio_values, first, last, _usable_level)
+    if len(levels) < _MIN_VALUES_TO_SCORE:
+        return _backtest_unavailable(
+            f"backtest series too short to score: needs at least {_MIN_VALUES_TO_SCORE} values",
+            window,
         )
 
-    if not definition_available:
-        return unavailable("definition unavailable")
-    if backtest is None:
-        return unavailable("backtest not run")
-    if backtest.error:
-        return unavailable(_backtest_error_reason(backtest.error))
-    if (
-        window is None
-        or backtest.first_day != window.get("first")
-        or backtest.last_market_day != window.get("last")
-    ):
-        return unavailable("backtest dates do not match the realized window")
-    levels = [
-        level
-        for key, raw in sorted(backtest.daily_portfolio_values.items())
-        if window["first"] <= key <= window["last"]
-        for level in [_usable_level(raw)]
-        if level is not None
-    ]
-    if len(levels) < 2:
-        return unavailable("backtest series too short")
-
-    bt_total, bt_dd = _levels_total_return_and_drawdown(levels)
+    leg = performance_metrics(_percent_changes([levels[d] for d in sorted(levels)]))
+    bt_total, bt_dd = leg["total_return"], leg["max_drawdown"]
     realized_total = _finite(realized_total_return)
     realized_dd = _finite(realized_max_drawdown)
-    gap_reason = "realized figure unavailable"
     figures = {
-        "realized_total_return": _figure(realized_total, "percent", gap_reason),
-        "realized_max_drawdown": _figure(realized_dd, "percent", gap_reason),
+        "realized_total_return": _figure(realized_total, "percent", _REALIZED_UNAVAILABLE_REASON),
+        "realized_max_drawdown": _figure(realized_dd, "percent", _REALIZED_UNAVAILABLE_REASON),
         "backtest_total_return": _figure(bt_total, "percent"),
         "backtest_max_drawdown": _figure(bt_dd, "percent"),
         "total_return_gap": _figure(
-            None if realized_total is None else realized_total - bt_total,
-            "percentage points",
-            gap_reason,
+            _difference(realized_total, bt_total), _POINTS_UNIT, _REALIZED_UNAVAILABLE_REASON
         ),
         "max_drawdown_gap": _figure(
-            None if realized_dd is None else realized_dd - bt_dd, "percentage points", gap_reason
+            _difference(realized_dd, bt_dd), _POINTS_UNIT, _REALIZED_UNAVAILABLE_REASON
         ),
     }
-    return _item("available", None, BACKTEST_LABEL, subject, source, dict(window), figures)
+    return _item(
+        "available",
+        None,
+        BACKTEST_LABEL,
+        _BACKTEST_SUBJECT,
+        _BACKTEST_SOURCE,
+        dict(window),
+        figures,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -563,32 +775,41 @@ def backtest_comparison(
 # ---------------------------------------------------------------------------
 
 
-def marginal_contribution(subject_id: str, eligible: Mapping, excluded: Sequence[str] = ()) -> dict:
-    subject = "portfolio of eligible symphonies with and without this symphony"
-    excluded_list = [
-        {"display_name": name, "reason": "excluded: not yet eligible"} for name in excluded
-    ]
-    me = eligible.get(subject_id) or {}
-    basis = me.get("basis")
-    label = MARGINAL_LABEL
-    source = _COMPOSER_SOURCE
+def _excluded_record(excluded: str | Mapping[str, str]) -> dict:
+    """A plain name is a symphony left out for being too young; a mapping is a ready record."""
+    if isinstance(excluded, str):
+        return {
+            "display_name": excluded,
+            "reason": f"{_EXCLUDED_PREFIX}{REASON_NOT_YET_ELIGIBLE}",
+        }
+    return dict(excluded)
 
-    def not_available(reason, status="unavailable"):
+
+def marginal_contribution(
+    subject_id: str, eligible: Mapping, excluded: Sequence[str | Mapping[str, str]] = ()
+) -> dict:
+    """The eligible symphonies' summed portfolio with and without ``subject_id``, over the
+    days on which every eligible symphony has a usable value. ``excluded`` lists the
+    symphonies left out of the comparison."""
+    excluded_list = [_excluded_record(e) for e in excluded]
+    basis = (eligible.get(subject_id) or {}).get("basis")
+
+    def not_available(reason: str, status: str = "unavailable") -> dict:
         return _unavailable(
             _MARGINAL_FIGURES,
             reason,
-            label,
-            subject,
-            source,
+            MARGINAL_LABEL,
+            _MARGINAL_SUBJECT,
+            _COMPOSER_SOURCE,
             status=status,
             excluded=excluded_list,
         )
 
-    if basis == "shadow":
-        return not_available("no position values on the shadow-history basis")
+    if basis == _KIND_SHADOW:
+        return not_available(_NO_POSITION_VALUES_REASON)
     others = [k for k in eligible if k != subject_id]
     if any(eligible[k].get("basis") != basis for k in others):
-        return not_available("bases differ")
+        return not_available(_BASES_DIFFER_REASON)
     if not others:
         return not_available("no other eligible symphonies", status="not_applicable")
 
@@ -601,26 +822,32 @@ def marginal_contribution(subject_id: str, eligible: Mapping, excluded: Sequence
         for k in eligible
     }
     shared = sorted(set.intersection(*(set(v) for v in usable.values())))
-    if len(shared) < 2:
-        return not_available("fewer than two shared days")
+    if len(shared) < _MIN_VALUES_TO_SCORE:
+        return not_available(
+            f"shared days too short to score: needs at least {_MIN_VALUES_TO_SCORE} days"
+        )
     with_levels = [sum(usable[k][d] for k in eligible) for d in shared]
     without_levels = [with_levels[i] - usable[subject_id][d] for i, d in enumerate(shared)]
-    with_total, with_dd = _levels_total_return_and_drawdown(with_levels)
-    without_total, without_dd = _levels_total_return_and_drawdown(without_levels)
+    with_leg = performance_metrics(_percent_changes(with_levels))
+    without_leg = performance_metrics(_percent_changes(without_levels))
     figures = {
-        "with_total_return": _figure(with_total, "percent"),
-        "with_max_drawdown": _figure(with_dd, "percent"),
-        "without_total_return": _figure(without_total, "percent"),
-        "without_max_drawdown": _figure(without_dd, "percent"),
-        "total_return_difference": _figure(without_total - with_total, "percentage points"),
-        "max_drawdown_difference": _figure(without_dd - with_dd, "percentage points"),
+        "with_total_return": _figure(with_leg["total_return"], "percent"),
+        "with_max_drawdown": _figure(with_leg["max_drawdown"], "percent"),
+        "without_total_return": _figure(without_leg["total_return"], "percent"),
+        "without_max_drawdown": _figure(without_leg["max_drawdown"], "percent"),
+        "total_return_difference": _figure(
+            _difference(without_leg["total_return"], with_leg["total_return"]), _POINTS_UNIT
+        ),
+        "max_drawdown_difference": _figure(
+            _difference(without_leg["max_drawdown"], with_leg["max_drawdown"]), _POINTS_UNIT
+        ),
     }
     return _item(
         "available",
         None,
-        label,
-        subject,
-        source,
+        MARGINAL_LABEL,
+        _MARGINAL_SUBJECT,
+        _COMPOSER_SOURCE,
         _window_dict(shared[0], shared[-1], len(shared)),
         figures,
         excluded=excluded_list,
@@ -636,12 +863,11 @@ def _normalize_ticker(raw: str) -> str:
     return str(raw).split("::")[-1].split("//")[0].strip().upper()
 
 
-def _long_vix_value(day_holdings: Mapping) -> tuple[float, float, bool]:
+def _long_vix_value(day_holdings: Mapping[str, float]) -> tuple[float, float, bool]:
     """(long-VIX value, total value, holds a long-VIX ticker) for one symphony-day."""
     long_value = total = 0.0
     held = False
-    for ticker, value in day_holdings.items():
-        amount = _finite(value) or 0.0
+    for ticker, amount in day_holdings.items():
         total += amount
         if _normalize_ticker(ticker) in LONG_VIX_TICKERS:
             long_value += amount
@@ -649,20 +875,41 @@ def _long_vix_value(day_holdings: Mapping) -> tuple[float, float, bool]:
     return long_value, total, held
 
 
-def long_vix_cofiring(holdings, subject_id: str, live_ids, window: dict) -> dict:
-    subject = "long-volatility (VIX) exposure beside the rest of the portfolio"
-    source = "Composer account holdings by day"
+def _known_day(day: Mapping, live: set[str]) -> dict[str, dict[str, float]] | None:
+    """The live symphonies' holdings of one day as numbers, or None when any value is unknown
+    (the day's total is then unknown too, so the day is treated as missing)."""
+    parsed = {
+        sym: {ticker: _finite(value) for ticker, value in held.items()}
+        for sym, held in day.items()
+        if sym in live
+    }
+    if any(value is None for held in parsed.values() for value in held.values()):
+        return None
+    return parsed  # type: ignore[return-value]
 
-    def unavailable(reason):
-        return _unavailable(_LONG_VIX_FIGURES, reason, LONG_VIX_LABEL, subject, source)
+
+def _failure_reason(failure: str) -> str:
+    return _FAILURE_REASONS.get(failure, _UNRECOGNIZED_FAILURE_REASON)
+
+
+def long_vix_cofiring(
+    holdings: HoldingsInput | None, subject_id: str, live_ids: Sequence[str], window: dict
+) -> dict:
+    """Days the subject held a long-VIX product, days another symphony did too, and the
+    peak long-VIX share of the portfolio with and without the subject. Informational."""
+
+    def unavailable(reason: str) -> dict:
+        return _unavailable(
+            _LONG_VIX_FIGURES, reason, LONG_VIX_LABEL, _LONG_VIX_SUBJECT, _LONG_VIX_SOURCE
+        )
 
     if holdings is None:
-        return unavailable("holdings unavailable")
+        return unavailable(_HOLDINGS_UNAVAILABLE_REASON)
     if not holdings.days and holdings.failure:
-        return unavailable(_FAILURE_REASONS.get(holdings.failure, "Composer unavailable"))
+        return unavailable(_failure_reason(holdings.failure))
     live = set(live_ids)
     first, last = window.get("first"), window.get("last")
-    days = [
+    with_subject = [
         d
         for d in sorted(holdings.days)
         if first is not None
@@ -670,13 +917,15 @@ def long_vix_cofiring(holdings, subject_id: str, live_ids, window: dict) -> dict
         and first <= d <= last
         and subject_id in holdings.days[d]
     ]
-    if not days:
+    if not with_subject:
         return unavailable("no holdings for this symphony in the window")
+    known = {d: parsed for d in with_subject if (parsed := _known_day(holdings.days[d], live))}
+    if not known:
+        return unavailable("holding values unknown on every day in the window")
 
     held_days = co_held = 0
     peak_with = peak_without = None
-    for d in days:
-        by_symphony = {k: v for k, v in holdings.days[d].items() if k in live}
+    for by_symphony in known.values():
         long_with = total_with = long_without = total_without = 0.0
         subject_held = other_held = False
         for sym_id, day_holdings in by_symphony.items():
@@ -711,9 +960,9 @@ def long_vix_cofiring(holdings, subject_id: str, live_ids, window: dict) -> dict
         "available",
         None,
         LONG_VIX_LABEL,
-        subject,
-        source,
-        _window_dict(first, last, len(days)),
+        _LONG_VIX_SUBJECT,
+        _LONG_VIX_SOURCE,
+        _window_dict(first, last, len(known)),
         figures,
     )
 
@@ -722,11 +971,8 @@ def long_vix_cofiring(holdings, subject_id: str, live_ids, window: dict) -> dict
 # Verdict
 # ---------------------------------------------------------------------------
 
-_TRAILS_REASON = "trails its own backtest"
-_DRAGS_REASON = "drags portfolio return and drawdown"
 
-
-def _figure_value(item: Mapping, name: str):
+def _figure_value(item: Mapping, name: str) -> float | None:
     return ((item.get("figures") or {}).get(name) or {}).get("value")
 
 
@@ -736,6 +982,8 @@ def _available(evidence: Mapping, name: str) -> Mapping | None:
 
 
 def decide_verdict(evidence: Mapping) -> dict:
+    """Retire-candidate, watch, keep or no verdict, from the redundancy, backtest and
+    marginal items, with the reasons and the unavailable items."""
     missing = [
         name
         for name in EVIDENCE_ITEM_ORDER
@@ -798,10 +1046,9 @@ def decide_verdict(evidence: Mapping) -> dict:
 @dataclass
 class _Prep:
     sym: SymphonyInput
-    start: date
     tenure: int | None
     eligible: bool
-    kind: str  # composer | shadow | none
+    kind: str  # one of the basis kinds
     fallback_reason: str | None
     window: dict
     series: dict[str, float]
@@ -809,19 +1056,31 @@ class _Prep:
 
     @property
     def label(self) -> str:
-        return {"composer": COMPOSER_BASIS_LABEL, "shadow": SHADOW_BASIS_LABEL}.get(
-            self.kind, _NO_BASIS_LABEL
+        return {_KIND_COMPOSER: COMPOSER_BASIS_LABEL, _KIND_SHADOW: SHADOW_BASIS_LABEL}.get(
+            self.kind, REASON_NO_HISTORY
         )
 
     @property
     def source(self) -> str:
-        return {"composer": _COMPOSER_SOURCE, "shadow": _SHADOW_SOURCE}.get(
-            self.kind, "no history available"
+        return {_KIND_COMPOSER: _COMPOSER_SOURCE, _KIND_SHADOW: _SHADOW_SOURCE}.get(
+            self.kind, _NO_SOURCE
         )
+
+
+def _fallback_reason(sym: SymphonyInput) -> str:
+    """Why the Composer series was not the basis: the failure class if there was one,
+    otherwise an empty answer or a series too short inside the tenure."""
+    if sym.series_failure:
+        return _failure_reason(sym.series_failure)
+    if not sym.composer_values:
+        return _FAILURE_REASONS["empty"]
+    return _SHORT_SERIES_REASON
 
 
 def _prepare(sym: SymphonyInput, as_of: date, threshold: int) -> _Prep:
     start_day = _parse_date(sym.invested_since) if sym.invested_since else None
+    if start_day is not None and start_day < CALENDAR_FLOOR:
+        start_day = None
     if start_day is None:
         tenure = None
     elif start_day > as_of:
@@ -830,89 +1089,102 @@ def _prepare(sym: SymphonyInput, as_of: date, threshold: int) -> _Prep:
         tenure = count_trading_days(start_day, as_of)
     start = start_day or date.min
 
-    kind = "none"
+    kind = _KIND_NONE
     fallback = None
     window: dict = {"first": None, "last": None, "days": 0, "dates": [], "returns_pct": []}
     series: dict[str, float] = {}
     values: dict[str, float] = {}
 
-    if sym.composer_values and sym.series_failure is None:
-        kept = realized_window(sym.composer_values, start, as_of)
-        if kept["days"] >= 2:
-            kind, window = "composer", kept
-            values = {
-                d: float(sym.composer_values[d]) for d in kept["dates"] if d in sym.composer_values
-            }
-            series = dict(zip(kept["dates"][1:], kept["returns_pct"], strict=True))
-    if kind == "none":
-        fallback = (
-            _FAILURE_REASONS.get(sym.series_failure, _EMPTY_SERIES_REASON)
-            if sym.series_failure
-            else _EMPTY_SERIES_REASON
-        )
-        rows = {}
-        for key, raw in (sym.shadow_returns or {}).items():
-            d, ret = _parse_date(key), _finite(raw)
-            if d is not None and ret is not None and start <= d <= as_of:
-                rows[d.isoformat()] = ret
+    levels = _points_by_date(sym.composer_values or {}, start, as_of, _usable_level)
+    if sym.series_failure is None and len(levels) >= _MIN_COMPOSER_POINTS:
+        kind = _KIND_COMPOSER
+        window = realized_window(sym.composer_values, start, as_of)
+        values = {d.isoformat(): level for d, level in levels.items()}
+        series = dict(zip(window["dates"][1:], window["returns_pct"], strict=True))
+    else:
+        fallback = _fallback_reason(sym)
+        rows = _points_by_date(sym.shadow_returns or {}, start, as_of, _finite)
         if rows:
             ordered = sorted(rows)
-            kind = "shadow"
-            series = {d: rows[d] for d in ordered}
+            kind = _KIND_SHADOW
+            dates = [d.isoformat() for d in ordered]
+            returns = [rows[d] for d in ordered]
+            series = dict(zip(dates, returns, strict=True))
             window = {
-                "first": ordered[0],
-                "last": ordered[-1],
-                "days": len(ordered),
-                "dates": ordered,
-                "returns_pct": [rows[d] for d in ordered],
+                "first": dates[0],
+                "last": dates[-1],
+                "days": len(dates),
+                "dates": dates,
+                "returns_pct": returns,
             }
     eligible = tenure is not None and tenure >= threshold
-    return _Prep(sym, start, tenure, eligible, kind, fallback, window, series, values)
+    return _Prep(sym, tenure, eligible, kind, fallback, window, series, values)
+
+
+def qualifying_window(symphony: SymphonyInput, as_of: date, threshold: int) -> dict | None:
+    """The first and last date and day count of the realized window the review would use
+    for this symphony, or None when it is not eligible or has no history. A backtest
+    requested over exactly these dates is accepted by the review."""
+    prep = _prepare(symphony, as_of, threshold)
+    if not prep.eligible or prep.kind == _KIND_NONE:
+        return None
+    return _window_dict(prep.window["first"], prep.window["last"], prep.window["days"])
+
+
+def _withheld_reason(p: _Prep) -> str | None:
+    """Why no evidence can be shown for this symphony, or None when it can be scored."""
+    if p.tenure is None:
+        return REASON_TENURE_UNAVAILABLE
+    if not p.eligible:
+        return REASON_NOT_YET_ELIGIBLE
+    if p.kind == _KIND_NONE:
+        return REASON_NO_HISTORY
+    return None
 
 
 def _performance_item(p: _Prep) -> tuple[dict, dict]:
-    if not p.eligible:
-        return _unavailable(
-            _PERF_FIGURES, REASON_NOT_YET_ELIGIBLE, p.label, p.sym.display_name, p.source
-        ), {}
-    if p.kind == "none":
-        return _unavailable(
-            _PERF_FIGURES, REASON_NO_HISTORY, p.label, p.sym.display_name, p.source
-        ), {}
     metrics = performance_metrics(p.window["returns_pct"])
     if all(v is None for v in metrics.values()):
         reason = "not computable: fewer than two finite returns"
-        return _unavailable(_PERF_FIGURES, reason, p.label, p.sym.display_name, p.source), {}
+        return _unavailable(_PERF_FIGURES, reason, p.label, _PERFORMANCE_SUBJECT, p.source), {}
     window = _window_dict(p.window["first"], p.window["last"], p.window["days"])
     figures = {
         name: _figure(metrics[name], unit, "undefined for this series")
         for name, unit in _PERF_FIGURES
     }
-    return _item("available", None, p.label, p.sym.display_name, p.source, window, figures), metrics
+    item = _item("available", None, p.label, _PERFORMANCE_SUBJECT, p.source, window, figures)
+    return item, metrics
 
 
-def _composite_item(p: _Prep, reason: str | None, composite: float | None, window: dict) -> dict:
+def _composite_item(
+    p: _Prep, reason: str | None, composite: float | None, window: dict, population: int
+) -> dict:
     if reason is not None or composite is None:
         return _unavailable(
-            _COMPOSITE_FIGURES, reason or "not computable", p.label, p.sym.display_name, p.source
+            _COMPOSITE_FIGURES,
+            reason or _NOT_COMPUTABLE,
+            p.label,
+            _COMPOSITE_SUBJECT,
+            p.source,
         )
     return _item(
         "available",
         None,
         p.label,
-        p.sym.display_name,
+        _COMPOSITE_SUBJECT,
         p.source,
         dict(window),
-        {"composite": _figure(composite, _COMPOSITE_FIGURES[0][1])},
+        {"composite": _figure(composite, _COMPOSITE_UNIT)},
+        population_size=population,
     )
 
 
 def _note_for_sibling(sibling_reason: str | None) -> str | None:
     if sibling_reason is None:
         return None
-    if sibling_reason == "not comparable: basis differs":
-        return "sibling has no composite: basis differs"
-    return f"sibling has no composite: {sibling_reason}"
+    if sibling_reason == _BASIS_DIFFERS_REASON:
+        return f"{_SIBLING_NOTE_PREFIX}{_BASIS_DIFFERS_NOTE}"
+    return f"{_SIBLING_NOTE_PREFIX}{sibling_reason}"
 
 
 def _pair_figures(pair: dict, sibling: _Prep, note: str | None) -> dict:
@@ -920,12 +1192,14 @@ def _pair_figures(pair: dict, sibling: _Prep, note: str | None) -> dict:
         "sibling_id": sibling.sym.symphony_id,
         "sibling_name": sibling.sym.display_name,
         "correlation": _figure(pair["correlation"], "correlation", "correlation is undefined"),
-        "ci_lower": _figure(pair["ci_lower"], "correlation", "interval not computed"),
-        "ci_upper": _figure(pair["ci_upper"], "correlation", "interval not computed"),
+        "ci_lower": _figure(pair["ci_lower"], "correlation", _INTERVAL_NOT_COMPUTED_REASON),
+        "ci_upper": _figure(pair["ci_upper"], "correlation", _INTERVAL_NOT_COMPUTED_REASON),
         "stressed_correlation": _figure(
             pair["stressed_correlation"], "correlation", "stressed-window correlation not computed"
         ),
-        "holdings_overlap": _figure(pair["holdings_overlap"], "ratio", "holdings unavailable"),
+        "holdings_overlap": _figure(
+            pair["holdings_overlap"], "ratio", _HOLDINGS_UNAVAILABLE_REASON
+        ),
         "n_obs": pair["n_obs"],
         "uncertainty_gate": pair["uncertainty_gate"],
         "structural_gate": pair["structural_gate"],
@@ -933,7 +1207,140 @@ def _pair_figures(pair: dict, sibling: _Prep, note: str | None) -> dict:
     }
 
 
+def _pairs_of(sid: str, pairs: Sequence[dict]) -> list[dict]:
+    return [x for x in pairs if sid in (x["sym_a"], x["sym_b"])]
+
+
+def _sibling_of(sid: str, pair: dict) -> str:
+    return pair["sym_b"] if pair["sym_a"] == sid else pair["sym_a"]
+
+
+def _flagged_and_shown(sid: str, mine: Sequence[dict], scores: Mapping) -> tuple[list, dict | None]:
+    """Pairs that flag ``sid`` for retirement (both gates passed and ``sid`` the weaker
+    member) and the pair its row shows: the most correlated flagging pair, else the most
+    correlated screen hit that had enough aligned days to be evaluated. The recommender
+    likewise keeps the most correlated pair."""
+    flagged = [
+        x
+        for x in mine
+        if _passes_both_gates(x)
+        and retirement_recommender.select_retirement_candidate(x["sym_a"], x["sym_b"], scores)
+        == sid
+    ]
+    evaluable_hits = [
+        x for x in mine if x["screen_hit"] and x["uncertainty_gate"]["state"] != _GATE_INSUFFICIENT
+    ]
+    pool = flagged or evaluable_hits
+    return flagged, max(pool, key=lambda x: x["correlation"]) if pool else None
+
+
+def _redundancy_unavailable(p: _Prep, reason: str) -> dict:
+    return _item(
+        "unavailable",
+        reason,
+        p.label,
+        _REDUNDANCY_SUBJECT,
+        _REDUNDANCY_SOURCE,
+        None,
+        {},
+        retire_candidate=False,
+        pair=None,
+    )
+
+
+def _no_pair_item(p: _Prep, preps: Sequence[_Prep]) -> dict:
+    """The redundancy item of a symphony that belongs to no evaluated pair."""
+    peers = [q for q in preps if q is not p]
+    if not peers:
+        return _item(
+            "not_applicable",
+            "no other symphonies to compare",
+            p.label,
+            _REDUNDANCY_SUBJECT,
+            _REDUNDANCY_SOURCE,
+            None,
+            {},
+            retire_candidate=False,
+            pair=None,
+        )
+    if any(q.kind not in (_KIND_NONE, p.kind) for q in peers):
+        return _redundancy_unavailable(p, _BASES_DIFFER_REASON)
+    return _redundancy_unavailable(p, "no history for any other symphony")
+
+
+def _redundancy_item(
+    p: _Prep, preps: Sequence[_Prep], by_id: Mapping, pairs: Sequence[dict], scores, reasons
+) -> dict:
+    sid = p.sym.symphony_id
+    mine = _pairs_of(sid, pairs)
+    if not mine:
+        return _no_pair_item(p, preps)
+    if all(x["uncertainty_gate"]["state"] == _GATE_INSUFFICIENT for x in mine):
+        return _redundancy_unavailable(p, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR))
+
+    flagged, shown = _flagged_and_shown(sid, mine, scores)
+    pair = window = None
+    extra = {"summary": _NO_SIBLING_TEXT}
+    if shown is not None:
+        sibling = by_id[_sibling_of(sid, shown)]
+        note = _note_for_sibling(reasons.get(sibling.sym.symphony_id))
+        pair = _pair_figures(shown, sibling, note)
+        window = shown["window"]
+        extra = {}
+    return _item(
+        "available",
+        None,
+        p.label,
+        _REDUNDANCY_SUBJECT,
+        _REDUNDANCY_SOURCE,
+        window,
+        {},
+        retire_candidate=bool(flagged),
+        pair=pair,
+        **extra,
+    )
+
+
+def _recommendation(
+    candidate_id: str, pair: dict, scores: Mapping, composite_window: dict, as_of: date
+) -> dict:
+    """The evidence dict the existing recommender stores for a flagged pair, plus the
+    window keys a later night's reuse comparison needs. Metrics keep the recommender's
+    key names and its scale."""
+    sibling_id = _sibling_of(candidate_id, pair)
+    candidate, sibling = scores[candidate_id], scores[sibling_id]
+    window = pair["window"]
+    return _clean(
+        {
+            "candidate_id": candidate_id,
+            "sibling_id": sibling_id,
+            "correlation": pair["correlation"],
+            "ci_lower": pair["ci_lower"],
+            "ci_upper": pair["ci_upper"],
+            "n_obs": pair["n_obs"],
+            "candidate_composite": candidate.composite,
+            "sibling_composite": sibling.composite,
+            "candidate_metrics": dict(candidate.metrics),
+            "sibling_metrics": dict(sibling.metrics),
+            "uncertainty_gate_passed": pair["uncertainty_gate"]["state"] == _GATE_PASSED,
+            "structural_redundancy_gate_passed": pair["structural_gate"]["state"] == _GATE_PASSED,
+            "stressed_correlation": pair["stressed_correlation"],
+            "holdings_overlap": pair["holdings_overlap"],
+            "basis_label": COMPOSER_BASIS_LABEL,
+            "as_of_trading_day": as_of.isoformat(),
+            "window_first": window["first"],
+            "window_last": window["last"],
+            "window_days": window["days"],
+            "composite_window_first": composite_window["first"],
+            "composite_window_last": composite_window["last"],
+            "composite_window_days": composite_window["days"],
+        }
+    )
+
+
 def build_review(inputs: ReviewInputs) -> ReviewResult:
+    """Assemble the six evidence items and the verdict for every symphony, and the
+    recommendation for every retire-candidate."""
     threshold = inputs.threshold.value
     as_of = inputs.as_of
     sessions = _last_sessions(as_of, threshold)
@@ -951,12 +1358,11 @@ def build_review(inputs: ReviewInputs) -> ReviewResult:
     metrics_by_id: dict[str, dict] = {}
     for p in preps:
         sid = p.sym.symphony_id
-        if not p.eligible:
-            composite_reason[sid] = REASON_NOT_YET_ELIGIBLE
-        elif p.kind == "none":
-            composite_reason[sid] = REASON_NO_HISTORY
-        elif p.kind != "composer":
-            composite_reason[sid] = "not comparable: basis differs"
+        withheld = _withheld_reason(p)
+        if withheld is not None:
+            composite_reason[sid] = withheld
+        elif p.kind != _KIND_COMPOSER:
+            composite_reason[sid] = _BASIS_DIFFERS_REASON
         else:
             covered = [k for k in session_keys if k in p.values]
             if len(covered) < len(session_keys):
@@ -965,50 +1371,64 @@ def build_review(inputs: ReviewInputs) -> ReviewResult:
                     f"{len(session_keys)} days)"
                 )
                 continue
-            returns = realized_window({k: p.values[k] for k in covered}, sessions[0], sessions[-1])[
-                "returns_pct"
-            ]
-            metrics = performance_metrics(returns)
-            metrics_by_id[sid] = metrics
+            window = realized_window({k: p.values[k] for k in covered}, sessions[0], sessions[-1])
+            metrics_by_id[sid] = _scored_metrics(window["returns_pct"])
             composite_reason[sid] = None
     scores = retirement_recommender.compute_composite_scores(metrics_by_id)
     for sid, score in scores.items():
         if not score.eligible:
             composite_reason[sid] = "not computable: a composite metric is undefined"
+    population = sum(1 for score in scores.values() if score.eligible)
 
     # Redundancy pairs, computed within one basis only.
     tickers = {p.sym.symphony_id: p.sym.current_tickers for p in preps if p.sym.current_tickers}
     pairs: list[dict] = []
-    for kind in ("composer", "shadow"):
+    for kind in (_KIND_COMPOSER, _KIND_SHADOW):
         group = {p.sym.symphony_id: p.series for p in preps if p.kind == kind}
         pairs.extend(evaluate_redundancy(group, tickers))
 
-    # Marginal inputs.
+    # Marginal inputs: scored symphonies compare; every other one is listed with its reason.
     eligible_inputs = {
-        p.sym.symphony_id: {"basis": p.kind, "values": p.values if p.kind == "composer" else None}
+        p.sym.symphony_id: {
+            "basis": p.kind,
+            "values": p.values if p.kind == _KIND_COMPOSER else None,
+        }
         for p in preps
-        if p.eligible
+        if _withheld_reason(p) is None
     }
-    excluded_names = [p.sym.display_name for p in preps if not p.eligible]
+    excluded = [
+        {"display_name": p.sym.display_name, "reason": f"{_EXCLUDED_PREFIX}{reason}"}
+        for p in preps
+        if (reason := _withheld_reason(p)) is not None
+    ]
 
-    entries = []
-    for p in preps:
-        entries.append(
-            _build_entry(
-                p,
-                preps=preps,
-                by_id=by_id,
-                pairs=pairs,
-                scores=scores,
-                composite_reason=composite_reason,
-                composite_window=composite_window,
-                eligible_inputs=eligible_inputs,
-                excluded_names=excluded_names,
-                holdings=inputs.holdings,
-                live_ids=live_ids,
-                threshold=threshold,
-            )
+    entries = [
+        _build_entry(
+            p,
+            preps=preps,
+            by_id=by_id,
+            pairs=pairs,
+            scores=scores,
+            composite_reason=composite_reason,
+            composite_window=composite_window,
+            population=population,
+            eligible_inputs=eligible_inputs,
+            excluded=excluded,
+            holdings=inputs.holdings,
+            live_ids=live_ids,
+            threshold=threshold,
         )
+        for p in preps
+    ]
+
+    recommendations = []
+    for p in sorted(preps, key=lambda q: q.sym.symphony_id):
+        sid = p.sym.symphony_id
+        flagged, shown = _flagged_and_shown(sid, _pairs_of(sid, pairs), scores)
+        if flagged and shown is not None:
+            recommendations.append(
+                _recommendation(sid, shown, scores, composite_window, as_of),
+            )
     return ReviewResult(
         run_id=inputs.run_id,
         trigger=inputs.trigger,
@@ -1017,10 +1437,45 @@ def build_review(inputs: ReviewInputs) -> ReviewResult:
         threshold=inputs.threshold,
         composite_window=composite_window,
         entries=entries,
+        recommendations=recommendations,
     )
 
 
-def _build_entry(
+def _eligibility(p: _Prep, threshold: int) -> tuple[int | None, str]:
+    """(trading days remaining until eligible, the text that says so)."""
+    if p.tenure is None:
+        return None, f"{REASON_TENURE_UNAVAILABLE}: Composer did not report an invested-since date"
+    if p.tenure < threshold:
+        remaining = threshold - p.tenure
+        unit = "trading day" if remaining == 1 else "trading days"
+        return remaining, f"{REASON_NOT_YET_ELIGIBLE}: {remaining} {unit} remaining"
+    return None, "eligible"
+
+
+def _withheld_evidence(p: _Prep, reason: str, excluded: Sequence[Mapping]) -> dict:
+    """Six unavailable items that all give the one reason the symphony cannot be scored."""
+    return {
+        "performance": _unavailable(_PERF_FIGURES, reason, p.label, _PERFORMANCE_SUBJECT, p.source),
+        "composite": _unavailable(
+            _COMPOSITE_FIGURES, reason, p.label, _COMPOSITE_SUBJECT, p.source
+        ),
+        "redundancy": _redundancy_unavailable(p, reason),
+        "backtest": _backtest_unavailable(reason),
+        "marginal": _unavailable(
+            _MARGINAL_FIGURES,
+            reason,
+            MARGINAL_LABEL,
+            _MARGINAL_SUBJECT,
+            _COMPOSER_SOURCE,
+            excluded=[dict(record) for record in excluded],
+        ),
+        "long_vix": _unavailable(
+            _LONG_VIX_FIGURES, reason, LONG_VIX_LABEL, _LONG_VIX_SUBJECT, _LONG_VIX_SOURCE
+        ),
+    }
+
+
+def _scored_evidence(
     p: _Prep,
     *,
     preps,
@@ -1029,79 +1484,13 @@ def _build_entry(
     scores,
     composite_reason,
     composite_window,
+    population,
     eligible_inputs,
-    excluded_names,
+    excluded,
     holdings,
     live_ids,
-    threshold,
 ) -> dict:
-    sym = p.sym
-    sid = sym.symphony_id
-    name = sym.display_name
-
-    if p.tenure is None:
-        days_remaining = None
-        text = "tenure unavailable: Composer did not report an invested-since date"
-    elif p.tenure < threshold:
-        days_remaining = threshold - p.tenure
-        unit = "trading day" if days_remaining == 1 else "trading days"
-        text = f"not yet eligible: {days_remaining} {unit} remaining"
-    else:
-        days_remaining = None
-        text = "eligible"
-
-    basis = {
-        "kind": p.kind,
-        "label": p.label,
-        "fallback_reason": p.fallback_reason if p.kind != "composer" else None,
-        "series_begins": p.window["first"] if p.kind != "none" else None,
-        "tenure_begins": sym.invested_since,
-    }
-    entry = {
-        "symphony_id": sid,
-        "display_name": name,
-        "invested_since": sym.invested_since,
-        "tenure_trading_days": p.tenure,
-        "eligibility_text": text,
-        "eligible": p.eligible,
-        "days_remaining": days_remaining,
-        "basis": basis,
-    }
-
-    if not p.eligible or p.kind == "none":
-        reason = REASON_NOT_YET_ELIGIBLE if not p.eligible else REASON_NO_HISTORY
-        evidence = {
-            "performance": _unavailable(_PERF_FIGURES, reason, p.label, name, p.source),
-            "composite": _unavailable(_COMPOSITE_FIGURES, reason, p.label, name, p.source),
-            "redundancy": _redundancy_unavailable(p, reason),
-            "backtest": _unavailable(_BACKTEST_FIGURES, reason, BACKTEST_LABEL, name, p.source),
-            "marginal": _unavailable(
-                _MARGINAL_FIGURES,
-                reason,
-                MARGINAL_LABEL,
-                name,
-                p.source,
-                excluded=[
-                    {"display_name": n, "reason": "excluded: not yet eligible"}
-                    for n in excluded_names
-                ],
-            ),
-            "long_vix": _unavailable(_LONG_VIX_FIGURES, reason, LONG_VIX_LABEL, name, p.source),
-        }
-        if not p.eligible:
-            entry.update(
-                verdict=None,
-                verdict_text="no verdict: tenure unavailable"
-                if p.tenure is None
-                else "no verdict: not yet eligible",
-                verdict_reasons=[],
-                missing_items=[],
-            )
-        else:
-            entry.update(decide_verdict(evidence))
-        entry["evidence"] = evidence
-        return entry
-
+    sid = p.sym.symphony_id
     performance, metrics = _performance_item(p)
     score = scores.get(sid)
     composite = _composite_item(
@@ -1109,117 +1498,69 @@ def _build_entry(
         composite_reason.get(sid),
         score.composite if score is not None else None,
         composite_window,
+        population,
     )
-    redundancy = _redundancy_item(p, preps, by_id, pairs, scores, composite_reason)
-
     if performance["status"] == "available":
         backtest = backtest_comparison(
             window=performance["window"],
             realized_total_return=metrics.get("total_return"),
             realized_max_drawdown=metrics.get("max_drawdown"),
-            backtest=sym.backtest,
-            definition_available=sym.definition_available,
+            backtest=p.sym.backtest,
+            definition_available=p.sym.definition_available,
         )
     else:
-        backtest = _unavailable(
-            _BACKTEST_FIGURES, performance["reason"], BACKTEST_LABEL, name, p.source
-        )
-    marginal = marginal_contribution(sid, eligible_inputs, excluded_names)
-    marginal["subject"] = f"{name}: eligible portfolio with and without this symphony"
-    marginal["label"] = MARGINAL_LABEL
-    long_vix = long_vix_cofiring(
-        holdings,
-        sid,
-        live_ids,
-        {"first": p.window["first"], "last": p.window["last"]},
-    )
-    evidence = {
+        backtest = _backtest_unavailable(performance["reason"])
+    return {
         "performance": performance,
         "composite": composite,
-        "redundancy": redundancy,
+        "redundancy": _redundancy_item(p, preps, by_id, pairs, scores, composite_reason),
         "backtest": backtest,
-        "marginal": marginal,
-        "long_vix": long_vix,
+        "marginal": marginal_contribution(sid, eligible_inputs, excluded),
+        "long_vix": long_vix_cofiring(
+            holdings, sid, live_ids, {"first": p.window["first"], "last": p.window["last"]}
+        ),
     }
-    entry.update(decide_verdict(evidence))
+
+
+def _build_entry(p: _Prep, *, threshold: int, excluded: Sequence[Mapping], **review) -> dict:
+    sym = p.sym
+    name = sym.display_name
+    days_remaining, text = _eligibility(p, threshold)
+    entry = {
+        "symphony_id": sym.symphony_id,
+        "display_name": name,
+        "invested_since": sym.invested_since,
+        "tenure_trading_days": p.tenure,
+        "eligibility_text": text,
+        "eligible": p.eligible,
+        "days_remaining": days_remaining,
+        "basis": {
+            "kind": p.kind,
+            "label": p.label,
+            "fallback_reason": p.fallback_reason if p.kind != _KIND_COMPOSER else None,
+            "series_begins": p.window["first"] if p.kind != _KIND_NONE else None,
+            "tenure_begins": sym.invested_since,
+        },
+    }
+    withheld = _withheld_reason(p)
+    evidence = (
+        _withheld_evidence(p, withheld, excluded)
+        if withheld is not None
+        else _scored_evidence(p, excluded=excluded, **review)
+    )
+    for item in evidence.values():
+        item["subject"] = f"{name}: {item['subject']}"
+    if p.eligible:
+        entry.update(decide_verdict(evidence))
+    else:
+        entry.update(
+            verdict=None,
+            verdict_text=f"no verdict: {withheld}",
+            verdict_reasons=[],
+            missing_items=[],
+        )
     entry["evidence"] = evidence
     return entry
-
-
-def _redundancy_unavailable(p: _Prep, reason: str) -> dict:
-    return _item(
-        "unavailable",
-        reason,
-        p.label,
-        p.sym.display_name,
-        "pairwise return correlation across live symphonies",
-        None,
-        {},
-        retire_candidate=False,
-        pair=None,
-    )
-
-
-def _redundancy_item(p: _Prep, preps, by_id, pairs, scores, composite_reason) -> dict:
-    sid = p.sym.symphony_id
-    source = "pairwise return correlation across live symphonies"
-    mine = [x for x in pairs if sid in (x["sym_a"], x["sym_b"])]
-    if not mine:
-        others = [
-            q
-            for q in preps
-            if q is not p and q.kind != "none" and q.eligible or (q is not p and q.kind != "none")
-        ]
-        if any(q.kind != p.kind for q in others):
-            return _redundancy_unavailable(p, "bases differ")
-        return _item(
-            "not_applicable",
-            "no other symphonies to compare",
-            p.label,
-            p.sym.display_name,
-            source,
-            None,
-            {},
-            retire_candidate=False,
-            pair=None,
-        )
-
-    def sibling_of(pair):
-        return pair["sym_b"] if pair["sym_a"] == sid else pair["sym_a"]
-
-    flagged = [
-        x
-        for x in mine
-        if _passes_both_gates(x)
-        and retirement_recommender.select_retirement_candidate(x["sym_a"], x["sym_b"], scores)
-        == sid
-    ]
-    hits = [x for x in mine if x["screen_hit"]]
-    if flagged:
-        shown = max(flagged, key=lambda x: x["correlation"])
-    elif hits:
-        shown = max(hits, key=lambda x: x["correlation"])
-    else:
-        shown = None
-
-    pair = None
-    window = None
-    if shown is not None:
-        sibling = by_id[sibling_of(shown)]
-        sib_reason = composite_reason.get(sibling.sym.symphony_id)
-        pair = _pair_figures(shown, sibling, _note_for_sibling(sib_reason))
-        window = shown["window"]
-    return _item(
-        "available",
-        None,
-        p.label,
-        p.sym.display_name,
-        source,
-        window,
-        {},
-        retire_candidate=bool(flagged),
-        pair=pair,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1270,6 +1611,7 @@ class _ReviewRunState:
         self._last_failed: dict | None = None
 
     def try_start(self, trigger: str) -> bool:
+        """Claim the single run slot; False when a run is already in progress."""
         with self._mutex:
             if self._running:
                 return False
@@ -1284,11 +1626,13 @@ class _ReviewRunState:
         self._trigger = None
 
     def finish_success(self) -> None:
+        """Release the slot and forget the last failed attempt."""
         with self._mutex:
             self._free()
             self._last_failed = None
 
-    def finish_failure(self, reason: str, at) -> None:
+    def finish_failure(self, reason: str, at: datetime | str) -> None:
+        """Release the slot and remember why the run failed and when."""
         with self._mutex:
             self._free()
             self._last_failed = {
@@ -1297,10 +1641,12 @@ class _ReviewRunState:
             }
 
     def release(self) -> None:
+        """Release the slot without recording an outcome."""
         with self._mutex:
             self._free()
 
     def snapshot(self) -> dict:
+        """The current state: running or not, since when, by which trigger, last failure."""
         with self._mutex:
             return {
                 "running": self._running,
@@ -1310,4 +1656,5 @@ class _ReviewRunState:
             }
 
 
+# The one process-wide review run state (see the class docstring).
 REVIEW_RUN_STATE = _ReviewRunState()
