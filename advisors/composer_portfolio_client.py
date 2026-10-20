@@ -94,8 +94,7 @@ def read_symphony_statistics(account_id) -> StatisticsRead:
         return StatisticsRead(failure, [])
     symphonies = body.get("symphonies") if isinstance(body, dict) else None
     if not isinstance(symphonies, list) or not all(
-        isinstance(s, dict) and isinstance(s.get("id"), str) and s["id"].strip()
-        for s in symphonies
+        isinstance(s, dict) and isinstance(s.get("id"), str) and s["id"].strip() for s in symphonies
     ):
         return StatisticsRead("unreadable", [])
     return StatisticsRead(None, symphonies)
