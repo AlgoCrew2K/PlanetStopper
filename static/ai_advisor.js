@@ -1180,5 +1180,45 @@
     window.frApprove = frApprove;
     window.frReject = frReject;
     window.retDispatchDecision = retDispatchDecision;
+    // "Run review now": one bodyless POST. The message is chosen from the HTTP
+    // status alone (a refusal from the global hooks is an HTML page, so a body is
+    // never parsed) and is fixed text set with textContent, never response text.
+    function retRunReview(btnEl) {
+        if (!btnEl || btnEl.disabled) { return; }
+        btnEl.disabled = true;
+        var messageEl = document.querySelector('[data-testid="tenure-review-run-message"]');
+        function show(text) { if (messageEl) { messageEl.textContent = text; } }
+        (async function () {
+            try {
+                var token = _csrfToken;
+                if (!token) {
+                    var tokenResp = await fetch('/api/csrf-token');
+                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                    var tokenData = await tokenResp.json();
+                    token = tokenData.csrf_token;
+                }
+                var resp = await fetch('/ai-advisor/retirement/review/run', {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+                });
+                if (resp.status === 202) {
+                    show('Review started: reload this page when it finishes');
+                } else if (resp.status === 409) {
+                    show('a review is already running');
+                } else if (resp.status === 401) {
+                    show('Session expired: sign in again');
+                } else if (resp.status === 403) {
+                    show('Request refused: reload the page');
+                } else {
+                    show('Request failed: HTTP ' + resp.status);
+                }
+            } catch (err) {
+                show('Request failed: ' + (err && err.message ? err.message : 'network error'));
+            } finally {
+                btnEl.disabled = false;
+            }
+        })();
+    }
+    window.retRunReview = retRunReview;
 
 })();

@@ -4230,7 +4230,9 @@ def _refresh_retirement_display_names(
 
 
 def _fetch_retirement_recommendations(
-    limit: int | None = None, bot_state_getter: Callable[[], dict] | None = None
+    limit: int | None = None,
+    bot_state_getter: Callable[[], dict] | None = None,
+    review_run_id: str | None = None,
 ) -> list[dict]:
     """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
 
@@ -4283,20 +4285,78 @@ def _fetch_retirement_recommendations(
     if limit is None:
         limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
     rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
-    dated_rows = [row for row in rows if row.get("created_at")]
-    if not dated_rows:
-        return []
-    latest_date = max(row["created_at"][:10] for row in dated_rows)
     out: list[dict] = []
-    for row in dated_rows:
-        if row["created_at"][:10] != latest_date:
-            continue
-        raw = row.get("raw_response")
-        if isinstance(raw, dict):
-            out.append(raw)
+    if review_run_id is not None:
+        # A completed review run owns the list: only the rows it wrote, so a
+        # nightly and a later on-demand run never both show, and rows of a run
+        # that never completed or of the pre-review nights stay hidden.
+        for row in rows:
+            raw = row.get("raw_response")
+            if isinstance(raw, dict) and raw.get("review_run_id") == review_run_id:
+                out.append(raw)
+    else:
+        dated_rows = [row for row in rows if row.get("created_at")]
+        if not dated_rows:
+            return []
+        latest_date = max(row["created_at"][:10] for row in dated_rows)
+        for row in dated_rows:
+            if row["created_at"][:10] != latest_date:
+                continue
+            raw = row.get("raw_response")
+            if isinstance(raw, dict):
+                out.append(raw)
     _join_retirement_approval_status(out)
     _refresh_retirement_display_names(out, bot_state_getter=bot_state_getter)
     return out
+
+
+def _join_symphony_approval_status(entries: list[dict]) -> None:
+    """Stamp approval_status on each review entry in place, keyed on the entry's
+    symphony_id (the Composer hash) and read fresh from retirement_decisions on
+    every call. A symphony with no decision row reads None (not "pending"); a
+    failed read leaves every entry at None. Never raises."""
+    if not entries:
+        return
+    try:
+        decisions = {row.get("candidate_id"): row for row in database.get_retirement_decisions()}
+    except Exception:
+        decisions = {}
+    for entry in entries:
+        entry["approval_status"] = (decisions.get(entry.get("symphony_id")) or {}).get(
+            "approval_status"
+        )
+
+
+def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict]:
+    """Return (run header, entries, run state) for the newest stored tenure review.
+
+    Shared by GET /api/retirement-recommendations and the AI Advisor panel. Reads
+    only: the stored run row, the decisions table and the in-process run state.
+    The header is the stored run record without its entries, or None when no run
+    is stored, the row is not a run record, or the read fails; entries are copies
+    of the stored entries (non-dict items skipped) plus a live approval_status.
+    Never raises.
+    """
+    from advisors import tenure_review  # noqa: PLC0415
+
+    status = tenure_review.REVIEW_RUN_STATE.snapshot()
+    run: dict | None = None
+    entries: list[dict] = []
+    try:
+        rows = database.get_advisor_observations_for_role(
+            tenure_review.TENURE_REVIEW_RUN_ROLE, limit=1
+        )
+        raw = rows[0].get("raw_response") if rows else None
+        if isinstance(raw, dict):
+            run = {k: v for k, v in raw.items() if k != "entries"}
+            stored = raw.get("entries")
+            if isinstance(stored, list):
+                entries = [dict(e) for e in stored if isinstance(e, dict)]
+    except Exception:
+        _daemon_log.debug("_fetch_tenure_review: read failed", exc_info=True)
+        run, entries = None, []
+    _join_symphony_approval_status(entries)
+    return run, entries, status
 
 
 @app.route("/api/retirement-recommendations")
@@ -4341,10 +4401,15 @@ def api_retirement_recommendations():
             return None
         if isinstance(value, dict):
             return {k: _json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_json_safe(v) for v in value]
         return value
 
+    review_run, review_entries, review_status = _fetch_tenure_review()
     try:
-        raw_rows = _fetch_retirement_recommendations()
+        raw_rows = _fetch_retirement_recommendations(
+            review_run_id=review_run.get("run_id") if review_run else None
+        )
     except Exception:
         _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
         raw_rows = []
@@ -4358,7 +4423,14 @@ def api_retirement_recommendations():
             _daemon_log.debug("api_retirement_recommendations: row degraded", exc_info=True)
             continue
 
-    return jsonify({"recommendations": out})
+    return jsonify(
+        {
+            "recommendations": out,
+            "review_run": _json_safe(review_run),
+            "review_entries": _json_safe(review_entries),
+            "review_status": _json_safe(review_status),
+        }
+    )
 
 
 @app.route("/api/exit-turnover")
@@ -6624,6 +6696,8 @@ def ai_advisor_tab():
             _ai_advisor_bot_state_loaded = True
         return _ai_advisor_bot_state
 
+    tenure_review_run, tenure_review_entries, tenure_review_status = _fetch_tenure_review()
+
     retirement_recommendations: list[dict] = []
     try:
         # Cycle 2d (AC-4, PR#140 2nd /code-review finding 5): pass the
@@ -6632,7 +6706,8 @@ def ai_advisor_tab():
         # the SAME memoized load the checklist/frontrunner blocks below
         # use, instead of independently calling database.load_state() again.
         retirement_recommendations = _fetch_retirement_recommendations(
-            bot_state_getter=_ensure_ai_advisor_bot_state
+            bot_state_getter=_ensure_ai_advisor_bot_state,
+            review_run_id=tenure_review_run.get("run_id") if tenure_review_run else None,
         )
     except Exception:
         pass  # Empty-state rendered by template on [].
@@ -6672,6 +6747,26 @@ def ai_advisor_tab():
                 _rec["_checklist"] = build_checklist(_rec, _ret_bot_state)
             except Exception:
                 _rec["_checklist"] = None
+
+    # Review entries: the wind-down checklist is built only for an entry with
+    # an approved decision, from that entry's own symphony_id.
+    if any(_entry.get("approval_status") == "approved" for _entry in tenure_review_entries):
+        try:
+            from advisors.retirement_checklist import (  # noqa: PLC0415
+                build_checklist as _build_entry_checklist,
+            )
+        except Exception:
+            _build_entry_checklist = None
+        _entry_bot_state = _ensure_ai_advisor_bot_state()
+        for _entry in tenure_review_entries:
+            if _entry.get("approval_status") != "approved":
+                continue
+            try:
+                _entry["_checklist"] = _build_entry_checklist(
+                    {"candidate_id": _entry.get("symphony_id")}, _entry_bot_state
+                )
+            except Exception:
+                _entry["_checklist"] = None
 
     # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
@@ -6784,6 +6879,9 @@ def ai_advisor_tab():
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
         retirement_recommendations=retirement_recommendations,
+        tenure_review=tenure_review_run,
+        tenure_review_entries=tenure_review_entries,
+        tenure_review_status=tenure_review_status,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,
