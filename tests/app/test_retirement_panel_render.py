@@ -1714,7 +1714,7 @@ class TestAReviewThatCannotBeReadSaysSo:
                 subject_type="tenure_review_run",
                 subject_id=pb.RUN_ID_FIRST,
                 verdict="completed",
-                raw_response="this is not json {",
+                raw_response='["not", "a", "record"]',
             )
         else:
             import advisors

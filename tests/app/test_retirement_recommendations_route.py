@@ -917,8 +917,8 @@ class TestFailClosedWhenTheLatestRunIsUnusable:
 
     @pytest.mark.parametrize(
         "stored",
-        ["this is not json {", ["not", "a", "record"], 42],
-        ids=["text", "list", "number"],
+        ['"plain text"', '["not", "a", "record"]', "42", "null", "this is not json {"],
+        ids=["json text", "json list", "json number", "json null", "unparseable"],
     )
     def test_a_stored_record_that_is_not_a_dict_lists_no_recommendation(
         self, client, isolated_db, stored
