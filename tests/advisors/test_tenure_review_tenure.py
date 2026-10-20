@@ -75,6 +75,17 @@ def test_present_but_invalid_threshold_falls_back_to_default_and_says_so(raw):
     assert setting.note == INVALID_NOTE
 
 
+def test_an_oversized_digit_string_does_not_crash_the_parser():
+    """Python refuses int() on digit runs over 4300 characters. A setting the operator
+    typed (or a corrupted environment file) must never stop a review from starting.
+
+    Rejects a bare int() with no guard; either 126 with the note or a large positive
+    value is acceptable, a raised exception is not."""
+    setting = tr.parse_threshold("9" * 5000)
+    assert type(setting.value) is int
+    assert setting.value >= 1
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [("126", 126), ("1", 1), (" 30 ", 30), ("\t45\n", 45), ("7", 7), ("500", 500)],
