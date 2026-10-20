@@ -4116,24 +4116,25 @@ def api_incubation():
     return jsonify({"incubating": out})
 
 
-def _join_retirement_approval_status(recs: list[dict]) -> None:
-    """Stamp approval_status onto each retirement recommendation dict in
-    place, read FRESH from the mutable retirement_decisions table on every
-    call -- never cached (Cycle 2c, AC-6).
+def _join_retirement_approval_status(
+    recs: list[dict], *, id_key: str = "candidate_id", absent_status: str | None = "pending"
+) -> None:
+    """Stamp approval_status onto each dict in recs in place, read FRESH from
+    the mutable retirement_decisions table on every call -- never cached
+    (Cycle 2c, AC-6).
 
-    Shared by BOTH _fetch_retirement_recommendations (backs GET /api/
-    retirement-recommendations) and the AI Advisor Overview-tab panel
-    prefetch, so a programmatic API consumer and the rendered panel always
-    agree on decision state. A database.get_retirement_decisions() read
-    failure degrades every row to the honest "pending" default rather than
-    raising -- mirrors this route's existing per-row-degrades-gracefully
-    convention (see api_incubation above). Never raises.
+    The one join of the decisions table, shared by the recommendation list
+    (id_key "candidate_id", a missing decision reads "pending") and the tenure
+    review entries (id_key "symphony_id", a missing decision reads None, so an
+    undecided symphony is distinguishable from one stored as pending). Used by
+    _fetch_retirement_recommendations (backs GET /api/retirement-
+    recommendations and the AI Advisor panel prefetch) and _fetch_tenure_review,
+    so the API and the rendered panel always agree on decision state. A
+    database.get_retirement_decisions() read failure leaves every row at
+    absent_status rather than raising. Never raises.
 
-    PR#140 2nd /code-review finding 6 (Cycle 2d, AC-5): a no-op on an empty
-    list, BEFORE calling database.get_retirement_decisions() -- mirrors
-    _refresh_retirement_display_names's own existing empty-list skip. Avoids
-    an unnecessary DB read on the honest-empty-state common case (no
-    RETIREMENT_RECOMMENDATION rows, or every row in the batch malformed).
+    A no-op on an empty list, BEFORE calling database.get_retirement_decisions(),
+    which avoids a DB read on the honest-empty-state common case.
     """
     if not recs:
         return
@@ -4144,8 +4145,8 @@ def _join_retirement_approval_status(recs: list[dict]) -> None:
     except Exception:
         decisions_by_id = {}
     for rec in recs:
-        decision = decisions_by_id.get(rec.get("candidate_id"))
-        rec["approval_status"] = (decision or {}).get("approval_status") or "pending"
+        decision = decisions_by_id.get(rec.get(id_key))
+        rec["approval_status"] = (decision or {}).get("approval_status") or absent_status
 
 
 def _refresh_retirement_display_names(
@@ -4233,8 +4234,15 @@ def _fetch_retirement_recommendations(
     limit: int | None = None,
     bot_state_getter: Callable[[], dict] | None = None,
     review_run_id: str | None = None,
+    review_unreadable: bool = False,
 ) -> list[dict]:
-    """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
+    """Return the persisted RETIREMENT_RECOMMENDATION raw_response dicts of the latest review.
+
+    With review_run_id (the newest completed run) only the rows whose own
+    review_run_id equals it are returned. With review_unreadable (a run row is
+    stored but cannot be read, so which rows belong to it is unknown) the list
+    is empty. With neither (no run was ever stored) the pre-review behaviour
+    applies: the latest night's rows, described below.
 
     Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
     Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
@@ -4282,6 +4290,8 @@ def _fetch_retirement_recommendations(
     panel: honest empty-state), matching this file's existing per-route error
     ownership convention (see api_incubation above).
     """
+    if review_unreadable:
+        return []
     if limit is None:
         limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
     rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
@@ -4310,53 +4320,67 @@ def _fetch_retirement_recommendations(
     return out
 
 
-def _join_symphony_approval_status(entries: list[dict]) -> None:
-    """Stamp approval_status on each review entry in place, keyed on the entry's
-    symphony_id (the Composer hash) and read fresh from retirement_decisions on
-    every call. A symphony with no decision row reads None (not "pending"); a
-    failed read leaves every entry at None. Never raises."""
-    if not entries:
-        return
+def _format_eastern_run_time(completed_at: object) -> str | None:
+    """Return completed_at as "YYYY-MM-DD HH:MM" US Eastern, or None when it is not a
+    readable ISO timestamp. A stamp without an offset is read as UTC, the zone the
+    review stores. Never raises."""
+    if not isinstance(completed_at, str):
+        return None
     try:
-        decisions = {row.get("candidate_id"): row for row in database.get_retirement_decisions()}
-    except Exception:
-        decisions = {}
-    for entry in entries:
-        entry["approval_status"] = (decisions.get(entry.get("symphony_id")) or {}).get(
-            "approval_status"
-        )
+        moment = datetime.fromisoformat(completed_at)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return moment.astimezone(_ET).strftime("%Y-%m-%d %H:%M")
+    except (ValueError, OverflowError):
+        return None
 
 
-def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict]:
-    """Return (run header, entries, run state) for the newest stored tenure review.
+def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict, bool]:
+    """Return (run header, entries, run state, read_failed) for the newest stored tenure review.
 
     Shared by GET /api/retirement-recommendations and the AI Advisor panel. Reads
     only: the stored run row, the decisions table and the in-process run state.
-    The header is the stored run record without its entries, or None when no run
-    is stored, the row is not a run record, or the read fails; entries are copies
+    The header is the stored run record without its entries; entries are copies
     of the stored entries (non-dict items skipped) plus a live approval_status.
+    read_failed is True when the newest run row cannot be used (the read raised,
+    the record is not a dict or carries no run_id, or the review module cannot
+    be imported); the header is then None and the entries are empty, and the
+    callers list no recommendation, because which run owns them is unknown.
+    No stored run at all is not a failure. The review_run_id that the caller
+    passes to _fetch_retirement_recommendations is the header's run_id.
     Never raises.
     """
-    from advisors import tenure_review  # noqa: PLC0415
-
-    status = tenure_review.REVIEW_RUN_STATE.snapshot()
+    status: dict = {"running": False, "running_since": None, "last_failed_attempt": None}
+    try:
+        from advisors import tenure_review  # noqa: PLC0415
+    except Exception:
+        _daemon_log.debug("_fetch_tenure_review: review module unavailable", exc_info=True)
+        return None, [], status, True
+    try:
+        status = tenure_review.REVIEW_RUN_STATE.snapshot()
+    except Exception:
+        _daemon_log.debug("_fetch_tenure_review: run state unavailable", exc_info=True)
     run: dict | None = None
     entries: list[dict] = []
+    read_failed = False
     try:
         rows = database.get_advisor_observations_for_role(
             tenure_review.TENURE_REVIEW_RUN_ROLE, limit=1
         )
-        raw = rows[0].get("raw_response") if rows else None
-        if isinstance(raw, dict):
-            run = {k: v for k, v in raw.items() if k != "entries"}
-            stored = raw.get("entries")
-            if isinstance(stored, list):
-                entries = [dict(e) for e in stored if isinstance(e, dict)]
+        if rows:
+            raw = rows[0].get("raw_response")
+            if isinstance(raw, dict) and raw.get("run_id"):
+                run = {k: v for k, v in raw.items() if k != "entries"}
+                stored = raw.get("entries")
+                if isinstance(stored, list):
+                    entries = [dict(e) for e in stored if isinstance(e, dict)]
+            else:
+                read_failed = True
     except Exception:
         _daemon_log.debug("_fetch_tenure_review: read failed", exc_info=True)
-        run, entries = None, []
-    _join_symphony_approval_status(entries)
-    return run, entries, status
+        run, entries, read_failed = None, [], True
+    _join_retirement_approval_status(entries, id_key="symphony_id", absent_status=None)
+    return run, entries, status, read_failed
 
 
 @app.route("/api/retirement-recommendations")
@@ -4371,7 +4395,14 @@ def api_retirement_recommendations():
     LIVE_EXECUTION interaction. GET never writes.
 
     Response shape: {"recommendations": [<raw_response dict, flattened to top
-    level>, ...]}. Each item carries the authoritative raw_response schema
+    level>, ...], "review_run": <newest stored review run header or null>,
+    "review_entries": [<one stored entry per live symphony, plus a live
+    approval_status that is null when no decision exists>], "review_status":
+    {running, running_since, trigger, last_failed_attempt}}. The recommendation
+    list follows the latest run: with a completed run it holds only the rows
+    carrying that run's review_run_id; with no run ever stored it holds the
+    latest night's rows; with a run row that cannot be read it is empty.
+    Each recommendation item carries the authoritative raw_response schema
     verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
     n_obs, candidate_composite, sibling_composite, candidate_metrics,
     sibling_metrics, uncertainty_gate_passed, structural_redundancy_gate_passed,
@@ -4405,10 +4436,11 @@ def api_retirement_recommendations():
             return [_json_safe(v) for v in value]
         return value
 
-    review_run, review_entries, review_status = _fetch_tenure_review()
+    review_run, review_entries, review_status, review_read_failed = _fetch_tenure_review()
     try:
         raw_rows = _fetch_retirement_recommendations(
-            review_run_id=review_run.get("run_id") if review_run else None
+            review_run_id=review_run.get("run_id") if review_run else None,
+            review_unreadable=review_read_failed,
         )
     except Exception:
         _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
@@ -6696,7 +6728,15 @@ def ai_advisor_tab():
             _ai_advisor_bot_state_loaded = True
         return _ai_advisor_bot_state
 
-    tenure_review_run, tenure_review_entries, tenure_review_status = _fetch_tenure_review()
+    (
+        tenure_review_run,
+        tenure_review_entries,
+        tenure_review_status,
+        tenure_review_read_failed,
+    ) = _fetch_tenure_review()
+    tenure_review_completed_et = _format_eastern_run_time(
+        tenure_review_run.get("completed_at") if tenure_review_run else None
+    )
 
     retirement_recommendations: list[dict] = []
     try:
@@ -6708,6 +6748,7 @@ def ai_advisor_tab():
         retirement_recommendations = _fetch_retirement_recommendations(
             bot_state_getter=_ensure_ai_advisor_bot_state,
             review_run_id=tenure_review_run.get("run_id") if tenure_review_run else None,
+            review_unreadable=tenure_review_read_failed,
         )
     except Exception:
         pass  # Empty-state rendered by template on [].
@@ -6723,50 +6764,40 @@ def ai_advisor_tab():
     # by the time it reaches here; the template reads those fields        #
     # directly (no separate panel-local resolution needed).               #
     # ------------------------------------------------------------------ #
-    _ret_any_approved = any(
-        _rec.get("approval_status") == "approved" for _rec in retirement_recommendations
-    )
-
-    # Checklist assembly (AC-6/AC-7 glue): deterministic, no LLM, built
-    # ONLY for approved cards -- never inside the approve route itself
-    # (AC-5: "Approve writes status ONLY"). Shares the lazy bot_state
-    # loader defined above with the frontrunner block below.
-    if _ret_any_approved:
+    # Wind-down checklist (AC-6/AC-7 glue): deterministic, no LLM, built ONLY
+    # for approved items the panel renders -- never inside the approve route
+    # itself (AC-5: "Approve writes status ONLY"). One loop serves the review
+    # entries (their own symphony_id, named as their row is) and, when no
+    # review ran yet, the legacy recommendation cards. A completed run's own
+    # recommendation rows are not rendered, so they get no checklist.
+    _checklist_jobs: list[tuple[dict, dict, str | None]] = [
+        (_entry, {"candidate_id": _entry.get("symphony_id")}, _entry.get("display_name"))
+        for _entry in tenure_review_entries
+        if _entry.get("approval_status") == "approved"
+    ]
+    if tenure_review_run is None:
+        _checklist_jobs += [
+            (_rec, _rec, None)
+            for _rec in retirement_recommendations
+            if _rec.get("approval_status") == "approved"
+        ]
+    if _checklist_jobs:
         _ret_bot_state = _ensure_ai_advisor_bot_state()
         try:
             from advisors.retirement_checklist import build_checklist  # noqa: PLC0415
         except Exception:
             build_checklist = None
-        for _rec in retirement_recommendations:
-            if _rec["approval_status"] != "approved":
-                continue
+        for _target, _source, _row_name in _checklist_jobs:
             if build_checklist is None:
-                _rec["_checklist"] = None
+                _target["_checklist"] = None
                 continue
             try:
-                _rec["_checklist"] = build_checklist(_rec, _ret_bot_state)
+                _checklist = build_checklist(_source, _ret_bot_state)
+                if isinstance(_row_name, str) and _row_name and isinstance(_checklist, dict):
+                    _checklist = {**_checklist, "candidate_name": _row_name}
+                _target["_checklist"] = _checklist
             except Exception:
-                _rec["_checklist"] = None
-
-    # Review entries: the wind-down checklist is built only for an entry with
-    # an approved decision, from that entry's own symphony_id.
-    if any(_entry.get("approval_status") == "approved" for _entry in tenure_review_entries):
-        try:
-            from advisors.retirement_checklist import (  # noqa: PLC0415
-                build_checklist as _build_entry_checklist,
-            )
-        except Exception:
-            _build_entry_checklist = None
-        _entry_bot_state = _ensure_ai_advisor_bot_state()
-        for _entry in tenure_review_entries:
-            if _entry.get("approval_status") != "approved":
-                continue
-            try:
-                _entry["_checklist"] = _build_entry_checklist(
-                    {"candidate_id": _entry.get("symphony_id")}, _entry_bot_state
-                )
-            except Exception:
-                _entry["_checklist"] = None
+                _target["_checklist"] = None
 
     # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
@@ -6882,6 +6913,8 @@ def ai_advisor_tab():
         tenure_review=tenure_review_run,
         tenure_review_entries=tenure_review_entries,
         tenure_review_status=tenure_review_status,
+        tenure_review_read_failed=tenure_review_read_failed,
+        tenure_review_completed_et=tenure_review_completed_et,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,

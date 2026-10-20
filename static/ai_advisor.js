@@ -1181,13 +1181,19 @@
     window.frReject = frReject;
     window.retDispatchDecision = retDispatchDecision;
     // "Run review now": one bodyless POST. The message is chosen from the HTTP
-    // status alone (a refusal from the global hooks is an HTML page, so a body is
-    // never parsed) and is fixed text set with textContent, never response text.
+    // status alone and is fixed text set with textContent, never response text or
+    // a thrown error's message. The global hooks answer an unauthenticated XHR with
+    // 401 JSON and a missing CSRF token with a 403 HTML page; neither body is
+    // parsed. A refusal gets the negative-token class; the next attempt clears it.
     function retRunReview(btnEl) {
         if (!btnEl || btnEl.disabled) { return; }
         btnEl.disabled = true;
         var messageEl = document.querySelector('[data-testid="tenure-review-run-message"]');
-        function show(text) { if (messageEl) { messageEl.textContent = text; } }
+        function show(text, refused) {
+            if (!messageEl) { return; }
+            messageEl.textContent = text;
+            messageEl.classList.toggle('tenure-review-run-message--refused', !!refused);
+        }
         (async function () {
             try {
                 var token = _csrfToken;
@@ -1202,18 +1208,18 @@
                     headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
                 });
                 if (resp.status === 202) {
-                    show('Review started: reload this page when it finishes');
+                    show('Review started: reload this page when it finishes', false);
                 } else if (resp.status === 409) {
-                    show('a review is already running');
+                    show('a review is already running', false);
                 } else if (resp.status === 401) {
-                    show('Session expired: sign in again');
+                    show('Session expired: sign in again', true);
                 } else if (resp.status === 403) {
-                    show('Request refused: reload the page');
+                    show('Request refused: reload the page', true);
                 } else {
-                    show('Request failed: HTTP ' + resp.status);
+                    show('Request failed: HTTP ' + resp.status, true);
                 }
             } catch (err) {
-                show('Request failed: ' + (err && err.message ? err.message : 'network error'));
+                show('Request failed: network error', true);
             } finally {
                 btnEl.disabled = false;
             }
