@@ -1690,6 +1690,8 @@ INVALID_SPACINGS = [
     pytest.param(math.inf, id="infinity"),
     pytest.param(-math.inf, id="negative_infinity"),
     pytest.param(None, id="none"),
+    pytest.param(True, id="boolean_true"),
+    pytest.param(False, id="boolean_false"),
     pytest.param("6.0", id="numeric_string"),
     pytest.param(LEAK, id="text"),
     pytest.param([6.0], id="list"),
@@ -1717,7 +1719,9 @@ def test_a_read_spacing_that_is_not_a_finite_number_of_zero_or_more_falls_back_t
     assert all(slept == cpc.COMPOSER_READ_SPACING_SECONDS for slept in router.sleeps)
     h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
     h.assert_requests_spaced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
-    assert len(spacing_warnings(caplog)) == 1, "one WARNING line names the parameter"
+    warnings = spacing_warnings(caplog)
+    assert len(warnings) == 1, "one WARNING line names the parameter"
+    assert str(bad) not in warnings[0].getMessage(), "the warning does not name the value"
     assert LEAK not in caplog.text, "the offending value is not echoed into a log line"
 
 

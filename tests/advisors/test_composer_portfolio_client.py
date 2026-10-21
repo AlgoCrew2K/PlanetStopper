@@ -50,6 +50,7 @@ from __future__ import annotations
 import ast
 import inspect
 import logging
+import math
 import re
 from datetime import date, timedelta
 from pathlib import Path
@@ -168,10 +169,8 @@ def test_the_spacing_constant_cites_the_per_minute_limit_and_not_a_per_second_on
     assert re.search(r"\b(?:6(?:\.0)?|10)\b", text), "the run's own rate is stated"
 
 
-def test_the_spacing_constant_comment_states_the_figures_behind_the_chosen_pause():
-    """The 6.0 s pause is a margin under Composer's 25 a minute: the engine reads statistics
-    every minute at all hours, the dashboard twice, and a 3.0 s pause at three accounts would
-    sit at 23 to 25 a minute against the 6.0 s pause's margin of 10 to 12."""
+def _spacing_constant_comment() -> str:
+    """The comment block above COMPOSER_READ_SPACING_SECONDS as one line of text."""
     lines = (REPO / "advisors" / "composer_portfolio_client.py").read_text("utf-8").splitlines()
     index = next(
         i for i, line in enumerate(lines) if line.startswith("COMPOSER_READ_SPACING_SECONDS")
@@ -181,7 +180,14 @@ def test_the_spacing_constant_comment_states_the_figures_behind_the_chosen_pause
         if not line.startswith("#"):
             break
         comment.append(line.lstrip("#").strip())
-    text = " ".join(reversed(comment))
+    return " ".join(reversed(comment))
+
+
+def test_the_spacing_constant_comment_states_the_figures_behind_the_chosen_pause():
+    """The 6.0 s pause is a margin under Composer's 25 a minute: the engine reads statistics
+    every minute at all hours, the dashboard twice, and a 3.0 s pause at three accounts would
+    sit at 23 to 25 a minute against the 6.0 s pause's margin of 10 to 12."""
+    text = _spacing_constant_comment()
     lowered = text.lower()
 
     assert re.search(r"\bevery minute\b", lowered), "the engine's read cadence is stated"
@@ -200,16 +206,7 @@ def test_the_spacing_constant_comment_states_ten_to_twelve_as_the_margin_and_not
     """At 6.0 s the run adds 10 a minute to the standing 3 to 5, so the load is 13 to 15 a
     minute and the room left under 25 is 10 to 12: the comment must give 10 to 12 as that room,
     never as how much is used."""
-    lines = (REPO / "advisors" / "composer_portfolio_client.py").read_text("utf-8").splitlines()
-    index = next(
-        i for i, line in enumerate(lines) if line.startswith("COMPOSER_READ_SPACING_SECONDS")
-    )
-    comment: list[str] = []
-    for line in reversed(lines[:index]):
-        if not line.startswith("#"):
-            break
-        comment.append(line.lstrip("#").strip())
-    lowered = " ".join(reversed(comment)).lower()
+    lowered = _spacing_constant_comment().lower()
     twelve = r"\b10\s+(?:to|and|or)\s+12\b"
 
     assert re.search(rf"\b(?:margin|headroom|room|spare)\b[^.]{{0,40}}{twelve}", lowered), (
@@ -217,6 +214,17 @@ def test_the_spacing_constant_comment_states_ten_to_twelve_as_the_margin_and_not
     )
     assert not re.search(rf"\b(?:whole|total|load|use[sd]?)\b[^.]{{0,20}}{twelve}", lowered), (
         "10 to 12 is not given as the load"
+    )
+
+
+def test_the_spacing_constant_comment_states_thirteen_to_fifteen_as_the_load():
+    """The run's 10 a minute added to the standing 3 to 5 is a load of 13 to 15 a minute: the
+    comment gives 13 to 15 as that load, in the same sentence as the word for it."""
+    lowered = _spacing_constant_comment().lower()
+    figure = r"\b13\s+(?:to|and|or)\s+15\b"
+
+    assert re.search(rf"\b(?:load|use[sd]?|total)\b[^.]{{0,40}}{figure}", lowered), (
+        "13 to 15 is named as the load on Composer's limit"
     )
 
 
@@ -893,6 +901,68 @@ def test_every_holdings_span_that_raises_is_followed_by_the_spacing_sleep(router
     h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
     h.assert_requests_spaced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
     assert router.sleeps == [cpc.COMPOSER_READ_SPACING_SECONDS] * 3
+
+
+# ---------------------------------------------------------------------------
+# A caller's spacing is used when it is a number of zero or more, else the default
+# ---------------------------------------------------------------------------
+
+# One call per read kind, each handed a spacing: the same four reads as READ_CALLS.
+SPACED_READ_CALLS = {
+    "statistics": lambda s: cpc.read_symphony_statistics(h.ACCOUNT_ID, spacing_seconds=s),
+    "series": lambda s: cpc.read_symphony_value_series(
+        h.ACCOUNT_ID, h.OLDEST_ID, spacing_seconds=s
+    ),
+    "definition": lambda s: cpc.read_symphony_definition(h.OLDEST_ID, spacing_seconds=s),
+    "holdings": lambda s: cpc.read_daily_holdings(
+        h.ACCOUNT_ID, RECENT_START, RECENT_END, spacing_seconds=s
+    ),
+}
+
+# Every kind of value that is not a finite number of zero or more, a boolean included: a boolean
+# is an int to Python, so False would otherwise pass for a legitimate zero.
+INVALID_SPACINGS = [
+    pytest.param(-1.0, id="negative"),
+    pytest.param(math.nan, id="nan"),
+    pytest.param(math.inf, id="infinity"),
+    pytest.param(-math.inf, id="negative_infinity"),
+    pytest.param(True, id="boolean_true"),
+    pytest.param(False, id="boolean_false"),
+    pytest.param("6.0", id="numeric_string"),
+]
+
+
+def _read_succeeded(result) -> bool:
+    """Whether the read gave its normal result: no failure, and what it read."""
+    if hasattr(result, "failed_spans"):
+        return not result.failed_spans and bool(result.days)
+    return result.failure is None
+
+
+@pytest.mark.parametrize("bad", INVALID_SPACINGS)
+@pytest.mark.parametrize("kind", sorted(SPACED_READ_CALLS))
+def test_a_read_given_an_invalid_spacing_returns_normally_and_sleeps_the_default(
+    router, kind, bad
+):
+    _serve_success(router, kind)
+
+    result = SPACED_READ_CALLS[kind](bad)
+
+    assert _read_succeeded(result), "the read answers as it does without a spacing"
+    assert len(router.requests) == 1
+    h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
+    assert router.sleeps == [cpc.COMPOSER_READ_SPACING_SECONDS]
+
+
+@pytest.mark.parametrize("good", [0, 0.0, 2.5])
+@pytest.mark.parametrize("kind", sorted(SPACED_READ_CALLS))
+def test_a_read_given_a_spacing_of_zero_or_more_sleeps_exactly_that(router, kind, good):
+    _serve_success(router, kind)
+
+    result = SPACED_READ_CALLS[kind](good)
+
+    assert _read_succeeded(result)
+    assert router.sleeps == [good]
 
 
 # ---------------------------------------------------------------------------
