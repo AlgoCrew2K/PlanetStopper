@@ -1487,6 +1487,130 @@ class TestEveryRegistrationFormIsSeenByTheDriftGuard:
         assert _unlisted_template_helpers(_parse_app_py()) == []
 
 
+# The static drift guard reads the registration spellings it knows; a helper registered by a
+# spelling it does not know (a table bound to a local, setattr, operator.setitem, a loop over a
+# local table) is reached by the template and by no scan entry point. This guard reads the
+# running application instead: every filter, test and global the app added to its Jinja
+# environment, by whatever spelling, must be a function of the app module that the scan lists.
+
+
+def _runtime_unlisted_template_helpers(env, baseline_env, app_module_name: str) -> list[str]:
+    """``table:name (what it is)`` for each filter, test and global of ``env`` that the
+    framework did not put there and that is not a listed function of the app module.
+
+    ``baseline_env`` is a fresh environment of the same framework, so the framework's own
+    entries are excluded by what they are (the very object the baseline holds under that name,
+    or an object of flask, jinja2, werkzeug or markupsafe that the baseline also has a name
+    for), never by name alone: a name the framework owns can still be re-bound by the app to
+    a function of its own."""
+    framework_roots = ("flask", "jinja2", "werkzeug", "markupsafe")
+    unlisted = []
+    for table in sorted(_TEMPLATE_REGISTRATION_TABLES):
+        registered = getattr(env, table)
+        baseline = getattr(baseline_env, table)
+        for name, value in sorted(registered.items()):
+            owner = getattr(value, "__module__", None) or type(value).__module__
+            if name in baseline and (
+                baseline[name] is value or owner.split(".")[0] in framework_roots
+            ):
+                continue
+            listed = (
+                callable(value)
+                and getattr(value, "__module__", None) == app_module_name
+                and getattr(value, "__name__", None) in _CYCLE_2C_ENTRY_POINT_FN_NAMES
+            )
+            if not listed:
+                described = getattr(value, "__qualname__", None) or type(value).__name__
+                unlisted.append(f"{table}:{name} ({described})")
+    return unlisted
+
+
+@pytest.fixture()
+def running_app():
+    """The imported application, and a fresh environment of the same framework to compare it
+    with."""
+    import flask  # noqa: PLC0415
+
+    import app as app_module  # noqa: PLC0415
+
+    return app_module, flask.Flask("template-helper-baseline").jinja_env
+
+
+class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
+    def test_the_app_has_added_helpers_to_every_table_so_the_comparison_is_not_vacuous(
+        self, running_app
+    ):
+        app_module, baseline = running_app
+        env = app_module.app.jinja_env
+        for table in sorted(_TEMPLATE_REGISTRATION_TABLES):
+            added = set(getattr(env, table)) - set(getattr(baseline, table))
+            if table != "globals":
+                assert added, f"the app registers nothing in {table}"
+        assert {"tenure_text", "finite_number"} <= set(env.filters) | set(env.tests)
+
+    def test_every_filter_test_and_global_the_app_added_is_a_listed_function(self, running_app):
+        app_module, baseline = running_app
+        unlisted = _runtime_unlisted_template_helpers(
+            app_module.app.jinja_env, baseline, app_module.__name__
+        )
+        assert unlisted == [], f"template helpers outside every scan entry point: {unlisted}"
+
+    @pytest.mark.parametrize("table", sorted(_TEMPLATE_REGISTRATION_TABLES))
+    def test_a_helper_registered_through_an_alias_of_the_table_is_reported(
+        self, running_app, table
+    ):
+        app_module, baseline = running_app
+
+        def _planted_through_an_alias(value):
+            return value
+
+        alias = getattr(app_module.app.jinja_env, table)
+        alias["planted_through_an_alias"] = _planted_through_an_alias
+        try:
+            unlisted = _runtime_unlisted_template_helpers(
+                app_module.app.jinja_env, baseline, app_module.__name__
+            )
+        finally:
+            del alias["planted_through_an_alias"]
+        assert len(unlisted) == 1 and unlisted[0].startswith(f"{table}:planted_through_an_alias"), (
+            unlisted
+        )
+        assert (
+            _runtime_unlisted_template_helpers(
+                app_module.app.jinja_env, baseline, app_module.__name__
+            )
+            == []
+        ), "the planted helper was not removed"
+
+    def test_a_lambda_a_builtin_and_a_function_named_like_a_listed_one_are_reported(
+        self, running_app
+    ):
+        app_module, baseline = running_app
+
+        def _tenure_text(value):  # the listed name, defined outside the app module
+            return value
+
+        planted = {
+            "planted_lambda": lambda value: value,
+            "planted_builtin": len,
+            "planted_lookalike": _tenure_text,
+            "tojson": _tenure_text,  # a name the framework owns, re-bound to a function
+        }
+        env = app_module.app.jinja_env
+        saved = env.filters.get("tojson")
+        env.filters.update(planted)
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module.__name__)
+        finally:
+            for name in planted:
+                env.filters.pop(name, None)
+            if saved is not None:
+                env.filters["tojson"] = saved
+        assert sorted(item.split(" ")[0] for item in unlisted) == sorted(
+            f"filters:{name}" for name in planted
+        ), unlisted
+
+
 # ===========================================================================
 # Group F (Cycle 2c): ai_advisor_tab()'s retirement name-resolution block
 # (AC-1) -- a SCOPED SOURCE-WINDOW scan, not the Group E transitive-walk

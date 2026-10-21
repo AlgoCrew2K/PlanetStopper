@@ -4852,6 +4852,11 @@ _UNKEYABLE_IDS = [
 ]
 
 
+# A stored explanation the keyless entry must not print: the entry is a retire candidate, so
+# its lifecycle block would show it if the block rendered.
+_KEYLESS_EXPLANATION = "Redundant with its stronger sibling, written for the keyless entry."
+
+
 class TestAnEntryWhoseIdCannotBeAKeyDegradesOnlyThatEntry:
     @pytest.fixture
     def stored(self, client, isolated_db, request):
@@ -4860,6 +4865,7 @@ class TestAnEntryWhoseIdCannotBeAKeyDegradesOnlyThatEntry:
         pb.seed_bot_state()
         record = pb.full_record(pb.RUN_ID_SECOND)
         broken = pb.entry_with_verdict(record, "retire_candidate")
+        pb.set_explanation(record, broken["symphony_id"], _KEYLESS_EXPLANATION, "2026-12-31")
         _edit(broken, "symphony_id", request.param)
         pb.store_run(record)
         watch = pb.entry_with_verdict(record, "watch")
@@ -4884,6 +4890,22 @@ class TestAnEntryWhoseIdCannotBeAKeyDegradesOnlyThatEntry:
         assert chip is not None and "approved" in chip.text().lower(), (
             "another entry's decision was lost"
         )
+
+    @pytest.mark.parametrize("stored", _UNKEYABLE_IDS, indirect=True)
+    def test_the_entry_renders_no_lifecycle_block_status_chip_or_explanation(self, client, stored):
+        """An id that is not non-blank text is a missing id for the whole entry, not only for
+        its buttons: the entry keeps its name and evidence and shows no decision state."""
+        record, broken = stored
+        nodes = _panel(client).find_all("tenure-review-entry")
+        keyless = [n for n in nodes if n.attrs.get("data-symphony-id", "").strip() == ""]
+        assert len(keyless) == 1, "the entry with the unusable id is not shown once"
+        node = keyless[0]
+        assert broken["display_name"] in node.text(), "the entry lost its name"
+        assert node.find("retirement-recommendation-card") is None, "a lifecycle block renders"
+        assert node.find("retirement-rec-status") is None, "a status chip renders"
+        assert node.find("retirement-rec-explanation") is None, "an explanation line renders"
+        assert _KEYLESS_EXPLANATION not in node.everything(), "the stored explanation is printed"
+        assert _lifecycle_buttons(node) == ([], [])
 
     @pytest.mark.parametrize("stored", _UNKEYABLE_IDS, indirect=True)
     def test_the_api_answers_200_with_no_decision_on_that_entry_and_the_others_joined(
@@ -5798,6 +5820,23 @@ def _assert_title_is_absent_or_not_recorded(node: pb.Node) -> None:
     assert title is None or title.lower() == _NOT_RECORDED, f"title {title!r}"
 
 
+# A stored name the card must not print. The family a stored name can take: only spaces, empty,
+# null, a boolean, a number, NaN, a list, a dict and the key missing. A text name is the
+# ordinary case and prints as stored.
+_STORED_NUMBER_NAME = 4242424
+_UNUSABLE_STORED_NAMES = [
+    pytest.param(_BLANK, id="blank"),
+    pytest.param("", id="empty"),
+    pytest.param(None, id="null"),
+    pytest.param(True, id="a boolean"),
+    pytest.param(_STORED_NUMBER_NAME, id="a number"),
+    pytest.param(float("nan"), id="nan"),
+    pytest.param([_MARK], id="a list"),
+    pytest.param({"k": _MARK}, id="a dict"),
+    pytest.param(_GONE, id="missing"),
+]
+
+
 class TestALegacyCardNamesAnUnusableFieldAsNotRecorded:
     @pytest.fixture(autouse=True)
     def roster(self, isolated_db):
@@ -5819,6 +5858,15 @@ class TestALegacyCardNamesAnUnusableFieldAsNotRecorded:
         _assert_no_repr_in(card)
         assert "0.80" in card.find("retirement-rec-correlation").text()
         assert client.get("/api/retirement-recommendations").status_code == 200
+
+    @pytest.mark.parametrize("bad", _NOT_NONBLANK_TEXT)
+    def test_a_candidate_id_that_is_not_text_shows_no_status_chip(self, client, bad):
+        """A card that names no symphony has no decision state to show, as an entry with a
+        missing id has none."""
+        _store_legacy_row(bad, "sib-good")
+        card = _only_legacy_card(client)
+        assert card.find("retirement-rec-status") is None, "a status chip renders"
+        assert "pending" not in card.everything().lower()
 
     @pytest.mark.parametrize("bad", _NOT_NONBLANK_TEXT)
     def test_a_sibling_id_that_is_not_text_reads_not_recorded_beside_the_candidates_name(
@@ -5850,6 +5898,49 @@ class TestALegacyCardNamesAnUnusableFieldAsNotRecorded:
         _assert_no_repr_in(card)
         assert client.get("/api/retirement-recommendations").status_code == 200
 
+    @pytest.mark.parametrize("bad", _UNUSABLE_STORED_NAMES)
+    def test_a_stored_candidate_name_that_is_not_text_is_never_printed_and_the_card_reads_the_id(
+        self, client, bad
+    ):
+        """The id is text with no live name, so no fresh name replaces the stored one."""
+        _store_legacy_row("cand-unknown", "sib-unknown", candidate_name=bad)
+        card = _only_legacy_card(client)
+        (candidate,) = _by_class(card, "retirement-rec-candidate")
+        assert candidate.text() == "cand-unknown", candidate.text()
+        assert candidate.attrs.get("title") == "cand-unknown"
+        (sibling,) = _by_class(card, "retirement-rec-sibling")
+        assert sibling.text() == "kept: sib-unknown", sibling.text()
+        _assert_no_repr_in(card)
+        assert len(_lifecycle_buttons(card)[0]) == 1
+
+    @pytest.mark.parametrize("bad", _UNUSABLE_STORED_NAMES)
+    def test_a_stored_sibling_name_that_is_not_text_is_never_printed_and_the_card_reads_the_id(
+        self, client, bad
+    ):
+        _store_legacy_row("cand-unknown", "sib-unknown", sibling_name=bad)
+        card = _only_legacy_card(client)
+        (sibling,) = _by_class(card, "retirement-rec-sibling")
+        assert sibling.text() == "kept: sib-unknown", sibling.text()
+        assert sibling.attrs.get("title") == "sib-unknown"
+        (candidate,) = _by_class(card, "retirement-rec-candidate")
+        assert candidate.text() == "cand-unknown", candidate.text()
+        _assert_no_repr_in(card)
+        assert len(_lifecycle_buttons(card)[0]) == 1
+
+    @pytest.mark.parametrize("bad_id", _NOT_NONBLANK_TEXT)
+    def test_a_stored_name_that_is_not_text_never_prints_beside_an_id_that_is_not_text_either(
+        self, client, bad_id
+    ):
+        _store_legacy_row(
+            bad_id, bad_id, candidate_name=_STORED_NUMBER_NAME, sibling_name=_STORED_NUMBER_NAME
+        )
+        card = _only_legacy_card(client)
+        (candidate,) = _by_class(card, "retirement-rec-candidate")
+        assert candidate.text().lower() == _NOT_RECORDED, candidate.text()
+        (sibling,) = _by_class(card, "retirement-rec-sibling")
+        assert re.fullmatch(r"kept:\s*not recorded", sibling.text().lower()), sibling.text()
+        _assert_no_repr_in(card)
+
     def test_a_card_whose_fields_are_all_text_prints_them_as_stored(self, client):
         _store_legacy_row("cand-good", "sib-good")
         card = _only_legacy_card(client)
@@ -5861,6 +5952,8 @@ class TestALegacyCardNamesAnUnusableFieldAsNotRecorded:
         assert basis.text() == _sample_raw_response()["basis_label"]
         approve, reject = _lifecycle_buttons(card)
         assert len(approve) == 1 and len(reject) == 1
+        chip = card.find("retirement-rec-status")
+        assert chip is not None and chip.text().lower() == "pending"
 
     def test_one_unusable_row_changes_neither_the_valid_card_nor_its_buttons(self, client):
         _store_legacy_row("cand-good", "sib-good")
@@ -5965,3 +6058,100 @@ class TestEachIdThatIsTextKeepsItsFreshName:
         ]
         assert len(rows) == 1
         assert rows[0]["candidate_name"] == candidate["display_name"]
+
+
+# ===========================================================================
+# An id that is not non-blank text is looked up for no name: a row with no stored name beside
+# such an id carries none after the refresh, whatever the id's type (a number, a boolean and a
+# float are hashable and would resolve to themselves).
+# ===========================================================================
+
+_IDS_THAT_NAME_NO_SYMPHONY = [
+    pytest.param(4242424, id="a number"),
+    pytest.param(True, id="a boolean"),
+    pytest.param(1.5, id="a float"),
+    pytest.param(None, id="null"),
+    pytest.param(["bad"], id="a list"),
+    pytest.param({"k": "v"}, id="a dict"),
+    pytest.param("", id="empty"),
+    pytest.param(_BLANK, id="blank"),
+    pytest.param(_GONE, id="missing"),
+]
+
+
+def _unnamed_row(**edits) -> dict:
+    """A recommendation row whose two names are not stored."""
+    raw = _sample_raw_response("cand-good", "sib-good")
+    for key, value in edits.items():
+        if value is _GONE:
+            del raw[key]
+        else:
+            raw[key] = value
+    return raw
+
+
+def _only_row(client) -> dict:
+    resp = client.get("/api/retirement-recommendations")
+    assert resp.status_code == 200
+    rows = pb.strict_json(resp)["recommendations"]
+    assert len(rows) == 1, f"expected one row, got {len(rows)}"
+    return rows[0]
+
+
+class TestAnIdThatIsNotTextIsResolvedToNoName:
+    @pytest.mark.parametrize("bad", _IDS_THAT_NAME_NO_SYMPHONY)
+    def test_with_no_run_a_candidate_id_that_is_not_text_carries_no_candidate_name(
+        self, client, isolated_db, bad
+    ):
+        _seed_named_roster()
+        _insert_row(_unnamed_row(candidate_id=bad), "cand-other")
+        row = _only_row(client)
+        assert row.get("candidate_name") is None, (
+            f"a name was resolved for an id that is not text: {row.get('candidate_name')!r}"
+        )
+        assert row["sibling_name"] == "Good Sibling Name", "the sibling lost its fresh name"
+
+    @pytest.mark.parametrize("bad", _IDS_THAT_NAME_NO_SYMPHONY)
+    def test_with_no_run_a_sibling_id_that_is_not_text_carries_no_sibling_name(
+        self, client, isolated_db, bad
+    ):
+        _seed_named_roster()
+        _insert_row(_unnamed_row(sibling_id=bad), "cand-good")
+        row = _only_row(client)
+        assert row.get("sibling_name") is None, (
+            f"a name was resolved for an id that is not text: {row.get('sibling_name')!r}"
+        )
+        assert row["candidate_name"] == "Good Candidate Name", "the candidate lost its fresh name"
+
+    @pytest.mark.parametrize("bad", _IDS_THAT_NAME_NO_SYMPHONY)
+    def test_with_a_run_a_candidate_id_that_is_not_text_carries_no_candidate_name(
+        self, client, isolated_db, bad
+    ):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        candidate = pb.entry_with_verdict(record, "retire_candidate")
+        body = pb.recommendation_for(record, candidate)
+        _edit(body, "candidate_id", bad)
+        _insert_row(body, candidate["symphony_id"])
+        pb.store_run(record)
+        row = _only_row(client)
+        assert row.get("candidate_name") is None, (
+            f"a name was resolved for an id that is not text: {row.get('candidate_name')!r}"
+        )
+
+    @pytest.mark.parametrize("bad", _IDS_THAT_NAME_NO_SYMPHONY)
+    def test_with_a_run_a_sibling_id_that_is_not_text_carries_no_sibling_name(
+        self, client, isolated_db, bad
+    ):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        candidate = pb.entry_with_verdict(record, "retire_candidate")
+        body = pb.recommendation_for(record, candidate)
+        _edit(body, "sibling_id", bad)
+        pb.store_recommendation(body)
+        pb.store_run(record)
+        row = _only_row(client)
+        assert row.get("sibling_name") is None, (
+            f"a name was resolved for an id that is not text: {row.get('sibling_name')!r}"
+        )
+        assert row["candidate_name"] == candidate["display_name"]
