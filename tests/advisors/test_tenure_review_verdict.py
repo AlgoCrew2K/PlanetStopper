@@ -236,6 +236,40 @@ def test_a_not_applicable_marginal_item_is_not_evidence_either():
     assert got["verdict"] is None
 
 
+def test_an_item_that_does_not_apply_gives_no_evidence_and_is_listed_missing():
+    """A not-applicable item decides nothing, exactly like an unavailable one: with the other
+    two items unavailable there is no verdict, and each of the three is listed with the reason
+    it carries."""
+    got = tr.decide_verdict(
+        evidence(
+            redundancy=_item("not_applicable", "no other symphonies to compare"),
+            backtest=backtest_item(),
+            marginal=_item("not_applicable", "no other eligible symphonies"),
+        )
+    )
+    assert got["verdict"] is None
+    assert got["verdict_text"] == "no verdict: no evidence available"
+    assert got["verdict_reasons"] == []
+    assert got["missing_items"] == ["redundancy", "backtest", "marginal"]
+
+
+@pytest.mark.parametrize("name", ["redundancy", "marginal"])
+def test_an_item_that_does_not_apply_is_listed_missing_beside_an_item_that_decides(name):
+    """The verdict comes from the backtest alone, and the item that does not apply is listed
+    in its place in the fixed order. Rejects listing only the unavailable items."""
+    items = {
+        "redundancy": redundancy_item(),
+        "backtest": backtest_item(realized=5.0, backtest=17.0),
+        "marginal": marginal_item(5.0, 4.0),
+    }
+    items[name] = _item("not_applicable", "no other eligible symphonies")
+    items["redundancy" if name == "marginal" else "marginal"] = _unavailable("bases differ")
+    got = tr.decide_verdict(evidence(**items))
+    assert got["verdict"] == "watch"
+    assert got["verdict_reasons"] == [TRAILS]
+    assert got["missing_items"] == ["redundancy", "marginal"]
+
+
 def _gate(state):
     return {"state": state, "text": f"{state}: as the gate words it"}
 
@@ -245,10 +279,10 @@ def _gate(state):
 STRUCTURAL_FLOOR = b.days_needed_for_structural_gate()
 
 
-def pair_redundancy_item(uncertainty, structural, aligned_days):
-    """An available redundancy item that shows a pair on this many aligned days whose two
-    gates read these states, with a correlation figure that has a value."""
-    pair = {
+def _shown_pair(uncertainty, structural, aligned_days):
+    """A shown pair on this many aligned days whose two gates read these states, with a
+    correlation figure that has a value."""
+    return {
         "sibling_id": "sibling-1",
         "sibling_name": "Sibling One",
         "n_obs": aligned_days,
@@ -257,16 +291,28 @@ def pair_redundancy_item(uncertainty, structural, aligned_days):
         "structural_gate": _gate(structural),
         "note": None,
     }
-    return _item(pair=pair, retire_candidate=False)
 
 
-# A shown pair is evidence for a verdict when it was measured on at least the aligned days the
-# structural gate needs and its correlation is one the interval can be computed for, whatever
-# its gates concluded: a pair found not confidently redundant on a long history is a finding.
-# A shorter pair says too little to rest a verdict on in either direction, and so does a pair
-# whose correlation the interval cannot be computed for (a correlation of exactly one).
-# (uncertainty state, structural state, aligned days)
-PAIRS_THAT_DECIDE_NOTHING = [
+def unused_pair_item(uncertainty, structural, aligned_days):
+    """A redundancy item that shows a pair and is not used in the verdict: unavailable, with
+    the reason the review gives, whatever its pair's own gates read."""
+    return _item(
+        "unavailable",
+        "comparison decides nothing for: Sibling One",
+        pair=_shown_pair(uncertainty, structural, aligned_days),
+        retire_candidate=False,
+    )
+
+
+def used_pair_item(uncertainty, structural, aligned_days):
+    """A redundancy item that shows a pair and is used in the verdict: available."""
+    return _item(pair=_shown_pair(uncertainty, structural, aligned_days), retire_candidate=False)
+
+
+# The pairs an unused item may show, as (uncertainty state, structural state, aligned days):
+# short ones, ones whose gates could not decide, and one whose gates look decided but sits
+# beside a peer that decided nothing, which is why the review marked the whole item unused.
+PAIRS_IN_AN_UNUSED_ITEM = [
     pytest.param("insufficient data", "not evaluated", 24, id="too_few_days_for_the_interval"),
     pytest.param(
         "passed",
@@ -275,30 +321,24 @@ PAIRS_THAT_DECIDE_NOTHING = [
         id="one_day_short_of_the_stressed_window",
     ),
     pytest.param(
-        "not met",
-        "not evaluated",
-        STRUCTURAL_FLOOR - 1,
-        id="interval_not_met_one_day_short_of_the_stressed_window",
-    ),
-    pytest.param(
-        "passed",
-        "passed",
-        STRUCTURAL_FLOOR - 1,
-        id="both_gates_passed_on_fewer_days_than_the_real_gates_allow",
-    ),
-    pytest.param(
         "undefined",
         "not evaluated",
         STRUCTURAL_FLOOR + 20,
         id="a_correlation_the_interval_cannot_be_computed_for",
     ),
-]
-PAIRS_THAT_ARE_EVIDENCE = [
-    pytest.param("passed", "passed", STRUCTURAL_FLOOR + 70, id="both_passed"),
-    pytest.param("passed", "not met", STRUCTURAL_FLOOR + 70, id="stressed_window_not_met"),
     pytest.param(
         "passed", "undefined", STRUCTURAL_FLOOR + 70, id="stressed_window_cannot_be_computed"
     ),
+    pytest.param(
+        "passed",
+        "passed",
+        STRUCTURAL_FLOOR + 70,
+        id="both_gates_passed_beside_a_peer_that_decided_nothing",
+    ),
+]
+PAIRS_IN_A_USED_ITEM = [
+    pytest.param("passed", "passed", STRUCTURAL_FLOOR + 70, id="both_passed"),
+    pytest.param("passed", "not met", STRUCTURAL_FLOOR + 70, id="stressed_window_not_met"),
     pytest.param(
         "not met", "not evaluated", STRUCTURAL_FLOOR + 70, id="interval_not_met_on_a_long_history"
     ),
@@ -311,19 +351,17 @@ PAIRS_THAT_ARE_EVIDENCE = [
 ]
 
 
-@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_DECIDE_NOTHING)
-def test_a_shown_pair_on_too_few_days_or_with_an_undefined_correlation_is_not_evidence(
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_IN_AN_UNUSED_ITEM)
+def test_an_unused_redundancy_item_is_listed_missing_and_gives_no_evidence_whatever_pair_it_shows(
     uncertainty, structural, aligned_days
 ):
     """With the backtest and the marginal item also unavailable, nothing is left to rest a
-    verdict on. The item is listed as missing in its place in the fixed order, and the
-    item itself is left as it was, pair and all.
+    verdict on. The item is listed as missing in its place in the fixed order and is left as
+    it was, pair and all. The verdict reads the item's own status, not the pair it shows.
 
-    Rejects counting an available redundancy item as evidence whatever its pair says,
-    deciding by the gates' states alone (the interval not met on too few days reads as a
-    finding there), and counting a pair whose correlation is exactly one."""
+    Rejects counting an item as evidence because the pair it shows looks decided."""
     ev = evidence(
-        redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
+        redundancy=unused_pair_item(uncertainty, structural, aligned_days),
         backtest=backtest_item(),
         marginal=marginal_item(),
     )
@@ -336,18 +374,18 @@ def test_a_shown_pair_on_too_few_days_or_with_an_undefined_correlation_is_not_ev
     assert ev == snapshot
 
 
-@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_DECIDE_NOTHING)
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_IN_AN_UNUSED_ITEM)
 @pytest.mark.parametrize(
     ("backtest_total", "verdict", "reasons"),
     [(5.0, "keep", []), (17.0, "watch", [TRAILS])],
     ids=["level_with_the_backtest", "trailing_by_12_points"],
 )
-def test_with_the_backtest_available_the_verdict_comes_from_it_and_the_pair_is_listed_missing(
+def test_with_the_backtest_available_the_verdict_comes_from_it_and_the_unused_item_is_listed_missing(
     uncertainty, structural, aligned_days, backtest_total, verdict, reasons
 ):
     got = tr.decide_verdict(
         evidence(
-            redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
+            redundancy=unused_pair_item(uncertainty, structural, aligned_days),
             backtest=backtest_item(realized=5.0, backtest=backtest_total),
             marginal=marginal_item(),
         )
@@ -357,13 +395,13 @@ def test_with_the_backtest_available_the_verdict_comes_from_it_and_the_pair_is_l
     assert got["missing_items"] == ["redundancy", "marginal"]
 
 
-@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_DECIDE_NOTHING)
-def test_with_the_marginal_item_available_the_verdict_comes_from_it_and_the_pair_is_listed_missing(
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_IN_AN_UNUSED_ITEM)
+def test_with_the_marginal_item_available_the_verdict_comes_from_it_and_the_unused_item_is_listed_missing(
     uncertainty, structural, aligned_days
 ):
     got = tr.decide_verdict(
         evidence(
-            redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
+            redundancy=unused_pair_item(uncertainty, structural, aligned_days),
             backtest=backtest_item(),
             marginal=marginal_item(5.0, 6.0, -10.0, -8.0),
         )
@@ -373,19 +411,16 @@ def test_with_the_marginal_item_available_the_verdict_comes_from_it_and_the_pair
     assert got["missing_items"] == ["redundancy", "backtest"]
 
 
-@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_ARE_EVIDENCE)
-def test_a_shown_pair_on_enough_days_is_evidence_whatever_its_gates_concluded(
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_IN_A_USED_ITEM)
+def test_an_available_redundancy_item_is_evidence_whatever_gates_its_pair_concluded(
     uncertainty, structural, aligned_days
 ):
-    """The pair was measured on at least the aligned days the stressed window needs, so
-    that it did not flag the symphony is a finding, however the gates ended: both ran, the
-    interval fell short, or the stressed window could not be computed. Rejects treating
-    every shown pair as no evidence, deciding by the gates' states (a stressed window that
-    cannot be computed is not a reason to ignore 250 days of correlation), and a floor one
-    day too high."""
+    """The review marks an item available only when the comparison decided, so the verdict
+    takes an available item as evidence: a pair found not redundant is a finding, however
+    the gates ended. Rejects treating every shown pair as no evidence."""
     got = tr.decide_verdict(
         evidence(
-            redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
+            redundancy=used_pair_item(uncertainty, structural, aligned_days),
             backtest=backtest_item(),
             marginal=marginal_item(),
         )
@@ -485,8 +520,9 @@ def test_a_lower_composite_member_of_a_passing_pair_is_not_retired_when_its_sibl
 
 def test_a_fallback_basis_sibling_is_never_paired_and_nobody_is_retired():
     """The same series on the Composer basis and on the fallback basis are never
-    paired: the pair reads bases differ and nobody is flagged. With backtest and
-    marginal also unavailable, neither gets a verdict, so neither offers a decision."""
+    paired: each row lists the other as a peer it did not compare and nobody is flagged. With
+    backtest and marginal also giving no evidence, neither gets a verdict, so neither offers
+    a decision."""
     returns = b.wave_returns(19, amp=0.6, drift=0.02)
     composer = b.composer_symphony("composer-a", "Composer A", DAYS, returns)
     fallback = b.make_symphony(
@@ -497,18 +533,26 @@ def test_a_fallback_basis_sibling_is_never_paired_and_nobody_is_retired():
         shadow_returns=b.by_date(DAYS[1:], [r + 0.05 for r in returns]),
     )
     result = b.review([composer, fallback], as_of=b.AS_OF, threshold=20)
-    for sid in ("composer-a", "fallback-b"):
+    for sid, other, reason in (
+        ("composer-a", "Fallback B", "no same-basis peer has a composite"),
+        ("fallback-b", "Composer A", "this symphony has no composite"),
+    ):
         entry = b.entry_of(result, sid)
-        assert b.item_of(entry, "redundancy")["reason"] == "bases differ"
-        assert b.item_of(entry, "redundancy")["retire_candidate"] is False
-        # redundancy, backtest and marginal are all unavailable, so there is no verdict
+        item = b.item_of(entry, "redundancy")
+        assert reason in item["reason"], sid
+        assert [r["display_name"] for r in item["not_compared"]] == [other], sid
+        assert item["pair"] is None, sid
+        assert item["retire_candidate"] is False, sid
+        # redundancy, backtest and marginal give no evidence, so there is no verdict
         assert entry["verdict"] is None, sid
         assert entry["verdict_text"] == "no verdict: no evidence available", sid
 
 
 # ---------------------------------------------------------------------------
-# Through build_review: a shown pair on too few days decides nothing
+# Through build_review: a pair with a sibling that has no composite decides nothing
 # ---------------------------------------------------------------------------
+
+NO_PEER_COMPOSITE = "no same-basis peer has a composite"
 
 LEAD_BESIDE_A_YOUNG_PEER_UNDECIDED = [
     # (noise on the peer, gate states of the pair the lead shows)
@@ -520,8 +564,9 @@ LEAD_BESIDE_A_YOUNG_PEER_UNDECIDED = [
 
 def _lead_beside_a_young_peer(noise):
     """Two Composer symphonies and a threshold. ``lead`` is eligible. ``peer`` is younger
-    than the threshold, so the marginal item has no other eligible symphony to compare and
-    reads not applicable, and the pair they form is the only evidence there can be.
+    than the threshold, so it has no composite, the marginal item has no other eligible
+    symphony to compare and reads not applicable, and the pair they form is the only evidence
+    there could be.
 
     ``noise`` None: the peer shares 24 returns with the lead and follows it exactly, too few
     for the interval. Otherwise the peer shares 39 returns and follows the lead with a sine
@@ -550,20 +595,23 @@ def _lead_beside_a_young_peer(noise):
 
 
 @pytest.mark.parametrize(("noise", "states"), LEAD_BESIDE_A_YOUNG_PEER_UNDECIDED)
-def test_a_symphony_whose_only_evidence_is_a_pair_on_too_few_days_has_no_verdict(noise, states):
-    """The pair is a screen hit and is shown with each gate's own state. The backtest was
-    not requested and the marginal item has no other eligible symphony, so the verdict has
-    nothing to rest on and says so, and the redundancy item is listed as missing.
+def test_a_symphony_whose_only_pair_is_with_a_sibling_that_has_no_composite_has_no_verdict(
+    noise, states
+):
+    """The pair is a screen hit and is shown with each gate's own state. The sibling has no
+    composite, so the rule could not flag the lead with it: the redundancy item is unavailable
+    and says so. The backtest was not requested and the marginal item has no other eligible
+    symphony, so the verdict has nothing to rest on and says so.
 
-    Rejects a keep verdict resting on a pair measured on far fewer days than the stressed
-    window needs, whatever its gates read."""
+    Rejects a keep verdict resting on a pair with a sibling that cannot be flagged."""
     roster, threshold = _lead_beside_a_young_peer(noise)
     lead = b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=threshold), "lead")
     redundancy = b.item_of(lead, "redundancy")
-    assert redundancy["status"] == "available"  # fixture sanity: the pair is shown
-    assert redundancy["pair"]["sibling_id"] == "peer"
+    assert redundancy["pair"]["sibling_id"] == "peer"  # fixture sanity: the pair is shown
     assert redundancy["pair"]["uncertainty_gate"]["state"] == states[0]
     assert redundancy["pair"]["structural_gate"]["state"] == states[1]
+    assert redundancy["status"] == "unavailable"
+    assert NO_PEER_COMPOSITE in redundancy["reason"]
     assert b.item_of(lead, "marginal")["status"] == "not_applicable"  # fixture sanity
     assert b.item_of(lead, "backtest")["status"] == "unavailable"  # fixture sanity
     assert "redundancy" in lead["missing_items"]
@@ -593,67 +641,32 @@ def _lead_beside_a_correlated_young_peer(rho, aligned_days):
         retirement_recommender.MIN_OBS_FLOOR,
         100,
         STRUCTURAL_FLOOR - 1,
+        STRUCTURAL_FLOOR,
+        250,
     ],
-    ids=["the_interval_floor", "100_days", "one_day_short_of_the_stressed_window"],
+    ids=[
+        "the_interval_floor",
+        "100_days",
+        "one_day_short_of_the_stressed_window",
+        "exactly_the_days_the_stressed_window_needs",
+        "250_days",
+    ],
 )
-def test_a_pair_on_fewer_days_than_the_stressed_window_needs_decides_nothing_whatever_its_correlation(
+def test_a_pair_with_a_sibling_that_has_no_composite_is_never_evidence_whatever_its_days_or_correlation(
     rho, aligned_days
 ):
-    """A pair at 0.70 and a pair at 0.90, each over the same 30 to 180 aligned days, are
-    both shown and neither supports a verdict: the 0.70 pair, whose interval falls short,
-    must not read as a finding that the lead has no redundant sibling while the 0.90 pair
-    reads as nothing. Rejects deciding by the gates' states, which counts the weaker pair
-    and ignores the stronger."""
+    """The peer is one session short of the threshold, so it has no composite and the rule
+    can never flag the lead with it: a pair on 30 days and a pair on 250 days, at 0.70 and at
+    0.90, are all shown and none supports a verdict. Rejects counting the long pairs, which
+    would have been findings had the peer a composite."""
     lead = _lead_beside_a_correlated_young_peer(rho, aligned_days)
-    assert "redundancy" in lead["missing_items"]
-    assert lead["verdict"] is None
-    assert lead["verdict_text"] == "no verdict: no evidence available"
-    assert lead["verdict_reasons"] == []
-
-
-@pytest.mark.parametrize("rho", [0.70, 0.90], ids=["correlated_at_0.70", "correlated_at_0.90"])
-@pytest.mark.parametrize(
-    "aligned_days",
-    [STRUCTURAL_FLOOR, 250],
-    ids=["exactly_the_days_the_stressed_window_needs", "250_days"],
-)
-def test_a_pair_on_at_least_the_days_the_stressed_window_needs_is_evidence_whatever_its_gates_concluded(
-    rho, aligned_days
-):
-    """The same two pairs on a long enough history: neither flags the lead (its peer has no
-    composite) and each is a finding, so the lead reads keep with the item not listed as
-    missing. Rejects a floor above the days the stressed window needs, and a rule that
-    discards every shown pair."""
-    lead = _lead_beside_a_correlated_young_peer(rho, aligned_days)
-    assert "redundancy" not in lead["missing_items"]
-    assert lead["verdict"] == "keep"
-    assert lead["verdict_reasons"] == []
-
-
-def test_an_exact_twin_pair_is_shown_but_decides_nothing_because_the_gate_reads_a_correlation_of_one_as_undefined():
-    """Two series identical to the last digit have a correlation of exactly 1, for which
-    the interval does not exist, so the recommender's gate reads it as undefined and the
-    pair is not evidence however many days it covers. This is a known limitation of the
-    current rule, pinned so that a change to it is deliberate: the pair is shown with the
-    uncertainty gate undefined and the structural gate skipped for that reason, nobody is
-    flagged, the item is listed as missing and the lead has no verdict."""
-    roster, threshold = b.twin_beside_young_peer(STRUCTURAL_FLOOR + 20)
-    result = b.review(roster, as_of=b.AS_OF, threshold=threshold)
-    lead = b.entry_of(result, "lead")
     item = b.item_of(lead, "redundancy")
-    pair = item["pair"]
-    assert pair is not None and pair["n_obs"] > STRUCTURAL_FLOOR  # fixture sanity
-    assert pair["correlation"]["value"] == 1.0  # fixture sanity: exactly one
-    assert pair["uncertainty_gate"]["state"] == "undefined"
-    assert pair["structural_gate"]["state"] == "not evaluated"
-    assert pair["structural_gate"]["text"] == "not evaluated: uncertainty gate undefined"
-    assert item["retire_candidate"] is False
-    assert result.recommendations == []
-    assert b.item_of(lead, "marginal")["status"] == "not_applicable"  # fixture sanity
-    assert b.item_of(lead, "backtest")["status"] == "unavailable"  # fixture sanity
+    assert item["status"] == "unavailable"
+    assert NO_PEER_COMPOSITE in item["reason"]
     assert "redundancy" in lead["missing_items"]
     assert lead["verdict"] is None
     assert lead["verdict_text"] == "no verdict: no evidence available"
+    assert lead["verdict_reasons"] == []
 
 
 @pytest.mark.parametrize(
@@ -661,7 +674,7 @@ def test_an_exact_twin_pair_is_shown_but_decides_nothing_because_the_gate_reads_
     [(0.0, "keep", []), (0.5, "watch", [TRAILS])],
     ids=["backtest_level_with_the_realized_returns", "backtest_half_a_point_a_day_ahead"],
 )
-def test_with_the_backtest_also_available_the_verdict_comes_from_it_and_the_short_pair_is_missing(
+def test_with_the_backtest_also_available_the_verdict_comes_from_it_and_the_unused_pair_is_missing(
     daily_extra_pp, verdict, reasons
 ):
     roster, threshold = _lead_beside_a_young_peer(None)
@@ -691,3 +704,83 @@ def test_with_the_marginal_item_also_available_the_verdict_comes_from_it_and_the
     assert b.item_of(lead, "redundancy")["pair"] is not None  # fixture sanity
     assert "redundancy" in lead["missing_items"]
     assert lead["verdict"] in ("keep", "watch")
+
+
+# ---------------------------------------------------------------------------
+# Through build_review: an item that does not apply gives no evidence
+# ---------------------------------------------------------------------------
+
+
+def _fallback_peer_of(lead_input):
+    """An eligible symphony on the fallback basis over the lead's own dates."""
+    days = sorted(lead_input.composer_values)
+    return b.shadow_symphony(
+        "fallback-peer",
+        "Fallback Peer",
+        days[0],
+        b.by_date(
+            [date.fromisoformat(d) for d in days[1:]], b.wave_returns(len(days) - 1, freq=1.4)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("with_peer", "marginal_reason"),
+    [
+        pytest.param(None, "no other eligible symphonies", id="no_other_eligible_symphony"),
+        pytest.param(
+            "young",
+            "no other eligible symphonies",
+            id="the_only_other_symphony_is_younger_than_the_threshold",
+        ),
+        pytest.param(
+            "fallback",
+            "no other eligible symphonies on this basis",
+            id="the_only_other_eligible_symphony_is_on_the_fallback_basis",
+        ),
+    ],
+)
+def test_a_lone_eligible_symphony_has_no_verdict_and_lists_every_item_that_gave_no_evidence(
+    with_peer, marginal_reason
+):
+    """Its redundancy item is unavailable or does not apply, its backtest was not requested
+    and its marginal item does not apply. A not-applicable item gives no evidence, exactly like
+    an unavailable one, so the row reads no verdict, offers no decision, and lists all three
+    items with the reason each carries. Rejects a verdict resting on an item that does not
+    apply."""
+    lead_input = b.composer_symphony("lone", "Lone", DAYS, b.wave_returns(19, amp=0.4))
+    roster = [lead_input]
+    if with_peer == "young":
+        roster.append(b.composer_symphony("young", "Young", DAYS[-10:], b.wave_returns(9)))
+    if with_peer == "fallback":
+        roster.append(_fallback_peer_of(lead_input))
+    result = b.review(roster, as_of=b.AS_OF, threshold=20)
+    lone = b.entry_of(result, "lone")
+    marginal = b.item_of(lone, "marginal")
+    assert marginal["status"] == "not_applicable"
+    assert marginal["reason"] == marginal_reason
+    assert b.item_of(lone, "backtest")["status"] == "unavailable"  # fixture sanity
+    assert b.item_of(lone, "redundancy")["status"] in ("unavailable", "not_applicable")
+    assert lone["verdict"] is None
+    assert lone["verdict_text"] == "no verdict: no evidence available"
+    assert lone["verdict_reasons"] == []
+    listed = [
+        name for name in lone["missing_items"] if name in ("redundancy", "backtest", "marginal")
+    ]
+    assert listed == ["redundancy", "backtest", "marginal"]
+    if with_peer is None:
+        assert b.item_of(lone, "redundancy")["status"] == "not_applicable"
+
+
+def test_a_symphony_on_the_fallback_basis_has_no_verdict_beside_a_composer_symphony():
+    """The same two symphonies from the fallback symphony's side: its redundancy item is
+    unusable (it has no composite), its comparison has no position values and its backtest
+    was not requested, so it has no verdict either."""
+    lead_input = b.composer_symphony("lone", "Lone", DAYS, b.wave_returns(19, amp=0.4))
+    result = b.review([lead_input, _fallback_peer_of(lead_input)], as_of=b.AS_OF, threshold=20)
+    entry = b.entry_of(result, "fallback-peer")
+    assert entry["basis"]["kind"] == "shadow"  # fixture sanity
+    assert b.item_of(entry, "marginal")["status"] == "unavailable"
+    assert entry["verdict"] is None
+    assert entry["verdict_text"] == "no verdict: no evidence available"
+    assert {"redundancy", "backtest", "marginal"} <= set(entry["missing_items"])

@@ -725,17 +725,33 @@ def lead_beside_young_peer(aligned: int, rho: float, *, scale: float = 0.3):
     return roster, aligned + 2
 
 
-def twin_beside_young_peer(aligned: int):
-    """Like ``lead_beside_young_peer`` but the peer repeats the lead's levels on the days it
-    has, so the two return series are identical to the last digit and their correlation is
-    exactly 1. Returns (roster, threshold)."""
-    days = last_n_nyse_days(AS_OF, aligned + 2)
-    lead = composer_symphony("lead", "Lead", days, wave_returns(aligned + 1, amp=0.6))
-    kept = {d.isoformat() for d in days[1:]}
-    peer = make_symphony(
-        "peer",
-        "Peer",
-        days[1].isoformat(),
-        composer_values={d: v for d, v in lead.composer_values.items() if d in kept},
-    )
-    return [lead, peer], aligned + 2
+# The threshold of the rosters below: the composite window is this many sessions, so both
+# symphonies of a pair are eligible and scored whenever each has at least this many points.
+COMPOSITE_PAIR_THRESHOLD = 20
+
+
+def two_composer_symphonies(first_returns, second_returns, *, names=("Lead", "Peer")):
+    """``lead`` and ``peer``: Composer symphonies that share every date, one point more than
+    there are returns, ending on the as-of day. Their pair has exactly as many aligned days
+    as there are returns."""
+    assert len(first_returns) == len(second_returns)
+    days = last_n_nyse_days(AS_OF, len(first_returns) + 1)
+    return [
+        composer_symphony("lead", names[0], days, first_returns),
+        composer_symphony("peer", names[1], days, second_returns),
+    ]
+
+
+def composite_pair(aligned: int, rho: float, *, scale: float = 0.3):
+    """Two eligible Composer symphonies that both have a composite and share exactly
+    ``aligned`` returns with a correlation of exactly ``rho`` (zero-mean sinusoids over whole
+    cycles, at a frequency high enough that the last composite window holds gains and losses).
+    Returns (roster, threshold)."""
+    assert aligned + 1 >= COMPOSITE_PAIR_THRESHOLD
+    lead, peer = orthogonal_pair(aligned, rho, k=max(1, aligned // 10), scale=scale)
+    return two_composer_symphonies(lead, peer), COMPOSITE_PAIR_THRESHOLD
+
+
+def has_composite(entry: dict) -> bool:
+    """Whether the entry's composite item holds a score."""
+    return item_of(entry, "composite")["status"] == "available"

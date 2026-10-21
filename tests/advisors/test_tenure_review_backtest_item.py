@@ -642,11 +642,9 @@ def _shadow_replica_with_rows_left_out(left_out, *, stored_without_return=False)
         else:
             del rows[day.isoformat()]
     symphony = b.shadow_symphony("rep-sym", "Replica Symphony", "2026-12-07", rows)
-    window = tr.qualifying_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
-    first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+    first, last = b.session_before(REPLICA_SESSIONS[0]), REPLICA_SESSIONS[-1]
     sessions = list(b.nyse_days(first, last))
     assert len(sessions) == len(REPLICA_SESSIONS) + 1  # fixture sanity: the baseline and every row
-    assert window["days"] == len(sessions) - len(left_out)  # fixture sanity: the window has holes
     symphony.backtest = b.replica_backtest(first, last, returns)
     return symphony
 
