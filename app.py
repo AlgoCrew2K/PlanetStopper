@@ -4120,8 +4120,7 @@ def _join_retirement_approval_status(
     recs: list[dict], *, id_key: str = "candidate_id", absent_status: str | None = "pending"
 ) -> None:
     """Stamp approval_status onto each dict in recs in place, read FRESH from
-    the mutable retirement_decisions table on every call -- never cached
-    (Cycle 2c, AC-6).
+    the mutable retirement_decisions table on every call -- never cached.
 
     The one join of the decisions table, shared by the recommendation list
     (id_key "candidate_id", a missing decision reads "pending") and the tenure
@@ -4224,6 +4223,12 @@ def _refresh_retirement_display_names(
         return fresh
 
     for rec in recs:
+        # A stored id that is not text (a list, a dict) cannot be resolved: that row
+        # keeps whatever names it carries and the other rows are unaffected.
+        if not (
+            isinstance(rec.get("candidate_id"), str) and isinstance(rec.get("sibling_id"), str)
+        ):
+            continue
         rec["candidate_name"] = _resolved_or_persisted_or_hash(
             rec.get("candidate_id"), rec.get("candidate_name")
         )
@@ -4354,7 +4359,11 @@ def _tenure_number(value: object) -> str:
     if not _is_finite_number(value):
         return _NOT_RECORDED_TEXT
     # An int is printed by its digits: float formatting overflows for a huge one.
-    return f"{value}.00" if isinstance(value, int) else f"{value:.2f}"
+    if isinstance(value, int):
+        return f"{value}.00"
+    text = f"{value:.2f}"
+    # A value that rounds to zero prints 0.00, never -0.00.
+    return "0.00" if text == "-0.00" else text
 
 
 @app.template_filter("tenure_whole")
@@ -4398,7 +4407,8 @@ def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict, bool]:
     the record is not a dict or carries no run_id, or the review module cannot
     be imported); the header is then None and the entries are empty, and the
     callers list no recommendation, because which run owns them is unknown.
-    No stored run at all is not a failure. The review_run_id that the caller
+    No stored run at all is not a failure. A stored entries value that is not a
+    list makes the run unreadable. The review_run_id that the caller
     passes to _fetch_retirement_recommendations is the header's run_id.
     Never raises.
     """
@@ -4479,10 +4489,11 @@ def api_retirement_recommendations():
     against current bot_state) -- never cached, never stored back into the
     row's raw_response.
 
-    Empty -> {"recommendations": []}, never a 500; with no stored run
-    review_run is null, and a stored run's header holds run_id,
-    as_of_trading_day, completed_at, trigger, threshold_in_effect and
-    threshold_note. A read failure degrades to the same empty list rather
+    Empty -> {"recommendations": []} with review_run null, review_entries [],
+    review_status the idle run state and review_read_failed false, never a 500.
+    A stored run's header holds run_id, as_of_trading_day, started_at,
+    completed_at, trigger, threshold_in_effect, threshold_note and
+    composite_window. A read failure degrades to the same empty list rather
     than 500ing (mirrors api_incubation).
 
     Strict-JSON safe: every numeric field (including nested candidate_metrics/
@@ -6823,7 +6834,7 @@ def ai_advisor_tab():
     # ------------------------------------------------------------------ #
     # Retirement approval status + display names: both now resolved       #
     # INSIDE _fetch_retirement_recommendations() itself -- approval_status #
-    # via _join_retirement_approval_status (Cycle 2c, AC-6) and            #
+    # via _join_retirement_approval_status (Cycle 2c) and                  #
     # candidate_name/sibling_name via _refresh_retirement_display_names    #
     # (PR#140 review finding 3) -- so this panel and GET /api/retirement-  #
     # recommendations always agree on both. Every rec already carries a   #
@@ -6831,9 +6842,9 @@ def ai_advisor_tab():
     # by the time it reaches here; the template reads those fields        #
     # directly (no separate panel-local resolution needed).               #
     # ------------------------------------------------------------------ #
-    # Wind-down checklist (AC-6/AC-7 glue): deterministic, no LLM, built ONLY
+    # Wind-down checklist: deterministic, no LLM, built ONLY
     # for approved items the panel renders -- never inside the approve route
-    # itself (AC-5: "Approve writes status ONLY"). One loop serves the review
+    # itself (approving writes the status only). One loop serves the review
     # entries (their own symphony_id, named as their row is) and, when no
     # review ran yet, the legacy recommendation cards. A completed run's own
     # recommendation rows are not rendered, so they get no checklist.
