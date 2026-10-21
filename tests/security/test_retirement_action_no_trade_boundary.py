@@ -606,6 +606,20 @@ _RETIREMENT_FETCH_FN_NAME = "_fetch_retirement_recommendations"
 _TENURE_REVIEW_FETCH_FN_NAME = "_fetch_tenure_review"
 _RETIREMENT_API_ROUTE_FN_NAME = "api_retirement_recommendations"
 
+# The helpers the panel template calls while it renders: the Eastern-time formatter, the
+# four text and number filters, and the two Jinja tests. They run on every AI Advisor page
+# load and are reached from the template only, so no entry point's call graph includes
+# them; each is an entry point of its own.
+_TENURE_RENDER_HELPER_FN_NAMES = [
+    "_format_eastern_run_time",
+    "_tenure_text",
+    "_tenure_number",
+    "_tenure_whole",
+    "_tenure_eastern",
+    "_is_finite_number",
+    "_is_whole_number",
+]
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
@@ -613,7 +627,41 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_FETCH_FN_NAME,
     _TENURE_REVIEW_FETCH_FN_NAME,
     _RETIREMENT_API_ROUTE_FN_NAME,
+    *_TENURE_RENDER_HELPER_FN_NAMES,
 ]
+
+
+_TEMPLATE_REGISTRATION_DECORATORS = frozenset(
+    {"template_filter", "template_test", "template_global", "context_processor"}
+)
+_TEMPLATE_REGISTRATION_TABLES = frozenset({"filters", "tests", "globals"})
+
+
+def _registered_template_function_names(tree: ast.Module) -> set[str]:
+    """The names of the functions a module registers for its templates: decorated with
+    ``template_filter``, ``template_test``, ``template_global`` or ``context_processor``, or
+    assigned into a ``filters``, ``tests`` or ``globals`` table (``app.jinja_env.tests[name]
+    = fn``). The template runs each of them on a page load, from outside any call graph."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            for decorator in node.decorator_list:
+                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr in _TEMPLATE_REGISTRATION_DECORATORS
+                ):
+                    names.add(node.name)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Attribute)
+                    and target.value.attr in _TEMPLATE_REGISTRATION_TABLES
+                ):
+                    names.add(node.value.id)
+    return names
+
 
 # Team-lead named this explicitly alongside composer_draft_client -- checked
 # via _references_name_or_attr (Name/Attribute AST check) rather than a
@@ -805,6 +853,36 @@ class TestGroupEScanReportsAPlantedSymphonyCreation:
         assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), (
             f"{planted_in} is not on the call graph of {entry_point}; hits: {hits}"
         )
+
+
+class TestEveryTemplateHelperIsAnEntryPointOfTheScan:
+    """A helper the template calls is reached from no route's call graph, so the scan covers it
+    only when it is listed. A helper added later and not listed would hold a trade call
+    unseen; this names it."""
+
+    def test_the_real_app_registers_the_helpers_this_file_lists_and_no_others(self):
+        registered = _registered_template_function_names(_parse_app_py())
+        assert set(_TENURE_RENDER_HELPER_FN_NAMES) <= registered, (
+            "a listed helper is not registered"
+        )
+        unlisted = sorted(registered - set(_CYCLE_2C_ENTRY_POINT_FN_NAMES))
+        assert unlisted == [], f"template helpers outside every scan entry point: {unlisted}"
+
+    def test_the_check_reports_a_filter_a_test_and_a_global_that_are_not_listed(self):
+        tree = ast.parse(
+            "@app.template_filter('shout')\n"
+            "def _shout(value):\n"
+            "    return value\n"
+            "def _is_odd(value):\n"
+            "    return value % 2\n"
+            "app.jinja_env.tests['odd'] = _is_odd\n"
+            "@app.template_global()\n"
+            "def _today():\n"
+            "    return 0\n"
+            "def _plain():\n"
+            "    return 1\n"
+        )
+        assert _registered_template_function_names(tree) == {"_shout", "_is_odd", "_today"}
 
 
 # ===========================================================================

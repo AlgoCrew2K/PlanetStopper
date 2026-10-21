@@ -776,7 +776,7 @@ class TestDecisionLifecycleOnEntries:
         assert _lifecycle_buttons(node) == ([], [])
 
 
-class TestEscaping:
+class TestHostileEntryFieldsAreEscaped:
     def test_hostile_entry_fields_are_escaped_and_cannot_open_an_attribute(
         self, client, isolated_db
     ):
@@ -2303,6 +2303,8 @@ _VICTIMS = {
     "keep": ("full", lambda r: pb.entry_with_verdict(r, "keep")),
     "steady": ("edge", lambda r: pb.entry_of(r, pb.EDGE_IDS["steady"])),
     "twin": ("edge", lambda r: pb.entry_of(r, pb.EDGE_IDS["twin_one"])),
+    "retire": ("full", lambda r: pb.entry_with_verdict(r, "retire_candidate")),
+    "short pair": ("small", lambda r: pb.entry_of(r, pb.SMALL_IDS["first"])),
 }
 
 
@@ -2316,6 +2318,7 @@ class _Poison:
     shows: str | None = None  # path of a float the scoped text must still show
     markers: tuple = (_MARK,)  # patterns that must not match anywhere in the panel
     optional: bool = False  # a line the page may drop instead of wording
+    keeps: tuple = ()  # paths of stored texts the scoped text must still carry
 
 
 _BASIS = ("basis",)
@@ -2349,7 +2352,10 @@ def _edit(root, path, value):
     *parents, leaf = path.split(".")
     node = _get(root, ".".join(parents)) if parents else root
     if isinstance(node, list):
-        node[int(leaf)] = value
+        if int(leaf) == len(node):  # one element after the last: the element is added
+            node.append(copy.deepcopy(value))
+        else:
+            node[int(leaf)] = value
     elif value is _GONE:
         node.pop(leaf, None)
     else:
@@ -2431,6 +2437,50 @@ def _assert_others_unchanged(panel, pristine: dict, victim_id: str, scope: tuple
 _LIST = [_MARK]
 _DICT = {"k": _MARK}
 _SHOWN_FIGURE = "evidence.performance.figures.total_return.value"
+_TRUNCATED_TWELVE = r"(?<![\d.-])12(?![\d.-])"  # 12.5 cut to 12, a date's "-12-" excluded
+_ELEMENT_MARKERS = (_MARK, "987654", _TRUE)
+_EXPLANATION = "Plain stored explanation text."
+# values an element of a stored list, or a stored text, can wrongly hold
+_BAD_ELEMENTS = [
+    ("null", None),
+    ("a list", _LIST),
+    ("a dict", _DICT),
+    ("a number", 987654),
+    ("a boolean", True),
+]
+# (figure of the pair, how it is wrong, the value stored in its place)
+_PAIR_FIGURE_FAULTS = [
+    ("correlation", "missing", _GONE),
+    ("correlation", "null", None),
+    ("correlation", "a list", _LIST),
+    ("correlation", "text", _MARK),
+    ("correlation", "a number", 987654),
+    ("ci_lower", "missing", _GONE),
+    ("ci_lower", "null", None),
+    ("ci_upper", "null", None),
+    ("ci_upper", "a dict", _DICT),
+    ("stressed_correlation", "missing", _GONE),
+    ("stressed_correlation", "a boolean", True),
+    ("holdings_overlap", "missing", _GONE),
+    ("holdings_overlap", "null", None),
+    ("holdings_overlap", "a list", _LIST),
+]
+# (item, figure, how it is wrong, the value stored in its place)
+_ITEM_FIGURE_FAULTS = [
+    ("performance", "sharpe", "null", None),
+    ("performance", "sharpe", "a list", _LIST),
+    ("performance", "sharpe", "a number", 987654),
+    ("performance", "sharpe", "text", _MARK),
+    ("marginal", "with_total_return", "null", None),
+    ("backtest", "total_return_gap", "a dict", _DICT),
+]
+_FIGURES_FAULTS = [
+    ("null", None),
+    ("a list", _LIST),
+    ("text", _MARK),
+    ("a number", 987654),
+    ("missing", _GONE),
+]
 _POISONS = [
     # the basis line
     _case("basis is a list", "watch", [("basis", _LIST)], _BASIS),
@@ -3001,6 +3051,130 @@ _POISONS = [
         absent=(r"\b2 symphon", _TWO_POINT_FIVE),
         markers=(_MARK, _TWO_POINT_FIVE),
     ),
+    # an element of the reasons or the missing list that is not a text
+    *[
+        _case(
+            f"verdict reason element {label}",
+            "watch",
+            [("verdict_reasons.2", value)],
+            ("testid", "tenure-review-verdict-reasons"),
+            keeps=("verdict_reasons.0", "verdict_reasons.1"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in _BAD_ELEMENTS
+    ],
+    *[
+        _case(
+            f"missing item element {label}",
+            "watch",
+            [("missing_items.1", value)],
+            ("testid", "tenure-review-missing"),
+            keeps=("missing_items.0",),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in _BAD_ELEMENTS
+    ],
+    # the explanation and the day it was written, which a retire-candidate entry carries
+    *[
+        _case(
+            f"explanation {label}",
+            "retire",
+            [("explanation", value)],
+            ("testid", "retirement-rec-explanation"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in _BAD_ELEMENTS
+        if value is not None
+    ],
+    *[
+        _case(
+            f"explanation written on {label}",
+            "retire",
+            [("explanation", _EXPLANATION), ("explanation_written_on", value)],
+            ("testid", "retirement-rec-explanation"),
+            keeps=("explanation",),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in _BAD_ELEMENTS
+        if value is not None
+    ],
+    # a figure of the pair that is absent, null or not a record
+    *[
+        _case(
+            f"pair {name.replace('_', ' ')} {label}",
+            "watch",
+            [(f"evidence.redundancy.pair.{name}", value)],
+            _line("redundancy", name.replace("_", " ")),
+            markers=_ELEMENT_MARKERS,
+        )
+        for name, label, value in _PAIR_FIGURE_FAULTS
+    ],
+    # a figure of an item that is null or not a record
+    *[
+        _case(
+            f"{item} {name.replace('_', ' ')} {label}",
+            "watch",
+            [(f"evidence.{item}.figures.{name}", value)],
+            _line(item, name.replace("_", " ")),
+            markers=_ELEMENT_MARKERS,
+        )
+        for item, name, label, value in _ITEM_FIGURE_FAULTS
+    ],
+    *[
+        _case(
+            f"performance figures {label}",
+            "watch",
+            [("evidence.performance.figures", value)],
+            _line("performance", "figures", "has"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in _FIGURES_FAULTS
+    ],
+    # a count of days that is a number but not a whole number
+    _case(
+        "window days not a whole number",
+        "watch",
+        [("evidence.performance.window.days", 12.5)],
+        _line("performance", "window"),
+        absent=(_TRUNCATED_TWELVE, _TWELVE_POINT_FIVE),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
+    ),
+    _case(
+        "window sessions not a whole number",
+        "watch",
+        [("evidence.performance.window.sessions", 12.5)],
+        _line("performance", "window"),
+        absent=(_TRUNCATED_TWELVE, _TWELVE_POINT_FIVE),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
+    ),
+    _case(
+        "holdings window days not a whole number",
+        "steady",
+        [("evidence.long_vix.window.days", 12.5)],
+        _line("long_vix", "window"),
+        absent=(_TRUNCATED_TWELVE, _TWELVE_POINT_FIVE),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
+    ),
+    _case(
+        "holdings window sessions not a whole number",
+        "steady",
+        [("evidence.long_vix.window.sessions", 12.5)],
+        _line("long_vix", "window"),
+        absent=(_TRUNCATED_TWELVE, _TWELVE_POINT_FIVE),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
+    ),
+    # a figure counted in days whose stored value is not a whole number
+    *[
+        _case(
+            f"{name.replace('_', ' ')} not a whole number",
+            "steady",
+            [(f"evidence.long_vix.figures.{name}.value", 12.5)],
+            _line("long_vix", name.replace("_", " ")),
+            absent=(_TRUNCATED_TWELVE, _TWELVE_POINT_FIVE),
+            markers=(_MARK, _TWELVE_POINT_FIVE),
+        )
+        for name in ("held_days", "co_held_days")
+    ],
 ]
 
 
@@ -3022,6 +3196,7 @@ class TestAMissingOrWrongTypedFieldReadsNotRecorded:
                     _edit(record, path.removeprefix("__run__."), value)
                 else:
                     _edit(victim, path, value)
+            holder["keeps"] = [_get(victim, path) for path in poison.keeps]
 
         record, pristine, panel = _render_edited(client, which, edit)
         everything = panel.everything()
@@ -3041,6 +3216,10 @@ class TestAMissingOrWrongTypedFieldReadsNotRecorded:
             assert not re.search(pattern, text, flags=re.IGNORECASE), (pattern, text)
         if poison.shows:
             assert _shows(scoped, holder["shown"]), f"the stored figure is gone: {text!r}"
+        for kept in holder["keeps"]:
+            assert kept.replace("_", " ") in text.replace("_", " "), (
+                f"the stored text {kept!r} was lost beside the field that reads not recorded: {text!r}"
+            )
         _assert_others_unchanged(panel, pristine, holder["id"], poison.scope)
 
     @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
@@ -4136,6 +4315,7 @@ _REASON_VICTIMS = [
     pytest.param("keep", "backtest", id="a backtest that was not run"),
     pytest.param("keep", "long_vix", id="holdings that were unavailable"),
     pytest.param("steady", "composite", id="a composite that is not computable"),
+    pytest.param("short pair", "redundancy", id="a redundancy item that decides nothing"),
 ]
 
 
@@ -4160,3 +4340,361 @@ class TestAStoredReasonIsShownAsStoredAndEscaped:
         assert _NOT_RECORDED not in block.text().lower()
         missing = node.find("tenure-review-missing")
         assert missing is not None and _NOVEL_REASON in missing.text()
+        if name == "redundancy":
+            lines = _not_used_lines(block)
+            assert len(lines) == 1, [n.text() for n in lines]
+            assert _NOVEL_REASON in lines[0].text(), "the not-used line lost the stored reason"
+
+
+# ===========================================================================
+# An unavailable redundancy item that shows its pair names the pair's subject and source,
+# because every figure the panel shows carries both.
+# ===========================================================================
+
+_PAIR_ON_AN_UNAVAILABLE_ITEM = (
+    pytest.param("small", pb.SMALL_IDS["first"], id="short pair"),
+    pytest.param("edge", pb.EDGE_IDS["twin_one"], id="undefined interval, first twin"),
+    pytest.param("edge", pb.EDGE_IDS["twin_two"], id="undefined interval, second twin"),
+    pytest.param(
+        "state:structural_undefined",
+        pb.state_id("structural_undefined", 0),
+        id="structural gate undefined",
+    ),
+    pytest.param(
+        "state:below_floor_hit", pb.state_id("below_floor_hit", 0), id="screen hit below the floor"
+    ),
+)
+
+
+class TestAnUnavailableItemThatShowsAPairNamesItsSubjectAndSource:
+    @pytest.mark.parametrize(("which", "symphony_id"), _PAIR_ON_AN_UNAVAILABLE_ITEM)
+    def test_the_box_carries_the_stored_subject_and_source_beside_the_pair(
+        self, client, isolated_db, which, symphony_id
+    ):
+        record = _store_record(which)
+        item = pb.entry_of(record, symphony_id)["evidence"]["redundancy"]
+        assert item["status"] == "unavailable" and item["pair"], (
+            "fixture sanity: a pair, no verdict"
+        )
+        assert item["subject"] and item["source"], "fixture sanity: the item stores both"
+        block = pb.entry_node(_panel(client), symphony_id).find("tenure-review-evidence-redundancy")
+        assert item["pair"]["sibling_name"] in block.text(), "the pair is not shown"
+        for word in ("subject", "source"):
+            lines = [
+                leaf
+                for leaf in pb.leaf_nodes_containing(block, item[word])
+                if leaf.text().lower().startswith(word)
+            ]
+            assert len(lines) == 1, f"the {word} of the pair is not on a line of its own"
+
+    def test_the_stored_subject_is_the_one_printed_and_not_a_fixed_phrase(
+        self, client, isolated_db
+    ):
+        victim = pb.SMALL_IDS["first"]
+
+        def edit(record):
+            _edit(pb.entry_of(record, victim), "evidence.redundancy.subject", "an edited subject")
+            _edit(pb.entry_of(record, victim), "evidence.redundancy.source", "an edited source")
+
+        _, _, panel = _render_edited(client, "small", edit)
+        text = pb.entry_node(panel, victim).find("tenure-review-evidence-redundancy").text()
+        assert "subject: an edited subject" in text and "source: an edited source" in text
+
+
+# ===========================================================================
+# A stored number too large for a float is still a finite whole number: the page prints
+# its digits or says "not recorded", and never answers a server error.
+# ===========================================================================
+
+_HUGE = 10**400
+
+
+def _huge_case(case_id, victim, edits, scope):
+    return pytest.param(victim, tuple(edits), scope, id=case_id)
+
+
+_HUGE_CASES = [
+    _huge_case(
+        "threshold in effect",
+        "watch",
+        [("__run__.threshold_in_effect", _HUGE)],
+        _header("tenure-review-threshold"),
+    ),
+    _huge_case(
+        "tenure", "watch", [("tenure_trading_days", _HUGE)], ("testid", "tenure-review-tenure")
+    ),
+    _huge_case(
+        "window with as many days as sessions",
+        "watch",
+        [
+            ("evidence.performance.window.days", _HUGE),
+            ("evidence.performance.window.sessions", _HUGE),
+        ],
+        _line("performance", "window"),
+    ),
+    _huge_case(
+        "window with fewer days than sessions",
+        "watch",
+        [
+            ("evidence.performance.window.days", _HUGE - 1),
+            ("evidence.performance.window.sessions", _HUGE),
+        ],
+        _line("performance", "window"),
+    ),
+    _huge_case(
+        "aligned days",
+        "watch",
+        [("evidence.redundancy.pair.n_obs", _HUGE)],
+        _line("redundancy", "aligned days"),
+    ),
+    _huge_case(
+        "population",
+        "watch",
+        [("evidence.composite.population_size", _HUGE)],
+        _block("composite"),
+    ),
+    _huge_case(
+        "figure",
+        "watch",
+        [("evidence.performance.figures.sharpe.value", _HUGE)],
+        _line("performance", "sharpe"),
+    ),
+    _huge_case(
+        "negative figure",
+        "watch",
+        [("evidence.performance.figures.sharpe.value", -_HUGE)],
+        _line("performance", "sharpe"),
+    ),
+    _huge_case(
+        "figure counted in days",
+        "steady",
+        [("evidence.long_vix.figures.held_days.value", _HUGE)],
+        _line("long_vix", "held days"),
+    ),
+]
+
+
+class TestAnIntegerTooLargeForAFloatDoesNotTakeThePageDown:
+    @pytest.mark.parametrize(("victim", "edits", "scope"), _HUGE_CASES)
+    def test_the_field_prints_its_digits_or_says_not_recorded_and_the_page_answers_200(
+        self, client, isolated_db, victim, edits, scope
+    ):
+        which, pick = _VICTIMS[victim]
+        holder = {}
+        stored_values = []
+
+        def edit(record):
+            entry = pick(record)
+            holder["id"] = entry["symphony_id"]
+            for path, value in edits:
+                stored_values.append(value)
+                if path.startswith("__run__."):
+                    _edit(record, path.removeprefix("__run__."), value)
+                else:
+                    _edit(entry, path, value)
+
+        _, pristine, panel = _render_edited(client, which, edit)
+        assert not re.search(r"\bNone\b", panel.everything())
+        scoped = _scoped(panel, holder["id"], scope)
+        assert scoped is not None, "the line that prints the field is dropped, not worded"
+        text = scoped.text()
+        digits = [str(abs(value)) for value in stored_values]
+        assert _NOT_RECORDED in text.lower() or all(d in text for d in digits), (
+            f"the field is neither worded as not recorded nor printed whole: {text[:200]!r}"
+        )
+        _assert_others_unchanged(panel, pristine, holder["id"], scope)
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        assert pb.strict_json(resp)["review_run"] is not None
+
+
+# ===========================================================================
+# An entry whose stored symphony_id cannot be a dictionary key leaves the page and the API
+# at 200, gets no decision and no buttons, and changes no other entry.
+# ===========================================================================
+
+_UNKEYABLE_IDS = [
+    pytest.param(["abc"], id="a list"),
+    pytest.param({"k": "v"}, id="a dict"),
+    pytest.param([["abc"]], id="a list of lists"),
+    pytest.param(987654, id="a number"),
+    pytest.param(None, id="null"),
+]
+
+
+class TestAnEntryWhoseIdCannotBeAKeyDegradesOnlyThatEntry:
+    @pytest.fixture
+    def stored(self, client, isolated_db, request):
+        """A full run whose retire-candidate entry carries the id under test, with one
+        decision made on another entry; returns (record, the broken entry)."""
+        pb.seed_bot_state()
+        record = pb.full_record(pb.RUN_ID_SECOND)
+        broken = pb.entry_with_verdict(record, "retire_candidate")
+        broken["symphony_id"] = request.param
+        pb.store_run(record)
+        watch = pb.entry_with_verdict(record, "watch")
+        db_module.upsert_retirement_decision(watch["symphony_id"], approval_status="approved")
+        return record, broken
+
+    @pytest.mark.parametrize("stored", _UNKEYABLE_IDS, indirect=True)
+    def test_the_page_answers_200_and_the_entry_has_no_decision_and_no_buttons(
+        self, client, stored
+    ):
+        record, broken = stored
+        panel = _panel(client)
+        nodes = panel.find_all("tenure-review-entry")
+        assert len(nodes) == len(record["entries"]), "an entry was dropped"
+        keyless = [n for n in nodes if n.attrs.get("data-symphony-id") == ""]
+        assert len(keyless) == 1, "the entry with the unusable id is not shown once"
+        assert broken["display_name"] in keyless[0].text()
+        assert _lifecycle_buttons(keyless[0]) == ([], [])
+        assert not re.search(r"\bNone\b", keyless[0].everything())
+        watch = pb.entry_with_verdict(record, "watch")
+        chip = pb.entry_node(panel, watch["symphony_id"]).find("retirement-rec-status")
+        assert chip is not None and "approved" in chip.text().lower(), (
+            "another entry's decision was lost"
+        )
+
+    @pytest.mark.parametrize("stored", _UNKEYABLE_IDS, indirect=True)
+    def test_the_api_answers_200_with_no_decision_on_that_entry_and_the_others_joined(
+        self, client, stored
+    ):
+        record, broken = stored
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        data = pb.strict_json(resp)
+        assert data["review_read_failed"] is False
+        assert len(data["review_entries"]) == len(record["entries"])
+        by_name = {e["display_name"]: e for e in data["review_entries"]}
+        assert by_name[broken["display_name"]].get("approval_status") is None
+        watch = pb.entry_with_verdict(record, "watch")
+        assert by_name[watch["display_name"]]["approval_status"] == "approved"
+
+
+# ===========================================================================
+# A stored run whose entries are not a list cannot be read: it is not a completed run
+# with no live symphonies.
+# ===========================================================================
+
+_NOT_A_LIST = [
+    pytest.param(_GONE, id="missing"),
+    pytest.param(None, id="null"),
+    pytest.param("garbage", id="text"),
+    pytest.param(7, id="a number"),
+    pytest.param({"a": 1}, id="a dict"),
+]
+
+
+class TestARunWhoseEntriesAreNotAListSaysTheReviewCannotBeRead:
+    @pytest.fixture
+    def stored(self, isolated_db, request):
+        _seed_symphony_roster("cand-legacy", "sib-legacy")
+        _seed_recommendation(candidate_id="cand-legacy", sibling_id="sib-legacy")
+        pb.seed_bot_state()
+        record = pb.full_record()
+        _edit(record, "entries", request.param)
+        pb.store_run(record)
+
+    @pytest.mark.parametrize("stored", _NOT_A_LIST, indirect=True)
+    def test_the_panel_says_the_review_is_unavailable_and_not_that_it_has_no_symphonies(
+        self, client, stored
+    ):
+        panel = _panel(client)
+        failed = panel.find("tenure-review-read-failed")
+        assert failed is not None and "review unavailable" in failed.text().lower()
+        assert panel.find("tenure-review-no-symphonies") is None
+        assert "no live symphonies" not in panel.everything().lower()
+        assert panel.find("tenure-review-as-of") is None, "the header of an unreadable run"
+        assert panel.find_all("tenure-review-entry") == []
+        assert panel.find_all("retirement-recommendation-card") == []
+        assert panel.find("tenure-review-run-btn") is not None
+
+    def test_a_run_whose_entries_are_an_empty_list_is_still_a_run_with_no_live_symphonies(
+        self, client, isolated_db
+    ):
+        pb.store_run(pb.empty_record())
+        panel = _panel(client)
+        assert panel.find("tenure-review-no-symphonies") is not None
+        assert panel.find("tenure-review-read-failed") is None
+
+
+# ===========================================================================
+# The rows use the classes the design mapping names for them, instead of restating the
+# same styles under classes of their own.
+# ===========================================================================
+
+_GATE_LABELS = ("uncertainty gate", "structural redundancy gate")
+
+
+def _leaf_lines(block: pb.Node, prefixes: tuple) -> list[pb.Node]:
+    """The elements below ``block`` with no element inside them whose text starts with one
+    of ``prefixes`` (a line of the box, as opposed to the box)."""
+    return [
+        n
+        for n in block.walk()
+        if not any(isinstance(c, pb.Node) for c in n.children)
+        and n.text().lower().startswith(prefixes)
+    ]
+
+
+class TestTheRowsUseTheMappedClasses:
+    @pytest.fixture
+    def shown(self, client, isolated_db):
+        record = _store_record("full")
+        return record, _panel(client)
+
+    def test_the_display_name_sits_in_an_element_carrying_the_pair_class(self, shown):
+        record, panel = shown
+        for stored in record["entries"]:
+            entry = pb.entry_node(panel, stored["symphony_id"])
+            name = entry.find("tenure-review-name")
+            chain, node = [name], name.parent
+            while node is not None and node is not entry:
+                chain.append(node)
+                node = node.parent
+            assert any("retirement-rec-pair" in n.classes() for n in chain), (
+                f"{stored['display_name']}: no element holding the name carries the pair class"
+            )
+
+    def test_the_tenure_and_eligibility_lines_carry_the_meta_class(self, shown):
+        record, panel = shown
+        checked = 0
+        for stored in record["entries"]:
+            entry = pb.entry_node(panel, stored["symphony_id"])
+            for testid in ("tenure-review-tenure", "tenure-review-eligibility"):
+                line = entry.find(testid)
+                if line is not None:
+                    assert "retirement-rec-meta" in line.classes(), (stored["display_name"], testid)
+                    checked += 1
+        assert checked >= 6
+
+    def test_the_provenance_and_status_lines_of_every_box_carry_the_meta_class(self, shown):
+        record, panel = shown
+        prefixes = (*_META_LINES, "not compared")
+        checked = 0
+        for stored in record["entries"]:
+            entry = pb.entry_node(panel, stored["symphony_id"])
+            for name in _PANEL_ITEMS:
+                for line in _leaf_lines(entry.find(f"tenure-review-evidence-{name}"), prefixes):
+                    assert "retirement-rec-meta" in line.classes(), (name, line.text())
+                    checked += 1
+        assert checked >= 30
+
+    def test_the_gate_results_and_the_figures_carry_the_gates_class(self, shown):
+        record, panel = shown
+        gates = figures = 0
+        for stored in record["entries"]:
+            entry = pb.entry_node(panel, stored["symphony_id"])
+            redundancy = entry.find("tenure-review-evidence-redundancy")
+            for line in _leaf_lines(redundancy, _GATE_LABELS):
+                assert "retirement-rec-gates" in line.classes(), line.text()
+                gates += 1
+            performance = stored["evidence"]["performance"]
+            if performance["status"] != "available":
+                continue
+            labels = tuple(name.replace("_", " ") for name in performance["figures"])
+            block = entry.find("tenure-review-evidence-performance")
+            for line in _leaf_lines(block, labels):
+                assert "retirement-rec-gates" in line.classes(), line.text()
+                figures += 1
+        assert gates >= 6 and figures >= 12

@@ -41,6 +41,7 @@ import ast
 import functools
 import inspect
 import json
+import logging
 import math
 import re
 import sys
@@ -1379,3 +1380,166 @@ class TestTheApiServesTheItemStatesAndWindowsAsStored:
                     assert window["days"] <= window["sessions"], where
                     short += window["days"] < window["sessions"]
         assert short >= 6, "the gap record must serve windows that use fewer days than they span"
+
+
+# ---------------------------------------------------------------------------
+# A stored run whose entries are not a list cannot be read: the flag says so, and the
+# response never reads as a completed run with no live symphonies.
+# ---------------------------------------------------------------------------
+
+_ENTRIES_NOT_A_LIST = [
+    pytest.param(None, True, id="missing"),
+    pytest.param(None, False, id="null"),
+    pytest.param("garbage", False, id="text"),
+    pytest.param(7, False, id="a number"),
+    pytest.param({"a": 1}, False, id="a dict"),
+]
+
+
+class TestARunWhoseEntriesAreNotAListReportsAReadFailure:
+    @pytest.mark.parametrize(("entries", "dropped"), _ENTRIES_NOT_A_LIST)
+    def test_the_flag_is_true_and_every_review_field_is_empty(
+        self, client, isolated_db, entries, dropped
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        record = pb.full_record()
+        if dropped:
+            del record["entries"]
+        else:
+            record["entries"] = entries
+        pb.store_run(record)
+        data = _get(client)
+        assert _read_failed_flag(data) is True, (
+            "a run whose entries cannot be read was served as a run with no live symphonies"
+        )
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == []
+
+    def test_an_empty_list_of_entries_is_still_a_completed_run_with_no_live_symphonies(
+        self, client, isolated_db
+    ):
+        pb.store_run(pb.empty_record())
+        data = _get(client)
+        assert _read_failed_flag(data) is False
+        assert data["review_run"] is not None and data["review_entries"] == []
+
+
+# ---------------------------------------------------------------------------
+# The run state keeps its four keys whichever way it is read.
+# ---------------------------------------------------------------------------
+
+_RUN_STATE_KEYS = {"running", "running_since", "trigger", "last_failed_attempt"}
+
+
+class TestTheRunStateKeepsItsShapeWhenItCannotBeRead:
+    def test_an_idle_state_carries_all_four_keys(self, client, isolated_db):
+        status = _get(client)["review_status"]
+        assert set(status) == _RUN_STATE_KEYS
+        assert status["trigger"] is None
+
+    def test_a_review_module_that_cannot_be_imported_still_carries_all_four_keys(
+        self, client, isolated_db, review_module_unimportable
+    ):
+        status = _get(client)["review_status"]
+        assert set(status) == _RUN_STATE_KEYS, "a key of the documented shape is absent"
+        assert status["running"] is False
+        assert status["trigger"] is None
+
+    def test_a_run_state_snapshot_that_raises_still_carries_all_four_keys(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise RuntimeError("simulated run state failure")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        status = _get(client)["review_status"]
+        assert set(status) == _RUN_STATE_KEYS, "a key of the documented shape is absent"
+        assert status["running"] is False
+        assert status["trigger"] is None
+
+
+# ---------------------------------------------------------------------------
+# The read path logs the type of an exception and nothing else: the message of an error
+# can carry a request address or an account number, and a traceback carries the message.
+# ---------------------------------------------------------------------------
+
+_SECRET_TEXT = "key=zz-test-secret-4411 account 99887766 https://example.invalid/v0/zz"
+
+
+def _review_log_records(caplog) -> list:
+    return [
+        r
+        for r in caplog.records
+        if r.name == "alphabot" and "_fetch_tenure_review" in r.getMessage()
+    ]
+
+
+class TestTheReadPathLogsOnlyTheExceptionType:
+    @pytest.fixture(autouse=True)
+    def _capture_the_daemon_log(self, caplog):
+        caplog.set_level(logging.DEBUG, logger="alphabot")
+
+    @staticmethod
+    def _assert_type_only(caplog, type_name: str) -> None:
+        records = _review_log_records(caplog)
+        assert records, "the failure was not logged at all"
+        for record in records:
+            assert not record.exc_info, (
+                "a traceback, which carries the exception message, was logged"
+            )
+            assert not record.exc_text
+            assert "zz-test-secret" not in record.getMessage()
+            assert "99887766" not in record.getMessage()
+            assert "example.invalid" not in record.getMessage()
+        assert any(type_name in r.getMessage() for r in records), (
+            f"the exception type {type_name} is not named in the log line"
+        )
+
+    def test_a_failed_read_of_the_run_logs_the_type_alone(
+        self, client, isolated_db, monkeypatch, caplog
+    ):
+        pb.store_full_run()
+        real = db_module.get_advisor_observations_for_role
+
+        def selective(role, *args, **kwargs):
+            if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+                raise RuntimeError(_SECRET_TEXT)
+            return real(role, *args, **kwargs)
+
+        monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+        assert client.get("/api/retirement-recommendations").status_code == 200
+        self._assert_type_only(caplog, "RuntimeError")
+
+    def test_a_run_state_snapshot_that_raises_logs_the_type_alone(
+        self, client, isolated_db, monkeypatch, caplog
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise ValueError(_SECRET_TEXT)
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        assert client.get("/api/retirement-recommendations").status_code == 200
+        self._assert_type_only(caplog, "ValueError")
+
+    def test_a_review_module_that_cannot_be_imported_logs_the_type_alone(
+        self, client, isolated_db, review_module_unimportable, caplog
+    ):
+        assert client.get("/api/retirement-recommendations").status_code == 200
+        self._assert_type_only(caplog, "ImportError")
+        assert not any("halted" in r.getMessage() for r in _review_log_records(caplog)), (
+            "the text of the import error was logged"
+        )
+
+    def test_the_page_logs_the_same_way(self, client, isolated_db, monkeypatch, caplog):
+        pb.store_full_run()
+
+        def broken():
+            raise ValueError(_SECRET_TEXT)
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        assert client.get("/ai-advisor").status_code == 200
+        self._assert_type_only(caplog, "ValueError")
