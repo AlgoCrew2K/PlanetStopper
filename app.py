@@ -4398,7 +4398,8 @@ def api_retirement_recommendations():
     level>, ...], "review_run": <newest stored review run header or null>,
     "review_entries": [<one stored entry per live symphony, plus a live
     approval_status that is null when no decision exists>], "review_status":
-    {running, running_since, trigger, last_failed_attempt}}. The recommendation
+    {running, running_since, trigger, last_failed_attempt}, "review_read_failed":
+    <true when the newest stored review cannot be read, else false>}. The recommendation
     list follows the latest run: with a completed run it holds only the rows
     carrying that run's review_run_id; with no run ever stored it holds the
     latest night's rows; with a run row that cannot be read it is empty.
@@ -4461,6 +4462,7 @@ def api_retirement_recommendations():
             "review_run": _json_safe(review_run),
             "review_entries": _json_safe(review_entries),
             "review_status": _json_safe(review_status),
+            "review_read_failed": review_read_failed,
         }
     )
 

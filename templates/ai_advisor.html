@@ -1695,10 +1695,10 @@
         {% endmacro %}
 
         {# One figure line: the value, or the figure's name with its stored reason when it is null. A count of days is a whole number. #}
-        {% macro tenure_figure(fig_name, fig) %}
+        {% macro tenure_figure(fig_name, fig, population=none) %}
             {% if fig is mapping %}
                 {% if fig.get('value') is number %}
-                <div class="tenure-review-evidence-figure">{{ fig_name | replace('_', ' ') }}: {% if fig.get('unit') == 'days' %}{{ fig.get('value') | int }}{% else %}{{ '%.2f' | format(fig.get('value')) }}{% endif %} {{ fig.get('unit') }}</div>
+                <div class="tenure-review-evidence-figure">{{ fig_name | replace('_', ' ') }}: {% if fig.get('unit') == 'days' %}{{ fig.get('value') | int }}{% else %}{{ '%.2f' | format(fig.get('value')) }}{% endif %} {{ fig.get('unit') }}{% if population is number and population is not boolean %}, normalized across {{ population | int }} symphonies{% endif %}</div>
                 {% else %}
                 <div class="tenure-review-evidence-figure">{{ fig_name | replace('_', ' ') }}: not computed, {{ fig.get('reason') }}</div>
                 {% endif %}
@@ -1727,7 +1727,7 @@
                 {% if item.get('status') == 'available' %}
                     {% if item.get('figures') is mapping %}
                     {% for fig_name, fig in item.get('figures').items() %}
-                        {{ tenure_figure(fig_name, fig) }}
+                        {{ tenure_figure(fig_name, fig, item.get('population_size') if name == 'composite' else none) }}
                     {% endfor %}
                     {% endif %}
                     {% set pair = item.get('pair') %}
