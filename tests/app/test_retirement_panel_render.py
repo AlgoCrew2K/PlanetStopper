@@ -3310,12 +3310,20 @@ def _label_outweighs_heading(label_css: str, heading_css: str) -> list[str]:
     return problems
 
 
-_META_LINES = ("unavailable", "not applicable", "subject", "source", "window", "left out")
+_META_LINES = (
+    "unavailable",
+    "not applicable",
+    "subject",
+    "source",
+    "window",
+    "left out",
+    "not used in the verdict",
+)
 
 
 def _label_nodes(block: pb.Node, label: str) -> list[pb.Node]:
     """The lines that carry the basis label: the lines holding it that are not the item's
-    subject, source, window, reason or left-out lines, which can repeat its words."""
+    subject, source, window, reason, left-out or not-used lines, which can repeat its words."""
     return [
         n
         for n in pb.leaf_nodes_containing(block, label)
