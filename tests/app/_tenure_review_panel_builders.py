@@ -843,13 +843,6 @@ def decisions_by_id() -> dict:
     return {row["candidate_id"]: row for row in db_module.get_retirement_decisions()}
 
 
-def reset_review_run_state() -> None:
-    state = tr.REVIEW_RUN_STATE
-    state.release()
-    if state.try_start("nightly"):
-        state.finish_success()
-
-
 def observation_count(role: str | None = None) -> int:
     conn = db_module.get_connection()
     try:

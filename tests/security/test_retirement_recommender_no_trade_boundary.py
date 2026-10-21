@@ -1,34 +1,48 @@
-"""RED tests -- Retirement Recommender no-auto-trade boundary (AC-7).
+"""Retirement and tenure review modules: no-trade, no-engine boundary.
 
-Mirrors tests/security/test_frontrunner_no_trade_boundary.py's structural,
-not-policy approach: source-scans the REAL module (not a mocked stand-in) so
-the guarantee holds regardless of future refactors inside the module body.
+Mirrors tests/security/test_frontrunner_no_trade_boundary.py's structural, not-policy approach:
+source-scans the REAL modules (not mocked stand-ins) so the guarantee holds regardless of future
+refactors inside a module body. The scan covers the Retirement Recommender and every module of the
+symphony tenure review: the review compute, the runner and the read-only Composer client.
 
-feature-plans/retirement-recommender-core.md AC-7: "The module contains NO
-trade / order / liquidation / deploy / LIVE_EXECUTION primitive and never
-writes settings. Recommendations persist advisory-only (insert_advisor_
-observation forces is_advisory_only=1). Structurally enforced by an
-adversarial source-scan test."
+The rule: a module contains NO trade, order, liquidation, deploy or LIVE_EXECUTION primitive and
+never writes settings. Persistence is advisory-only (insert_advisor_observation forces
+is_advisory_only=1). The recommender, the review compute and the runner never import the execution
+engine at all; the Composer client imports exactly its base URL constant and its credential header
+builder from it and nothing else. No module names the engine's per-account statistics reader, the
+panic-sell function, the go-to-cash sell function or a go-to-cash URL: the first reads Composer
+state through a path that cannot tell a failure from an empty account, and the others move money.
 
-Expected state: RED until advisors/retirement_recommender.py exists.
+Every check is a function of a source text, so each is also run over small planted modules (below)
+to show it fails when it should: a scan that cannot fail proves nothing.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
+import importlib.util
 import pathlib
 
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_MODULE_REL_PATH = "advisors/retirement_recommender.py"
 
-# Trade/order/liquidation/deploy action tokens that must never appear as a
-# whole underscore-delimited symbol/word component in this module. Checked
-# word-boundary (split on "_"), not bare substring -- so e.g. a hypothetical
-# "undeployed" or "deployment_target" identifier would not itself trip this
-# (word-boundary discipline mirrors the frontrunner precedent's own
-# 'undeployed' vs 'deploy' distinction).
+_RECOMMENDER = "advisors/retirement_recommender.py"
+_REVIEW = "advisors/tenure_review.py"
+_RUNNER = "advisors/tenure_review_runner.py"
+_CLIENT = "advisors/composer_portfolio_client.py"
+_MODULE_REL_PATHS = (_RECOMMENDER, _REVIEW, _RUNNER, _CLIENT)
+_NEVER_IMPORT_THE_ENGINE = (_RECOMMENDER, _REVIEW, _RUNNER)
+
+_ENGINE_MODULE = "alpha_bot_execution"
+# The only two names the Composer client may take from the engine: the Composer base URL
+# constant and the credential header builder the two existing read-only clients import.
+_CLIENT_ALLOWED_ENGINE_NAMES = frozenset({"COMPOSER_BASE_URL", "get_composer_headers"})
+
+# Trade/order/liquidation/deploy action tokens that must never appear as a whole
+# underscore-delimited symbol/word component in a public name. Checked word-boundary (split on
+# "_"), not bare substring, so e.g. "undeployed" or "deployment_target" would not trip it.
 _FORBIDDEN_ACTION_WORDS = {
     "invest",
     "deploy",
@@ -40,27 +54,32 @@ _FORBIDDEN_ACTION_WORDS = {
     "trade",
     "execute",
 }
+# Public names a module may carry although a component matches the list above, by module and
+# exact name. The review compute's display sequence of its six evidence items is the only one:
+# it orders rows on a page and places no order of any kind.
+_PUBLIC_SYMBOL_EXEMPTIONS = {_REVIEW: frozenset({"EVIDENCE_ITEM_ORDER"})}
 
-_FORBIDDEN_URL_FRAGMENTS = ("/deploy/", "/invest", "/sell", "/liquidate")
+_FORBIDDEN_URL_FRAGMENTS = ("/deploy/", "/invest", "/sell", "/liquidate", "/go-to-cash")
+
+# Engine and dashboard functions that read account state through a lossy path or move money.
+_FORBIDDEN_NAMES = ("fetch_symphony_stats", "perform_account_liquidation", "execute_sell_to_cash")
 
 
-def _read_source() -> str:
-    path = REPO_ROOT / _MODULE_REL_PATH
+def _source_of(rel_path: str) -> str:
+    path = REPO_ROOT / rel_path
     if not path.exists():
-        pytest.fail(f"expected module source not found: {_MODULE_REL_PATH}")
+        pytest.fail(f"expected module source not found: {rel_path}")
     return path.read_text(encoding="utf-8")
 
 
-def _read_executable_source() -> str:
-    """Docstrings/comments stripped via AST so this module's own docstring
-    may legitimately DOCUMENT the exclusion in prose (e.g. 'this module never
-    calls invest_in_symphony') without tripping the scan. Mirrors
-    tests/security/test_frontrunner_no_trade_boundary.py's identical helper."""
-    source = _read_source()
+def _executable_source(source: str, label: str = "module") -> str:
+    """Docstrings and comment lines removed via AST, so a module's own docstring may
+    legitimately DOCUMENT an exclusion in prose (e.g. 'this module never calls
+    invest_in_symphony') without tripping the scan."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        pytest.fail(f"{_MODULE_REL_PATH} has a syntax error -- cannot source-scan")
+        pytest.fail(f"{label} has a syntax error -- cannot source-scan")
 
     docstring_ranges: list[tuple[int, int]] = []
     for node in ast.walk(tree):
@@ -78,100 +97,346 @@ def _read_executable_source() -> str:
         for lineno in range(start, end + 1):
             if 1 <= lineno <= len(lines):
                 lines[lineno - 1] = ""
-
-    stripped_lines = []
-    for line in lines:
-        stripped_lines.append("" if line.lstrip().startswith("#") else line)
-    return "\n".join(stripped_lines)
+    return "\n".join("" if line.lstrip().startswith("#") else line for line in lines)
 
 
+# ---------------------------------------------------------------------------
+# The checks, each a function of a source text (or of the names a module holds)
+# ---------------------------------------------------------------------------
+
+
+def _trade_shaped_public_names(names, exempt=frozenset()) -> list[str]:
+    return [
+        n
+        for n in names
+        if not n.startswith("_")
+        and n not in exempt
+        and any(word in n.lower().split("_") for word in _FORBIDDEN_ACTION_WORDS)
+    ]
+
+
+def _trade_url_fragments(source: str) -> list[str]:
+    executable = _executable_source(source)
+    return [fragment for fragment in _FORBIDDEN_URL_FRAGMENTS if fragment in executable]
+
+
+def _forbidden_names_used(source: str) -> list[str]:
+    executable = _executable_source(source)
+    return [name for name in _FORBIDDEN_NAMES if name in executable]
+
+
+def _engine_imports(source: str) -> list[tuple[str, tuple[str, ...]]]:
+    """Every way the source reaches the execution engine module: ``import alpha_bot_execution``,
+    ``from alpha_bot_execution import ...`` (at any depth, lazy imports included) and an
+    ``importlib.import_module`` or ``__import__`` call with the module name as a literal.
+    Returns (how, imported names) pairs; a whole-module import has no names."""
+    tree = ast.parse(source)
+    found: list[tuple[str, tuple[str, ...]]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _ENGINE_MODULE or alias.name.startswith(_ENGINE_MODULE + "."):
+                    found.append(("import", ()))
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == _ENGINE_MODULE or module.startswith(_ENGINE_MODULE + "."):
+                found.append(("from", tuple(alias.name for alias in node.names)))
+        elif isinstance(node, ast.Call):
+            for arg in node.args:
+                if isinstance(arg, ast.Constant) and arg.value == _ENGINE_MODULE:
+                    found.append(("dynamic", ()))
+    return found
+
+
+def _engine_import_violations(source: str, allowed: frozenset[str] = frozenset()) -> list:
+    """Engine imports that are not a ``from`` import of only the ``allowed`` names."""
+    return [
+        entry
+        for entry in _engine_imports(source)
+        if not (entry[0] == "from" and entry[1] and set(entry[1]) <= allowed)
+    ]
+
+
+def _has_wildcard_import(source: str) -> bool:
+    return any(
+        isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names)
+        for node in ast.walk(ast.parse(source))
+    )
+
+
+def _advisory_flag_mentions(source: str) -> bool:
+    return "is_advisory_only" in _executable_source(source)
+
+
+def _live_execution_mentions(source: str) -> bool:
+    return "LIVE_EXECUTION" in _executable_source(source)
+
+
+def _trade_module_mentions(source: str) -> list[str]:
+    executable = _executable_source(source)
+    return [t for t in ("invest_in_symphony", "composer_draft_client") if t in executable]
+
+
+# ---------------------------------------------------------------------------
+# The real modules
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("module_rel_path", _MODULE_REL_PATHS)
 class TestNoTradeSymbols:
-    def test_module_exposes_no_trade_shaped_public_symbols(self):
-        import advisors.retirement_recommender as rr  # noqa: PLC0415
+    def test_module_exists(self, module_rel_path):
+        assert (REPO_ROOT / module_rel_path).exists(), (
+            f"{module_rel_path} does not exist -- the no-trade boundary is unverifiable"
+        )
 
-        public_names = [n for n in dir(rr) if not n.startswith("_")]
-        offending = [
-            n
-            for n in public_names
-            if any(word in n.lower().split("_") for word in _FORBIDDEN_ACTION_WORDS)
-        ]
+    def test_module_exposes_no_trade_shaped_public_symbols(self, module_rel_path):
+        mod = importlib.import_module(module_rel_path.replace("/", ".").removesuffix(".py"))
+        offending = _trade_shaped_public_names(
+            dir(mod), _PUBLIC_SYMBOL_EXEMPTIONS.get(module_rel_path, frozenset())
+        )
         assert offending == [], (
-            f"retirement_recommender exposes trade-shaped public symbols: {offending}"
+            f"{module_rel_path} exposes trade-shaped public symbols: {offending}"
         )
 
-    def test_module_never_constructs_a_trade_url_fragment_in_executable_code(self):
-        source = _read_executable_source()
-        for fragment in _FORBIDDEN_URL_FRAGMENTS:
-            assert fragment not in source, (
-                f"retirement_recommender.py contains the '{fragment}' fragment in "
-                "EXECUTABLE code -- this module must never reference a trade/deploy "
-                "endpoint."
-            )
-
-    def test_module_never_imports_alpha_bot_execution(self):
-        """Architecture: 'never imports alpha_bot_execution/math_engine trade
-        paths'. A source-scan for the module name catches both a direct
-        `import alpha_bot_execution` and a `from alpha_bot_execution import ...`."""
-        source = _read_source()
-        assert "alpha_bot_execution" not in source, (
-            "retirement_recommender.py must never import alpha_bot_execution "
-            "(the live execution engine) -- this is a purely advisory, "
-            "off-execution-path module."
+    def test_module_never_constructs_a_trade_url_fragment_in_executable_code(self, module_rel_path):
+        assert _trade_url_fragments(_source_of(module_rel_path)) == [], (
+            f"{module_rel_path} references a trade, deploy or go-to-cash endpoint in executable code"
         )
 
-    def test_module_never_calls_invest_in_symphony_or_composer_draft_client(self):
-        source = _read_executable_source()
-        assert "invest_in_symphony" not in source
-        assert "composer_draft_client" not in source, (
-            "retirement_recommender.py must never reference composer_draft_client "
-            "(the only module in the repo permitted to create a real Composer "
-            "symphony) -- this is a pure math/advisory module with no write path."
+    def test_module_never_names_the_lossy_state_reader_or_a_money_moving_function(
+        self, module_rel_path
+    ):
+        assert _forbidden_names_used(_source_of(module_rel_path)) == [], (
+            f"{module_rel_path} names an engine or dashboard function this feature must never use"
         )
 
-    def test_module_never_reads_or_sets_live_execution(self):
-        source = _read_executable_source()
-        assert "LIVE_EXECUTION" not in source
+    def test_module_never_calls_invest_in_symphony_or_composer_draft_client(self, module_rel_path):
+        assert _trade_module_mentions(_source_of(module_rel_path)) == []
+
+    def test_module_never_reads_or_sets_live_execution(self, module_rel_path):
+        assert not _live_execution_mentions(_source_of(module_rel_path))
+
+    def test_module_does_not_use_wildcard_imports(self, module_rel_path):
+        """Even an indirect `from alpha_bot_execution import *` (or from any other module)
+        would make the absence of trade primitives unverifiable by source-scan."""
+        assert not _has_wildcard_import(_source_of(module_rel_path))
+
+    def test_module_never_overrides_is_advisory_only(self, module_rel_path):
+        """database.insert_advisor_observation forces is_advisory_only=1 in its own SQL
+        regardless of caller kwargs; none of these modules writes a row or passes the flag."""
+        assert not _advisory_flag_mentions(_source_of(module_rel_path))
 
 
-class TestNoWildcardImportEscapeHatch:
-    def test_module_does_not_use_wildcard_imports(self):
-        """Even an indirect `from alpha_bot_execution import *` (or from any
-        other module) would make the invest/deploy-absence unverifiable by
-        source-scan."""
-        source = _read_source()
-        assert "import *" not in source
-
-
-class TestAdvisoryOnlyPersistence:
-    def test_module_never_overrides_is_advisory_only(self):
-        """database.insert_advisor_observation forces is_advisory_only=1 in
-        its own SQL regardless of caller kwargs (AC-7's DB-layer half) -- this
-        module must not attempt to pass a conflicting is_advisory_only kwarg
-        (which insert_advisor_observation's **kwargs would silently swallow
-        today, but a future refactor of that function must not be able to be
-        overridden from this call site)."""
-        source = _read_executable_source()
-        assert "is_advisory_only" not in source, (
-            "retirement_recommender.py must not reference is_advisory_only at "
-            "all -- persistence is advisory-only by construction of "
-            "database.insert_advisor_observation, never by a caller-supplied "
-            "override."
+@pytest.mark.parametrize("module_rel_path", _NEVER_IMPORT_THE_ENGINE)
+class TestNoEngineImport:
+    def test_module_never_imports_the_execution_engine(self, module_rel_path):
+        """An AST check, not a substring one: a docstring may name the engine, no import
+        statement (top-level, lazy, aliased or dynamic) may reach it."""
+        assert _engine_import_violations(_source_of(module_rel_path)) == [], (
+            f"{module_rel_path} must never import alpha_bot_execution (the live execution "
+            "engine) -- it is a purely advisory, off-execution-path module."
         )
 
 
-class TestRouteNotInSettingsWriteAllowlist:
-    def test_retirement_recommendations_route_not_in_allowlist(self):
+class TestTheComposerClientTakesTwoNamesFromTheEngine:
+    def test_it_imports_exactly_the_base_url_and_the_header_builder(self):
+        imports = _engine_imports(_source_of(_CLIENT))
+        assert [kind for kind, _ in imports] == ["from"], imports
+        assert set(imports[0][1]) == _CLIENT_ALLOWED_ENGINE_NAMES, (
+            "the client takes COMPOSER_BASE_URL and get_composer_headers from the engine, "
+            f"nothing more and nothing less; it imports {imports[0][1]}"
+        )
+        assert _engine_import_violations(_source_of(_CLIENT), _CLIENT_ALLOWED_ENGINE_NAMES) == []
+
+
+class TestRoutesAreNotSettingsWrites:
+    @pytest.mark.parametrize(
+        "path", ["/api/retirement-recommendations", "/ai-advisor/retirement/review/run"]
+    )
+    def test_route_not_in_allowlist(self, path):
         import app as app_module  # noqa: PLC0415
 
         allowlist = getattr(app_module, "_SETTINGS_WRITE_ALLOWLIST", None)
-        if allowlist is None:
-            pytest.skip("_SETTINGS_WRITE_ALLOWLIST not found on app module")
-        assert "/api/retirement-recommendations" not in allowlist
+        assert allowlist is not None, "app._SETTINGS_WRITE_ALLOWLIST is missing"
+        assert path not in allowlist
 
 
-class TestRequiredModuleExistsForBoundaryToBeMeaningful:
-    def test_module_exists(self):
-        path = REPO_ROOT / _MODULE_REL_PATH
-        assert path.exists(), (
-            f"{_MODULE_REL_PATH} does not exist -- the no-trade boundary is unverifiable"
+# ---------------------------------------------------------------------------
+# Mutation proof: each check run over planted modules
+# ---------------------------------------------------------------------------
+
+_CLEAN = '''"""This module never calls fetch_symphony_stats, perform_account_liquidation or
+execute_sell_to_cash and never visits /go-to-cash; it imports nothing from alpha_bot_execution."""
+import math
+
+def read(x):
+    # a comment may say fetch_symphony_stats too
+    return math.floor(x)
+'''
+
+
+def _plant(statement: str, *, head: str = "") -> str:
+    return f"{head}\ndef planted(account):\n    {statement}\n"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "fetch_symphony_stats(account)",
+        "alpha_bot_execution.fetch_symphony_stats(account)",
+        "return fetch_symphony_stats",
+        "perform_account_liquidation(account)",
+        "app.perform_account_liquidation(account)",
+        "execute_sell_to_cash(account)",
+        "alpha_bot_execution.execute_sell_to_cash(account)",
+        'getattr(module, "fetch_symphony_stats")(account)',
+    ],
+    ids=[
+        "stats reader call",
+        "stats reader attribute call",
+        "stats reader reference",
+        "liquidation call",
+        "liquidation attribute call",
+        "sell to cash call",
+        "sell to cash attribute call",
+        "stats reader by string",
+    ],
+)
+class TestAPlantedForbiddenNameIsReported:
+    def test_the_clean_module_is_not_reported(self, statement):
+        assert _forbidden_names_used(_CLEAN) == []
+
+    def test_a_planted_use_is_reported(self, statement):
+        assert _forbidden_names_used(_plant(statement)) != []
+
+    def test_a_planted_use_in_a_docstring_or_a_comment_is_not_reported(self, statement):
+        prose = f'def f():\n    """Never {statement}."""\n    # not {statement}\n    return 1\n'
+        assert _forbidden_names_used(prose) == []
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        'requests.post(BASE + "/go-to-cash")',
+        'url = f"{BASE}/portfolio/accounts/{account}/sell"',
+        'url = BASE + "/deploy/" + account',
+        'url = BASE + "/invest"',
+        'url = BASE + "/liquidate"',
+    ],
+    ids=["go to cash", "sell", "deploy", "invest", "liquidate"],
+)
+class TestAPlantedTradeEndpointIsReported:
+    def test_the_clean_module_is_not_reported(self, statement):
+        assert _trade_url_fragments(_CLEAN) == []
+
+    def test_a_planted_endpoint_is_reported(self, statement):
+        assert _trade_url_fragments(_plant(statement)) != []
+
+
+class TestAPlantedEngineImportIsReported:
+    @pytest.mark.parametrize(
+        "head",
+        [
+            "import alpha_bot_execution",
+            "import alpha_bot_execution as engine",
+            "from alpha_bot_execution import COMPOSER_BASE_URL",
+            "from alpha_bot_execution import fetch_symphony_stats",
+            "from alpha_bot_execution import *",
+        ],
+        ids=["plain", "aliased", "base url", "stats reader", "wildcard"],
+    )
+    def test_a_module_that_must_not_import_the_engine_is_flagged_for_any_import(self, head):
+        assert _engine_import_violations(_CLEAN) == []
+        assert _engine_import_violations(_plant("return 1", head=head)) != []
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "import alpha_bot_execution",
+            "from alpha_bot_execution import COMPOSER_BASE_URL",
+            'importlib.import_module("alpha_bot_execution")',
+            '__import__("alpha_bot_execution")',
+        ],
+        ids=["lazy plain", "lazy from", "importlib", "dunder import"],
+    )
+    def test_a_lazy_or_dynamic_import_inside_a_function_is_flagged(self, statement):
+        assert _engine_import_violations(_plant(statement)) != []
+
+    def test_the_client_form_passes_and_any_other_form_does_not(self):
+        two = "from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers"
+        one = "from alpha_bot_execution import COMPOSER_BASE_URL"
+        assert (
+            _engine_import_violations(_plant("return 1", head=two), _CLIENT_ALLOWED_ENGINE_NAMES)
+            == []
         )
+        assert (
+            _engine_import_violations(_plant("return 1", head=one), _CLIENT_ALLOWED_ENGINE_NAMES)
+            == []
+        )
+        for head in (
+            "from alpha_bot_execution import COMPOSER_BASE_URL, fetch_symphony_stats",
+            "from alpha_bot_execution import get_composer_headers, execute_sell_to_cash",
+            "import alpha_bot_execution",
+            "from alpha_bot_execution import *",
+        ):
+            assert (
+                _engine_import_violations(
+                    _plant("return 1", head=head), _CLIENT_ALLOWED_ENGINE_NAMES
+                )
+                != []
+            ), head
+        assert (
+            _engine_import_violations(
+                _plant("import alpha_bot_execution"), _CLIENT_ALLOWED_ENGINE_NAMES
+            )
+            != []
+        )
+
+    def test_the_client_check_requires_both_names_to_be_present(self):
+        """The real-module test above pins the exact pair; this shows the pair check itself can
+        tell a missing name from a full pair."""
+        one = _plant("return 1", head="from alpha_bot_execution import COMPOSER_BASE_URL")
+        imports = _engine_imports(one)
+        assert set(imports[0][1]) != _CLIENT_ALLOWED_ENGINE_NAMES
+
+
+class TestAPlantedTradeShapedPublicNameIsReported:
+    @pytest.mark.parametrize(
+        "name",
+        ["place_order", "sell_all", "PANIC_SELL_LIMIT", "liquidate_position", "trade_rate"],
+    )
+    def test_a_trade_shaped_public_name_is_reported_unless_private(self, name):
+        assert _trade_shaped_public_names(["read", name]) == [name]
+        assert _trade_shaped_public_names(["read", "_" + name]) == []
+
+    def test_an_exemption_covers_exactly_the_name_it_lists(self):
+        exempt = _PUBLIC_SYMBOL_EXEMPTIONS[_REVIEW]
+        assert exempt == frozenset({"EVIDENCE_ITEM_ORDER"})
+        assert _trade_shaped_public_names(["EVIDENCE_ITEM_ORDER"], exempt) == []
+        assert _trade_shaped_public_names(["EVIDENCE_ITEM_ORDER_X", "place_order"], exempt) == [
+            "EVIDENCE_ITEM_ORDER_X",
+            "place_order",
+        ]
+        assert _trade_shaped_public_names(["EVIDENCE_ITEM_ORDER"]) == ["EVIDENCE_ITEM_ORDER"]
+        assert set(_PUBLIC_SYMBOL_EXEMPTIONS) == {_REVIEW}, "no other module is exempt"
+
+    def test_a_planted_public_function_is_found_through_dir_of_a_loaded_module(self, tmp_path):
+        planted = tmp_path / "planted_module.py"
+        planted.write_text(_CLEAN + "\ndef place_order(x):\n    return x\n", encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("planted_module_for_scan", planted)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert _trade_shaped_public_names(dir(module)) == ["place_order"]
+
+
+class TestOtherPlantedPrimitivesAreReported:
+    def test_live_execution_composer_draft_client_and_the_advisory_flag(self):
+        assert not _live_execution_mentions(_CLEAN)
+        assert _live_execution_mentions(_plant('return os.environ.get("LIVE_EXECUTION")'))
+        assert _trade_module_mentions(_CLEAN) == []
+        assert _trade_module_mentions(_plant("composer_draft_client.save_symphony(1)")) != []
+        assert _trade_module_mentions(_plant("invest_in_symphony(1)")) != []
+        assert not _advisory_flag_mentions(_CLEAN)
+        assert _advisory_flag_mentions(_plant("insert(is_advisory_only=0)"))
+        assert not _has_wildcard_import(_CLEAN)
+        assert _has_wildcard_import("from somewhere import *\n")

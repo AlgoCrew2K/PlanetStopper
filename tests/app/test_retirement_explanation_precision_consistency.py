@@ -49,6 +49,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.app import _tenure_review_job_builders as jb
+
 _CANDIDATE_HASH = "cand-precision-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
 _SIBLING_HASH = "sib-precision-bbb"
@@ -184,7 +186,7 @@ def _run_worker_with_mocked_prior_rows(prior_rows, new_rec, *, explain_return="f
         return len(recs)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(recommender_module, "build_recommendations", lambda **kw: [new_rec])
+        jb.patch_runner(mp, lambda: [new_rec])
         mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
         mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
         mp.setattr(db_module, "get_advisor_observations_for_role", lambda *a, **kw: prior_rows)
@@ -313,8 +315,11 @@ class TestExplainerInputMatchesPersistedEvidence:
 
         assert len(explain_calls) == 1
         assert len(persisted) == 1
-        seen_by_explainer = {k: v for k, v in explain_calls[0].items() if k != "explanation"}
-        persisted_evidence = {k: v for k, v in persisted[0].items() if k != "explanation"}
+        # The explanation, the day it was written and the run link are stamped by the run, not
+        # evidence the explainer could cite.
+        not_evidence = {"explanation", "explanation_written_on", "review_run_id"}
+        seen_by_explainer = {k: v for k, v in explain_calls[0].items() if k not in not_evidence}
+        persisted_evidence = {k: v for k, v in persisted[0].items() if k not in not_evidence}
         assert seen_by_explainer == persisted_evidence, (
             "The evidence the explainer was shown must be byte-identical to what "
             "gets persisted (and therefore rendered on the card/API) -- otherwise "
@@ -357,7 +362,7 @@ class TestSteadyStateFullPrecisionRecomputation:
             return [_sample_raw_response(correlation=next(night_values))]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: _fixed_recs())
+            jb.patch_runner(mp, lambda: _fixed_recs())
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()  # night 1
@@ -388,7 +393,7 @@ class TestSteadyStateFullPrecisionRecomputation:
             return [_sample_raw_response(correlation=next(night_values))]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: _fixed_recs())
+            jb.patch_runner(mp, lambda: _fixed_recs())
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()  # night 1

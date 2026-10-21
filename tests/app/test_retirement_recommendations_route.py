@@ -740,8 +740,11 @@ class TestReviewStatusReportsTheLiveRunState:
     def test_a_failed_attempt_is_reported_with_its_reason_and_time(self, client, isolated_db):
         pb.store_full_run()
         state = tenure_review.REVIEW_RUN_STATE
-        assert state.try_start("nightly")
-        state.finish_failure("Composer statistics unavailable", datetime(2026, 12, 31, tzinfo=UTC))
+        token = state.try_start("nightly")
+        assert token
+        state.finish_failure(
+            token, "Composer statistics unavailable", datetime(2026, 12, 31, tzinfo=UTC)
+        )
         data = _get(client)
         status = data["review_status"]
         assert status["running"] is False

@@ -836,9 +836,10 @@ class TestRunStateNotices:
     def test_the_notice_is_gone_once_the_run_has_finished(self, client, isolated_db):
         _stored_full_run()
         state = tenure_review.REVIEW_RUN_STATE
-        assert state.try_start("nightly")
+        token = state.try_start("nightly")
+        assert token
         assert _panel(client).find("tenure-review-running-notice") is not None
-        state.finish_success()
+        state.finish_success(token)
         assert _panel(client).find("tenure-review-running-notice") is None
 
     def test_a_failed_attempt_is_stated_with_its_reason_and_time_next_to_the_previous_run(
@@ -846,9 +847,10 @@ class TestRunStateNotices:
     ):
         record = _stored_full_run()
         state = tenure_review.REVIEW_RUN_STATE
-        assert state.try_start("nightly")
+        token = state.try_start("nightly")
+        assert token
         state.finish_failure(
-            "Composer statistics unavailable", datetime(2026, 12, 31, 15, 0, tzinfo=UTC)
+            token, "Composer statistics unavailable", datetime(2026, 12, 31, 15, 0, tzinfo=UTC)
         )
         panel = _panel(client)
         notice = panel.find("tenure-review-failed-notice")
@@ -1035,8 +1037,9 @@ class TestDesignSystem:
     def test_the_failed_attempt_notice_is_styled_with_the_negative_token(self, client, isolated_db):
         _stored_full_run()
         state = tenure_review.REVIEW_RUN_STATE
-        assert state.try_start("nightly")
-        state.finish_failure("Composer statistics unavailable", datetime.now(UTC))
+        token = state.try_start("nightly")
+        assert token
+        state.finish_failure(token, "Composer statistics unavailable", datetime.now(UTC))
         notice = _panel(client).find("tenure-review-failed-notice")
         classes = notice.classes()
         assert classes
@@ -3675,9 +3678,12 @@ class TestNoticeTimesAreEastern:
     ):
         _stored_full_run()
         state = tenure_review.REVIEW_RUN_STATE
-        assert state.try_start("nightly")
+        token = state.try_start("nightly")
+        assert token
         state.finish_failure(
-            "Composer statistics unavailable", moment if as_text else datetime.fromisoformat(moment)
+            token,
+            "Composer statistics unavailable",
+            moment if as_text else datetime.fromisoformat(moment),
         )
         notice = _panel(client).find("tenure-review-failed-notice").text()
         assert "latest review attempt failed: Composer statistics unavailable" in notice
@@ -3691,9 +3697,10 @@ class TestNoticeTimesAreEastern:
         pb.seed_bot_state()
         pb.store_run(pb.full_record(completed_at="2026-12-31T22:04:00+00:00"))
         state = tenure_review.REVIEW_RUN_STATE
-        assert state.try_start("nightly")
+        token = state.try_start("nightly")
+        assert token
         state.finish_failure(
-            "Composer statistics unavailable", datetime(2026, 12, 31, 21, 45, tzinfo=UTC)
+            token, "Composer statistics unavailable", datetime(2026, 12, 31, 21, 45, tzinfo=UTC)
         )
         panel = _panel(client)
         failed = _ET_STAMP.search(panel.find("tenure-review-failed-notice").text())

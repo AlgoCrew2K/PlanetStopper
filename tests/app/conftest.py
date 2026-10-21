@@ -87,23 +87,18 @@ def _stub_community_strats_offline():
 
 
 @pytest.fixture(autouse=True)
-def _reset_review_run_state():
-    """Bring the review run state to idle, with no remembered failed attempt, before and
-    after every tests/app/ test.
+def _reset_review_run_state(monkeypatch):
+    """Give every tests/app/ test a fresh, idle review run state with no remembered failed
+    attempt.
 
-    The state is one module-level singleton shared by the nightly tick, the on-demand
-    route and the panel, so a test that takes it (or records a failed attempt) would
-    otherwise change what the next test's page and API report. Starting and finishing a
-    run is the only public way to clear the failed-attempt record.
+    The state is one module-level object shared by the nightly tick, the on-demand route
+    and the panel, so a test that takes it (or records a failed attempt) would otherwise
+    change what the next test's page and API report. A run that is still holding the old
+    object finishes against it and cannot touch the new one. Production code must reach the
+    state as ``tenure_review.REVIEW_RUN_STATE`` at each use (never a name bound at import),
+    which is what makes this replacement take effect everywhere.
     """
     import advisors.tenure_review as tenure_review
 
-    def reset():
-        state = tenure_review.REVIEW_RUN_STATE
-        state.release()
-        if state.try_start("nightly"):
-            state.finish_success()
-
-    reset()
+    monkeypatch.setattr(tenure_review, "REVIEW_RUN_STATE", type(tenure_review.REVIEW_RUN_STATE)())
     yield
-    reset()

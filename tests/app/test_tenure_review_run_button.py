@@ -369,6 +369,64 @@ class TestMessagesByStatus:
         assert not any("<img" in html for html in out["log"]["innerHtml"])
 
 
+class TestARefusedSubmissionAnsweredWithStatus200:
+    """The route answers 200 with ``{"error": <exception type name>}`` when the review could not
+    be handed to its worker. The client reads the status first and must still show that text:
+    "Request failed: HTTP 200" would send the operator looking for a failure that is not there."""
+
+    def test_the_error_text_the_server_sent_is_shown_and_the_status_is_not_reported_as_the_failure(
+        self,
+    ):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={
+                "mode": "status",
+                "status": 200,
+                "kind": "json",
+                "body": {"error": "RuntimeError"},
+            },
+            csrf_preset="tok",
+        )
+        assert "RuntimeError" in out["state"]["message"]
+        assert "HTTP 200" not in out["state"]["message"]
+        assert out["state"]["disabled"] is False
+
+    def test_it_is_styled_as_a_failure_and_never_written_as_markup(self):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 200, "kind": "json", "body": {"error": HOSTILE}},
+            csrf_preset="tok",
+        )
+        assert _is_negative(out["state"]), "an error the server reported is not an acknowledgement"
+        assert not any("<img" in html for html in out["log"]["innerHtml"]), "text, never markup"
+
+    @pytest.mark.parametrize(
+        "body",
+        [{}, {"status": "started"}, {"error": ""}, {"error": None}, {"error": 7}],
+        ids=["empty object", "no error key", "empty error", "null error", "number error"],
+    )
+    def test_a_200_without_a_usable_error_text_is_reported_by_its_status(self, body):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 200, "kind": "json", "body": body},
+            csrf_preset="tok",
+        )
+        assert out["state"]["message"] == "Request failed: HTTP 200"
+        assert out["state"]["disabled"] is False
+
+    def test_a_200_whose_body_is_not_json_is_reported_by_its_status_without_the_parser_message(
+        self,
+    ):
+        out = _run(
+            _CLICK_AND_SETTLE,
+            run={"mode": "status", "status": 200, "kind": "html"},
+            csrf_preset="tok",
+            error_text="Unexpected token LEAKMARK in JSON",
+        )
+        assert out["state"]["message"] == "Request failed: HTTP 200"
+        assert "LEAKMARK" not in out["state"]["message"]
+
+
 class TestOneRequestAtATime:
     def test_the_button_stays_disabled_until_the_response_arrives_and_a_second_click_sends_nothing(
         self,

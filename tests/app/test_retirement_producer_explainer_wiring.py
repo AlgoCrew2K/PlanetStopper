@@ -8,16 +8,15 @@ each rec's raw_response dict. The LLM never runs on the render path or the
 approve/checklist path. advisors/retirement_recommender.py stays LLM-free --
 pinned via a golden sha256 hash (this cycle's diff to that file MUST be zero).
 
-Lazy-import mocking note: _retirement_recommender_tick_worker does
-`from advisors.retirement_recommender import (build_recommendations,
-persist_recommendations)` INSIDE the function body (CC-2) -- patching the
-MODULE-level attributes (advisors.retirement_recommender.build_recommendations
-etc.) before calling the worker is picked up correctly, since a `from X
-import Y` executes at call time and reads Y off X's current namespace. Same
-pattern applies to the explainer import this cycle adds.
+Since the review run replaced the old producer, the night's recommendations come from
+advisors.tenure_review_runner.run_tenure_review (the "build" step below), which the tests
+replace with a stand-in over the real result types. The job imports the runner, the
+persistence function and the explainer INSIDE its body (CC-2), so patching the MODULE-level
+attributes of those modules before calling the worker is picked up: a `from X import Y`
+executes at call time and reads Y off X's current namespace.
 
-Expected state: RED until app.py's _retirement_recommender_tick_worker is
-extended to call advisors.retirement_explainer.explain_recommendation.
+Expected state: RED until app.py's _retirement_recommender_tick_worker calls the shared
+review job, which takes its recommendations from the review run.
 """
 
 from __future__ import annotations
@@ -30,8 +29,20 @@ from unittest.mock import patch
 import pytest
 
 import app as app_module
+from tests.app import _tenure_review_job_builders as jb
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# The review run replaces the old producer as the source of the night's recommendations.
+_RUN = "advisors.tenure_review_runner.run_tenure_review"
+
+
+@pytest.fixture(autouse=True)
+def _scratch_environment(monkeypatch):
+    """The run reads account and threshold settings from the environment file: never the
+    developer's real one."""
+    jb.hide_environment(monkeypatch)
+
 
 # Golden immutability pin (NOT a producer-computed value -- a file-integrity
 # guard, same convention as this codebase's other "byte-preserved, pinned
@@ -146,7 +157,7 @@ def test_retirement_recommender_module_never_imports_ai_advisor():
 def test_worker_calls_explainer_once_per_recommendation():
     recs = _sample_recs()
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(_RUN, side_effect=jb.fake_runner(recs)),
         patch("advisors.retirement_recommender.persist_recommendations", return_value=len(recs)),
         patch(
             "advisors.retirement_explainer.explain_recommendation", return_value="explanation text"
@@ -169,7 +180,7 @@ def test_worker_stamps_explanation_into_each_recs_raw_response_before_persist():
         return len(recs_arg)
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(_RUN, side_effect=jb.fake_runner(recs)),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch(
             "advisors.retirement_explainer.explain_recommendation",
@@ -194,9 +205,8 @@ def test_explainer_runs_after_build_and_before_persist_ordering():
     after persist."""
     events: list[str] = []
 
-    def _fake_build(**kwargs):
+    def _fake_build(kwargs):
         events.append("build")
-        return _sample_recs()
 
     def _fake_explain(rec):
         events.append(f"explain:{rec['candidate_id']}")
@@ -207,13 +217,13 @@ def test_explainer_runs_after_build_and_before_persist_ordering():
         return len(recs_arg)
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", side_effect=_fake_build),
+        patch(_RUN, side_effect=jb.fake_runner(_sample_recs, hook=_fake_build)),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch("advisors.retirement_explainer.explain_recommendation", side_effect=_fake_explain),
     ):
         app_module._retirement_recommender_tick_worker()
 
-    assert events[0] == "build", f"build_recommendations must run first, got order {events}."
+    assert events[0] == "build", f"the review run must come first, got order {events}."
     assert events[-1] == "persist", f"persist_recommendations must run last, got order {events}."
     explain_events = [e for e in events if e.startswith("explain:")]
     assert len(explain_events) == 2, f"Expected 2 explain events, got {events}."
@@ -239,7 +249,7 @@ def test_explainer_failure_none_does_not_block_persistence():
         return len(recs_arg)
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(_RUN, side_effect=jb.fake_runner(recs)),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch("advisors.retirement_explainer.explain_recommendation", return_value=None),
     ):
@@ -255,7 +265,7 @@ def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(ca
     all (nothing to explain), persist_recommendations is still called
     (honoring the existing Cycle-2a contract) with an empty list."""
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=[]),
+        patch(_RUN, side_effect=jb.fake_runner([])),
         patch(
             "advisors.retirement_recommender.persist_recommendations", return_value=0
         ) as mock_persist,
@@ -280,7 +290,7 @@ def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(
     recs = _sample_recs()
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(_RUN, side_effect=jb.fake_runner(recs)),
         patch("advisors.retirement_recommender.persist_recommendations", return_value=len(recs)),
         patch(
             "advisors.retirement_explainer.explain_recommendation",

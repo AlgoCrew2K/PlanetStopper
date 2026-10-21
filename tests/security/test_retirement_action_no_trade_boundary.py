@@ -538,6 +538,61 @@ class TestNewRoutesNotInSettingsWriteAllowlist:
         )
 
 
+# ---------------------------------------------------------------------------
+# The settings write allowlist stays exactly what it was: the tenure threshold is an operator
+# setting in the environment file and is not writable from the dashboard, and neither the
+# on-demand review route nor the review's API route is a settings write.
+# ---------------------------------------------------------------------------
+
+# The members at the base the review feature branched from: two engine settings and the
+# eight tunable search-space keys. Written out here (not read from the module), so adding any
+# key, the review's threshold included, fails this test and has to be decided on purpose.
+_ALLOWLIST_MEMBERS_AT_THE_BASE = frozenset(
+    {
+        "EXECUTION_START_TIME",
+        "EXIT_AUTHORITY",
+        "MAX_PARABOLIC_SQUEEZE",
+        "MAX_SQUEEZE_FLOOR",
+        "PARABOLIC_VELOCITY_THRESHOLD",
+        "TAKE_PROFIT_MC_PCT",
+        "TRIGGER_THRESHOLD_PCT",
+        "VWAP_BLEED_MULTIPLIER",
+        "VWAP_BLEED_TICKS",
+        "VWAP_CROSS_HWM_PCT",
+    }
+)
+
+
+class TestTheSettingsWriteAllowlistIsUnchanged:
+    def test_the_allowlist_holds_exactly_its_members_at_the_base(self):
+        import app as app_module
+
+        assert frozenset(app_module._SETTINGS_WRITE_ALLOWLIST) == _ALLOWLIST_MEMBERS_AT_THE_BASE
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "TENURE_REVIEW_MIN_TRADING_DAYS",
+            "ACCOUNT_INDIVIDUAL",
+            "ACCOUNT_ROTH",
+            "ACCOUNT_TRAD",
+            "LIVE_EXECUTION",
+        ],
+    )
+    def test_no_review_setting_or_account_key_is_dashboard_writable(self, key):
+        import app as app_module
+
+        assert key not in app_module._SETTINGS_WRITE_ALLOWLIST
+
+    @pytest.mark.parametrize(
+        "path", ["/ai-advisor/retirement/review/run", "/api/retirement-recommendations"]
+    )
+    def test_the_review_routes_are_not_settings_writes(self, path):
+        import app as app_module
+
+        assert path not in app_module._SETTINGS_WRITE_ALLOWLIST
+
+
 # ===========================================================================
 # Group E (Cycle 2c, DE-RETIRE-POLISH-001, ret3-review findings (b) and,
 # later, (c)): static AST call-graph proof for the app.py HELPER call paths
@@ -606,6 +661,22 @@ _RETIREMENT_FETCH_FN_NAME = "_fetch_retirement_recommendations"
 _TENURE_REVIEW_FETCH_FN_NAME = "_fetch_tenure_review"
 _RETIREMENT_API_ROUTE_FN_NAME = "api_retirement_recommendations"
 
+# Symphony tenure review run path: the job both run entry points share, the scheduler-facing
+# tick that starts it, the route that submits it, and the step that prepares the night's
+# recommendations for storage (moved out of the tick worker). The route submits the job as a
+# function reference and the tick hands it to a thread the same way, so no transitive walk
+# from either reaches it: each is an entry point of its own.
+_TENURE_REVIEW_JOB_FN_NAME = "_tenure_review_job"
+_RETIREMENT_TICK_FN_NAME = "_run_retirement_recommender_tick"
+_TENURE_REVIEW_RUN_ROUTE_FN_NAME = "ai_advisor_retirement_review_run"
+_RETIREMENT_PREPARE_FN_NAME = "_prepare_retirement_recs_for_persist"
+_TENURE_RUN_PATH_FN_NAMES = [
+    _TENURE_REVIEW_JOB_FN_NAME,
+    _RETIREMENT_TICK_FN_NAME,
+    _TENURE_REVIEW_RUN_ROUTE_FN_NAME,
+    _RETIREMENT_PREPARE_FN_NAME,
+]
+
 # The helpers the panel template calls while it renders: the Eastern-time formatter, the
 # four text and number filters, and the two Jinja tests. They run on every AI Advisor page
 # load and are reached from the template only, so no entry point's call graph includes
@@ -627,6 +698,7 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_FETCH_FN_NAME,
     _TENURE_REVIEW_FETCH_FN_NAME,
     _RETIREMENT_API_ROUTE_FN_NAME,
+    *_TENURE_RUN_PATH_FN_NAMES,
     *_TENURE_RENDER_HELPER_FN_NAMES,
 ]
 
@@ -875,15 +947,41 @@ def _hits_live_execution(subtrees) -> list[str]:
     ]
 
 
+# Functions this feature must never reach, besides a Composer symphony creation: the engine's
+# per-account statistics reader (it answers an empty list for every failure, so it cannot tell a
+# failure from an empty account), the panic-sell function and the go-to-cash sell function,
+# and the go-to-cash URL fragment.
+_FORBIDDEN_ENGINE_NAMES = (
+    "fetch_symphony_stats",
+    "perform_account_liquidation",
+    "execute_sell_to_cash",
+)
+_GO_TO_CASH_FRAGMENT = "/go-to-cash"
+
+
+def _hits_forbidden_engine_names(subtrees) -> list[str]:
+    hits = []
+    for t in subtrees:
+        text = _unparse_without_docstrings(t)
+        where = getattr(t, "name", "?")
+        for name in _FORBIDDEN_ENGINE_NAMES:
+            if name in text or _references_name_or_attr(t, name):
+                hits.append(f"{name} via {where}")
+        if _GO_TO_CASH_FRAGMENT in text:
+            hits.append(f"{_GO_TO_CASH_FRAGMENT} via {where}")
+    return hits
+
+
 def _exec_seam_hits(tree: ast.Module, fn_name: str) -> list[str]:
     """Every forbidden reference in the transitive call graph of ``fn_name``, by the same
-    four predicates the entry point tests below apply one at a time."""
+    predicates the entry point tests below apply one at a time."""
     subtrees = _collect_transitive_local_call_subtrees(tree, fn_name)
     return (
         _hits_composer_draft_client(subtrees)
         + _hits_save_symphony(subtrees)
         + _hits_alpha_bot_execution(subtrees)
         + _hits_live_execution(subtrees)
+        + _hits_forbidden_engine_names(subtrees)
     )
 
 
@@ -963,6 +1061,16 @@ class TestCycle2cCallPathsNeverReachExecSeam:
         hits = _hits_live_execution(self._get_transitive_subtrees(fn_name))
         assert hits == [], f"{fn_name}'s transitive call graph reads/writes LIVE_EXECUTION: {hits}"
 
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_never_reaches_the_lossy_state_reader_or_a_money_moving_function(
+        self, fn_name
+    ):
+        hits = _hits_forbidden_engine_names(self._get_transitive_subtrees(fn_name))
+        assert hits == [], (
+            f"{fn_name}'s transitive call graph reaches an engine or dashboard function the "
+            f"review path must never use, or a go-to-cash URL: {hits}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Mutation proof for Group E: a scan that cannot fail proves nothing. Each test plants
@@ -1022,6 +1130,65 @@ class TestGroupEScanReportsAPlantedSymphonyCreation:
         assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), (
             f"{planted_in} is not on the call graph of {entry_point}; hits: {hits}"
         )
+
+
+_PLANTED_ENGINE_CALLS = {
+    "stats reader": ("fetch_symphony_stats", "fetch_symphony_stats(planted_argument)"),
+    "stats reader through the engine": (
+        "fetch_symphony_stats",
+        "alpha_bot_execution.fetch_symphony_stats(planted_argument)",
+    ),
+    "panic sell": ("perform_account_liquidation", "perform_account_liquidation(planted_argument)"),
+    "go to cash sell": ("execute_sell_to_cash", "execute_sell_to_cash(planted_argument)"),
+    "go to cash url": (_GO_TO_CASH_FRAGMENT, 'requests.post(planted_base + "/go-to-cash")'),
+}
+
+
+class TestGroupEScanReportsAPlantedLossyReaderOrMoneyMover:
+    """The entry points of the review run path (and the fetch the panel and API share) are shown
+    to fail when one of the functions the feature must never reach is planted in their body or in
+    a function they call. Every entry point of the group is also checked clean, unplanted, by the
+    tests above, with the same predicate."""
+
+    @pytest.mark.parametrize("form", list(_PLANTED_ENGINE_CALLS))
+    @pytest.mark.parametrize("fn_name", [*_TENURE_RUN_PATH_FN_NAMES, _TENURE_REVIEW_FETCH_FN_NAME])
+    def test_a_planted_call_is_reported_from_the_entry_point_it_is_planted_in(self, fn_name, form):
+        expected, statement = _PLANTED_ENGINE_CALLS[form]
+        hits = _exec_seam_hits(_tree_with_planted_call(fn_name, statement), fn_name)
+        assert any(expected in hit for hit in hits), (
+            f"a {form} planted in {fn_name} was not reported; hits: {hits}"
+        )
+
+    @pytest.mark.parametrize("form", list(_PLANTED_ENGINE_CALLS))
+    @pytest.mark.parametrize(
+        "planted_in, entry_point",
+        [
+            (_RETIREMENT_PREPARE_FN_NAME, _TENURE_REVIEW_JOB_FN_NAME),
+            (_TENURE_REVIEW_JOB_FN_NAME, _RETIREMENT_TICK_WORKER_FN_NAME),
+            (_RETIREMENT_PREPARE_FN_NAME, _RETIREMENT_TICK_WORKER_FN_NAME),
+        ],
+        ids=[
+            "preparation step reached from the job",
+            "job reached from the tick worker",
+            "preparation step reached from the tick worker",
+        ],
+    )
+    def test_a_planted_call_is_reported_from_an_entry_point_that_calls_the_function(
+        self, planted_in, entry_point, form
+    ):
+        expected, statement = _PLANTED_ENGINE_CALLS[form]
+        hits = _exec_seam_hits(_tree_with_planted_call(planted_in, statement), entry_point)
+        assert any(expected in hit for hit in hits), (
+            f"{planted_in} is not on the call graph of {entry_point}; hits: {hits}"
+        )
+
+    def test_the_run_path_entry_points_are_distinct_functions_with_distinct_bodies(self):
+        """Non-vacuity of the list itself: each name is found and none is an alias of another."""
+        tree = _parse_app_py()
+        nodes = [_find_function_def(tree, name) for name in _TENURE_RUN_PATH_FN_NAMES]
+        assert all(node is not None for node in nodes)
+        assert len({id(node) for node in nodes}) == len(_TENURE_RUN_PATH_FN_NAMES)
+        assert len({ast.dump(node) for node in nodes}) == len(_TENURE_RUN_PATH_FN_NAMES)
 
 
 class TestEveryTemplateHelperIsAnEntryPointOfTheScan:
