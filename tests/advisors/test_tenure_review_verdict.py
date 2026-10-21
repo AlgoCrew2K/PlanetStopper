@@ -689,6 +689,7 @@ def test_with_the_backtest_also_available_the_verdict_comes_from_it_and_the_unus
     roster, threshold = _lead_beside_a_young_peer(None)
     lead_input = roster[0]
     window = tr.backtest_window(lead_input, b.AS_OF, threshold)
+    assert window is not None
     realized = b.returns_from_values(lead_input.composer_values)
     lead_input.backtest = b.replica_backtest(
         date.fromisoformat(window["first"]),

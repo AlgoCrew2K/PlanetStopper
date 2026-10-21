@@ -692,6 +692,7 @@ def test_a_composer_series_with_a_day_missing_inside_the_window_is_still_compare
     symphony, returns = _composer_replica()
     symphony.composer_values[REPLICA_SESSIONS[5].isoformat()] = None
     window = tr.backtest_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    assert window is not None
     first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
     assert window["days"] == len(REPLICA_SESSIONS) - 1  # fixture sanity: one day is missing
     symphony.backtest = b.replica_backtest(first, last, returns)
