@@ -635,31 +635,75 @@ _TEMPLATE_REGISTRATION_DECORATORS = frozenset(
     {"template_filter", "template_test", "template_global", "context_processor"}
 )
 _TEMPLATE_REGISTRATION_TABLES = frozenset({"filters", "tests", "globals"})
+# Calls that register their first argument, or their ``f`` keyword, as a template helper.
+_TEMPLATE_REGISTRATION_CALLS = frozenset(
+    {"add_template_filter", "add_template_test", "add_template_global", "context_processor"}
+)
+# Methods of a filters, tests or globals table that store the values they are given.
+_TEMPLATE_TABLE_STORING_METHODS = frozenset({"update", "setdefault"})
+
+
+def _helper_names_in(node: ast.AST | None) -> set[str]:
+    """The bare names a registration hands over: the name itself, the values of a dict
+    literal, or the arguments of ``dict(...)``."""
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.Dict):
+        return {name for value in node.values for name in _helper_names_in(value)}
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
+        names: set[str] = set()
+        for argument in node.args:
+            names |= _helper_names_in(argument)
+        for keyword in node.keywords:
+            names |= _helper_names_in(keyword.value)
+        return names
+    return set()
+
+
+def _is_template_table(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Attribute) and node.attr in _TEMPLATE_REGISTRATION_TABLES) or (
+        isinstance(node, ast.Name) and node.id in _TEMPLATE_REGISTRATION_TABLES
+    )
 
 
 def _registered_template_function_names(tree: ast.Module) -> set[str]:
-    """The names of the functions a module registers for its templates: decorated with
-    ``template_filter``, ``template_test``, ``template_global`` or ``context_processor``, or
-    assigned into a ``filters``, ``tests`` or ``globals`` table (``app.jinja_env.tests[name]
-    = fn``). The template runs each of them on a page load, from outside any call graph."""
+    """The names of the functions a module registers for its templates, by every form Flask
+    and Jinja accept: a ``template_filter``, ``template_test``, ``template_global`` or
+    ``context_processor`` decorator; a call of ``add_template_filter``, ``add_template_test``,
+    ``add_template_global`` or ``context_processor`` with the function; a store into a
+    ``filters``, ``tests`` or ``globals`` table (``app.jinja_env.tests[name] = fn``, or
+    ``.update(...)`` and ``.setdefault(...)`` with the function as a value); and the names a
+    context processor returns in a dict. The template runs each of them on a page load, from
+    outside any call graph."""
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef):
             for decorator in node.decorator_list:
                 target = decorator.func if isinstance(decorator, ast.Call) else decorator
-                if (
+                if not (
                     isinstance(target, ast.Attribute)
                     and target.attr in _TEMPLATE_REGISTRATION_DECORATORS
                 ):
-                    names.add(node.name)
-        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Name):
+                    continue
+                names.add(node.name)
+                if target.attr == "context_processor":
+                    for inner in ast.walk(node):
+                        if isinstance(inner, ast.Return):
+                            names |= _helper_names_in(inner.value)
+        elif isinstance(node, ast.Assign):
             for target in node.targets:
-                if (
-                    isinstance(target, ast.Subscript)
-                    and isinstance(target.value, ast.Attribute)
-                    and target.value.attr in _TEMPLATE_REGISTRATION_TABLES
-                ):
-                    names.add(node.value.id)
+                if isinstance(target, ast.Subscript) and _is_template_table(target.value):
+                    names |= _helper_names_in(node.value)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in _TEMPLATE_REGISTRATION_CALLS:
+                handed = list(node.args[:1]) + [k.value for k in node.keywords if k.arg == "f"]
+                for value in handed:
+                    names |= _helper_names_in(value)
+            elif node.func.attr in _TEMPLATE_TABLE_STORING_METHODS and _is_template_table(
+                node.func.value
+            ):
+                for value in [*node.args, *(k.value for k in node.keywords)]:
+                    names |= _helper_names_in(value)
     return names
 
 
@@ -884,6 +928,105 @@ class TestEveryTemplateHelperIsAnEntryPointOfTheScan:
             "    return 1\n"
         )
         assert _registered_template_function_names(tree) == {"_shout", "_is_odd", "_today"}
+
+
+# Every way Flask and Jinja take a function for a template. The drift guard above is only as
+# strong as the forms it recognizes, so each form is planted and shown to be seen.
+_REGISTRATION_FORMS = [
+    pytest.param("app.add_template_filter(_planted, 'planted')", id="add_template_filter"),
+    pytest.param("app.add_template_filter(_planted)", id="add_template_filter without a name"),
+    pytest.param(
+        "app.add_template_filter(f=_planted, name='planted')", id="add_template_filter by keyword"
+    ),
+    pytest.param("app.add_template_test(_planted, 'planted')", id="add_template_test"),
+    pytest.param("app.add_template_global(_planted, 'planted')", id="add_template_global"),
+    pytest.param("app.jinja_env.filters.update(planted=_planted)", id="filters update by keyword"),
+    pytest.param(
+        "app.jinja_env.tests.update({'planted': _planted})", id="tests update by dict literal"
+    ),
+    pytest.param(
+        "app.jinja_env.globals.update(dict(planted=_planted))", id="globals update by dict call"
+    ),
+    pytest.param("app.jinja_env.filters.setdefault('planted', _planted)", id="filters setdefault"),
+    pytest.param("app.jinja_env.filters['planted'] = _planted", id="filters subscript"),
+    pytest.param("environment.tests['planted'] = _planted", id="tests subscript of another object"),
+    pytest.param(
+        "app.context_processor(_planted)", id="context_processor called with the function"
+    ),
+]
+_PLANTED_HELPER_SOURCE = (
+    "def _planted(value):\n    return composer_draft_client.save_symphony(value)\n"
+)
+_CONTEXT_PROCESSOR_FORMS = [
+    pytest.param(
+        "@app.context_processor\ndef _inject():\n    return {'planted': _planted}\n",
+        id="context processor returning a dict literal",
+    ),
+    pytest.param(
+        "@app.context_processor\ndef _inject():\n    return dict(planted=_planted)\n",
+        id="context processor returning dict()",
+    ),
+]
+
+
+def _unlisted_template_helpers(tree: ast.Module) -> list[str]:
+    return sorted(_registered_template_function_names(tree) - set(_CYCLE_2C_ENTRY_POINT_FN_NAMES))
+
+
+def _real_tree_with(source: str) -> ast.Module:
+    tree = _parse_app_py()
+    tree.body.extend(ast.parse(source).body)
+    ast.fix_missing_locations(tree)
+    return tree
+
+
+class TestEveryRegistrationFormIsSeenByTheDriftGuard:
+    @pytest.mark.parametrize("statement", _REGISTRATION_FORMS)
+    def test_a_function_registered_by_the_form_is_found(self, statement):
+        assert _registered_template_function_names(ast.parse(statement)) == {"_planted"}
+
+    @pytest.mark.parametrize("source", _CONTEXT_PROCESSOR_FORMS)
+    def test_a_name_a_context_processor_returns_is_found_with_the_processor(self, source):
+        assert _registered_template_function_names(ast.parse(source)) == {"_inject", "_planted"}
+
+    def test_two_functions_stored_by_one_update_are_both_found(self):
+        statement = "app.jinja_env.filters.update({'a': _first}, b=_second)"
+        assert _registered_template_function_names(ast.parse(statement)) == {"_first", "_second"}
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "app.add_template_filter('shout')",
+            "app.jinja_env.filters.update()",
+            "app.jinja_env.filters.get('shout')",
+            "registry.update(planted=_planted)",
+            "app.add_url_rule('/x', view_func=_planted)",
+        ],
+        ids=[
+            "a name and no function",
+            "an empty update",
+            "a read of the table",
+            "an update of another object",
+            "a route registration",
+        ],
+    )
+    def test_a_call_that_registers_no_template_function_is_not_reported(self, statement):
+        assert _registered_template_function_names(ast.parse(statement)) == set()
+
+    @pytest.mark.parametrize("statement", _REGISTRATION_FORMS)
+    def test_a_helper_holding_a_symphony_creation_call_registered_by_the_form_is_unlisted(
+        self, statement
+    ):
+        tree = _real_tree_with(_PLANTED_HELPER_SOURCE + statement + "\n")
+        assert _unlisted_template_helpers(tree) == ["_planted"]
+
+    @pytest.mark.parametrize("source", _CONTEXT_PROCESSOR_FORMS)
+    def test_a_helper_returned_by_a_context_processor_is_unlisted_with_the_processor(self, source):
+        tree = _real_tree_with(_PLANTED_HELPER_SOURCE + source)
+        assert _unlisted_template_helpers(tree) == ["_inject", "_planted"]
+
+    def test_the_unplanted_app_has_no_unlisted_helper(self):
+        assert _unlisted_template_helpers(_parse_app_py()) == []
 
 
 # ===========================================================================

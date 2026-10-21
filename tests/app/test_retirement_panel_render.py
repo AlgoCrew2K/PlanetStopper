@@ -2292,6 +2292,7 @@ class TestNoEntryListsItselfAsLeftOut:
 
 _NOT_RECORDED = "not recorded"
 _MARK = "zzmarkerzz"
+_BLANK = "   "  # text of only spaces, which counts as missing
 _GONE = object()  # the key is deleted from the stored record
 _TRUE = r"\bTrue\b"
 _TWELVE_POINT_FIVE = r"(?<![\d.])12\.5(?!\d)"
@@ -2509,7 +2510,7 @@ _POISONS = [
         _BASIS,
         not_recorded=False,
     ),
-    # the name and the tenure line
+    # the name and the lines under it
     _case(
         "display name a list",
         "watch",
@@ -2517,13 +2518,25 @@ _POISONS = [
         ("testid", "tenure-review-name"),
         not_recorded=False,
     ),
+    *[
+        _case(
+            f"display name {label}",
+            "watch",
+            [("display_name", value)],
+            ("testid", "tenure-review-name"),
+            not_recorded=False,
+            keeps=("symphony_id",),
+            absent=(_NOT_RECORDED,),
+        )
+        for label, value in (("missing", _GONE), ("null", None), ("blank", _BLANK))
+    ],
+    # a tenure that is null or of the wrong type reads not recorded on its own line; only a
+    # key that is absent may drop the line
     _case(
         "tenure a boolean",
         "watch",
         [("tenure_trading_days", True)],
         ("testid", "tenure-review-tenure"),
-        not_recorded=False,
-        optional=True,
         absent=(r"\bTrue\b", r"\b1 trading"),
         markers=(_MARK, _TRUE),
     ),
@@ -2532,15 +2545,111 @@ _POISONS = [
         "watch",
         [("tenure_trading_days", 12.5)],
         ("testid", "tenure-review-tenure"),
-        not_recorded=False,
-        optional=True,
         absent=(r"\b12 trading", _TWELVE_POINT_FIVE),
         markers=(_MARK, _TWELVE_POINT_FIVE),
     ),
+    _case(
+        "tenure missing",
+        "watch",
+        [("tenure_trading_days", _GONE)],
+        ("testid", "tenure-review-tenure"),
+        optional=True,
+    ),
+    *[
+        _case(
+            f"tenure {label}",
+            "watch",
+            [("tenure_trading_days", value)],
+            ("testid", "tenure-review-tenure"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in (
+            ("null", None),
+            ("text", _MARK),
+            ("a list", _LIST),
+            ("a dict", _DICT),
+            ("blank", _BLANK),
+        )
+    ],
+    # the eligibility sentence
+    _case(
+        "eligibility missing",
+        "watch",
+        [("eligibility_text", _GONE)],
+        ("testid", "tenure-review-eligibility"),
+        optional=True,
+    ),
+    *[
+        _case(
+            f"eligibility {label}",
+            "watch",
+            [("eligibility_text", value)],
+            ("testid", "tenure-review-eligibility"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in (
+            ("null", None),
+            ("a number", 987654),
+            ("a list", _LIST),
+            ("a dict", _DICT),
+            ("a boolean", True),
+            ("blank", _BLANK),
+        )
+    ],
+    # the reasons and the missing items when the whole value is null or not a list
+    _case(
+        "verdict reasons missing",
+        "watch",
+        [("verdict_reasons", _GONE)],
+        ("testid", "tenure-review-verdict-reasons"),
+        optional=True,
+    ),
+    *[
+        _case(
+            f"verdict reasons {label}",
+            "watch",
+            [("verdict_reasons", value)],
+            ("testid", "tenure-review-verdict-reasons"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in (
+            ("null", None),
+            ("text", _MARK),
+            ("a number", 987654),
+            ("a dict", _DICT),
+            ("a boolean", True),
+            ("blank", _BLANK),
+        )
+    ],
+    _case(
+        "missing items missing",
+        "watch",
+        [("missing_items", _GONE)],
+        ("testid", "tenure-review-missing"),
+        optional=True,
+    ),
+    *[
+        _case(
+            f"missing items {label}",
+            "watch",
+            [("missing_items", value)],
+            ("testid", "tenure-review-missing"),
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in (
+            ("null", None),
+            ("text", _MARK),
+            ("a number", 987654),
+            ("a dict", _DICT),
+            ("a boolean", True),
+            ("blank", _BLANK),
+        )
+    ],
     # the verdict chip
     _case("verdict text missing", "watch", [("verdict_text", _GONE)], _CHIP),
     _case("verdict text null", "watch", [("verdict_text", None)], _CHIP),
     _case("verdict text a list", "watch", [("verdict_text", _LIST)], _CHIP),
+    _case("verdict text blank", "watch", [("verdict_text", _BLANK)], _CHIP),
     # the run header
     _case(
         "as-of day missing",
@@ -2802,25 +2911,42 @@ _POISONS = [
         [("evidence.redundancy.pair.ci_lower.reason", _GONE)],
         _line("redundancy", "ci lower"),
     ),
-    # the pair
-    _case(
-        "pair sibling missing",
-        "watch",
-        [("evidence.redundancy.pair.sibling_name", _GONE)],
-        _line("redundancy", "paired with"),
-    ),
-    _case(
-        "pair sibling null",
-        "watch",
-        [("evidence.redundancy.pair.sibling_name", None)],
-        _line("redundancy", "paired with"),
-    ),
+    # the pair: a sibling name that is missing or blank falls back to the sibling's Composer id
+    *[
+        _case(
+            f"pair sibling {label}",
+            "watch",
+            [("evidence.redundancy.pair.sibling_name", value)],
+            _line("redundancy", "paired with"),
+            not_recorded=False,
+            keeps=("evidence.redundancy.pair.sibling_id",),
+            absent=(_NOT_RECORDED,),
+        )
+        for label, value in (("missing", _GONE), ("null", None), ("blank", _BLANK))
+    ],
     _case(
         "pair sibling a list",
         "watch",
         [("evidence.redundancy.pair.sibling_name", _LIST)],
         _line("redundancy", "paired with"),
+        not_recorded=False,
     ),
+    *[
+        _case(
+            f"pair sibling {label}",
+            "watch",
+            [
+                ("evidence.redundancy.pair.sibling_name", value),
+                ("evidence.redundancy.pair.sibling_id", id_value),
+            ],
+            _line("redundancy", "paired with"),
+        )
+        for label, value, id_value in (
+            ("name and id missing", _GONE, _GONE),
+            ("name and id blank", _BLANK, _BLANK),
+            ("name missing and id null", _GONE, None),
+        )
+    ],
     _case(
         "aligned days missing",
         "watch",
@@ -3171,6 +3297,170 @@ _POISONS = [
             [(f"evidence.long_vix.figures.{name}.value", 12.5)],
             _line("long_vix", name.replace("_", " ")),
             absent=(_TRUNCATED_TWELVE, _TWELVE_POINT_FIVE),
+            markers=(_MARK, _TWELVE_POINT_FIVE),
+        )
+        for name in ("held_days", "co_held_days")
+    ],
+    # text of only spaces counts as missing, in every place a stored text is printed
+    _case("basis label blank", "watch", [("basis.label", _BLANK)], _BASIS),
+    _case(
+        "basis fallback reason blank",
+        "watch",
+        [("basis.fallback_reason", _BLANK)],
+        _BASIS,
+        not_recorded=False,
+        absent=(r";\s*;", r";\s*$"),
+    ),
+    _case(
+        "basis series start blank",
+        "watch",
+        [("basis.series_begins", _BLANK)],
+        _BASIS,
+        not_recorded=False,
+        absent=(r"series begins\s*(;|$)",),
+    ),
+    _case(
+        "basis tenure start blank",
+        "watch",
+        [("basis.tenure_begins", _BLANK)],
+        _BASIS,
+        not_recorded=False,
+        absent=(r"tenure begins\s*$",),
+    ),
+    _case(
+        "trigger blank", "watch", [("__run__.trigger", _BLANK)], _header("tenure-review-trigger")
+    ),
+    *[
+        _case(
+            f"trigger {label}",
+            "watch",
+            [("__run__.trigger", value)],
+            _header("tenure-review-trigger"),
+            optional=True,
+            markers=_ELEMENT_MARKERS,
+        )
+        for label, value in (
+            ("missing", _GONE),
+            ("null", None),
+            ("a list", _LIST),
+            ("a number", 987654),
+        )
+    ],
+    _case(
+        "threshold note blank",
+        "watch",
+        [("__run__.threshold_note", _BLANK)],
+        _header("tenure-review-threshold-note"),
+        optional=True,
+        not_recorded=False,
+    ),
+    _case(
+        "explanation written on blank",
+        "retire",
+        [("explanation", _EXPLANATION), ("explanation_written_on", _BLANK)],
+        ("testid", "retirement-rec-explanation"),
+        not_recorded=False,
+        keeps=("explanation",),
+        absent=(r"written", _NOT_RECORDED),
+    ),
+    _case(
+        "subject blank",
+        "watch",
+        [("evidence.performance.subject", _BLANK)],
+        _line("performance", "subject"),
+    ),
+    _case(
+        "source blank",
+        "watch",
+        [("evidence.performance.source", _BLANK)],
+        _line("performance", "source"),
+    ),
+    _case(
+        "unavailable reason blank",
+        "watch",
+        [("evidence.long_vix.reason", _BLANK)],
+        _line("long_vix", "unavailable"),
+    ),
+    _case(
+        "window start blank",
+        "watch",
+        [("evidence.performance.window.first", _BLANK)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "window end blank",
+        "watch",
+        [("evidence.performance.window.last", _BLANK)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "uncertainty gate result blank",
+        "watch",
+        [("evidence.redundancy.pair.uncertainty_gate.text", _BLANK)],
+        _line("redundancy", "uncertainty gate"),
+    ),
+    _case(
+        "left-out name blank",
+        "watch",
+        [("evidence.marginal.excluded.0.display_name", _BLANK)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "left-out reason blank",
+        "watch",
+        [("evidence.marginal.excluded.0.reason", _BLANK)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "not-compared name blank",
+        "watch",
+        [("evidence.redundancy.not_compared.0.display_name", _BLANK)],
+        _line("redundancy", "bases differ", "has"),
+    ),
+    _case(
+        "not-compared reason blank",
+        "watch",
+        [("evidence.redundancy.not_compared.0.reason", _BLANK)],
+        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+    ),
+    _case(
+        "verdict reason element blank",
+        "watch",
+        [("verdict_reasons.2", _BLANK)],
+        ("testid", "tenure-review-verdict-reasons"),
+        keeps=("verdict_reasons.0", "verdict_reasons.1"),
+    ),
+    _case(
+        "missing item element blank",
+        "watch",
+        [("missing_items.1", _BLANK)],
+        ("testid", "tenure-review-missing"),
+        keeps=("missing_items.0",),
+    ),
+    # subject and source of an unavailable item that shows its window
+    *[
+        _case(
+            f"unavailable item {word} {label}",
+            "keep",
+            [(f"evidence.backtest.{word}", value)],
+            _line("backtest", word),
+        )
+        for word in ("subject", "source")
+        for label, value in (
+            ("missing", _GONE),
+            ("null", None),
+            ("a list", _LIST),
+            ("blank", _BLANK),
+        )
+    ],
+    # a figure whose value rounds to zero or is a fraction of days is never a bare "not computed"
+    *[
+        _case(
+            f"{name.replace('_', ' ')} not a whole number, wording",
+            "steady",
+            [(f"evidence.long_vix.figures.{name}.value", 12.5)],
+            _line("long_vix", name.replace("_", " ")),
+            absent=(r"\bnot computed\b",),
             markers=(_MARK, _TWELVE_POINT_FIVE),
         )
         for name in ("held_days", "co_held_days")
@@ -3723,7 +4013,9 @@ class TestAUnitWordIsNotRepeatedBesideTheFigureItNames:
                         ]
                         where = f"{stored['display_name']} / {fig_name}"
                         assert len(lines) == 1, where
-                        assert unit_word in lines[0].text().lower(), (where, lines[0].text())
+                        # a percent figure carries the percent sign, not the word
+                        shown_unit = "%" if fig["unit"].lower() == "percent" else unit_word
+                        assert shown_unit in lines[0].text().lower(), (where, lines[0].text())
                         shown += 1
         assert shown >= 20, "the records must hold many figures with a unit of their own"
 
@@ -4716,3 +5008,669 @@ class TestALegacyRecommendationWhoseIdCannotBeAKeyDoesNotTakeThePageDown:
         )
         assert client.get("/ai-advisor").status_code == 200
         assert client.get("/api/retirement-recommendations").status_code == 200
+
+
+# ===========================================================================
+# A verdict chip whose text reads "not recorded" has no verdict colour to show: it takes the
+# neutral chip style whatever verdict the entry holds.
+# ===========================================================================
+
+_VERDICT_MODIFIERS = (
+    "tenure-verdict-chip--retire_candidate",
+    "tenure-verdict-chip--watch",
+    "tenure-verdict-chip--keep",
+)
+_UNUSABLE_CHIP_TEXTS = [
+    pytest.param(_GONE, id="missing"),
+    pytest.param(None, id="null"),
+    pytest.param(_LIST, id="a list"),
+    pytest.param(987654, id="a number"),
+    pytest.param(_BLANK, id="blank"),
+]
+
+
+class TestAVerdictChipThatReadsNotRecordedTakesTheNeutralStyle:
+    @pytest.mark.parametrize("verdict", ["retire_candidate", "watch", "keep"])
+    @pytest.mark.parametrize("unusable", _UNUSABLE_CHIP_TEXTS)
+    def test_the_chip_reads_not_recorded_in_the_neutral_style_whatever_the_verdict(
+        self, client, isolated_db, verdict, unusable
+    ):
+        holder = {}
+
+        def edit(record):
+            victim = pb.entry_with_verdict(record, verdict)
+            holder["id"] = victim["symphony_id"]
+            _edit(victim, "verdict_text", unusable)
+
+        _, _, panel = _render_edited(client, "full", edit)
+        chip = pb.entry_node(panel, holder["id"]).find("tenure-review-verdict-chip")
+        assert chip is not None
+        assert chip.text().lower() == _NOT_RECORDED, chip.text()
+        assert "tenure-verdict-chip--none" in chip.classes(), chip.classes()
+        assert not set(_VERDICT_MODIFIERS) & set(chip.classes()), (
+            f"a chip with no verdict text wears the colour of the verdict {verdict}"
+        )
+
+    @pytest.mark.parametrize("verdict", ["retire_candidate", "watch", "keep"])
+    def test_a_chip_with_its_text_keeps_the_style_of_its_verdict(
+        self, client, isolated_db, verdict
+    ):
+        record = _stored_full_run()
+        stored = pb.entry_with_verdict(record, verdict)
+        shown = pb.entry_node(_panel(client), stored["symphony_id"]).find(
+            "tenure-review-verdict-chip"
+        )
+        assert f"tenure-verdict-chip--{verdict}" in shown.classes()
+
+
+# ===========================================================================
+# One wording for an unreadable time: the run line reads the way the notices do.
+# ===========================================================================
+
+_UNREADABLE_RUN_TIMES = [
+    pytest.param(_GONE, id="missing"),
+    pytest.param(None, id="null"),
+    pytest.param("not a timestamp", id="text"),
+    pytest.param(12345, id="a number"),
+    pytest.param("", id="empty"),
+    pytest.param(_BLANK, id="blank"),
+]
+
+
+class TestAnUnreadableRunTimeReadsLikeEveryOtherUnreadableTime:
+    @pytest.mark.parametrize("unusable", _UNREADABLE_RUN_TIMES)
+    def test_the_run_line_says_the_time_is_not_recorded(self, client, isolated_db, unusable):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        _edit(record, "completed_at", unusable)
+        pb.store_run(record)
+        text = _panel(client).find("tenure-review-run-time").text().lower()
+        assert text.startswith("run completed"), text
+        assert _TIME_NOT_RECORDED in text, text
+        assert "unreadable" not in text, "a second wording for the same state"
+        assert not re.search(r"\bNone\b", text)
+        if isinstance(unusable, str) and unusable.strip():
+            assert unusable not in text
+
+    @pytest.mark.parametrize("unusable", _UNREADABLE_RUN_TIMES)
+    def test_the_run_line_and_a_failed_attempt_notice_use_the_same_words(
+        self, client, isolated_db, monkeypatch, unusable
+    ):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        _edit(record, "completed_at", unusable)
+        pb.store_run(record)
+        _run_state(
+            monkeypatch,
+            last_failed_attempt={"reason": "Composer statistics unavailable", "at": None},
+        )
+        panel = _panel(client)
+        run_line = panel.find("tenure-review-run-time").text().lower()
+        notice = panel.find("tenure-review-failed-notice").text().lower()
+        assert _TIME_NOT_RECORDED in run_line and _TIME_NOT_RECORDED in notice, (run_line, notice)
+
+
+# ===========================================================================
+# A figure reads in the words of the plan: a percent figure carries the percent sign,
+# a figure with no value reads "not computable", and a value that rounds to zero prints
+# 0.00 and never -0.00.
+# ===========================================================================
+
+
+def _figure_lines(block: pb.Node, label: str) -> list[pb.Node]:
+    return [
+        n
+        for n in pb.leaf_nodes_containing(block, label)
+        if n.text().lower().startswith(f"{label}:")
+    ]
+
+
+class TestAPercentFigureCarriesThePercentSign:
+    def test_every_percent_figure_is_the_number_and_the_sign_and_never_the_word(
+        self, client, isolated_db
+    ):
+        checked = 0
+        for which in ("full", "edge", "small", "quiet"):
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                node = pb.entry_node(panel, stored["symphony_id"])
+                for name in _PANEL_ITEMS:
+                    item = stored["evidence"][name]
+                    if item["status"] != "available":
+                        continue
+                    block = node.find(f"tenure-review-evidence-{name}")
+                    for fig_name, fig in item["figures"].items():
+                        if fig["unit"].lower() != "percent" or fig["value"] is None:
+                            continue
+                        label = fig_name.replace("_", " ")
+                        where = f"{which} / {stored['display_name']} / {fig_name}"
+                        lines = _figure_lines(block, label)
+                        assert len(lines) == 1, where
+                        text = lines[0].text()
+                        assert any(
+                            re.search(rf"{re.escape(form)}%(?![\w%])", text)
+                            for form in _two_decimal_forms(fig["value"])
+                        ), (where, text)
+                        assert not re.search(r"\bpercent\b", text.lower()), (where, text)
+                        checked += 1
+        assert checked >= 20, f"the records must hold many percent figures, got {checked}"
+
+    def test_a_percent_figure_that_is_zero_reads_zero_point_zero_zero_percent(
+        self, client, isolated_db
+    ):
+        holder = {}
+
+        def edit(record):
+            victim = pb.entry_with_verdict(record, "watch")
+            holder["id"] = victim["symphony_id"]
+            _edit(victim, "evidence.performance.figures.max_drawdown.value", 0.0)
+
+        _, _, panel = _render_edited(client, "full", edit)
+        block = pb.entry_node(panel, holder["id"]).find("tenure-review-evidence-performance")
+        lines = _figure_lines(block, "max drawdown")
+        assert len(lines) == 1
+        assert re.fullmatch(r"max drawdown: 0\.00%", lines[0].text()), lines[0].text()
+
+    def test_a_unit_that_is_not_percent_keeps_its_words(self, client, isolated_db):
+        record = _store_record("full")
+        watch = pb.entry_with_verdict(record, "watch")
+        block = pb.entry_node(_panel(client), watch["symphony_id"]).find(
+            "tenure-review-evidence-marginal"
+        )
+        lines = _figure_lines(block, "total return difference")
+        assert len(lines) == 1
+        assert "percentage points" in lines[0].text(), lines[0].text()
+
+
+class TestAFigureWithNoValueReadsNotComputable:
+    def test_no_line_of_any_record_says_not_computed(self, client, isolated_db):
+        for which in ("full", "edge", "small", "quiet", "gap", "lone", "solo", "apart"):
+            _store_record(which)
+            text = _panel(client).everything().lower()
+            assert "not computed" not in text, f"{which}: the retired wording is back"
+
+    def test_each_null_figure_starts_not_computable_and_keeps_its_stored_reason(
+        self, client, isolated_db
+    ):
+        record = _store_record("edge")
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            for name in _PANEL_ITEMS:
+                item = stored["evidence"][name]
+                if item["status"] != "available" and not item.get("pair"):
+                    continue
+                block = node.find(f"tenure-review-evidence-{name}")
+                for fig_name, reason in _null_figures(item):
+                    label = fig_name.replace("_", " ")
+                    where = f"{stored['display_name']} / {name} / {fig_name}"
+                    lines = [n for n in _figure_lines(block, label) if reason in n.text()]
+                    assert len(lines) == 1, where
+                    assert lines[0].text().lower().startswith(f"{label}: not computable"), (
+                        where,
+                        lines[0].text(),
+                    )
+                    checked += 1
+        assert checked >= 10
+
+    def test_an_undefined_calmar_reads_not_computable_beside_the_figures_that_have_values(
+        self, client, isolated_db
+    ):
+        record = _store_record("edge")
+        steady = pb.entry_of(record, pb.EDGE_IDS["steady"])
+        figures = steady["evidence"]["performance"]["figures"]
+        assert figures["calmar"]["value"] is None, "fixture sanity: an undefined Calmar"
+        block = pb.entry_node(_panel(client), steady["symphony_id"]).find(
+            "tenure-review-evidence-performance"
+        )
+        calmar = _figure_lines(block, "calmar")
+        assert len(calmar) == 1 and calmar[0].text().lower().startswith("calmar: not computable")
+        assert _shows(block, figures["total_return"]["value"])
+
+
+# (item, the label the line starts with, the path of the stored value inside the entry)
+_ZERO_ROUNDING_TARGETS = [
+    pytest.param(
+        "performance",
+        "max drawdown",
+        "evidence.performance.figures.max_drawdown.value",
+        id="a percent figure",
+    ),
+    pytest.param(
+        "marginal",
+        "max drawdown difference",
+        "evidence.marginal.figures.max_drawdown_difference.value",
+        id="a figure in percentage points",
+    ),
+    pytest.param(
+        "redundancy",
+        "stressed correlation",
+        "evidence.redundancy.pair.stressed_correlation.value",
+        id="a figure of the pair",
+    ),
+]
+_ROUNDS_TO_ZERO = [
+    pytest.param(-0.0, id="negative zero"),
+    pytest.param(0.0, id="zero"),
+    pytest.param(-0.0017296, id="a small negative"),
+    pytest.param(0.0017296, id="a small positive"),
+    pytest.param(-0.004999, id="just short of the rounding edge"),
+    pytest.param(-1e-12, id="far below the second decimal"),
+]
+_DOES_NOT_ROUND_TO_ZERO = [
+    pytest.param(-0.0051, "-0.01", id="just past the rounding edge"),
+    pytest.param(-0.5, "-0.50", id="half a point down"),
+    pytest.param(0.0051, "0.01", id="just past the edge, positive"),
+]
+
+
+def _signed_forms(text: str) -> list[str]:
+    return [text, text.replace("-", _MINUS)]
+
+
+class TestAValueThatRoundsToZeroPrintsZero:
+    @pytest.mark.parametrize(("item", "label", "path"), _ZERO_ROUNDING_TARGETS)
+    @pytest.mark.parametrize("value", _ROUNDS_TO_ZERO)
+    def test_the_line_reads_zero_point_zero_zero_with_no_minus_sign(
+        self, client, isolated_db, item, label, path, value
+    ):
+        holder = {}
+
+        def edit(record):
+            victim = pb.entry_with_verdict(record, "watch")
+            holder["id"] = victim["symphony_id"]
+            _edit(victim, path, value)
+
+        _, _, panel = _render_edited(client, "full", edit)
+        block = pb.entry_node(panel, holder["id"]).find(f"tenure-review-evidence-{item}")
+        lines = _figure_lines(block, label)
+        assert len(lines) == 1, [n.text() for n in lines]
+        text = lines[0].text()
+        assert re.match(rf"{re.escape(label)}:\s*0\.00(?!\d)", text), text
+        assert not re.search(rf"[-{_MINUS}]\s*0\.00", text), f"a negative zero is printed: {text!r}"
+
+    @pytest.mark.parametrize(("item", "label", "path"), _ZERO_ROUNDING_TARGETS)
+    @pytest.mark.parametrize(("value", "expected"), _DOES_NOT_ROUND_TO_ZERO)
+    def test_a_value_that_does_not_round_to_zero_keeps_its_sign_and_digits(
+        self, client, isolated_db, item, label, path, value, expected
+    ):
+        holder = {}
+
+        def edit(record):
+            victim = pb.entry_with_verdict(record, "watch")
+            holder["id"] = victim["symphony_id"]
+            _edit(victim, path, value)
+
+        _, _, panel = _render_edited(client, "full", edit)
+        block = pb.entry_node(panel, holder["id"]).find(f"tenure-review-evidence-{item}")
+        lines = _figure_lines(block, label)
+        assert len(lines) == 1
+        text = lines[0].text()
+        assert any(
+            re.match(rf"{re.escape(label)}:\s*{re.escape(form)}(?!\d)", text)
+            for form in _signed_forms(expected)
+        ), text
+
+
+# ===========================================================================
+# A redundancy item that shows no pair prints its reason once, on the line that says the
+# item is not used in the verdict, beside a line that names its status.
+# ===========================================================================
+
+
+class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
+    def test_the_reason_is_on_one_line_and_the_status_is_named_on_another(
+        self, client, isolated_db
+    ):
+        checked = decided_nothing = 0
+        problems = []
+        for which in _REDUNDANCY_RECORDS:
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                item = stored["evidence"]["redundancy"]
+                if item["status"] == "available" or item.get("pair"):
+                    continue
+                where = f"{which} / {stored['display_name']}"
+                block = pb.entry_node(panel, stored["symphony_id"]).find(
+                    "tenure-review-evidence-redundancy"
+                )
+                reason = item["reason"]
+                carrying = [
+                    n
+                    for n in pb.leaf_nodes_containing(block, reason)
+                    if not n.text().lower().startswith(("not compared", "left out"))
+                ]
+                if len(carrying) != 1 or carrying[0].text().count(reason) != 1:
+                    problems.append(f"{where}: reason on {[n.text() for n in carrying]}")
+                    continue
+                if "redundancy" in stored["missing_items"]:
+                    decided_nothing += 1
+                    if not carrying[0].text().lower().startswith(_NOT_USED):
+                        problems.append(f"{where}: the reason is not on the not-used line")
+                status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
+                status_lines = [
+                    n for n in _leaf_lines(block, (status_word,)) if n is not carrying[0]
+                ]
+                if not status_lines:
+                    problems.append(f"{where}: no line names the status {status_word!r}")
+                checked += 1
+        assert problems == []
+        assert checked >= 25 and decided_nothing >= 10, (checked, decided_nothing)
+
+    def test_an_item_that_shows_a_pair_still_states_its_reason_on_the_not_used_line(
+        self, client, isolated_db
+    ):
+        record = _store_record("small")
+        stored = pb.entry_of(record, pb.SMALL_IDS["first"])
+        item = stored["evidence"]["redundancy"]
+        assert item["pair"] and item["status"] == "unavailable", "fixture sanity"
+        block = pb.entry_node(_panel(client), stored["symphony_id"]).find(
+            "tenure-review-evidence-redundancy"
+        )
+        lines = _not_used_lines(block)
+        assert len(lines) == 1 and item["reason"] in lines[0].text()
+
+    def test_the_stored_reason_is_the_one_printed_once(self, client, isolated_db):
+        reason = "a stored reason no template carries"
+        _seed_roster("state:no_peer_composite")
+        record = _RECORD_BUILDERS["state:no_peer_composite"](run_id=pb.RUN_ID_SECOND)
+        victim = pb.entry_of(record, pb.state_id("no_peer_composite", 0))
+        assert victim["evidence"]["redundancy"]["pair"] is None, "fixture sanity"
+        _edit(victim, "evidence.redundancy.reason", reason)
+        pb.store_run(record)
+        block = pb.entry_node(_panel(client), victim["symphony_id"]).find(
+            "tenure-review-evidence-redundancy"
+        )
+        assert block.text().count(reason) == 1, block.text()
+
+
+# ===========================================================================
+# An unavailable or not applicable item that shows a window also prints its stored
+# subject and source, because every figure and window the panel shows carries both.
+# ===========================================================================
+
+
+class TestAnItemThatShowsAWindowNamesItsSubjectAndSource:
+    def test_every_unavailable_item_with_a_window_has_a_subject_line_and_a_source_line(
+        self, client, isolated_db
+    ):
+        checked = 0
+        problems = []
+        for which in _REDUNDANCY_RECORDS:
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                node = pb.entry_node(panel, stored["symphony_id"])
+                for name in _PANEL_ITEMS:
+                    item = stored["evidence"][name]
+                    if item["status"] == "available" or not isinstance(item.get("window"), dict):
+                        continue
+                    block = node.find(f"tenure-review-evidence-{name}")
+                    for word in ("subject", "source"):
+                        lines = [
+                            n
+                            for n in pb.leaf_nodes_containing(block, item[word])
+                            if n.text().lower().startswith(f"{word}:")
+                        ]
+                        if len(lines) != 1:
+                            problems.append(f"{which} / {stored['display_name']} / {name}: {word}")
+                    checked += 1
+        assert problems == []
+        assert checked >= 30, (
+            f"the records must hold many unavailable items with a window: {checked}"
+        )
+
+    def test_the_stored_subject_and_source_are_the_ones_printed(self, client, isolated_db):
+        holder = {}
+
+        def edit(record):
+            victim = pb.entry_with_verdict(record, "keep")
+            holder["id"] = victim["symphony_id"]
+            assert victim["evidence"]["backtest"]["status"] == "unavailable", "fixture sanity"
+            _edit(victim, "evidence.backtest.subject", "an edited backtest subject")
+            _edit(victim, "evidence.backtest.source", "an edited backtest source")
+
+        _, _, panel = _render_edited(client, "full", edit)
+        text = pb.entry_node(panel, holder["id"]).find("tenure-review-evidence-backtest").text()
+        assert "subject: an edited backtest subject" in text
+        assert "source: an edited backtest source" in text
+
+
+# ===========================================================================
+# Text of only spaces counts as missing: it leaves no empty line behind.
+# ===========================================================================
+
+_SLOT_CLASSES = frozenset({"retirement-rec-meta", "retirement-rec-gates", "retirement-rec-basis"})
+
+
+def _empty_lines(block: pb.Node) -> list[pb.Node]:
+    return [
+        n
+        for n in block.walk()
+        if not any(isinstance(c, pb.Node) for c in n.children)
+        and not n.text()
+        and _SLOT_CLASSES & set(n.classes())
+    ]
+
+
+class TestBlankTextLeavesNoEmptyLine:
+    @pytest.mark.parametrize(
+        ("which", "path", "item"),
+        [
+            pytest.param("full", "evidence.redundancy.pair.note", "redundancy", id="pair note"),
+            pytest.param("quiet", "evidence.redundancy.summary", "redundancy", id="summary"),
+            pytest.param("full", "evidence.performance.label", "performance", id="item label"),
+        ],
+    )
+    def test_the_box_has_no_line_without_text(self, client, isolated_db, which, path, item):
+        holder = {}
+
+        def edit(record):
+            victim = (
+                pb.entry_with_verdict(record, "watch") if which == "full" else record["entries"][0]
+            )
+            holder["id"] = victim["symphony_id"]
+            _edit(victim, path, _BLANK)
+
+        _, _, panel = _render_edited(client, which, edit)
+        block = pb.entry_node(panel, holder["id"]).find(f"tenure-review-evidence-{item}")
+        assert [n.tag for n in _empty_lines(block)] == [], block.text()
+
+
+# ===========================================================================
+# The legacy recommendation cards read their numbers through the same helpers as the
+# review entries: a value that is not a finite number reads "not recorded", an integer too
+# large for a float never takes the page down, and a figure that rounds to zero prints 0.00.
+# They show only while no review run is stored.
+# ===========================================================================
+
+_LEGACY_UNUSABLE = [
+    pytest.param("0.7", id="text"),
+    pytest.param([0.7], id="a list"),
+    pytest.param({"k": 0.7}, id="a dict"),
+    pytest.param(True, id="a boolean"),
+]
+_LEGACY_LEAKS = (r"\b0\.7\b", r"\bTrue\b", r"\[", r"\{")
+
+
+def _store_legacy_row(candidate_id="cand-legacy", sibling_id="sib-legacy", **fields) -> dict:
+    raw = _sample_raw_response(candidate_id, sibling_id)
+    raw.update(fields)
+    subject = candidate_id if isinstance(candidate_id, str) else "bad-row"
+    db_module.insert_advisor_observation(
+        advisor_role="RETIREMENT_RECOMMENDATION",
+        subject_type="symphony",
+        subject_id=subject,
+        symphony_id=subject,
+        verdict="retire_candidate",
+        raw_response=raw,
+    )
+    return raw
+
+
+def _only_legacy_card(client) -> pb.Node:
+    cards = _panel(client).find_all("retirement-recommendation-card")
+    assert len(cards) == 1, f"expected one legacy card, got {len(cards)}"
+    return cards[0]
+
+
+def _gap_text(card: pb.Node) -> str:
+    lines = pb.leaf_nodes_containing(card, "composite gap")
+    assert lines, "the card has no composite gap line"
+    return lines[0].text()
+
+
+class TestALegacyCardReadsItsNumbersThroughTheNumberHelpers:
+    @pytest.fixture(autouse=True)
+    def roster(self, isolated_db):
+        _seed_symphony_roster("cand-legacy", "sib-legacy")
+
+    @pytest.mark.parametrize("bad", _LEGACY_UNUSABLE)
+    def test_a_correlation_of_the_wrong_type_reads_not_recorded_and_the_page_answers_200(
+        self, client, bad
+    ):
+        _store_legacy_row(correlation=bad)
+        card = _only_legacy_card(client)
+        text = card.find("retirement-rec-correlation").text()
+        assert _NOT_RECORDED in text.lower(), text
+        for leak in _LEGACY_LEAKS:
+            assert not re.search(leak, text), (leak, text)
+        assert "0.55" in _gap_text(card), "another figure of the card changed"
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    @pytest.mark.parametrize("side", ["sibling_composite", "candidate_composite"])
+    @pytest.mark.parametrize("bad", _LEGACY_UNUSABLE)
+    def test_a_composite_of_the_wrong_type_makes_the_gap_read_not_recorded(self, client, side, bad):
+        _store_legacy_row(**{side: bad})
+        card = _only_legacy_card(client)
+        text = _gap_text(card)
+        assert _NOT_RECORDED in text.lower(), text
+        for leak in _LEGACY_LEAKS:
+            assert not re.search(leak, text), (leak, text)
+        assert "0.80" in card.find("retirement-rec-correlation").text()
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    def test_a_correlation_too_large_for_a_float_prints_its_digits_or_reads_not_recorded(
+        self, client
+    ):
+        _store_legacy_row(correlation=10**400)
+        card = _only_legacy_card(client)
+        text = card.find("retirement-rec-correlation").text()
+        assert _NOT_RECORDED in text.lower() or str(10**400) in text, text[:120]
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    @pytest.mark.parametrize("side", ["sibling_composite", "candidate_composite"])
+    def test_a_composite_too_large_for_a_float_makes_the_gap_read_not_recorded(self, client, side):
+        _store_legacy_row(**{side: 10**400})
+        card = _only_legacy_card(client)
+        assert _NOT_RECORDED in _gap_text(card).lower()
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    def test_ordinary_numbers_print_as_two_decimals(self, client):
+        _store_legacy_row(correlation=0.8, sibling_composite=0.75, candidate_composite=0.2)
+        card = _only_legacy_card(client)
+        assert card.find("retirement-rec-correlation").text().endswith("0.80")
+        assert re.search(r"composite gap:\s*0\.55\b", _gap_text(card).lower())
+
+    @pytest.mark.parametrize(
+        ("sibling", "candidate"),
+        [(0.2, 0.2005), (0.2, 0.2), (0.2005, 0.2), (0.25, 0.2500000001)],
+        ids=["gap just below zero", "no gap", "gap just above zero", "gap far below the decimal"],
+    )
+    def test_a_gap_that_rounds_to_zero_reads_zero_point_zero_zero(self, client, sibling, candidate):
+        _store_legacy_row(sibling_composite=sibling, candidate_composite=candidate)
+        text = _gap_text(_only_legacy_card(client))
+        assert re.search(r"composite gap:\s*0\.00\b", text.lower()), text
+        assert not re.search(rf"[-{_MINUS}]\s*0\.00", text), text
+
+    def test_a_correlation_that_rounds_to_zero_reads_zero_point_zero_zero(self, client):
+        _store_legacy_row(correlation=-0.0004)
+        text = _only_legacy_card(client).find("retirement-rec-correlation").text()
+        assert re.search(r"correlation:\s*0\.00\b", text.lower()), text
+        assert not re.search(rf"[-{_MINUS}]\s*0\.00", text), text
+
+
+# ===========================================================================
+# A recommendation row whose candidate_id or sibling_id is a list or a dict degrades only
+# itself: the display-name refresh skips it, and every other row and card still renders.
+# ===========================================================================
+
+_BAD_ROW_IDS = [
+    pytest.param("candidate_id", ["bad"], id="candidate id a list"),
+    pytest.param("candidate_id", {"k": "v"}, id="candidate id a dict"),
+    pytest.param("sibling_id", ["bad"], id="sibling id a list"),
+    pytest.param("sibling_id", {"k": "v"}, id="sibling id a dict"),
+]
+
+
+def _seed_named_roster() -> None:
+    db_module.save_state(
+        {
+            "cand-good": {"name": "Good Candidate Name", "logic_holdings": {"AAPL": 1.0}},
+            "sib-good": {"name": "Good Sibling Name", "logic_holdings": {"AAPL": 1.0}},
+        }
+    )
+
+
+def _insert_row(raw: dict, subject_id: str) -> None:
+    db_module.insert_advisor_observation(
+        advisor_role="RETIREMENT_RECOMMENDATION",
+        subject_type="symphony",
+        subject_id=subject_id,
+        symphony_id=subject_id,
+        verdict="retire_candidate",
+        raw_response=raw,
+    )
+
+
+class TestARecommendationRowWhoseIdCannotBeAKeyDegradesOnlyItself:
+    @pytest.mark.parametrize(("field", "bad"), _BAD_ROW_IDS)
+    def test_with_no_run_the_other_rows_and_cards_keep_their_names(
+        self, client, isolated_db, field, bad
+    ):
+        _seed_named_roster()
+        _insert_row(_sample_raw_response("cand-good", "sib-good"), "cand-good")
+        broken = _sample_raw_response("cand-other", "sib-other")
+        broken[field] = bad
+        _insert_row(broken, "cand-other")
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        rows = pb.strict_json(resp)["recommendations"]
+        listed = [r for r in rows if r.get("candidate_id") == "cand-good"]
+        assert len(listed) == 1, "the valid row was lost beside the broken one"
+        assert listed[0]["candidate_name"] == "Good Candidate Name"
+        assert listed[0]["sibling_name"] == "Good Sibling Name"
+        assert listed[0]["approval_status"] == "pending"
+        shown = [
+            card
+            for card in _panel(client).find_all("retirement-recommendation-card")
+            if "Good Candidate Name" in card.text()
+        ]
+        assert len(shown) == 1, "the valid card is not on the page"
+        assert "kept: Good Sibling Name" in shown[0].text()
+
+    @pytest.mark.parametrize(("field", "bad"), _BAD_ROW_IDS)
+    def test_with_a_run_the_rows_it_owns_keep_their_names(self, client, isolated_db, field, bad):
+        pb.seed_bot_state()
+        record = pb.store_full_run()
+        candidate = pb.entry_with_verdict(record, "retire_candidate")
+        broken = pb.recommendation_for(record, candidate)
+        broken["candidate_id"] = "cand-other"
+        broken[field] = bad
+        _insert_row(broken, "cand-other")
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        data = pb.strict_json(resp)
+        assert data["review_read_failed"] is False
+        listed = [
+            r for r in data["recommendations"] if r.get("candidate_id") == candidate["symphony_id"]
+        ]
+        assert len(listed) == 1, "the valid row was lost beside the broken one"
+        assert listed[0]["candidate_name"] == candidate["display_name"]
+        assert listed[0]["approval_status"] == "pending"
+        entry = pb.entry_node(_panel(client), candidate["symphony_id"])
+        approve, reject = _lifecycle_buttons(entry)
+        assert len(approve) == 1 and len(reject) == 1, "the review entry lost its decision buttons"
