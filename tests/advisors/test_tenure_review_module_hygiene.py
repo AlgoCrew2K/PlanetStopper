@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import math
 import os
 import re
 import subprocess
@@ -186,9 +187,10 @@ import advisors.tenure_review as tr
 print("imported", hasattr(tr, "build_review"))
 """
 
-# A pair whose first series is a wave and whose second follows it at about 0.99, with
-# enough days for the uncertainty gate; the probe prints the structural gate for a pair one
-# day short of the days it needs and a pair with exactly that many.
+# A pair whose first series is a wave and whose second follows it at about 0.99, with enough
+# days for the uncertainty gate. For each requested day count the probe prints the structural
+# gate of the review and whether the recommender's own stressed-window function gave no answer
+# for the same two series (its subset is too thin, as these series have variance everywhere).
 _NEEDS_PROBE = """
 import json
 import math
@@ -207,10 +209,15 @@ def gate(days):
     first = [math.sin(0.37 * i) + 0.1 * math.sin(2.9 * i) for i in range(days)]
     second = [0.95 * v + 0.05 * math.cos(1.3 * i) for i, v in enumerate(first)]
     pair = tr.evaluate_redundancy({{"a": dict(zip(keys, first)), "b": dict(zip(keys, second))}})[0]
-    return pair["structural_gate"]
+    thin = retirement_recommender._compute_stressed_correlation(first, second) is None
+    return {{
+        "state": pair["structural_gate"]["state"],
+        "text": pair["structural_gate"]["text"],
+        "recommender_gives_no_answer": thin,
+    }}
 
 
-print(json.dumps({{"short": gate({short}), "enough": gate({enough})}}))
+print(json.dumps({{str(days): gate(days) for days in {sweep!r}}}))
 """
 
 
@@ -246,26 +253,43 @@ def test_importing_the_module_returns_whatever_the_recommenders_stress_fraction_
     assert done.stdout.strip().splitlines()[-1] == "imported True"
 
 
-def test_the_days_the_structural_gate_needs_follow_the_recommenders_stress_fraction(tmp_path):
-    """At a fraction of 2 percent the stressed window reaches the recommender's minimum of
-    10 days at 451 aligned days (ceil of 2 percent of 451 is 10, of 450 is 9), found here
-    by a bounded search over integers. The pair one day short reads insufficient data and
-    names that count; the pair with exactly that many is evaluated. Rejects a count typed
-    for the default fraction."""
-    fraction = 0.02
-    percent = round(fraction * 100)
+@pytest.mark.parametrize(
+    "fraction",
+    [0.02, 0.025, 0.0333, 0.037, 0.05, 0.0667, 0.004],
+    ids=lambda fraction: f"stress_fraction_{fraction}",
+)
+def test_the_days_the_structural_gate_needs_follow_the_recommenders_stress_fraction(
+    fraction, tmp_path
+):
+    """The recommender's stressed window holds ceil(fraction * n) of n aligned days and is
+    read from 10 of them. The least n that gives 10 is found here by a bounded search over
+    integers with that same product. For a sweep of day counts around it, in a fresh
+    interpreter that sets the fraction before the module is imported, the review's
+    structural gate reads insufficient data exactly where the recommender's own function
+    gives no answer, and the text names that count. Rejects a count typed for the default
+    fraction, and a fraction rounded to a whole percent before it is applied (2.5 percent
+    read as 2 needs 451 days where the recommender's window reaches 10 days at 361)."""
     minimum = retirement_recommender.STRESS_MIN_OBS
-    limit = minimum * 100 // percent + 2
-    needed = next(n for n in range(1, limit) if -(-n * percent // 100) >= minimum)
-    code = _NEEDS_PROBE.format(
-        root=str(_REPO_ROOT), fraction=fraction, short=needed - 1, enough=needed
+    limit = math.ceil(minimum / fraction) + 2
+    needed = next(n for n in range(1, limit) if math.ceil(fraction * n) >= minimum)
+    uncertainty_floor = retirement_recommender.MIN_OBS_FLOOR
+    sweep = sorted(
+        {max(uncertainty_floor + 5, needed - 25), needed - 1, needed, needed + 1, needed + 30}
     )
+    code = _NEEDS_PROBE.format(root=str(_REPO_ROOT), fraction=fraction, sweep=sweep)
     done = _run_probe(code, tmp_path)
     assert done.returncode == 0, done.stderr[-2000:]
-    gates = json.loads(done.stdout.strip().splitlines()[-1])
-    assert gates["short"]["state"] == "insufficient data"
-    assert gates["short"]["text"] == f"insufficient data: needs {needed} aligned days"
-    assert gates["enough"]["state"] not in ("insufficient data", "not evaluated")
+    gates = {
+        int(days): gate for days, gate in json.loads(done.stdout.strip().splitlines()[-1]).items()
+    }
+    assert sorted(gates) == sweep
+    for days, gate in gates.items():
+        too_few = days < needed
+        # fixture sanity: the recommender's function agrees with the search above
+        assert gate["recommender_gives_no_answer"] is too_few, days
+        assert (gate["state"] == "insufficient data") is too_few, days
+        if too_few:
+            assert gate["text"] == f"insufficient data: needs {needed} aligned days", days
 
 
 # ---------------------------------------------------------------------------

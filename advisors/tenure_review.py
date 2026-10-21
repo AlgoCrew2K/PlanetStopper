@@ -19,12 +19,13 @@ from __future__ import annotations
 import itertools
 import math
 import re
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 import analytics
@@ -132,9 +133,14 @@ _SHORT_SERIES_REASON = (
     f"Composer series has fewer than {_MIN_COMPOSER_POINTS} usable points in the tenure"
 )
 
-# Share of aligned days forming the stressed window, as an integer percent so the
-# day count is exact (a float product can land on the wrong side of an integer).
-_STRESS_PERCENT: int = round(retirement_recommender.STRESS_WINDOW_FRACTION * _FRACTION_TO_PERCENT)
+# Aligned days the search for the structural gate's minimum steps back from its closed-form
+# estimate, so that float rounding of the estimate cannot skip the least qualifying count
+# (unit: aligned days).
+_NEEDS_SEARCH_BACKOFF: int = 2
+
+# Most missing sessions a shadow-hole reason names before it summarizes the rest
+# (a display bound; unit: sessions).
+_MAX_NAMED_MISSING_SESSIONS: int = 10
 
 # Names of the six evidence items, in display order.
 EVIDENCE_ITEM_ORDER: tuple[str, ...] = (
@@ -281,6 +287,10 @@ _LONG_VIX_SOURCE = "Composer account holdings by day"
 # Reason shown for a figure that needs account holdings the caller did not supply.
 _HOLDINGS_UNAVAILABLE_REASON = "holdings unavailable"
 
+# Reason the redundancy item is withheld when a same-basis peer's correlation is undefined
+# (a flat series), because redundancy with that peer cannot be ruled out.
+_UNDEFINED_PEER_REASON = "a peer's correlation is undefined"
+
 # Reason shown for an interval bound that was not computed.
 _INTERVAL_NOT_COMPUTED_REASON = "interval not computed"
 
@@ -398,16 +408,21 @@ def _is_session(d: date) -> bool:
     return d in _sessions_in_year(d.year)
 
 
+def _walk_back_to_session(d: date) -> date:
+    """``d`` itself when it is a session, else the latest session before it; the walk stops
+    at the calendar floor."""
+    while not _is_session(d) and d > CALENDAR_FLOOR:
+        d -= timedelta(days=1)
+    return d
+
+
 def as_of_trading_day(now_et: datetime) -> date:
     """The latest NYSE session that has closed at ``now_et`` (read in Eastern time)."""
     now = now_et.astimezone(_ET) if now_et.tzinfo is not None else now_et
     today = now.date()
     if _is_session(today) and now.time() >= market_calendar.session_close(today):
         return today
-    d = today - timedelta(days=1)
-    while not _is_session(d) and d > CALENDAR_FLOOR:
-        d -= timedelta(days=1)
-    return d
+    return _walk_back_to_session(today - timedelta(days=1))
 
 
 def count_trading_days(start: date, end: date) -> int:
@@ -460,21 +475,18 @@ def _parse_date(text: object) -> date | None:
 
 def _previous_session(d: date) -> date | None:
     """The NYSE session before ``d``, or None when none lies after the calendar floor."""
-    d -= timedelta(days=1)
-    while d > CALENDAR_FLOOR:
-        if _is_session(d):
-            return d
-        d -= timedelta(days=1)
-    return None
+    previous = _walk_back_to_session(d - timedelta(days=1))
+    return previous if previous > CALENDAR_FLOOR else None
 
 
 def _points_by_date(
-    values: Mapping, start: date, end: date, usable: Callable[[object], float | None]
-) -> dict[date, float]:
+    values: Mapping, start: date, end: date, usable: Callable[[Any], Any]
+) -> dict[date, Any]:
     """Usable values in [start, end] on NYSE sessions by date. A key is read as the date in
     its first ten characters; among keys naming one date the greatest key with a usable
-    value wins, whatever the order of the mapping. A point on a closed day is dropped."""
-    points: dict[date, float] = {}
+    value (one that ``usable`` does not turn into None) wins, whatever the order of the
+    mapping. A point on a closed day is dropped."""
+    points: dict[date, Any] = {}
     for key in sorted(values, key=str):
         d = _parse_date(key)
         value = usable(values[key])
@@ -565,7 +577,7 @@ def _item(
     source: str,
     window: dict | None = None,
     figures: dict | None = None,
-    **extra,
+    **extra: object,
 ) -> dict:
     return {
         "status": status,
@@ -588,7 +600,7 @@ def _unavailable(
     *,
     status: str = "unavailable",
     window: dict | None = None,
-    **extra,
+    **extra: object,
 ) -> dict:
     figures = {name: _figure(None, unit, reason) for name, unit in specs}
     return _item(status, reason, label, subject, source, window, figures, **extra)
@@ -600,22 +612,26 @@ def _unavailable(
 
 
 def _stressed_day_count(aligned_days: int) -> int:
-    """Days in the stressed window: the share of aligned days, rounded up."""
-    return -(-aligned_days * _STRESS_PERCENT // _FRACTION_TO_PERCENT)
+    """Days in the stressed window, counted as the recommender counts them."""
+    return math.ceil(retirement_recommender.STRESS_WINDOW_FRACTION * aligned_days)
 
 
-def _days_for_stressed_window(stress_percent: int, min_obs: int) -> int:
-    """Fewest aligned days whose stressed window reaches ``min_obs``: the least n with
-    ceil(n * percent / 100) >= min_obs, which is n > 100 * (min_obs - 1) / percent. A
-    percent below 1 is read as 1 so that the count stays finite."""
-    percent = max(stress_percent, 1)
-    return _FRACTION_TO_PERCENT * (min_obs - 1) // percent + 1
-
-
-# Aligned days at which the stressed window first reaches the recommender's minimum.
-_STRUCTURAL_NEEDS_DAYS = _days_for_stressed_window(
-    _STRESS_PERCENT, retirement_recommender.STRESS_MIN_OBS
-)
+def _structural_needs_days() -> int:
+    """Fewest aligned days whose stressed window reaches the recommender's minimum. The
+    least n with ceil(fraction * n) >= minimum lies just above (minimum - 1) / fraction, so
+    the search starts there and is bounded. A fraction that can never reach the minimum
+    gives ``sys.maxsize``: no pair is then long enough."""
+    fraction = retirement_recommender.STRESS_WINDOW_FRACTION
+    minimum = retirement_recommender.STRESS_MIN_OBS
+    if not fraction > 0:
+        return sys.maxsize
+    try:
+        days = max(1, int((minimum - 1) / fraction) - _NEEDS_SEARCH_BACKOFF)
+    except OverflowError:
+        return sys.maxsize
+    while _stressed_day_count(days) < minimum:
+        days += 1
+    return days
 
 
 def _insufficient_text(days: int) -> str:
@@ -659,9 +675,11 @@ def _evaluate_pair(a: str, b: str, series: Mapping, tickers: Mapping | None) -> 
 
     stressed = None
     if uncertainty["state"] != _GATE_PASSED:
-        structural = _gate(_GATE_NOT_EVALUATED, "not evaluated: uncertainty gate not met")
+        structural = _gate(
+            _GATE_NOT_EVALUATED, f"{_GATE_NOT_EVALUATED}: uncertainty gate {uncertainty['state']}"
+        )
     elif _stressed_day_count(n_obs) < retirement_recommender.STRESS_MIN_OBS:
-        structural = _gate(_GATE_INSUFFICIENT, _insufficient_text(_STRUCTURAL_NEEDS_DAYS))
+        structural = _gate(_GATE_INSUFFICIENT, _insufficient_text(_structural_needs_days()))
     else:
         stressed = retirement_recommender._compute_stressed_correlation(vals_a, vals_b)
         if stressed is None:
@@ -946,26 +964,20 @@ def long_vix_cofiring(
     live = set(live_ids)
     first, last = window.get("first"), window.get("last")
     first_day, last_day = _parse_date(first), _parse_date(last)
-    keys_by_date: dict[date, list[str]] = {}
-    for key in sorted(holdings.days, key=str, reverse=True):
-        day = _parse_date(key)
-        if (
-            day is not None
-            and first_day is not None
-            and last_day is not None
-            and first_day <= day <= last_day
-            and subject_id in holdings.days[key]
-        ):
-            keys_by_date.setdefault(day, []).append(key)
-    if not keys_by_date:
+    held, known = {}, {}
+    if first_day is not None and last_day is not None:
+        held = _points_by_date(
+            holdings.days, first_day, last_day, lambda day: day if subject_id in day else None
+        )
+        # Per date the greatest key whose holdings are all known stands for the day.
+        known = _points_by_date(
+            holdings.days,
+            first_day,
+            last_day,
+            lambda day: _known_day(day, live) if subject_id in day else None,
+        )
+    if not held:
         return unavailable("no holdings for this symphony in the window")
-    # Per date the greatest key whose holdings are all known stands for the day.
-    known = {}
-    for day in sorted(keys_by_date):
-        for key in keys_by_date[day]:
-            if parsed := _known_day(holdings.days[key], live):
-                known[day] = parsed
-                break
     if not known:
         return unavailable("holding values unknown on every day in the window")
 
@@ -1027,25 +1039,26 @@ def _available(evidence: Mapping, name: str) -> Mapping | None:
     return item if item is not None and item.get("status") == "available" else None
 
 
-def _pair_decided(item: Mapping) -> bool:
-    """False when the item shows a pair with a gate that could not decide (too few days
-    or an undefined statistic); such a pair is no evidence. A gate skipped because the
-    interval was not met is a decision."""
+def _redundancy_is_evidence(item: Mapping) -> bool:
+    """Whether an available redundancy item can support a verdict. A shown pair does when
+    it was compared on at least the aligned days the structural gate needs and its
+    correlation has an interval (its uncertainty gate is not undefined), whatever the gates
+    concluded. An item with no pair is evidence as it stands."""
     pair = item.get("pair")
     if not pair:
         return True
-    states = {
-        (pair.get(gate) or {}).get("state") for gate in ("uncertainty_gate", "structural_gate")
-    }
-    return not states & {_GATE_INSUFFICIENT, _GATE_UNDEFINED}
+    return (
+        pair["n_obs"] >= _structural_needs_days()
+        and pair["uncertainty_gate"]["state"] != _GATE_UNDEFINED
+    )
 
 
 def decide_verdict(evidence: Mapping) -> dict:
     """Retire-candidate, watch, keep or no verdict, from the redundancy, backtest and
-    marginal items, with the reasons and the unavailable items. A redundancy item whose
-    shown pair could not decide counts as unavailable."""
+    marginal items, with the reasons and the unavailable items. A redundancy item that
+    shows a pair which is no evidence counts as unavailable."""
     redundancy = _available(evidence, "redundancy")
-    if redundancy is not None and not _pair_decided(redundancy):
+    if redundancy is not None and not _redundancy_is_evidence(redundancy):
         redundancy = None
     missing = [
         name
@@ -1149,6 +1162,10 @@ def _fallback_reason(sym: SymphonyInput) -> str:
 
 
 def _prepare(sym: SymphonyInput, as_of: date, threshold: int) -> _Prep:
+    """Tenure, basis and realized window of one symphony. The Composer series is the basis
+    when it has enough usable points; otherwise the shadow rows are, and the session before
+    the first usable row opens the window when it lies inside the tenure (its own return is
+    not counted); with none inside the tenure the first row serves as its own baseline."""
     start_day = _parse_date(sym.invested_since) if sym.invested_since else None
     if start_day is not None and start_day < CALENDAR_FLOOR:
         start_day = None
@@ -1314,7 +1331,17 @@ def _flagged_and_shown(sid: str, mine: Sequence[dict], scores: Mapping) -> tuple
     return flagged, max(pool, key=lambda x: x["correlation"]) if pool else None
 
 
-def _redundancy_unavailable(p: _Prep, reason: str) -> dict:
+def _not_compared(p: _Prep, preps: Sequence[_Prep]) -> list[dict]:
+    """The peers with a series on another basis, which no pair could compare."""
+    return [
+        {"display_name": q.sym.display_name, "reason": _BASES_DIFFER_REASON}
+        for q in preps
+        if q is not p and q.kind not in (_KIND_NONE, p.kind)
+    ]
+
+
+def _redundancy_unavailable(p: _Prep, reason: str, not_compared: list[dict] | None = None) -> dict:
+    extra = {} if not_compared is None else {"not_compared": not_compared}
     return _item(
         "unavailable",
         reason,
@@ -1325,6 +1352,7 @@ def _redundancy_unavailable(p: _Prep, reason: str) -> dict:
         {},
         retire_candidate=False,
         pair=None,
+        **extra,
     )
 
 
@@ -1342,10 +1370,12 @@ def _no_pair_item(p: _Prep, preps: Sequence[_Prep]) -> dict:
             {},
             retire_candidate=False,
             pair=None,
+            not_compared=[],
         )
-    if any(q.kind not in (_KIND_NONE, p.kind) for q in peers):
-        return _redundancy_unavailable(p, _BASES_DIFFER_REASON)
-    return _redundancy_unavailable(p, "no history for any other symphony")
+    not_compared = _not_compared(p, preps)
+    if not_compared:
+        return _redundancy_unavailable(p, _BASES_DIFFER_REASON, not_compared)
+    return _redundancy_unavailable(p, "no history for any other symphony", not_compared)
 
 
 def _redundancy_item(
@@ -1356,16 +1386,33 @@ def _redundancy_item(
     scores: Mapping,
     reasons: Mapping[str, str | None],
 ) -> dict:
-    """The redundancy item: the pair the row shows and whether it flags the symphony. A
-    symphony with no pair at the screen threshold says so only when some pair could be
-    evaluated; when every pair has too few aligned days the item is unavailable."""
+    """The redundancy item: the pair the row shows and whether it flags the symphony.
+
+    A symphony with no pair at the screen threshold says ``no redundant sibling`` only when
+    that claim is evidence: every other symphony on its basis, eligible or not, was compared
+    with it on at least the recommender's minimum aligned days with a defined correlation.
+    Otherwise the item is unavailable and its reason says why (every pair too short, a peer
+    compared on too few days, or a peer whose correlation is undefined). A shown pair stays
+    available whatever its length; the verdict decides whether it is evidence. Every item
+    lists the peers that were not compared because their basis differs."""
     sid = p.sym.symphony_id
     mine = _pairs_of(sid, pairs)
     if not mine:
         return _no_pair_item(p, preps)
     flagged, shown = _flagged_and_shown(sid, mine, scores)
-    if shown is None and all(x["uncertainty_gate"]["state"] == _GATE_INSUFFICIENT for x in mine):
-        return _redundancy_unavailable(p, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR))
+    not_compared = _not_compared(p, preps)
+    if shown is None:
+        if all(x["uncertainty_gate"]["state"] == _GATE_INSUFFICIENT for x in mine):
+            return _redundancy_unavailable(
+                p, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR), not_compared
+            )
+        short = [x for x in mine if x["n_obs"] < retirement_recommender.MIN_OBS_FLOOR]
+        if short:
+            return _redundancy_unavailable(
+                p, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR), not_compared
+            )
+        if any(x["correlation"] is None for x in mine):
+            return _redundancy_unavailable(p, _UNDEFINED_PEER_REASON, not_compared)
     pair = window = None
     extra = {"summary": _NO_SIBLING_TEXT}
     if shown is not None:
@@ -1384,6 +1431,7 @@ def _redundancy_item(
         {},
         retire_candidate=bool(flagged),
         pair=pair,
+        not_compared=not_compared,
         **extra,
     )
 
@@ -1565,6 +1613,29 @@ def _withheld_evidence(p: _Prep, reason: str, excluded: Sequence[Mapping]) -> di
     }
 
 
+def _shadow_hole_reason(p: _Prep) -> str | None:
+    """On the shadow basis, why the window cannot be compared with a backtest: it spans
+    sessions that have no usable row. None on any other basis or when no session is missing."""
+    if p.kind != _KIND_SHADOW:
+        return None
+    first, last = _parse_date(p.window["first"]), _parse_date(p.window["last"])
+    if first is None or last is None:
+        return None
+    have = set(p.window["dates"])
+    missing = [
+        d.isoformat()
+        for year in range(first.year, last.year + 1)
+        for d in sorted(_sessions_in_year(year))
+        if first <= d <= last and d.isoformat() not in have
+    ]
+    if not missing:
+        return None
+    named = ", ".join(missing[:_MAX_NAMED_MISSING_SESSIONS])
+    more = len(missing) - _MAX_NAMED_MISSING_SESSIONS
+    suffix = f" and {more} more" if more > 0 else ""
+    return f"shadow history has no usable row for {named}{suffix}"
+
+
 def _scored_evidence(
     p: _Prep,
     *,
@@ -1591,7 +1662,10 @@ def _scored_evidence(
         composite_window,
         population,
     )
-    if performance["status"] == "available":
+    holes = _shadow_hole_reason(p) if performance["status"] == "available" else None
+    if holes is not None:
+        backtest = _backtest_unavailable(holes, performance["window"])
+    elif performance["status"] == "available":
         backtest = backtest_comparison(
             window=performance["window"],
             realized_total_return=metrics.get("total_return"),
@@ -1614,13 +1688,13 @@ def _scored_evidence(
 
 
 def _build_entry(
-    p: _Prep, *, threshold: int, excluded: Sequence[tuple[str, Mapping]], **review
+    p: _Prep, *, threshold: int, excluded: Sequence[tuple[str, Mapping]], **review: Any
 ) -> dict:
     """One symphony's entry: eligibility, basis, the six evidence items and the verdict.
     ``excluded`` holds every withheld symphony as (symphony id, record); the entry lists
     the others and never itself."""
     sym = p.sym
-    excluded = [record for sid, record in excluded if sid != sym.symphony_id]
+    others = [record for sid, record in excluded if sid != sym.symphony_id]
     name = sym.display_name
     days_remaining, text = _eligibility(p, threshold)
     entry = {
@@ -1641,9 +1715,9 @@ def _build_entry(
     }
     withheld = _withheld_reason(p)
     evidence = (
-        _withheld_evidence(p, withheld, excluded)
+        _withheld_evidence(p, withheld, others)
         if withheld is not None
-        else _scored_evidence(p, excluded=excluded, **review)
+        else _scored_evidence(p, excluded=others, **review)
     )
     for item in evidence.values():
         item["subject"] = f"{name}: {item['subject']}"

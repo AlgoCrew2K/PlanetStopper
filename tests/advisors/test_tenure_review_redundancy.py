@@ -219,6 +219,39 @@ def test_a_pair_that_fails_the_uncertainty_gate_leaves_the_structural_gate_not_e
     assert pair["structural_gate"]["text"] == "not evaluated: uncertainty gate not met"
 
 
+@pytest.mark.parametrize(
+    ("build", "state"),
+    [
+        pytest.param(
+            lambda: b.orthogonal_pair(29, 0.95, k=1),
+            "insufficient data",
+            id="too_few_days_for_the_interval",
+        ),
+        pytest.param(
+            lambda: (b.wave_returns(60), b.wave_returns(60)),
+            "undefined",
+            id="a_correlation_of_exactly_one",
+        ),
+        pytest.param(
+            lambda: b.block_pair(181, "diverging"), "not met", id="interval_below_the_threshold"
+        ),
+    ],
+)
+def test_a_structural_gate_that_did_not_run_names_the_state_of_the_uncertainty_gate_that_stopped_it(
+    build, state
+):
+    """The text says why the gate did not run, in the words of the gate that stopped it. The
+    words "uncertainty gate not met" belong to a pair whose interval was computed and fell
+    short, and to no other pair. Rejects one fixed text for every reason."""
+    a, c = build()
+    pair = _pair(a, c)
+    assert pair["uncertainty_gate"]["state"] == state  # fixture sanity
+    gate = pair["structural_gate"]
+    assert gate["state"] == "not evaluated"
+    assert gate["text"] == f"not evaluated: uncertainty gate {state}"
+    assert ("uncertainty gate not met" in gate["text"]) is (state == "not met")
+
+
 def test_a_pair_with_180_aligned_days_reads_insufficient_data_not_not_met():
     """The uncertainty gate passes; there are too few days for a stressed window of 10.
 
@@ -792,6 +825,9 @@ def test_a_screen_hit_on_too_few_aligned_days_is_shown_with_the_gate_reading_ins
         assert pair["uncertainty_gate"]["state"] == "insufficient data", sid
         assert pair["uncertainty_gate"]["text"] == INSUFFICIENT_UNCERTAINTY, sid
         assert pair["structural_gate"]["state"] == "not evaluated", sid
+        assert (
+            pair["structural_gate"]["text"] == "not evaluated: uncertainty gate insufficient data"
+        )
 
 
 def test_one_pair_with_enough_days_keeps_the_item_available():
@@ -915,6 +951,119 @@ def test_no_row_shows_its_own_symphony_as_its_sibling():
 
 
 # ---------------------------------------------------------------------------
+# "No redundant sibling" is only evidence when every same-basis peer was compared
+# ---------------------------------------------------------------------------
+
+YOUNG_PEERS_THRESHOLD = 42  # the lead's points; each peer has fewer, so it is not eligible
+FULL_OVERLAP = 40  # returns the fully compared peer shares with the lead
+
+
+def _lead_beside_two_young_peers(second, overlap):
+    """``lead`` (42 points, eligible at threshold 42) beside two younger peers, so its
+    marginal item has no other eligible symphony and its pairs are all the evidence there
+    can be. ``steady`` shares 40 returns with the lead and is uncorrelated with it.
+    ``second`` shares ``overlap`` returns: ``moving`` is a series unrelated to the lead's,
+    ``flat`` a constant one, whose correlation with anything is undefined."""
+    days = b.last_n_nyse_days(b.AS_OF, YOUNG_PEERS_THRESHOLD)
+    returns = b.sine_returns(overlap, 3, amp=0.4) if second == "moving" else [0.05] * overlap
+    return [
+        b.composer_symphony("lead", "Lead", days, b.wave_returns(YOUNG_PEERS_THRESHOLD - 1)),
+        b.composer_symphony("steady", "Steady", days[1:], b.sine_returns(FULL_OVERLAP, 2)),
+        b.composer_symphony("second", "Second", days[-(overlap + 1) :], returns),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("second", "overlap", "is_evidence"),
+    [
+        pytest.param("moving", 27, False, id="a_peer_compared_on_27_days"),
+        pytest.param(
+            "moving",
+            retirement_recommender.MIN_OBS_FLOOR - 1,
+            False,
+            id="a_peer_compared_on_one_day_short_of_the_floor",
+        ),
+        pytest.param(
+            "moving",
+            retirement_recommender.MIN_OBS_FLOOR,
+            True,
+            id="a_peer_compared_on_exactly_the_floor",
+        ),
+        pytest.param("moving", FULL_OVERLAP, True, id="a_peer_compared_on_40_days"),
+        pytest.param("flat", FULL_OVERLAP, False, id="a_peer_whose_correlation_is_undefined"),
+        pytest.param(
+            "flat",
+            retirement_recommender.MIN_OBS_FLOOR,
+            False,
+            id="an_undefined_correlation_on_exactly_the_floor",
+        ),
+    ],
+)
+def test_no_redundant_sibling_is_evidence_only_when_every_peer_was_compared_on_enough_days(
+    second, overlap, is_evidence
+):
+    """No pair of the lead reaches the screen. The lead's other peer is compared on 40 days;
+    the second is compared on ``overlap`` days with a defined correlation (``moving``) or an
+    undefined one (``flat``). The claim counts as evidence only when the second comparison
+    has at least 30 aligned days and a defined correlation: otherwise the item is listed
+    as missing and, with the backtest not requested and no other eligible symphony, the
+    lead has no verdict. Rejects a claim resting on a comparison too short to support it,
+    and one resting on a correlation that does not exist."""
+    roster = _lead_beside_two_young_peers(second, overlap)
+    lead_returns = _returns_of(roster, "lead")
+    assert b.pearson(lead_returns[-FULL_OVERLAP:], _returns_of(roster, "steady")) < (
+        b.SCREEN_THRESHOLD
+    )  # fixture sanity
+    if second == "moving":
+        shared = b.pearson(lead_returns[-overlap:], _returns_of(roster, "second"))
+        assert shared < b.SCREEN_THRESHOLD  # fixture sanity: no pair reaches the screen
+    result = b.review(roster, as_of=b.AS_OF, threshold=YOUNG_PEERS_THRESHOLD)
+    lead = b.entry_of(result, "lead")
+    item = b.item_of(lead, "redundancy")
+    assert lead["eligible"] is True  # fixture sanity
+    assert b.item_of(lead, "marginal")["status"] == "not_applicable"  # fixture sanity
+    assert b.item_of(lead, "backtest")["status"] == "unavailable"  # fixture sanity
+    assert item["pair"] is None
+    assert item["retire_candidate"] is False
+    assert ("redundancy" not in lead["missing_items"]) is is_evidence
+    if is_evidence:
+        assert item["status"] == "available"
+        assert item["summary"] == NO_SIBLING_TEXT
+        assert lead["verdict"] == "keep"
+        assert lead["verdict_reasons"] == []
+    else:
+        assert lead["verdict"] is None
+        assert lead["verdict_text"] == "no verdict: no evidence available"
+        assert lead["verdict_reasons"] == []
+
+
+def test_a_flat_symphony_leaves_every_symphony_unable_to_claim_it_has_no_redundant_sibling():
+    """A constant series has an undefined correlation with each peer. The flat symphony has
+    no comparison at all, and each moving symphony has one peer it could not compare, so
+    none of the three rows can rest a verdict on having no redundant sibling."""
+    days = b.last_n_nyse_days(b.AS_OF, 71)
+    roster = [
+        b.composer_symphony("flat", "Flat", days, [0.0] * 70),
+        b.composer_symphony("wave-one", "Wave One", days, b.wave_returns(70)),
+        b.composer_symphony("wave-two", "Wave Two", days, b.sine_returns(70, 3)),
+    ]
+    result = b.review(roster, as_of=b.AS_OF, threshold=60)
+    for entry in result.entries:
+        sid = entry["symphony_id"]
+        assert b.item_of(entry, "redundancy")["retire_candidate"] is False, sid
+        assert "redundancy" in entry["missing_items"], sid
+
+
+def test_symphonies_that_were_all_compared_on_enough_days_are_not_listed_as_missing_redundancy():
+    """The control for the three rows above: a roster of defined, uncorrelated comparisons
+    on 40 or more aligned days each. Rejects listing the item as missing in every case."""
+    result = b.review(_quiet_roster(), as_of=b.AS_OF, threshold=20)
+    for entry in result.entries:
+        assert b.item_of(entry, "redundancy")["summary"] == NO_SIBLING_TEXT
+        assert "redundancy" not in entry["missing_items"], entry["symphony_id"]
+
+
+# ---------------------------------------------------------------------------
 # A peer with no history, a peer on another basis, and a symphony with no peer
 # ---------------------------------------------------------------------------
 
@@ -973,3 +1122,68 @@ def test_a_peer_with_history_on_another_basis_reads_bases_differ_whether_or_not_
     item = b.item_of(b.entry_of(result, "lone-a"), "redundancy")
     assert item["status"] == "unavailable"
     assert item["reason"] == "bases differ"
+
+
+# ---------------------------------------------------------------------------
+# Peers that were not compared because their basis differs are listed
+# ---------------------------------------------------------------------------
+
+CROSS_BASIS_THRESHOLD = 60
+CROSS_BASIS_RETURNS = 90
+BASES_DIFFER = "bases differ"
+
+
+def _two_composer_symphonies_and_a_shadow_clone_of_the_first():
+    """Three eligible symphonies. ``Xray`` and ``Yoke`` are on the Composer basis and
+    unrelated; ``Zulu Shadow`` is on the shadow basis (its Composer read failed) and repeats
+    Xray's returns, so a comparison across the two bases would flag it."""
+    days = b.last_n_nyse_days(b.AS_OF, CROSS_BASIS_RETURNS + 1)
+    xray = b.wave_returns(CROSS_BASIS_RETURNS, freq=0.37)
+    return [
+        b.composer_symphony("x", "Xray", days, xray),
+        b.composer_symphony("y", "Yoke", days, b.sine_returns(CROSS_BASIS_RETURNS, 5)),
+        b.shadow_symphony("z", "Zulu Shadow", days[0].isoformat(), b.by_date(days[1:], xray)),
+    ]
+
+
+def _not_compared(entry):
+    listed = b.item_of(entry, "redundancy").get("not_compared")
+    assert listed is not None, "the redundancy item carries no list of peers it did not compare"
+    return sorted((record["display_name"], record["reason"]) for record in listed)
+
+
+def test_an_eligible_peer_on_another_basis_is_listed_as_not_compared_beside_the_ones_that_were():
+    """Xray and Yoke are compared with each other and no pair reaches the screen. Zulu is
+    on another basis and cannot be compared with either, so each row names it with the
+    reason and never stays silent about it; Zulu's own row names both. No row lists
+    itself. The list reaches the stored record. Rejects a row that says nothing of a peer it
+    did not compare, which hides a clone on the other basis."""
+    result = b.review(
+        _two_composer_symphonies_and_a_shadow_clone_of_the_first(),
+        as_of=b.AS_OF,
+        threshold=CROSS_BASIS_THRESHOLD,
+    )
+    for sid in ("x", "y"):
+        entry = b.entry_of(result, sid)
+        assert entry["basis"]["kind"] == "composer", sid  # fixture sanity
+        assert b.item_of(entry, "redundancy")["pair"] is None, sid  # fixture sanity
+        assert _not_compared(entry) == [("Zulu Shadow", BASES_DIFFER)], sid
+    zulu = b.entry_of(result, "z")
+    assert zulu["basis"]["kind"] == "shadow"  # fixture sanity
+    assert _not_compared(zulu) == [("Xray", BASES_DIFFER), ("Yoke", BASES_DIFFER)]
+    record = json.loads(json.dumps(tr.run_record(result, b.et(2026, 12, 31, 17, 5))))
+    stored = next(e for e in record["entries"] if e["symphony_id"] == "x")
+    assert _not_compared(stored) == [("Zulu Shadow", BASES_DIFFER)]
+
+
+def test_a_roster_on_one_basis_lists_no_peer_as_not_compared():
+    """The list is present and empty when every peer was compared, and for a symphony with
+    no peer at all. Rejects a list that is absent when it is empty, and one that names a
+    peer that was compared."""
+    for entry in b.review(_quiet_roster(), as_of=b.AS_OF, threshold=20).entries:
+        assert b.item_of(entry, "redundancy").get("not_compared") == [], entry["symphony_id"]
+    lone = b.entry_of(
+        b.review([_lone_composer()], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "lone-a"
+    )
+    assert b.item_of(lone, "redundancy")["status"] == "not_applicable"  # fixture sanity
+    assert b.item_of(lone, "redundancy").get("not_compared") == []
