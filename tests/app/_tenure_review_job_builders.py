@@ -219,6 +219,16 @@ def hide_environment(monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def stub_live_explainer(monkeypatch) -> None:
+    """Replace the LLM explainer with canned text unless the test already replaced it, so a
+    review job run by a test can never make a network call."""
+    import advisors.retirement_explainer as explainer_module  # noqa: PLC0415
+
+    current = explainer_module.explain_recommendation
+    if getattr(current, "__module__", None) == explainer_module.__name__:
+        monkeypatch.setattr(explainer_module, "explain_recommendation", lambda rec: "canned text")
+
+
 def fake_runner(recs=(), *, entries=None, outcome=None, hook=None, calls=None):
     """A stand-in for ``run_tenure_review`` that answers a completed run over the real result
     types. ``recs`` is a list, or a callable returning one for each run (a fresh list each time,
@@ -255,6 +265,7 @@ def patch_runner(
     calls: list[dict] = []
     if isolate:
         hide_environment(monkeypatch)
+    stub_live_explainer(monkeypatch)
     monkeypatch.setattr(
         runner_module,
         "run_tenure_review",
@@ -287,6 +298,7 @@ class BlockingRunner:
         )
 
     def install(self, monkeypatch):
+        stub_live_explainer(monkeypatch)
         monkeypatch.setattr(runner_module, "run_tenure_review", self)
         return self
 
