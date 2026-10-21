@@ -1722,34 +1722,32 @@
                 {% endif %}
                 {% set w = item.get('window') %}
                 {% if w is mapping %}
-                <div class="tenure-review-evidence-meta">window: {{ w.get('first') | tenure_text }} to {{ w.get('last') | tenure_text }}, {% if w.get('days') is whole_number %}{{ w.get('days') | int }} days{% else %}days not recorded{% endif %}</div>
+                <div class="tenure-review-evidence-meta">window: {{ w.get('first') | tenure_text }} to {{ w.get('last') | tenure_text }}, {% if w.get('days') is not whole_number %}days not recorded{% elif w.get('sessions') is not whole_number %}trading sessions not recorded{% elif w.get('days') < w.get('sessions') %}{{ 'holdings on ' if name == 'long_vix' else '' }}{{ w.get('days') | int }} of {{ w.get('sessions') | int }} trading days{% else %}{{ w.get('days') | int }} trading days{% endif %}</div>
                 {% endif %}
-                {% if item.get('status') == 'available' %}
-                    {% if item.get('figures') is mapping %}
-                    {% for fig_name, fig in item.get('figures').items() %}
-                        {{ tenure_figure(fig_name, fig, item.get('population_size'), name == 'composite') }}
-                    {% endfor %}
-                    {% endif %}
-                    {% set pair = item.get('pair') %}
-                    {% if pair is mapping %}
-                    {% set ugate = pair.get('uncertainty_gate') if pair.get('uncertainty_gate') is mapping else {} %}
-                    {% set sgate = pair.get('structural_gate') if pair.get('structural_gate') is mapping else {} %}
-                    <div class="tenure-review-evidence-figure">paired with: {{ pair.get('sibling_name') | tenure_text }}</div>
-                    {% for fig_name in ('correlation', 'ci_lower', 'ci_upper', 'stressed_correlation', 'holdings_overlap') %}
-                        {{ tenure_figure(fig_name, pair.get(fig_name)) }}
-                    {% endfor %}
-                    <div class="tenure-review-evidence-figure">aligned days: {{ pair.get('n_obs') | tenure_whole }}</div>
-                    <div class="tenure-review-evidence-figure">uncertainty gate: {{ ugate.get('text') | tenure_text }}</div>
-                    <div class="tenure-review-evidence-figure">structural redundancy gate: {{ sgate.get('text') | tenure_text }}</div>
-                    {% if pair.get('note') is string and pair.get('note') %}
-                    <div class="tenure-review-evidence-meta">{{ pair.get('note') }}</div>
-                    {% endif %}
-                    {% if name == 'redundancy' and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
-                    <div class="tenure-review-evidence-meta">not used in the verdict: {{ item.get('reason') | tenure_text }}</div>
-                    {% endif %}
-                    {% elif item.get('summary') is string and item.get('summary') %}
-                    <div class="tenure-review-evidence-meta">{{ item.get('summary') }}</div>
-                    {% endif %}
+                {% if item.get('status') == 'available' and item.get('figures') is mapping %}
+                {% for fig_name, fig in item.get('figures').items() %}
+                    {{ tenure_figure(fig_name, fig, item.get('population_size'), name == 'composite') }}
+                {% endfor %}
+                {% endif %}
+                {% set pair = item.get('pair') %}
+                {% if pair is mapping %}
+                {% set ugate = pair.get('uncertainty_gate') if pair.get('uncertainty_gate') is mapping else {} %}
+                {% set sgate = pair.get('structural_gate') if pair.get('structural_gate') is mapping else {} %}
+                <div class="tenure-review-evidence-figure">paired with: {{ pair.get('sibling_name') | tenure_text }}</div>
+                {% for fig_name in ('correlation', 'ci_lower', 'ci_upper', 'stressed_correlation', 'holdings_overlap') %}
+                    {{ tenure_figure(fig_name, pair.get(fig_name)) }}
+                {% endfor %}
+                <div class="tenure-review-evidence-figure">aligned days: {{ pair.get('n_obs') | tenure_whole }}</div>
+                <div class="tenure-review-evidence-figure">uncertainty gate: {{ ugate.get('text') | tenure_text }}</div>
+                <div class="tenure-review-evidence-figure">structural redundancy gate: {{ sgate.get('text') | tenure_text }}</div>
+                {% if pair.get('note') is string and pair.get('note') %}
+                <div class="tenure-review-evidence-meta">{{ pair.get('note') }}</div>
+                {% endif %}
+                {% elif item.get('status') == 'available' and item.get('summary') is string and item.get('summary') %}
+                <div class="tenure-review-evidence-meta">{{ item.get('summary') }}</div>
+                {% endif %}
+                {% if name == 'redundancy' and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
+                <div class="tenure-review-evidence-meta">not used in the verdict: {{ item.get('reason') | tenure_text }}</div>
                 {% endif %}
                 {% set not_compared = item.get('not_compared') %}
                 {% if not_compared is sequence and not_compared is not string and not_compared is not mapping %}
@@ -1826,7 +1824,7 @@
                     {%- if basis.get('tenure_begins') is string and basis.get('tenure_begins') %}; tenure begins {{ basis.get('tenure_begins') }}{% endif %}</div>
                 {% set missing = e.get('missing_items') %}
                 {% if missing and missing is sequence and missing is not string and missing is not mapping %}
-                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {{ missing | map('string') | map('replace', '_', ' ') | join(', ') }}</div>
+                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% for m in missing %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ m | string | replace('_', ' ') }} ({% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}){% endfor %}</div>
                 {% endif %}
                 <div class="tenure-review-evidence-grid">
                     {% for name in ('performance', 'composite', 'redundancy', 'backtest', 'marginal', 'long_vix') %}
