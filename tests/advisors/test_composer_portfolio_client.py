@@ -22,15 +22,17 @@ Contract pinned here (the implementer reads this file, not the plan):
   ``time.sleep``, called as ``time.sleep(...)`` so the tests' patch of the ``time`` module
   attribute holds), whether the request was answered or raised: the sleep runs in a
   ``finally``, so a failed read never lets the next request follow at once.
-  COMPOSER_READ_SPACING_SECONDS is 3.0: 20 requests a minute, under the 25 a minute Composer
-  documents, which leaves room for the engine's own per-minute read.
+  COMPOSER_READ_SPACING_SECONDS is 6.0: 10 requests a minute, under the 25 a minute Composer
+  documents, which leaves room for the engine's own per-minute statistics read at every hour
+  and the dashboard's two.
 - Reads never follow a redirect (``allow_redirects=False``: a followed redirect would carry the
   key header to another host), so a 3xx reply is a rejected read, the definition read
-  included. The account id is one percent-quoted path segment (no safe characters), so an id
-  holding "/", "?" or "#" stays one segment. A symphony id is refused before any URL is built
-  unless it is a plain id segment: "." and ".." (which a URL normaliser turns into another
-  route), the empty id and any id holding a path, query, fragment, percent or space
-  character read unreadable and cost no request.
+  included. An account id and a symphony id are each refused before any URL is built unless
+  they are a plain id (letters, digits, "_" and "-"): "." and ".." (which a URL normaliser
+  turns into another route), the empty id and any id holding a path, query, fragment, percent
+  or space character cost no request and no pause. A refused statistics or series read answers
+  unreadable; a refused holdings read lists every span of the range as a failed span of class
+  unreadable, in order and without a gap, so it never reads as a success with no holdings.
 - After a holdings span answered 429 no further span is requested; that span and every later
   span of the range are listed as failed spans of class rate_limited, in order, without a gap.
 - A holdings row whose ``symbol`` is not a string (a list, an object, a number or null) makes
@@ -51,7 +53,6 @@ import logging
 import re
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
 import pytest
 import requests
@@ -139,7 +140,7 @@ def _serve_success(router, kind):
 
 def test_read_constants_match_the_documented_limits():
     assert cpc.COMPOSER_READ_TIMEOUT_SECONDS == 15
-    assert cpc.COMPOSER_READ_SPACING_SECONDS == 3.0
+    assert cpc.COMPOSER_READ_SPACING_SECONDS == 6.0
     assert cpc.HOLDINGS_REQUEST_SPAN_DAYS == 30
 
 
@@ -158,6 +159,13 @@ def test_the_spacing_constant_cites_the_per_minute_limit_and_not_a_per_second_on
     assert comment, "the constant carries a comment"
     assert re.search(r"\b25\b.*\bminute\b", text), "the 25 a minute figure is cited"
     assert "per second" not in text, "Composer's stricter documented limit is per minute"
+    lowered = text.lower()
+    assert re.search(r"after (?:every|each) (?:http )?request", lowered), (
+        "the pause follows requests"
+    )
+    assert not re.search(r"after (?:every|each) (?:http )?repl", lowered), "not only replies"
+    assert "engine" in lowered and "dashboard" in lowered, "the standing Composer load is named"
+    assert re.search(r"\b(?:6(?:\.0)?|10)\b", text), "the run's own rate is stated"
 
 
 # ---------------------------------------------------------------------------
@@ -842,20 +850,6 @@ def test_every_holdings_span_that_raises_is_followed_by_the_spacing_sleep(router
 AWKWARD_ID = "ab/../cd?x=1 #frag%2F"
 
 
-def test_the_account_id_is_one_percent_quoted_path_segment_on_all_three_reads(router):
-    router.set_all_holdings(h.Reply(body=h.holdings_emptied_body()))
-
-    cpc.read_symphony_statistics(AWKWARD_ID)
-    cpc.read_symphony_value_series(AWKWARD_ID, h.OLDEST_ID)
-    cpc.read_daily_holdings(AWKWARD_ID, RECENT_START, RECENT_END)
-
-    assert router.violations == [], "an unquoted id splits the path into another route"
-    assert [r.kind for r in router.requests] == ["statistics", "series", "holdings"]
-    for request in router.requests:
-        assert request.match["account"] == quote(AWKWARD_ID, safe="")
-        assert request.query.get("x") is None, "a raw ? would start a query string"
-
-
 NOT_A_PLAIN_ID_SEGMENT = [
     pytest.param(".", id="single_dot"),
     pytest.param("..", id="double_dot"),
@@ -884,6 +878,53 @@ def test_a_symphony_id_that_is_not_a_plain_id_segment_is_refused_before_any_requ
     assert not definition.definition
     assert router.requests == [], "a refused id builds no URL, so nothing is sent"
     assert router.violations == []
+
+
+@pytest.mark.parametrize("account_id", NOT_A_PLAIN_ID_SEGMENT)
+def test_an_account_id_that_is_not_a_plain_id_is_refused_before_any_request(router, account_id):
+    statistics = cpc.read_symphony_statistics(account_id)
+    series = cpc.read_symphony_value_series(account_id, h.OLDEST_ID)
+    holdings = cpc.read_daily_holdings(account_id, THREE_SPAN_START, THREE_SPAN_END)
+
+    assert statistics.failure == "unreadable"
+    assert not statistics.symphonies
+    assert series.failure == "unreadable"
+    assert not series.values
+    assert holdings.days == {}
+    assert [(s.start, s.end, s.failure) for s in holdings.failed_spans] == [
+        (date(2026, 4, 6), date(2026, 5, 5), "unreadable"),
+        (date(2026, 5, 6), date(2026, 6, 4), "unreadable"),
+        (date(2026, 6, 5), date(2026, 6, 19), "unreadable"),
+    ], "a refused holdings read never looks like a read with nothing in it"
+    assert router.requests == [], "a refused id builds no URL, so nothing is sent"
+    assert router.violations == []
+    assert router.sleeps == [], "no request was made, so no pause follows"
+
+
+@pytest.mark.parametrize(
+    "plain_id", ["a-b_c", "A1", h.ACCOUNT_ID], ids=["dash_underscore", "short", "uuid"]
+)
+def test_a_plain_id_is_sent_as_it_is_on_every_read(router, plain_id):
+    router.set_all_holdings(h.Reply(body=h.holdings_emptied_body()))
+
+    cpc.read_symphony_statistics(plain_id)
+    cpc.read_symphony_value_series(plain_id, plain_id)
+    cpc.read_symphony_definition(plain_id)
+    cpc.read_daily_holdings(plain_id, RECENT_START, RECENT_END)
+
+    assert router.violations == []
+    assert [r.kind for r in router.requests] == ["statistics", "series", "score", "holdings"]
+    for request in router.requests:
+        assert plain_id in request.path
+
+
+def test_a_refused_account_id_does_not_stop_the_next_read(router):
+    cpc.read_symphony_statistics("..")
+
+    result = cpc.read_symphony_statistics(h.ACCOUNT_ID)
+
+    assert result.failure is None
+    assert [r.match["account"] for r in router.requests] == [h.ACCOUNT_ID]
 
 
 def test_a_refused_symphony_id_does_not_stop_the_next_read(router):

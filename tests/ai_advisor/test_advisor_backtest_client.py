@@ -1197,3 +1197,28 @@ class TestStatedWaitBound:
         assert not re.search(r"\b15\s*s", constant_text)
         assert "Retry-After" in docstring
         assert re.search(r"\b60\s*s", docstring), "the Retry-After clamp is named"
+
+    def test_the_module_text_limits_the_bound_to_callers_with_the_default_minimum_wait(
+        self, minimal_raw_value
+    ):
+        client = _import_client()
+        huge = _make_mock_response(429, headers={"Retry-After": "86400"})
+        sleeps, _, _ = _scripted(client, minimal_raw_value, [huge], min_retry_wait_seconds=120.0)
+        source = (_REPO_ROOT / "advisors" / "composer_backtest_client.py").read_text("utf-8")
+        docstring = " ".join((ast.get_docstring(ast.parse(source)) or "").split())
+        sentences = re.split(r"(?<=\.)\s+", docstring)
+
+        assert sum(sleeps) > client.BACKTEST_MAX_RETRY_WAIT_SECONDS, (
+            "a large floor outruns the bound"
+        )
+        claims = [
+            sentence
+            for sentence in sentences
+            if "BACKTEST_MAX_RETRY_WAIT_SECONDS" in sentence or "bound" in sentence
+        ]
+        assert claims, "the module text states the bound"
+        assert any(
+            "default" in sentence
+            and ("min_retry_wait_seconds" in sentence or "minimum wait" in sentence)
+            for sentence in claims
+        ), f"the bound is stated for a caller with the default minimum wait only: {claims}"
