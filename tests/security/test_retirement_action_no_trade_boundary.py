@@ -745,6 +745,14 @@ def _called_attribute(call: ast.Call) -> str | None:
     return call.func.attr if isinstance(call.func, ast.Attribute) else None
 
 
+def _is_a_mapping_of_names(node: ast.AST | None) -> bool:
+    """Whether a context processor's return value is a dict literal or ``dict(...)``, the
+    only shapes that hand the template names; any other return value is data."""
+    return isinstance(node, ast.Dict) or (
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict"
+    )
+
+
 def _registered_template_function_names(tree: ast.Module) -> set[str]:
     """The names of the functions a module registers for its templates, by every form Flask,
     Blueprints and Jinja accept: a ``template_filter``, ``template_test``, ``template_global``
@@ -819,7 +827,7 @@ def _registered_template_function_names(tree: ast.Module) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in processors:
             for inner in ast.walk(node):
-                if isinstance(inner, ast.Return):
+                if isinstance(inner, ast.Return) and _is_a_mapping_of_names(inner.value):
                     names |= _helper_names_in(inner.value)
     return names
 
