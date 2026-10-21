@@ -325,9 +325,9 @@ class TestExplainerInputMatchesPersistedEvidence:
 
         assert len(explain_calls) == 1
         assert len(persisted) == 1
-        # The explanation, the day it was written and the run link are stamped by the run, not
-        # evidence the explainer could cite.
-        not_evidence = {"explanation", "explanation_written_on", "review_run_id"}
+        # The keys the explainer is not shown (the explanation, the run stamps and the moving
+        # window keys) are not evidence it could cite; every key it IS shown must match.
+        not_evidence = set(_STAMPED_AND_MOVING_KEYS)
         seen_by_explainer = {k: v for k, v in explain_calls[0].items() if k not in not_evidence}
         persisted_evidence = {k: v for k, v in persisted[0].items() if k not in not_evidence}
         assert seen_by_explainer == persisted_evidence, (
