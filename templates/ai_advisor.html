@@ -1641,10 +1641,12 @@
                         {%- if explanation is string and explanation.strip() %}{{ explanation }}{% if written_on is string %}{% if written_on.strip() %} (written {{ written_on }}){% endif %}{% elif written_on is not none %} (written not recorded){% endif %}{% elif explanation is none or explanation is string %}explanation unavailable{% else %}not recorded{% endif -%}
                     </div>
                     {% endif %}
+                    {% if candidate_id %}
                     <span class="retirement-status-chip retirement-status-chip--{{ status or 'pending' }}"
                           data-testid="retirement-rec-status">
                         {{- (status or 'pending') | capitalize -}}
                     </span>
+                    {% endif %}
                     {% if allow_actions and (status or 'pending') == 'pending' %}
                     <div class="retirement-rec-actions">
                         <button type="button"
@@ -1846,7 +1848,7 @@
                     {{ tenure_evidence_item(name, ev.get(name), e.get('missing_items')) }}
                     {% endfor %}
                 </div>
-                {% if sid and (e.get('verdict') == 'retire_candidate' or status) %}
+                {% if sid.strip() and (e.get('verdict') == 'retire_candidate' or status) %}
                 <div class="tenure-review-lifecycle" data-testid="retirement-recommendation-card">
                     {{ retirement_lifecycle(sid, e.get('explanation'), e.get('explanation_written_on'), status, e.get('_checklist'), e.get('verdict') == 'retire_candidate' and sid.strip(), e.get('verdict') == 'retire_candidate') }}
                 </div>

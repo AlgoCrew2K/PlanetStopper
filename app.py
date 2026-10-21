@@ -4225,11 +4225,11 @@ def _refresh_retirement_display_names(
     for rec in recs:
         # A stored id that is not text (a list, a dict) cannot be resolved: that field
         # keeps whatever name it carries; the other field and the other rows are unaffected.
-        if isinstance(rec.get("candidate_id"), str):
+        if isinstance(rec.get("candidate_id"), str) and rec["candidate_id"].strip():
             rec["candidate_name"] = _resolved_or_persisted_or_hash(
                 rec["candidate_id"], rec.get("candidate_name")
             )
-        if isinstance(rec.get("sibling_id"), str):
+        if isinstance(rec.get("sibling_id"), str) and rec["sibling_id"].strip():
             rec["sibling_name"] = _resolved_or_persisted_or_hash(
                 rec["sibling_id"], rec.get("sibling_name")
             )
