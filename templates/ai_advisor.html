@@ -1698,7 +1698,7 @@
                 {% set value = fig.get('value') %}
                 {% if value is finite_number and (unit != 'days' or value is whole_number) %}
                 <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% else %}{{ value | tenure_number }}{% endif %}
-                    {%- if unit == 'percent' %}%{% elif unit is string and unit %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
+                    {%- if unit == 'percent' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
                     {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</div>
                 {% elif value is finite_number %}
                 <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not computable, not recorded</div>
@@ -1848,7 +1848,7 @@
                 </div>
                 {% if sid and (e.get('verdict') == 'retire_candidate' or status) %}
                 <div class="tenure-review-lifecycle" data-testid="retirement-recommendation-card">
-                    {{ retirement_lifecycle(sid, e.get('explanation'), e.get('explanation_written_on'), status, e.get('_checklist'), e.get('verdict') == 'retire_candidate', e.get('verdict') == 'retire_candidate') }}
+                    {{ retirement_lifecycle(sid, e.get('explanation'), e.get('explanation_written_on'), status, e.get('_checklist'), e.get('verdict') == 'retire_candidate' and sid.strip(), e.get('verdict') == 'retire_candidate') }}
                 </div>
                 {% endif %}
             </div>
@@ -1870,12 +1870,19 @@
                 {% for rec in retirement_recommendations %}
                 <div class="retirement-rec-card" data-testid="retirement-recommendation-card">
                     {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
-                    {% set _cand_display = rec.get('candidate_name') or rec.get('candidate_id', '') %}
-                    {% set _sib_display = rec.get('sibling_name') or rec.get('sibling_id', '') %}
+                    {# A stored id, name or label that is not non-blank text reads "not recorded"; a card without a usable candidate id offers no decision. #}
+                    {% set _cid = rec.get('candidate_id') %}
+                    {% set _sid = rec.get('sibling_id') %}
+                    {% set _cid_ok = _cid is string and _cid.strip() %}
+                    {% set _sid_ok = _sid is string and _sid.strip() %}
+                    {% set _cname = rec.get('candidate_name') %}
+                    {% set _sname = rec.get('sibling_name') %}
+                    {% set _cand_display = (_cname if _cname is string and _cname.strip() else _cid) if _cid_ok else 'not recorded' %}
+                    {% set _sib_display = (_sname if _sname is string and _sname.strip() else _sid) if _sid_ok else 'not recorded' %}
                     <div class="retirement-rec-pair">
-                        <span class="retirement-rec-candidate" title="{{ rec.get('candidate_id', '') | e }}">{{ _cand_display | e }}</span>
+                        <span class="retirement-rec-candidate" title="{{ (_cid if _cid_ok else 'not recorded') | e }}">{{ _cand_display | e }}</span>
                         <span aria-hidden="true">&rarr;</span>
-                        <span class="retirement-rec-sibling" title="{{ rec.get('sibling_id', '') | e }}">kept: {{ _sib_display | e }}</span>
+                        <span class="retirement-rec-sibling" title="{{ (_sid if _sid_ok else 'not recorded') | e }}">kept: {{ _sib_display | e }}</span>
                     </div>
                     <div class="retirement-rec-meta">
                         <span data-testid="retirement-rec-correlation">
@@ -1884,7 +1891,7 @@
                         <span>
                             Composite gap:
                             {%- if rec.get('sibling_composite') is not none and rec.get('candidate_composite') is not none %}
-                                {% set sc = rec.sibling_composite %}{% set cc = rec.candidate_composite %}
+                                {# 1e300 bounds the operands so their difference cannot overflow to infinity. #}{% set sc = rec.sibling_composite %}{% set cc = rec.candidate_composite %}
                                 {{ (sc - cc) | tenure_number if sc is finite_number and cc is finite_number and -1e300 < sc < 1e300 and -1e300 < cc < 1e300 else 'not recorded' }}
                             {%- else %}
                                 —
@@ -1895,8 +1902,9 @@
                         <span>Uncertainty gate: {{ 'passed' if rec.get('uncertainty_gate_passed') else 'not met' }}</span>
                         <span>Structural-redundancy gate: {{ 'passed' if rec.get('structural_redundancy_gate_passed') else 'not met' }}</span>
                     </div>
-                    <div class="retirement-rec-basis">{{ rec.get('basis_label', '') | e }}</div>
-                    {{ retirement_lifecycle(rec.get('candidate_id', ''), rec.get('explanation'), rec.get('explanation_written_on'), rec.get('approval_status', 'pending'), rec.get('_checklist'), true, true) }}
+                    {% set _lbl = rec.get('basis_label') %}
+                    <div class="retirement-rec-basis">{{ (_lbl if _lbl is string and _lbl.strip() else 'not recorded') | e }}</div>
+                    {{ retirement_lifecycle(_cid if _cid_ok else '', rec.get('explanation'), rec.get('explanation_written_on'), rec.get('approval_status', 'pending'), rec.get('_checklist'), _cid_ok, true) }}
                 </div>
                 {% endfor %}
             {% endif %}
