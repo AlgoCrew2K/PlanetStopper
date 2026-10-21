@@ -23,7 +23,8 @@ Retry policy
 Exponential backoff: 1 s → 2 s → 4 s → 8 s.  ``max_retries`` is a per-call
 parameter (default 4).  The maximum cumulative wait is bounded by
 ``BACKTEST_MAX_RETRY_WAIT_SECONDS``.  429 responses respect the ``Retry-After``
-header when present; otherwise the first backoff interval is used.
+header when present, clamped to 60 s; otherwise the first backoff interval is used.
+A caller may raise every wait to a floor with ``min_retry_wait_seconds``.
 
 Rate limit
 ----------
@@ -55,12 +56,13 @@ logger = logging.getLogger(__name__)
 # Backoff intervals (seconds) indexed by attempt number (0-based).
 _BACKOFF_INTERVALS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0)
 
-# Hard ceiling on cumulative retry wait — sum of all backoff intervals.
-BACKTEST_MAX_RETRY_WAIT_SECONDS: float = sum(_BACKOFF_INTERVALS)  # 15 s
-
 # Longest wait taken on a server's Retry-After say-so, seconds: the length of Composer's
 # per-minute rate-limit window, so a mistaken or hostile header cannot stall a caller for hours.
 _MAX_RETRY_AFTER_SECONDS: float = 60.0
+
+# Ceiling on the cumulative retry wait of a default caller, seconds: the longest case is every
+# one of the four default retries answered 429 with a Retry-After at the clamp.
+BACKTEST_MAX_RETRY_WAIT_SECONDS: float = len(_BACKOFF_INTERVALS) * _MAX_RETRY_AFTER_SECONDS
 
 # Explicit per-request HTTP timeout.  Composer serialises a full decision-tree
 # plus per-day portfolio values so 120 s is required for large symphonies.
@@ -342,13 +344,13 @@ def run_backtest(
     if end_date is not None:
         body["end_date"] = end_date
     headers = get_composer_headers()
-    post_kwargs: dict[str, Any] = {"json": body}
+    post_kwargs: dict[str, Any] = {"json": body, "allow_redirects": False}
     if compact_body:
         try:
             payload = json.dumps(body, separators=(",", ":"), allow_nan=False)
         except (ValueError, TypeError) as exc:
             return _error_result(f"request body not serializable: {type(exc).__name__}")
-        post_kwargs = {"data": payload}
+        post_kwargs = {"data": payload, "allow_redirects": False}
         headers = {**headers, "Content-Type": "application/json"}
 
     logger.debug(
@@ -400,10 +402,11 @@ def run_backtest(
                 return _error_result(last_reason)
 
             if response.status_code in _RETRYABLE_HTTP_STATUSES and attempt < max_retries:
-                delay = (
+                delay = max(
                     backoff_schedule[attempt]
                     if attempt < len(backoff_schedule)
-                    else _BACKOFF_INTERVALS[-1]
+                    else _BACKOFF_INTERVALS[-1],
+                    min_retry_wait_seconds,
                 )
                 last_reason = f"HTTP {response.status_code} (transient)"
                 logger.info(
@@ -412,7 +415,7 @@ def run_backtest(
                     delay,
                     attempt + 1,
                 )
-                time.sleep(max(delay, min_retry_wait_seconds))
+                time.sleep(delay)
                 continue
 
             # Non-retryable or retries exhausted.

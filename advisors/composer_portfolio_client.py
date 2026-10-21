@@ -2,14 +2,15 @@
 
 Four GET reads (symphony statistics, one symphony's value series, one symphony's
 definition, daily holdings). Every read is one request with no retry and no redirect
-following, paced by one sleep after each HTTP reply, and never raises: a failure is a class
-string on the result. Logs carry the endpoint kind, the HTTP status and exception type
-names only.
+following, paced by one sleep after each request whether or not it was answered, and never
+raises: a failure is a class string on the result. Logs carry the endpoint kind, the HTTP
+status and exception type names only.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -31,6 +32,9 @@ COMPOSER_READ_SPACING_SECONDS = 3.0
 HOLDINGS_REQUEST_SPAN_DAYS = 30
 
 _MS_PER_SECOND = 1000
+
+# A symphony id is one plain URL path segment; anything else could reroute the request.
+_PLAIN_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 
 @dataclass(frozen=True)
@@ -92,8 +96,18 @@ def _segment(identifier: str) -> str:
     return quote(str(identifier), safe="")
 
 
-def _get(kind: str, path: str, params: dict | None = None) -> tuple[str | None, object]:
-    """One GET without redirects. Returns (failure, parsed JSON); sleeps once after any reply."""
+def _is_plain_id(identifier: object) -> bool:
+    return isinstance(identifier, str) and _PLAIN_ID.fullmatch(identifier) is not None
+
+
+def _get(
+    kind: str,
+    path: str,
+    params: dict | None = None,
+    spacing_seconds: float | None = None,
+) -> tuple[str | None, object]:
+    """One GET without redirects. Returns (failure, parsed JSON); sleeps once after any request."""
+    spacing = COMPOSER_READ_SPACING_SECONDS if spacing_seconds is None else spacing_seconds
     url = f"{COMPOSER_BASE_URL}{path}"
     try:
         kwargs = {
@@ -107,8 +121,10 @@ def _get(kind: str, path: str, params: dict | None = None) -> tuple[str | None, 
     except Exception as exc:  # noqa: BLE001 - the module never raises
         logger.warning("composer %s read failed: %s", kind, type(exc).__name__)
         return "unavailable", None
+    finally:
+        # The spacing holds whether or not the request was answered.
+        time.sleep(spacing)
     logger.info("composer %s read: HTTP %d", kind, response.status_code)
-    time.sleep(COMPOSER_READ_SPACING_SECONDS)
     if response.status_code != 200:
         return _status_class(response.status_code), None
     try:
@@ -117,10 +133,14 @@ def _get(kind: str, path: str, params: dict | None = None) -> tuple[str | None, 
         return "unreadable", None
 
 
-def read_symphony_statistics(account_id: str) -> StatisticsRead:
+def read_symphony_statistics(
+    account_id: str, spacing_seconds: float | None = None
+) -> StatisticsRead:
     """The symphonies an account lists, from its symphony-stats-meta endpoint."""
     failure, body = _get(
-        "statistics", f"/portfolio/accounts/{_segment(account_id)}/symphony-stats-meta"
+        "statistics",
+        f"/portfolio/accounts/{_segment(account_id)}/symphony-stats-meta",
+        spacing_seconds=spacing_seconds,
     )
     if failure:
         return StatisticsRead(failure, [])
@@ -136,10 +156,19 @@ def _utc_date(epoch_ms: float) -> str:
     return datetime.fromtimestamp(epoch_ms / _MS_PER_SECOND, tz=UTC).date().isoformat()
 
 
-def read_symphony_value_series(account_id: str, symphony_id: str) -> SeriesRead:
-    """One symphony's deposit-adjusted value by UTC date, from the account's portfolio data."""
+def read_symphony_value_series(
+    account_id: str, symphony_id: str, spacing_seconds: float | None = None
+) -> SeriesRead:
+    """One symphony's deposit-adjusted value by UTC date, from the account's portfolio data.
+
+    An id that is not a plain id segment is refused as unreadable without a request.
+    """
+    if not _is_plain_id(symphony_id):
+        return SeriesRead("unreadable", {})
     failure, body = _get(
-        "series", f"/portfolio/accounts/{_segment(account_id)}/symphonies/{_segment(symphony_id)}"
+        "series",
+        f"/portfolio/accounts/{_segment(account_id)}/symphonies/{symphony_id}",
+        spacing_seconds=spacing_seconds,
     )
     if failure:
         return SeriesRead(failure, {})
@@ -155,9 +184,18 @@ def read_symphony_value_series(account_id: str, symphony_id: str) -> SeriesRead:
         return SeriesRead("unreadable", {})
 
 
-def read_symphony_definition(symphony_id: str) -> DefinitionRead:
-    """One symphony's current decision tree, from its score endpoint, keeping the status."""
-    failure, body = _get("definition", f"/symphonies/{_segment(symphony_id)}/score")
+def read_symphony_definition(
+    symphony_id: str, spacing_seconds: float | None = None
+) -> DefinitionRead:
+    """One symphony's current decision tree, from its score endpoint, keeping the status.
+
+    An id that is not a plain id segment is refused as unreadable without a request.
+    """
+    if not _is_plain_id(symphony_id):
+        return DefinitionRead("unreadable", {})
+    failure, body = _get(
+        "definition", f"/symphonies/{symphony_id}/score", spacing_seconds=spacing_seconds
+    )
     if failure:
         return DefinitionRead(failure, {})
     if not isinstance(body, dict):
@@ -199,7 +237,9 @@ def _parse_holdings(body: object) -> dict | None:
     return days
 
 
-def read_daily_holdings(account_id: str, start: date, end: date) -> HoldingsRead:
+def read_daily_holdings(
+    account_id: str, start: date, end: date, spacing_seconds: float | None = None
+) -> HoldingsRead:
     """Daily holdings of an account from ``start`` to ``end`` in client-sized date spans.
 
     A rate-limited span ends the reads: it and every later span are listed as failed spans.
@@ -217,6 +257,7 @@ def read_daily_holdings(account_id: str, start: date, end: date) -> HoldingsRead
             "holdings",
             f"/portfolio/accounts/{_segment(account_id)}/symphony-historical-holdings",
             params,
+            spacing_seconds,
         )
         parsed = None
         if failure is None:
