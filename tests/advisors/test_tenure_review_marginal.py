@@ -26,6 +26,11 @@ LABEL = "counterfactual: portfolio without this symphony"
 DAYS = b.last_n_nyse_days(b.AS_OF, 14)
 
 
+def _excluded(display_name, label):
+    """The record an item lists for a live symphony left out of its comparison portfolio."""
+    return {"display_name": display_name, "reason": f"excluded: {label}"}
+
+
 def _peer(base, returns, dates=DAYS, basis="composer"):
     return {"basis": basis, "values": b.values_from_returns(list(dates), returns, base=base)}
 
@@ -158,6 +163,7 @@ def test_item_is_labelled_counterfactual_and_names_its_window_units_and_basis():
         "first": DAYS[0].isoformat(),
         "last": DAYS[-1].isoformat(),
         "days": len(DAYS),
+        "sessions": len(b.nyse_days(DAYS[0], DAYS[-1])),
     }
     for name in (
         "with_total_return",
@@ -246,18 +252,6 @@ def test_excluded_symphonies_are_listed_beside_a_real_comparison():
     assert [e["display_name"] for e in item["excluded"]] == ["Slate Valley Hedge"]
 
 
-def test_a_composer_symphony_with_a_fallback_basis_peer_reads_bases_differ():
-    eligible = {
-        "sym-a": _peer(1000.0, b.wave_returns(13)),
-        "sym-b": {"basis": "shadow", "values": None},
-    }
-    item = tr.marginal_contribution("sym-a", eligible)
-    assert item["status"] == "unavailable"
-    assert item["reason"] == "bases differ"
-    for fig in item["figures"].values():
-        assert fig["value"] is None
-
-
 def test_an_all_shadow_history_roster_has_no_position_values_to_compare():
     eligible = {
         "sym-a": {"basis": "shadow", "values": None},
@@ -336,20 +330,25 @@ def test_the_only_eligible_symphony_with_only_young_peers_is_not_applicable():
     assert [e["display_name"] for e in item["excluded"]] == ["Young Peer"]
 
 
-def test_a_composer_symphony_beside_a_fallback_symphony_reads_bases_differ_in_a_review():
+def test_a_composer_symphony_whose_only_eligible_peer_is_on_the_fallback_basis_is_not_applicable():
+    """The comparison portfolio exists only on the Composer basis, so with every other eligible
+    symphony on the fallback basis there is nothing to compare: the item says there is no other
+    eligible symphony on this basis, shows no figure and lists the peer as left out for its
+    basis. Rejects reading the peer's different basis as a failure of the subject's own item."""
     days = b.last_n_nyse_days(b.AS_OF, 31)
-    fallback = b.make_symphony(
-        "fallback-sym",
-        "Fallback Sym",
-        days[0].isoformat(),
-        series_failure="unavailable",
-        shadow_returns=b.by_date(days[1:], b.wave_returns(30, freq=1.4)),
+    fallback = b.shadow_symphony(
+        "fallback-sym", "Fallback Sym", days[0].isoformat(), b.by_date(days[1:], b.wave_returns(30))
     )
-    composer = b.composer_symphony("composer-sym", "Composer Sym", days, b.wave_returns(30))
+    composer = b.composer_symphony(
+        "composer-sym", "Composer Sym", days, b.wave_returns(30, freq=1.4)
+    )
     result = b.review([composer, fallback], as_of=b.AS_OF, threshold=30)
     item = b.item_of(b.entry_of(result, "composer-sym"), "marginal")
-    assert item["status"] == "unavailable"
-    assert item["reason"] == "bases differ"
+    assert item["status"] == "not_applicable"
+    assert item["reason"] == "no other eligible symphonies on this basis"
+    assert item["excluded"] == [_excluded("Fallback Sym", "different basis")]
+    for fig in item["figures"].values():
+        assert fig["value"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -518,22 +517,155 @@ def test_the_only_comparable_symphony_beside_a_peer_with_no_history_is_not_appli
         assert fig["value"] is None
 
 
-def test_a_shadow_basis_peer_still_makes_a_composer_symphony_read_bases_differ():
-    """The rule for a peer with no history must not swallow a peer that has history on
-    another basis. Rejects dropping every peer that is not on the subject's basis."""
-    days = ROSTER_DAYS
-    fallback = b.make_symphony(
-        "fallback-sym",
-        "Fallback Sym",
-        days[0].isoformat(),
-        series_failure="unavailable",
-        shadow_returns=b.by_date(days[1:], b.wave_returns(30, freq=1.4)),
+# ---------------------------------------------------------------------------
+# An eligible symphony on the fallback basis is left out and listed, never a reason to
+# blank the other symphonies' comparison
+# ---------------------------------------------------------------------------
+
+
+def _fallback_peer(sid="fallback-sym", name="Fallback Sym", freq=1.4):
+    """Eligible by tenure on the fallback basis: its Composer read failed, so it has only
+    shadow rows, which hold percent returns and no position values."""
+    return b.shadow_symphony(
+        sid,
+        name,
+        ROSTER_DAYS[0].isoformat(),
+        b.by_date(ROSTER_DAYS[1:], b.wave_returns(30, freq=freq)),
     )
+
+
+def _marginal_of(result, sid):
+    return b.item_of(b.entry_of(result, sid), "marginal")
+
+
+def test_a_fallback_basis_peer_beside_a_composer_and_a_void_peer_still_leaves_nothing_to_compare():
+    """A fallback-basis peer and a peer with no history are both left out, each with its own
+    label, and the lone Composer symphony reads that it has no other eligible symphony on its
+    basis. Rejects reading the fallback peer as a Composer peer, and letting the void peer's
+    label stand in for the fallback peer's."""
     result = b.review(
-        [_composer("comp-a", "Comp A", 0.4), fallback, _void_peer()],
+        [_composer("comp-a", "Comp A", 0.4), _fallback_peer(), _void_peer()],
         as_of=b.AS_OF,
         threshold=ROSTER_THRESHOLD,
     )
-    item = b.item_of(b.entry_of(result, "comp-a"), "marginal")
+    item = _marginal_of(result, "comp-a")
+    assert item["status"] == "not_applicable"
+    assert item["reason"] == "no other eligible symphonies on this basis"
+    assert sorted(item["excluded"], key=lambda r: r["display_name"]) == [
+        _excluded("Fallback Sym", "different basis"),
+        EXCLUDED_NO_HISTORY,
+    ]
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+def test_a_fallback_basis_peer_neither_blanks_nor_moves_the_comparison_of_two_composer_symphonies():
+    """Two Composer symphonies are compared exactly as they are without a third eligible
+    symphony on the fallback basis, which is listed as left out for its basis. The comparison
+    window does not move and no figure combines the two bases. Rejects an item that reads
+    unavailable because one peer's basis differs."""
+    composers = [_composer("comp-a", "Comp A", 0.4), _composer("comp-c", "Comp C", 1.3)]
+    beside = b.review([*composers, _fallback_peer()], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    alone = b.review(composers, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    for sid in ("comp-a", "comp-c"):
+        item, baseline = _marginal_of(beside, sid), _marginal_of(alone, sid)
+        assert baseline["status"] == "available"  # fixture sanity
+        assert item["status"] == "available", sid
+        assert item["reason"] is None, sid
+        assert item["figures"] == baseline["figures"], sid
+        assert item["window"] == baseline["window"], sid
+        assert item["excluded"] == [_excluded("Fallback Sym", "different basis")], sid
+
+
+@pytest.mark.parametrize(
+    "others",
+    [
+        pytest.param([], id="with_no_other_eligible_symphony"),
+        pytest.param(["fallback"], id="with_another_eligible_symphony_on_the_fallback_basis"),
+        pytest.param(["composer"], id="with_an_eligible_symphony_on_the_composer_basis"),
+    ],
+)
+def test_a_fallback_basis_symphony_has_no_position_values_whatever_its_peers(others):
+    """Shadow history stores percent returns only, so its own item has nothing to sum: it
+    reads unavailable for that reason and shows no with or without figure, with or without
+    peers, and a Composer peer does not change that. Rejects an item that falls back to
+    'not applicable' for a lone symphony or computes a portfolio from returns."""
+    roster = [_fallback_peer("fallback-subject", "Fallback Subject")]
+    if "fallback" in others:
+        roster.append(_fallback_peer("fallback-other", "Fallback Other", freq=0.9))
+    if "composer" in others:
+        roster.append(_composer("comp-a", "Comp A", 0.4))
+    item = _marginal_of(
+        b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "fallback-subject"
+    )
     assert item["status"] == "unavailable"
-    assert item["reason"] == "bases differ"
+    assert item["reason"] == "no position values on the shadow-history basis"
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+def test_every_composer_symphony_lists_each_fallback_basis_symphony_as_left_out_for_its_basis():
+    roster = [
+        _composer("comp-a", "Comp A", 0.4),
+        _composer("comp-c", "Comp C", 1.3),
+        _fallback_peer("fallback-one", "Fallback One"),
+        _fallback_peer("fallback-two", "Fallback Two", freq=0.9),
+    ]
+    result = b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    for sid in ("comp-a", "comp-c"):
+        assert sorted(_marginal_of(result, sid)["excluded"], key=lambda r: r["display_name"]) == [
+            _excluded("Fallback One", "different basis"),
+            _excluded("Fallback Two", "different basis"),
+        ], sid
+
+
+YOUNG_PEER = ("young-peer", "Young Peer")
+UNKNOWN_PEER = ("unknown-peer", "Unknown Peer")
+
+
+def _every_kind_of_symphony_left_out():
+    """One live symphony of each kind the comparison portfolio leaves out: younger than the
+    threshold, with no invested-since date, eligible with no history, and eligible on the
+    fallback basis."""
+    return [
+        b.composer_symphony(
+            YOUNG_PEER[0], YOUNG_PEER[1], ROSTER_DAYS[-10:], b.wave_returns(9, freq=0.8)
+        ),
+        b.composer_symphony(
+            UNKNOWN_PEER[0],
+            UNKNOWN_PEER[1],
+            ROSTER_DAYS,
+            b.wave_returns(30, freq=2.1),
+            invested_since=None,
+        ),
+        _void_peer(),
+        _fallback_peer(),
+    ]
+
+
+def test_each_kind_of_symphony_left_out_of_the_comparison_carries_its_own_label_and_moves_nothing():
+    """The four kinds are listed in the same item, each with the label that says why it is
+    left out, and the comparison of the two Composer symphonies (figures and window) equals
+    the comparison without any of them. Rejects one label for the family, a label that names
+    a kind the symphony is not, and a window moved by a symphony that is left out."""
+    composers = [_composer("comp-a", "Comp A", 0.4), _composer("comp-c", "Comp C", 1.3)]
+    beside = b.review(
+        [*composers, *_every_kind_of_symphony_left_out()], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD
+    )
+    alone = b.review(composers, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    expected = sorted(
+        [
+            _excluded(YOUNG_PEER[1], "not yet eligible"),
+            _excluded(UNKNOWN_PEER[1], "tenure unavailable"),
+            EXCLUDED_NO_HISTORY,
+            _excluded("Fallback Sym", "different basis"),
+        ],
+        key=lambda r: r["display_name"],
+    )
+    for sid in ("comp-a", "comp-c"):
+        item, baseline = _marginal_of(beside, sid), _marginal_of(alone, sid)
+        assert baseline["status"] == "available"  # fixture sanity
+        assert sorted(item["excluded"], key=lambda r: r["display_name"]) == expected, sid
+        assert item["status"] == "available", sid
+        assert item["figures"] == baseline["figures"], sid
+        assert item["window"] == baseline["window"], sid

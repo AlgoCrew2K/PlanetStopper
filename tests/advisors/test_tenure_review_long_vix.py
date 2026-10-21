@@ -98,7 +98,12 @@ def test_counts_are_days_and_shares_are_percent_of_the_days_total_value():
     assert got["peak_share_with"] == pytest.approx(20.0, rel=1e-9)
     assert got["peak_share_without"] == pytest.approx(10.0, rel=1e-9)
     assert item["label"] == LABEL
-    assert item["window"] == {"first": ISO[0], "last": ISO[-1], "days": 5}
+    assert item["window"] == {
+        "first": ISO[0],
+        "last": ISO[-1],
+        "days": 5,
+        "sessions": len(SESSIONS_IN_WINDOW),
+    }
     for name in ("held_days", "co_held_days"):
         assert item["figures"][name]["unit"] == "days", name
     for name in ("peak_share_with", "peak_share_without"):
@@ -187,6 +192,7 @@ def test_days_outside_the_symphonys_window_are_ignored():
     assert _figures(item)["held_days"] == 1
     assert _figures(item)["co_held_days"] == 0
     assert item["window"]["days"] == 1
+    assert item["window"].get("sessions") == len(DAYS)  # holdings on 1 of the window's 5 sessions
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +339,8 @@ def test_a_holdings_key_on_a_closed_day_is_not_a_day(case, stamp):
     item = _cofire(tr.HoldingsInput(days=days))
     assert item == _cofire(_holdings(SCENARIO))
     assert item["window"]["days"] == len(SESSIONS_IN_WINDOW)
+    # the sessions the span holds are the exchange's, not every calendar day of the span
+    assert item["window"].get("sessions") == len(SESSIONS_IN_WINDOW)
 
 
 def test_holdings_and_a_value_series_read_the_same_days_from_the_same_keys():
@@ -446,6 +454,7 @@ def test_days_with_no_holdings_are_skipped_and_the_row_shows_the_reduced_day_cou
     got = _figures(item)
     assert item["status"] == "available"
     assert item["window"]["days"] == 3
+    assert item["window"].get("sessions") == len(DAYS)  # holdings on 3 of the window's 5 sessions
     assert got["held_days"] == 2  # D1 and D3
     assert got["co_held_days"] == 2
     assert got["peak_share_with"] == pytest.approx(40 / 300 * 100, rel=1e-9)  # D3
@@ -545,3 +554,99 @@ def test_the_subject_of_an_available_long_vix_item_names_its_symphony():
         item = b.item_of(entry, "long_vix")
         assert item["status"] == "available", sid  # fixture sanity
         assert entry["display_name"] in item["subject"], sid
+
+
+# ---------------------------------------------------------------------------
+# Holdings on N of M trading days: the item states both counts
+# ---------------------------------------------------------------------------
+
+
+def test_a_review_states_the_days_with_holdings_and_the_sessions_the_window_holds():
+    """Holdings exist for 12 of the 20 sessions of the symphony's window. The item carries
+    12 as the days used and 20 as the sessions the span holds (from the calendar library), so
+    a reader sees holdings on 12 of 20 trading days rather than a window 12 days long. Rejects
+    a window that states only the days used, and sessions taken from the days used."""
+    covered = DAYS_20[:12]
+    on_covered_days = {
+        d.isoformat(): {
+            "vix-1": {"VIXY": 90.0, "SPY": 10.0},
+            "vix-2": {"SPY": 100.0},
+            "vix-3": {"SPY": 100.0},
+        }
+        for d in covered
+    }
+    window = b.item_of(b.entry_of(_review_over(on_covered_days), "vix-1"), "long_vix")["window"]
+    assert window["first"] == DAYS_20[0].isoformat()
+    assert window["last"] == DAYS_20[-1].isoformat()
+    assert window["days"] == len(covered)
+    assert window.get("sessions") == len(b.nyse_days(DAYS_20[0], DAYS_20[-1]))
+    assert window["days"] < window["sessions"]  # fixture sanity: the two counts differ
+
+
+# ---------------------------------------------------------------------------
+# A symphony outside the run's live set has no long-VIX figure and moves nobody else's
+# ---------------------------------------------------------------------------
+
+
+def test_a_subject_outside_the_live_set_reads_unavailable_never_zero_held_days():
+    """The holdings mention the symphony and hold a long-VIX product on every day, but it is
+    not among the live symphonies of the run, so nothing of its holdings is counted: the item
+    has no figure at all rather than a count of 0 that reads as never having held one."""
+    item = tr.long_vix_cofiring(_holdings(SCENARIO), "subj", ["o1", "o2"], WINDOW)
+    assert item["status"] == "unavailable"
+    assert item["reason"]
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+def test_the_holdings_of_a_symphony_outside_the_live_set_move_no_figure_of_a_reviewed_symphony():
+    """A symphony that held a long-VIX product on days a reviewed symphony did too is not in
+    the run: it has no entry and no long-VIX figure, and every item of every reviewed
+    symphony (co-held days and both peak shares included) equals the item for the same
+    holdings without it. Rejects counting it as a live peer."""
+    reviewed = {
+        "vix-1": {"VIXY": 90.0, "SPY": 10.0},
+        "vix-2": {"UVXY": 50.0, "SPY": 50.0},
+        "vix-3": {"SPY": 100.0},
+    }
+    stranger = {"VIXY": 700.0, "UVXY": 300.0}
+    with_stranger = _review_with({**reviewed, "stranger": stranger})
+    without = _review_with(reviewed)
+    assert "stranger" not in [e["symphony_id"] for e in with_stranger.entries]
+    for sid in reviewed:
+        item = b.item_of(b.entry_of(with_stranger, sid), "long_vix")
+        assert item == b.item_of(b.entry_of(without, sid), "long_vix"), sid
+    co_held = b.value_of(b.entry_of(with_stranger, "vix-1"), "long_vix", "co_held_days")
+    assert co_held == len(
+        DAYS_20
+    )  # fixture sanity: vix-2 co-holds on every day, the stranger aside
+
+
+# ---------------------------------------------------------------------------
+# A key the reader ignores is never evaluated
+# ---------------------------------------------------------------------------
+
+IGNORED_KEYS = {
+    "a_key_that_is_not_a_date": "notes",
+    "a_date_before_the_window": "2026-12-01",
+    "a_date_after_the_window": "2027-01-04",
+    "a_weekend_day_inside_the_window": next(d.isoformat() for d in CLOSED_DAYS if d.weekday() >= 5),
+    "the_weekday_holiday_inside_the_window": next(
+        d.isoformat() for d in CLOSED_DAYS if d.weekday() < 5
+    ),
+}
+NOT_A_DAY_OF_HOLDINGS = [None, "text", 7, [1, 2], 3.5]
+
+
+@pytest.mark.parametrize("value", NOT_A_DAY_OF_HOLDINGS, ids=repr)
+@pytest.mark.parametrize("key", list(IGNORED_KEYS.values()), ids=list(IGNORED_KEYS))
+def test_a_value_that_is_not_a_day_of_holdings_under_an_ignored_key_changes_nothing_and_raises_nothing(
+    key, value
+):
+    """A key that names no day of the window (not a date, outside the window, or a day the
+    exchange was closed) is skipped before its value is looked at, so a value that could not be
+    holdings under it is harmless. Rejects reading the value first, which raises on a value
+    that is not a mapping."""
+    days = dict(_holdings(SCENARIO).days)
+    days[key] = value
+    assert _cofire(tr.HoldingsInput(days=days)) == _cofire(_holdings(SCENARIO))

@@ -183,7 +183,9 @@ def test_every_composite_is_scored_over_the_same_common_window(golden):
         threshold=golden["threshold"],
     )
     window = golden["common_window"]
-    assert result.composite_window == window
+    assert {key: result.composite_window[key] for key in window} == window
+    # the common window is that many consecutive sessions, so its span holds as many sessions
+    assert result.composite_window.get("sessions") == window["days"]
     window_dates = [
         d.isoformat()
         for d in b.last_n_nyse_days(date.fromisoformat(window["last"]), window["days"])
@@ -199,7 +201,7 @@ def test_every_composite_is_scored_over_the_same_common_window(golden):
         entry = b.entry_of(result, sid)
         item = b.item_of(entry, "composite")
         assert item["status"] == "available", sid
-        assert item["window"] == window, sid
+        assert item["window"] == result.composite_window, sid
         got[sid] = item["figures"]["composite"]["value"]
         # sums and compounding in a different order than numpy: 1e-9 absolute
         assert got[sid] == pytest.approx(expected[sid], abs=1e-9), sid

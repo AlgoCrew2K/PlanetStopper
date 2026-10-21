@@ -524,16 +524,20 @@ def test_a_symphony_with_no_history_at_all_reads_unavailable_no_history_everywhe
 
 
 def test_a_composer_symphony_and_a_shadow_symphony_are_never_combined_in_a_pair():
-    """Both rows read bases differ, no correlation is computed, and neither member can
-    be flagged for retirement."""
+    """No pair is made of the two, and each row names the other as a peer it did not compare
+    because the bases differ. Neither member can be flagged for retirement."""
     shadow_sym = _subject(series_failure="unavailable", shadow_returns=_shadow_rows())
     result = b.review([shadow_sym, _peer()], as_of=b.AS_OF, threshold=THRESHOLD)
-    for sid in ("subject-sym", "peer-comp"):
+    for sid, other in (("subject-sym", "peer-comp"), ("peer-comp", "subject-sym")):
         item = b.item_of(b.entry_of(result, sid), "redundancy")
         assert item["status"] == "unavailable", sid
-        assert item["reason"] == "bases differ", sid
         assert item["pair"] is None, sid
         assert item["retire_candidate"] is False, sid
+        # the peer on the other basis is named as one that was not compared
+        assert [r["display_name"] for r in item["not_compared"]] == [
+            b.entry_of(result, other)["display_name"]
+        ], sid
+        assert {r["reason"] for r in item["not_compared"]} == {"bases differ"}, sid
         assert b.entry_of(result, sid)["verdict"] != "retire_candidate", sid
 
 
@@ -592,6 +596,7 @@ def test_a_shadow_window_starts_at_the_session_before_its_first_stored_row(first
         "first": b.session_before(first_row).isoformat(),
         "last": b.AS_OF.isoformat(),
         "days": len(sessions) + 1,
+        "sessions": len(sessions) + 1,  # a row on every session, and the baseline before them
     }
     assert perf["figures"]["total_return"]["value"] == pytest.approx(
         _compounded_percent(returns), rel=1e-9
@@ -653,9 +658,10 @@ def test_a_shadow_window_never_reaches_back_before_the_tenure_and_keeps_a_baseli
         assert perf["window"]["days"] == len(kept_days)
         counted = kept_returns[1:]
     assert date.fromisoformat(perf["window"]["first"]) >= invested_since
-    # where the data starts: the first row in the tenure, which is the window's first day
-    # only when that row is its own baseline
-    assert basis["series_begins"] == kept_days[0].isoformat()
+    # the first shadow return: the first row's own return when a baseline session precedes it
+    # inside the tenure, otherwise the next row's, because the first row is its own baseline
+    first_counted = kept_days[0] if baseline_in_tenure else kept_days[1]
+    assert basis["series_begins"] == first_counted.isoformat()
     assert basis["tenure_begins"] == invested_since.isoformat()
     assert perf["figures"]["total_return"]["value"] == pytest.approx(
         _compounded_percent(counted), rel=1e-9
@@ -693,3 +699,90 @@ def test_a_shadow_pair_is_measured_on_the_returns_the_window_counts(
     assert pair is not None  # fixture sanity: the pair reaches the screen
     assert window_days == len(sessions) + (1 if baseline_in_tenure else 0)
     assert pair["n_obs"] == window_days - 1
+
+
+# ---------------------------------------------------------------------------
+# A shadow symphony whose only row is its own baseline has no first return
+# ---------------------------------------------------------------------------
+
+
+def test_a_shadow_symphony_with_a_single_row_on_its_first_tenure_day_has_no_first_return_date():
+    """That row is the baseline and its return is not counted, so no return exists to date.
+    The review answers instead of failing, the basis states no first-return date (never the
+    baseline's own date) and the performance item is unavailable."""
+    day = b.last_n_nyse_days(b.AS_OF, 2)[-1]
+    subject = b.shadow_symphony("one-row", "One Row", day.isoformat(), {day.isoformat(): 1.5})
+    entry = b.entry_of(b.review([subject], as_of=b.AS_OF, threshold=1), "one-row")
+    assert entry["basis"]["kind"] == "shadow"
+    assert entry["basis"]["series_begins"] is None
+    assert entry["basis"]["tenure_begins"] == day.isoformat()
+    assert b.item_of(entry, "performance")["status"] == "unavailable"
+
+
+# ---------------------------------------------------------------------------
+# Every window states the days used and the sessions its span holds
+# ---------------------------------------------------------------------------
+
+# A fixed number of interior sessions the lead has no value on, so the days its window uses
+# are fewer than the sessions its span holds.
+SESSIONS_WITHOUT_A_VALUE = 2
+SPAN_RETURNS = 60
+
+
+def _roster_with_every_item_and_two_sessions_without_a_value():
+    """Two correlated Composer symphonies. The lead has no value on two interior sessions; a
+    backtest over its window and holdings on every session give all six items a window."""
+    roster, threshold = b.composite_pair(SPAN_RETURNS, 0.9)
+    lead, peer = roster
+    sessions = sorted(lead.composer_values)
+    for key in sessions[10 : 10 + SESSIONS_WITHOUT_A_VALUE]:
+        lead.composer_values[key] = None
+    window = tr.qualifying_window(lead, b.AS_OF, threshold)
+    first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+    lead.backtest = b.replica_backtest(
+        first, last, b.wave_returns(len(b.nyse_days(first, last)) - 1, amp=0.2)
+    )
+    held = {
+        "lead": {"VIXY": 10.0, "SPY": 90.0},
+        "peer": {"SPY": 100.0},
+    }
+    holdings = tr.HoldingsInput(days={key: held for key in sessions})
+    return roster, threshold, holdings
+
+
+def test_every_window_of_every_item_states_the_sessions_its_span_holds():
+    """The sessions come from the calendar library, for the same first and last dates, and
+    are never fewer than the days used. With no value missing, days used and sessions are the
+    same number; with two sessions missing the days are two fewer. Rejects a window that
+    states only the days it used (which reads as the window's length) and sessions counted
+    from the days used."""
+    roster, threshold, holdings = _roster_with_every_item_and_two_sessions_without_a_value()
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold, holdings=holdings)
+    for sid in ("lead", "peer"):
+        entry = b.entry_of(result, sid)
+        for name in b.EVIDENCE_ITEMS:
+            item = b.item_of(entry, name)
+            window = item["window"]
+            assert window is not None, (sid, name)  # fixture sanity: every item has a window
+            first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+            assert window.get("sessions") == len(b.nyse_days(first, last)), (sid, name)
+            assert 0 < window["days"] <= window.get("sessions", 0), (sid, name)
+    peer_window = b.item_of(b.entry_of(result, "peer"), "performance")["window"]
+    assert peer_window["days"] == peer_window.get("sessions")
+    lead_window = b.item_of(b.entry_of(result, "lead"), "performance")["window"]
+    assert lead_window["days"] == lead_window.get("sessions", 0) - SESSIONS_WITHOUT_A_VALUE
+    run_window = result.composite_window
+    assert run_window.get("sessions") == len(
+        b.nyse_days(date.fromisoformat(run_window["first"]), date.fromisoformat(run_window["last"]))
+    )
+    assert run_window["days"] == run_window.get("sessions")
+
+
+def test_the_stored_record_carries_the_sessions_of_every_window():
+    roster, threshold, holdings = _roster_with_every_item_and_two_sessions_without_a_value()
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold, holdings=holdings)
+    record = tr.run_record(result, b.et(2026, 12, 31, 17, 5))
+    assert record["composite_window"].get("sessions") == result.composite_window.get("sessions")
+    for entry in record["entries"]:
+        for name in b.EVIDENCE_ITEMS:
+            assert "sessions" in entry["evidence"][name]["window"], (entry["symphony_id"], name)
