@@ -22,7 +22,8 @@ Retry policy
 ------------
 Exponential backoff: 1 s → 2 s → 4 s → 8 s.  ``max_retries`` is a per-call
 parameter (default 4).  The maximum cumulative wait is bounded by
-``BACKTEST_MAX_RETRY_WAIT_SECONDS``.  429 responses respect the ``Retry-After``
+``BACKTEST_MAX_RETRY_WAIT_SECONDS`` for a caller with the default ``min_retry_wait_seconds``
+only; a larger floor can outrun it.  429 responses respect the ``Retry-After``
 header when present, clamped to 60 s; otherwise the first backoff interval is used.
 A caller may raise every wait to a floor with ``min_retry_wait_seconds``.
 

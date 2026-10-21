@@ -22,8 +22,13 @@ from advisors.tenure_review import HoldingsInput, ReviewResult
 
 logger = logging.getLogger(__name__)
 
-_ACCOUNT_ENV_KEYS = ("ACCOUNT_INDIVIDUAL", "ACCOUNT_ROTH", "ACCOUNT_TRAD")
-_ACCOUNT_LABEL_SUFFIX = " account"
+# Configuration key to the label the dashboard shows for that account.
+_ACCOUNT_LABELS = {
+    "ACCOUNT_INDIVIDUAL": "Individual",
+    "ACCOUNT_ROTH": "Roth IRA",
+    "ACCOUNT_TRAD": "Trad. IRA",
+}
+_ACCOUNT_ENV_KEYS = tuple(_ACCOUNT_LABELS)
 
 # Error text of a backtest that was not requested because an earlier request was answered 429;
 # the review module reads the leading "HTTP 429" as the rate-limit reason.
@@ -46,10 +51,10 @@ class RunOutcome:
 
 @dataclass(frozen=True)
 class _MissingAccount:
-    """An account whose holdings were not read in full: its failure class and how much was read."""
+    """An account whose holdings were not read in full: its failure classes and how much was read."""
 
     account_id: str
-    failure: str
+    failures: tuple[str, ...]
     partly_read: bool
 
 
@@ -76,11 +81,8 @@ def configured_account_ids(env: Mapping) -> list[str]:
 
 
 def configured_account_labels(env: Mapping) -> dict[str, str]:
-    """Account id to label for the configured accounts, each named after its configuration key."""
-    return {
-        account_id: key.removeprefix("ACCOUNT_").capitalize() + _ACCOUNT_LABEL_SUFFIX
-        for key, account_id in _configured_accounts(env)
-    }
+    """Account id to the dashboard's label for each configured account."""
+    return {account_id: _ACCOUNT_LABELS[key] for key, account_id in _configured_accounts(env)}
 
 
 def _shadow_returns(symphony_id: str) -> dict | None:
@@ -90,7 +92,9 @@ def _shadow_returns(symphony_id: str) -> dict | None:
     return dict(zip(series[0], series[1], strict=False))
 
 
-def _read_roster(account_ids: Sequence[str], spacing: float):
+def _read_roster(
+    account_ids: Sequence[str], spacing: float
+) -> tuple[list[tuple[str, dict]] | None, str | None]:
     """Returns (roster, failure_reason); roster is a list of (account, entry)."""
     roster = []
     for account in account_ids:
@@ -196,25 +200,22 @@ def _read_holdings(
 ) -> tuple[HoldingsInput, list[_MissingAccount]]:
     """Returns (HoldingsInput, the accounts whose holdings were not read in full)."""
     days: dict = {}
-    first_failure = None
     missing: list[_MissingAccount] = []
     requested_days = (as_of - earliest).days + 1
     for account in account_ids:
         if run.rate_limited:
-            missing.append(_MissingAccount(account, "rate_limited", False))
-            first_failure = first_failure or "rate_limited"
+            missing.append(_MissingAccount(account, ("rate_limited",), False))
             continue
         read = composer_portfolio_client.read_daily_holdings(account, earliest, as_of, spacing)
         if read.failed_spans:
             failed_days = sum((s.end - s.start).days + 1 for s in read.failed_spans)
-            missing.append(
-                _MissingAccount(account, read.failed_spans[0].failure, failed_days < requested_days)
-            )
-            first_failure = first_failure or read.failed_spans[0].failure
+            classes = tuple(dict.fromkeys(s.failure for s in read.failed_spans))
+            missing.append(_MissingAccount(account, classes, failed_days < requested_days))
             run.rate_limited = any(s.failure == "rate_limited" for s in read.failed_spans)
         for day, by_id in read.days.items():
             if _is_session(day):
                 days.setdefault(day, {}).update(by_id)
+    first_failure = missing[0].failures[0] if missing else None
     return HoldingsInput(days, None if days else first_failure), missing
 
 
@@ -224,12 +225,30 @@ def _class_reason(failure: str) -> str:
 
 
 def _missing_reason(missing: Sequence[_MissingAccount], label_of: Mapping[str, str]) -> str:
-    """Each missing account's failure class text and how much of its holdings was read."""
+    """Each missing account's failure class texts and how much of its holdings was read."""
     return "; ".join(
-        f"{_class_reason(m.failure)}: holdings "
+        f"{_class_reason(failure)}: holdings "
         f"{'partly read' if m.partly_read else 'not read'} for {label_of[m.account_id]}"
         for m in missing
+        for failure in m.failures
     )
+
+
+def _name_every_class(result: ReviewResult, first_class: str, missing: Sequence[_MissingAccount]):
+    """With no holding day read, name every failure class of every failed span, once each."""
+    classes = list(dict.fromkeys(f for m in missing for f in m.failures))
+    if len(classes) < 2:
+        return
+    old = _class_reason(first_class)
+    reason = "; ".join(_class_reason(f) for f in classes)
+    for entry in result.entries:
+        item = entry.get("evidence", {}).get("long_vix")
+        if not item or item["status"] != "unavailable" or item["reason"] != old:
+            continue
+        item["reason"] = reason
+        for figure in item["figures"].values():
+            if figure.get("reason") == old:
+                figure["reason"] = reason
 
 
 def _name_missing_accounts(
@@ -258,6 +277,14 @@ def _name_missing_accounts(
                 figure["reason"] = reason
 
 
+def _valid_spacing(value: object) -> float:
+    """The given spacing when it is a finite number of zero or more, else the client default."""
+    if composer_portfolio_client.is_valid_spacing_seconds(value):
+        return value
+    logger.warning("tenure review read_spacing_seconds is invalid: using the default")
+    return composer_portfolio_client.COMPOSER_READ_SPACING_SECONDS
+
+
 def run_tenure_review(
     *,
     account_ids: Sequence[str],
@@ -278,25 +305,25 @@ def run_tenure_review(
             return RunOutcome(False, None, "no Composer account configured")
         threshold = tenure_review.parse_threshold(threshold_raw)
         as_of = tenure_review.as_of_trading_day(now_et)
-        roster, reason = _read_roster(account_ids, read_spacing_seconds)
+        spacing = _valid_spacing(read_spacing_seconds)
+        roster, reason = _read_roster(account_ids, spacing)
         if roster is None:
             return RunOutcome(False, None, reason)
         run = _RunState()
         state = _state_entries()
         symphonies = [
-            _read_series(account, entry, state, run, read_spacing_seconds)
-            for account, entry in roster
+            _read_series(account, entry, state, run, spacing) for account, entry in roster
         ]
         firsts = []
         for sym in symphonies:
             window = tenure_review.qualifying_window(sym, as_of, threshold.value)
             if window is not None:
                 firsts.append(window["first"])
-                _attach_backtest(sym, window, run, read_spacing_seconds)
+                _attach_backtest(sym, window, run, spacing)
         holdings, missing = None, []
         if firsts:
             holdings, missing = _read_holdings(
-                account_ids, date.fromisoformat(min(firsts)), as_of, run, read_spacing_seconds
+                account_ids, date.fromisoformat(min(firsts)), as_of, run, spacing
             )
         inputs = tenure_review.ReviewInputs(
             run_id=run_id,
@@ -308,7 +335,9 @@ def run_tenure_review(
             holdings=holdings,
         )
         result = tenure_review.build_review(inputs)
-        if missing and holdings.days:
+        if missing and holdings.failure:
+            _name_every_class(result, holdings.failure, missing)
+        elif missing:
             labels = account_labels or {}
             label_of = {
                 account: labels.get(account) or f"account {n}"

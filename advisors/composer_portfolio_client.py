@@ -10,11 +10,11 @@ status and exception type names only.
 from __future__ import annotations
 
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
-from urllib.parse import quote
 
 import requests
 
@@ -24,16 +24,17 @@ logger = logging.getLogger(__name__)
 
 # Per-request HTTP timeout, seconds: a bounded wait so a hung Composer read cannot stall a run.
 COMPOSER_READ_TIMEOUT_SECONDS = 15
-# Pause after every HTTP reply, seconds: at most 20 requests a minute, under the 25 requests
-# per minute Composer documents for these endpoints.
-COMPOSER_READ_SPACING_SECONDS = 3.0
+# Pause after every request, seconds: a run makes at most 10 requests a minute, well under the
+# 25 requests per minute Composer documents for these endpoints, so the engine and the dashboard,
+# which keep reading Composer while a run is in progress, still have the remaining headroom.
+COMPOSER_READ_SPACING_SECONDS = 6.0
 # Longest date range one holdings request may cover, calendar days: the span of the captured
 # holdings request the endpoint was verified with.
 HOLDINGS_REQUEST_SPAN_DAYS = 30
 
 _MS_PER_SECOND = 1000
 
-# A symphony id is one plain URL path segment; anything else could reroute the request.
+# A symphony or account id is one plain URL path segment; anything else could reroute the request.
 _PLAIN_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -91,12 +92,18 @@ def _status_class(status: int) -> str:
     return "rejected"
 
 
-def _segment(identifier: str) -> str:
-    """One URL path segment: the id percent-quoted so it cannot add a route or a query."""
-    return quote(str(identifier), safe="")
+def is_valid_spacing_seconds(value: object) -> bool:
+    """Whether ``value`` is a finite number of zero or more (a boolean is not a number here)."""
+    return (
+        isinstance(value, int | float)
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
 
 
 def _is_plain_id(identifier: object) -> bool:
+    """Whether the id is a non-empty string of letters, digits, "_" and "-" only."""
     return isinstance(identifier, str) and _PLAIN_ID.fullmatch(identifier) is not None
 
 
@@ -107,7 +114,11 @@ def _get(
     spacing_seconds: float | None = None,
 ) -> tuple[str | None, object]:
     """One GET without redirects. Returns (failure, parsed JSON); sleeps once after any request."""
-    spacing = COMPOSER_READ_SPACING_SECONDS if spacing_seconds is None else spacing_seconds
+    spacing = (
+        spacing_seconds
+        if is_valid_spacing_seconds(spacing_seconds)
+        else (COMPOSER_READ_SPACING_SECONDS)
+    )
     url = f"{COMPOSER_BASE_URL}{path}"
     try:
         kwargs = {
@@ -136,10 +147,15 @@ def _get(
 def read_symphony_statistics(
     account_id: str, spacing_seconds: float | None = None
 ) -> StatisticsRead:
-    """The symphonies an account lists, from its symphony-stats-meta endpoint."""
+    """The symphonies an account lists, from its symphony-stats-meta endpoint.
+
+    An account id that is not a plain id segment is refused as unreadable without a request.
+    """
+    if not _is_plain_id(account_id):
+        return StatisticsRead("unreadable", [])
     failure, body = _get(
         "statistics",
-        f"/portfolio/accounts/{_segment(account_id)}/symphony-stats-meta",
+        f"/portfolio/accounts/{account_id}/symphony-stats-meta",
         spacing_seconds=spacing_seconds,
     )
     if failure:
@@ -163,11 +179,11 @@ def read_symphony_value_series(
 
     An id that is not a plain id segment is refused as unreadable without a request.
     """
-    if not _is_plain_id(symphony_id):
+    if not _is_plain_id(account_id) or not _is_plain_id(symphony_id):
         return SeriesRead("unreadable", {})
     failure, body = _get(
         "series",
-        f"/portfolio/accounts/{_segment(account_id)}/symphonies/{symphony_id}",
+        f"/portfolio/accounts/{account_id}/symphonies/{symphony_id}",
         spacing_seconds=spacing_seconds,
     )
     if failure:
@@ -243,10 +259,13 @@ def read_daily_holdings(
     """Daily holdings of an account from ``start`` to ``end`` in client-sized date spans.
 
     A rate-limited span ends the reads: it and every later span are listed as failed spans.
+    An account id that is not a plain id segment fails every span as unreadable, with no request.
     """
     days: dict = {}
     failed: list[FailedSpan] = []
     spans = _spans(start, end)
+    if not _is_plain_id(account_id):
+        return HoldingsRead({}, [FailedSpan(s, e, "unreadable") for s, e in spans])
     for index, (span_start, span_end) in enumerate(spans):
         params = {
             "start_date": span_start.isoformat(),
@@ -255,7 +274,7 @@ def read_daily_holdings(
         }
         failure, body = _get(
             "holdings",
-            f"/portfolio/accounts/{_segment(account_id)}/symphony-historical-holdings",
+            f"/portfolio/accounts/{account_id}/symphony-historical-holdings",
             params,
             spacing_seconds,
         )
