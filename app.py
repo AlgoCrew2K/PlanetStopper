@@ -1246,7 +1246,7 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
             subject_type="tenure_review_run",
             subject_id=run_id,
             verdict="completed",
-            raw_response=tenure_review.run_record(result, now_et),
+            raw_response=tenure_review.run_record(result, datetime.now(_ET)),
         )
         tenure_review.REVIEW_RUN_STATE.finish_success(owner)
         _daemon_log.info("Tenure review complete: %d recommendation(s).", len(recs))
