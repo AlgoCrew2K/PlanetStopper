@@ -1529,7 +1529,7 @@ class TestTheReadPathLogsOnlyTheExceptionType:
         self, client, isolated_db, review_module_unimportable, caplog
     ):
         assert client.get("/api/retirement-recommendations").status_code == 200
-        self._assert_type_only(caplog, "ImportError")
+        self._assert_type_only(caplog, "ModuleNotFoundError")
         assert not any("halted" in r.getMessage() for r in _review_log_records(caplog)), (
             "the text of the import error was logged"
         )
