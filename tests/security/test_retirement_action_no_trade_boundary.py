@@ -631,79 +631,196 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
 ]
 
 
+# Every spelling of "make this function a template helper" that Flask, Blueprints and Jinja
+# accept. A helper registered by a form this guard does not read is reached by the template
+# and by no scan entry point, so the guard is only as strong as the forms listed here.
 _TEMPLATE_REGISTRATION_DECORATORS = frozenset(
-    {"template_filter", "template_test", "template_global", "context_processor"}
+    {
+        "template_filter",
+        "template_test",
+        "template_global",
+        "context_processor",
+        "app_template_filter",
+        "app_template_test",
+        "app_template_global",
+        "app_context_processor",
+    }
 )
+_CONTEXT_PROCESSOR_ATTRS = frozenset({"context_processor", "app_context_processor"})
 _TEMPLATE_REGISTRATION_TABLES = frozenset({"filters", "tests", "globals"})
+# The list of context processors an application keeps; a function stored in it runs per render.
+_TEMPLATE_PROCESSOR_LIST_ATTR = "template_context_processors"
 # Calls that register their first argument, or their ``f`` keyword, as a template helper.
 _TEMPLATE_REGISTRATION_CALLS = frozenset(
-    {"add_template_filter", "add_template_test", "add_template_global", "context_processor"}
+    {
+        "add_template_filter",
+        "add_template_test",
+        "add_template_global",
+        "add_app_template_filter",
+        "add_app_template_test",
+        "add_app_template_global",
+        *_CONTEXT_PROCESSOR_ATTRS,
+    }
 )
-# Methods of a filters, tests or globals table that store the values they are given.
-_TEMPLATE_TABLE_STORING_METHODS = frozenset({"update", "setdefault"})
+# Methods of a filters, tests or globals table, or of the processor list, that store the
+# values they are given.
+_TEMPLATE_TABLE_STORING_METHODS = frozenset(
+    {"update", "setdefault", "__setitem__", "__ior__", "append", "extend", "insert"}
+)
+# What a registered helper that has no name (a lambda) is reported as: it cannot be an entry
+# point of the scan, so it is always unlisted.
+_ANONYMOUS_HELPER = "<anonymous helper>"
+# Builtins that only collect or pair the helpers they are given.
+_COLLECTING_BUILTINS = frozenset({"dict", "list", "tuple", "set", "frozenset", "zip", "map"})
 
 
 def _helper_names_in(node: ast.AST | None) -> set[str]:
-    """The bare names a registration hands over: the name itself, the values of a dict
-    literal, or the arguments of ``dict(...)``."""
+    """The names of the functions a registration hands over, whatever shape it hands them in:
+    a bare name, a lambda, the values of a dict literal or comprehension, the elements of a
+    list, tuple, set, generator or comprehension (the key of a ``(key, function)`` pair is
+    not a helper), either side of ``|`` or ``+``, a conditional's two branches, and the
+    arguments of a call that wraps or collects them (``dict(...)``, ``zip(...)``,
+    ``functools.partial(...)``)."""
+    if node is None:
+        return set()
     if isinstance(node, ast.Name):
-        return {node.id}
+        # The table itself, as the left side of a union, is not a helper.
+        return set() if node.id in _TEMPLATE_REGISTRATION_TABLES else {node.id}
+    if isinstance(node, ast.Lambda):
+        return {_ANONYMOUS_HELPER}
+    if isinstance(node, ast.Starred):
+        return _helper_names_in(node.value)
     if isinstance(node, ast.Dict):
         return {name for value in node.values for name in _helper_names_in(value)}
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
+    if isinstance(node, ast.DictComp):
+        return _helper_names_in(node.value)
+    if isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+        return _helper_names_in(node.elt)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         names: set[str] = set()
-        for argument in node.args:
+        for index, element in enumerate(node.elts):
+            is_key = (
+                index == 0
+                and isinstance(node, ast.Tuple)
+                and isinstance(element, ast.Constant)
+                and isinstance(element.value, str)
+            )
+            if not is_key:
+                names |= _helper_names_in(element)
+        return names
+    if isinstance(node, ast.BinOp):
+        return _helper_names_in(node.left) | _helper_names_in(node.right)
+    if isinstance(node, ast.IfExp):
+        return _helper_names_in(node.body) | _helper_names_in(node.orelse)
+    if isinstance(node, ast.Call):
+        names = set()
+        if isinstance(node.func, ast.Name) and node.func.id not in _COLLECTING_BUILTINS:
+            names.add(node.func.id)
+        for argument in [*node.args, *(k.value for k in node.keywords)]:
             names |= _helper_names_in(argument)
-        for keyword in node.keywords:
-            names |= _helper_names_in(keyword.value)
         return names
     return set()
 
 
+def _strip_subscripts(node: ast.AST) -> ast.AST:
+    while isinstance(node, ast.Subscript):
+        node = node.value
+    return node
+
+
 def _is_template_table(node: ast.AST) -> bool:
-    return (isinstance(node, ast.Attribute) and node.attr in _TEMPLATE_REGISTRATION_TABLES) or (
-        isinstance(node, ast.Name) and node.id in _TEMPLATE_REGISTRATION_TABLES
-    )
+    """A ``filters``, ``tests`` or ``globals`` table, or the application's list of context
+    processors, however it is reached and whether or not it is indexed."""
+    node = _strip_subscripts(node)
+    if isinstance(node, ast.Attribute):
+        return (
+            node.attr in _TEMPLATE_REGISTRATION_TABLES or node.attr == _TEMPLATE_PROCESSOR_LIST_ATTR
+        )
+    return isinstance(node, ast.Name) and node.id in _TEMPLATE_REGISTRATION_TABLES
+
+
+def _called_attribute(call: ast.Call) -> str | None:
+    """The attribute a call is made through: ``app.template_filter("x")`` is made through
+    ``template_filter``."""
+    return call.func.attr if isinstance(call.func, ast.Attribute) else None
 
 
 def _registered_template_function_names(tree: ast.Module) -> set[str]:
-    """The names of the functions a module registers for its templates, by every form Flask
-    and Jinja accept: a ``template_filter``, ``template_test``, ``template_global`` or
-    ``context_processor`` decorator; a call of ``add_template_filter``, ``add_template_test``,
-    ``add_template_global`` or ``context_processor`` with the function; a store into a
-    ``filters``, ``tests`` or ``globals`` table (``app.jinja_env.tests[name] = fn``, or
-    ``.update(...)`` and ``.setdefault(...)`` with the function as a value); and the names a
-    context processor returns in a dict. The template runs each of them on a page load, from
-    outside any call graph."""
+    """The names of the functions a module registers for its templates, by every form Flask,
+    Blueprints and Jinja accept: a ``template_filter``, ``template_test``, ``template_global``
+    or ``context_processor`` decorator (and the Blueprint ``app_`` spellings), applied by
+    ``@`` or by a call (``app.template_filter("x")(fn)``); a call of ``add_template_filter``,
+    ``add_template_test``, ``add_template_global`` or ``context_processor`` (and the
+    Blueprint spellings) with the function; a store into a ``filters``, ``tests`` or
+    ``globals`` table by subscript, by ``.update(...)`` (a dict, keywords, a list or generator
+    of pairs), ``.setdefault(...)``, ``|=``, or a replacement of the whole table; an append
+    to the context processor list; and the names a context processor returns in a dict. The
+    template runs each of them on a page load, from outside any call graph."""
     names: set[str] = set()
+    processors: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for decorator in node.decorator_list:
                 target = decorator.func if isinstance(decorator, ast.Call) else decorator
-                if not (
-                    isinstance(target, ast.Attribute)
-                    and target.attr in _TEMPLATE_REGISTRATION_DECORATORS
-                ):
+                attribute = (
+                    target.attr
+                    if isinstance(target, ast.Attribute)
+                    else target.id
+                    if isinstance(target, ast.Name)
+                    else None
+                )
+                if attribute not in _TEMPLATE_REGISTRATION_DECORATORS:
                     continue
                 names.add(node.name)
-                if target.attr == "context_processor":
-                    for inner in ast.walk(node):
-                        if isinstance(inner, ast.Return):
-                            names |= _helper_names_in(inner.value)
+                if attribute in _CONTEXT_PROCESSOR_ATTRS:
+                    processors.add(node.name)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Subscript) and _is_template_table(target.value):
+                # Binding a local that happens to be called ``filters`` registers nothing;
+                # replacing the table on an object, or storing into it by index, does.
+                if _is_template_table(target) and not isinstance(target, ast.Name):
                     names |= _helper_names_in(node.value)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in _TEMPLATE_REGISTRATION_CALLS:
-                handed = list(node.args[:1]) + [k.value for k in node.keywords if k.arg == "f"]
-                for value in handed:
-                    names |= _helper_names_in(value)
-            elif node.func.attr in _TEMPLATE_TABLE_STORING_METHODS and _is_template_table(
-                node.func.value
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            if _is_template_table(node.target):
+                names |= _helper_names_in(node.value)
+        elif isinstance(node, ast.Call):
+            attribute = _called_attribute(node)
+            if isinstance(node.func, ast.Call):
+                # app.template_filter("x")(fn): the decorator is applied by a call.
+                applied = _called_attribute(node.func)
+                if applied in _TEMPLATE_REGISTRATION_DECORATORS:
+                    handed = _helper_names_in(node.args[0]) if node.args else set()
+                    names |= handed
+                    if applied in _CONTEXT_PROCESSOR_ATTRS:
+                        processors |= handed
+            elif attribute in _TEMPLATE_REGISTRATION_CALLS:
+                handed = set()
+                for value in [*node.args[:1], *(k.value for k in node.keywords if k.arg == "f")]:
+                    handed |= _helper_names_in(value)
+                names |= handed
+                if attribute in _CONTEXT_PROCESSOR_ATTRS:
+                    processors |= handed
+            elif (
+                attribute in _TEMPLATE_TABLE_STORING_METHODS
+                and isinstance(node.func, ast.Attribute)
+                and _is_template_table(node.func.value)
             ):
+                handed = set()
                 for value in [*node.args, *(k.value for k in node.keywords)]:
-                    names |= _helper_names_in(value)
+                    handed |= _helper_names_in(value)
+                names |= handed
+                receiver = _strip_subscripts(node.func.value)
+                if (
+                    isinstance(receiver, ast.Attribute)
+                    and receiver.attr == _TEMPLATE_PROCESSOR_LIST_ATTR
+                ):
+                    processors |= handed
+    # A context processor hands its template the names it returns.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in processors:
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Return):
+                    names |= _helper_names_in(inner.value)
     return names
 
 
@@ -930,32 +1047,129 @@ class TestEveryTemplateHelperIsAnEntryPointOfTheScan:
         assert _registered_template_function_names(tree) == {"_shout", "_is_odd", "_today"}
 
 
-# Every way Flask and Jinja take a function for a template. The drift guard above is only as
-# strong as the forms it recognizes, so each form is planted and shown to be seen.
-_REGISTRATION_FORMS = [
-    pytest.param("app.add_template_filter(_planted, 'planted')", id="add_template_filter"),
-    pytest.param("app.add_template_filter(_planted)", id="add_template_filter without a name"),
-    pytest.param(
-        "app.add_template_filter(f=_planted, name='planted')", id="add_template_filter by keyword"
-    ),
-    pytest.param("app.add_template_test(_planted, 'planted')", id="add_template_test"),
-    pytest.param("app.add_template_global(_planted, 'planted')", id="add_template_global"),
-    pytest.param("app.jinja_env.filters.update(planted=_planted)", id="filters update by keyword"),
-    pytest.param(
-        "app.jinja_env.tests.update({'planted': _planted})", id="tests update by dict literal"
-    ),
-    pytest.param(
-        "app.jinja_env.globals.update(dict(planted=_planted))", id="globals update by dict call"
-    ),
-    pytest.param("app.jinja_env.filters.setdefault('planted', _planted)", id="filters setdefault"),
-    pytest.param("app.jinja_env.filters['planted'] = _planted", id="filters subscript"),
-    pytest.param("environment.tests['planted'] = _planted", id="tests subscript of another object"),
-    pytest.param(
-        "app.context_processor(_planted)", id="context_processor called with the function"
-    ),
-]
+# Every way Flask, Blueprints and Jinja take a function for a template. The drift guard above
+# is only as strong as the forms it recognizes, so each form is planted and shown to be seen,
+# for a filter, a test and a global alike: a form that only one table's tests exercise leaves
+# the other two unproven.
+_REGISTRATION_KINDS = ("filter", "test", "global")
+_TABLE_OF_KIND = {"filter": "filters", "test": "tests", "global": "globals"}
+
+
+def _registration_forms() -> list:
+    forms = [
+        pytest.param("app.add_template_filter(f=_planted, name='planted')", id="add by keyword"),
+        pytest.param("app.add_template_filter(_planted)", id="add_template_filter without a name"),
+        pytest.param(
+            "app.context_processor(_planted)", id="context_processor called with the function"
+        ),
+        pytest.param(
+            "app.app_context_processor(_planted)", id="app_context_processor called with it"
+        ),
+        pytest.param(
+            "blueprint.app_context_processor(_planted)", id="blueprint context processor call"
+        ),
+        pytest.param(
+            "app.template_context_processors[None].append(_planted)",
+            id="appended to the processor list",
+        ),
+        pytest.param(
+            "app.template_context_processors[None].extend([_planted])",
+            id="extended onto the processor list",
+        ),
+        pytest.param(
+            "environment.tests['planted'] = _planted", id="tests subscript of another object"
+        ),
+    ]
+    for kind in _REGISTRATION_KINDS:
+        table = f"app.jinja_env.{_TABLE_OF_KIND[kind]}"
+        forms += [
+            pytest.param(
+                f"app.add_template_{kind}(_planted, 'planted')", id=f"add_template_{kind}"
+            ),
+            pytest.param(
+                f"blueprint.add_app_template_{kind}(_planted, 'planted')",
+                id=f"add_app_template_{kind}",
+            ),
+            # a decorator applied by a call instead of by @
+            pytest.param(
+                f"app.template_{kind}('planted')(_planted)", id=f"template_{kind} applied by a call"
+            ),
+            pytest.param(
+                f"app.template_{kind}()(_planted)", id=f"template_{kind} without a name applied"
+            ),
+            pytest.param(
+                f"app.template_{kind}(name='planted')(_planted)",
+                id=f"template_{kind} by keyword applied",
+            ),
+            pytest.param(
+                f"blueprint.app_template_{kind}('planted')(_planted)",
+                id=f"app_template_{kind} applied by a call",
+            ),
+            # a table updated, by every argument shape update takes
+            pytest.param(f"{table}.update(planted=_planted)", id=f"{table} update by keyword"),
+            pytest.param(f"{table}.update({{'planted': _planted}})", id=f"{table} update by dict"),
+            pytest.param(
+                f"{table}.update(dict(planted=_planted))", id=f"{table} update by dict call"
+            ),
+            pytest.param(
+                f"{table}.update([('planted', _planted)])", id=f"{table} update by a list of pairs"
+            ),
+            pytest.param(
+                f"{table}.update((('planted', _planted),))",
+                id=f"{table} update by a tuple of pairs",
+            ),
+            pytest.param(
+                f"{table}.update(('planted', _planted) for _ in range(1))",
+                id=f"{table} update by a generator of pairs",
+            ),
+            pytest.param(
+                f"{table}.update(zip(['planted'], [_planted]))", id=f"{table} update by zip"
+            ),
+            pytest.param(
+                f"{table}.update(planted=functools.partial(_planted, 1))",
+                id=f"{table} update by a wrapped function",
+            ),
+            pytest.param(f"{table}.setdefault('planted', _planted)", id=f"{table} setdefault"),
+            pytest.param(f"{table}.__setitem__('planted', _planted)", id=f"{table} __setitem__"),
+            pytest.param(f"{table}['planted'] = _planted", id=f"{table} subscript"),
+            # the in-place union and the replacement of the whole table
+            pytest.param(f"{table} |= {{'planted': _planted}}", id=f"{table} |= a dict"),
+            pytest.param(f"{table} |= dict(planted=_planted)", id=f"{table} |= dict call"),
+            pytest.param(
+                f"{table} |= {{'a': _first, 'b': _planted}}", id=f"{table} |= two functions"
+            ),
+            pytest.param(f"{table} = {{**{table}, 'planted': _planted}}", id=f"{table} replaced"),
+            pytest.param(
+                f"{table} = {table} | {{'planted': _planted}}", id=f"{table} replaced by a union"
+            ),
+            pytest.param(f"{table}.__ior__({{'planted': _planted}})", id=f"{table} __ior__"),
+        ]
+    return forms
+
+
+_REGISTRATION_FORMS = _registration_forms()
+# Three registration shapes, each with a helper that creates a symphony the way a real one would.
+_PLANTED_WITH_A_CALL_APPLIED_DECORATOR = (
+    "def _planted_extra(value):\n"
+    "    from advisors import composer_draft_client\n\n"
+    "    return composer_draft_client.save_symphony(value)\n\n\n"
+    "app.template_filter('planted_extra')(_planted_extra)\n"
+)
+_PLANTED_WITH_A_PAIRS_UPDATE = (
+    "def _planted_extra(value):\n"
+    "    from advisors import composer_draft_client\n\n"
+    "    return composer_draft_client.save_symphony(value)\n\n\n"
+    "app.jinja_env.filters.update([('planted_extra', _planted_extra)])\n"
+)
+_PLANTED_WITH_AN_IN_PLACE_UNION = (
+    "def _planted_extra(value):\n"
+    "    from advisors import composer_draft_client\n\n"
+    "    return composer_draft_client.save_symphony(value)\n\n\n"
+    "app.jinja_env.filters |= {'planted_extra': _planted_extra}\n"
+)
 _PLANTED_HELPER_SOURCE = (
-    "def _planted(value):\n    return composer_draft_client.save_symphony(value)\n"
+    "def _first(value):\n    return value\n\n\n"
+    "def _planted(value):\n    return composer_draft_client.save_symphony(value)\n\n\n"
 )
 _CONTEXT_PROCESSOR_FORMS = [
     pytest.param(
@@ -965,6 +1179,19 @@ _CONTEXT_PROCESSOR_FORMS = [
     pytest.param(
         "@app.context_processor\ndef _inject():\n    return dict(planted=_planted)\n",
         id="context processor returning dict()",
+    ),
+    pytest.param(
+        "def _inject():\n    return {'planted': _planted}\n\n\napp.context_processor(_inject)\n",
+        id="context processor registered by a call",
+    ),
+    pytest.param(
+        "@blueprint.app_context_processor\ndef _inject():\n    return {'planted': _planted}\n",
+        id="blueprint context processor returning a dict literal",
+    ),
+    pytest.param(
+        "def _inject():\n    return {'planted': _planted}\n\n\n"
+        "app.template_context_processors[None].append(_inject)\n",
+        id="context processor appended to the processor list",
     ),
 ]
 
@@ -983,7 +1210,9 @@ def _real_tree_with(source: str) -> ast.Module:
 class TestEveryRegistrationFormIsSeenByTheDriftGuard:
     @pytest.mark.parametrize("statement", _REGISTRATION_FORMS)
     def test_a_function_registered_by_the_form_is_found(self, statement):
-        assert _registered_template_function_names(ast.parse(statement)) == {"_planted"}
+        found = _registered_template_function_names(ast.parse(statement))
+        assert "_planted" in found, f"the form is not read: {sorted(found)}"
+        assert found <= {"_planted", "_first"}, f"the form reports something else: {sorted(found)}"
 
     @pytest.mark.parametrize("source", _CONTEXT_PROCESSOR_FORMS)
     def test_a_name_a_context_processor_returns_is_found_with_the_processor(self, source):
@@ -993,21 +1222,58 @@ class TestEveryRegistrationFormIsSeenByTheDriftGuard:
         statement = "app.jinja_env.filters.update({'a': _first}, b=_second)"
         assert _registered_template_function_names(ast.parse(statement)) == {"_first", "_second"}
 
+    @pytest.mark.parametrize("kind", _REGISTRATION_KINDS)
+    def test_a_function_without_a_name_is_reported_as_unlisted(self, kind):
+        table = f"app.jinja_env.{_TABLE_OF_KIND[kind]}"
+        for statement in (
+            f"app.template_{kind}('x')(lambda v: composer_draft_client.save_symphony(v))",
+            f"{table}['x'] = lambda v: composer_draft_client.save_symphony(v)",
+            f"{table}.update(x=lambda v: composer_draft_client.save_symphony(v))",
+            f"{table}.update([('x', lambda v: composer_draft_client.save_symphony(v))])",
+        ):
+            found = _registered_template_function_names(ast.parse(statement))
+            assert found == {_ANONYMOUS_HELPER}, (statement, found)
+            assert _unlisted_template_helpers(_real_tree_with(statement)) == [_ANONYMOUS_HELPER]
+
     @pytest.mark.parametrize(
         "statement",
         [
             "app.add_template_filter('shout')",
+            "app.template_filter('shout')",
+            "app.template_filter('shout')()",
             "app.jinja_env.filters.update()",
             "app.jinja_env.filters.get('shout')",
+            "app.jinja_env.filters['shout']",
+            "copied = app.jinja_env.filters.copy()",
             "registry.update(planted=_planted)",
+            "registry.update([('planted', _planted)])",
+            "registry |= {'planted': _planted}",
+            "registry['planted'] = _planted",
+            "filters = {'planted': _planted}",
             "app.add_url_rule('/x', view_func=_planted)",
+            "app.errorhandler(404)(_planted)",
+            "functools.lru_cache(maxsize=1)(_planted)",
+            "app.template_context_processors[None]",
+            "handlers.append(_planted)",
         ],
         ids=[
             "a name and no function",
+            "a decorator factory never applied",
+            "a decorator factory applied to nothing",
             "an empty update",
             "a read of the table",
+            "an index read of the table",
+            "a copy of the table",
             "an update of another object",
+            "a pairs update of another object",
+            "a union into another object",
+            "a store into another object",
+            "a local that happens to be called filters",
             "a route registration",
+            "an error handler applied by a call",
+            "another decorator applied by a call",
+            "a read of the processor list",
+            "an append to another list",
         ],
     )
     def test_a_call_that_registers_no_template_function_is_not_reported(self, statement):
@@ -1018,12 +1284,29 @@ class TestEveryRegistrationFormIsSeenByTheDriftGuard:
         self, statement
     ):
         tree = _real_tree_with(_PLANTED_HELPER_SOURCE + statement + "\n")
-        assert _unlisted_template_helpers(tree) == ["_planted"]
+        unlisted = _unlisted_template_helpers(tree)
+        assert "_planted" in unlisted, f"the planted helper is not reported: {unlisted}"
+        assert set(unlisted) <= {"_planted", "_first"}, unlisted
 
     @pytest.mark.parametrize("source", _CONTEXT_PROCESSOR_FORMS)
     def test_a_helper_returned_by_a_context_processor_is_unlisted_with_the_processor(self, source):
         tree = _real_tree_with(_PLANTED_HELPER_SOURCE + source)
         assert _unlisted_template_helpers(tree) == ["_inject", "_planted"]
+
+    @pytest.mark.parametrize(
+        "planted",
+        [
+            _PLANTED_WITH_A_CALL_APPLIED_DECORATOR,
+            _PLANTED_WITH_A_PAIRS_UPDATE,
+            _PLANTED_WITH_AN_IN_PLACE_UNION,
+        ],
+        ids=["decorator applied by a call", "filters update by a list of pairs", "filters |= dict"],
+    )
+    def test_each_of_these_forms_registers_a_symphony_creating_helper_the_scan_would_not_reach(
+        self, planted
+    ):
+        assert _unlisted_template_helpers(_parse_app_py()) == []
+        assert _unlisted_template_helpers(_real_tree_with(planted)) == ["_planted_extra"]
 
     def test_the_unplanted_app_has_no_unlisted_helper(self):
         assert _unlisted_template_helpers(_parse_app_py()) == []

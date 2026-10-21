@@ -1098,6 +1098,13 @@ class TestDocstringsNameWhatChanged:
         doc = self._flat(app_module._fetch_retirement_recommendations)
         assert "review_run_id" in doc
 
+    def test_the_review_fetch_docstring_states_the_non_list_entries_case_on_one_line(self):
+        # A plain substring check on the docstring as written, so the phrase must not wrap.
+        doc = app_module._fetch_tenure_review.__doc__ or ""
+        assert "not a list" in doc, (
+            "the docstring does not say a non-list entries value is unreadable"
+        )
+
 
 # ---------------------------------------------------------------------------
 # review_read_failed: whether the empty review fields mean "nothing stored" or "the

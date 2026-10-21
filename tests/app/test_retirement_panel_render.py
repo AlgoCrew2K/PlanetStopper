@@ -3465,6 +3465,34 @@ _POISONS = [
         )
         for name in ("held_days", "co_held_days")
     ],
+    # a unit of only spaces is a missing unit: the figure says so, whatever its unit family
+    _case(
+        "percent figure unit blank",
+        "watch",
+        [("evidence.performance.figures.total_return.unit", _BLANK)],
+        _line("performance", "total return"),
+        shows=_SHOWN_FIGURE,
+    ),
+    _case(
+        "ratio figure unit blank",
+        "watch",
+        [("evidence.performance.figures.sharpe.unit", _BLANK)],
+        _line("performance", "sharpe"),
+        shows="evidence.performance.figures.sharpe.value",
+    ),
+    _case(
+        "days figure unit blank",
+        "steady",
+        [("evidence.long_vix.figures.held_days.unit", _BLANK)],
+        _line("long_vix", "held days"),
+    ),
+    _case(
+        "composite figure unit blank",
+        "watch",
+        [("evidence.composite.figures.composite.unit", _BLANK)],
+        _line("composite", "composite:"),
+        shows="evidence.composite.figures.composite.value",
+    ),
 ]
 
 
@@ -4811,6 +4839,9 @@ _UNKEYABLE_IDS = [
     pytest.param([["abc"]], id="a list of lists"),
     pytest.param(987654, id="a number"),
     pytest.param(None, id="null"),
+    pytest.param(_GONE, id="missing"),
+    pytest.param("", id="empty"),
+    pytest.param(_BLANK, id="blank"),
 ]
 
 
@@ -4822,7 +4853,7 @@ class TestAnEntryWhoseIdCannotBeAKeyDegradesOnlyThatEntry:
         pb.seed_bot_state()
         record = pb.full_record(pb.RUN_ID_SECOND)
         broken = pb.entry_with_verdict(record, "retire_candidate")
-        broken["symphony_id"] = request.param
+        _edit(broken, "symphony_id", request.param)
         pb.store_run(record)
         watch = pb.entry_with_verdict(record, "watch")
         db_module.upsert_retirement_decision(watch["symphony_id"], approval_status="approved")
@@ -4836,7 +4867,7 @@ class TestAnEntryWhoseIdCannotBeAKeyDegradesOnlyThatEntry:
         panel = _panel(client)
         nodes = panel.find_all("tenure-review-entry")
         assert len(nodes) == len(record["entries"]), "an entry was dropped"
-        keyless = [n for n in nodes if n.attrs.get("data-symphony-id") == ""]
+        keyless = [n for n in nodes if n.attrs.get("data-symphony-id", "").strip() == ""]
         assert len(keyless) == 1, "the entry with the unusable id is not shown once"
         assert broken["display_name"] in keyless[0].text()
         assert _lifecycle_buttons(keyless[0]) == ([], [])
@@ -5387,6 +5418,37 @@ class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
         lines = _not_used_lines(block)
         assert len(lines) == 1 and item["reason"] in lines[0].text()
 
+    def test_an_item_that_shows_a_pair_keeps_its_reason_on_its_status_line_too(
+        self, client, isolated_db
+    ):
+        checked = 0
+        problems = []
+        for which in _REDUNDANCY_RECORDS:
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                item = stored["evidence"]["redundancy"]
+                if (
+                    item["status"] == "available"
+                    or not item.get("pair")
+                    or "redundancy" not in stored["missing_items"]
+                ):
+                    continue
+                where = f"{which} / {stored['display_name']}"
+                block = pb.entry_node(panel, stored["symphony_id"]).find(
+                    "tenure-review-evidence-redundancy"
+                )
+                status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
+                status_lines = _leaf_lines(block, (status_word,))
+                if len(status_lines) != 1 or item["reason"] not in status_lines[0].text():
+                    problems.append(f"{where}: status line {[n.text() for n in status_lines]}")
+                not_used = _not_used_lines(block)
+                if len(not_used) != 1 or item["reason"] not in not_used[0].text():
+                    problems.append(f"{where}: not-used line {[n.text() for n in not_used]}")
+                checked += 1
+        assert problems == []
+        assert checked >= 1, "no record holds a listed-missing redundancy item that shows a pair"
+
     def test_the_stored_reason_is_the_one_printed_once(self, client, isolated_db):
         reason = "a stored reason no template carries"
         _seed_roster("state:no_peer_composite")
@@ -5513,7 +5575,9 @@ _LEGACY_LEAKS = (r"\b0\.7\b", r"\bTrue\b", r"\[", r"\{")
 def _store_legacy_row(candidate_id="cand-legacy", sibling_id="sib-legacy", **fields) -> dict:
     raw = _sample_raw_response(candidate_id, sibling_id)
     raw.update(fields)
-    subject = candidate_id if isinstance(candidate_id, str) else "bad-row"
+    for key in [key for key, value in raw.items() if value is _GONE]:
+        del raw[key]
+    subject = candidate_id if isinstance(candidate_id, str) and candidate_id else "bad-row"
     db_module.insert_advisor_observation(
         advisor_role="RETIREMENT_RECOMMENDATION",
         subject_type="symphony",
@@ -5688,3 +5752,209 @@ class TestARecommendationRowWhoseIdCannotBeAKeyDegradesOnlyItself:
         entry = pb.entry_node(_panel(client), candidate["symphony_id"])
         approve, reject = _lifecycle_buttons(entry)
         assert len(approve) == 1 and len(reject) == 1, "the review entry lost its decision buttons"
+
+
+# ===========================================================================
+# A legacy recommendation card whose candidate_id, sibling_id or basis_label is not text
+# with something in it reads "not recorded" in each place it prints, never the Python text
+# of the stored value, and a card whose candidate_id cannot name a symphony offers no decision.
+# ===========================================================================
+
+_NOT_NONBLANK_TEXT = [
+    pytest.param(None, id="null"),
+    pytest.param(True, id="a boolean"),
+    pytest.param(4242424, id="a number"),
+    pytest.param(float("nan"), id="nan"),
+    pytest.param(float("inf"), id="infinity"),
+    pytest.param([_MARK], id="a list"),
+    pytest.param({"k": _MARK}, id="a dict"),
+    pytest.param("", id="empty"),
+    pytest.param(_BLANK, id="blank"),
+    pytest.param(_GONE, id="missing"),
+]
+# The Python text a stored value takes when it is printed without a check.
+_REPR_LEAKS = (r"\bNone\b", r"\bTrue\b", r"4242424", r"\bnan\b", r"\binf\b", _MARK, r"\[", r"\{")
+
+
+def _by_class(card: pb.Node, css_class: str) -> list[pb.Node]:
+    return [n for n in card.walk() if css_class in n.classes()]
+
+
+def _assert_no_repr_in(card: pb.Node) -> None:
+    text = card.everything()
+    for leak in _REPR_LEAKS:
+        assert not re.search(leak, text), f"the card prints {leak!r}: {text[:300]}"
+
+
+def _assert_title_is_absent_or_not_recorded(node: pb.Node) -> None:
+    title = node.attrs.get("title")
+    assert title is None or title.lower() == _NOT_RECORDED, f"title {title!r}"
+
+
+class TestALegacyCardNamesAnUnusableFieldAsNotRecorded:
+    @pytest.fixture(autouse=True)
+    def roster(self, isolated_db):
+        _seed_named_roster()
+
+    @pytest.mark.parametrize("bad", _NOT_NONBLANK_TEXT)
+    def test_a_candidate_id_that_is_not_text_reads_not_recorded_and_offers_no_decision(
+        self, client, bad
+    ):
+        _store_legacy_row(bad, "sib-good")
+        card = _only_legacy_card(client)
+        (candidate,) = _by_class(card, "retirement-rec-candidate")
+        assert candidate.text().lower() == _NOT_RECORDED, candidate.text()
+        _assert_title_is_absent_or_not_recorded(candidate)
+        (sibling,) = _by_class(card, "retirement-rec-sibling")
+        assert sibling.text() == "kept: Good Sibling Name", sibling.text()
+        assert _lifecycle_buttons(card) == ([], []), "a decision is offered for no symphony"
+        assert not any("data-candidate-id" in n.attrs for n in card.walk())
+        _assert_no_repr_in(card)
+        assert "0.80" in card.find("retirement-rec-correlation").text()
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    @pytest.mark.parametrize("bad", _NOT_NONBLANK_TEXT)
+    def test_a_sibling_id_that_is_not_text_reads_not_recorded_beside_the_candidates_name(
+        self, client, bad
+    ):
+        _store_legacy_row("cand-good", bad)
+        card = _only_legacy_card(client)
+        (sibling,) = _by_class(card, "retirement-rec-sibling")
+        assert re.fullmatch(r"kept:\s*not recorded", sibling.text().lower()), sibling.text()
+        _assert_title_is_absent_or_not_recorded(sibling)
+        (candidate,) = _by_class(card, "retirement-rec-candidate")
+        assert candidate.text() == "Good Candidate Name", "the candidate lost its fresh name"
+        assert candidate.attrs.get("title") == "cand-good"
+        approve, reject = _lifecycle_buttons(card)
+        assert len(approve) == 1 and len(reject) == 1, "the valid candidate lost its decision"
+        assert approve[0].attrs["data-candidate-id"] == "cand-good"
+        assert reject[0].attrs["data-candidate-id"] == "cand-good"
+        _assert_no_repr_in(card)
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    @pytest.mark.parametrize("bad", _NOT_NONBLANK_TEXT)
+    def test_a_basis_label_that_is_not_text_reads_not_recorded(self, client, bad):
+        _store_legacy_row("cand-good", "sib-good", basis_label=bad)
+        card = _only_legacy_card(client)
+        (basis,) = _by_class(card, "retirement-rec-basis")
+        assert basis.text().lower() == _NOT_RECORDED, basis.text()
+        approve, reject = _lifecycle_buttons(card)
+        assert len(approve) == 1 and len(reject) == 1
+        _assert_no_repr_in(card)
+        assert client.get("/api/retirement-recommendations").status_code == 200
+
+    def test_a_card_whose_fields_are_all_text_prints_them_as_stored(self, client):
+        _store_legacy_row("cand-good", "sib-good")
+        card = _only_legacy_card(client)
+        (candidate,) = _by_class(card, "retirement-rec-candidate")
+        (sibling,) = _by_class(card, "retirement-rec-sibling")
+        (basis,) = _by_class(card, "retirement-rec-basis")
+        assert candidate.text() == "Good Candidate Name" and candidate.attrs["title"] == "cand-good"
+        assert sibling.text() == "kept: Good Sibling Name" and sibling.attrs["title"] == "sib-good"
+        assert basis.text() == _sample_raw_response()["basis_label"]
+        approve, reject = _lifecycle_buttons(card)
+        assert len(approve) == 1 and len(reject) == 1
+
+    def test_one_unusable_row_changes_neither_the_valid_card_nor_its_buttons(self, client):
+        _store_legacy_row("cand-good", "sib-good")
+        _store_legacy_row(["bad"], "sib-good", basis_label=None)
+        cards = _panel(client).find_all("retirement-recommendation-card")
+        assert len(cards) == 2, "both rows are listed"
+        by_title = {
+            (_by_class(c, "retirement-rec-candidate")[0].attrs.get("title") or ""): c for c in cards
+        }
+        valid = by_title["cand-good"]
+        assert _by_class(valid, "retirement-rec-candidate")[0].text() == "Good Candidate Name"
+        assert len(_lifecycle_buttons(valid)[0]) == 1
+        broken = next(c for t, c in by_title.items() if t != "cand-good")
+        assert _lifecycle_buttons(broken) == ([], [])
+        _assert_no_repr_in(broken)
+
+
+# ===========================================================================
+# A recommendation row whose ids are not both text keeps the name of each id that is text:
+# only the field that cannot be looked up is skipped, on the API and on the page.
+# ===========================================================================
+
+_ONE_UNUSABLE_ID = [
+    pytest.param(["bad"], id="a list"),
+    pytest.param({"k": "v"}, id="a dict"),
+    pytest.param(None, id="null"),
+    pytest.param(4242424, id="a number"),
+    pytest.param(_BLANK, id="blank"),
+    pytest.param(_GONE, id="missing"),
+]
+_STALE_CANDIDATE = "Stale Candidate Name"
+_STALE_SIBLING = "Stale Sibling Name"
+
+
+def _named_row(**edits) -> dict:
+    raw = _sample_raw_response("cand-good", "sib-good")
+    raw["candidate_name"] = _STALE_CANDIDATE
+    raw["sibling_name"] = _STALE_SIBLING
+    for key, value in edits.items():
+        if value is _GONE:
+            del raw[key]
+        else:
+            raw[key] = value
+    return raw
+
+
+class TestEachIdThatIsTextKeepsItsFreshName:
+    @pytest.mark.parametrize("bad", _ONE_UNUSABLE_ID)
+    def test_with_no_run_a_valid_candidate_id_is_resolved_beside_a_sibling_id_that_is_not_text(
+        self, client, isolated_db, bad
+    ):
+        _seed_named_roster()
+        _insert_row(_named_row(sibling_id=bad), "cand-good")
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        rows = [
+            r
+            for r in pb.strict_json(resp)["recommendations"]
+            if r.get("candidate_id") == "cand-good"
+        ]
+        assert len(rows) == 1
+        assert rows[0]["candidate_name"] == "Good Candidate Name", (
+            "the candidate's fresh name was skipped because the sibling id is not text"
+        )
+        assert rows[0].get("sibling_name") == _STALE_SIBLING, "the unusable field was rewritten"
+
+    @pytest.mark.parametrize("bad", _ONE_UNUSABLE_ID)
+    def test_with_no_run_a_valid_sibling_id_is_resolved_beside_a_candidate_id_that_is_not_text(
+        self, client, isolated_db, bad
+    ):
+        _seed_named_roster()
+        _insert_row(_named_row(candidate_id=bad), "cand-other")
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        rows = [
+            r for r in pb.strict_json(resp)["recommendations"] if r.get("sibling_id") == "sib-good"
+        ]
+        assert len(rows) == 1
+        assert rows[0]["sibling_name"] == "Good Sibling Name", (
+            "the sibling's fresh name was skipped because the candidate id is not text"
+        )
+        assert rows[0].get("candidate_name") == _STALE_CANDIDATE, "the unusable field was rewritten"
+
+    @pytest.mark.parametrize("bad", _ONE_UNUSABLE_ID)
+    def test_with_a_run_the_candidate_of_the_run_keeps_its_fresh_name(
+        self, client, isolated_db, bad
+    ):
+        pb.seed_bot_state()
+        record = pb.full_record()
+        candidate = pb.entry_with_verdict(record, "retire_candidate")
+        body = pb.recommendation_for(record, candidate)
+        body["candidate_name"] = _STALE_CANDIDATE
+        _edit(body, "sibling_id", bad)
+        pb.store_recommendation(body)
+        pb.store_run(record)
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        rows = [
+            r
+            for r in pb.strict_json(resp)["recommendations"]
+            if r.get("candidate_id") == candidate["symphony_id"]
+        ]
+        assert len(rows) == 1
+        assert rows[0]["candidate_name"] == candidate["display_name"]
