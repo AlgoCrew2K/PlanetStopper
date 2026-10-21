@@ -708,3 +708,34 @@ def roster_with_a_candidate_in_two_passing_pairs(*, stronger_sorts_first: bool):
         composer_symphony(first_id, "Sibling Alpha", days, by_id[first_id]),
         composer_symphony(second_id, "Sibling Beta", days, by_id[second_id]),
     ]
+
+
+def lead_beside_young_peer(aligned: int, rho: float, *, scale: float = 0.3):
+    """Two Composer symphonies and a threshold. ``lead`` is eligible; ``peer`` is one session
+    short of the threshold, so the marginal item has no other eligible symphony to compare
+    and the pair they form is the only evidence the lead can have. The pair has exactly
+    ``aligned`` aligned returns and a correlation of ``rho`` (zero-mean sinusoids of one
+    frequency). Returns (roster, threshold)."""
+    days = last_n_nyse_days(AS_OF, aligned + 2)
+    lead_tail, peer_returns = orthogonal_pair(aligned, rho, k=1, scale=scale)
+    roster = [
+        composer_symphony("lead", "Lead", days, [0.1, *lead_tail]),
+        composer_symphony("peer", "Peer", days[1:], peer_returns),
+    ]
+    return roster, aligned + 2
+
+
+def twin_beside_young_peer(aligned: int):
+    """Like ``lead_beside_young_peer`` but the peer repeats the lead's levels on the days it
+    has, so the two return series are identical to the last digit and their correlation is
+    exactly 1. Returns (roster, threshold)."""
+    days = last_n_nyse_days(AS_OF, aligned + 2)
+    lead = composer_symphony("lead", "Lead", days, wave_returns(aligned + 1, amp=0.6))
+    kept = {d.isoformat() for d in days[1:]}
+    peer = make_symphony(
+        "peer",
+        "Peer",
+        days[1].isoformat(),
+        composer_values={d: v for d, v in lead.composer_values.items() if d in kept},
+    )
+    return [lead, peer], aligned + 2

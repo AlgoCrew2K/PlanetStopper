@@ -25,6 +25,7 @@ from datetime import date
 import pytest
 
 import advisors.tenure_review as tr
+from advisors import retirement_recommender
 from tests.advisors import _tenure_review_builders as b
 
 TRAILS = "trails its own backtest"
@@ -239,11 +240,19 @@ def _gate(state):
     return {"state": state, "text": f"{state}: as the gate words it"}
 
 
-def pair_redundancy_item(uncertainty, structural):
-    """An available redundancy item that shows a pair whose two gates read these states."""
+# Aligned days a pair needs before its stressed window can be read at all, from the oracle
+# that restates the recommender's constants.
+STRUCTURAL_FLOOR = b.days_needed_for_structural_gate()
+
+
+def pair_redundancy_item(uncertainty, structural, aligned_days):
+    """An available redundancy item that shows a pair on this many aligned days whose two
+    gates read these states, with a correlation figure that has a value."""
     pair = {
         "sibling_id": "sibling-1",
         "sibling_name": "Sibling One",
+        "n_obs": aligned_days,
+        "correlation": _fig(0.9, "correlation"),
         "uncertainty_gate": _gate(uncertainty),
         "structural_gate": _gate(structural),
         "note": None,
@@ -251,39 +260,70 @@ def pair_redundancy_item(uncertainty, structural):
     return _item(pair=pair, retire_candidate=False)
 
 
-# A shown pair is evidence for a verdict when its gates reached a decision: both ran, or the
-# uncertainty gate found the pair not confidently redundant (not met), a computed finding and
-# the reason the structural gate was skipped. A pair is no evidence when a gate could not
-# decide: it read insufficient data or undefined, or it was skipped because the uncertainty
-# gate could not decide.
-PAIRS_WITH_A_GATE_THAT_COULD_NOT_DECIDE = [
-    pytest.param("insufficient data", "not evaluated", id="too_few_days_for_the_interval"),
-    pytest.param("passed", "insufficient data", id="too_few_days_for_the_stressed_window"),
-    pytest.param("undefined", "not evaluated", id="the_interval_cannot_be_computed"),
-    pytest.param("passed", "undefined", id="the_stressed_window_cannot_be_computed"),
-]
-PAIRS_WHOSE_GATES_DECIDED = [
-    pytest.param("passed", "passed", id="both_passed"),
-    pytest.param("passed", "not met", id="stressed_window_not_met"),
+# A shown pair is evidence for a verdict when it was measured on at least the aligned days the
+# structural gate needs and its correlation is one the interval can be computed for, whatever
+# its gates concluded: a pair found not confidently redundant on a long history is a finding.
+# A shorter pair says too little to rest a verdict on in either direction, and so does a pair
+# whose correlation the interval cannot be computed for (a correlation of exactly one).
+# (uncertainty state, structural state, aligned days)
+PAIRS_THAT_DECIDE_NOTHING = [
+    pytest.param("insufficient data", "not evaluated", 24, id="too_few_days_for_the_interval"),
     pytest.param(
-        "not met", "not evaluated", id="interval_not_met_so_the_stressed_window_was_skipped"
+        "passed",
+        "insufficient data",
+        STRUCTURAL_FLOOR - 1,
+        id="one_day_short_of_the_stressed_window",
+    ),
+    pytest.param(
+        "not met",
+        "not evaluated",
+        STRUCTURAL_FLOOR - 1,
+        id="interval_not_met_one_day_short_of_the_stressed_window",
+    ),
+    pytest.param(
+        "passed",
+        "passed",
+        STRUCTURAL_FLOOR - 1,
+        id="both_gates_passed_on_fewer_days_than_the_real_gates_allow",
+    ),
+    pytest.param(
+        "undefined",
+        "not evaluated",
+        STRUCTURAL_FLOOR + 20,
+        id="a_correlation_the_interval_cannot_be_computed_for",
+    ),
+]
+PAIRS_THAT_ARE_EVIDENCE = [
+    pytest.param("passed", "passed", STRUCTURAL_FLOOR + 70, id="both_passed"),
+    pytest.param("passed", "not met", STRUCTURAL_FLOOR + 70, id="stressed_window_not_met"),
+    pytest.param(
+        "passed", "undefined", STRUCTURAL_FLOOR + 70, id="stressed_window_cannot_be_computed"
+    ),
+    pytest.param(
+        "not met", "not evaluated", STRUCTURAL_FLOOR + 70, id="interval_not_met_on_a_long_history"
+    ),
+    pytest.param(
+        "not met",
+        "not evaluated",
+        STRUCTURAL_FLOOR,
+        id="interval_not_met_on_exactly_the_days_the_stressed_window_needs",
     ),
 ]
 
 
-@pytest.mark.parametrize(("uncertainty", "structural"), PAIRS_WITH_A_GATE_THAT_COULD_NOT_DECIDE)
-def test_a_shown_pair_with_a_gate_that_could_not_decide_is_not_evidence_for_the_verdict(
-    uncertainty, structural
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_DECIDE_NOTHING)
+def test_a_shown_pair_on_too_few_days_or_with_an_undefined_correlation_is_not_evidence(
+    uncertainty, structural, aligned_days
 ):
     """With the backtest and the marginal item also unavailable, nothing is left to rest a
     verdict on. The item is listed as missing in its place in the fixed order, and the
     item itself is left as it was, pair and all.
 
-    Rejects counting an available redundancy item as evidence whatever its pair says, and
-    reading only "insufficient data" as a gate that could not decide: "undefined" is the
-    same."""
+    Rejects counting an available redundancy item as evidence whatever its pair says,
+    deciding by the gates' states alone (the interval not met on too few days reads as a
+    finding there), and counting a pair whose correlation is exactly one."""
     ev = evidence(
-        redundancy=pair_redundancy_item(uncertainty, structural),
+        redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
         backtest=backtest_item(),
         marginal=marginal_item(),
     )
@@ -296,18 +336,18 @@ def test_a_shown_pair_with_a_gate_that_could_not_decide_is_not_evidence_for_the_
     assert ev == snapshot
 
 
-@pytest.mark.parametrize(("uncertainty", "structural"), PAIRS_WITH_A_GATE_THAT_COULD_NOT_DECIDE)
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_DECIDE_NOTHING)
 @pytest.mark.parametrize(
     ("backtest_total", "verdict", "reasons"),
     [(5.0, "keep", []), (17.0, "watch", [TRAILS])],
     ids=["level_with_the_backtest", "trailing_by_12_points"],
 )
 def test_with_the_backtest_available_the_verdict_comes_from_it_and_the_pair_is_listed_missing(
-    uncertainty, structural, backtest_total, verdict, reasons
+    uncertainty, structural, aligned_days, backtest_total, verdict, reasons
 ):
     got = tr.decide_verdict(
         evidence(
-            redundancy=pair_redundancy_item(uncertainty, structural),
+            redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
             backtest=backtest_item(realized=5.0, backtest=backtest_total),
             marginal=marginal_item(),
         )
@@ -317,13 +357,13 @@ def test_with_the_backtest_available_the_verdict_comes_from_it_and_the_pair_is_l
     assert got["missing_items"] == ["redundancy", "marginal"]
 
 
-@pytest.mark.parametrize(("uncertainty", "structural"), PAIRS_WITH_A_GATE_THAT_COULD_NOT_DECIDE)
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_DECIDE_NOTHING)
 def test_with_the_marginal_item_available_the_verdict_comes_from_it_and_the_pair_is_listed_missing(
-    uncertainty, structural
+    uncertainty, structural, aligned_days
 ):
     got = tr.decide_verdict(
         evidence(
-            redundancy=pair_redundancy_item(uncertainty, structural),
+            redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
             backtest=backtest_item(),
             marginal=marginal_item(5.0, 6.0, -10.0, -8.0),
         )
@@ -333,15 +373,19 @@ def test_with_the_marginal_item_available_the_verdict_comes_from_it_and_the_pair
     assert got["missing_items"] == ["redundancy", "backtest"]
 
 
-@pytest.mark.parametrize(("uncertainty", "structural"), PAIRS_WHOSE_GATES_DECIDED)
-def test_a_shown_pair_whose_gates_decided_is_evidence_for_the_verdict(uncertainty, structural):
-    """Both gates ran, or the uncertainty gate found by computation that the pair is not
-    confidently redundant and the structural gate was skipped for that reason: either way
-    the pair did not flag the symphony and that is a finding. Rejects treating every shown
-    pair as no evidence, and a skipped structural gate as a gate that could not decide."""
+@pytest.mark.parametrize(("uncertainty", "structural", "aligned_days"), PAIRS_THAT_ARE_EVIDENCE)
+def test_a_shown_pair_on_enough_days_is_evidence_whatever_its_gates_concluded(
+    uncertainty, structural, aligned_days
+):
+    """The pair was measured on at least the aligned days the stressed window needs, so
+    that it did not flag the symphony is a finding, however the gates ended: both ran, the
+    interval fell short, or the stressed window could not be computed. Rejects treating
+    every shown pair as no evidence, deciding by the gates' states (a stressed window that
+    cannot be computed is not a reason to ignore 250 days of correlation), and a floor one
+    day too high."""
     got = tr.decide_verdict(
         evidence(
-            redundancy=pair_redundancy_item(uncertainty, structural),
+            redundancy=pair_redundancy_item(uncertainty, structural, aligned_days),
             backtest=backtest_item(),
             marginal=marginal_item(),
         )
@@ -463,7 +507,7 @@ def test_a_fallback_basis_sibling_is_never_paired_and_nobody_is_retired():
 
 
 # ---------------------------------------------------------------------------
-# Through build_review: a shown pair whose gates were not evaluated decides nothing
+# Through build_review: a shown pair on too few days decides nothing
 # ---------------------------------------------------------------------------
 
 LEAD_BESIDE_A_YOUNG_PEER_UNDECIDED = [
@@ -506,15 +550,13 @@ def _lead_beside_a_young_peer(noise):
 
 
 @pytest.mark.parametrize(("noise", "states"), LEAD_BESIDE_A_YOUNG_PEER_UNDECIDED)
-def test_a_symphony_whose_only_evidence_is_a_pair_with_a_gate_that_could_not_decide_has_no_verdict(
-    noise, states
-):
+def test_a_symphony_whose_only_evidence_is_a_pair_on_too_few_days_has_no_verdict(noise, states):
     """The pair is a screen hit and is shown with each gate's own state. The backtest was
     not requested and the marginal item has no other eligible symphony, so the verdict has
     nothing to rest on and says so, and the redundancy item is listed as missing.
 
-    Rejects a keep verdict resting on a gate that could not decide: too few days for the
-    interval, too few for the stressed window, or an interval that cannot be computed."""
+    Rejects a keep verdict resting on a pair measured on far fewer days than the stressed
+    window needs, whatever its gates read."""
     roster, threshold = _lead_beside_a_young_peer(noise)
     lead = b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=threshold), "lead")
     redundancy = b.item_of(lead, "redundancy")
@@ -530,23 +572,88 @@ def test_a_symphony_whose_only_evidence_is_a_pair_with_a_gate_that_could_not_dec
     assert lead["verdict_reasons"] == []
 
 
-def test_a_symphony_whose_only_available_pair_was_found_not_confidently_redundant_has_a_verdict():
-    """The peer shares 39 returns and follows the lead at about 0.72, a screen hit whose
-    interval reaches below 0.65: the uncertainty gate found, by computation, that the pair
-    is not confidently redundant, and the structural gate was skipped for that reason. That
-    is a finding, so the pair is evidence and the lead reads keep.
-
-    Rejects reading the skipped structural gate as a gate that could not decide."""
-    roster, threshold = _lead_beside_a_young_peer(0.5)
+def _lead_beside_a_correlated_young_peer(rho, aligned_days):
+    """The lead and a peer one session short of the threshold, correlated at ``rho`` over
+    exactly ``aligned_days`` returns, and what the review says of the lead."""
+    roster, threshold = b.lead_beside_young_peer(aligned_days, rho)
     lead = b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=threshold), "lead")
-    redundancy = b.item_of(lead, "redundancy")
-    assert redundancy["pair"]["uncertainty_gate"]["state"] == "not met"  # fixture sanity
-    assert redundancy["pair"]["structural_gate"]["state"] == "not evaluated"  # fixture sanity
+    pair = b.item_of(lead, "redundancy")["pair"]
+    assert pair is not None  # fixture sanity: a screen hit is shown
+    assert pair["n_obs"] == aligned_days  # fixture sanity
+    assert pair["correlation"]["value"] == pytest.approx(rho, abs=1e-9)  # fixture sanity
     assert b.item_of(lead, "marginal")["status"] == "not_applicable"  # fixture sanity
     assert b.item_of(lead, "backtest")["status"] == "unavailable"  # fixture sanity
+    return lead
+
+
+@pytest.mark.parametrize("rho", [0.70, 0.90], ids=["correlated_at_0.70", "correlated_at_0.90"])
+@pytest.mark.parametrize(
+    "aligned_days",
+    [
+        retirement_recommender.MIN_OBS_FLOOR,
+        100,
+        STRUCTURAL_FLOOR - 1,
+    ],
+    ids=["the_interval_floor", "100_days", "one_day_short_of_the_stressed_window"],
+)
+def test_a_pair_on_fewer_days_than_the_stressed_window_needs_decides_nothing_whatever_its_correlation(
+    rho, aligned_days
+):
+    """A pair at 0.70 and a pair at 0.90, each over the same 30 to 180 aligned days, are
+    both shown and neither supports a verdict: the 0.70 pair, whose interval falls short,
+    must not read as a finding that the lead has no redundant sibling while the 0.90 pair
+    reads as nothing. Rejects deciding by the gates' states, which counts the weaker pair
+    and ignores the stronger."""
+    lead = _lead_beside_a_correlated_young_peer(rho, aligned_days)
+    assert "redundancy" in lead["missing_items"]
+    assert lead["verdict"] is None
+    assert lead["verdict_text"] == "no verdict: no evidence available"
+    assert lead["verdict_reasons"] == []
+
+
+@pytest.mark.parametrize("rho", [0.70, 0.90], ids=["correlated_at_0.70", "correlated_at_0.90"])
+@pytest.mark.parametrize(
+    "aligned_days",
+    [STRUCTURAL_FLOOR, 250],
+    ids=["exactly_the_days_the_stressed_window_needs", "250_days"],
+)
+def test_a_pair_on_at_least_the_days_the_stressed_window_needs_is_evidence_whatever_its_gates_concluded(
+    rho, aligned_days
+):
+    """The same two pairs on a long enough history: neither flags the lead (its peer has no
+    composite) and each is a finding, so the lead reads keep with the item not listed as
+    missing. Rejects a floor above the days the stressed window needs, and a rule that
+    discards every shown pair."""
+    lead = _lead_beside_a_correlated_young_peer(rho, aligned_days)
     assert "redundancy" not in lead["missing_items"]
     assert lead["verdict"] == "keep"
     assert lead["verdict_reasons"] == []
+
+
+def test_an_exact_twin_pair_is_shown_but_decides_nothing_because_the_gate_reads_a_correlation_of_one_as_undefined():
+    """Two series identical to the last digit have a correlation of exactly 1, for which
+    the interval does not exist, so the recommender's gate reads it as undefined and the
+    pair is not evidence however many days it covers. This is a known limitation of the
+    current rule, pinned so that a change to it is deliberate: the pair is shown with the
+    uncertainty gate undefined and the structural gate skipped for that reason, nobody is
+    flagged, the item is listed as missing and the lead has no verdict."""
+    roster, threshold = b.twin_beside_young_peer(STRUCTURAL_FLOOR + 20)
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold)
+    lead = b.entry_of(result, "lead")
+    item = b.item_of(lead, "redundancy")
+    pair = item["pair"]
+    assert pair is not None and pair["n_obs"] > STRUCTURAL_FLOOR  # fixture sanity
+    assert pair["correlation"]["value"] == 1.0  # fixture sanity: exactly one
+    assert pair["uncertainty_gate"]["state"] == "undefined"
+    assert pair["structural_gate"]["state"] == "not evaluated"
+    assert pair["structural_gate"]["text"] == "not evaluated: uncertainty gate undefined"
+    assert item["retire_candidate"] is False
+    assert result.recommendations == []
+    assert b.item_of(lead, "marginal")["status"] == "not_applicable"  # fixture sanity
+    assert b.item_of(lead, "backtest")["status"] == "unavailable"  # fixture sanity
+    assert "redundancy" in lead["missing_items"]
+    assert lead["verdict"] is None
+    assert lead["verdict_text"] == "no verdict: no evidence available"
 
 
 @pytest.mark.parametrize(

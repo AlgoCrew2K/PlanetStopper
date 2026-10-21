@@ -303,6 +303,65 @@ def test_a_holdings_key_that_is_not_a_date_is_ignored():
 
 
 # ---------------------------------------------------------------------------
+# A holdings key on a day the exchange was closed is not a day
+# ---------------------------------------------------------------------------
+
+SESSIONS_IN_WINDOW = b.nyse_days(DAYS[0], DAYS[-1])
+CLOSED_DAYS = [d for d in b.calendar_days(DAYS[0], DAYS[-1]) if d not in SESSIONS_IN_WINDOW]
+# The five sessions straddle Christmas Day (a weekday holiday) and a weekend.
+CLOSED_CASES = {
+    "weekday_holiday": [d for d in CLOSED_DAYS if d.weekday() < 5],
+    "saturday": [d for d in CLOSED_DAYS if d.weekday() == 5],
+    "sunday": [d for d in CLOSED_DAYS if d.weekday() == 6],
+    "every_closed_day": CLOSED_DAYS,
+}
+
+
+@pytest.mark.parametrize("stamp", ["", "T16:00:00"], ids=["bare_date_key", "stamped_key"])
+@pytest.mark.parametrize("case", list(CLOSED_CASES))
+def test_a_holdings_key_on_a_closed_day_is_not_a_day(case, stamp):
+    """Heavy long-VIX holdings are keyed on days the exchange was closed (a weekday holiday,
+    a Saturday, a Sunday), bare or stamped. The item equals the item for the sessions alone,
+    and its day count is the number of exchange sessions in the window, from the calendar
+    library. Rejects counting every calendar day, and a rule that drops weekends but keeps a
+    weekday holiday."""
+    closed = CLOSED_CASES[case]
+    assert closed, "fixture sanity: the window holds this kind of closed day"
+    days = dict(_holdings(SCENARIO).days)
+    for day in closed:
+        days[f"{day.isoformat()}{stamp}"] = HEAVY_DAY
+    item = _cofire(tr.HoldingsInput(days=days))
+    assert item == _cofire(_holdings(SCENARIO))
+    assert item["window"]["days"] == len(SESSIONS_IN_WINDOW)
+
+
+def test_holdings_and_a_value_series_read_the_same_days_from_the_same_keys():
+    """One rule reads the days of a mapping keyed by dates, for a symphony's series and for
+    the holdings: stamped duplicates of a session, closed days (bare and stamped), keys
+    outside the window and keys that are not dates give the same days either way. Rejects a
+    second copy of the rule in the holdings reader that drifts from the first."""
+    keys = [
+        *ISO,
+        f"{ISO[1]}T16:00:00",
+        f"{ISO[3]}T09:30:00",
+        *(day.isoformat() for day in CLOSED_DAYS),
+        f"{CLOSED_DAYS[0].isoformat()}T16:00:00",
+        "2026-12-23",
+        "2027-01-04",
+        ISO[-1][:-1],
+        "not-a-date",
+    ]
+    held = {"subj": {"VIXY": 10.0, "SPY": 90.0}, "o1": {"SPY": 100.0}, "o2": {"TLT": 100.0}}
+    item = _cofire(tr.HoldingsInput(days={key: held for key in keys}))
+    series = tr.realized_window({key: 100.0 + i for i, key in enumerate(keys)}, DAYS[0], DAYS[-1])
+    assert series["days"] == len(
+        SESSIONS_IN_WINDOW
+    )  # fixture sanity: the series kept sessions only
+    assert _figures(item)["held_days"] == series["days"]
+    assert item["window"]["days"] == series["days"]
+
+
+# ---------------------------------------------------------------------------
 # Missing data is unavailable or reduced, never zero
 # ---------------------------------------------------------------------------
 
@@ -409,13 +468,21 @@ def test_with_no_other_holdings_the_portfolio_without_the_subject_is_empty_not_z
 DAYS_20 = b.last_n_nyse_days(b.AS_OF, 20)
 
 
-def _review_with(per_symphony_holdings):
+def _review_over(holdings_by_day):
     roster = [
         b.composer_symphony(f"vix-{k}", f"Vix {k}", DAYS_20, b.sine_returns(19, k, drift=0.05 * k))
         for k in (1, 2, 3)
     ]
-    days = {d.isoformat(): per_symphony_holdings for d in DAYS_20}
-    return b.review(roster, as_of=b.AS_OF, threshold=20, holdings=tr.HoldingsInput(days=days))
+    return b.review(
+        roster,
+        as_of=b.AS_OF,
+        threshold=20,
+        holdings=tr.HoldingsInput(days=holdings_by_day),
+    )
+
+
+def _review_with(per_symphony_holdings):
+    return _review_over({d.isoformat(): per_symphony_holdings for d in DAYS_20})
 
 
 def test_changing_only_the_long_vix_holdings_changes_nothing_but_the_long_vix_item():
@@ -436,6 +503,26 @@ def test_changing_only_the_long_vix_holdings_changes_nothing_but_the_long_vix_it
     held_a = b.value_of(b.entry_of(a, "vix-1"), "long_vix", "held_days")
     held_c = b.value_of(b.entry_of(c, "vix-1"), "long_vix", "held_days")
     assert held_a == 20 and held_c == 0  # the item does respond to its input
+
+
+def test_holdings_keyed_on_every_calendar_day_give_the_review_of_holdings_keyed_on_sessions():
+    """Heavy holdings sit on the weekends and the holiday inside the realized window. The
+    whole review (every item of every entry, the long-VIX day counts included) equals the
+    review of the same holdings keyed on the sessions alone."""
+    on_sessions = {
+        "vix-1": {"VIXY": 90.0, "SPY": 10.0},
+        "vix-2": {"UVXY": 50.0, "SPY": 50.0},
+        "vix-3": {"SPY": 100.0},
+    }
+    on_closed_days = {"vix-1": {"VIXY": 900.0}, "vix-2": {"SPY": 1.0}, "vix-3": {"SPY": 1.0}}
+    every_day = b.calendar_days(DAYS_20[0], DAYS_20[-1])
+    assert len(every_day) > len(DAYS_20)  # fixture sanity: closed days lie inside the window
+    keyed_on_every_day = {
+        d.isoformat(): on_sessions if d in DAYS_20 else on_closed_days for d in every_day
+    }
+    reviewed = _review_over(keyed_on_every_day)
+    assert reviewed.entries == _review_with(on_sessions).entries
+    assert b.value_of(b.entry_of(reviewed, "vix-1"), "long_vix", "held_days") == len(DAYS_20)
 
 
 def test_a_review_without_any_holdings_input_gets_the_same_verdicts():
