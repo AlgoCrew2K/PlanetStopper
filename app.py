@@ -1220,7 +1220,7 @@ def _log_tenure_review_end(trigger: str, run_id: str, ending: str) -> None:
     _daemon_log.info(
         "Tenure review end: trigger=%s at=%s run_id=%s %s",
         trigger,
-        datetime.now(_ET).strftime("%Y-%m-%d %H:%M"),
+        datetime.now(_ET).strftime("%Y-%m-%d %H:%M") + " ET",
         run_id,
         ending,
     )
@@ -1256,7 +1256,7 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
         _daemon_log.info(
             "Tenure review start: trigger=%s at=%s run_id=%s",
             trigger,
-            now_et.strftime("%Y-%m-%d %H:%M"),
+            now_et.strftime("%Y-%m-%d %H:%M") + " ET",
             run_id,
         )
         env = _tenure_review_settings()
