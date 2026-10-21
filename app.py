@@ -4145,7 +4145,9 @@ def _join_retirement_approval_status(
     except Exception:
         decisions_by_id = {}
     for rec in recs:
-        decision = decisions_by_id.get(rec.get(id_key))
+        rec_id = rec.get(id_key)
+        # A stored id that is not text (a list, a dict) cannot key the lookup.
+        decision = decisions_by_id.get(rec_id) if isinstance(rec_id, str) else None
         rec["approval_status"] = (decision or {}).get("approval_status") or absent_status
 
 
@@ -4349,9 +4351,10 @@ def _tenure_text(value: object) -> str:
 @app.template_filter("tenure_number")
 def _tenure_number(value: object) -> str:
     """A finite stored number to two decimals, else "not recorded" (never nan, inf or True)."""
-    if _is_finite_number(value):
-        return f"{value:.2f}"
-    return _NOT_RECORDED_TEXT
+    if not _is_finite_number(value):
+        return _NOT_RECORDED_TEXT
+    # An int is printed by its digits: float formatting overflows for a huge one.
+    return f"{value}.00" if isinstance(value, int) else f"{value:.2f}"
 
 
 @app.template_filter("tenure_whole")
@@ -4368,11 +4371,16 @@ def _tenure_eastern(value: object) -> str:
 
 
 def _is_finite_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if isinstance(value, bool):
+        return False
+    # An int is always finite; math.isfinite would convert a huge one to a float.
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
 
 
 def _is_whole_number(value: object) -> bool:
-    return _is_finite_number(value) and float(value).is_integer()
+    if isinstance(value, int) and not isinstance(value, bool):
+        return True
+    return isinstance(value, float) and math.isfinite(value) and value.is_integer()
 
 
 app.jinja_env.tests["finite_number"] = _is_finite_number
@@ -4394,16 +4402,23 @@ def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict, bool]:
     passes to _fetch_retirement_recommendations is the header's run_id.
     Never raises.
     """
-    status: dict = {"running": False, "running_since": None, "last_failed_attempt": None}
+    status: dict = {
+        "running": False,
+        "running_since": None,
+        "trigger": None,
+        "last_failed_attempt": None,
+    }
     try:
         from advisors import tenure_review  # noqa: PLC0415
-    except Exception:
-        _daemon_log.debug("_fetch_tenure_review: review module unavailable", exc_info=True)
+    except Exception as exc:
+        _daemon_log.debug(
+            "_fetch_tenure_review: review module unavailable (%s)", type(exc).__name__
+        )
         return None, [], status, True
     try:
         status = tenure_review.REVIEW_RUN_STATE.snapshot()
-    except Exception:
-        _daemon_log.debug("_fetch_tenure_review: run state unavailable", exc_info=True)
+    except Exception as exc:
+        _daemon_log.debug("_fetch_tenure_review: run state unavailable (%s)", type(exc).__name__)
     run: dict | None = None
     entries: list[dict] = []
     read_failed = False
@@ -4414,14 +4429,16 @@ def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict, bool]:
         if rows:
             raw = rows[0].get("raw_response")
             if isinstance(raw, dict) and raw.get("run_id"):
-                run = {k: v for k, v in raw.items() if k != "entries"}
                 stored = raw.get("entries")
                 if isinstance(stored, list):
+                    run = {k: v for k, v in raw.items() if k != "entries"}
                     entries = [dict(e) for e in stored if isinstance(e, dict)]
+                else:
+                    read_failed = True
             else:
                 read_failed = True
-    except Exception:
-        _daemon_log.debug("_fetch_tenure_review: read failed", exc_info=True)
+    except Exception as exc:
+        _daemon_log.debug("_fetch_tenure_review: read failed (%s)", type(exc).__name__)
         run, entries, read_failed = None, [], True
     _join_retirement_approval_status(entries, id_key="symphony_id", absent_status=None)
     return run, entries, status, read_failed
@@ -4462,8 +4479,11 @@ def api_retirement_recommendations():
     against current bot_state) -- never cached, never stored back into the
     row's raw_response.
 
-    Empty -> {"recommendations": []}, never a 500; a read failure degrades to
-    the same empty list rather than 500ing (mirrors api_incubation).
+    Empty -> {"recommendations": []}, never a 500; with no stored run
+    review_run is null, and a stored run's header holds run_id,
+    as_of_trading_day, completed_at, trigger, threshold_in_effect and
+    threshold_note. A read failure degrades to the same empty list rather
+    than 500ing (mirrors api_incubation).
 
     Strict-JSON safe: every numeric field (including nested candidate_metrics/
     sibling_metrics) is sanitized through a local NaN/Infinity guard (mirrors
@@ -6785,17 +6805,18 @@ def ai_advisor_tab():
     )
 
     retirement_recommendations: list[dict] = []
+    # The panel shows the legacy cards only when no review run exists, so a run
+    # (or an unreadable run row) needs no recommendation read.
     try:
         # Cycle 2d (AC-4, PR#140 2nd /code-review finding 5): pass the
         # shared closure so _refresh_retirement_display_names's bot_state
         # need (inside _fetch_retirement_recommendations) is absorbed into
         # the SAME memoized load the checklist/frontrunner blocks below
         # use, instead of independently calling database.load_state() again.
-        retirement_recommendations = _fetch_retirement_recommendations(
-            bot_state_getter=_ensure_ai_advisor_bot_state,
-            review_run_id=tenure_review_run.get("run_id") if tenure_review_run else None,
-            review_unreadable=tenure_review_read_failed,
-        )
+        if tenure_review_run is None and not tenure_review_read_failed:
+            retirement_recommendations = _fetch_retirement_recommendations(
+                bot_state_getter=_ensure_ai_advisor_bot_state,
+            )
     except Exception:
         pass  # Empty-state rendered by template on [].
 

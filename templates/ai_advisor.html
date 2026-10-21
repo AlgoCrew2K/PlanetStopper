@@ -1638,7 +1638,7 @@
         {% macro retirement_lifecycle(candidate_id, explanation, written_on, status, checklist, allow_actions, show_explanation) %}
                     {% if show_explanation %}
                     <div class="retirement-rec-explanation" data-testid="retirement-rec-explanation">
-                        {%- if explanation %}{{ explanation }}{% if written_on %} (written {{ written_on }}){% endif %}{% else %}explanation unavailable{% endif -%}
+                        {%- if explanation is string and explanation.strip() %}{{ explanation }}{% if written_on is string %}{% if written_on %} (written {{ written_on }}){% endif %}{% elif written_on is not none %} (written not recorded){% endif %}{% elif explanation is none or explanation is string %}explanation unavailable{% else %}not recorded{% endif -%}
                     </div>
                     {% endif %}
                     <span class="retirement-status-chip retirement-status-chip--{{ status or 'pending' }}"
@@ -1692,16 +1692,21 @@
 
         {# One figure line: the value, or the figure's name with its stored reason when it is null. A count of days is a whole number; a unit that ends the figure's name is not repeated. #}
         {% macro tenure_figure(fig_name, fig, population=none, with_population=false) %}
+            {% set fig_label = fig_name | replace('_', ' ') %}
             {% if fig is mapping %}
-                {% set fig_label = fig_name | replace('_', ' ') %}
                 {% set unit = fig.get('unit') %}
-                {% if fig.get('value') is finite_number %}
-                <div class="tenure-review-evidence-figure">{{ fig_label }}: {% if unit == 'days' %}{{ fig.get('value') | int }}{% else %}{{ fig.get('value') | tenure_number }}{% endif %}
+                {% set value = fig.get('value') %}
+                {% if value is finite_number and (unit != 'days' or value is whole_number) %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% else %}{{ value | tenure_number }}{% endif %}
                     {%- if unit is string and unit %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
                     {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</div>
+                {% elif value is finite_number %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not computed, not recorded</div>
                 {% else %}
-                <div class="tenure-review-evidence-figure">{{ fig_label }}: not computed, {{ fig.get('reason') | tenure_text }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not computed, {{ fig.get('reason') | tenure_text }}</div>
                 {% endif %}
+            {% else %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not recorded</div>
             {% endif %}
         {% endmacro %}
 
@@ -1713,52 +1718,56 @@
                 <div class="tenure-review-evidence-heading" data-testid="tenure-review-evidence-heading">{{ headings.get(name, name) }}</div>
                 <div class="retirement-rec-basis">{{ item.get('label') if item.get('label') is string and item.get('label') else name | replace('_', ' ') }}</div>
                 {% if item.get('status') == 'available' %}
-                    <div class="tenure-review-evidence-meta">subject: {{ item.get('subject') | tenure_text }}</div>
-                    <div class="tenure-review-evidence-meta">source: {{ item.get('source') | tenure_text }}</div>
                 {% elif item.get('status') == 'not_applicable' %}
-                    <div class="tenure-review-evidence-meta">not applicable: {{ item.get('reason') | tenure_text }}</div>
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">not applicable: {{ item.get('reason') | tenure_text }}</div>
                 {% else %}
-                    <div class="tenure-review-evidence-meta">unavailable: {{ item.get('reason') | tenure_text }}</div>
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">unavailable: {{ item.get('reason') | tenure_text }}</div>
+                {% endif %}
+                {% if item.get('status') == 'available' or item.get('pair') is mapping %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">subject: {{ item.get('subject') | tenure_text }}</div>
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">source: {{ item.get('source') | tenure_text }}</div>
                 {% endif %}
                 {% set w = item.get('window') %}
                 {% if w is mapping %}
-                <div class="tenure-review-evidence-meta">window: {{ w.get('first') | tenure_text }} to {{ w.get('last') | tenure_text }}, {% if w.get('days') is not whole_number %}days not recorded{% elif w.get('sessions') is not whole_number %}trading sessions not recorded{% elif w.get('days') < w.get('sessions') %}{{ 'holdings on ' if name == 'long_vix' else '' }}{{ w.get('days') | int }} of {{ w.get('sessions') | int }} trading days{% else %}{{ w.get('days') | int }} trading days{% endif %}</div>
+                <div class="tenure-review-evidence-meta retirement-rec-meta">window: {{ w.get('first') | tenure_text }} to {{ w.get('last') | tenure_text }}, {% if w.get('days') is not whole_number %}days not recorded{% elif w.get('sessions') is not whole_number %}trading sessions not recorded{% elif w.get('days') < w.get('sessions') %}{{ 'holdings on ' if name == 'long_vix' else '' }}{{ w.get('days') | int }} of {{ w.get('sessions') | int }} trading days{% else %}{{ w.get('days') | int }} trading days{% endif %}</div>
                 {% endif %}
                 {% if item.get('status') == 'available' and item.get('figures') is mapping %}
                 {% for fig_name, fig in item.get('figures').items() %}
                     {{ tenure_figure(fig_name, fig, item.get('population_size'), name == 'composite') }}
                 {% endfor %}
+                {% elif item.get('status') == 'available' and item.get('pair') is not mapping %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">figures: not recorded</div>
                 {% endif %}
                 {% set pair = item.get('pair') %}
                 {% if pair is mapping %}
                 {% set ugate = pair.get('uncertainty_gate') if pair.get('uncertainty_gate') is mapping else {} %}
                 {% set sgate = pair.get('structural_gate') if pair.get('structural_gate') is mapping else {} %}
-                <div class="tenure-review-evidence-figure">paired with: {{ pair.get('sibling_name') | tenure_text }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">paired with: {{ pair.get('sibling_name') | tenure_text }}</div>
                 {% for fig_name in ('correlation', 'ci_lower', 'ci_upper', 'stressed_correlation', 'holdings_overlap') %}
                     {{ tenure_figure(fig_name, pair.get(fig_name)) }}
                 {% endfor %}
-                <div class="tenure-review-evidence-figure">aligned days: {{ pair.get('n_obs') | tenure_whole }}</div>
-                <div class="tenure-review-evidence-figure">uncertainty gate: {{ ugate.get('text') | tenure_text }}</div>
-                <div class="tenure-review-evidence-figure">structural redundancy gate: {{ sgate.get('text') | tenure_text }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">aligned days: {{ pair.get('n_obs') | tenure_whole }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">uncertainty gate: {{ ugate.get('text') | tenure_text }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">structural redundancy gate: {{ sgate.get('text') | tenure_text }}</div>
                 {% if pair.get('note') is string and pair.get('note') %}
-                <div class="tenure-review-evidence-meta">{{ pair.get('note') }}</div>
+                <div class="tenure-review-evidence-meta retirement-rec-meta">{{ pair.get('note') }}</div>
                 {% endif %}
                 {% elif item.get('status') == 'available' and item.get('summary') is string and item.get('summary') %}
-                <div class="tenure-review-evidence-meta">{{ item.get('summary') }}</div>
+                <div class="tenure-review-evidence-meta retirement-rec-meta">{{ item.get('summary') }}</div>
                 {% endif %}
                 {% if name == 'redundancy' and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
-                <div class="tenure-review-evidence-meta">not used in the verdict: {{ item.get('reason') | tenure_text }}</div>
+                <div class="tenure-review-evidence-meta retirement-rec-meta">not used in the verdict: {{ item.get('reason') | tenure_text }}</div>
                 {% endif %}
                 {% set not_compared = item.get('not_compared') %}
                 {% if not_compared is sequence and not_compared is not string and not_compared is not mapping %}
                 {% for peer in not_compared if peer is mapping %}
-                    <div class="tenure-review-evidence-meta">not compared: {{ peer.get('display_name') | tenure_text }}, {{ peer.get('reason') | tenure_text }}</div>
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">not compared: {{ peer.get('display_name') | tenure_text }}, {{ peer.get('reason') | tenure_text }}</div>
                 {% endfor %}
                 {% endif %}
                 {% set excluded = item.get('excluded') %}
                 {% if excluded is sequence and excluded is not string and excluded is not mapping %}
                 {% for ex in excluded if ex is mapping %}
-                    <div class="tenure-review-evidence-meta">left out: {{ ex.get('display_name') | tenure_text }}, {{ ex.get('reason') | tenure_text }}</div>
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">left out: {{ ex.get('display_name') | tenure_text }}, {{ ex.get('reason') | tenure_text }}</div>
                 {% endfor %}
                 {% endif %}
             </div>
@@ -1804,19 +1813,19 @@
             {% set ev = e.get('evidence') if e.get('evidence') is mapping else {} %}
             {% set status = e.get('approval_status') %}
             <div class="tenure-review-entry retirement-rec-card" data-testid="tenure-review-entry" data-symphony-id="{{ sid }}">
-                <div class="tenure-review-entry-head">
+                <div class="tenure-review-entry-head retirement-rec-pair">
                     <span class="tenure-review-name" data-testid="tenure-review-name" title="{{ sid }}">{{ e.get('display_name') if e.get('display_name') is string and e.get('display_name') else (sid or 'not recorded') }}</span>
                     <span class="tenure-verdict-chip tenure-verdict-chip--{{ verdict_mod }}" data-testid="tenure-review-verdict-chip">{{ e.get('verdict_text') | tenure_text }}</span>
                 </div>
                 {% if e.get('tenure_trading_days') is whole_number %}
-                <div class="tenure-review-line" data-testid="tenure-review-tenure">tenure: {{ e.get('tenure_trading_days') | int }} trading days</div>
+                <div class="tenure-review-line retirement-rec-meta" data-testid="tenure-review-tenure">tenure: {{ e.get('tenure_trading_days') | int }} trading days</div>
                 {% endif %}
                 {% if e.get('eligibility_text') is string %}
-                <div class="tenure-review-line" data-testid="tenure-review-eligibility">{{ e.get('eligibility_text') }}</div>
+                <div class="tenure-review-line retirement-rec-meta" data-testid="tenure-review-eligibility">{{ e.get('eligibility_text') }}</div>
                 {% endif %}
                 {% set reasons = e.get('verdict_reasons') %}
                 {% if reasons and reasons is sequence and reasons is not string and reasons is not mapping %}
-                <div class="tenure-review-line" data-testid="tenure-review-verdict-reasons">because: {{ reasons | map('string') | join('; ') }}</div>
+                <div class="tenure-review-line" data-testid="tenure-review-verdict-reasons">because: {% for r in reasons %}{% if not loop.first %}; {% endif %}{{ r | tenure_text }}{% endfor %}</div>
                 {% endif %}
                 <div class="tenure-review-line" data-testid="tenure-review-basis">basis: {{ basis.get('label') | tenure_text }}
                     {%- if basis.get('fallback_reason') is string and basis.get('fallback_reason') %}; {{ basis.get('fallback_reason') }}{% endif %}
@@ -1824,7 +1833,7 @@
                     {%- if basis.get('tenure_begins') is string and basis.get('tenure_begins') %}; tenure begins {{ basis.get('tenure_begins') }}{% endif %}</div>
                 {% set missing = e.get('missing_items') %}
                 {% if missing and missing is sequence and missing is not string and missing is not mapping %}
-                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% for m in missing %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ m | string | replace('_', ' ') }} ({% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}){% endfor %}</div>
+                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% for m in missing %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ (m | replace('_', ' ')) if m is string and m.strip() else 'not recorded' }} ({% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}){% endfor %}</div>
                 {% endif %}
                 <div class="tenure-review-evidence-grid">
                     {% for name in ('performance', 'composite', 'redundancy', 'backtest', 'marginal', 'long_vix') %}
