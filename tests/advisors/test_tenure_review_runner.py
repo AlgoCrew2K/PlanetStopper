@@ -2490,10 +2490,12 @@ def test_a_symphony_without_a_backtest_window_gets_no_definition_read_and_no_bac
 
     completed_run()
 
-    assert len(backtest_posts(router)) == 1, "fixture sanity: another symphony is still backtested"
     requested = {r.match["sid"] for r in router.of_kind("score")}
+    assert h.MID_ID in requested, "fixture sanity: a symphony with a backtest window is read"
     assert h.BACKTEST_ID not in requested
-    assert h.MID_ID in requested
+    assert len(backtest_posts(router)) == 1, (
+        "only the symphony with a backtest window is backtested"
+    )
 
 
 def test_no_backtest_window_for_any_symphony_leaves_only_the_holdings_read_after_the_series(
