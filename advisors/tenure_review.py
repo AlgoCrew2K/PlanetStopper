@@ -1254,6 +1254,11 @@ def qualifying_window(symphony: SymphonyInput, as_of: date, threshold: int) -> d
     return performance["window"]
 
 
+def backtest_window(symphony: SymphonyInput, as_of: date, threshold: int) -> dict | None:
+    """The window a backtest is requested over (not implemented yet)."""
+    return None
+
+
 def _withheld_reason(p: _Prep) -> str | None:
     """Why no evidence can be shown for this symphony, or None when it can be scored."""
     if p.tenure is None:

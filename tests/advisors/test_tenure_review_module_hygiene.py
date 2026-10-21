@@ -468,6 +468,180 @@ def test_a_comparison_needs_the_larger_of_the_days_the_structural_gate_needs_and
 
 
 # ---------------------------------------------------------------------------
+# The days the structural gate needs, for every float the stress fraction can be
+# ---------------------------------------------------------------------------
+
+# Prints the days the structural gate needs and, for each requested number of returns, what the
+# review says of the first symphony's redundancy item for two uncorrelated symphonies (sines of
+# different whole frequencies). An error is reported by its class name, never raised, so a test
+# can tell the answer from a failure to give one. The fraction arrives as text because nan and
+# the infinities have no literal.
+_NEEDS_REVIEW_PROBE = (
+    _REVIEW_PROBE_PRELUDE.replace("= {fraction!r}", "= float({fraction_text!r})")
+    + """
+out = {{"needs": None, "reviews": {{}}}}
+try:
+    out["needs"] = tr._structural_needs_days()
+except Exception as exc:
+    out["needs"] = {{"raised": type(exc).__name__}}
+for returns in {sweep!r}:
+    first = [0.3 * math.sin(2 * math.pi * 2 * i / returns) for i in range(returns)]
+    second = [0.3 * math.sin(2 * math.pi * 3 * i / returns) for i in range(returns)]
+    try:
+        entry = next(e for e in review_of(first, second).entries if e["symphony_id"] == "a")
+        item = entry["evidence"]["redundancy"]
+        out["reviews"][str(returns)] = {{
+            "status": item["status"],
+            "summary": item.get("summary"),
+            "missing": "redundancy" in entry["missing_items"],
+        }}
+    except Exception as exc:
+        out["reviews"][str(returns)] = {{"raised": type(exc).__name__}}
+print(json.dumps(out))
+"""
+)
+
+# Fractions that give no stressed day at all: not a number, minus infinity, negative, zero.
+NO_STRESSED_DAY_FRACTIONS = ["nan", "-inf", "-1.0", "0.0"]
+# Fractions that reach the minimum from one session or a few, up to the largest float and
+# infinity. The product of 1.95e289 with the largest integer the search could try is the first
+# one past the largest float; 1.94e289 is the last one below it.
+STRESS_FRACTIONS_AT_OR_ABOVE_ONE = [
+    "1.0",
+    "9.99",
+    "10.0",
+    "1.94e+289",
+    "1.95e+289",
+    "1e+300",
+    repr(sys.float_info.max),
+    "inf",
+]
+# Returns the review of the probe is asked about: one fewer than the uncertainty gate's floor,
+# the floor, and a long pair.
+_PROBE_RETURNS = [
+    retirement_recommender.MIN_OBS_FLOOR - 1,
+    retirement_recommender.MIN_OBS_FLOOR,
+    200,
+]
+
+
+def _days_the_structural_gate_needs(fraction: float) -> int:
+    """The least number of aligned days n with ceil(fraction * n) at the recommender's minimum:
+    no number of days when the fraction is not positive. The comparison is the one a ceiling
+    makes, a product above the minimum less one, which holds for an infinite product as well."""
+    minimum = retirement_recommender.STRESS_MIN_OBS
+    if not fraction > 0:
+        return sys.maxsize
+    return next(n for n in range(1, minimum + 1) if fraction * n > minimum - 1)
+
+
+@pytest.fixture(
+    scope="module",
+    params=[*NO_STRESSED_DAY_FRACTIONS, *STRESS_FRACTIONS_AT_OR_ABOVE_ONE],
+    ids=lambda text: f"stress_fraction_{text}",
+)
+def stress_fraction_probe(request, tmp_path_factory):
+    """(the fraction as text, what a fresh interpreter that sets it before importing the module
+    answers): one interpreter per fraction, shared by the tests that read it."""
+    code = _NEEDS_REVIEW_PROBE.format(
+        root=str(_REPO_ROOT), fraction_text=request.param, sweep=_PROBE_RETURNS
+    )
+    done = _run_probe(code, tmp_path_factory.mktemp("stress_fraction"))
+    assert done.returncode == 0, done.stderr[-2000:]
+    return request.param, json.loads(done.stdout.strip().splitlines()[-1])
+
+
+def test_the_days_the_structural_gate_needs_are_answered_for_every_float_stress_fraction(
+    stress_fraction_probe,
+):
+    """A fraction that is not positive (or not a number) gives no stressed day, so no number of
+    aligned days is enough. A fraction of one session's worth of minimum or more reaches the
+    minimum from the fewest days, found without error however large the fraction is, up to
+    infinity. Rejects an error where the product of the fraction and a day count is beyond the
+    largest float, and a count that treats such a fraction as never reaching the minimum."""
+    text, probe = stress_fraction_probe
+    assert probe["needs"] == _days_the_structural_gate_needs(float(text)), text
+
+
+def test_a_review_of_two_uncorrelated_symphonies_completes_at_every_float_stress_fraction(
+    stress_fraction_probe,
+):
+    """Whatever the stress fraction, the review returns. An uncorrelated pair is a finding that
+    the two are not redundant from the larger of the days the structural gate needs and the
+    uncertainty gate's floor, and until then the item is unavailable and listed missing.
+    Rejects a review that stops, and a floor taken from a fraction the structural gate cannot
+    use."""
+    text, probe = stress_fraction_probe
+    floor = max(_days_the_structural_gate_needs(float(text)), retirement_recommender.MIN_OBS_FLOOR)
+    for returns in _PROBE_RETURNS:
+        got = probe["reviews"][str(returns)]
+        assert "raised" not in got, (text, returns, got)
+        decided = returns >= floor
+        assert got["status"] == ("available" if decided else "unavailable"), (text, returns)
+        assert got["summary"] == ("no redundant sibling" if decided else None), (text, returns)
+        assert got["missing"] is (not decided), (text, returns)
+
+
+# ---------------------------------------------------------------------------
+# Grammar: the module imports on the oldest interpreter the project supports
+# ---------------------------------------------------------------------------
+
+# The oldest Python grammar the module must parse under.
+_OLDEST_GRAMMAR = (3, 11)
+
+
+def test_the_module_parses_under_the_grammar_of_python_3_11():
+    """Type parameter lists on a function or class, and the type statement, are a syntax error
+    before Python 3.12, so a module that uses them stops importing there. Rejects any of them."""
+    try:
+        ast.parse(_source(), feature_version=_OLDEST_GRAMMAR)
+    except SyntaxError as exc:
+        pytest.fail(f"the module does not parse under Python 3.11: {exc}")
+
+
+def _lines_reusing_the_enclosing_quote(source: str) -> list[int]:
+    """Lines where a string inside an f-string's replacement field is delimited by the quote
+    that delimits an enclosing f-string, which only Python 3.12 accepts. The tokenizer of an
+    older interpreter cannot read such a source at all, so nothing is reported there."""
+    if not hasattr(tokenize, "FSTRING_START"):
+        return []
+
+    def delimiter(text: str) -> str:
+        body = text.lstrip("rRbBfFuU")
+        return body[:3] if body[:3] in ('"""', "'''") else body[:1]
+
+    open_quotes: list[str] = []
+    found: list[int] = []
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type == tokenize.FSTRING_END:
+            open_quotes.pop()
+            continue
+        if token.type not in (tokenize.FSTRING_START, tokenize.STRING):
+            continue
+        quote = delimiter(token.string)
+        for outer in open_quotes:
+            reused = quote[:1] == outer[:1] and not (len(outer) == 3 and len(quote) == 1)
+            if reused:
+                found.append(token.start[0])
+        if token.type == tokenize.FSTRING_START:
+            open_quotes.append(quote)
+    return found
+
+
+def test_no_f_string_of_the_module_reuses_its_own_quote_inside_a_replacement_field():
+    """Quote reuse inside an f-string is accepted only from Python 3.12, and the parse test
+    above does not see it. The scan is shown to flag a source that reuses the quote and to pass
+    one that does not, then run over the module. Rejects an f-string that older interpreters
+    cannot read."""
+    if hasattr(tokenize, "FSTRING_START"):
+        reuse = 'x = f"{"a"}"'
+        no_reuse = "x = f\"{'a'}\""
+        assert _lines_reusing_the_enclosing_quote(reuse) == [1]  # the scan can fail
+        assert _lines_reusing_the_enclosing_quote(no_reuse) == []
+    assert _lines_reusing_the_enclosing_quote(_source()) == []
+
+
+# ---------------------------------------------------------------------------
 # Constants: one definition, a comment that says what it is, a derived note
 # ---------------------------------------------------------------------------
 
