@@ -319,7 +319,9 @@ def run_tenure_review(
             window = tenure_review.qualifying_window(sym, as_of, threshold.value)
             if window is not None:
                 firsts.append(window["first"])
-                _attach_backtest(sym, window, run, spacing)
+            backtest_window = tenure_review.backtest_window(sym, as_of, threshold.value)
+            if backtest_window is not None:
+                _attach_backtest(sym, backtest_window, run, spacing)
         holdings, missing = None, []
         if firsts:
             holdings, missing = _read_holdings(
