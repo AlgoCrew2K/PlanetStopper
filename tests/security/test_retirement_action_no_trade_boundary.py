@@ -1676,16 +1676,85 @@ def _runtime_unlisted_template_helpers(env, baseline_env, app_module) -> list[st
                 baseline[name] is value or owner.split(".")[0] in framework_roots
             ):
                 continue
-            listed = (
-                callable(value)
-                and getattr(value, "__module__", None) == app_module.__name__
-                and getattr(value, "__name__", None) in _CYCLE_2C_ENTRY_POINT_FN_NAMES
-                and value is getattr(app_module, value.__name__, None)
-            )
-            if not listed:
+            if not _is_the_listed_function(value, app_module):
                 described = getattr(value, "__qualname__", None) or type(value).__name__
                 unlisted.append(f"{table}:{name} ({described})")
     return unlisted
+
+
+def _is_the_listed_function(value, app_module) -> bool:
+    """True when ``value`` IS the module-level function of app.py that the scan lists under its
+    name (the object the static scan reads), not a nested function, a copy or a
+    ``functools.wraps`` look-alike that carries the same name and module."""
+    return (
+        callable(value)
+        and getattr(value, "__module__", None) == app_module.__name__
+        and getattr(value, "__name__", None) in _CYCLE_2C_ENTRY_POINT_FN_NAMES
+        and value is getattr(app_module, value.__name__, None)
+    )
+
+
+def _fresh_flask_app():
+    import flask  # noqa: PLC0415
+
+    return flask.Flask("template-context-baseline")
+
+
+def _runtime_unlisted_context_processors(flask_app, baseline_app, app_module) -> list[str]:
+    """``context_processors:<blueprint or None> (<what it is>)`` for each context processor of
+    ``flask_app`` that a fresh Flask application does not have and that is not a listed function
+    of the app module. A processor runs on every render and can hand any function to a
+    template, so it counts as a template helper however it was added (a decorator, a call, an
+    alias of the list, a blueprint's own list)."""
+    baseline = baseline_app.template_context_processors
+    unlisted = []
+    for key, processors in sorted(
+        flask_app.template_context_processors.items(), key=lambda item: str(item[0])
+    ):
+        known = baseline.get(key, [])
+        for processor in processors:
+            if any(processor is framework_owned for framework_owned in known):
+                continue
+            if not _is_the_listed_function(processor, app_module):
+                described = getattr(processor, "__qualname__", None) or type(processor).__name__
+                unlisted.append(f"context_processors:{key} ({described})")
+    return unlisted
+
+
+def _template_table_reads_inside_functions(tree: ast.Module) -> list[str]:
+    """Every read, inside a function body (a lambda too), of a template table of the Jinja
+    environment (``<...>.jinja_env.filters``, ``.tests`` or ``.globals``) or of the
+    application's context processor lists, by attribute or by ``getattr``/``setattr``/
+    ``delattr`` with the name as a literal. The runtime guard reads the tables once, after
+    the module is imported; a helper stored from inside a function runs later and escapes it.
+    Reads at module level are import-time registrations, which the runtime guard sees."""
+    watched = _TEMPLATE_REGISTRATION_TABLES | {_TEMPLATE_PROCESSOR_LIST_ATTR}
+    found: set[str] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        where = getattr(fn, "name", "<lambda>")
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Attribute):
+                is_table = node.attr in _TEMPLATE_REGISTRATION_TABLES and (
+                    "jinja_env" in ast.unparse(node.value)
+                )
+                if is_table or node.attr == _TEMPLATE_PROCESSOR_LIST_ATTR:
+                    found.add(f"{where}:{node.lineno} {ast.unparse(node)}")
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in {"getattr", "setattr", "delattr"}
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in watched
+                and (
+                    "jinja_env" in ast.unparse(node.args[0])
+                    or node.args[1].value == _TEMPLATE_PROCESSOR_LIST_ATTR
+                )
+            ):
+                found.add(f"{where}:{node.lineno} {ast.unparse(node)}")
+    return sorted(found)
 
 
 @pytest.fixture()
@@ -1770,6 +1839,31 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
             del env.filters["planted_nested"]
         assert len(unlisted) == 1 and unlisted[0].startswith("filters:planted_nested"), unlisted
 
+    @pytest.mark.parametrize("listed_name", ["_tenure_text", "_tenure_number", "_is_finite_number"])
+    def test_a_functools_wraps_look_alike_of_a_listed_function_is_reported(
+        self, running_app, listed_name
+    ):
+        """``functools.wraps`` copies the name, the module and the docstring, so a wrapper
+        that does something else wears the listed function's whole identity; only identity
+        with the module-level function tells them apart."""
+        import functools  # noqa: PLC0415
+
+        app_module, baseline = running_app
+        listed = getattr(app_module, listed_name)
+
+        @functools.wraps(listed)
+        def wrapper(value):
+            return value
+
+        assert (wrapper.__name__, wrapper.__module__) == (listed.__name__, listed.__module__)
+        env = app_module.app.jinja_env
+        env.filters["planted_look_alike"] = wrapper
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
+        finally:
+            del env.filters["planted_look_alike"]
+        assert len(unlisted) == 1 and unlisted[0].startswith("filters:planted_look_alike"), unlisted
+
     def test_the_listed_function_itself_registered_under_another_name_is_not_reported(
         self, running_app
     ):
@@ -1809,6 +1903,156 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
         assert sorted(item.split(" ")[0] for item in unlisted) == sorted(
             f"filters:{name}" for name in planted
         ), unlisted
+
+
+class TestEveryContextProcessorOfTheRunningAppIsAnEntryPointOfTheScan:
+    """The helpers a template reaches also come through context processors. The runtime guard
+    compares the app's processors with a fresh Flask application's, whatever spelling added
+    them."""
+
+    @pytest.fixture()
+    def pair(self, running_app):
+        app_module, _ = running_app
+        return app_module, _fresh_flask_app()
+
+    def test_the_real_app_has_only_the_framework_processors_and_listed_ones(self, pair):
+        app_module, baseline = pair
+        assert _runtime_unlisted_context_processors(app_module.app, baseline, app_module) == []
+
+    def test_the_comparison_is_not_vacuous(self, pair):
+        """The framework's own processor is in both lists, so it is excluded by what it is."""
+        app_module, baseline = pair
+        assert baseline.template_context_processors[None], "premise: Flask adds a processor"
+        assert all(
+            any(p is q for q in app_module.app.template_context_processors[None])
+            for p in baseline.template_context_processors[None]
+        )
+
+    @pytest.mark.parametrize("how", ["alias append", "extend", "blueprint list", "insert"])
+    def test_a_processor_added_by_any_spelling_is_reported(self, pair, how):
+        app_module, baseline = pair
+        flask_app = app_module.app
+
+        def planted_processor():
+            return {"planted": len}
+
+        table = flask_app.template_context_processors
+        key = None
+        try:
+            if how == "alias append":
+                alias = table[None]
+                alias.append(planted_processor)
+            elif how == "extend":
+                table[None].extend([planted_processor])
+            elif how == "blueprint list":
+                key = "planted_blueprint"
+                table[key] = [planted_processor]
+            else:
+                table[None].insert(0, planted_processor)
+            unlisted = _runtime_unlisted_context_processors(flask_app, baseline, app_module)
+        finally:
+            if key is not None:
+                table.pop(key, None)
+            while planted_processor in table[None]:
+                table[None].remove(planted_processor)
+        assert len(unlisted) == 1 and "planted_processor" in unlisted[0], unlisted
+        assert _runtime_unlisted_context_processors(flask_app, baseline, app_module) == []
+
+    @pytest.mark.parametrize("kind", ["lambda", "nested function with a listed name", "wraps"])
+    def test_a_processor_that_is_not_a_listed_function_is_reported(self, pair, kind):
+        import functools  # noqa: PLC0415
+
+        app_module, baseline = pair
+        listed = app_module._tenure_text
+        if kind == "lambda":
+            planted = lambda: {}  # noqa: E731
+        elif kind == "wraps":
+
+            @functools.wraps(listed)
+            def planted():
+                return {}
+
+        else:
+
+            def planted():
+                return {}
+
+            planted.__name__ = "_tenure_text"
+            planted.__module__ = app_module.__name__
+        table = app_module.app.template_context_processors
+        table[None].append(planted)
+        try:
+            unlisted = _runtime_unlisted_context_processors(app_module.app, baseline, app_module)
+        finally:
+            table[None].remove(planted)
+        assert len(unlisted) == 1 and unlisted[0].startswith("context_processors:None"), unlisted
+
+
+_TABLE_READ_FORMS = {
+    "globals alias": "_planted_table = app.jinja_env.globals",
+    "filters store": "app.jinja_env.filters['planted'] = perform_account_liquidation",
+    "tests update": "app.jinja_env.tests.update(planted=perform_account_liquidation)",
+    "globals through the current app": "current_app.jinja_env.globals['planted'] = len",
+    "filters through flask": "flask.current_app.jinja_env.filters.update(planted=len)",
+    "processor list alias": "_planted_list = app.template_context_processors[None]",
+    "processor append": "app.template_context_processors[None].append(planted_processor)",
+    "processor list of another object": "current_app.template_context_processors.clear()",
+    "getattr of a table": "getattr(app.jinja_env, 'filters')['planted'] = len",
+    "setattr of a table": "setattr(app.jinja_env, 'globals', planted_table)",
+    "getattr of the processor list": "getattr(app, 'template_context_processors')",
+}
+
+
+class TestTheStaticScanReportsATemplateTableReadInsideAFunction:
+    """The runtime guard reads the tables once, after the import. A helper stored from inside
+    a function (at request time) is stored later, so the scan reads the function bodies of
+    app.py for a read of the tables."""
+
+    def test_the_real_app_reads_no_template_table_inside_a_function(self):
+        assert _template_table_reads_inside_functions(_parse_app_py()) == []
+
+    @pytest.mark.parametrize("form", list(_TABLE_READ_FORMS))
+    @pytest.mark.parametrize(
+        "planted_in", ["ai_advisor_tab", "_tenure_review_job", "_format_eastern_run_time"]
+    )
+    def test_a_read_planted_in_a_function_body_is_reported(self, planted_in, form):
+        tree = _tree_with_planted_call(planted_in, _TABLE_READ_FORMS[form])
+
+        found = _template_table_reads_inside_functions(tree)
+
+        assert any(hit.startswith(f"{planted_in}:") for hit in found), (found, form)
+
+    def test_a_read_planted_in_a_nested_function_or_a_lambda_is_reported(self):
+        tree = _tree_with_planted_call(
+            "ai_advisor_tab",
+            "def _inner():\n    return app.jinja_env.globals\n",
+        )
+        assert any(
+            ":" in hit and "_inner" in hit for hit in _template_table_reads_inside_functions(tree)
+        )
+        tree = _tree_with_planted_call(
+            "ai_advisor_tab", "_hook = lambda: app.jinja_env.filters.update(planted=len)"
+        )
+        assert any("<lambda>" in hit for hit in _template_table_reads_inside_functions(tree))
+
+    def test_a_read_at_module_level_is_an_import_time_registration_and_is_not_reported(self):
+        tree = _parse_app_py()
+        tree.body.extend(ast.parse("app.jinja_env.filters['planted'] = len").body)
+        ast.fix_missing_locations(tree)
+        assert _template_table_reads_inside_functions(tree) == []
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "planted_cache.filters = {}",
+            "planted_settings.tests.append(1)",
+            "planted_module.globals()",
+            "getattr(planted_object, 'filters')",
+        ],
+    )
+    def test_an_attribute_of_something_else_with_the_same_name_is_not_reported(self, statement):
+        tree = _tree_with_planted_call("ai_advisor_tab", statement)
+        assert _template_table_reads_inside_functions(tree) == []
 
 
 # ===========================================================================
