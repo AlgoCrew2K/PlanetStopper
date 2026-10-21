@@ -925,7 +925,7 @@ class TestTheRunsLogLinesReachTheDaemonsLogFile:
         with jb.capturing_daemon_log(monkeypatch) as log:
             run_tick()
 
-        text = log.getvalue()
+        text = log.text()
         for logged, routed in LOGGED_READ_KINDS.items():
             asked = len(router.of_kind(routed))
             assert len(_logged_reads(text, logged)) == asked, (
@@ -945,7 +945,7 @@ class TestTheRunsLogLinesReachTheDaemonsLogFile:
         with jb.capturing_daemon_log(monkeypatch) as log:
             run_tick()
 
-        text = log.getvalue()
+        text = log.text()
         assert _logged_reads(text, "series") == ["429"], (
             "the first 429 ends the run's requests, and the log shows it"
         )
@@ -965,7 +965,7 @@ class TestTheRunsLogLinesReachTheDaemonsLogFile:
 
         asked = len(router.of_kind("backtest"))
         assert asked >= 1, "premise: the run asked for a backtest"
-        assert _logged_backtests(log.getvalue()) == ["413"] * asked
+        assert _logged_backtests(log.text()) == ["413"] * asked
 
     @pytest.mark.parametrize(
         "reply, reason",
@@ -986,7 +986,7 @@ class TestTheRunsLogLinesReachTheDaemonsLogFile:
         with jb.capturing_daemon_log(monkeypatch) as log:
             run_tick()
 
-        text = log.getvalue()
+        text = log.text()
         assert reason in text, "the daemon log does not say why the run did not complete"
         assert LEAK not in text, "the log must not carry what the server answered"
         assert jb.new_rows_since(ids_before) == [], "premise: the run did not complete"

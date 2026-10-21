@@ -27,7 +27,6 @@ from __future__ import annotations
 import builtins
 import contextlib
 import copy
-import io
 import logging
 import math
 import os
@@ -127,33 +126,55 @@ class StartedThread:
         return False
 
 
+def is_pool_worker(target) -> bool:
+    """True when ``target`` is the loop of a ``concurrent.futures`` pool worker."""
+    return getattr(target, "__module__", "").startswith("concurrent.futures")
+
+
+def _target_of(args: tuple, kwargs: dict):
+    return kwargs.get("target", args[1] if len(args) > 1 else None)
+
+
 def install_inline_threads(monkeypatch) -> list[StartedThread]:
-    """Replace ``threading.Thread`` by ``StartedThread`` for the rest of the test; the returned
-    list collects every thread whose ``start()`` was called, in order."""
+    """Replace ``threading.Thread`` for the rest of the test by a factory of ``StartedThread``;
+    the returned list collects every thread whose ``start()`` was called, in order.
+
+    The loop of a ``concurrent.futures`` pool worker never returns, so a pool worker is built
+    as the real thread it is: code that still submits its job to a pool gets a worker that
+    works, and the test fails on what it asserts and does not hang."""
     started: list[StartedThread] = []
 
     class Inline(StartedThread):
         pass
 
     Inline.started = started
-    monkeypatch.setattr(threading, "Thread", Inline)
+
+    def make(*args, **kwargs):
+        if is_pool_worker(_target_of(args, kwargs)):
+            return REAL_THREAD(*args, **kwargs)
+        return Inline(*args, **kwargs)
+
+    monkeypatch.setattr(threading, "Thread", make)
     return started
 
 
-def install_refusing_threads(monkeypatch, exc: BaseException, *, where: str = "start") -> list[str]:
+def install_refusing_threads(
+    monkeypatch, exc: BaseException, *, where: str = "start"
+) -> list[tuple[str, object]]:
     """Replace ``threading.Thread`` by a class whose construction (``where="construct"``) or
-    ``start()`` (``where="start"``) raises ``exc``. The returned list records ``"construct"`` and
-    ``"start"`` for each stage that was reached."""
-    reached: list[str] = []
+    ``start()`` (``where="start"``) raises ``exc``. The returned list records
+    ``("construct", target)`` and ``("start", target)`` for each stage that was reached."""
+    reached: list[tuple[str, object]] = []
 
     class Refusing:
         def __init__(self, *args, **kwargs):
-            reached.append("construct")
+            self._target = _target_of(args, kwargs)
+            reached.append(("construct", self._target))
             if where == "construct":
                 raise exc
 
         def start(self):
-            reached.append("start")
+            reached.append(("start", self._target))
             raise exc
 
     monkeypatch.setattr(threading, "Thread", Refusing)
@@ -178,7 +199,7 @@ def install_recording_threads(monkeypatch) -> list[RecordingThread]:
     return RecordingThread.instances
 
 
-def join_threads(threads, timeout: float = 60.0) -> None:
+def join_threads(threads, timeout: float = 30.0) -> None:
     """Wait for each recorded thread to end."""
     for thread in list(threads):
         thread.join(timeout=timeout)
@@ -517,17 +538,31 @@ def assert_no_unserved_requests() -> None:
 # ---------------------------------------------------------------------------
 
 
+class DaemonLog:
+    """The records that reached a file handler of the daemon's log file, each once."""
+
+    def __init__(self) -> None:
+        self.records: list[logging.LogRecord] = []
+
+    def text(self) -> str:
+        """One line per record: level, logger name and message."""
+        return "\n".join(f"{r.levelname} {r.name} {r.getMessage()}" for r in self.records)
+
+
 @contextlib.contextmanager
 def capturing_daemon_log(monkeypatch):
-    """Yield a buffer that receives everything the daemon would write to its log file.
+    """Yield a ``DaemonLog`` that receives every record the daemon's log file would receive.
 
     The daemon configures no root handler: its log file is written by the file handlers it
     attaches itself. Every file handler found anywhere in the logging tree that writes to the
-    daemon's log file is given the buffer as its stream, so a line reaches the buffer only by the
-    path it would take to the file. The root logger is held at its default level (``WARNING``)
-    inside the block, so a module logger whose lines reach the file only because a test runner
-    lowered the root level is not mistaken for one that delivers them."""
-    buffer = io.StringIO()
+    daemon's log file has its ``handle`` replaced by a recorder (nothing is written to the file),
+    so a record is captured only if the logger it was emitted on reaches one of those handlers
+    at its own level, which is the path it takes to the file. A record that reaches two such
+    handlers (the module was loaded twice) is captured once. The root logger is held at its
+    default level (``WARNING``) inside the block, so a module logger whose lines reach the file
+    only because a test runner lowered the root level is not mistaken for one that delivers
+    them."""
+    log = DaemonLog()
     wanted = os.path.abspath(app_module.LOG_FILE)
     loggers = [logging.getLogger(), *logging.root.manager.loggerDict.values()]
     handlers = {
@@ -538,13 +573,19 @@ def capturing_daemon_log(monkeypatch):
         if isinstance(h, logging.FileHandler) and os.path.abspath(h.baseFilename) == wanted
     }
     assert handlers, "no file handler writes to the daemon's log file"
+
+    def record_once(record) -> bool:
+        if all(record is not seen for seen in log.records):
+            log.records.append(record)
+        return True
+
     for handler in handlers.values():
-        monkeypatch.setattr(handler, "stream", buffer)
+        monkeypatch.setattr(handler, "handle", record_once)
     root = logging.getLogger()
     previous = root.level
     root.setLevel(logging.WARNING)
     try:
-        yield buffer
+        yield log
     finally:
         root.setLevel(previous)
 

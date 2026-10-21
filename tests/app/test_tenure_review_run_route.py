@@ -358,7 +358,12 @@ class TestAThreadThatCannotBeStartedGivesTheSlotBack:
         assert response.get_json() == {"error": "RuntimeError"}
         assert LEAK not in response.get_data(as_text=True)
         assert LEAK not in caplog.text, "the log names the exception type only"
-        assert reached[0] == "construct" and reached.count("start") == (where == "start")
+        assert [stage for stage, _ in reached] == (
+            ["construct"] if where == "construct" else ["construct", "start"]
+        )
+        assert not any(jb.is_pool_worker(target) for _, target in reached), (
+            "the job was handed to a pool worker, not to a thread of its own"
+        )
         assert jb.taken_then_released(), "a thread that failed to start left the run slot taken"
         assert jb.the_run_state().snapshot()["last_failed_attempt"] is None, (
             "a job that never started is not a failed review attempt"
