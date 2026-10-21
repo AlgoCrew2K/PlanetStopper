@@ -853,6 +853,7 @@ def test_a_full_composer_series_is_the_realized_basis_over_the_whole_tenure(
         "first": "2024-07-12",
         "last": "2026-10-19",
         "days": len(h.series_dates(h.OLDEST_ID)),
+        "sessions": len(b.nyse_days(date(2024, 7, 12), AS_OF)),  # the sessions its span holds
     }
 
 
@@ -1105,6 +1106,87 @@ def test_definitions_are_read_only_for_eligible_symphonies(router):
     requested = {r.match["sid"] for r in router.of_kind("score")}
     assert requested <= eligible
     assert h.BACKTEST_ID in requested
+
+
+def seed_shadow_with_missing_sessions(tmp_path, monkeypatch, symphony_id, missing, count=140):
+    """Shadow rows for one Composer id on the last ``count`` sessions to the as-of day, except
+    the sessions at the ``missing`` positions (0-based, from the first), each a session of the
+    window's span with no usable row. A file name apart from seed_shadow's lets one test seed
+    twice."""
+    days = [d.isoformat() for d in b.last_n_nyse_days(AS_OF, count)]
+    bot = b.sine_returns(count, 3, amp=0.4, drift=0.08)
+    held = b.sine_returns(count, 5, amp=0.9, drift=-0.04)
+    rows = {
+        symphony_id: {
+            d: (s, c)
+            for i, (d, s, c) in enumerate(zip(days, bot, held, strict=True))
+            if i not in missing
+        }
+    }
+    db_file = seed_state_db(
+        tmp_path,
+        monkeypatch,
+        series_by_symphony=rows,
+        filename=f"shadow_missing_{len(missing)}_{'_'.join(map(str, missing))}.db",
+    )
+    monkeypatch.setattr(analytics, "DB_FILE", db_file)
+    return [d for i, d in enumerate(days) if i in missing]
+
+
+def request_signatures(router):
+    """Every request of the ledger as (kind, method, path, query, body), in order."""
+    return [
+        (r.kind, r.method, r.path, tuple(sorted(r.query.items())), r.body_text())
+        for r in router.requests
+    ]
+
+
+MISSING_SESSION_POSITIONS = [
+    pytest.param((70,), id="mid_window"),
+    pytest.param((1,), id="second_row"),
+    pytest.param((138,), id="before_the_last_row"),
+    pytest.param((20, 21, 90), id="several_sessions"),
+]
+
+
+@pytest.mark.parametrize("missing", MISSING_SESSION_POSITIONS)
+def test_a_shadow_window_with_missing_sessions_sends_no_backtest_and_changes_no_other_request(
+    router, inputs_seen, tmp_path, monkeypatch, missing
+):
+    """The control run has a shadow row on every session of the same symphony; the other run
+    lacks the listed sessions. The second run's requests are the control's minus the one
+    symphony's definition read and backtest, in the same order."""
+    router.set_series(h.BACKTEST_ID, h.error_reply(500))  # the shadow basis for this symphony
+    seed_shadow_with_missing_sessions(tmp_path, monkeypatch, h.BACKTEST_ID, missing=())
+    completed_run()
+    control_sym = input_of(inputs_seen, h.BACKTEST_ID)
+    control_window = tr.qualifying_window(control_sym, AS_OF, tr.DEFAULT_MIN_TENURE_TRADING_DAYS)
+    control_requests = request_signatures(router)
+    assert control_window is not None, "the control window qualifies for a backtest"
+    assert len(backtest_posts(router)) == 1, "the control run backtests the symphony"
+    assert [r.match["sid"] for r in router.of_kind("score")].count(h.BACKTEST_ID) == 1
+
+    router.requests.clear()
+    inputs_seen.clear()
+    holes = seed_shadow_with_missing_sessions(tmp_path, monkeypatch, h.BACKTEST_ID, missing)
+    outcome = completed_run()
+
+    sym = input_of(inputs_seen, h.BACKTEST_ID)
+    assert set(holes) <= {d.isoformat() for d in b.nyse_days(date(2025, 1, 1), AS_OF)}
+    assert not set(holes) & set(sym.shadow_returns), "the listed sessions have no usable row"
+    assert sym.series_failure == "unavailable"
+    assert tr.qualifying_window(sym, AS_OF, tr.DEFAULT_MIN_TENURE_TRADING_DAYS) is None
+    assert backtest_posts(router) == [], "no backtest is sent over a window with a hole"
+    assert h.BACKTEST_ID not in [r.match["sid"] for r in router.of_kind("score")]
+    assert sym.backtest is None
+    assert entry(outcome, h.BACKTEST_ID)["evidence"]["backtest"]["status"] == "unavailable"
+    expected = [
+        sig
+        for sig in control_requests
+        if not (sig[0] == "backtest" or (sig[0] == "score" and h.BACKTEST_ID in sig[2]))
+    ]
+    assert len(expected) == len(control_requests) - 2
+    assert request_signatures(router) == expected
 
 
 def test_a_backtest_whose_window_matches_the_realized_window_gives_both_legs_and_gaps(

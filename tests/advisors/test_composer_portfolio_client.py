@@ -168,6 +168,34 @@ def test_the_spacing_constant_cites_the_per_minute_limit_and_not_a_per_second_on
     assert re.search(r"\b(?:6(?:\.0)?|10)\b", text), "the run's own rate is stated"
 
 
+def test_the_spacing_constant_comment_states_the_figures_behind_the_chosen_pause():
+    """The 6.0 s pause is a margin under Composer's 25 a minute: the engine reads statistics
+    every minute at all hours, the dashboard twice, and a 3.0 s pause at three accounts would
+    sit at 23 to 25 a minute against the 6.0 s pause's margin of 10 to 12."""
+    lines = (REPO / "advisors" / "composer_portfolio_client.py").read_text("utf-8").splitlines()
+    index = next(
+        i for i, line in enumerate(lines) if line.startswith("COMPOSER_READ_SPACING_SECONDS")
+    )
+    comment: list[str] = []
+    for line in reversed(lines[:index]):
+        if not line.startswith("#"):
+            break
+        comment.append(line.lstrip("#").strip())
+    text = " ".join(reversed(comment))
+    lowered = text.lower()
+
+    assert re.search(r"\bevery minute\b", lowered), "the engine's read cadence is stated"
+    assert re.search(r"\ball hours\b", lowered), "the cadence holds at all hours"
+    assert "statistics" in lowered, "the engine's reads are the statistics reads"
+    assert re.search(r"dashboard.{0,40}\btwo\b|\btwo\b.{0,40}dashboard", lowered), (
+        "the dashboard's two reads are stated"
+    )
+    assert re.search(r"\b3\.0\b", text), "the rejected shorter pause is stated"
+    assert re.search(r"\b(?:three|3) accounts\b", lowered), "at three accounts"
+    assert re.search(r"\b23\s+(?:to|and|or)\s+25\b", lowered), "its 23 to 25 a minute"
+    assert re.search(r"\b10\s+(?:to|and|or)\s+12\b", lowered), "the chosen pause's margin"
+
+
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
