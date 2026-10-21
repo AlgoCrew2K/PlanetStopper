@@ -196,6 +196,30 @@ def test_the_spacing_constant_comment_states_the_figures_behind_the_chosen_pause
     assert re.search(r"\b10\s+(?:to|and|or)\s+12\b", lowered), "the chosen pause's margin"
 
 
+def test_the_spacing_constant_comment_states_ten_to_twelve_as_the_margin_and_not_as_the_load():
+    """At 6.0 s the run adds 10 a minute to the standing 3 to 5, so the load is 13 to 15 a
+    minute and the room left under 25 is 10 to 12: the comment must give 10 to 12 as that room,
+    never as how much is used."""
+    lines = (REPO / "advisors" / "composer_portfolio_client.py").read_text("utf-8").splitlines()
+    index = next(
+        i for i, line in enumerate(lines) if line.startswith("COMPOSER_READ_SPACING_SECONDS")
+    )
+    comment: list[str] = []
+    for line in reversed(lines[:index]):
+        if not line.startswith("#"):
+            break
+        comment.append(line.lstrip("#").strip())
+    lowered = " ".join(reversed(comment)).lower()
+    twelve = r"\b10\s+(?:to|and|or)\s+12\b"
+
+    assert re.search(rf"\b(?:margin|headroom|room|spare)\b[^.]{{0,40}}{twelve}", lowered), (
+        "10 to 12 is named as the margin under the limit"
+    )
+    assert not re.search(rf"\b(?:whole|total|load|use[sd]?)\b[^.]{{0,20}}{twelve}", lowered), (
+        "10 to 12 is not given as the load"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
