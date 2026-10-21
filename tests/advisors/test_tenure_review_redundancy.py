@@ -1147,10 +1147,9 @@ def _two_composer_symphonies_and_a_shadow_clone_of_the_first():
 
 
 def _not_compared(entry):
-    return sorted(
-        (record["display_name"], record["reason"])
-        for record in b.item_of(entry, "redundancy")["not_compared"]
-    )
+    listed = b.item_of(entry, "redundancy").get("not_compared")
+    assert listed is not None, "the redundancy item carries no list of peers it did not compare"
+    return sorted((record["display_name"], record["reason"]) for record in listed)
 
 
 def test_an_eligible_peer_on_another_basis_is_listed_as_not_compared_beside_the_ones_that_were():
@@ -1182,9 +1181,9 @@ def test_a_roster_on_one_basis_lists_no_peer_as_not_compared():
     no peer at all. Rejects a list that is absent when it is empty, and one that names a
     peer that was compared."""
     for entry in b.review(_quiet_roster(), as_of=b.AS_OF, threshold=20).entries:
-        assert b.item_of(entry, "redundancy")["not_compared"] == [], entry["symphony_id"]
+        assert b.item_of(entry, "redundancy").get("not_compared") == [], entry["symphony_id"]
     lone = b.entry_of(
         b.review([_lone_composer()], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "lone-a"
     )
     assert b.item_of(lone, "redundancy")["status"] == "not_applicable"  # fixture sanity
-    assert b.item_of(lone, "redundancy")["not_compared"] == []
+    assert b.item_of(lone, "redundancy").get("not_compared") == []
