@@ -221,6 +221,115 @@ print(json.dumps({{str(days): gate(days) for days in {sweep!r}}}))
 """
 
 
+# The setup both review probes share: the stress fraction is set before the module is
+# imported, and ``review_of`` builds two Composer symphonies that end on the as-of day from
+# two lists of percent returns.
+_REVIEW_PROBE_PRELUDE = """
+import json
+import math
+import sys
+from datetime import UTC, date, datetime, timedelta
+
+sys.path.insert(0, {root!r})
+from advisors import retirement_recommender
+
+retirement_recommender.STRESS_WINDOW_FRACTION = {fraction!r}
+import advisors.tenure_review as tr
+import market_calendar
+
+
+def sessions_ending(count):
+    found, cursor = [], date(2026, 12, 31)
+    while len(found) < count:
+        if market_calendar.is_trading_day(cursor):
+            found.append(cursor)
+        cursor -= timedelta(days=1)
+    return found[::-1]
+
+
+def values(sessions, returns):
+    level, out = 100.0, {{sessions[0].isoformat(): 100.0}}
+    for day, change in zip(sessions[1:], returns):
+        level *= 1.0 + change / 100.0
+        out[day.isoformat()] = level
+    return out
+
+
+def review_of(first, second):
+    sessions = sessions_ending(len(first) + 1)
+    symphonies = [
+        tr.SymphonyInput(
+            symphony_id=sid,
+            display_name=name,
+            invested_since=sessions[0].isoformat(),
+            composer_values=values(sessions, returns),
+        )
+        for sid, name, returns in (("a", "Alpha", first), ("b", "Bravo", second))
+    ]
+    return tr.build_review(
+        tr.ReviewInputs(
+            run_id="probe",
+            trigger="nightly",
+            started_at=datetime(2026, 12, 31, 22, 0, tzinfo=UTC),
+            as_of=date(2026, 12, 31),
+            threshold=tr.ThresholdSetting(20, None),
+            symphonies=symphonies,
+        )
+    )
+"""
+
+# Two series that follow each other at about 0.99 over 60 sessions. The probe prints the
+# structural gate of their pair, the pair's uncertainty gate and what the review says of the
+# first symphony's redundancy item.
+_TINY_FRACTION_PROBE = (
+    _REVIEW_PROBE_PRELUDE
+    + """
+days = 60
+first = [0.5 * (math.sin(0.37 * i) + 0.1 * math.sin(2.9 * i)) for i in range(days)]
+second = [0.95 * v + 0.025 * math.cos(1.3 * i) for i, v in enumerate(first)]
+keys = [d.isoformat() for d in sessions_ending(days + 1)[1:]]
+pair = tr.evaluate_redundancy(
+    {{"a": dict(zip(keys, first)), "b": dict(zip(keys, second))}}
+)[0]
+entry = next(e for e in review_of(first, second).entries if e["symphony_id"] == "a")
+item = entry["evidence"]["redundancy"]
+print(
+    json.dumps(
+        {{
+            "aligned_days": pair["n_obs"],
+            "uncertainty": pair["uncertainty_gate"]["state"],
+            "structural": pair["structural_gate"],
+            "item_status": item["status"],
+            "item_text": json.dumps(item),
+            "missing_items": entry["missing_items"],
+        }}
+    )
+)
+"""
+)
+
+# Two uncorrelated series (sines of different whole frequencies) over each requested number of
+# returns; the probe prints what the review says of the first symphony's redundancy item.
+_FLOOR_PROBE = (
+    _REVIEW_PROBE_PRELUDE
+    + """
+out = {{}}
+for returns in {sweep!r}:
+    first = [0.3 * math.sin(2 * math.pi * 2 * i / returns) for i in range(returns)]
+    second = [0.3 * math.sin(2 * math.pi * 3 * i / returns) for i in range(returns)]
+    entry = next(e for e in review_of(first, second).entries if e["symphony_id"] == "a")
+    item = entry["evidence"]["redundancy"]
+    out[str(returns)] = {{
+        "status": item["status"],
+        "summary": item.get("summary"),
+        "pair": item["pair"],
+        "missing": "redundancy" in entry["missing_items"],
+    }}
+print(json.dumps(out))
+"""
+)
+
+
 def _run_probe(code: str, tmp_path):
     env = dict(os.environ)
     env["DB_PATH"] = str(tmp_path / "fresh_interpreter_state.db")
@@ -239,7 +348,14 @@ def _run_probe(code: str, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "fraction", [0.0, 0.004], ids=["zero_fraction", "fraction_that_rounds_to_zero_percent"]
+    "fraction",
+    [0.0, 0.004, 1e-100, 1e-300],
+    ids=[
+        "zero_fraction",
+        "fraction_that_rounds_to_zero_percent",
+        "fraction_far_below_float_steps_of_an_integer",
+        "fraction_near_the_smallest_normal_float",
+    ],
 )
 def test_importing_the_module_returns_whatever_the_recommenders_stress_fraction_is(
     fraction, tmp_path
@@ -290,6 +406,65 @@ def test_the_days_the_structural_gate_needs_follow_the_recommenders_stress_fract
         assert (gate["state"] == "insufficient data") is too_few, days
         if too_few:
             assert gate["text"] == f"insufficient data: needs {needed} aligned days", days
+
+
+@pytest.mark.parametrize(
+    "fraction",
+    [1e-100, 1e-300],
+    ids=["fraction_far_below_float_steps_of_an_integer", "fraction_near_the_smallest_normal_float"],
+)
+def test_a_stress_fraction_too_small_for_float_arithmetic_reads_insufficient_data_promptly(
+    fraction, tmp_path
+):
+    """At these fractions the integer that would give 10 stressed days is so large that adding
+    one to it no longer changes the float product, so a search that steps by one never ends.
+    The review must still answer: a pair that passes the uncertainty gate reads insufficient
+    data for the structural gate with a count of days larger than the pair's own, and the item
+    that shows the pair is not used in the verdict. The fresh interpreter has the 60 second
+    bound of the import probe above. Rejects a search with no end, a count smaller than the
+    days the pair already has (which would contradict the gate's own state), and a pair that
+    counts as evidence for a gate that could not run."""
+    done = _run_probe(
+        _TINY_FRACTION_PROBE.format(root=str(_REPO_ROOT), fraction=fraction), tmp_path
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    assert got["uncertainty"] == "passed"  # fixture sanity: the structural gate is reached
+    gate = got["structural"]
+    assert gate["state"] == "insufficient data"
+    match = re.fullmatch(r"insufficient data: needs (\d+) aligned days", gate["text"])
+    assert match, gate["text"]
+    assert int(match.group(1)) > got["aligned_days"]
+    assert got["item_status"] == "unavailable"
+    assert "redundancy" in got["missing_items"]
+    assert "no redundant sibling" not in got["item_text"]
+
+
+def test_a_comparison_needs_the_larger_of_the_days_the_structural_gate_needs_and_thirty(tmp_path):
+    """With a stress fraction of 0.5 the stressed window holds 10 days from 19 aligned days, far
+    below the 30 the uncertainty gate needs. An uncorrelated pair compared on 25 days is not a
+    finding (the correlation interval needs 30), and on exactly 30 it is. Rejects a floor that
+    is the structural gate's days alone."""
+    fraction = 0.5
+    structural_days = next(
+        n for n in range(1, 100) if math.ceil(fraction * n) >= retirement_recommender.STRESS_MIN_OBS
+    )
+    uncertainty_days = retirement_recommender.MIN_OBS_FLOOR
+    assert structural_days < uncertainty_days  # fixture sanity: the two floors differ
+    sweep = [uncertainty_days - 5, uncertainty_days]
+    done = _run_probe(
+        _FLOOR_PROBE.format(root=str(_REPO_ROOT), fraction=fraction, sweep=sweep), tmp_path
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    short, enough = (got[str(n)] for n in sweep)
+    assert short["pair"] is None and enough["pair"] is None  # fixture sanity: no screen hit
+    assert short["status"] == "unavailable"
+    assert short["summary"] is None
+    assert short["missing"] is True
+    assert enough["status"] == "available"
+    assert enough["summary"] == "no redundant sibling"
+    assert enough["missing"] is False
 
 
 # ---------------------------------------------------------------------------

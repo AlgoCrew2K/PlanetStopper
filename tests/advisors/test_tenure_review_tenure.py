@@ -586,7 +586,10 @@ def test_the_qualifying_window_of_an_eligible_symphony_is_the_window_its_review_
         "win-a",
     )
     assert window == b.item_of(entry, "performance")["window"]
-    assert set(window) == {"first", "last", "days"}
+    assert set(window) == {"first", "last", "days", "sessions"}
+    assert window["sessions"] == len(
+        b.nyse_days(date.fromisoformat(window["first"]), date.fromisoformat(window["last"]))
+    )
 
     values = {d.isoformat(): 100.0 + i for i, d in enumerate(ROSTER_DAYS)}
     roster[0].backtest = client.BacktestResult(
@@ -632,6 +635,53 @@ def test_the_qualifying_window_of_a_shadow_basis_symphony_is_its_shadow_window()
     # thirty rows are thirty returns, measured from the session before the first row
     assert window["first"] == ROSTER_DAYS[0].isoformat()
     assert window["days"] == len(ROSTER_DAYS)
+
+
+def _shadow_with_rows_left_out(left_out, *, stored_without_return):
+    """A shadow symphony with a row on every session after the first tenure day, except that
+    the rows of ``left_out`` are missing or stored with no return."""
+    rows = b.by_date(ROSTER_DAYS[1:], b.wave_returns(len(ROSTER_DAYS) - 1))
+    for day in left_out:
+        if stored_without_return:
+            rows[day.isoformat()] = None
+        else:
+            del rows[day.isoformat()]
+    return b.shadow_symphony("holey", "Holey", ROSTER_DAYS[0].isoformat(), rows)
+
+
+@pytest.mark.parametrize(
+    "positions", [[7], [3, 4, 9]], ids=["one_session_without_a_row", "three_sessions_without_a_row"]
+)
+@pytest.mark.parametrize(
+    "stored_without_return", [False, True], ids=["no_row_stored", "row_stored_with_no_return"]
+)
+def test_a_shadow_window_with_a_session_that_has_no_usable_row_has_no_qualifying_window(
+    positions, stored_without_return
+):
+    """The review withholds the backtest item for such a window, so a runner that asked for the
+    window and fetched a backtest over it would fetch one the review discards. The window is
+    absent exactly when the review's backtest item is withheld for the hole. Rejects a window
+    for a symphony whose backtest item cannot be compared."""
+    symphony = _shadow_with_rows_left_out(
+        [ROSTER_DAYS[i] for i in positions], stored_without_return=stored_without_return
+    )
+    entry = b.entry_of(b.review([symphony], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "holey")
+    assert b.item_of(entry, "performance")["status"] == "available"  # fixture sanity
+    assert "has no usable row" in b.item_of(entry, "backtest")["reason"]  # fixture sanity
+    assert tr.qualifying_window(symphony, b.AS_OF, ROSTER_THRESHOLD) is None
+
+
+def test_a_shadow_window_with_every_session_covered_and_a_composer_window_with_a_day_missing_qualify():
+    """Rejects widening the hole rule: a shadow window whose sessions all have a row, and a
+    Composer window with a missing interior day (a series of levels, which a backtest over the
+    window can still be compared with), both keep their window."""
+    whole = _shadow_with_rows_left_out([], stored_without_return=False)
+    assert tr.qualifying_window(whole, b.AS_OF, ROSTER_THRESHOLD) is not None
+    composer = b.composer_symphony("c-gap", "Composer Gap", ROSTER_DAYS, b.wave_returns(30))
+    composer.composer_values[ROSTER_DAYS[7].isoformat()] = None
+    window = tr.qualifying_window(composer, b.AS_OF, ROSTER_THRESHOLD)
+    assert window is not None
+    assert window["days"] == len(ROSTER_DAYS) - 1
 
 
 @pytest.mark.parametrize(
@@ -702,9 +752,7 @@ def _shadow_rows_on(symphony_id, row_days):
             id="shadow_two_rows_from_the_first_tenure_day_are_one_return",
         ),
         pytest.param(
-            lambda: _shadow_rows_on(
-                "s-edge-three", [ROSTER_DAYS[0], ROSTER_DAYS[15], ROSTER_DAYS[-1]]
-            ),
+            lambda: _shadow_rows_on("s-edge-three", ROSTER_DAYS[:3]),
             True,
             id="shadow_three_rows_from_the_first_tenure_day_are_two_returns",
         ),

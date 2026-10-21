@@ -118,7 +118,8 @@ def test_the_composite_window_is_the_threshold_many_sessions_ending_on_the_as_of
     assert window["last"] == "2026-12-31"
     assert window["days"] == 20
     assert b.oracle_count_trading_days(date.fromisoformat(window["first"]), b.AS_OF) == 20
-    assert set(window) == {"first", "last", "days"}
+    assert set(window) == {"first", "last", "days", "sessions"}
+    assert window["sessions"] == window["days"]
 
 
 def test_entries_are_the_reviews_entries_one_per_symphony():
