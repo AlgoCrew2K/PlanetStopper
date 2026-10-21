@@ -4421,8 +4421,7 @@ def _fetch_retirement_recommendations(
             for row in rows
             if row.get("created_at")
             and not (
-                isinstance(row.get("raw_response"), dict)
-                and "review_run_id" in row["raw_response"]
+                isinstance(row.get("raw_response"), dict) and "review_run_id" in row["raw_response"]
             )
         ]
         if not dated_rows:
