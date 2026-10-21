@@ -4335,6 +4335,50 @@ def _format_eastern_run_time(completed_at: object) -> str | None:
         return None
 
 
+_NOT_RECORDED_TEXT = "not recorded"
+_TIME_NOT_RECORDED_TEXT = "time not recorded"
+
+
+@app.template_filter("tenure_text")
+def _tenure_text(value: object) -> str:
+    """A stored text as stored, or "not recorded" when it is absent or not a text, so the
+    panel never prints Python's None or a stored list."""
+    return value if isinstance(value, str) and value.strip() else _NOT_RECORDED_TEXT
+
+
+@app.template_filter("tenure_number")
+def _tenure_number(value: object) -> str:
+    """A finite stored number to two decimals, else "not recorded" (never nan, inf or True)."""
+    if _is_finite_number(value):
+        return f"{value:.2f}"
+    return _NOT_RECORDED_TEXT
+
+
+@app.template_filter("tenure_whole")
+def _tenure_whole(value: object) -> str:
+    """A stored whole number as an integer, else "not recorded" (2.5 is never truncated)."""
+    return str(int(value)) if _is_whole_number(value) else _NOT_RECORDED_TEXT
+
+
+@app.template_filter("tenure_eastern")
+def _tenure_eastern(value: object) -> str:
+    """A stored timestamp as "YYYY-MM-DD HH:MM ET", else "time not recorded"."""
+    stamp = _format_eastern_run_time(value)
+    return f"{stamp} ET" if stamp else _TIME_NOT_RECORDED_TEXT
+
+
+def _is_finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_whole_number(value: object) -> bool:
+    return _is_finite_number(value) and float(value).is_integer()
+
+
+app.jinja_env.tests["finite_number"] = _is_finite_number
+app.jinja_env.tests["whole_number"] = _is_whole_number
+
+
 def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict, bool]:
     """Return (run header, entries, run state, read_failed) for the newest stored tenure review.
 
