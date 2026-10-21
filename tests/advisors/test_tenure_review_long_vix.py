@@ -249,6 +249,60 @@ def test_when_every_day_with_holdings_carries_an_unknown_value_the_item_is_unava
 
 
 # ---------------------------------------------------------------------------
+# A day key is the date in its first ten characters
+# ---------------------------------------------------------------------------
+
+TIME_PARTS = ["T00:00:00", "T00:00:00Z", " 00:00:00", "T16:00:00-05:00"]
+HEAVY_DAY = {"subj": {"VIXY": 200.0}, "o1": {"UVXY": 200.0}, "o2": {"TLT": 1.0}}
+
+
+@pytest.mark.parametrize("time_part", TIME_PARTS)
+def test_a_holdings_key_with_a_time_part_is_read_as_its_date(time_part):
+    """Every day, including the window's last, whose stamped key sorts after the bare
+    date. The item equals the item for the same holdings keyed by date. Rejects comparing
+    keys as text against the window's bounds, which drops the last day."""
+    stamped = tr.HoldingsInput(
+        days={f"{iso}{time_part}": held for iso, held in zip(ISO, SCENARIO, strict=True)}
+    )
+    assert _cofire(stamped) == _cofire(_holdings(SCENARIO))
+    assert _cofire(stamped)["window"]["days"] == len(ISO)  # fixture sanity: no day was lost
+
+
+def test_two_keys_for_one_date_count_as_one_day_and_the_greatest_key_wins():
+    """Each day in turn is given two keys, the bare date holding a heavy long-VIX day and
+    the stamped key the real one; the stamped key sorts later and wins, in either
+    insertion order. Rejects counting both keys as days, and first-wins or last-wins."""
+    expected = _cofire(_holdings(SCENARIO))
+    for position, iso in enumerate(ISO):
+        rest = {k: held for k, held in zip(ISO, SCENARIO, strict=True) if k != iso}
+        for first_key, second_key in ((iso, f"{iso}T16:00:00"), (f"{iso}T16:00:00", iso)):
+            days = dict(rest)
+            for key in (first_key, second_key):
+                days[key] = HEAVY_DAY if key == iso else SCENARIO[position]
+            assert _cofire(tr.HoldingsInput(days=days)) == expected, (iso, first_key)
+
+
+def test_an_unknown_value_under_the_greatest_key_does_not_hide_a_known_day_of_the_same_date():
+    partial = copy.deepcopy(SCENARIO[0])
+    partial["o1"]["SPY"] = None
+    rest = {k: held for k, held in zip(ISO[1:], SCENARIO[1:], strict=True)}
+    for keys in ((ISO[0], f"{ISO[0]}T16:00:00"), (f"{ISO[0]}T16:00:00", ISO[0])):
+        days = {**rest}
+        for key in keys:
+            days[key] = SCENARIO[0] if key == ISO[0] else partial
+        assert _cofire(tr.HoldingsInput(days=days)) == _cofire(_holdings(SCENARIO)), keys
+
+
+def test_a_holdings_key_that_is_not_a_date_is_ignored():
+    """Nine characters, 2026-12-3, sorts between the window's bounds as text; it names no
+    day. Rejects counting it, and raising on it."""
+    days = dict(_holdings(SCENARIO).days)
+    days[ISO[-1][:-1]] = SCENARIO[0]
+    days["not-a-date"] = SCENARIO[0]
+    assert _cofire(tr.HoldingsInput(days=days)) == _cofire(_holdings(SCENARIO))
+
+
+# ---------------------------------------------------------------------------
 # Missing data is unavailable or reduced, never zero
 # ---------------------------------------------------------------------------
 

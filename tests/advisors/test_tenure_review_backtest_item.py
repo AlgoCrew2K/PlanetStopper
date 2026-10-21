@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -548,3 +549,77 @@ def test_the_backtest_item_carries_the_entrys_own_realized_legs_and_gaps_from_th
     )
     assert entry["verdict"] == verdict
     assert entry["verdict_reasons"] == reasons
+
+
+# ---------------------------------------------------------------------------
+# A backtest that reproduces the realized returns leaves no gap, on either basis
+# ---------------------------------------------------------------------------
+
+REPLICA_THRESHOLD = 5
+REPLICA_SESSIONS = list(b.nyse_days(date(2026, 12, 14), b.AS_OF))
+
+
+def _replica_returns(count):
+    returns = b.wave_returns(count, amp=2.0)
+    returns[0] = 2.5  # large enough that counting or dropping it shows as a gap
+    return returns
+
+
+def _composer_replica():
+    returns = _replica_returns(len(REPLICA_SESSIONS) - 1)
+    symphony = b.composer_symphony("rep-sym", "Replica Symphony", REPLICA_SESSIONS, returns)
+    return symphony, returns
+
+
+def _shadow_replica(invested_since, *, first_return_counted):
+    """A shadow row on every session from 14 December. With the tenure starting before
+    that, the session before the first row is the window's first day and all 13 returns
+    count; with the tenure starting on the first row there is no session before it inside
+    the tenure, the first row is the baseline and 12 returns count."""
+    returns = _replica_returns(len(REPLICA_SESSIONS))
+    rows = b.by_date(REPLICA_SESSIONS, returns)
+    symphony = b.shadow_symphony("rep-sym", "Replica Symphony", invested_since.isoformat(), rows)
+    return symphony, returns if first_return_counted else returns[1:]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(_composer_replica, id="composer_basis"),
+        pytest.param(
+            lambda: _shadow_replica(date(2026, 12, 7), first_return_counted=True),
+            id="shadow_basis_with_a_baseline_session_in_the_tenure",
+        ),
+        pytest.param(
+            lambda: _shadow_replica(date(2026, 12, 14), first_return_counted=False),
+            id="shadow_basis_with_the_first_row_on_the_first_tenure_day",
+        ),
+    ],
+)
+def test_a_backtest_that_reproduces_the_realized_returns_leaves_a_gap_of_zero(build):
+    """The backtest is requested over the window the review reports, so its return days
+    are the realized return days. A perfect replica then differs from the realized legs by
+    nothing, whichever basis the realized series came from.
+
+    Rejects a shadow window with one more return than the backtest over it can have (a gap
+    of that day's return, 2.5 points here, on a symphony that did exactly what its
+    definition says)."""
+    symphony, counted = build()
+    window = tr.qualifying_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    assert window is not None
+    first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+    sessions_in_window = len(list(b.nyse_days(first, last)))
+    assert sessions_in_window == len(counted) + 1, "a window spans one more day than it has returns"
+    symphony.backtest = b.replica_backtest(first, last, counted)
+
+    result = b.review([symphony], as_of=b.AS_OF, threshold=REPLICA_THRESHOLD)
+    item = b.item_of(b.entry_of(result, symphony.symphony_id), "backtest")
+    assert item["status"] == "available"
+    figs = item["figures"]
+    # percentage points; 1e-9 absorbs only the rounding of rebuilding levels from percent
+    # returns, far below the smallest real gap, which is one day's return
+    assert figs["total_return_gap"]["value"] == pytest.approx(0.0, abs=1e-9)
+    assert figs["max_drawdown_gap"]["value"] == pytest.approx(0.0, abs=1e-9)
+    assert figs["realized_total_return"]["value"] == pytest.approx(
+        figs["backtest_total_return"]["value"], abs=1e-9
+    )

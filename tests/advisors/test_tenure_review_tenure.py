@@ -420,6 +420,66 @@ def test_every_marginal_item_lists_each_excluded_symphony_with_the_reason_that_a
     for entry in result.entries:
         for record in b.item_of(entry, "marginal")["excluded"]:
             assert record["reason"] == reasons[record["display_name"]], entry["symphony_id"]
+            assert record["display_name"] != entry["display_name"], entry["symphony_id"]
+
+
+WITHHELD_KINDS = {
+    "unk-u": ("Unknown Tenure", "excluded: tenure unavailable"),
+    "young-y": ("Young Why", "excluded: not yet eligible"),
+    "void-v": ("Void Peer", "excluded: no history"),
+}
+
+
+def _roster_with_one_symphony_of_each_withheld_kind():
+    """Two scored symphonies, one with no invested-since date, one younger than the
+    threshold and one eligible by tenure that has no series on any basis."""
+    return [
+        *_mixed_tenure_roster(),
+        b.no_history_symphony("void-v", "Void Peer", ROSTER_DAYS[0].isoformat()),
+    ]
+
+
+def test_no_entry_lists_its_own_symphony_as_excluded_from_its_own_comparison():
+    """A symphony is never left out of a comparison it is the subject of. Every entry
+    lists exactly the other withheld symphonies, each with the reason that applies to it,
+    so a scored entry lists all three and a withheld entry the other two.
+
+    Rejects the review-wide list handed to every entry unchanged (a withheld entry then
+    names itself), and a filter that empties the list instead of removing one record."""
+    result = b.review(
+        _roster_with_one_symphony_of_each_withheld_kind(),
+        as_of=b.AS_OF,
+        threshold=ROSTER_THRESHOLD,
+    )
+    assert len(result.entries) == 5  # fixture sanity: all five symphonies have an entry
+    for entry in result.entries:
+        sid = entry["symphony_id"]
+        records = b.item_of(entry, "marginal")["excluded"]
+        listed = sorted((r["display_name"], r["reason"]) for r in records)
+        expected = sorted(v for other, v in WITHHELD_KINDS.items() if other != sid)
+        assert listed == expected, sid
+        assert entry["display_name"] not in [r["display_name"] for r in records], sid
+
+
+def test_two_withheld_symphonies_that_share_a_display_name_each_list_the_other():
+    """The list is told apart by symphony, not by name. Rejects removing every record
+    that carries the entry's own display name, which would also remove the twin."""
+    roster = [
+        b.composer_symphony("comp-a", "Comp A", ROSTER_DAYS, b.wave_returns(30, freq=0.4)),
+        b.composer_symphony("comp-c", "Comp C", ROSTER_DAYS, b.wave_returns(30, freq=1.3)),
+        b.composer_symphony("twin-young", "Twin", ROSTER_DAYS[-10:], b.wave_returns(9, freq=0.8)),
+        b.composer_symphony(
+            "twin-unknown", "Twin", ROSTER_DAYS, b.wave_returns(30, freq=2.1), invested_since=None
+        ),
+    ]
+    result = b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    young_reason = {"display_name": "Twin", "reason": "excluded: not yet eligible"}
+    unknown_reason = {"display_name": "Twin", "reason": "excluded: tenure unavailable"}
+    assert b.item_of(b.entry_of(result, "twin-young"), "marginal")["excluded"] == [unknown_reason]
+    assert b.item_of(b.entry_of(result, "twin-unknown"), "marginal")["excluded"] == [young_reason]
+    for sid in ("comp-a", "comp-c"):
+        listed = b.item_of(b.entry_of(result, sid), "marginal")["excluded"]
+        assert sorted(listed, key=lambda r: r["reason"]) == [young_reason, unknown_reason], sid
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +629,9 @@ def test_the_qualifying_window_of_a_shadow_basis_symphony_is_its_shadow_window()
     window = tr.qualifying_window(sym, b.AS_OF, ROSTER_THRESHOLD)
     entry = b.entry_of(b.review([sym], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "shadow-win")
     assert window == b.item_of(entry, "performance")["window"]
-    assert window["days"] == 30
+    # thirty rows are thirty returns, measured from the session before the first row
+    assert window["first"] == ROSTER_DAYS[0].isoformat()
+    assert window["days"] == len(ROSTER_DAYS)
 
 
 @pytest.mark.parametrize(
@@ -596,6 +658,75 @@ def test_the_qualifying_window_of_a_shadow_basis_symphony_is_its_shadow_window()
 )
 def test_there_is_no_qualifying_window_unless_the_symphony_is_eligible_and_has_history(build):
     assert tr.qualifying_window(build(), b.AS_OF, ROSTER_THRESHOLD) is None
+
+
+def _two_composer_points():
+    values = {ROSTER_DAYS[-2].isoformat(): 100.0, ROSTER_DAYS[-1].isoformat(): 101.0}
+    return b.make_symphony(
+        "c-two", "Composer Two", ROSTER_DAYS[0].isoformat(), composer_values=values
+    )
+
+
+def _three_composer_points():
+    values = {
+        d.isoformat(): v for d, v in zip(ROSTER_DAYS[-3:], (100.0, 101.0, 100.5), strict=True)
+    }
+    return b.make_symphony(
+        "c-three", "Composer Three", ROSTER_DAYS[0].isoformat(), composer_values=values
+    )
+
+
+def _shadow_rows_on(symphony_id, row_days):
+    rows = {d.isoformat(): 0.4 - 0.3 * i for i, d in enumerate(row_days)}
+    return b.shadow_symphony(symphony_id, symphony_id.title(), ROSTER_DAYS[0].isoformat(), rows)
+
+
+@pytest.mark.parametrize(
+    ("build", "scored"),
+    [
+        pytest.param(_two_composer_points, False, id="composer_two_points_is_one_return"),
+        pytest.param(_three_composer_points, True, id="composer_three_points_is_two_returns"),
+        pytest.param(
+            lambda: _shadow_rows_on("s-one", ROSTER_DAYS[-1:]),
+            False,
+            id="shadow_one_row_after_a_baseline_is_one_return",
+        ),
+        pytest.param(
+            lambda: _shadow_rows_on("s-two", ROSTER_DAYS[-2:]),
+            True,
+            id="shadow_two_rows_after_a_baseline_are_two_returns",
+        ),
+        pytest.param(
+            lambda: _shadow_rows_on("s-edge-two", [ROSTER_DAYS[0], ROSTER_DAYS[-1]]),
+            False,
+            id="shadow_two_rows_from_the_first_tenure_day_are_one_return",
+        ),
+        pytest.param(
+            lambda: _shadow_rows_on(
+                "s-edge-three", [ROSTER_DAYS[0], ROSTER_DAYS[15], ROSTER_DAYS[-1]]
+            ),
+            True,
+            id="shadow_three_rows_from_the_first_tenure_day_are_two_returns",
+        ),
+    ],
+)
+def test_a_symphony_whose_performance_cannot_be_scored_has_no_qualifying_window(build, scored):
+    """Eligible, with a series, but too short for the shared metric function: no backtest
+    is worth requesting for it, and the window it would be requested over is the window of
+    a performance item that exists. Rejects a window for a symphony that cannot be scored
+    and a rule that differs between the two bases."""
+    symphony = build()
+    entry = b.entry_of(
+        b.review([symphony], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), symphony.symphony_id
+    )
+    performance = b.item_of(entry, "performance")
+    assert entry["eligible"] is True and entry["basis"]["kind"] != "none"  # fixture sanity
+    assert (performance["status"] == "available") is scored  # fixture sanity
+    window = tr.qualifying_window(symphony, b.AS_OF, ROSTER_THRESHOLD)
+    if scored:
+        assert window == performance["window"]
+    else:
+        assert window is None
 
 
 def test_the_threshold_given_decides_whether_a_window_qualifies():

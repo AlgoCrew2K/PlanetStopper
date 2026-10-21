@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -224,6 +224,112 @@ def test_shadow_rows_resolve_duplicate_dates_by_the_same_rule_whatever_the_mappi
 
 
 # ---------------------------------------------------------------------------
+# Only days the exchange traded are points
+# ---------------------------------------------------------------------------
+
+# (a day, whether the exchange traded that day): a weekend day, weekday closures, and the
+# half days around Thanksgiving and Christmas, which are sessions and so stay points
+CALENDAR_CASES = [
+    pytest.param(date(2026, 12, 26), False, id="saturday"),
+    pytest.param(date(2026, 12, 27), False, id="sunday"),
+    pytest.param(date(2026, 12, 25), False, id="christmas_day"),
+    pytest.param(date(2026, 11, 26), False, id="thanksgiving_day"),
+    pytest.param(date(2026, 4, 3), False, id="good_friday"),
+    pytest.param(date(2026, 11, 27), True, id="half_day_after_thanksgiving"),
+    pytest.param(date(2026, 12, 24), True, id="half_day_on_christmas_eve"),
+]
+
+
+@pytest.mark.parametrize(("extra", "traded"), CALENDAR_CASES)
+def test_a_point_on_a_day_the_exchange_was_closed_is_not_a_point(extra, traded):
+    """A value dated on a weekend or a holiday is dropped: it adds no return and is not a
+    day of the window, so the move across the closure runs between the sessions on either
+    side of it. A half day is a session and stays.
+
+    Rejects keeping every parseable date, and a calendar that reads a half day as closed."""
+    start, end = extra - timedelta(days=8), extra + timedelta(days=8)
+    sessions = list(b.nyse_days(start, end))
+    assert (extra in sessions) is traded  # fixture sanity: the calendar library agrees
+    kept = {d.isoformat(): 100.0 + i for i, d in enumerate(sessions)}
+    values = dict(kept)
+    if not traded:
+        values[extra.isoformat()] = 90000.0  # a level no real move produces
+    win = tr.realized_window(values, start, end)
+    assert win["dates"] == [d.isoformat() for d in sessions]
+    assert win["days"] == len(sessions)
+    assert win["returns_pct"] == pytest.approx(b.returns_from_values(kept), rel=1e-12)
+
+
+def test_a_series_that_opens_and_closes_on_closed_days_starts_and_ends_on_sessions():
+    start, end = date(2026, 12, 19), date(2026, 12, 27)  # a Saturday and a Sunday
+    sessions = list(b.nyse_days(start, end))
+    values = {d.isoformat(): 100.0 + i for i, d in enumerate(sessions)}
+    values[start.isoformat()] = 5.0
+    values[end.isoformat()] = 5.0
+    win = tr.realized_window(values, start, end)
+    assert win["first"] == sessions[0].isoformat()
+    assert win["last"] == sessions[-1].isoformat()
+    assert win["days"] == len(sessions)
+
+
+def _closed_days_between(days):
+    traded = set(days)
+    return [d for d in b.calendar_days(days[0], days[-1]) if d not in traded]
+
+
+def _three_composer_symphonies(*, closed_day_level=None):
+    out = []
+    for k, (sid, freq) in enumerate((("open-a", 0.3), ("open-b", 0.9), ("open-c", 1.7)), start=1):
+        symphony = b.composer_symphony(
+            sid, sid.upper(), WINDOW_DAYS, b.wave_returns(THRESHOLD - 1, freq=freq)
+        )
+        if closed_day_level is not None:
+            for d in _closed_days_between(WINDOW_DAYS):
+                symphony.composer_values[d.isoformat()] = closed_day_level * k
+        out.append(symphony)
+    return out
+
+
+def _three_shadow_symphonies(*, closed_day_return=None):
+    out = []
+    for sid, freq in (("open-a", 0.3), ("open-b", 0.9), ("open-c", 1.7)):
+        rows = b.by_date(WINDOW_DAYS[1:], b.wave_returns(THRESHOLD - 1, freq=freq))
+        if closed_day_return is not None:
+            rows.update(
+                {d.isoformat(): closed_day_return for d in _closed_days_between(WINDOW_DAYS)}
+            )
+        out.append(b.shadow_symphony(sid, sid.upper(), WINDOW_DAYS[0].isoformat(), rows))
+    return out
+
+
+def test_a_composer_series_with_points_on_closed_days_is_reviewed_like_the_same_series_without():
+    """Every consumer of the kept points (the window, the composite coverage check, the
+    pairs, the marginal comparison) must see only sessions. Rejects dropping closed days
+    in one place and keeping them in another."""
+    plain = b.review(_three_composer_symphonies(), as_of=b.AS_OF, threshold=THRESHOLD)
+    extra = b.review(
+        _three_composer_symphonies(closed_day_level=5000.0), as_of=b.AS_OF, threshold=THRESHOLD
+    )
+    first = b.entry_of(plain, "open-a")
+    assert b.item_of(first, "performance")["window"]["days"] == THRESHOLD  # fixture sanity
+    assert b.item_of(first, "composite")["status"] == "available"  # fixture sanity
+    assert b.item_of(first, "marginal")["status"] == "available"  # fixture sanity
+    assert extra.entries == plain.entries
+
+
+def test_shadow_rows_on_closed_days_are_reviewed_like_the_same_rows_without():
+    """A row dated on a weekend or a holiday adds no return and is not a day, on the
+    shadow basis as on the Composer one."""
+    plain = b.review(_three_shadow_symphonies(), as_of=b.AS_OF, threshold=THRESHOLD)
+    extra = b.review(
+        _three_shadow_symphonies(closed_day_return=25.0), as_of=b.AS_OF, threshold=THRESHOLD
+    )
+    first = b.entry_of(plain, "open-a")
+    assert b.item_of(first, "performance")["status"] == "available"  # fixture sanity
+    assert extra.entries == plain.entries
+
+
+# ---------------------------------------------------------------------------
 # Basis selection through build_review
 # ---------------------------------------------------------------------------
 
@@ -365,6 +471,13 @@ def test_a_composer_series_whose_values_are_all_unusable_is_not_an_empty_series(
     assert _fallback_reason(composer_values=unusable) == SHORT_SERIES_REASON
 
 
+def test_a_point_on_a_closed_day_does_not_count_toward_the_two_points_the_basis_needs():
+    """One session and one weekend day are one usable point, so the series is too short."""
+    closed = _closed_days_between(WINDOW_DAYS)[0]
+    values = {WINDOW_DAYS[-1].isoformat(): 100.0, closed.isoformat(): 101.0}
+    assert _fallback_reason(composer_values=values) == SHORT_SERIES_REASON
+
+
 def test_two_usable_composer_points_are_enough_for_the_composer_basis():
     two_points = {WINDOW_DAYS[-2].isoformat(): 100.0, WINDOW_DAYS[-1].isoformat(): 101.0}
     subject = _subject(composer_values=two_points, shadow_returns=_shadow_rows())
@@ -373,7 +486,7 @@ def test_two_usable_composer_points_are_enough_for_the_composer_basis():
 
 
 def test_shadow_returns_are_percent_returns_used_as_given():
-    rows = _shadow_rows(freq=0.9)
+    rows = _shadow_rows(THRESHOLD - 1, freq=0.9)  # the first tenure day is the baseline
     subject = _subject(series_failure="unavailable", shadow_returns=rows)
     entry, _ = _entry(subject, _peer())
     expected_total = (math.prod(1 + v / 100 for v in rows.values()) - 1) * 100
@@ -432,3 +545,151 @@ def test_a_shadow_series_never_reaches_back_before_the_tenure_starts():
     window = b.item_of(entry, "performance")["window"]
     assert date.fromisoformat(window["first"]) >= WINDOW_DAYS[0]
     assert window["days"] == THRESHOLD
+
+
+# ---------------------------------------------------------------------------
+# A shadow window starts at the session before its first row
+# ---------------------------------------------------------------------------
+
+# A shadow row is the return INTO its day, measured from the previous session's close, so
+# the window opens on that previous session (the baseline), the way a Composer window
+# opens on its first value. N rows then span N + 1 days and N returns. When the previous
+# session falls before the tenure there is no baseline inside it: the first row is the
+# baseline, its own return is not counted, and N rows span N days and one return fewer than N.
+SHADOW_START_THRESHOLD = 5
+
+
+def _sessions_from(first: date) -> list[date]:
+    return list(b.nyse_days(first, b.AS_OF))
+
+
+def _compounded_percent(returns_pct) -> float:
+    return (math.prod(1 + r / 100 for r in returns_pct) - 1) * 100
+
+
+def _shadow_performance(rows, invested_since: date):
+    subject = b.shadow_symphony("shadow-sub", "Shadow Sub", invested_since.isoformat(), rows)
+    result = b.review([subject], as_of=b.AS_OF, threshold=SHADOW_START_THRESHOLD)
+    entry = b.entry_of(result, "shadow-sub")
+    return subject, b.item_of(entry, "performance"), entry["basis"]
+
+
+@pytest.mark.parametrize(
+    "first_row",
+    [date(2026, 12, 22), date(2026, 12, 21), date(2026, 12, 28)],
+    ids=["after_a_weekday", "after_a_weekend", "after_a_holiday_and_a_weekend"],
+)
+def test_a_shadow_window_starts_at_the_session_before_its_first_stored_row(first_row):
+    """The session before is the calendar's, not the day before: Friday for a Monday
+    row, Christmas Eve for the row after the Christmas closure. Every row's return is
+    counted. Rejects a window that opens on the first row, which leaves that row's
+    return with no baseline in the window, and a baseline taken from calendar days."""
+    sessions = _sessions_from(first_row)
+    returns = b.wave_returns(len(sessions), amp=2.0)
+    subject, perf, basis = _shadow_performance(b.by_date(sessions, returns), date(2026, 12, 14))
+    assert perf["status"] == "available"
+    assert perf["window"] == {
+        "first": b.session_before(first_row).isoformat(),
+        "last": b.AS_OF.isoformat(),
+        "days": len(sessions) + 1,
+    }
+    assert perf["figures"]["total_return"]["value"] == pytest.approx(
+        _compounded_percent(returns), rel=1e-9
+    )
+    assert tr.qualifying_window(subject, b.AS_OF, SHADOW_START_THRESHOLD) == perf["window"]
+    # the data starts on the first stored row; the baseline session before it has no row
+    assert basis["series_begins"] == first_row.isoformat()
+    assert basis["tenure_begins"] == date(2026, 12, 14).isoformat()
+
+
+def test_the_window_opens_before_the_first_usable_row_when_the_first_stored_row_is_unusable():
+    """The return of the first usable row is measured from the session before it, whether
+    or not that session has a stored row, and the data starts on the first usable row.
+    Rejects opening the window before the first stored key, which leaves a session with no
+    return inside the window, and a series that begins on a row with no usable return."""
+    sessions = _sessions_from(date(2026, 12, 21))
+    returns = b.wave_returns(len(sessions), amp=2.0)
+    rows = b.by_date(sessions, returns)
+    rows[sessions[0].isoformat()] = None
+    _subject_input, perf, basis = _shadow_performance(rows, date(2026, 12, 14))
+    assert perf["window"]["first"] == sessions[0].isoformat()
+    assert basis["series_begins"] == sessions[1].isoformat()
+    assert perf["window"]["days"] == len(sessions)  # the usable rows, plus the baseline
+    assert perf["figures"]["total_return"]["value"] == pytest.approx(
+        _compounded_percent(returns[1:]), rel=1e-9
+    )
+
+
+@pytest.mark.parametrize(
+    ("invested_since", "rows_from", "baseline_in_tenure"),
+    [
+        pytest.param(date(2026, 12, 22), date(2026, 12, 22), False, id="first_row_on_day_one"),
+        pytest.param(date(2026, 12, 22), date(2026, 12, 18), False, id="earlier_rows_are_dropped"),
+        pytest.param(date(2026, 12, 21), date(2026, 12, 22), True, id="baseline_on_day_one"),
+        pytest.param(date(2026, 12, 18), date(2026, 12, 22), True, id="baseline_inside_tenure"),
+    ],
+)
+def test_a_shadow_window_never_reaches_back_before_the_tenure_and_keeps_a_baseline_it_can(
+    invested_since, rows_from, baseline_in_tenure
+):
+    """With the previous session inside the tenure (the first tenure day counts) it is
+    the window's first day and every row's return is counted. Without one, the first row
+    is the baseline and its return, which would be measured from before the tenure, is
+    left out: the window never reaches back before the tenure and never counts a return
+    its first day cannot account for."""
+    sessions = _sessions_from(rows_from)
+    returns = b.wave_returns(len(sessions), amp=2.0)
+    kept = [i for i, d in enumerate(sessions) if d >= invested_since]
+    returns[kept[0]] = 3.7  # a first kept return no later return can stand in for
+    _subject_input, perf, basis = _shadow_performance(b.by_date(sessions, returns), invested_since)
+    kept_days = [sessions[i] for i in kept]
+    kept_returns = [returns[i] for i in kept]
+    if baseline_in_tenure:
+        assert perf["window"]["first"] == b.session_before(kept_days[0]).isoformat()
+        assert perf["window"]["days"] == len(kept_days) + 1
+        counted = kept_returns
+    else:
+        assert perf["window"]["first"] == kept_days[0].isoformat()
+        assert perf["window"]["days"] == len(kept_days)
+        counted = kept_returns[1:]
+    assert date.fromisoformat(perf["window"]["first"]) >= invested_since
+    # where the data starts: the first row in the tenure, which is the window's first day
+    # only when that row is its own baseline
+    assert basis["series_begins"] == kept_days[0].isoformat()
+    assert basis["tenure_begins"] == invested_since.isoformat()
+    assert perf["figures"]["total_return"]["value"] == pytest.approx(
+        _compounded_percent(counted), rel=1e-9
+    )
+
+
+LONG_FIRST_ROW = date(2026, 9, 8)  # the session after Labor Day, so a long pair of series
+
+
+@pytest.mark.parametrize(
+    ("invested_since", "baseline_in_tenure"),
+    [(date(2026, 9, 8), False), (date(2026, 9, 1), True)],
+    ids=["first_row_on_day_one", "baseline_inside_tenure"],
+)
+def test_a_shadow_pair_is_measured_on_the_returns_the_window_counts(
+    invested_since, baseline_in_tenure
+):
+    """The aligned days of a pair are the returns each window counts: one fewer than the
+    window's days. Rejects dropping the first row from the figures but keeping it in the
+    pair, and the reverse. The pair is long enough to be evaluated, so it is shown
+    whatever the display rule for short pairs says."""
+    sessions = _sessions_from(LONG_FIRST_ROW)
+    first = b.wave_returns(len(sessions), amp=1.0)
+    second = [
+        0.8 * r + 0.3 * x for r, x in zip(first, b.sine_returns(len(sessions), 7), strict=True)
+    ]
+    subjects = [
+        b.shadow_symphony(sid, sid.title(), invested_since.isoformat(), b.by_date(sessions, rows))
+        for sid, rows in (("pair-a", first), ("pair-b", second))
+    ]
+    result = b.review(subjects, as_of=b.AS_OF, threshold=SHADOW_START_THRESHOLD)
+    entry = b.entry_of(result, "pair-a")
+    pair = b.item_of(entry, "redundancy")["pair"]
+    window_days = b.item_of(entry, "performance")["window"]["days"]
+    assert pair is not None  # fixture sanity: the pair reaches the screen
+    assert window_days == len(sessions) + (1 if baseline_in_tenure else 0)
+    assert pair["n_obs"] == window_days - 1
