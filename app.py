@@ -434,6 +434,11 @@ atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 _FRONTRUNNER_BUILD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 atexit.register(_FRONTRUNNER_BUILD_EXECUTOR.shutdown, wait=True)
 
+# Dedicated single-worker pool for on-demand tenure reviews: a review makes many
+# paced Composer reads, so it must not queue behind the dismiss or frontrunner work.
+_TENURE_REVIEW_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+atexit.register(_TENURE_REVIEW_EXECUTOR.shutdown, wait=True)
+
 # CC-NEW-001: serializes flush_resync's background load+modify+save against any
 # other intra-process writer of the state DB.  This is an INTRA-PROCESS guard
 # only: it serializes concurrent _flush_state_async submissions running on the
@@ -1013,7 +1018,23 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     with zero special-casing. Future-proof against schema growth: a NEW
     raw_response field automatically joins the comparison.
     """
-    excluded = {"explanation", "candidate_id", "sibling_id"}
+    excluded = {
+        "explanation",
+        "candidate_id",
+        "sibling_id",
+        # Run-stamped and moving-window keys: they change every run without
+        # changing what the explanation was written about. window_first stays
+        # in the comparison (the pair's first day is part of the evidence).
+        "review_run_id",
+        "as_of_trading_day",
+        "explanation_written_on",
+        "n_obs",
+        "window_last",
+        "window_days",
+        "composite_window_first",
+        "composite_window_last",
+        "composite_window_days",
+    }
     snapshot = {k: v for k, v in rec.items() if k not in excluded}
     return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
 
@@ -1077,165 +1098,197 @@ def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> s
         return None
 
 
-def _retirement_recommender_tick_worker() -> None:
-    """Background worker that runs the Retirement Recommender's daily tick.
+def _prepare_retirement_recs_for_persist(recs: list[dict], *, written_on: str) -> None:
+    """Complete each recommendation in `recs` in place before it is persisted.
 
-    Imported lazily to keep advisors.retirement_recommender off the execution
-    path (CC-2). Calls the real producer chain -- build_recommendations() then
-    persist_recommendations(<its own return value>) -- so the read-only
-    GET /api/retirement-recommendations route and the AI Advisor panel have
-    something to render (PM ruling, review-response cycle 2: without this
-    tick nothing in production ever calls the producer, so both read-only
-    surfaces render an honest-empty state forever).
-
-    Cycle 2b (AC-2): each recommendation is run through advisors.
-    retirement_explainer.explain_recommendation and the result is stamped
-    onto rec["explanation"] -- this keeps the LLM entirely out of
-    advisors/retirement_recommender.py (byte-unchanged this cycle, pinned by
-    a golden hash test) and out of the render/approve/checklist paths
-    (operator ruling, Gate-2b). A per-rec explainer failure degrades that
-    one recommendation's explanation to None and never blocks persistence
-    of the rest of the batch.
-
-    Cycle 2c (AC-2): before its own explain-or-reuse decision, each rec is
-    enriched in place with candidate_name/sibling_name resolved from live
-    database.load_state() (honest raw-id fallback when unresolvable or on a
-    load failure; only set when the key is absent, never clobbering a
-    caller-supplied value) -- this both grounds the explainer's prompt in
-    readable names and (critically) lands those two keys in the dict that
-    flows into persist_recommendations, which AC-4's reuse check depends on
-    to detect a rename against a prior night's persisted row. A bot_state
-    load failure degrades the name fields to the raw id but never skips the
-    explainer call itself.
-
-    Cycle 2c (AC-4): before calling the explainer, each rec is checked
-    against a prior-row map (built ONCE per tick, PR#140 review finding 2)
-    via _retirement_find_reusable_prior_explanation for a reusable prior
-    explanation (nightly-explain spend control, whole-dict canonical-
-    snapshot equality per PR#140 review finding 1) -- when found, the prior
-    text is reused verbatim and explain_recommendation is skipped for that
-    rec; otherwise a fresh explanation is generated exactly as before. This
-    decision is made independently per rec in the batch. Enrichment and the
-    reuse-or-explain decision are one merged pass over recs (PR#140 review
-    finding 5) -- enrichment for a given rec always completes before that
-    SAME rec's reuse check runs, since both live in the same loop iteration.
-
-    Cycle 2d (AC-2, PR#140 2nd /code-review findings 2+3): immediately after
-    name enrichment and BEFORE the reuse-or-explain decision, each rec's
-    numeric evidence is rounded to _MATERIAL_CHANGE_ROUND_NDIGITS via
-    _round_floats and reassigned onto recs[i] (the function is pure -- a
-    rebind of the loop-local name alone would not propagate). This makes
-    the citation precision the explainer sees equal the comparison
-    precision the reuse gate checks, and equal what ultimately gets
-    persisted -- regardless of whether that rec's explanation is reused or
-    freshly generated.
-
-    D-1 error contract: only type(exc).__name__ appears in log records at
-    WARNING+ -- a producer failure must never crash the scheduler thread.
+    Per recommendation: resolve candidate_name/sibling_name from live
+    database.load_state() (honest raw-id fallback; only set when absent),
+    round numeric evidence to _MATERIAL_CHANGE_ROUND_NDIGITS, then reuse the
+    most recent prior explanation for an unchanged pair or ask the explainer.
+    A fresh non-empty explanation is dated `written_on`; a reused one keeps the
+    day stored on the prior row (None when that row stored none). An explainer
+    failure degrades that one recommendation to no explanation and never
+    blocks the rest. Only type(exc).__name__ is logged (D-1).
     """
+    if not recs:
+        return
+    from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
+
     try:
-        from advisors.retirement_recommender import (  # lazy — not module-level (CC-2)
-            build_recommendations,
-            persist_recommendations,
+        _ret_bot_state = database.load_state()
+    except Exception:
+        _ret_bot_state = {}
+    try:
+        from advisors.frontrunner_builder import (  # lazy (CC-2)
+            resolve_incumbent_display_name as _resolve_ret_name,
         )
+    except Exception:
+        _resolve_ret_name = None
 
-        recs = build_recommendations()
-        if recs:
-            from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
+    # ONE role-wide query per call (not one per rec): the
+    # {(candidate_id, sibling_id): raw} map every reuse decision looks up.
+    try:
+        _prior_rows = database.get_advisor_observations_for_role(
+            "RETIREMENT_RECOMMENDATION", limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+        )
+        _prior_map = _build_retirement_prior_row_map(_prior_rows)
+    except Exception:
+        _prior_map = {}
 
-            try:
-                _ret_bot_state = database.load_state()
-            except Exception:
-                _ret_bot_state = {}
-            try:
-                from advisors.frontrunner_builder import (  # lazy (CC-2)
-                    resolve_incumbent_display_name as _resolve_ret_name,
-                )
-            except Exception:
-                _resolve_ret_name = None
+    for rec in recs:
+        # Only set when absent, never clobber a value a caller already supplied.
+        if "candidate_name" not in rec:
+            rec["candidate_name"] = (
+                _resolve_ret_name(_ret_bot_state, rec.get("candidate_id"))
+                if _resolve_ret_name is not None
+                else rec.get("candidate_id")
+            )
+        if "sibling_name" not in rec:
+            rec["sibling_name"] = (
+                _resolve_ret_name(_ret_bot_state, rec.get("sibling_id"))
+                if _resolve_ret_name is not None
+                else rec.get("sibling_id")
+            )
 
-            # PR#140 review finding 2: ONE role-wide query per tick (not one
-            # per rec) -- builds the {(candidate_id, sibling_id): raw} map
-            # every rec's reuse decision below looks up against.
-            try:
-                _prior_rows = database.get_advisor_observations_for_role(
-                    "RETIREMENT_RECOMMENDATION", limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
-                )
-                _prior_map = _build_retirement_prior_row_map(_prior_rows)
-            except Exception:
-                _prior_map = {}
+        # Round BEFORE the reuse-vs-fresh decision and before the explainer
+        # sees it, so the cited precision equals the compared and persisted
+        # precision. _round_floats returns a new structure; write it back into
+        # the caller's dict.
+        rounded = _round_floats(rec, _MATERIAL_CHANGE_ROUND_NDIGITS)
+        rec.clear()
+        rec.update(rounded)
 
-            for _i, rec in enumerate(recs):
-                # A real build_recommendations() rec never carries these keys
-                # (they are not part of the recommender's authoritative
-                # schema) -- only set them when absent, never clobber a
-                # value a caller already supplied.
-                if "candidate_name" not in rec:
-                    rec["candidate_name"] = (
-                        _resolve_ret_name(_ret_bot_state, rec.get("candidate_id"))
-                        if _resolve_ret_name is not None
-                        else rec.get("candidate_id")
-                    )
-                if "sibling_name" not in rec:
-                    rec["sibling_name"] = (
-                        _resolve_ret_name(_ret_bot_state, rec.get("sibling_id"))
-                        if _resolve_ret_name is not None
-                        else rec.get("sibling_id")
-                    )
+        reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
+        if reused_explanation is not None:
+            prior_raw = _prior_map.get((rec.get("candidate_id"), rec.get("sibling_id"))) or {}
+            rec["explanation"] = reused_explanation
+            rec["explanation_written_on"] = prior_raw.get("explanation_written_on")
+            continue
+        try:
+            rec["explanation"] = explain_recommendation(rec)
+        except Exception as exc:
+            _daemon_log.warning(
+                "Retirement explainer failed for %s: %s",
+                rec.get("candidate_id"),
+                type(exc).__name__,
+            )
+            rec["explanation"] = None
+        rec["explanation_written_on"] = written_on if rec["explanation"] else None
 
-                # PR#140 2nd /code-review findings 2+3 (Cycle 2d, AC-2): round
-                # every numeric field to _MATERIAL_CHANGE_ROUND_NDIGITS BEFORE
-                # the reuse-vs-fresh decision AND before explain_recommendation
-                # sees it -- so the LLM never cites a number more precise than
-                # what gets persisted/rendered (closes finding 3's stale-
-                # citation window), and a stable pair's rounded evidence is
-                # byte-identical night-to-night even though build_recommendations
-                # legitimately returns slightly different raw floats each run
-                # (restores finding 2's reuse spend savings). _round_floats is
-                # pure (returns a NEW structure) -- reassign onto recs[_i] so
-                # persist_recommendations(recs) sees the rounded values
-                # regardless of which branch below runs; a rebind of the
-                # loop-local `rec` name alone would not propagate. n_obs (int)
-                # passes through _round_floats unrounded, as always.
-                rec = _round_floats(rec, _MATERIAL_CHANGE_ROUND_NDIGITS)
-                recs[_i] = rec
 
-                reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
-                if reused_explanation is not None:
-                    rec["explanation"] = reused_explanation
-                    continue
-                try:
-                    rec["explanation"] = explain_recommendation(rec)
-                except Exception as exc:
-                    # Defense-in-depth: explain_recommendation is D-1/never-
-                    # raises by its own contract, but a violation must never
-                    # take down the whole tick or leak the raw exception.
-                    _daemon_log.warning(
-                        "Retirement explainer failed for %s: %s",
-                        rec.get("candidate_id"),
-                        type(exc).__name__,
-                    )
-                    rec["explanation"] = None
+_TENURE_REVIEW_THRESHOLD_KEY = "TENURE_REVIEW_MIN_TRADING_DAYS"
+_TENURE_REVIEW_ACCOUNT_KEYS = ("ACCOUNT_INDIVIDUAL", "ACCOUNT_ROTH", "ACCOUNT_TRAD")
+_TENURE_REVIEW_FAILED_TEXT = "review failed"
+
+
+def _tenure_review_settings() -> dict:
+    """The review's settings, read fresh from the env file (the file wins over os.environ)."""
+    file_values = dotenv_values(ENV_FILE_PATH)
+    env = {}
+    for key in (_TENURE_REVIEW_THRESHOLD_KEY, *_TENURE_REVIEW_ACCOUNT_KEYS):
+        value = file_values.get(key)
+        if value is None:
+            value = os.environ.get(key)
+        if value is not None:
+            env[key] = value
+    return env
+
+
+def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
+    """Run one symphony tenure review under the run slot and persist what it found.
+
+    `owner` is the token from the caller's REVIEW_RUN_STATE.try_start; with none,
+    the job claims the slot itself and returns doing nothing when it is taken.
+    Recommendation rows are written before the run row and never for a failed
+    attempt. Never raises; only type(exc).__name__ is logged and recorded.
+    """
+    from advisors import tenure_review  # lazy (CC-2)
+
+    if owner is None:
+        owner = tenure_review.REVIEW_RUN_STATE.try_start(trigger)
+        if not owner:
+            _daemon_log.info("Tenure review (%s) skipped: a review is already running.", trigger)
+            return
+    try:
+        from advisors import tenure_review_runner  # lazy (CC-2)
+
+        now_et = datetime.now(_ET)
+        run_id = uuid.uuid4().hex
+        env = _tenure_review_settings()
+        outcome = tenure_review_runner.run_tenure_review(
+            account_ids=tenure_review_runner.configured_account_ids(env),
+            threshold_raw=env.get(_TENURE_REVIEW_THRESHOLD_KEY),
+            now_et=now_et,
+            run_id=run_id,
+            trigger=trigger,
+            account_labels=tenure_review_runner.configured_account_labels(env),
+        )
+        if not outcome.completed:
+            tenure_review.REVIEW_RUN_STATE.finish_failure(
+                owner, outcome.failure_reason or _TENURE_REVIEW_FAILED_TEXT, datetime.now(_ET)
+            )
+            return
+        result = outcome.result
+        recs = result.recommendations
+        for rec in recs:
+            rec["review_run_id"] = run_id
+        _prepare_retirement_recs_for_persist(recs, written_on=now_et.date().isoformat())
+        from advisors.retirement_recommender import persist_recommendations  # lazy (CC-2)
+
         persist_recommendations(recs)
-        _daemon_log.info("Retirement recommender tick complete: %d recommendation(s).", len(recs))
+        for rec in recs:
+            for entry in result.entries:
+                if entry.get("symphony_id") == rec.get("candidate_id"):
+                    entry["explanation"] = rec.get("explanation")
+                    entry["explanation_written_on"] = rec.get("explanation_written_on")
+        database.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=run_id,
+            verdict="completed",
+            raw_response=tenure_review.run_record(result, now_et),
+        )
+        tenure_review.REVIEW_RUN_STATE.finish_success(owner)
+        _daemon_log.info("Tenure review complete: %d recommendation(s).", len(recs))
     except Exception as exc:
-        _daemon_log.error("Retirement recommender tick worker failed: %s", type(exc).__name__)
+        _daemon_log.error("Tenure review failed: %s", type(exc).__name__)
+        tenure_review.REVIEW_RUN_STATE.finish_failure(owner, type(exc).__name__, datetime.now(_ET))
+    finally:
+        tenure_review.REVIEW_RUN_STATE.release(owner)
+
+
+def _retirement_recommender_tick_worker(owner: object | None = None) -> None:
+    """The nightly review (03:45 slot) as a run of the tenure review job."""
+    _tenure_review_job("nightly", owner)
 
 
 def _run_retirement_recommender_tick() -> None:
-    """Non-blocking daily off-hours wrapper for the retirement recommender tick.
+    """Non-blocking daily off-hours wrapper for the nightly tenure review.
 
-    Spawns a daemon thread so the scheduler thread returns immediately — the
-    tick never blocks the 1-minute execution path (arch constraint 1).
+    Claims the run slot before building the thread (a refused claim starts
+    nothing), then hands the token to a daemon thread so the scheduler thread
+    returns immediately (arch constraint 1). A thread that cannot be built or
+    started gives the slot back; the scheduler loop never sees an exception.
     """
-    import threading
+    owner = None
+    tenure_review = None
+    try:
+        from advisors import tenure_review  # lazy (CC-2)
 
-    t = threading.Thread(
-        target=_retirement_recommender_tick_worker,
-        daemon=True,
-        name="retirement-recommender-tick",
-    )
-    t.start()
+        owner = tenure_review.REVIEW_RUN_STATE.try_start("nightly")
+        if not owner:
+            _daemon_log.info("Nightly tenure review skipped: a review is already running.")
+            return
+        held = owner
+        threading.Thread(
+            target=lambda: _retirement_recommender_tick_worker(held),
+            daemon=True,
+            name="retirement-recommender-tick",
+        ).start()
+    except Exception as exc:
+        _daemon_log.error("Nightly tenure review could not start: %s", type(exc).__name__)
+        if owner:
+            tenure_review.REVIEW_RUN_STATE.release(owner)
 
 
 def run_scheduler():
@@ -8186,6 +8239,29 @@ def ai_advisor_retirement_reject():
     shared contract.
     """
     return _dispatch_retirement_decision("rejected")
+
+
+@app.route("/ai-advisor/retirement/review/run", methods=["POST"])
+def ai_advisor_retirement_review_run():
+    """Start one on-demand symphony tenure review in the background.
+
+    Reads no body. Claims the single run slot (409 when a review is running),
+    submits the job to the dedicated executor and answers 202 at once. A refused
+    submission gives the slot back and answers 200 with the exception type name
+    only. Advisory only: no Composer write, no trade primitive.
+    """
+    from advisors import tenure_review  # lazy (CC-2)
+
+    owner = tenure_review.REVIEW_RUN_STATE.try_start("on_demand")
+    if not owner:
+        return jsonify({"status": "already_running", "message": "a review is already running"}), 409
+    try:
+        _TENURE_REVIEW_EXECUTOR.submit(_tenure_review_job, "on_demand", owner)
+    except Exception as exc:
+        tenure_review.REVIEW_RUN_STATE.release(owner)
+        _daemon_log.error("Tenure review could not be submitted: %s", type(exc).__name__)
+        return jsonify({"error": type(exc).__name__}), 200
+    return jsonify({"status": "started", "message": "review started"}), 202
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:

@@ -1949,40 +1949,48 @@ class _ReviewRunState:
         self._trigger: str | None = None
         self._last_failed: dict | None = None
 
-    def try_start(self, trigger: str) -> bool:
-        """Claim the single run slot; False when a run is already in progress."""
+    def try_start(self, trigger: str) -> object | None:
+        """Claim the single run slot; the owner token, or None while a run holds it."""
         with self._mutex:
             if self._running:
-                return False
+                return None
             self._running = True
             self._running_since = datetime.now(UTC).isoformat()
             self._trigger = trigger
-            return True
+            self._owner = object()
+            return self._owner
 
     def _free(self) -> None:
         self._running = False
         self._running_since = None
         self._trigger = None
+        self._owner = None
 
-    def finish_success(self) -> None:
-        """Release the slot and forget the last failed attempt."""
-        with self._mutex:
-            self._free()
-            self._last_failed = None
+    def _is_owner(self, token: object) -> bool:
+        return self._running and token is not None and token is self._owner
 
-    def finish_failure(self, reason: str, at: datetime | str) -> None:
-        """Release the slot and remember why the run failed and when."""
+    def finish_success(self, token: object) -> None:
+        """Release the slot and forget the last failed attempt; only the owner may."""
         with self._mutex:
-            self._free()
-            self._last_failed = {
-                "at": at.isoformat() if isinstance(at, datetime) else str(at),
-                "reason": reason,
-            }
+            if self._is_owner(token):
+                self._free()
+                self._last_failed = None
 
-    def release(self) -> None:
-        """Release the slot without recording an outcome."""
+    def finish_failure(self, token: object, reason: str, at: datetime | str) -> None:
+        """Release the slot and remember why the run failed and when; only the owner may."""
         with self._mutex:
-            self._free()
+            if self._is_owner(token):
+                self._free()
+                self._last_failed = {
+                    "at": at.isoformat() if isinstance(at, datetime) else str(at),
+                    "reason": reason,
+                }
+
+    def release(self, token: object) -> None:
+        """Release the slot without recording an outcome; only the owner may."""
+        with self._mutex:
+            if self._is_owner(token):
+                self._free()
 
     def snapshot(self) -> dict:
         """The current state: running or not, since when, by which trigger, last failure."""

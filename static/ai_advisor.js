@@ -1215,6 +1215,15 @@
                     show('Session expired: sign in again', true);
                 } else if (resp.status === 403) {
                     show('Request refused: reload the page', true);
+                } else if (resp.status === 200) {
+                    var refusal = '';
+                    try {
+                        var body = await resp.json();
+                        if (body && typeof body.error === 'string') { refusal = body.error.trim(); }
+                    } catch (parseErr) {
+                        refusal = '';
+                    }
+                    show(refusal || 'Request failed: HTTP 200', true);
                 } else {
                     show('Request failed: HTTP ' + resp.status, true);
                 }
