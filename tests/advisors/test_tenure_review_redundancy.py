@@ -1151,6 +1151,37 @@ def test_an_exact_twin_leaves_the_item_unused_and_names_the_uncertainty_gate():
     assert result.recommendations == []
 
 
+# A factor large enough that the product of the two symphonies' return variances is beyond the
+# largest float, while each symphony still scores (a composite needs only finite returns).
+VARIANCE_OVERFLOW_FACTOR = 1e100
+
+
+def test_a_pair_whose_return_variances_overflow_has_no_correlation_and_leaves_the_item_unused():
+    """On one session both values rise by a factor of 1e100 and on the next they fall back, so
+    each return series holds one enormous move and the product of the two variances is beyond
+    the largest float: the correlation is undefined although each symphony has a composite and
+    the pair has more than the floor's days. The item is unavailable, names the peer and the
+    days, is listed missing and never makes the claim, as for a pair the interval cannot
+    handle. Rejects counting a comparison with no correlation as one that found no redundant
+    sibling."""
+    first = b.wave_returns(FLOOR_DAYS + 19, amp=0.6)
+    second = b.wave_returns(FLOOR_DAYS + 19, amp=0.6, freq=0.9)
+    roster = b.two_composer_symphonies(first, second)
+    spike_day = sorted(roster[0].composer_values)[-10]
+    for symphony in roster:
+        symphony.composer_values[spike_day] *= VARIANCE_OVERFLOW_FACTOR
+    spiked = [b.returns_from_values(symphony.composer_values) for symphony in roster]
+    assert (
+        b.exact_pearson_or_none(*spiked) is None
+    )  # fixture sanity: the recommender's own function
+    result = b.review(roster, as_of=b.AS_OF, threshold=b.COMPOSITE_PAIR_THRESHOLD)
+    _both_scored(result)
+    for sid, peer in (("lead", "Peer"), ("peer", "Lead")):
+        entry, item = _entry_and_item(result, sid)
+        _assert_not_used(entry, item, names_with_days=[(peer, len(first))])
+    assert result.recommendations == []
+
+
 def test_a_decided_pair_beside_a_peer_compared_on_too_few_days_is_not_used():
     """The lead's strongest pair is a screen hit over 265 days whose gates both reached a result,
     and the lead has a second scored peer compared on only 40. Alone, the decided pair counts;

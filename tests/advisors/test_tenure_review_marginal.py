@@ -2,14 +2,14 @@
 
 Module under test: advisors.tenure_review (marginal_contribution and build_review).
 
-The comparison portfolio holds the ELIGIBLE symphonies only. Its value on a day is
-the sum of their deposit-adjusted values, so dollar scale matters (an equal-weight
-average of returns is a different, wrong answer). The "without" portfolio drops the
-subject's value and reallocates nothing. Only days on which every eligible
-symphony has a usable value count. Differences are without minus with, in
-percentage points, so a positive total-return difference means removing the symphony
-would have raised the portfolio's return. Max drawdown is <= 0, so a positive
-drawdown difference means a shallower drawdown without it.
+The comparison portfolio holds the eligible Composer-basis symphonies that have a composite.
+Its value on a day is the sum of their deposit-adjusted values, so dollar scale matters (an
+equal-weight average of returns is a different, wrong answer). The "without" portfolio is the
+sum of the other members' values and reallocates nothing. Only days on which every member has
+a usable value count, and a comparison needs at least the uncertainty floor's days. Differences
+are without minus with, in percentage points, so a positive total-return difference means
+removing the symphony would have raised the portfolio's return. Max drawdown is <= 0, so a
+positive drawdown difference means a shallower drawdown without it.
 """
 
 from __future__ import annotations
@@ -20,9 +20,12 @@ from datetime import date
 import pytest
 
 import advisors.tenure_review as tr
+from advisors import retirement_recommender
 from tests.advisors import _tenure_review_builders as b
 
 LABEL = "counterfactual: portfolio without this symphony"
+# A comparison needs this many days on which every member of the portfolio has a value.
+FLOOR = retirement_recommender.MIN_OBS_FLOOR
 DAYS = b.last_n_nyse_days(b.AS_OF, 14)
 
 
@@ -621,12 +624,39 @@ def test_every_composer_symphony_lists_each_fallback_basis_symphony_as_left_out_
 
 YOUNG_PEER = ("young-peer", "Young Peer")
 UNKNOWN_PEER = ("unknown-peer", "Unknown Peer")
+THIN_PEER = ("thin-peer", "Thin Peer")
+GAP_PEER = ("gap-peer", "Gap Peer")
+FLAT_PEER = ("flat-peer", "Flat Peer")
+THIN_COVERAGE_LABEL = "insufficient coverage in the common window"
+NO_COMPOSITE_LABEL = "composite not computable"
+
+
+def _thin_peer(points=3):
+    """Eligible by tenure (31 sessions, threshold 30) with a value on only its last ``points``
+    sessions, so it covers none of the common composite window but those."""
+    return b.thin_symphony(THIN_PEER[0], THIN_PEER[1], ROSTER_DAYS, points)
+
+
+def _gap_peer():
+    """Eligible by tenure with a value on every session but one inside the composite window."""
+    symphony = b.composer_symphony(
+        GAP_PEER[0], GAP_PEER[1], ROSTER_DAYS, b.wave_returns(30, freq=0.7)
+    )
+    symphony.composer_values[ROSTER_DAYS[15].isoformat()] = None
+    return symphony
+
+
+def _flat_peer():
+    """Eligible by tenure with a value on every session that never changes, so its Sharpe
+    ratio is undefined."""
+    return b.flat_symphony(FLAT_PEER[0], FLAT_PEER[1], ROSTER_DAYS)
 
 
 def _every_kind_of_symphony_left_out():
     """One live symphony of each kind the comparison portfolio leaves out: younger than the
-    threshold, with no invested-since date, eligible with no history, and eligible on the
-    fallback basis."""
+    threshold, with no invested-since date, eligible with no history, eligible on the
+    fallback basis, and eligible on the Composer basis with no composite (too few points in
+    the common window, and a series that never moves)."""
     return [
         b.composer_symphony(
             YOUNG_PEER[0], YOUNG_PEER[1], ROSTER_DAYS[-10:], b.wave_returns(9, freq=0.8)
@@ -640,14 +670,17 @@ def _every_kind_of_symphony_left_out():
         ),
         _void_peer(),
         _fallback_peer(),
+        _thin_peer(),
+        _flat_peer(),
     ]
 
 
 def test_each_kind_of_symphony_left_out_of_the_comparison_carries_its_own_label_and_moves_nothing():
-    """The four kinds are listed in the same item, each with the label that says why it is
+    """The six kinds are listed in the same item, each with the label that says why it is
     left out, and the comparison of the two Composer symphonies (figures and window) equals
     the comparison without any of them. Rejects one label for the family, a label that names
-    a kind the symphony is not, and a window moved by a symphony that is left out."""
+    a kind the symphony is not, a window moved by a symphony that is left out, and a
+    symphony with no composite taking part in the portfolio."""
     composers = [_composer("comp-a", "Comp A", 0.4), _composer("comp-c", "Comp C", 1.3)]
     beside = b.review(
         [*composers, *_every_kind_of_symphony_left_out()], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD
@@ -659,6 +692,8 @@ def test_each_kind_of_symphony_left_out_of_the_comparison_carries_its_own_label_
             _excluded(UNKNOWN_PEER[1], "tenure unavailable"),
             EXCLUDED_NO_HISTORY,
             _excluded("Fallback Sym", "different basis"),
+            _excluded(THIN_PEER[1], THIN_COVERAGE_LABEL),
+            _excluded(FLAT_PEER[1], NO_COMPOSITE_LABEL),
         ],
         key=lambda r: r["display_name"],
     )
@@ -669,3 +704,324 @@ def test_each_kind_of_symphony_left_out_of_the_comparison_carries_its_own_label_
         assert item["status"] == "available", sid
         assert item["figures"] == baseline["figures"], sid
         assert item["window"] == baseline["window"], sid
+
+
+# ---------------------------------------------------------------------------
+# An eligible Composer symphony with no composite is not a member of the portfolio
+# ---------------------------------------------------------------------------
+
+NO_COMPOSITE_KINDS = [
+    pytest.param(_thin_peer, THIN_COVERAGE_LABEL, id="three_points_only"),
+    pytest.param(_gap_peer, THIN_COVERAGE_LABEL, id="a_value_missing_inside_the_window"),
+    pytest.param(_flat_peer, NO_COMPOSITE_LABEL, id="a_series_that_never_moves"),
+]
+
+
+@pytest.mark.parametrize(("build", "label"), NO_COMPOSITE_KINDS)
+def test_a_symphony_with_no_composite_has_an_unavailable_item_and_shortens_no_other_comparison(
+    build, label
+):
+    """Its own item reads unavailable with the reason it has no composite and shows no figure,
+    and is listed missing. On the two members' rows it is listed with the matching label, and
+    their figures and windows are those of the review without it. Rejects a symphony with a
+    handful of points shrinking every other symphony's comparison to those few days."""
+    composers = [_composer("comp-a", "Comp A", 0.4), _composer("comp-c", "Comp C", 1.3)]
+    peer = build()
+    beside = b.review([*composers, peer], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    alone = b.review(composers, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    entry = b.entry_of(beside, peer.symphony_id)
+    assert entry["eligible"] is True and entry["basis"]["kind"] == "composer"  # fixture sanity
+    assert not b.has_composite(entry)  # fixture sanity
+    own = b.item_of(entry, "marginal")
+    assert own["status"] == "unavailable"
+    assert own["reason"] == label
+    for fig in own["figures"].values():
+        assert fig["value"] is None
+    assert "marginal" in entry["missing_items"]
+    for sid in ("comp-a", "comp-c"):
+        item, baseline = _marginal_of(beside, sid), _marginal_of(alone, sid)
+        assert baseline["status"] == "available"  # fixture sanity
+        assert _excluded(peer.display_name, label) in item["excluded"], sid
+        assert item["figures"] == baseline["figures"], sid
+        assert item["window"] == baseline["window"], sid
+
+
+@pytest.mark.parametrize("beside", [None, "fallback"], ids=["alone", "beside_a_fallback_peer"])
+@pytest.mark.parametrize(("build", "label"), NO_COMPOSITE_KINDS)
+def test_a_sole_eligible_composer_symphony_with_no_composite_reads_its_own_unavailable_text(
+    build, label, beside
+):
+    """The symphony's own composite is decided before any text about its peers: alone, or
+    beside a peer on the fallback basis, it reads unavailable for the reason it has no
+    composite, never one of the not-applicable texts about other symphonies. Rejects reading
+    the peers before the symphony itself."""
+    roster = [build()]
+    if beside == "fallback":
+        roster.append(_fallback_peer())
+    result = b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    item = _marginal_of(result, roster[0].symphony_id)
+    assert item["status"] == "unavailable"
+    assert item["reason"] == label
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+
+
+@pytest.mark.parametrize("fallback_peer", [False, True], ids=["alone", "beside_a_fallback_peer"])
+def test_a_symphony_whose_only_eligible_composer_peers_have_no_composite_is_not_applicable(
+    fallback_peer,
+):
+    """Every other eligible Composer symphony lacks a composite (one with too few points, one
+    that never moves), so no comparison portfolio exists. The item says there is no other
+    eligible symphony with a composite on this basis, shows no figure, lists both peers with
+    their labels and is listed missing. Rejects the wording about eligible symphonies on
+    another basis, which would be false here, and a comparison made over a symphony with no
+    composite."""
+    roster = [_composer("comp-a", "Comp A", 0.4), _thin_peer(), _flat_peer()]
+    expected = [
+        _excluded(THIN_PEER[1], THIN_COVERAGE_LABEL),
+        _excluded(FLAT_PEER[1], NO_COMPOSITE_LABEL),
+    ]
+    if fallback_peer:
+        roster.append(_fallback_peer())
+        expected.append(_excluded("Fallback Sym", "different basis"))
+    result = b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    entry = b.entry_of(result, "comp-a")
+    assert b.has_composite(entry)  # fixture sanity
+    item = b.item_of(entry, "marginal")
+    assert item["status"] == "not_applicable"
+    assert item["reason"] == "no other eligible symphony with a composite on this basis"
+    for fig in item["figures"].values():
+        assert fig["value"] is None
+    assert sorted(item["excluded"], key=lambda r: r["display_name"]) == sorted(
+        expected, key=lambda r: r["display_name"]
+    )
+    assert "marginal" in entry["missing_items"]
+
+
+def _outlier_and_a_short_symphony(points):
+    """Two long Composer symphonies and a third that is eligible by tenure with only
+    ``points`` values. ``x`` falls on each of its last sessions and the third rises on each of
+    its, so over those few days alone removing ``x`` raises the portfolio's return and
+    shallows its drawdown; over the whole window ``x`` is the stronger of the two long ones
+    and removing it does the opposite. Returns the roster with the third, the long pair
+    alone and the threshold."""
+    sessions = 100
+    days = b.last_n_nyse_days(b.AS_OF, sessions + 1)
+    falling_tail = b.wave_returns(sessions, freq=0.31, drift=0.3)
+    falling_tail = falling_tail[: -(points - 1)] + [-2.0] * (points - 1)
+    long_pair = [
+        b.composer_symphony("x", "X long", days, falling_tail),
+        b.composer_symphony(
+            "x2", "X2 long", days, b.wave_returns(sessions, amp=0.3, drift=0.05, freq=1.1)
+        ),
+    ]
+    short = b.make_symphony(
+        "y",
+        "Y short",
+        days[0].isoformat(),
+        composer_values=b.values_from_returns(days[-points:], [1.0] * (points - 1)),
+    )
+    return [*long_pair, short], long_pair, sessions + 1
+
+
+@pytest.mark.parametrize("points", [3, 4, 10])
+def test_a_symphony_with_a_handful_of_points_neither_shrinks_a_window_nor_drives_a_watch(points):
+    """Over the whole window the long symphony is not a drag (the review without the short one
+    keeps it); over the last few days alone it would be. With the short symphony beside them
+    the long pair's comparison, window and verdict are exactly those of the review without
+    it. Rejects a watch verdict that rests on the few days one short symphony shares, and a
+    window of that many days."""
+    with_short, without_short, threshold = _outlier_and_a_short_symphony(points)
+    beside = b.review(with_short, as_of=b.AS_OF, threshold=threshold)
+    alone = b.review(without_short, as_of=b.AS_OF, threshold=threshold)
+    baseline = b.entry_of(alone, "x")
+    assert b.item_of(baseline, "marginal")["status"] == "available"  # fixture sanity
+    assert baseline["verdict"] == "keep"  # fixture sanity: no drag over the whole window
+    for sid in ("x", "x2"):
+        item = _marginal_of(beside, sid)
+        reference = _marginal_of(alone, sid)
+        assert item["status"] == "available", sid
+        assert item["window"] == reference["window"], sid
+        assert item["window"]["days"] == threshold, sid
+        assert item["figures"] == reference["figures"], sid
+        assert _excluded("Y short", THIN_COVERAGE_LABEL) in item["excluded"], sid
+    entry = b.entry_of(beside, "x")
+    assert entry["verdict"] == baseline["verdict"]
+    assert entry["verdict_reasons"] == baseline["verdict_reasons"] == []
+    short = b.entry_of(beside, "y")
+    assert b.item_of(short, "marginal")["reason"] == THIN_COVERAGE_LABEL
+    assert "marginal" in short["missing_items"]
+
+
+# ---------------------------------------------------------------------------
+# A member that lacks a value before the common window stays a member
+# ---------------------------------------------------------------------------
+
+
+def test_a_member_missing_a_value_before_the_common_window_reduces_the_shared_days_only():
+    """Both symphonies have a composite (each covers every session of the common composite
+    window). One has no value on one session before that window, so the comparison runs over
+    the days on which both have a value, one fewer than either series holds, and neither is
+    left out. Rejects dropping a member for a gap that lies outside the common window and a
+    day count taken from one series."""
+    days = b.last_n_nyse_days(b.AS_OF, 41)  # threshold 30: the common window is the last 30
+    first = b.composer_symphony("early-a", "Early A", days, b.wave_returns(40, freq=0.4))
+    second = b.composer_symphony("early-c", "Early C", days, b.wave_returns(40, freq=1.3))
+    missing = days[3]
+    assert missing < days[-ROSTER_THRESHOLD]  # fixture sanity: before the common window
+    second.composer_values[missing.isoformat()] = None
+    result = b.review([first, second], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    shared = len(days) - 1
+    eligible = {
+        sym.symphony_id: {"basis": "composer", "values": sym.composer_values}
+        for sym in (first, second)
+    }
+    expected = _oracle(eligible, "early-a")
+    assert len(expected["days"]) == shared  # fixture sanity
+    for sid in ("early-a", "early-c"):
+        assert b.has_composite(b.entry_of(result, sid)), sid  # fixture sanity
+        item = _marginal_of(result, sid)
+        assert item["status"] == "available", sid
+        assert item["excluded"] == [], sid
+        assert item["window"]["days"] == shared, sid
+        assert item["window"]["first"] == days[0].isoformat(), sid
+    item = _marginal_of(result, "early-a")
+    assert item["figures"]["with_total_return"]["value"] == pytest.approx(
+        expected["with_total_return"], rel=1e-9
+    )
+    assert item["figures"]["without_total_return"]["value"] == pytest.approx(
+        expected["without_total_return"], rel=1e-9
+    )
+
+
+# ---------------------------------------------------------------------------
+# The comparison needs the uncertainty floor's days
+# ---------------------------------------------------------------------------
+
+
+def _drag_and_lift(points):
+    """Two Composer symphonies that are eligible at a threshold equal to ``points`` and hold
+    exactly ``points`` values, so the comparison window holds ``points`` shared days. ``drag``
+    falls and ``lift`` rises, so over those days removing ``drag`` raises the portfolio's
+    return and shallows its drawdown. Each has a day of loss, because a window with none has
+    no Sortino ratio and so no composite. Returns (roster, threshold)."""
+    days = b.last_n_nyse_days(b.AS_OF, points)
+    returns = points - 1
+    roster = [
+        b.composer_symphony("drag", "Drag", days, b.sine_returns(returns, 1, amp=0.2, drift=-0.3)),
+        b.composer_symphony("lift", "Lift", days, b.sine_returns(returns, 2, amp=0.5, drift=0.3)),
+    ]
+    return roster, points
+
+
+# the floor as it is, and a smaller one that a typed 30 would not follow
+FLOORS_IN_FORCE = [FLOOR, FLOOR - 8]
+
+
+@pytest.mark.parametrize("floor", FLOORS_IN_FORCE, ids=lambda n: f"floor_{n}")
+def test_a_comparison_over_fewer_shared_days_than_the_floor_is_unavailable_and_decides_nothing(
+    floor, monkeypatch
+):
+    """With one shared day fewer than the floor the item reads unavailable, names the day
+    count and the floor, shows no figure and is listed missing, and the drag it would have
+    shown (the fixture is one) drives no verdict: with the redundancy and backtest items also
+    giving no evidence the row has no verdict. The floor is the recommender's, read when the
+    review runs. Rejects a comparison with no floor, and a floor typed into the module."""
+    monkeypatch.setattr(retirement_recommender, "MIN_OBS_FLOOR", floor)
+    roster, threshold = _drag_and_lift(floor - 1)
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold)
+    for sid in ("drag", "lift"):
+        entry = b.entry_of(result, sid)
+        assert b.has_composite(entry), sid  # fixture sanity
+        item = b.item_of(entry, "marginal")
+        assert item["status"] == "unavailable", sid
+        assert f"{floor - 1} shared days" in item["reason"], sid
+        assert str(floor) in item["reason"], sid
+        for fig in item["figures"].values():
+            assert fig["value"] is None, sid
+        assert "marginal" in entry["missing_items"], sid
+        assert entry["verdict"] is None, sid
+        assert entry["verdict_text"] == "no verdict: no evidence available", sid
+        assert entry["verdict_reasons"] == [], sid
+
+
+@pytest.mark.parametrize("floor", FLOORS_IN_FORCE, ids=lambda n: f"floor_{n}")
+def test_a_comparison_over_exactly_the_floors_days_is_evidence(floor, monkeypatch):
+    """The same two symphonies over exactly the floor's days: the figures and both differences
+    are shown, the item is not listed missing, and the drag decides the verdict. Rejects an
+    exclusive floor."""
+    monkeypatch.setattr(retirement_recommender, "MIN_OBS_FLOOR", floor)
+    roster, threshold = _drag_and_lift(floor)
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold)
+    drag = b.entry_of(result, "drag")
+    item = b.item_of(drag, "marginal")
+    assert item["status"] == "available"
+    assert item["window"]["days"] == floor
+    for name in (
+        "with_total_return",
+        "without_total_return",
+        "total_return_difference",
+        "max_drawdown_difference",
+    ):
+        assert item["figures"][name]["value"] is not None, name
+    assert "marginal" not in drag["missing_items"]
+    assert drag["verdict"] == "watch"
+    assert drag["verdict_reasons"] == ["drags portfolio return and drawdown"]
+    assert b.entry_of(result, "lift")["verdict"] == "keep"
+
+
+# ---------------------------------------------------------------------------
+# "Without" is the sum of the other members, so a far larger subject cannot cancel it
+# ---------------------------------------------------------------------------
+
+SUBJECT_BASES = [
+    pytest.param(1e18, id="a_subject_ten_quadrillion_times_the_peer"),
+    pytest.param(1e150, id="a_subject_of_1e150"),
+]
+
+
+@pytest.mark.parametrize("subject_base", SUBJECT_BASES)
+def test_the_without_leg_is_the_sum_of_the_other_members_whatever_the_subjects_size(subject_base):
+    """The subject's values are about 1e16 or more times the peer's. Taking the subject off the
+    combined value cancels the peer to nothing (or to float noise) and then divides by zero;
+    summing the other members leaves the peer's own value series. The without leg then equals
+    the peer's total return and drawdown from the shared metric function. Rejects a
+    subtraction."""
+    eligible = {
+        "big": _peer(subject_base, b.wave_returns(13)),
+        "small": _peer(100.0, b.wave_returns(13, freq=1.1)),
+    }
+    peer_returns = b.returns_from_values(eligible["small"]["values"])
+    expected = b.quantstats_percent(peer_returns)
+    try:
+        item = tr.marginal_contribution("big", eligible)
+    except Exception as exc:
+        pytest.fail(f"the comparison raised {type(exc).__name__}")
+    got = _figures(item)
+    assert item["status"] == "available"
+    # the same function over the same returns: 1e-9 relative absorbs float summation order
+    assert got["without_total_return"] == pytest.approx(expected["total_return"], rel=1e-9)
+    assert got["without_max_drawdown"] == pytest.approx(expected["max_drawdown"], rel=1e-9)
+    oracle = _oracle(eligible, "big")
+    assert got["with_total_return"] == pytest.approx(oracle["with_total_return"], rel=1e-9)
+
+
+def test_a_review_with_one_enormous_value_on_one_day_still_completes_its_comparison():
+    """One symphony's value is 1e100 times itself on one session and returns to its level on
+    the next, beside an ordinary peer. The review completes; the enormous symphony's without
+    leg is the peer's own total return. Rejects a subtraction that cancels the peer to zero and
+    raises."""
+    first = b.composer_symphony("spike", "Spike", ROSTER_DAYS, b.wave_returns(30, freq=0.4))
+    peer = _composer("calm", "Calm", 1.3)
+    first.composer_values[ROSTER_DAYS[15].isoformat()] *= 1e100
+    try:
+        result = b.review([first, peer], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD)
+    except Exception as exc:
+        pytest.fail(f"the review raised {type(exc).__name__}")
+    item = _marginal_of(result, "spike")
+    assert item["status"] == "available"
+    expected = b.quantstats_percent(b.returns_from_values(peer.composer_values))
+    got = _figures(item)
+    # the same function over the same returns: 1e-9 relative absorbs float summation order
+    assert got["without_total_return"] == pytest.approx(expected["total_return"], rel=1e-9)
+    assert got["without_max_drawdown"] == pytest.approx(expected["max_drawdown"], rel=1e-9)

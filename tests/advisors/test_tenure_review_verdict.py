@@ -486,16 +486,25 @@ def test_deciding_a_verdict_does_not_modify_the_evidence():
 # ---------------------------------------------------------------------------
 
 DAYS = b.last_n_nyse_days(b.AS_OF, 20)
+# The comparison portfolio needs this many days on which every member has a value.
+COMPARISON_DAYS = b.last_n_nyse_days(b.AS_OF, retirement_recommender.MIN_OBS_FLOOR)
 
 
 def test_a_symphony_whose_removal_would_raise_the_portfolio_return_is_a_watch():
     """A falls about 0.3 percent a day and B rises about 0.3 percent a day, on
-    orthogonal patterns, so neither is redundant and there is no backtest."""
+    orthogonal patterns, so neither is redundant and there is no backtest. B has days of loss,
+    because a window with none has no Sortino ratio and so no composite; the comparison runs
+    over the fewest days it can use."""
+    returns = len(COMPARISON_DAYS) - 1
     roster = [
-        b.composer_symphony("drag-a", "Drag A", DAYS, b.sine_returns(19, 1, amp=0.2, drift=-0.3)),
-        b.composer_symphony("drag-b", "Drag B", DAYS, b.sine_returns(19, 2, amp=0.2, drift=0.3)),
+        b.composer_symphony(
+            "drag-a", "Drag A", COMPARISON_DAYS, b.sine_returns(returns, 1, amp=0.2, drift=-0.3)
+        ),
+        b.composer_symphony(
+            "drag-b", "Drag B", COMPARISON_DAYS, b.sine_returns(returns, 2, amp=0.5, drift=0.3)
+        ),
     ]
-    result = b.review(roster, as_of=b.AS_OF, threshold=20)
+    result = b.review(roster, as_of=b.AS_OF, threshold=len(COMPARISON_DAYS))
     a = b.entry_of(result, "drag-a")
     assert a["verdict"] == "watch"
     assert a["verdict_text"] == "watch"
@@ -679,7 +688,8 @@ def test_with_the_backtest_also_available_the_verdict_comes_from_it_and_the_unus
 ):
     roster, threshold = _lead_beside_a_young_peer(None)
     lead_input = roster[0]
-    window = tr.qualifying_window(lead_input, b.AS_OF, threshold)
+    window = tr.backtest_window(lead_input, b.AS_OF, threshold)
+    assert window is not None
     realized = b.returns_from_values(lead_input.composer_values)
     lead_input.backtest = b.replica_backtest(
         date.fromisoformat(window["first"]),
@@ -696,9 +706,17 @@ def test_with_the_backtest_also_available_the_verdict_comes_from_it_and_the_unus
 
 
 def test_with_the_marginal_item_also_available_the_verdict_comes_from_it_and_the_pair_is_missing():
-    """The same two symphonies, both eligible: the comparison portfolio exists, so there is
-    a verdict, and it does not rest on the short pair."""
-    roster, _threshold = _lead_beside_a_young_peer(None)
+    """Two eligible symphonies that share exactly the comparison's minimum days: the
+    comparison portfolio exists, so there is a verdict, and it does not rest on the pair, which
+    is shown but far shorter than a comparison needs."""
+    shared = retirement_recommender.MIN_OBS_FLOOR
+    days = b.last_n_nyse_days(b.AS_OF, shared + 20)
+    lead_returns = b.wave_returns(shared + 19)
+    peer_returns = [0.9 * r + 0.01 for r in lead_returns[-(shared - 1) :]]
+    roster = [
+        b.composer_symphony("lead", "Lead", days, lead_returns),
+        b.composer_symphony("peer", "Peer", days[-shared:], peer_returns),
+    ]
     lead = b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=20), "lead")
     assert b.item_of(lead, "marginal")["status"] == "available"  # fixture sanity
     assert b.item_of(lead, "redundancy")["pair"] is not None  # fixture sanity
@@ -738,6 +756,11 @@ def _fallback_peer_of(lead_input):
             "no other eligible symphonies on this basis",
             id="the_only_other_eligible_symphony_is_on_the_fallback_basis",
         ),
+        pytest.param(
+            "no_composite",
+            "no other eligible symphony with a composite on this basis",
+            id="every_other_eligible_composer_symphony_has_no_composite",
+        ),
     ],
 )
 def test_a_lone_eligible_symphony_has_no_verdict_and_lists_every_item_that_gave_no_evidence(
@@ -754,6 +777,9 @@ def test_a_lone_eligible_symphony_has_no_verdict_and_lists_every_item_that_gave_
         roster.append(b.composer_symphony("young", "Young", DAYS[-10:], b.wave_returns(9)))
     if with_peer == "fallback":
         roster.append(_fallback_peer_of(lead_input))
+    if with_peer == "no_composite":
+        roster.append(b.thin_symphony("thin", "Thin", DAYS, 3))
+        roster.append(b.flat_symphony("flat", "Flat", DAYS))
     result = b.review(roster, as_of=b.AS_OF, threshold=20)
     lone = b.entry_of(result, "lone")
     marginal = b.item_of(lone, "marginal")
