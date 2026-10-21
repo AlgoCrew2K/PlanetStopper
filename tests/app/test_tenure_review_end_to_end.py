@@ -1098,8 +1098,9 @@ class TestTheJobWritesAStartLineAndACompletionLine:
         requests_logged = log.positions_of_loggers(
             "advisors.composer_portfolio_client", "advisors.composer_backtest_client"
         )
-        assert len(requests_logged) == len(router.requests) > 0, (
-            "premise: one logged line for each request the run made"
+        assert len(requests_logged) >= len(router.requests) > 0, (
+            "premise: at least one logged line for each request the run made (a client may add "
+            "a warning of its own)"
         )
         assert start < min(requests_logged) and max(requests_logged) < end
         self._assert_names_trigger_and_eastern_time(log.records[start].getMessage(), "nightly")
