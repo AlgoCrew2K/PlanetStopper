@@ -29,7 +29,8 @@ COMPOSER_READ_TIMEOUT_SECONDS = 15
 # minute, at all hours, for 3 accounts, and the dashboard adds its two reads, so 3 accounts of
 # statistics reads every minute plus the dashboard's two already use some of the limit while a
 # run is in progress. A shorter 3.0 pause (20 requests a minute) would sit at 23 to 25 a minute,
-# at the limit; this 6.0 pause leaves the whole at 10 to 12 a minute, under Composer's 25 a minute.
+# at the limit; this 6.0 pause adds 10 to the standing 3 to 5, a load of 13 to 15 a minute, and
+# leaves a margin of 10 to 12 a minute under Composer's 25 a minute.
 COMPOSER_READ_SPACING_SECONDS = 6.0
 # Longest date range one holdings request may cover, calendar days: the span of the captured
 # holdings request the endpoint was verified with.
