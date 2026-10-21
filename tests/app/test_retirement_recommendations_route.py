@@ -1125,20 +1125,25 @@ def _make_run_read_raise(monkeypatch) -> None:
     monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
 
 
+def _read_failed_flag(data):
+    assert "review_read_failed" in data, "the response carries no review_read_failed key"
+    return data["review_read_failed"]
+
+
 class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
     def test_a_completed_run_reports_false(self, client, isolated_db):
         pb.store_full_run()
         data = _get(client)
-        assert data["review_read_failed"] is False
+        assert _read_failed_flag(data) is False
         assert data["review_run"] is not None and data["review_entries"]
 
     def test_with_no_run_stored_it_reports_false_with_or_without_older_recommendations(
         self, client, isolated_db
     ):
-        assert _get(client)["review_read_failed"] is False
+        assert _read_failed_flag(_get(client)) is False
         _seed_recommendation("legacy-cand", "legacy-sib")
         data = _get(client)
-        assert data["review_read_failed"] is False, (
+        assert _read_failed_flag(data) is False, (
             "nothing stored is not a failure: the latest-date list applies"
         )
         assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
@@ -1147,7 +1152,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         pb.store_run(pb.empty_record())
         data = _get(client)
         assert data["review_entries"] == []
-        assert data["review_read_failed"] is False, (
+        assert _read_failed_flag(data) is False, (
             "empty entries beside a header is an honest empty run, not a failed read"
         )
 
@@ -1155,7 +1160,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         pb.store_run(pb.small_record())
         data = _get(client)
         assert data["recommendations"] == []
-        assert data["review_read_failed"] is False, (
+        assert _read_failed_flag(data) is False, (
             "an empty recommendation list does not mean the run could not be read"
         )
 
@@ -1169,7 +1174,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
 
         monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
         data = _get(client)
-        assert data["review_read_failed"] is False
+        assert _read_failed_flag(data) is False
         assert data["review_run"] is not None
 
     def test_a_failed_read_of_the_run_reports_true_with_the_review_fields_empty(
@@ -1179,7 +1184,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         _seed_unrelated_recommendation_of_another_run(record)
         _make_run_read_raise(monkeypatch)
         data = _get(client)
-        assert data["review_read_failed"] is True
+        assert _read_failed_flag(data) is True
         assert data["review_run"] is None
         assert data["review_entries"] == []
         assert data["recommendations"] == []
@@ -1195,7 +1200,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         _seed_recommendation("legacy-cand", "legacy-sib")
         _store_unreadable_run_record(stored)
         data = _get(client)
-        assert data["review_read_failed"] is True
+        assert _read_failed_flag(data) is True
         assert data["review_run"] is None
         assert data["review_entries"] == []
         assert data["recommendations"] == []
@@ -1208,7 +1213,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         _seed_recommendation("legacy-cand", "legacy-sib")
         _store_unreadable_run_record({"trigger": "nightly", "entries": []})
         data = _get(client)
-        assert data["review_read_failed"] is True
+        assert _read_failed_flag(data) is True
         assert data["review_run"] is None and data["recommendations"] == []
 
     def test_a_review_module_that_cannot_be_imported_reports_true(
@@ -1216,7 +1221,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
     ):
         _seed_recommendation("legacy-cand", "legacy-sib")
         data = _get(client)
-        assert data["review_read_failed"] is True
+        assert _read_failed_flag(data) is True
         assert data["review_run"] is None and data["recommendations"] == []
 
     def test_the_newest_row_decides_when_a_broken_row_is_followed_by_a_good_run(
@@ -1225,7 +1230,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         _store_unreadable_run_record('["not", "a", "record"]')
         pb.store_full_run(pb.RUN_ID_SECOND)
         data = _get(client)
-        assert data["review_read_failed"] is False
+        assert _read_failed_flag(data) is False
         assert data["review_run"]["run_id"] == pb.RUN_ID_SECOND
 
     def test_the_newest_row_decides_when_a_good_run_is_followed_by_a_broken_row(
@@ -1234,7 +1239,7 @@ class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
         pb.store_full_run(pb.RUN_ID_FIRST)
         _store_unreadable_run_record('["not", "a", "record"]')
         data = _get(client)
-        assert data["review_read_failed"] is True
+        assert _read_failed_flag(data) is True
         assert data["review_run"] is None and data["review_entries"] == []
 
     def test_the_flag_is_written_as_a_json_boolean_in_every_state(
