@@ -623,3 +623,86 @@ def test_a_backtest_that_reproduces_the_realized_returns_leaves_a_gap_of_zero(bu
     assert figs["realized_total_return"]["value"] == pytest.approx(
         figs["backtest_total_return"]["value"], abs=1e-9
     )
+
+
+# ---------------------------------------------------------------------------
+# A shadow window with sessions that have no row cannot be compared with a backtest
+# ---------------------------------------------------------------------------
+
+
+def _shadow_replica_with_rows_left_out(left_out, *, stored_without_return=False):
+    """The shadow replica of this section, with the rows of ``left_out`` missing (or stored
+    with no return) and a backtest that reproduces every session's return, the left-out ones
+    included. Its window runs from the session before the first row to the last row."""
+    returns = _replica_returns(len(REPLICA_SESSIONS))
+    rows = b.by_date(REPLICA_SESSIONS, returns)
+    for day in left_out:
+        if stored_without_return:
+            rows[day.isoformat()] = None
+        else:
+            del rows[day.isoformat()]
+    symphony = b.shadow_symphony("rep-sym", "Replica Symphony", "2026-12-07", rows)
+    window = tr.qualifying_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+    sessions = list(b.nyse_days(first, last))
+    assert len(sessions) == len(REPLICA_SESSIONS) + 1  # fixture sanity: the baseline and every row
+    assert window["days"] == len(sessions) - len(left_out)  # fixture sanity: the window has holes
+    symphony.backtest = b.replica_backtest(first, last, returns)
+    return symphony
+
+
+@pytest.mark.parametrize(
+    "positions",
+    [[4], [3, 4, 7]],
+    ids=["one_session_without_a_row", "three_sessions_without_a_row"],
+)
+@pytest.mark.parametrize(
+    "stored_without_return", [False, True], ids=["no_row_stored", "row_stored_with_no_return"]
+)
+def test_a_shadow_window_with_sessions_that_have_no_usable_row_makes_the_backtest_unavailable(
+    positions, stored_without_return
+):
+    """The realized chain skips a session with no usable return while the backtest over the
+    window covers it, so a perfect replica would show a gap of that day's return. The item
+    reads unavailable and the reason names each missing session by date, and only those. The
+    comparison is not made. Rejects a gap shown for a symphony that did exactly what its
+    definition says, and a reason that names no session."""
+    missing = [REPLICA_SESSIONS[i] for i in positions]
+    symphony = _shadow_replica_with_rows_left_out(
+        missing, stored_without_return=stored_without_return
+    )
+    entry = b.entry_of(
+        b.review([symphony], as_of=b.AS_OF, threshold=REPLICA_THRESHOLD), symphony.symphony_id
+    )
+    item = b.item_of(entry, "backtest")
+    assert item["status"] == "unavailable"
+    reason = item["reason"]
+    for day in missing:
+        assert day.isoformat() in reason, day
+    for day in REPLICA_SESSIONS:
+        if day not in missing:
+            assert day.isoformat() not in reason, day
+    for figure in item["figures"].values():
+        assert figure["value"] is None
+    assert "backtest" in entry["missing_items"]
+
+
+def test_a_composer_series_with_a_day_missing_inside_the_window_is_still_compared_with_a_backtest():
+    """The Composer series is a series of levels, so a missing interior day changes no
+    endpoint and the total return over the window is the same with or without it. Rejects
+    applying the shadow rule to the Composer basis."""
+    symphony, returns = _composer_replica()
+    symphony.composer_values[REPLICA_SESSIONS[5].isoformat()] = None
+    window = tr.qualifying_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+    assert window["days"] == len(REPLICA_SESSIONS) - 1  # fixture sanity: one day is missing
+    symphony.backtest = b.replica_backtest(first, last, returns)
+    item = b.item_of(
+        b.entry_of(
+            b.review([symphony], as_of=b.AS_OF, threshold=REPLICA_THRESHOLD), symphony.symphony_id
+        ),
+        "backtest",
+    )
+    assert item["status"] == "available"
+    # percentage points; 1e-9 absorbs only the rounding of rebuilding levels from returns
+    assert item["figures"]["total_return_gap"]["value"] == pytest.approx(0.0, abs=1e-9)
