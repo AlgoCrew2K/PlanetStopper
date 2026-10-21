@@ -24,9 +24,12 @@ logger = logging.getLogger(__name__)
 
 # Per-request HTTP timeout, seconds: a bounded wait so a hung Composer read cannot stall a run.
 COMPOSER_READ_TIMEOUT_SECONDS = 15
-# Pause after every request, seconds: a run makes at most 10 requests a minute, well under the
-# 25 requests per minute Composer documents for these endpoints, so the engine and the dashboard,
-# which keep reading Composer while a run is in progress, still have the remaining headroom.
+# Pause after every request, seconds: a run makes at most 10 requests a minute, under the 25 a
+# minute Composer allows for these endpoints. The engine reads the account statistics every
+# minute, at all hours, for 3 accounts, and the dashboard adds its two reads, so 3 accounts of
+# statistics reads every minute plus the dashboard's two already use some of the limit while a
+# run is in progress. A shorter 3.0 pause (20 requests a minute) would sit at 23 to 25 a minute,
+# at the limit; this 6.0 pause leaves the whole at 10 to 12 a minute, under Composer's 25 a minute.
 COMPOSER_READ_SPACING_SECONDS = 6.0
 # Longest date range one holdings request may cover, calendar days: the span of the captured
 # holdings request the endpoint was verified with.
