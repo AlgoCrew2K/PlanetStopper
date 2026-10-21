@@ -4698,3 +4698,21 @@ class TestTheRowsUseTheMappedClasses:
                 assert "retirement-rec-gates" in line.classes(), line.text()
                 figures += 1
         assert gates >= 6 and figures >= 12
+
+
+class TestALegacyRecommendationWhoseIdCannotBeAKeyDoesNotTakeThePageDown:
+    """The decisions join serves the legacy recommendation cards too (keyed by candidate_id)."""
+
+    @pytest.mark.parametrize("bad_id", [["abc"], {"k": "v"}], ids=["a list", "a dict"])
+    def test_the_page_and_the_api_answer_200(self, client, isolated_db, bad_id):
+        _seed_symphony_roster("cand-legacy", "sib-legacy")
+        db_module.insert_advisor_observation(
+            advisor_role="RETIREMENT_RECOMMENDATION",
+            subject_type="symphony",
+            subject_id="cand-legacy",
+            symphony_id="cand-legacy",
+            verdict="retire_candidate",
+            raw_response=_sample_raw_response(bad_id, "sib-legacy"),
+        )
+        assert client.get("/ai-advisor").status_code == 200
+        assert client.get("/api/retirement-recommendations").status_code == 200

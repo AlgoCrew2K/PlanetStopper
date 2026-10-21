@@ -862,7 +862,8 @@ class TestEveryTemplateHelperIsAnEntryPointOfTheScan:
 
     def test_the_real_app_registers_the_helpers_this_file_lists_and_no_others(self):
         registered = _registered_template_function_names(_parse_app_py())
-        assert set(_TENURE_RENDER_HELPER_FN_NAMES) <= registered, (
+        called_by_a_registered_helper = {"_format_eastern_run_time"}
+        assert set(_TENURE_RENDER_HELPER_FN_NAMES) - called_by_a_registered_helper <= registered, (
             "a listed helper is not registered"
         )
         unlisted = sorted(registered - set(_CYCLE_2C_ENTRY_POINT_FN_NAMES))
