@@ -133,10 +133,12 @@ _SHORT_SERIES_REASON = (
     f"Composer series has fewer than {_MIN_COMPOSER_POINTS} usable points in the tenure"
 )
 
-# Aligned days the search for the structural gate's minimum steps back from its closed-form
-# estimate, so that float rounding of the estimate cannot skip the least qualifying count
-# (unit: aligned days).
-_NEEDS_SEARCH_BACKOFF: int = 2
+# Largest aligned-day count the structural gate's minimum is searched up to; a stress
+# fraction that cannot reach the minimum within it reads as never reachable (unit: aligned days).
+_NEEDS_SEARCH_LIMIT: int = sys.maxsize
+
+# Separator between the names or sessions a reason text lists.
+_LIST_SEPARATOR = ", "
 
 # Most missing sessions a shadow-hole reason names before it summarizes the rest
 # (a display bound; unit: sessions).
@@ -239,6 +241,12 @@ _GATE_UNDEFINED = "undefined"
 # Gate state of a gate that was not reached because an earlier gate was not met.
 _GATE_NOT_EVALUATED = "not evaluated"
 
+# Suffix naming the uncertainty gate when it could not be computed for an undecided peer.
+_UNCERTAINTY_UNDEFINED_SUFFIX = f", uncertainty gate {_GATE_UNDEFINED}"
+
+# Suffix naming the structural gate when it could not be computed for an undecided peer.
+_STRUCTURAL_UNDEFINED_SUFFIX = f", structural gate {_GATE_UNDEFINED}"
+
 # Composite reason of a symphony on the fallback basis.
 _BASIS_DIFFERS_REASON = "not comparable: basis differs"
 
@@ -250,6 +258,31 @@ _SIBLING_NOTE_PREFIX = "sibling has no composite: "
 
 # Reason shown by items that compare symphonies across different bases.
 _BASES_DIFFER_REASON = "bases differ"
+
+# Label of a symphony left out of the marginal comparison because it is on the other basis.
+_DIFFERENT_BASIS_LABEL = "different basis"
+
+# Reason of the marginal item when no other eligible symphony shares the subject's basis;
+# the basis qualifier is appended when an eligible symphony exists only on the other basis.
+_NO_OTHER_ELIGIBLE_REASON = "no other eligible symphonies"
+
+# Qualifier appended to the no-other-eligible reason when the other eligible symphonies are
+# all on a different basis from the subject's.
+_ON_THIS_BASIS_QUALIFIER = " on this basis"
+
+# Reason of a redundancy item for a symphony that has no composite, so the existing rule
+# can never flag it.
+_NO_COMPOSITE_REASON = "this symphony has no composite"
+
+# Reason of a redundancy item when no peer on the symphony's basis has a composite, so no
+# comparison could have flagged it.
+_NO_PEER_COMPOSITE_REASON = "no same-basis peer has a composite"
+
+# Prefix of the redundancy reason that names the peers a comparison did not decide.
+_UNDECIDED_PREFIX = "comparison decides nothing for: "
+
+# Reason of a redundancy item for a symphony with no other live symphony to compare.
+_NO_PEERS_REASON = "no other symphonies to compare"
 
 # Reason of the marginal item on the shadow basis, which carries no position values.
 _NO_POSITION_VALUES_REASON = "no position values on the shadow-history basis"
@@ -284,12 +317,11 @@ _LONG_VIX_SUBJECT = "long-volatility (VIX) exposure beside the rest of the portf
 # Where the long-VIX item's figures come from.
 _LONG_VIX_SOURCE = "Composer account holdings by day"
 
+# Reason of the long-VIX item for a subject that is not a live symphony of this review.
+_NOT_LIVE_REASON = "symphony is not live"
+
 # Reason shown for a figure that needs account holdings the caller did not supply.
 _HOLDINGS_UNAVAILABLE_REASON = "holdings unavailable"
-
-# Reason the redundancy item is withheld when a same-basis peer's correlation is undefined
-# (a flat series), because redundancy with that peer cannot be ruled out.
-_UNDEFINED_PEER_REASON = "a peer's correlation is undefined"
 
 # Reason shown for an interval bound that was not computed.
 _INTERVAL_NOT_COMPUTED_REASON = "interval not computed"
@@ -425,14 +457,19 @@ def as_of_trading_day(now_et: datetime) -> date:
     return _walk_back_to_session(today - timedelta(days=1))
 
 
+def _sessions_between(start: date, end: date) -> list[date]:
+    """NYSE sessions in [start, end] in order, both ends included; empty when end < start."""
+    return sorted(
+        d
+        for year in range(start.year, end.year + 1)
+        for d in _sessions_in_year(year)
+        if start <= d <= end
+    )
+
+
 def count_trading_days(start: date, end: date) -> int:
     """NYSE sessions in [start, end], both ends included; 0 when end < start."""
-    if end < start:
-        return 0
-    total = 0
-    for year in range(start.year, end.year + 1):
-        total += sum(1 for d in _sessions_in_year(year) if start <= d <= end)
-    return total
+    return len(_sessions_between(start, end))
 
 
 def _last_sessions(end: date, count: int) -> list[date]:
@@ -479,24 +516,21 @@ def _previous_session(d: date) -> date | None:
     return previous if previous > CALENDAR_FLOOR else None
 
 
-def _points_by_date(
-    values: Mapping, start: date, end: date, usable: Callable[[Any], Any]
-) -> dict[date, Any]:
+def _points_by_date[Point](
+    values: Mapping, start: date, end: date, usable: Callable[[Any], Point | None]
+) -> dict[date, Point]:
     """Usable values in [start, end] on NYSE sessions by date. A key is read as the date in
     its first ten characters; among keys naming one date the greatest key with a usable
     value (one that ``usable`` does not turn into None) wins, whatever the order of the
-    mapping. A point on a closed day is dropped."""
-    points: dict[date, Any] = {}
+    mapping. A key that is not a date, lies outside the window or names a closed day is
+    skipped before its value is looked at."""
+    points: dict[date, Point] = {}
     for key in sorted(values, key=str):
         d = _parse_date(key)
+        if d is None or not start <= d <= end or d < CALENDAR_FLOOR or not _is_session(d):
+            continue
         value = usable(values[key])
-        if (
-            d is not None
-            and value is not None
-            and start <= d <= end
-            and d >= CALENDAR_FLOOR
-            and _is_session(d)
-        ):
+        if value is not None:
             points[d] = value
     return points
 
@@ -554,7 +588,11 @@ def _difference(minuend: float | None, subtrahend: float | None) -> float | None
 
 
 def _window_dict(first: str | None, last: str | None, days: int) -> dict:
-    return {"first": first, "last": last, "days": days}
+    """A window: its first and last date, the ``days`` used and the NYSE ``sessions`` from
+    the first to the last date, counted from the calendar."""
+    start, end = _parse_date(first), _parse_date(last)
+    sessions = 0 if start is None or end is None else count_trading_days(start, end)
+    return {"first": first, "last": last, "days": days, "sessions": sessions}
 
 
 # ---------------------------------------------------------------------------
@@ -617,21 +655,22 @@ def _stressed_day_count(aligned_days: int) -> int:
 
 
 def _structural_needs_days() -> int:
-    """Fewest aligned days whose stressed window reaches the recommender's minimum. The
-    least n with ceil(fraction * n) >= minimum lies just above (minimum - 1) / fraction, so
-    the search starts there and is bounded. A fraction that can never reach the minimum
-    gives ``sys.maxsize``: no pair is then long enough."""
+    """Fewest aligned days whose stressed window reaches the recommender's minimum, found by
+    a binary search (the stressed count never falls as the days grow) with a fixed number of
+    steps whatever the fraction. A fraction that is not positive, or that cannot reach the
+    minimum within the search limit, gives ``sys.maxsize``: no pair is then long enough."""
     fraction = retirement_recommender.STRESS_WINDOW_FRACTION
     minimum = retirement_recommender.STRESS_MIN_OBS
-    if not fraction > 0:
+    if not fraction > 0 or _stressed_day_count(_NEEDS_SEARCH_LIMIT) < minimum:
         return sys.maxsize
-    try:
-        days = max(1, int((minimum - 1) / fraction) - _NEEDS_SEARCH_BACKOFF)
-    except OverflowError:
-        return sys.maxsize
-    while _stressed_day_count(days) < minimum:
-        days += 1
-    return days
+    low, high = 1, _NEEDS_SEARCH_LIMIT
+    while low < high:
+        middle = (low + high) >> 1
+        if _stressed_day_count(middle) >= minimum:
+            high = middle
+        else:
+            low = middle + 1
+    return low
 
 
 def _insufficient_text(days: int) -> str:
@@ -842,9 +881,9 @@ def _excluded_record(excluded: str | Mapping[str, str]) -> dict:
 def marginal_contribution(
     subject_id: str, eligible: Mapping, excluded: Sequence[str | Mapping[str, str]] = ()
 ) -> dict:
-    """The eligible symphonies' summed portfolio with and without ``subject_id``, over the
-    days on which every eligible symphony has a usable value. ``excluded`` lists the
-    symphonies left out of the comparison."""
+    """The summed portfolio of the eligible symphonies on the subject's basis with and
+    without ``subject_id``, over the days on which each of them has a usable value.
+    ``excluded`` lists the symphonies left out of the comparison."""
     excluded_list = [_excluded_record(e) for e in excluded]
     basis = (eligible.get(subject_id) or {}).get("basis")
 
@@ -862,10 +901,11 @@ def marginal_contribution(
     if basis == _KIND_SHADOW:
         return not_available(_NO_POSITION_VALUES_REASON)
     others = [k for k in eligible if k != subject_id]
-    if any(eligible[k].get("basis") != basis for k in others):
-        return not_available(_BASES_DIFFER_REASON)
-    if not others:
-        return not_available("no other eligible symphonies", status="not_applicable")
+    members = [k for k in others if eligible[k].get("basis") == basis]
+    if not members:
+        qualifier = _ON_THIS_BASIS_QUALIFIER if others else ""
+        return not_available(f"{_NO_OTHER_ELIGIBLE_REASON}{qualifier}", status="not_applicable")
+    members.append(subject_id)
 
     usable = {
         k: {
@@ -873,14 +913,14 @@ def marginal_contribution(
             for d, raw in (eligible[k].get("values") or {}).items()
             if (level := _usable_level(raw)) is not None
         }
-        for k in eligible
+        for k in members
     }
     shared = sorted(set.intersection(*(set(v) for v in usable.values())))
     if len(shared) < _MIN_VALUES_TO_SCORE:
         return not_available(
             f"shared days too short to score: needs at least {_MIN_VALUES_TO_SCORE} days"
         )
-    with_levels = [sum(usable[k][d] for k in eligible) for d in shared]
+    with_levels = [sum(usable[k][d] for k in members) for d in shared]
     without_levels = [with_levels[i] - usable[subject_id][d] for i, d in enumerate(shared)]
     with_leg = performance_metrics(_percent_changes(with_levels))
     without_leg = performance_metrics(_percent_changes(without_levels))
@@ -962,11 +1002,13 @@ def long_vix_cofiring(
     if not holdings.days and holdings.failure:
         return unavailable(_failure_reason(holdings.failure))
     live = set(live_ids)
+    if subject_id not in live:
+        return unavailable(_NOT_LIVE_REASON)
     first, last = window.get("first"), window.get("last")
     first_day, last_day = _parse_date(first), _parse_date(last)
-    held, known = {}, {}
+    subject_days, known = {}, {}
     if first_day is not None and last_day is not None:
-        held = _points_by_date(
+        subject_days = _points_by_date(
             holdings.days, first_day, last_day, lambda day: day if subject_id in day else None
         )
         # Per date the greatest key whose holdings are all known stands for the day.
@@ -976,7 +1018,7 @@ def long_vix_cofiring(
             last_day,
             lambda day: _known_day(day, live) if subject_id in day else None,
         )
-    if not held:
+    if not subject_days:
         return unavailable("no holdings for this symphony in the window")
     if not known:
         return unavailable("holding values unknown on every day in the window")
@@ -987,15 +1029,15 @@ def long_vix_cofiring(
         long_with = total_with = long_without = total_without = 0.0
         subject_held = other_held = False
         for sym_id, day_holdings in by_symphony.items():
-            long_value, total, held = _long_vix_value(day_holdings)
+            long_value, total, holds = _long_vix_value(day_holdings)
             long_with += long_value
             total_with += total
             if sym_id == subject_id:
-                subject_held = held
+                subject_held = holds
             else:
                 long_without += long_value
                 total_without += total
-                other_held = other_held or held
+                other_held = other_held or holds
         if subject_held:
             held_days += 1
             co_held += int(other_held)
@@ -1039,39 +1081,15 @@ def _available(evidence: Mapping, name: str) -> Mapping | None:
     return item if item is not None and item.get("status") == "available" else None
 
 
-def _redundancy_is_evidence(item: Mapping) -> bool:
-    """Whether an available redundancy item can support a verdict. A shown pair does when
-    it was compared on at least the aligned days the structural gate needs and its
-    correlation has an interval (its uncertainty gate is not undefined), whatever the gates
-    concluded. An item with no pair is evidence as it stands."""
-    pair = item.get("pair")
-    if not pair:
-        return True
-    return (
-        pair["n_obs"] >= _structural_needs_days()
-        and pair["uncertainty_gate"]["state"] != _GATE_UNDEFINED
-    )
-
-
 def decide_verdict(evidence: Mapping) -> dict:
     """Retire-candidate, watch, keep or no verdict, from the redundancy, backtest and
-    marginal items, with the reasons and the unavailable items. A redundancy item that
-    shows a pair which is no evidence counts as unavailable."""
+    marginal items, with the reasons and the items that gave no evidence (every item whose
+    status is not available, ``not_applicable`` included)."""
     redundancy = _available(evidence, "redundancy")
-    if redundancy is not None and not _redundancy_is_evidence(redundancy):
-        redundancy = None
     missing = [
         name
         for name in EVIDENCE_ITEM_ORDER
-        if name in evidence
-        and (
-            evidence[name].get("status") == "unavailable"
-            or (
-                name == "redundancy"
-                and evidence[name].get("status") == "available"
-                and redundancy is None
-            )
-        )
+        if name in evidence and evidence[name].get("status") != "available"
     ]
     backtest = _available(evidence, "backtest")
     marginal = _available(evidence, "marginal")
@@ -1197,14 +1215,17 @@ def _prepare(sym: SymphonyInput, as_of: date, threshold: int) -> _Prep:
         if rows:
             ordered = sorted(rows)
             kind = _KIND_SHADOW
-            series_begins = ordered[0].isoformat()
             # The session before the first row is the baseline whose own return is not
-            # counted; with none inside the tenure the first row serves as the baseline.
+            # counted; with none inside the tenure the first row serves as the baseline,
+            # and the series begins at the next row.
             baseline = _previous_session(ordered[0])
             if baseline is not None and baseline >= start:
                 day_list = [baseline, *ordered]
+                counted = ordered
             else:
                 day_list = ordered
+                counted = ordered[1:]
+            series_begins = counted[0].isoformat() if counted else None
             dates = [d.isoformat() for d in day_list]
             returns = [rows[d] for d in ordered[len(ordered) - len(day_list) + 1 :]]
             series = dict(zip(dates[1:], returns, strict=True))
@@ -1220,15 +1241,17 @@ def _prepare(sym: SymphonyInput, as_of: date, threshold: int) -> _Prep:
 
 
 def qualifying_window(symphony: SymphonyInput, as_of: date, threshold: int) -> dict | None:
-    """The first and last date and day count of the realized window the review would use
-    for this symphony, or None when it is not eligible, has no history or cannot be scored.
-    A backtest requested over exactly these dates is accepted by the review."""
+    """The first and last date, day count and session count of the realized window the
+    review would use for this symphony, or None when it is not eligible, has no history,
+    cannot be scored or (on the shadow basis) has a session with no usable row. A backtest
+    requested over exactly these dates is accepted by the review."""
     prep = _prepare(symphony, as_of, threshold)
     if not prep.eligible or prep.kind == _KIND_NONE:
         return None
-    if _performance_item(prep)[0]["status"] != "available":
+    performance = _performance_item(prep)[0]
+    if performance["status"] != "available" or _shadow_hole_reason(prep) is not None:
         return None
-    return _window_dict(prep.window["first"], prep.window["last"], prep.window["days"])
+    return performance["window"]
 
 
 def _withheld_reason(p: _Prep) -> str | None:
@@ -1340,8 +1363,8 @@ def _not_compared(p: _Prep, preps: Sequence[_Prep]) -> list[dict]:
     ]
 
 
-def _redundancy_unavailable(p: _Prep, reason: str, not_compared: list[dict] | None = None) -> dict:
-    extra = {} if not_compared is None else {"not_compared": not_compared}
+def _redundancy_unavailable(p: _Prep, reason: str) -> dict:
+    """The redundancy item of a symphony that is withheld from scoring."""
     return _item(
         "unavailable",
         reason,
@@ -1352,30 +1375,71 @@ def _redundancy_unavailable(p: _Prep, reason: str, not_compared: list[dict] | No
         {},
         retire_candidate=False,
         pair=None,
-        **extra,
     )
 
 
-def _no_pair_item(p: _Prep, preps: Sequence[_Prep]) -> dict:
-    """The redundancy item of a symphony that belongs to no evaluated pair."""
-    peers = [q for q in preps if q is not p]
-    if not peers:
-        return _item(
-            "not_applicable",
-            "no other symphonies to compare",
-            p.label,
-            _REDUNDANCY_SUBJECT,
-            _REDUNDANCY_SOURCE,
-            None,
-            {},
-            retire_candidate=False,
-            pair=None,
-            not_compared=[],
-        )
-    not_compared = _not_compared(p, preps)
-    if not_compared:
-        return _redundancy_unavailable(p, _BASES_DIFFER_REASON, not_compared)
-    return _redundancy_unavailable(p, "no history for any other symphony", not_compared)
+def _has_composite(sid: str, scores: Mapping, reasons: Mapping[str, str | None]) -> bool:
+    score = scores.get(sid)
+    return reasons.get(sid) is None and score is not None and score.composite is not None
+
+
+def _comparison_reached_result(pair: dict, floor: int) -> bool:
+    """Whether a pair was compared far enough to rule on: at least ``floor`` aligned days, a
+    defined correlation and, for a screen hit, gates that decided (met or not met)."""
+    if pair["n_obs"] < floor or pair["correlation"] is None:
+        return False
+    if not pair["screen_hit"]:
+        return True
+    uncertainty = pair["uncertainty_gate"]["state"]
+    if uncertainty == _GATE_NOT_MET:
+        return True
+    return uncertainty == _GATE_PASSED and pair["structural_gate"]["state"] in (
+        _GATE_PASSED,
+        _GATE_NOT_MET,
+    )
+
+
+def _undecided_text(name: str, pair: dict) -> str:
+    """A peer a comparison did not decide, with the aligned days and any gate that gave no
+    result."""
+    suffix = ""
+    if pair["screen_hit"]:
+        if pair["uncertainty_gate"]["state"] == _GATE_UNDEFINED:
+            suffix = _UNCERTAINTY_UNDEFINED_SUFFIX
+        elif (
+            pair["uncertainty_gate"]["state"] == _GATE_PASSED
+            and pair["structural_gate"]["state"] == _GATE_UNDEFINED
+        ):
+            suffix = _STRUCTURAL_UNDEFINED_SUFFIX
+    return f"{name} ({pair['n_obs']} aligned days{suffix})"
+
+
+def _redundancy_blocker(
+    p: _Prep,
+    peers: Sequence[_Prep],
+    mine: Sequence[dict],
+    scores: Mapping,
+    reasons: Mapping[str, str | None],
+) -> str | None:
+    """Why a symphony that no pair flags still has no redundancy evidence, or None when its
+    comparisons rule out a redundant sibling: it has a composite, at least one same-basis
+    peer has one and every such peer was compared with it to a result."""
+    sid = p.sym.symphony_id
+    if not _has_composite(sid, scores, reasons):
+        return _NO_COMPOSITE_REASON
+    scored_peers = [
+        q for q in peers if q.kind == p.kind and _has_composite(q.sym.symphony_id, scores, reasons)
+    ]
+    if not scored_peers:
+        return _NO_PEER_COMPOSITE_REASON
+    floor = max(_structural_needs_days(), retirement_recommender.MIN_OBS_FLOOR)
+    pair_with = {_sibling_of(sid, x): x for x in mine}
+    undecided = [
+        _undecided_text(q.sym.display_name, pair_with[q.sym.symphony_id])
+        for q in scored_peers
+        if not _comparison_reached_result(pair_with[q.sym.symphony_id], floor)
+    ]
+    return f"{_UNDECIDED_PREFIX}{_LIST_SEPARATOR.join(undecided)}" if undecided else None
 
 
 def _redundancy_item(
@@ -1386,44 +1450,41 @@ def _redundancy_item(
     scores: Mapping,
     reasons: Mapping[str, str | None],
 ) -> dict:
-    """The redundancy item: the pair the row shows and whether it flags the symphony.
+    """The redundancy item: the pair the row shows and whether it is evidence.
 
-    A symphony with no pair at the screen threshold says ``no redundant sibling`` only when
-    that claim is evidence: every other symphony on its basis, eligible or not, was compared
-    with it on at least the recommender's minimum aligned days with a defined correlation.
-    Otherwise the item is unavailable and its reason says why (every pair too short, a peer
-    compared on too few days, or a peer whose correlation is undefined). A shown pair stays
-    available whatever its length; the verdict decides whether it is evidence. Every item
-    lists the peers that were not compared because their basis differs."""
+    The item is available when the existing rule flags the symphony, or when the symphony
+    and at least one same-basis peer have a composite and every such peer was compared with
+    it to a result; it then says ``no redundant sibling`` if no pair reaches the screen.
+    Otherwise it is unavailable and its reason says why. The shown pair is kept either way,
+    and every item lists the peers that were not compared because their basis differs."""
     sid = p.sym.symphony_id
+    peers = [q for q in preps if q is not p]
+    if not peers:
+        return _item(
+            "not_applicable",
+            _NO_PEERS_REASON,
+            p.label,
+            _REDUNDANCY_SUBJECT,
+            _REDUNDANCY_SOURCE,
+            None,
+            {},
+            retire_candidate=False,
+            pair=None,
+            not_compared=[],
+        )
     mine = _pairs_of(sid, pairs)
-    if not mine:
-        return _no_pair_item(p, preps)
     flagged, shown = _flagged_and_shown(sid, mine, scores)
-    not_compared = _not_compared(p, preps)
-    if shown is None:
-        if all(x["uncertainty_gate"]["state"] == _GATE_INSUFFICIENT for x in mine):
-            return _redundancy_unavailable(
-                p, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR), not_compared
-            )
-        short = [x for x in mine if x["n_obs"] < retirement_recommender.MIN_OBS_FLOOR]
-        if short:
-            return _redundancy_unavailable(
-                p, _insufficient_text(retirement_recommender.MIN_OBS_FLOOR), not_compared
-            )
-        if any(x["correlation"] is None for x in mine):
-            return _redundancy_unavailable(p, _UNDEFINED_PEER_REASON, not_compared)
+    reason = None if flagged else _redundancy_blocker(p, peers, mine, scores, reasons)
     pair = window = None
-    extra = {"summary": _NO_SIBLING_TEXT}
     if shown is not None:
         sibling = by_id[_sibling_of(sid, shown)]
         note = _note_for_sibling(reasons.get(sibling.sym.symphony_id))
         pair = _pair_figures(shown, sibling, note)
         window = shown["window"]
-        extra = {}
+    summary = {"summary": _NO_SIBLING_TEXT} if reason is None and shown is None else {}
     return _item(
-        "available",
-        None,
+        "available" if reason is None else "unavailable",
+        reason,
         p.label,
         _REDUNDANCY_SUBJECT,
         _REDUNDANCY_SOURCE,
@@ -1431,8 +1492,8 @@ def _redundancy_item(
         {},
         retire_candidate=bool(flagged),
         pair=pair,
-        not_compared=not_compared,
-        **extra,
+        not_compared=_not_compared(p, preps),
+        **summary,
     )
 
 
@@ -1622,15 +1683,10 @@ def _shadow_hole_reason(p: _Prep) -> str | None:
     if first is None or last is None:
         return None
     have = set(p.window["dates"])
-    missing = [
-        d.isoformat()
-        for year in range(first.year, last.year + 1)
-        for d in sorted(_sessions_in_year(year))
-        if first <= d <= last and d.isoformat() not in have
-    ]
+    missing = [d.isoformat() for d in _sessions_between(first, last) if d.isoformat() not in have]
     if not missing:
         return None
-    named = ", ".join(missing[:_MAX_NAMED_MISSING_SESSIONS])
+    named = _LIST_SEPARATOR.join(missing[:_MAX_NAMED_MISSING_SESSIONS])
     more = len(missing) - _MAX_NAMED_MISSING_SESSIONS
     suffix = f" and {more} more" if more > 0 else ""
     return f"shadow history has no usable row for {named}{suffix}"
@@ -1653,6 +1709,14 @@ def _scored_evidence(
 ) -> dict:
     """The six evidence items of a symphony that can be scored."""
     sid = p.sym.symphony_id
+    other_basis = [
+        {
+            "display_name": by_id[k].sym.display_name,
+            "reason": f"{_EXCLUDED_PREFIX}{_DIFFERENT_BASIS_LABEL}",
+        }
+        for k, v in eligible_inputs.items()
+        if v["basis"] != p.kind
+    ]
     performance, metrics = _performance_item(p)
     score = scores.get(sid)
     composite = _composite_item(
@@ -1680,7 +1744,7 @@ def _scored_evidence(
         "composite": composite,
         "redundancy": _redundancy_item(p, preps, by_id, pairs, scores, composite_reason),
         "backtest": backtest,
-        "marginal": marginal_contribution(sid, eligible_inputs, excluded),
+        "marginal": marginal_contribution(sid, eligible_inputs, [*excluded, *other_basis]),
         "long_vix": long_vix_cofiring(
             holdings, sid, live_ids, {"first": p.window["first"], "last": p.window["last"]}
         ),
