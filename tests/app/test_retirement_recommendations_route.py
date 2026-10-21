@@ -1276,6 +1276,35 @@ class TestTheCompositeItemServesItsPopulationSize:
         assert checked >= 3
 
 
+class TestTheRedundancyItemServesWhatThePanelRenders:
+    """The panel renders the list of peers not compared; the API serves the stored item
+    as it is, so the two surfaces list the same peers with the same reasons."""
+
+    @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
+    def test_the_served_item_carries_the_stored_not_compared_list_and_the_stored_missing_items(
+        self, client, isolated_db, which
+    ):
+        builders = {
+            "full": pb.full_record,
+            "small": pb.small_record,
+            "edge": pb.edge_record,
+            "quiet": pb.quiet_record,
+        }
+        record = builders[which]()
+        pb.store_run(record)
+        got = _entries_by_id(_get(client))
+        listed = 0
+        for stored in record["entries"]:
+            served = got[stored["symphony_id"]]
+            item = stored["evidence"]["redundancy"]
+            assert served["evidence"]["redundancy"].get("not_compared") == item.get(
+                "not_compared"
+            ), stored["display_name"]
+            assert served["missing_items"] == stored["missing_items"], stored["display_name"]
+            listed += len(item.get("not_compared") or [])
+        assert listed >= (3 if which == "full" else 0)
+
+
 class TestNoEntryListsItselfAsLeftOut:
     @pytest.mark.parametrize("which", ["full", "small", "edge"])
     def test_an_entrys_comparison_item_never_names_the_entry_itself(

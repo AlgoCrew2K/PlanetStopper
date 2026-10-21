@@ -81,6 +81,20 @@ EDGE_NAMES = {
     "late": "Late Series",
 }
 
+QUIET_IDS = {
+    "first": "Qa1Bb2Cc3Dd4Ee5Ff6Gg",
+    "second": "Qh1Ii2Jj3Kk4Ll5Mm6Nn",
+    "third": "Qo1Pp2Qq3Rr4Ss5Tt6Uu",
+}
+QUIET_NAMES = {
+    "first": "Quiet Meadow Rotation",
+    "second": "Quiet Harbor Carry",
+    "third": "Quiet Ridge Hedge",
+}
+# Aligned days enough for "no redundant sibling" to be evidence: more than the
+# recommender's minimum of thirty, with the series built from mutually orthogonal waves.
+QUIET_DAYS = 40
+
 SMALL_THRESHOLD = 30
 TICKERS = {
     FULL_IDS["retire"]: {"AAPL": 0.6, "MSFT": 0.4},
@@ -202,8 +216,9 @@ def _edge_base_record() -> dict:
     renderer is tempted to drop:
 
     * steady: only rising days, so Sortino and Calmar are undefined and the composite
-      cannot be scored; no other symphony is correlated with it ("no redundant
-      sibling"); long-VIX holdings are available (whole-number day counts)
+      cannot be scored; no peer reaches the screen with it, but the peers share too few
+      aligned days for "no redundant sibling" to be evidence, so its redundancy item is
+      unavailable; long-VIX holdings are available (whole-number day counts)
     * twin_one, twin_two: identical return series, so the correlation is exactly 1,
       the interval and the stressed-window correlation are not computed, the holdings
       overlap is unavailable, and the two gates carry different texts
@@ -252,6 +267,29 @@ def _edge_base_record() -> dict:
     return record
 
 
+@lru_cache(maxsize=1)
+def _quiet_base_record() -> dict:
+    """Three live symphonies on the Composer basis, threshold 20, whose series are
+    mutually orthogonal over enough aligned days: no pair reaches the screen and every
+    comparison is long enough, so each redundancy item is available with no pair and says
+    "no redundant sibling", and none of them lists redundancy as missing."""
+    days = b.last_n_nyse_days(b.AS_OF, QUIET_DAYS + 1)
+    symphonies = [
+        b.composer_symphony(
+            QUIET_IDS[key], QUIET_NAMES[key], days, b.sine_returns(QUIET_DAYS, number)
+        )
+        for number, key in enumerate(("first", "second", "third"), start=1)
+    ]
+    result = b.review(symphonies, as_of=b.AS_OF, threshold=20)
+    record = tr.run_record(result, b.et(2026, 12, 31, 17, 5))
+    for stored in record["entries"]:
+        item = stored["evidence"]["redundancy"]
+        assert item["status"] == "available" and item["pair"] is None, stored["display_name"]
+        assert item["summary"], "the quiet roster must yield the no-sibling statement"
+        assert "redundancy" not in stored["missing_items"], stored["display_name"]
+    return record
+
+
 def _entry(record: dict, symphony_id: str) -> dict:
     matches = [e for e in record["entries"] if e["symphony_id"] == symphony_id]
     assert len(matches) == 1, f"expected one entry for {symphony_id}"
@@ -285,6 +323,14 @@ def small_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dic
 def edge_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
     """A fresh copy of the record whose figures are null, undefined or unpaired."""
     record = copy.deepcopy(_edge_base_record())
+    record["run_id"] = run_id
+    record["trigger"] = trigger
+    return record
+
+
+def quiet_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record whose redundancy items all say "no redundant sibling"."""
+    record = copy.deepcopy(_quiet_base_record())
     record["run_id"] = run_id
     record["trigger"] = trigger
     return record
@@ -426,6 +472,16 @@ def seed_edge_bot_state() -> None:
         {
             sid: {"name": EDGE_NAMES[key], "logic_holdings": {"QQQ": 1.0}}
             for key, sid in EDGE_IDS.items()
+        }
+    )
+
+
+def seed_quiet_bot_state() -> None:
+    """The live roster of the quiet record: display names and holdings per symphony."""
+    db_module.save_state(
+        {
+            sid: {"name": QUIET_NAMES[key], "logic_holdings": {"QQQ": 1.0}}
+            for key, sid in QUIET_IDS.items()
         }
     )
 

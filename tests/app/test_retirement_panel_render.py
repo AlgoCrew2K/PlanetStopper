@@ -26,8 +26,10 @@ markup/wiring.
 from __future__ import annotations
 
 import ast
+import copy
 import re
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -1269,44 +1271,48 @@ class TestNoRedundantSiblingIsStated:
     def test_an_eligible_symphony_with_no_screen_hit_says_there_is_no_redundant_sibling(
         self, client, isolated_db
     ):
-        record = _store_edge_run()
-        steady = pb.entry_of(record, pb.EDGE_IDS["steady"])
-        item = steady["evidence"]["redundancy"]
-        assert item["status"] == "available" and item["pair"] is None
-        block = pb.entry_node(_panel(client), steady["symphony_id"]).find(
-            "tenure-review-evidence-redundancy"
-        )
-        assert item["summary"] in block.text()
-        assert "no redundant sibling" in block.text()
-        assert "unavailable" not in block.text().lower(), (
-            "a symphony that was checked and has no redundant sibling is not 'unavailable'"
-        )
+        record = _store_record("quiet")
+        panel = _panel(client)
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            assert item["status"] == "available" and item["pair"] is None
+            block = pb.entry_node(panel, stored["symphony_id"]).find(
+                "tenure-review-evidence-redundancy"
+            )
+            assert item["summary"] in block.text(), stored["display_name"]
+            assert "no redundant sibling" in block.text(), stored["display_name"]
+            assert "unavailable" not in block.text().lower(), (
+                "a symphony that was checked and has no redundant sibling is not 'unavailable'"
+            )
 
     def test_each_eligible_symphony_of_the_small_run_states_what_its_check_found(
         self, client, isolated_db
     ):
-        """One eligible symphony of the small run has no pair at or above the screen and
-        says so; the other has a pair on too few days, which is shown and never denied."""
+        """One eligible symphony of the small run has a pair on too few days, which is shown
+        and never denied; the other was compared on too few days to claim it has no
+        redundant sibling, so its item is unavailable with the stored reason and never says
+        so."""
         pb.seed_bot_state(include_small=True)
         record = pb.small_record()
         pb.store_run(record)
         panel = _panel(client)
-        said = shown = 0
+        unproven = shown = 0
         for key in ("first", "second"):
             stored = pb.entry_of(record, pb.SMALL_IDS[key])
             item = stored["evidence"]["redundancy"]
             block = pb.entry_node(panel, stored["symphony_id"]).find(
                 "tenure-review-evidence-redundancy"
             )
+            assert "no redundant sibling" not in block.text(), key
             if item["pair"] is None:
-                assert item["summary"] in block.text(), key
-                said += 1
+                assert item["status"] == "unavailable", key
+                assert item["reason"] in block.text(), key
+                unproven += 1
             else:
                 assert item.get("summary") is None, key
                 assert item["pair"]["sibling_name"] in block.text(), key
-                assert "no redundant sibling" not in block.text(), key
                 shown += 1
-        assert (said, shown) == (1, 1), "the small record must hold one of each"
+        assert (unproven, shown) == (1, 1), "the small record must hold one of each"
 
     def test_a_symphony_with_a_pair_does_not_claim_there_is_no_sibling(self, client, isolated_db):
         record = _stored_full_run()
@@ -1863,16 +1869,27 @@ class TestApprovedEntryChecklistNamesTheSymphonyAsItsRowDoes:
 # itself as left out.
 # ===========================================================================
 
-_RECORD_BUILDERS = {"full": pb.full_record, "small": pb.small_record, "edge": pb.edge_record}
+_RECORD_BUILDERS = {
+    "full": pb.full_record,
+    "small": pb.small_record,
+    "edge": pb.edge_record,
+    "quiet": pb.quiet_record,
+}
 
 
-def _store_record(which: str, **kwargs):
+def _seed_roster(which: str) -> None:
     if which == "full":
         pb.seed_bot_state()
     elif which == "small":
         pb.seed_bot_state(include_small=True)
+    elif which == "quiet":
+        pb.seed_quiet_bot_state()
     else:
         pb.seed_edge_bot_state()
+
+
+def _store_record(which: str, **kwargs):
+    _seed_roster(which)
     record = _RECORD_BUILDERS[which](**kwargs)
     pb.store_run(record)
     return record
@@ -2117,40 +2134,58 @@ class TestMissingItemsAreListedOnEveryRecord:
     def test_an_item_that_says_no_redundant_sibling_is_not_listed_as_missing(
         self, client, isolated_db
     ):
-        record = _store_record("small")
-        quartz = pb.entry_of(record, pb.SMALL_IDS["second"])
-        item = quartz["evidence"]["redundancy"]
-        assert item["status"] == "available" and item["pair"] is None
-        node = pb.entry_node(_panel(client), quartz["symphony_id"])
-        assert "no redundant sibling" in node.find("tenure-review-evidence-redundancy").text()
-        missing = node.find("tenure-review-missing")
-        assert missing is None or "redundancy" not in missing.text().lower()
+        record = _store_record("quiet")
+        panel = _panel(client)
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            assert item["status"] == "available" and item["pair"] is None
+            node = pb.entry_node(panel, stored["symphony_id"])
+            assert "no redundant sibling" in node.find("tenure-review-evidence-redundancy").text()
+            missing = node.find("tenure-review-missing")
+            assert missing is not None, "the quiet record still lacks a backtest"
+            assert "redundancy" not in missing.text().lower(), stored["display_name"]
 
 
 class TestTheBasisLineCarriesTheDatesAsTheRecordStatesThem:
-    _DATE_AFTER = {
-        "series begins": re.compile(r"series begins (\d{4}-\d{2}-\d{2})"),
-        "tenure begins": re.compile(r"tenure begins (\d{4}-\d{2}-\d{2})"),
+    """The Composer basis stores the date of its first value, which it calls the series
+    start. The shadow basis stores the date of its first return, which is measured from the
+    previous session's close, so its window opens a session earlier; its line says so in
+    those words and never calls that date a series start."""
+
+    _DATE = r"(\d{4}-\d{2}-\d{2})"
+    _PHRASES = {
+        "series begins": re.compile(rf"series begins {_DATE}"),
+        "first shadow return": re.compile(rf"first shadow return {_DATE}"),
+        "tenure begins": re.compile(rf"tenure begins {_DATE}"),
     }
+    _SHADOW_NOTE = "measured from the previous session's close"
+
+    @staticmethod
+    def _straight(text: str) -> str:
+        return text.replace(chr(0x2019), "'")
 
     @pytest.mark.parametrize("which", ["full", "small", "edge"])
-    def test_each_date_is_the_stored_one_and_an_unknown_one_is_not_printed(
+    def test_each_date_is_the_stored_one_under_the_phrase_of_its_basis_and_an_unknown_one_is_not_printed(
         self, client, isolated_db, which
     ):
         record = _store_record(which)
         panel = _panel(client)
+        shadows = 0
         for stored in record["entries"]:
             text = pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-basis").text()
             where = stored["display_name"]
-            for phrase, key in (
-                ("series begins", "series_begins"),
-                ("tenure begins", "tenure_begins"),
-            ):
-                found = self._DATE_AFTER[phrase].findall(text)
+            shadow = stored["basis"]["kind"] == "shadow"
+            shadows += shadow
+            series = "first shadow return" if shadow else "series begins"
+            other = "series begins" if shadow else "first shadow return"
+            for phrase, key in ((series, "series_begins"), ("tenure begins", "tenure_begins")):
+                found = self._PHRASES[phrase].findall(text)
                 expected = stored["basis"][key]
                 assert found == ([expected] if expected else []), (where, phrase, found)
+            assert self._PHRASES[other].findall(text) == [], (where, other)
+        assert shadows == (1 if which == "full" else 0), "the full record holds one shadow entry"
 
-    def test_a_shadow_series_states_its_first_usable_row_and_not_the_day_its_window_opens(
+    def test_a_shadow_series_states_its_first_return_and_the_session_close_it_is_measured_from(
         self, client, isolated_db
     ):
         record = _store_record("full")
@@ -2158,11 +2193,34 @@ class TestTheBasisLineCarriesTheDatesAsTheRecordStatesThem:
         window_first = shadow["evidence"]["performance"]["window"]["first"]
         began = shadow["basis"]["series_begins"]
         assert window_first != began, "fixture sanity: the window opens a session before the series"
-        text = (
+        text = self._straight(
             pb.entry_node(_panel(client), shadow["symphony_id"]).find("tenure-review-basis").text()
         )
-        assert f"series begins {began}" in text
-        assert f"series begins {window_first}" not in text
+        assert f"first shadow return {began}" in text
+        assert f"first shadow return {window_first}" not in text
+        assert self._SHADOW_NOTE in text
+        assert "series begins" not in text
+
+    def test_a_composer_series_keeps_its_series_start_wording_and_adds_no_shadow_note(
+        self, client, isolated_db
+    ):
+        record = _store_record("full")
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            if stored["basis"]["kind"] != "composer" or not stored["basis"]["series_begins"]:
+                continue
+            text = self._straight(
+                pb.entry_node(panel, stored["symphony_id"]).find("tenure-review-basis").text()
+            )
+            assert f"series begins {stored['basis']['series_begins']}" in text, stored[
+                "display_name"
+            ]
+            assert "shadow return" not in text and self._SHADOW_NOTE not in text, stored[
+                "display_name"
+            ]
+            checked += 1
+        assert checked >= 4
 
 
 class TestNoEntryListsItselfAsLeftOut:
@@ -2205,3 +2263,1272 @@ class TestNoEntryListsItselfAsLeftOut:
         )
         for name in names:
             assert pb.leaf_nodes_containing(block, name), name
+
+
+# ===========================================================================
+# A stored field the panel prints is never shown as Python's None, nor left as an
+# empty slot, whatever its type: each case stores a run whose one field is missing,
+# null or of the wrong type, renders the page, and requires "not recorded" in the
+# place that field is printed, no trace of the poison anywhere in the panel, and
+# every other entry (and every other block of that entry) to read as it does when
+# nothing is poisoned. The poison text is a marker no real value contains.
+# ===========================================================================
+
+_NOT_RECORDED = "not recorded"
+_MARK = "zzmarkerzz"
+_GONE = object()  # the key is deleted from the stored record
+_TRUE = r"\bTrue\b"
+_TWELVE_POINT_FIVE = r"(?<![\d.])12\.5(?!\d)"
+_TWO_POINT_FIVE = r"(?<![\d.])2\.5(?!\d)"
+_ET_STAMP = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2} ET\b")
+
+_VICTIMS = {
+    "watch": ("full", lambda r: pb.entry_with_verdict(r, "watch")),
+    "keep": ("full", lambda r: pb.entry_with_verdict(r, "keep")),
+    "steady": ("edge", lambda r: pb.entry_of(r, pb.EDGE_IDS["steady"])),
+    "twin": ("edge", lambda r: pb.entry_of(r, pb.EDGE_IDS["twin_one"])),
+}
+
+
+@dataclass(frozen=True)
+class _Poison:
+    victim: str
+    edits: tuple  # of (dotted path inside the victim entry, value or _GONE)
+    scope: tuple  # where the field is printed; see _scoped
+    not_recorded: bool = True  # an optional field only has to leave no trace
+    absent: tuple = ()  # patterns the scoped text must not match
+    shows: str | None = None  # path of a float the scoped text must still show
+    markers: tuple = (_MARK,)  # patterns that must not match anywhere in the panel
+
+
+_BASIS = ("basis",)
+_CHIP = ("chip",)
+
+
+def _block(name):
+    return ("block", name)
+
+
+def _line(name, needle, mode="starts"):
+    return ("line", name, needle, mode)
+
+
+def _header(testid):
+    return ("header", testid)
+
+
+def _case(case_id, victim, edits, scope, **kwargs):
+    return pytest.param(_Poison(victim, tuple(edits), scope, **kwargs), id=case_id)
+
+
+def _get(root, path):
+    node = root
+    for key in path.split("."):
+        node = node[int(key)] if isinstance(node, list) else node[key]
+    return node
+
+
+def _edit(root, path, value):
+    *parents, leaf = path.split(".")
+    node = _get(root, ".".join(parents)) if parents else root
+    if isinstance(node, list):
+        node[int(leaf)] = value
+    elif value is _GONE:
+        node.pop(leaf, None)
+    else:
+        node[leaf] = copy.deepcopy(value)
+
+
+def _texts_of(panel) -> dict:
+    """What the unpoisoned panel reads like: per entry the whole entry and each block,
+    plus the run header."""
+    texts = {"[header]": panel.find("tenure-review-as-of").parent.everything()}
+    for node in panel.find_all("tenure-review-entry"):
+        texts[node.attrs["data-symphony-id"]] = {
+            "entry": node.everything(),
+            **{n: node.find(f"tenure-review-evidence-{n}").everything() for n in _PANEL_ITEMS},
+        }
+    return texts
+
+
+_PRISTINE_TEXTS: dict[str, dict] = {}  # test-only memo of a deterministic render, per record
+
+
+def _pristine(client, which: str) -> dict:
+    if which not in _PRISTINE_TEXTS:
+        _store_record(which)
+        _PRISTINE_TEXTS[which] = _texts_of(_panel(client))
+    return _PRISTINE_TEXTS[which]
+
+
+def _render_edited(client, which: str, edit):
+    """Render the page for the record of ``which`` after ``edit`` changed it; returns the
+    edited record, the unpoisoned texts and the panel."""
+    _seed_roster(which)
+    pristine = _pristine(client, which)
+    record = _RECORD_BUILDERS[which](run_id=pb.RUN_ID_SECOND)
+    edit(record)
+    pb.store_run(record)
+    return record, pristine, _panel(client)
+
+
+def _scoped(panel, victim_id, scope):
+    kind = scope[0]
+    if kind == "header":
+        return panel.find(scope[1])
+    node = pb.entry_node(panel, victim_id)
+    if kind == "basis":
+        return node.find("tenure-review-basis")
+    if kind == "chip":
+        return node.find("tenure-review-verdict-chip")
+    block = node.find(f"tenure-review-evidence-{scope[1]}")
+    if kind == "block":
+        return block
+    needle, mode = scope[2], scope[3]
+    leaves = pb.leaf_nodes_containing(block, needle)
+    if mode == "starts":
+        leaves = [leaf for leaf in leaves if leaf.text().lower().startswith(needle.lower())]
+    return leaves[0] if leaves else None
+
+
+def _assert_others_unchanged(panel, pristine: dict, victim_id: str, scope: tuple) -> None:
+    for sid, texts in pristine.items():
+        if sid == "[header]":
+            if scope[0] != "header":
+                assert panel.find("tenure-review-as-of").parent.everything() == texts
+            continue
+        node = pb.entry_node(panel, sid)
+        if sid != victim_id:
+            assert node.everything() == texts["entry"], f"another entry changed: {sid}"
+            continue
+        for name in _PANEL_ITEMS:
+            if scope[0] in ("block", "line") and scope[1] == name:
+                continue
+            assert node.find(f"tenure-review-evidence-{name}").everything() == texts[name], (
+                f"another block of the entry changed: {name}"
+            )
+
+
+_LIST = [_MARK]
+_DICT = {"k": _MARK}
+_SHOWN_FIGURE = "evidence.performance.figures.total_return.value"
+_POISONS = [
+    # the basis line
+    _case("basis is a list", "watch", [("basis", _LIST)], _BASIS),
+    _case("basis label missing", "watch", [("basis.label", _GONE)], _BASIS),
+    _case("basis label null", "watch", [("basis.label", None)], _BASIS),
+    _case("basis label a list", "watch", [("basis.label", _LIST)], _BASIS),
+    _case(
+        "basis fallback reason a list",
+        "watch",
+        [("basis.fallback_reason", _LIST)],
+        _BASIS,
+        not_recorded=False,
+    ),
+    _case(
+        "basis series start a number",
+        "watch",
+        [("basis.series_begins", 987654)],
+        _BASIS,
+        not_recorded=False,
+        markers=(_MARK, "987654"),
+    ),
+    _case(
+        "basis tenure start a list",
+        "watch",
+        [("basis.tenure_begins", _LIST)],
+        _BASIS,
+        not_recorded=False,
+    ),
+    # the verdict chip
+    _case("verdict text missing", "watch", [("verdict_text", _GONE)], _CHIP),
+    _case("verdict text null", "watch", [("verdict_text", None)], _CHIP),
+    _case("verdict text a list", "watch", [("verdict_text", _LIST)], _CHIP),
+    # the run header
+    _case(
+        "as-of day missing",
+        "watch",
+        [("__run__.as_of_trading_day", _GONE)],
+        _header("tenure-review-as-of"),
+    ),
+    _case(
+        "as-of day null",
+        "watch",
+        [("__run__.as_of_trading_day", None)],
+        _header("tenure-review-as-of"),
+    ),
+    _case(
+        "as-of day a list",
+        "watch",
+        [("__run__.as_of_trading_day", _LIST)],
+        _header("tenure-review-as-of"),
+    ),
+    _case(
+        "threshold missing",
+        "watch",
+        [("__run__.threshold_in_effect", _GONE)],
+        _header("tenure-review-threshold"),
+    ),
+    _case(
+        "threshold null",
+        "watch",
+        [("__run__.threshold_in_effect", None)],
+        _header("tenure-review-threshold"),
+    ),
+    _case(
+        "threshold text",
+        "watch",
+        [("__run__.threshold_in_effect", _MARK)],
+        _header("tenure-review-threshold"),
+    ),
+    _case(
+        "threshold a boolean",
+        "watch",
+        [("__run__.threshold_in_effect", True)],
+        _header("tenure-review-threshold"),
+        absent=(r"\bTrue\b",),
+        markers=(_MARK, _TRUE),
+    ),
+    _case(
+        "threshold not a whole number",
+        "watch",
+        [("__run__.threshold_in_effect", 12.5)],
+        _header("tenure-review-threshold"),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
+    ),
+    _case(
+        "threshold note a list",
+        "watch",
+        [("__run__.threshold_note", _LIST)],
+        _header("tenure-review-threshold"),
+        not_recorded=False,
+    ),
+    # an evidence item that is not a record
+    _case("item is a list", "watch", [("evidence.performance", _LIST)], _block("performance")),
+    # subject and source of an available item
+    _case(
+        "subject missing",
+        "watch",
+        [("evidence.performance.subject", _GONE)],
+        _line("performance", "subject"),
+    ),
+    _case(
+        "subject null",
+        "watch",
+        [("evidence.performance.subject", None)],
+        _line("performance", "subject"),
+    ),
+    _case(
+        "subject a list",
+        "watch",
+        [("evidence.performance.subject", _LIST)],
+        _line("performance", "subject"),
+    ),
+    _case(
+        "source missing",
+        "watch",
+        [("evidence.performance.source", _GONE)],
+        _line("performance", "source"),
+    ),
+    _case(
+        "source null",
+        "watch",
+        [("evidence.performance.source", None)],
+        _line("performance", "source"),
+    ),
+    _case(
+        "source a list",
+        "watch",
+        [("evidence.performance.source", _LIST)],
+        _line("performance", "source"),
+    ),
+    # the reason of an item that is unavailable or not applicable
+    _case(
+        "unavailable reason missing",
+        "watch",
+        [("evidence.marginal.reason", _GONE)],
+        _line("marginal", "unavailable"),
+    ),
+    _case(
+        "unavailable reason null",
+        "watch",
+        [("evidence.marginal.reason", None)],
+        _line("marginal", "unavailable"),
+    ),
+    _case(
+        "unavailable reason a list",
+        "watch",
+        [("evidence.marginal.reason", _LIST)],
+        _line("marginal", "unavailable"),
+    ),
+    _case(
+        "not applicable reason null",
+        "watch",
+        [("evidence.long_vix.status", "not_applicable"), ("evidence.long_vix.reason", None)],
+        _line("long_vix", "not applicable"),
+    ),
+    # the window of an item
+    _case(
+        "window start missing",
+        "watch",
+        [("evidence.performance.window.first", _GONE)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "window start null",
+        "watch",
+        [("evidence.performance.window.first", None)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "window start a list",
+        "watch",
+        [("evidence.performance.window.first", _LIST)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "window end missing",
+        "watch",
+        [("evidence.performance.window.last", _GONE)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "window days null",
+        "watch",
+        [("evidence.performance.window.days", None)],
+        _line("performance", "window"),
+    ),
+    _case(
+        "window days text",
+        "watch",
+        [("evidence.performance.window.days", _MARK)],
+        _line("performance", "window"),
+    ),
+    # a figure
+    _case(
+        "figure unit missing",
+        "watch",
+        [("evidence.performance.figures.total_return.unit", _GONE)],
+        _line("performance", "total return"),
+        shows=_SHOWN_FIGURE,
+    ),
+    _case(
+        "figure unit null",
+        "watch",
+        [("evidence.performance.figures.total_return.unit", None)],
+        _line("performance", "total return"),
+        shows=_SHOWN_FIGURE,
+    ),
+    _case(
+        "figure unit a number",
+        "watch",
+        [("evidence.performance.figures.total_return.unit", 987654)],
+        _line("performance", "total return"),
+        shows=_SHOWN_FIGURE,
+        markers=(_MARK, "987654"),
+    ),
+    _case(
+        "figure value a boolean",
+        "watch",
+        [("evidence.performance.figures.sharpe.value", True)],
+        _line("performance", "sharpe"),
+        absent=(r"\bTrue\b", r"1\.00"),
+        markers=(_MARK, _TRUE),
+    ),
+    _case(
+        "figure value not a number",
+        "watch",
+        [("evidence.performance.figures.sharpe.value", float("nan"))],
+        _line("performance", "sharpe"),
+        absent=(r"\bnan\b",),
+    ),
+    _case(
+        "figure value infinite",
+        "watch",
+        [("evidence.performance.figures.sharpe.value", float("inf"))],
+        _line("performance", "sharpe"),
+        absent=(r"\binf\b",),
+    ),
+    _case(
+        "null figure reason missing",
+        "steady",
+        [("evidence.performance.figures.calmar.reason", _GONE)],
+        _line("performance", "calmar"),
+    ),
+    _case(
+        "null figure reason null",
+        "steady",
+        [("evidence.performance.figures.calmar.reason", None)],
+        _line("performance", "calmar"),
+    ),
+    _case(
+        "pair figure reason missing",
+        "twin",
+        [("evidence.redundancy.pair.ci_lower.reason", _GONE)],
+        _line("redundancy", "ci lower"),
+    ),
+    # the pair
+    _case(
+        "pair sibling missing",
+        "watch",
+        [("evidence.redundancy.pair.sibling_name", _GONE)],
+        _line("redundancy", "paired with"),
+    ),
+    _case(
+        "pair sibling null",
+        "watch",
+        [("evidence.redundancy.pair.sibling_name", None)],
+        _line("redundancy", "paired with"),
+    ),
+    _case(
+        "pair sibling a list",
+        "watch",
+        [("evidence.redundancy.pair.sibling_name", _LIST)],
+        _line("redundancy", "paired with"),
+    ),
+    _case(
+        "aligned days missing",
+        "watch",
+        [("evidence.redundancy.pair.n_obs", _GONE)],
+        _line("redundancy", "aligned days"),
+    ),
+    _case(
+        "aligned days null",
+        "watch",
+        [("evidence.redundancy.pair.n_obs", None)],
+        _line("redundancy", "aligned days"),
+    ),
+    _case(
+        "aligned days a boolean",
+        "watch",
+        [("evidence.redundancy.pair.n_obs", True)],
+        _line("redundancy", "aligned days"),
+        absent=(r"\bTrue\b", r"\b1\b"),
+        markers=(_MARK, _TRUE),
+    ),
+    _case(
+        "aligned days not a whole number",
+        "watch",
+        [("evidence.redundancy.pair.n_obs", 12.5)],
+        _line("redundancy", "aligned days"),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
+    ),
+    _case(
+        "aligned days text",
+        "watch",
+        [("evidence.redundancy.pair.n_obs", _MARK)],
+        _line("redundancy", "aligned days"),
+    ),
+    _case(
+        "uncertainty gate missing",
+        "watch",
+        [("evidence.redundancy.pair.uncertainty_gate", _GONE)],
+        _line("redundancy", "uncertainty gate"),
+    ),
+    _case(
+        "uncertainty gate text instead of a record",
+        "watch",
+        [("evidence.redundancy.pair.uncertainty_gate", _MARK)],
+        _line("redundancy", "uncertainty gate"),
+    ),
+    _case(
+        "uncertainty gate result missing",
+        "watch",
+        [("evidence.redundancy.pair.uncertainty_gate.text", _GONE)],
+        _line("redundancy", "uncertainty gate"),
+    ),
+    _case(
+        "uncertainty gate result a list",
+        "watch",
+        [("evidence.redundancy.pair.uncertainty_gate.text", _LIST)],
+        _line("redundancy", "uncertainty gate"),
+    ),
+    _case(
+        "structural gate missing",
+        "watch",
+        [("evidence.redundancy.pair.structural_gate", _GONE)],
+        _line("redundancy", "structural redundancy gate"),
+    ),
+    _case(
+        "structural gate text instead of a record",
+        "watch",
+        [("evidence.redundancy.pair.structural_gate", _MARK)],
+        _line("redundancy", "structural redundancy gate"),
+    ),
+    _case(
+        "structural gate result null",
+        "watch",
+        [("evidence.redundancy.pair.structural_gate.text", None)],
+        _line("redundancy", "structural redundancy gate"),
+    ),
+    _case(
+        "structural gate result a list",
+        "watch",
+        [("evidence.redundancy.pair.structural_gate.text", _LIST)],
+        _line("redundancy", "structural redundancy gate"),
+    ),
+    _case(
+        "pair note a list",
+        "watch",
+        [("evidence.redundancy.pair.note", _LIST)],
+        _block("redundancy"),
+        not_recorded=False,
+    ),
+    # a left-out symphony
+    _case(
+        "left-out name missing",
+        "watch",
+        [("evidence.marginal.excluded.0.display_name", _GONE)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "left-out name null",
+        "watch",
+        [("evidence.marginal.excluded.0.display_name", None)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "left-out name a list",
+        "watch",
+        [("evidence.marginal.excluded.0.display_name", _LIST)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "left-out reason missing",
+        "watch",
+        [("evidence.marginal.excluded.0.reason", _GONE)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "left-out reason null",
+        "watch",
+        [("evidence.marginal.excluded.0.reason", None)],
+        _line("marginal", "left out"),
+    ),
+    _case(
+        "left-out reason a list",
+        "watch",
+        [("evidence.marginal.excluded.0.reason", _LIST)],
+        _line("marginal", "left out"),
+    ),
+    # a peer that was not compared
+    _case(
+        "not-compared name missing",
+        "watch",
+        [("evidence.redundancy.not_compared.0.display_name", _GONE)],
+        _line("redundancy", "bases differ", "has"),
+    ),
+    _case(
+        "not-compared name null",
+        "watch",
+        [("evidence.redundancy.not_compared.0.display_name", None)],
+        _line("redundancy", "bases differ", "has"),
+    ),
+    _case(
+        "not-compared name a list",
+        "watch",
+        [("evidence.redundancy.not_compared.0.display_name", _LIST)],
+        _line("redundancy", "bases differ", "has"),
+    ),
+    _case(
+        "not-compared reason missing",
+        "watch",
+        [("evidence.redundancy.not_compared.0.reason", _GONE)],
+        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+    ),
+    _case(
+        "not-compared reason null",
+        "watch",
+        [("evidence.redundancy.not_compared.0.reason", None)],
+        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+    ),
+    _case(
+        "not-compared reason a list",
+        "watch",
+        [("evidence.redundancy.not_compared.0.reason", _LIST)],
+        _line("redundancy", pb.FULL_NAMES["shadow"], "has"),
+    ),
+    _case(
+        "not-compared list is text",
+        "watch",
+        [("evidence.redundancy.not_compared", _MARK)],
+        _block("redundancy"),
+        not_recorded=False,
+    ),
+    _case(
+        "not-compared list holds text",
+        "watch",
+        [("evidence.redundancy.not_compared", [_MARK])],
+        _block("redundancy"),
+        not_recorded=False,
+    ),
+    _case(
+        "not-compared list is a dict",
+        "watch",
+        [("evidence.redundancy.not_compared", _DICT)],
+        _block("redundancy"),
+        not_recorded=False,
+    ),
+    # the population the composite was normalized over
+    _case(
+        "population missing",
+        "watch",
+        [("evidence.composite.population_size", _GONE)],
+        _block("composite"),
+    ),
+    _case(
+        "population null",
+        "watch",
+        [("evidence.composite.population_size", None)],
+        _block("composite"),
+    ),
+    _case(
+        "population a list",
+        "watch",
+        [("evidence.composite.population_size", _LIST)],
+        _block("composite"),
+    ),
+    _case(
+        "population a dict",
+        "watch",
+        [("evidence.composite.population_size", _DICT)],
+        _block("composite"),
+    ),
+    _case(
+        "population text",
+        "watch",
+        [("evidence.composite.population_size", _MARK)],
+        _block("composite"),
+    ),
+    _case(
+        "population a boolean",
+        "watch",
+        [("evidence.composite.population_size", True)],
+        _block("composite"),
+        absent=(r"\bTrue\b", r"\b1 symphon"),
+        markers=(_MARK, _TRUE),
+    ),
+    _case(
+        "population not a whole number",
+        "watch",
+        [("evidence.composite.population_size", 2.5)],
+        _block("composite"),
+        absent=(r"\b2 symphon", _TWO_POINT_FIVE),
+        markers=(_MARK, _TWO_POINT_FIVE),
+    ),
+]
+
+
+class TestAMissingOrWrongTypedFieldReadsNotRecorded:
+    @pytest.mark.parametrize("poison", _POISONS)
+    def test_the_field_reads_not_recorded_and_leaves_no_trace_while_everything_else_is_unchanged(
+        self, client, isolated_db, poison
+    ):
+        which, pick = _VICTIMS[poison.victim]
+        holder = {}
+
+        def edit(record):
+            victim = pick(record)
+            holder["id"] = victim["symphony_id"]
+            if poison.shows:
+                holder["shown"] = _get(victim, poison.shows)
+            for path, value in poison.edits:
+                if path.startswith("__run__."):
+                    _edit(record, path.removeprefix("__run__."), value)
+                else:
+                    _edit(victim, path, value)
+
+        record, pristine, panel = _render_edited(client, which, edit)
+        everything = panel.everything()
+        assert not re.search(r"\bNone\b", everything), "Python's None reached the panel"
+        for marker in poison.markers:
+            assert not re.search(marker, everything), f"the stored value {marker!r} was printed"
+        scoped = _scoped(panel, holder["id"], poison.scope)
+        assert scoped is not None, "the line that prints the field is dropped, not worded"
+        text = scoped.text()
+        if poison.not_recorded:
+            assert _NOT_RECORDED in text.lower(), f"nothing says it is not recorded: {text!r}"
+        for pattern in poison.absent:
+            assert not re.search(pattern, text, flags=re.IGNORECASE), (pattern, text)
+        if poison.shows:
+            assert _shows(scoped, holder["shown"]), f"the stored figure is gone: {text!r}"
+        _assert_others_unchanged(panel, pristine, holder["id"], poison.scope)
+
+    @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
+    def test_the_unpoisoned_panels_print_none_of_the_tokens_the_cases_forbid(
+        self, client, isolated_db, which
+    ):
+        _store_record(which)
+        everything = _panel(client).everything()
+        forbidden = re.compile(
+            rf"\b(None|True|False|nan|inf)\b|{_MARK}|987654|{_TWELVE_POINT_FIVE}|{_TWO_POINT_FIVE}"
+        )
+        found = forbidden.search(everything)
+        assert found is None, found.group(0)
+
+
+class TestEveryPrintedFieldOfOneBrokenRunIsHonest:
+    """The shape the ux review captured: one entry whose basis is a list and whose evidence
+    is text, another whose unavailable item has a null reason, and a run header with no
+    threshold."""
+
+    def test_a_run_with_several_broken_fields_prints_no_none_and_leaves_the_rest_alone(
+        self, client, isolated_db
+    ):
+        def edit(record):
+            _edit(pb.entry_with_verdict(record, "keep"), "basis", ["a", "list"])
+            _edit(pb.entry_with_verdict(record, "keep"), "evidence", "text")
+            _edit(pb.entry_with_verdict(record, "watch"), "evidence.marginal.reason", None)
+            _edit(record, "threshold_in_effect", _GONE)
+
+        record, pristine, panel = _render_edited(client, "full", edit)
+        assert not re.search(r"\bNone\b", panel.everything())
+        keep = pb.entry_with_verdict(record, "keep")
+        node = pb.entry_node(panel, keep["symphony_id"])
+        assert _NOT_RECORDED in node.find("tenure-review-basis").text().lower()
+        for name in _PANEL_ITEMS:
+            assert _NOT_RECORDED in node.find(f"tenure-review-evidence-{name}").text().lower(), name
+        assert _NOT_RECORDED in panel.find("tenure-review-threshold").text().lower()
+        watch = pb.entry_with_verdict(record, "watch")
+        marginal = pb.entry_node(panel, watch["symphony_id"]).find(
+            "tenure-review-evidence-marginal"
+        )
+        assert _NOT_RECORDED in marginal.text().lower()
+        for sid, texts in pristine.items():
+            if sid in ("[header]", keep["symphony_id"], watch["symphony_id"]):
+                continue
+            assert pb.entry_node(panel, sid).everything() == texts["entry"], sid
+
+    def test_an_entry_with_no_symphony_id_prints_no_none_and_offers_no_decision_on_it(
+        self, client, isolated_db
+    ):
+        def edit(record):
+            _edit(pb.entry_with_verdict(record, "keep"), "symphony_id", _GONE)
+
+        record, pristine, panel = _render_edited(client, "full", edit)
+        assert not re.search(r"\bNone\b", panel.everything())
+        keep_id = pb.FULL_IDS["keep"]
+        buttons = panel.find_all("retirement-approve-btn") + panel.find_all("retirement-reject-btn")
+        for button in buttons:
+            assert button.attrs.get("data-candidate-id"), "a decision button carries no id"
+        for sid, texts in pristine.items():
+            if sid in ("[header]", keep_id):
+                continue
+            assert pb.entry_node(panel, sid).everything() == texts["entry"], sid
+
+    def test_a_stored_reason_is_printed_as_stored_even_when_it_says_none(self, client, isolated_db):
+        reason = "None of the peers could be compared, undefined for this series"
+
+        def edit(record):
+            _edit(pb.entry_with_verdict(record, "watch"), "evidence.marginal.reason", reason)
+
+        record, _, panel = _render_edited(client, "full", edit)
+        watch = pb.entry_with_verdict(record, "watch")
+        marginal = pb.entry_node(panel, watch["symphony_id"]).find(
+            "tenure-review-evidence-marginal"
+        )
+        assert reason in marginal.text()
+        assert _NOT_RECORDED not in marginal.text().lower()
+
+
+# ===========================================================================
+# The running-since and failed-attempt notices read in the zone the run line does, so
+# the order of events reads correctly.
+# ===========================================================================
+
+_ET_CASES = [
+    ("2026-12-31T22:04:00+00:00", "2026-12-31 17:04"),
+    ("2026-07-15T02:30:00+00:00", "2026-07-14 22:30"),
+    ("2026-12-31T17:05:00-05:00", "2026-12-31 17:05"),
+]
+_ET_IDS = ["standard time", "daylight time, previous Eastern day", "already Eastern"]
+_TIME_NOT_RECORDED = "time not recorded"
+_UNREADABLE_TIMES = [None, "not a timestamp", 12345]
+_UNREADABLE_IDS = ["missing", "text", "number"]
+
+
+def _run_state(monkeypatch, **fields) -> None:
+    """Make the review run state report exactly ``fields`` (the dict the panel reads)."""
+    snapshot = {
+        "running": False,
+        "running_since": None,
+        "trigger": None,
+        "last_failed_attempt": None,
+        **fields,
+    }
+    monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", lambda: dict(snapshot))
+
+
+def _assert_eastern(notice_text: str, moment: str, expected: str) -> None:
+    assert f"{expected} ET" in notice_text, notice_text
+    assert "+00:00" not in notice_text and "-05:00" not in notice_text, notice_text
+    assert not re.search(r"\d{4}-\d{2}-\d{2}T", notice_text), notice_text
+    if moment[:10] != expected[:10]:
+        assert moment[:10] not in notice_text, "the UTC date is shown as if it were Eastern"
+    if moment[11:16] != expected[11:]:
+        assert moment[11:16] not in notice_text, "the stored time is shown as if it were Eastern"
+
+
+class TestNoticeTimesAreEastern:
+    @pytest.mark.parametrize("moment, expected", _ET_CASES, ids=_ET_IDS)
+    def test_the_running_since_time_reads_in_eastern_with_the_run_lines_format(
+        self, client, isolated_db, monkeypatch, moment, expected
+    ):
+        _stored_full_run()
+        _run_state(monkeypatch, running=True, running_since=moment)
+        panel = _panel(client)
+        notice = panel.find("tenure-review-running-notice").text()
+        assert "review running since" in notice
+        _assert_eastern(notice, moment, expected)
+        assert _ET_STAMP.search(panel.find("tenure-review-run-time").text()), "fixture sanity"
+
+    @pytest.mark.parametrize("moment, expected", _ET_CASES, ids=_ET_IDS)
+    @pytest.mark.parametrize("as_text", [False, True], ids=["datetime", "text"])
+    def test_the_failed_attempt_time_reads_in_eastern_with_the_run_lines_format(
+        self, client, isolated_db, moment, expected, as_text
+    ):
+        _stored_full_run()
+        state = tenure_review.REVIEW_RUN_STATE
+        assert state.try_start("nightly")
+        state.finish_failure(
+            "Composer statistics unavailable", moment if as_text else datetime.fromisoformat(moment)
+        )
+        notice = _panel(client).find("tenure-review-failed-notice").text()
+        assert "latest review attempt failed: Composer statistics unavailable" in notice
+        _assert_eastern(notice, moment, expected)
+
+    def test_a_failed_attempt_before_the_completed_run_reads_as_earlier_than_it(
+        self, client, isolated_db
+    ):
+        """The captured case: a failure at 21:45 UTC printed above a run completed at 17:04
+        Eastern read as later than the run, when it was 16:45 Eastern."""
+        pb.seed_bot_state()
+        pb.store_run(pb.full_record(completed_at="2026-12-31T22:04:00+00:00"))
+        state = tenure_review.REVIEW_RUN_STATE
+        assert state.try_start("nightly")
+        state.finish_failure(
+            "Composer statistics unavailable", datetime(2026, 12, 31, 21, 45, tzinfo=UTC)
+        )
+        panel = _panel(client)
+        failed = _ET_STAMP.search(panel.find("tenure-review-failed-notice").text())
+        completed = _ET_STAMP.search(panel.find("tenure-review-run-time").text())
+        assert failed and completed
+        assert failed.group(0).startswith("2026-12-31 16:45")
+        assert failed.group(0) < completed.group(0), "the order of events reads backwards"
+
+    @pytest.mark.parametrize("moment", _UNREADABLE_TIMES, ids=_UNREADABLE_IDS)
+    def test_a_running_since_time_that_cannot_be_read_says_so_and_prints_no_raw_value(
+        self, client, isolated_db, monkeypatch, moment
+    ):
+        _stored_full_run()
+        _run_state(monkeypatch, running=True, running_since=moment)
+        notice = _panel(client).find("tenure-review-running-notice").text()
+        assert "review running since" in notice
+        assert _TIME_NOT_RECORDED in notice.lower(), notice
+        assert not re.search(r"\bNone\b", notice)
+        if isinstance(moment, str):
+            assert moment not in notice
+        elif moment is not None:
+            assert str(moment) not in notice
+
+    @pytest.mark.parametrize("moment", _UNREADABLE_TIMES, ids=_UNREADABLE_IDS)
+    def test_a_failed_attempt_time_that_cannot_be_read_says_so_and_keeps_the_reason(
+        self, client, isolated_db, monkeypatch, moment
+    ):
+        _stored_full_run()
+        failed = {"reason": "Composer statistics unavailable", "at": moment}
+        _run_state(monkeypatch, last_failed_attempt=failed)
+        notice = _panel(client).find("tenure-review-failed-notice").text()
+        assert "latest review attempt failed: Composer statistics unavailable" in notice
+        assert _TIME_NOT_RECORDED in notice.lower(), notice
+        assert not re.search(r"\bNone\b", notice)
+        if isinstance(moment, str):
+            assert moment not in notice
+        elif moment is not None:
+            assert str(moment) not in notice
+
+    def test_a_failed_attempt_with_no_time_key_says_the_time_is_not_recorded(
+        self, client, isolated_db, monkeypatch
+    ):
+        _stored_full_run()
+        _run_state(monkeypatch, last_failed_attempt={"reason": "Composer statistics unavailable"})
+        notice = _panel(client).find("tenure-review-failed-notice").text()
+        assert _TIME_NOT_RECORDED in notice.lower(), notice
+        assert not re.search(r"\bNone\b", notice)
+
+    @pytest.mark.parametrize(
+        "failed",
+        [
+            {"at": "2026-12-31T21:45:00+00:00"},
+            {"reason": None, "at": "2026-12-31T21:45:00+00:00"},
+            {"reason": [_MARK], "at": "2026-12-31T21:45:00+00:00"},
+        ],
+        ids=["reason missing", "reason null", "reason a list"],
+    )
+    def test_a_failed_attempt_with_no_readable_reason_says_so(
+        self, client, isolated_db, monkeypatch, failed
+    ):
+        _stored_full_run()
+        _run_state(monkeypatch, last_failed_attempt=failed)
+        notice = _panel(client).find("tenure-review-failed-notice").text()
+        assert "latest review attempt failed" in notice
+        assert _NOT_RECORDED in notice.lower(), notice
+        assert _MARK not in notice and not re.search(r"\bNone\b", notice)
+        assert "2026-12-31 16:45 ET" in notice
+
+
+# ===========================================================================
+# The evidence labels and the row use the sibling classes the design mapping names, so a
+# label is never heavier than its box heading.
+# ===========================================================================
+
+
+def _declared(css: str, prop: str) -> list[str]:
+    return [v.strip() for v in re.findall(rf"(?<![\w-]){prop}\s*:\s*([^;}}]+)", css)]
+
+
+def _size_in_rem(value: str) -> float | None:
+    found = re.fullmatch(r"\s*([\d.]+)(rem|px)\s*", value)
+    if not found:
+        return None
+    return float(found.group(1)) / (16 if found.group(2) == "px" else 1)
+
+
+def _weight(value: str) -> int | None:
+    named = {"normal": 400, "bold": 700, "bolder": 800, "lighter": 300}
+    value = value.strip().lower()
+    return named.get(value, int(value) if value.isdigit() else None)
+
+
+def _label_outweighs_heading(label_css: str, heading_css: str) -> list[str]:
+    """Reasons a label styled by ``label_css`` is larger or bolder than a heading styled by
+    ``heading_css``. A label that declares no size inherits the row's, which is larger."""
+    problems = []
+    heading_size = [_size_in_rem(v) for v in _declared(heading_css, "font-size")]
+    label_size = [_size_in_rem(v) for v in _declared(label_css, "font-size")]
+    if not heading_size or None in heading_size:
+        problems.append("the heading declares no size in rem or px")
+    elif not label_size or None in label_size:
+        problems.append("the label declares no size, so it inherits the row's larger one")
+    elif label_size[-1] > heading_size[-1]:
+        problems.append(f"the label is larger than its heading ({label_size[-1]} rem)")
+    heading_weight = [_weight(v) for v in _declared(heading_css, "font-weight")] or [400]
+    label_weight = [_weight(v) for v in _declared(label_css, "font-weight")] or [400]
+    if None in label_weight or None in heading_weight:
+        problems.append("a weight is not readable")
+    elif label_weight[-1] > heading_weight[-1]:
+        problems.append(f"the label is bolder than its heading ({label_weight[-1]})")
+    return problems
+
+
+_META_LINES = ("unavailable", "not applicable", "subject", "source", "window", "left out")
+
+
+def _label_nodes(block: pb.Node, label: str) -> list[pb.Node]:
+    """The lines that carry the basis label: the lines holding it that are not the item's
+    subject, source, window, reason or left-out lines, which can repeat its words."""
+    return [
+        n
+        for n in pb.leaf_nodes_containing(block, label)
+        if not n.text().lower().startswith(_META_LINES)
+    ]
+
+
+class TestTheEvidenceUsesTheSiblingClasses:
+    @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
+    def test_every_evidence_label_carries_the_basis_class_and_every_row_the_card_class(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            assert "retirement-rec-card" in node.classes(), stored["display_name"]
+            for name in _PANEL_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                labels = _label_nodes(block, stored["evidence"][name]["label"])
+                where = f"{stored['display_name']} / {name}"
+                assert labels, f"{where}: the basis label is not shown on a line of its own"
+                for label in labels:
+                    assert "retirement-rec-basis" in label.classes(), (where, label.classes())
+                checked += 1
+        assert checked >= 18
+
+    def test_the_css_check_reports_a_restyled_label_and_accepts_the_mapped_class(self):
+        rules = TestDesignSystem._css_rules()
+        heading_css = TestDesignSystem._css_of_exact_classes(
+            rules, ["tenure-review-evidence-heading"]
+        )
+        assert heading_css, "fixture sanity: the heading has a style of its own"
+        mapped = TestDesignSystem._css_of_exact_classes(rules, ["retirement-rec-basis"])
+        assert _label_outweighs_heading(mapped, heading_css) == []
+        no_size = "font-weight: 700; color: var(--studio-ink);"
+        assert _label_outweighs_heading(no_size, heading_css)
+        large = "font-size: 0.8125rem; font-style: italic;"
+        assert _label_outweighs_heading(large, heading_css)
+        heavy = "font-size: 0.5rem; font-weight: 800;"
+        assert _label_outweighs_heading(heavy, heading_css)
+
+    @pytest.mark.parametrize("which", ["full", "edge"])
+    def test_no_label_is_larger_or_bolder_than_the_heading_of_its_box(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        rules = TestDesignSystem._css_rules()
+        checked = 0
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            for name in _PANEL_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                heading = block.find("tenure-review-evidence-heading")
+                heading_css = TestDesignSystem._css_of_exact_classes(rules, heading.classes())
+                for label in _label_nodes(block, stored["evidence"][name]["label"]):
+                    label_css = TestDesignSystem._css_of_exact_classes(rules, label.classes())
+                    where = f"{stored['display_name']} / {name}"
+                    assert _label_outweighs_heading(label_css, heading_css) == [], where
+                    checked += 1
+        assert checked >= 12
+
+    def test_each_block_of_every_entry_still_shows_its_basis_label(self, client, isolated_db):
+        record = _stored_full_run()
+        panel = _panel(client)
+        for stored in record["entries"]:
+            node = pb.entry_node(panel, stored["symphony_id"])
+            for name in _PANEL_ITEMS:
+                text = node.find(f"tenure-review-evidence-{name}").text()
+                assert stored["evidence"][name]["label"] in text, (stored["display_name"], name)
+
+
+# ===========================================================================
+# A pair that decides nothing is shown, and its box says it is not used in the verdict.
+# ===========================================================================
+
+_NOT_USED = "not used in the verdict"
+
+
+def _not_used_lines(block: pb.Node) -> list[pb.Node]:
+    return [
+        leaf
+        for leaf in pb.leaf_nodes_containing(block, _NOT_USED)
+        if leaf.text().lower().startswith(_NOT_USED)
+    ]
+
+
+class TestAnUnusedPairSaysItIsNotUsedInTheVerdict:
+    _CASES = [
+        ("small", pb.SMALL_IDS["first"]),
+        ("edge", pb.EDGE_IDS["twin_one"]),
+        ("edge", pb.EDGE_IDS["twin_two"]),
+    ]
+    _IDS = ["short pair", "undefined interval, first twin", "undefined interval, second twin"]
+
+    @pytest.fixture(params=_CASES, ids=_IDS)
+    def unused(self, request, client, isolated_db):
+        which, symphony_id = request.param
+        record = _store_record(which)
+        stored = pb.entry_of(record, symphony_id)
+        item = stored["evidence"]["redundancy"]
+        assert item["status"] == "available" and item["pair"], "fixture sanity: a pair is shown"
+        assert "redundancy" in stored["missing_items"], "fixture sanity: it decides nothing"
+        node = pb.entry_node(_panel(client), symphony_id)
+        return item, node.find("tenure-review-evidence-redundancy")
+
+    def test_the_box_states_the_pair_is_not_used_followed_by_the_items_reason(self, unused):
+        item, block = unused
+        lines = _not_used_lines(block)
+        assert len(lines) == 1, [n.text() for n in lines]
+        text = lines[0].text()
+        assert re.match(rf"{_NOT_USED}:\s*\S", text, flags=re.IGNORECASE), text
+        stored = item.get("reason")
+        expected = stored if isinstance(stored, str) and stored else _NOT_RECORDED
+        assert expected in text, f"the line does not carry the item's reason {expected!r}: {text!r}"
+        assert not re.search(r"\bNone\b", text)
+
+    def test_the_line_sits_in_the_box_that_shows_the_pair(self, unused):
+        item, block = unused
+        assert item["pair"]["sibling_name"] in block.text()
+        assert _not_used_lines(block), "the box shows a pair and does not say it decides nothing"
+
+    @pytest.mark.parametrize("which", ["small", "edge"])
+    def test_the_reason_is_read_from_the_stored_item(self, client, isolated_db, which):
+        reason = "gates could not decide on this pair"
+        victim = pb.SMALL_IDS["first"] if which == "small" else pb.EDGE_IDS["twin_one"]
+
+        def edit(record):
+            _edit(pb.entry_of(record, victim), "evidence.redundancy.reason", reason)
+
+        _, _, panel = _render_edited(client, which, edit)
+        block = pb.entry_node(panel, victim).find("tenure-review-evidence-redundancy")
+        lines = _not_used_lines(block)
+        assert len(lines) == 1 and reason in lines[0].text(), [n.text() for n in lines]
+
+    @pytest.mark.parametrize("which", ["full", "quiet"])
+    def test_a_box_whose_redundancy_decided_or_says_no_sibling_carries_no_such_line(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        checked = 0
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            if item["status"] != "available" or "redundancy" in stored["missing_items"]:
+                continue
+            block = pb.entry_node(panel, stored["symphony_id"]).find(
+                "tenure-review-evidence-redundancy"
+            )
+            assert _NOT_USED not in block.text().lower(), stored["display_name"]
+            checked += 1
+        assert checked >= 3
+
+
+# ===========================================================================
+# Wording: a unit word that repeats the figure's name is not printed.
+# ===========================================================================
+
+
+class TestAUnitWordIsNotRepeatedBesideTheFigureItNames:
+    def test_a_figure_named_for_its_unit_is_printed_as_the_bare_number(self, client, isolated_db):
+        shown = 0
+        for which in ("full", "edge"):
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                node = pb.entry_node(panel, stored["symphony_id"])
+                for name in _PANEL_ITEMS:
+                    item = stored["evidence"][name]
+                    if item["status"] != "available":
+                        continue
+                    figures = dict(item["figures"])
+                    if item["pair"]:
+                        figures.update({n: item["pair"][n] for n in _PAIR_FIGURES})
+                    for fig_name, fig in figures.items():
+                        label = fig_name.replace("_", " ")
+                        if fig["value"] is None or fig["unit"].lower() != label:
+                            continue
+                        block = node.find(f"tenure-review-evidence-{name}")
+                        lines = [
+                            n
+                            for n in pb.leaf_nodes_containing(block, label)
+                            if n.text().lower().startswith(f"{label}:")
+                        ]
+                        where = f"{stored['display_name']} / {fig_name}"
+                        assert len(lines) == 1, where
+                        text = lines[0].text()
+                        assert _shows(lines[0], fig["value"]), (where, text)
+                        assert not re.search(rf"\d\s*{re.escape(fig['unit'])}\b", text), (
+                            f"{where}: the unit repeats the name: {text!r}"
+                        )
+                        shown += 1
+        assert shown >= 3, "the records must hold figures whose unit is their name"
+
+    def test_a_unit_that_does_not_repeat_the_name_is_still_printed(self, client, isolated_db):
+        shown = 0
+        for which in ("full", "edge"):
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                node = pb.entry_node(panel, stored["symphony_id"])
+                for name in _PANEL_ITEMS:
+                    item = stored["evidence"][name]
+                    if item["status"] != "available":
+                        continue
+                    for fig_name, fig in item["figures"].items():
+                        label = fig_name.replace("_", " ")
+                        unit_word = fig["unit"].split()[0].lower()
+                        if fig["value"] is None or unit_word in label.split():
+                            continue
+                        block = node.find(f"tenure-review-evidence-{name}")
+                        lines = [
+                            n
+                            for n in pb.leaf_nodes_containing(block, label)
+                            if n.text().lower().startswith(f"{label}:")
+                        ]
+                        where = f"{stored['display_name']} / {fig_name}"
+                        assert len(lines) == 1, where
+                        assert unit_word in lines[0].text().lower(), (where, lines[0].text())
+                        shown += 1
+        assert shown >= 20, "the records must hold many figures with a unit of their own"
+
+
+# ===========================================================================
+# The comparison item lists the peers it could not compare; the population line reads
+# in the singular for one symphony.
+# ===========================================================================
+
+
+class TestPeersNotComparedAreListedWithTheirReason:
+    @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
+    def test_every_peer_the_record_lists_is_named_with_its_reason_in_the_redundancy_box(
+        self, client, isolated_db, which
+    ):
+        record = _store_record(which)
+        panel = _panel(client)
+        listed = 0
+        for stored in record["entries"]:
+            item = stored["evidence"]["redundancy"]
+            block = pb.entry_node(panel, stored["symphony_id"]).find(
+                "tenure-review-evidence-redundancy"
+            )
+            for peer in item.get("not_compared") or []:
+                lines = pb.leaf_nodes_containing(block, peer["display_name"])
+                where = f"{stored['display_name']} / {peer['display_name']}"
+                assert any(peer["reason"] in line.text() for line in lines), where
+                listed += 1
+        assert listed >= (3 if which == "full" else 0)
+
+    def test_the_list_is_read_from_the_stored_item_and_not_derived_from_the_bases(
+        self, client, isolated_db
+    ):
+        peer = {"display_name": "Zed Peak Rotation", "reason": "bases differ, stored for this test"}
+
+        def edit(record):
+            _edit(
+                pb.entry_with_verdict(record, "watch"), "evidence.redundancy.not_compared", [peer]
+            )
+
+        record, _, panel = _render_edited(client, "full", edit)
+        watch = pb.entry_with_verdict(record, "watch")
+        block = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-redundancy")
+        lines = pb.leaf_nodes_containing(block, peer["display_name"])
+        assert any(peer["reason"] in line.text() for line in lines)
+        assert pb.FULL_NAMES["shadow"] not in block.text(), "a peer the record does not list"
+
+    @pytest.mark.parametrize("stored", [[], _GONE], ids=["empty list", "key absent"])
+    def test_an_empty_or_absent_list_adds_no_line_and_no_none(self, client, isolated_db, stored):
+        def edit(record):
+            _edit(
+                pb.entry_with_verdict(record, "watch"), "evidence.redundancy.not_compared", stored
+            )
+
+        record, _, panel = _render_edited(client, "full", edit)
+        watch = pb.entry_with_verdict(record, "watch")
+        block = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-redundancy")
+        assert pb.FULL_NAMES["shadow"] not in block.text()
+        assert not re.search(r"\bNone\b", block.text())
+        assert watch["evidence"]["redundancy"]["pair"]["sibling_name"] in block.text()
+
+
+class TestThePopulationLineReadsInTheSingularForOne:
+    def _composite_block(self, client, population):
+        def edit(record):
+            _edit(
+                pb.entry_with_verdict(record, "watch"),
+                "evidence.composite.population_size",
+                population,
+            )
+
+        record, _, panel = _render_edited(client, "full", edit)
+        watch = pb.entry_with_verdict(record, "watch")
+        return pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-composite")
+
+    def test_one_symphony_reads_as_one_symphony(self, client, isolated_db):
+        text = self._composite_block(client, 1).text()
+        assert re.search(r"(?<![\d.])1 symphony(?!\w)", text), text
+        assert "1 symphonies" not in text
+
+    @pytest.mark.parametrize("population", [2, 7])
+    def test_a_larger_whole_population_keeps_the_plural(self, client, isolated_db, population):
+        text = self._composite_block(client, population).text()
+        assert re.search(rf"(?<![\d.]){population} symphonies", text), text
