@@ -51,7 +51,7 @@ class RunOutcome:
 
 @dataclass(frozen=True)
 class _MissingAccount:
-    """An account whose holdings were not read in full: its failure classes and how much was read."""
+    """An account whose holdings were not read in full: its failure classes, how much was read."""
 
     account_id: str
     failures: tuple[str, ...]
