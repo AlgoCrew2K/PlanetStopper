@@ -571,7 +571,7 @@ def _shadow_performance(rows, invested_since: date):
     subject = b.shadow_symphony("shadow-sub", "Shadow Sub", invested_since.isoformat(), rows)
     result = b.review([subject], as_of=b.AS_OF, threshold=SHADOW_START_THRESHOLD)
     entry = b.entry_of(result, "shadow-sub")
-    return subject, b.item_of(entry, "performance")
+    return subject, b.item_of(entry, "performance"), entry["basis"]
 
 
 @pytest.mark.parametrize(
@@ -586,7 +586,7 @@ def test_a_shadow_window_starts_at_the_session_before_its_first_stored_row(first
     return with no baseline in the window, and a baseline taken from calendar days."""
     sessions = _sessions_from(first_row)
     returns = b.wave_returns(len(sessions), amp=2.0)
-    subject, perf = _shadow_performance(b.by_date(sessions, returns), date(2026, 12, 14))
+    subject, perf, basis = _shadow_performance(b.by_date(sessions, returns), date(2026, 12, 14))
     assert perf["status"] == "available"
     assert perf["window"] == {
         "first": b.session_before(first_row).isoformat(),
@@ -597,18 +597,23 @@ def test_a_shadow_window_starts_at_the_session_before_its_first_stored_row(first
         _compounded_percent(returns), rel=1e-9
     )
     assert tr.qualifying_window(subject, b.AS_OF, SHADOW_START_THRESHOLD) == perf["window"]
+    # the data starts on the first stored row; the baseline session before it has no row
+    assert basis["series_begins"] == first_row.isoformat()
+    assert basis["tenure_begins"] == date(2026, 12, 14).isoformat()
 
 
 def test_the_window_opens_before_the_first_usable_row_when_the_first_stored_row_is_unusable():
     """The return of the first usable row is measured from the session before it, whether
-    or not that session has a stored row. Rejects opening the window before the first
-    stored key, which leaves a session with no return inside the window."""
+    or not that session has a stored row, and the data starts on the first usable row.
+    Rejects opening the window before the first stored key, which leaves a session with no
+    return inside the window, and a series that begins on a row with no usable return."""
     sessions = _sessions_from(date(2026, 12, 21))
     returns = b.wave_returns(len(sessions), amp=2.0)
     rows = b.by_date(sessions, returns)
     rows[sessions[0].isoformat()] = None
-    _subject_input, perf = _shadow_performance(rows, date(2026, 12, 14))
+    _subject_input, perf, basis = _shadow_performance(rows, date(2026, 12, 14))
     assert perf["window"]["first"] == sessions[0].isoformat()
+    assert basis["series_begins"] == sessions[1].isoformat()
     assert perf["window"]["days"] == len(sessions)  # the usable rows, plus the baseline
     assert perf["figures"]["total_return"]["value"] == pytest.approx(
         _compounded_percent(returns[1:]), rel=1e-9
@@ -636,7 +641,7 @@ def test_a_shadow_window_never_reaches_back_before_the_tenure_and_keeps_a_baseli
     returns = b.wave_returns(len(sessions), amp=2.0)
     kept = [i for i, d in enumerate(sessions) if d >= invested_since]
     returns[kept[0]] = 3.7  # a first kept return no later return can stand in for
-    _subject_input, perf = _shadow_performance(b.by_date(sessions, returns), invested_since)
+    _subject_input, perf, basis = _shadow_performance(b.by_date(sessions, returns), invested_since)
     kept_days = [sessions[i] for i in kept]
     kept_returns = [returns[i] for i in kept]
     if baseline_in_tenure:
@@ -648,6 +653,10 @@ def test_a_shadow_window_never_reaches_back_before_the_tenure_and_keeps_a_baseli
         assert perf["window"]["days"] == len(kept_days)
         counted = kept_returns[1:]
     assert date.fromisoformat(perf["window"]["first"]) >= invested_since
+    # where the data starts: the first row in the tenure, which is the window's first day
+    # only when that row is its own baseline
+    assert basis["series_begins"] == kept_days[0].isoformat()
+    assert basis["tenure_begins"] == invested_since.isoformat()
     assert perf["figures"]["total_return"]["value"] == pytest.approx(
         _compounded_percent(counted), rel=1e-9
     )

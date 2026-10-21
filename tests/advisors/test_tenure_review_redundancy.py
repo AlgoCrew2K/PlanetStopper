@@ -782,7 +782,8 @@ def test_a_screen_hit_on_too_few_aligned_days_is_shown_with_the_gate_reading_ins
         assert item["status"] == "available", sid
         assert item["retire_candidate"] is False, sid
         assert item.get("summary") != NO_SIBLING_TEXT, sid
-        assert "redundancy" not in entry["missing_items"], sid
+        # shown, but its gates were not evaluated, so it decides nothing
+        assert "redundancy" in entry["missing_items"], sid
         pair = item["pair"]
         assert pair["sibling_id"] == sibling, sid
         assert pair["n_obs"] == SHORT_OVERLAP, sid
@@ -809,7 +810,7 @@ def test_one_pair_with_enough_days_keeps_the_item_available():
         assert item["status"] == "available", sid
         assert item["pair"]["sibling_id"] == sibling, sid
         assert item.get("summary") != NO_SIBLING_TEXT, sid
-        assert "redundancy" not in entry["missing_items"], sid
+        assert "redundancy" in entry["missing_items"], sid
 
 
 def test_an_unrelated_evaluable_peer_changes_neither_the_pair_a_short_hit_shows_nor_its_claim():
