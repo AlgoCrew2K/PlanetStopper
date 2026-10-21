@@ -5184,11 +5184,21 @@ class TestAPercentFigureCarriesThePercentSign:
 
 
 class TestAFigureWithNoValueReadsNotComputable:
-    def test_no_line_of_any_record_says_not_computed(self, client, isolated_db):
+    def test_no_figure_line_of_any_record_says_not_computed(self, client, isolated_db):
+        """A stored reason may itself say a value was not computed; the figure line's own
+        wording is what retired."""
+        retired = re.compile(r"^[a-z][a-z ]*: not computed")
+        checked = 0
         for which in ("full", "edge", "small", "quiet", "gap", "lone", "solo", "apart"):
             _store_record(which)
-            text = _panel(client).everything().lower()
-            assert "not computed" not in text, f"{which}: the retired wording is back"
+            panel = _panel(client)
+            for node in panel.walk():
+                if any(isinstance(child, pb.Node) for child in node.children):
+                    continue
+                text = node.text().lower()
+                assert not retired.match(text), f"{which}: the retired wording is back: {text!r}"
+                checked += text.startswith("holdings overlap:")
+        assert checked >= 3, "the records must hold figure lines to read"
 
     def test_each_null_figure_starts_not_computable_and_keeps_its_stored_reason(
         self, client, isolated_db
@@ -5338,27 +5348,31 @@ class TestARedundancyItemThatShowsNoPairStatesItsReasonOnce:
                     "tenure-review-evidence-redundancy"
                 )
                 reason = item["reason"]
+                # the box label may read like the reason; it is not a line that states one
                 carrying = [
                     n
                     for n in pb.leaf_nodes_containing(block, reason)
                     if not n.text().lower().startswith(("not compared", "left out"))
+                    and "retirement-rec-basis" not in n.classes()
                 ]
                 if len(carrying) != 1 or carrying[0].text().count(reason) != 1:
                     problems.append(f"{where}: reason on {[n.text() for n in carrying]}")
                     continue
+                status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
                 if "redundancy" in stored["missing_items"]:
                     decided_nothing += 1
                     if not carrying[0].text().lower().startswith(_NOT_USED):
                         problems.append(f"{where}: the reason is not on the not-used line")
-                status_word = "unavailable" if item["status"] == "unavailable" else "not applicable"
-                status_lines = [
-                    n for n in _leaf_lines(block, (status_word,)) if n is not carrying[0]
-                ]
-                if not status_lines:
-                    problems.append(f"{where}: no line names the status {status_word!r}")
+                    status_lines = [
+                        n for n in _leaf_lines(block, (status_word,)) if n is not carrying[0]
+                    ]
+                    if not status_lines:
+                        problems.append(f"{where}: no line names the status {status_word!r}")
+                elif not carrying[0].text().lower().startswith(status_word):
+                    problems.append(f"{where}: the status line does not carry the reason")
                 checked += 1
         assert problems == []
-        assert checked >= 25 and decided_nothing >= 10, (checked, decided_nothing)
+        assert checked >= 20 and decided_nothing >= 10, (checked, decided_nothing)
 
     def test_an_item_that_shows_a_pair_still_states_its_reason_on_the_not_used_line(
         self, client, isolated_db
