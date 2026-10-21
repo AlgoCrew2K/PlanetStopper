@@ -45,13 +45,6 @@ def isolated_db(tmp_path, monkeypatch):
     return tmp_path
 
 
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
 class TestRetirementRecommendationsTickThreadSpawn:
     def test_run_retirement_recommender_tick_spawns_a_daemon_thread(self, isolated_db):
         """The scheduler-facing wrapper must spawn a thread and return immediately -- never
@@ -311,7 +304,7 @@ class TestTheNightlyTickProducesAReviewPerLiveSymphony:
         with patch("threading.Thread", jb.ImmediateThread):
             app_module._run_retirement_recommender_tick()
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         live = jb.stored_and_listed_ids()
         assert sorted(jb.entries_by_id(data)) == sorted(live)
         assert len(data["review_entries"]) == len(live), "one row per live symphony, no repeats"

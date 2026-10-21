@@ -86,6 +86,17 @@ def _stub_community_strats_offline():
         yield mock_load
 
 
+@pytest.fixture()
+def client():
+    """A Flask test client for tests that do not need a special one (a test file that defines
+    its own ``client`` keeps using that)."""
+    import app as app_module
+
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        yield c
+
+
 @pytest.fixture(autouse=True)
 def _reset_review_run_state(monkeypatch):
     """Give every tests/app/ test a fresh, idle review run state with no remembered failed

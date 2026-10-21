@@ -39,6 +39,7 @@ from advisors import tenure_review_runner as runner_module
 from tests.advisors import _composer_http_router as h
 from tests.advisors import _tenure_review_builders as b
 from tests.app import _tenure_review_panel_builders as pb
+from tests.app.test_held_basis_route_convergence import _frozen_datetime_class
 
 ET = ZoneInfo("America/New_York")
 
@@ -62,15 +63,9 @@ ROLE_REC = "RETIREMENT_RECOMMENDATION"
 def freeze_app_clock(monkeypatch, instant: datetime = NOW_ET):
     """Make ``app.datetime.now(tz)`` answer ``instant`` in ``tz`` for the rest of the test."""
 
-    class _Frozen(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            if tz is not None:
-                return instant.astimezone(tz)
-            return instant.replace(tzinfo=None)
-
-    monkeypatch.setattr(app_module, "datetime", _Frozen)
-    return _Frozen
+    frozen = _frozen_datetime_class(instant)
+    monkeypatch.setattr(app_module, "datetime", frozen)
+    return frozen
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +487,19 @@ def api(client) -> dict:
     response = client.get("/api/retirement-recommendations")
     assert response.status_code == 200, f"the API answered {response.status_code}"
     return pb.strict_json(response)
+
+
+def api_after_run(client) -> dict:
+    """``api`` for a test that expects a review run to be stored: fails with that reason, not
+    with a missing key further on."""
+    data = api(client)
+    assert data["review_run"] is not None, "no review run is stored: the run did not complete"
+    return data
+
+
+def assert_review_ran(calls: list, who: str = "the worker") -> None:
+    """The stand-in for the review run was called: ``who`` reached the review run at all."""
+    assert calls, f"{who} never reached the review run (run_tenure_review was not called)"
 
 
 def entries_by_id(data: dict) -> dict[str, dict]:

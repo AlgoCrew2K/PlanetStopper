@@ -93,11 +93,12 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: [rec])
+            runs = jb.patch_runner(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()
+            jb.assert_review_ran(runs)
 
         assert len(captured_calls) == 1
         passed = captured_calls[0]
@@ -134,11 +135,12 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: [rec])
+            runs = jb.patch_runner(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
             mp.setattr(explainer_module, "explain_recommendation", lambda r: "explanation text")
 
             app_module._retirement_recommender_tick_worker()
+            jb.assert_review_ran(runs)
 
         assert len(captured_persisted) == 1
         persisted = captured_persisted[0]
@@ -163,11 +165,12 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: [rec])
+            runs = jb.patch_runner(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()
+            jb.assert_review_ran(runs)
 
         assert captured_calls[0].get("candidate_name") == _CANDIDATE_HASH, (
             "An unresolvable candidate must fall back to its own raw id as the "
@@ -189,11 +192,12 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: [rec])
+            runs = jb.patch_runner(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()
+            jb.assert_review_ran(runs)
 
         assert captured_calls[0].get("sibling_name") == _SIBLING_HASH
 
@@ -223,7 +227,7 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: [rec])
+            runs = jb.patch_runner(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
@@ -234,6 +238,7 @@ class TestExplainerReceivesResolvedNames:
                     f"_retirement_recommender_tick_worker must never propagate a "
                     f"bot_state load failure: {type(exc).__name__}: {exc}"
                 )
+            jb.assert_review_ran(runs)
 
         assert len(captured_calls) == 1, (
             "The explainer must still run despite the name-resolution failure."
@@ -261,11 +266,12 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: [rec])
+            runs = jb.patch_runner(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()
+            jb.assert_review_ran(runs)
 
         assert isinstance(captured_calls[0].get("candidate_name"), str)
         assert isinstance(captured_calls[0].get("sibling_name"), str)
@@ -296,11 +302,12 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            jb.patch_runner(mp, lambda: recs)
+            runs = jb.patch_runner(mp, lambda: recs)
             mp.setattr(recommender_module, "persist_recommendations", lambda r, **kw: len(r))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()
+            jb.assert_review_ran(runs)
 
         assert len(captured_calls) == 2
         by_candidate = {c["candidate_id"]: c for c in captured_calls}

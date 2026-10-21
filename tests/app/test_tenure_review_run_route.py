@@ -53,13 +53,6 @@ def store(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-@pytest.fixture()
 def executor(monkeypatch):
     """The executor the route submits to, replaced by one that runs the job at once."""
     immediate = jb.ImmediateExecutor()
@@ -145,7 +138,9 @@ class TestAnOnDemandRunReplacesTheLastReview:
     ):
         nightly = pb.store_full_run(pb.RUN_ID_FIRST)
         pb.seed_roster_state(nightly)
-        assert len(jb.api(client)["recommendations"]) == 1, "premise: the nightly run has one"
+        assert len(jb.api_after_run(client)["recommendations"]) == 1, (
+            "premise: the nightly run has one"
+        )
         fresh = pb.full_record(pb.RUN_ID_SECOND, trigger="on_demand")
         entries = copy.deepcopy(fresh["entries"])
         jb.patch_runner(monkeypatch, [], entries=entries, isolate=False)
@@ -153,7 +148,7 @@ class TestAnOnDemandRunReplacesTheLastReview:
         response = _post(client)
 
         assert response.status_code == 202
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         run = data["review_run"]
         assert run["run_id"] != pb.RUN_ID_FIRST
         assert run["trigger"] == "on_demand"
@@ -300,7 +295,7 @@ class TestAFailedJobNeverShowsItsExceptionText:
     ):
         previous = pb.store_full_run(pb.RUN_ID_FIRST)
         pb.seed_roster_state(previous)
-        before = jb.api(client)
+        before = jb.api_after_run(client)
         where(monkeypatch)
 
         with caplog.at_level(logging.DEBUG):
@@ -308,7 +303,7 @@ class TestAFailedJobNeverShowsItsExceptionText:
 
         assert response.status_code == 202, "the failure happens after the request was answered"
         assert LEAK not in response.get_data(as_text=True)
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         assert data["review_run"] == before["review_run"], "the previous run stays the latest"
         assert data["review_entries"] == before["review_entries"]
         failed = data["review_status"]["last_failed_attempt"]

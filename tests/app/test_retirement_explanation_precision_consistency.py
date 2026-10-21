@@ -186,12 +186,13 @@ def _run_worker_with_mocked_prior_rows(prior_rows, new_rec, *, explain_return="f
         return len(recs)
 
     with pytest.MonkeyPatch.context() as mp:
-        jb.patch_runner(mp, lambda: [new_rec])
+        runs = jb.patch_runner(mp, lambda: [new_rec])
         mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
         mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
         mp.setattr(db_module, "get_advisor_observations_for_role", lambda *a, **kw: prior_rows)
 
         app_module._retirement_recommender_tick_worker()
+        jb.assert_review_ran(runs)
 
     return explain_calls, persisted
 

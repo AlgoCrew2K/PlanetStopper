@@ -397,6 +397,7 @@ class TestARefusedSubmissionAnsweredWithStatus200:
             run={"mode": "status", "status": 200, "kind": "json", "body": {"error": HOSTILE}},
             csrf_preset="tok",
         )
+        assert HOSTILE in out["state"]["message"], "the server's text is what the panel shows"
         assert _is_negative(out["state"]), "an error the server reported is not an acknowledgement"
         assert not any("<img" in html for html in out["log"]["innerHtml"]), "text, never markup"
 

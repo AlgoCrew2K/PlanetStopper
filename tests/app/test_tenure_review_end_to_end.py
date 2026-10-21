@@ -115,13 +115,6 @@ def world(tmp_path, monkeypatch, explainer_calls):
     return env
 
 
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
 def run_tick() -> None:
     """The 03:45 tick, with the thread it starts run on the spot."""
     with patch("threading.Thread", jb.ImmediateThread):
@@ -163,7 +156,7 @@ class TestTheNightlyReviewListsEveryLiveSymphony:
 
         run_tick()
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         entries = jb.entries_by_id(data)
         assert sorted(entries) == sorted(stats), "one entry per symphony Composer lists"
         assert len(data["review_entries"]) == len(stats), "no symphony twice"
@@ -203,7 +196,7 @@ class TestTheNightlyReviewListsEveryLiveSymphony:
 
         run_tick()
 
-        entry = jb.entries_by_id(jb.api(client))[h.MID_ID]
+        entry = jb.entries_by_id(jb.api_after_run(client))[h.MID_ID]
         points = h.series_points(h.MID_ID)
         first = entry["invested_since"]
         kept = [d for d in sorted(points) if first <= d <= "2026-10-19"]
@@ -225,7 +218,7 @@ class TestTheNightlyReviewListsEveryLiveSymphony:
 
         run_tick()
 
-        entries = jb.entries_by_id(jb.api(client))
+        entries = jb.entries_by_id(jb.api_after_run(client))
         sessions = b.last_n_nyse_days(jb.AS_OF, THRESHOLD)
         scored = {
             sid: e
@@ -280,7 +273,7 @@ class TestASymphonyBelowTheThresholdIsListedWithoutAVerdict:
         else:
             assert run_on_demand(client, monkeypatch).status_code == 202
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         entry = jb.entries_by_id(data)[jb.TWIN_ID]
         remaining = THRESHOLD - days
         assert data["review_run"]["trigger"] == trigger
@@ -303,7 +296,7 @@ class TestASymphonyBelowTheThresholdIsListedWithoutAVerdict:
 
         run_tick()
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         peer = jb.entries_by_id(data)[h.MID_ID]
         pair = peer["evidence"]["redundancy"]["pair"]
         assert pair is not None and pair["sibling_id"] == jb.TWIN_ID, (
@@ -352,7 +345,7 @@ class TestAPassingPairBecomesARetirementCandidate:
 
         run_tick()
 
-        entry = jb.entries_by_id(jb.api(client))[jb.TWIN_ID]
+        entry = jb.entries_by_id(jb.api_after_run(client))[jb.TWIN_ID]
         redundancy = entry["evidence"]["redundancy"]
         pair = redundancy["pair"]
         assert redundancy["retire_candidate"] is True
@@ -374,7 +367,7 @@ class TestAPassingPairBecomesARetirementCandidate:
 
         run_tick()
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         run_id = data["review_run"]["run_id"]
         entry = jb.entries_by_id(data)[jb.TWIN_ID]
         assert entry["explanation"] == EXPLANATION
@@ -413,7 +406,7 @@ class TestAPassingPairBecomesARetirementCandidate:
         with caplog.at_level(logging.DEBUG):
             run_tick()
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         assert data["review_run"] is not None, "an explainer failure never fails the run"
         entry = jb.entries_by_id(data)[jb.TWIN_ID]
         assert entry["verdict"] == "retire_candidate"
@@ -461,7 +454,7 @@ class TestTheComparisonPortfolioIsTheEligibleSymphoniesOnly:
 
         run_tick()
 
-        entries = jb.entries_by_id(jb.api(client))
+        entries = jb.entries_by_id(jb.api_after_run(client))
         eligible = [h.OLDEST_ID, h.MID_ID, h.BACKTEST_ID]
         points = {sid: h.series_points(sid) for sid in eligible}
         starts = {
@@ -520,7 +513,7 @@ class TestLongVolatilityCoFiring:
 
         run_tick()
 
-        entries = jb.entries_by_id(jb.api(client))
+        entries = jb.entries_by_id(jb.api_after_run(client))
         checked = 0
         for sid, entry in entries.items():
             item = entry["evidence"]["long_vix"]
@@ -558,7 +551,7 @@ class TestTheDatedBacktestCoversTheRealizedWindow:
         response = run_on_demand(client, monkeypatch)
 
         assert response.status_code == 202
-        entry = jb.entries_by_id(jb.api(client))[h.BACKTEST_ID]
+        entry = jb.entries_by_id(jb.api_after_run(client))[h.BACKTEST_ID]
         points = h.series_points(h.BACKTEST_ID)
         kept = [d for d in sorted(points) if "2026-07-20" <= d <= "2026-10-19"]
         performance = entry["evidence"]["performance"]
@@ -580,7 +573,7 @@ class TestTheDatedBacktestCoversTheRealizedWindow:
         assert realized == pytest.approx((points[kept[-1]] / points[kept[0]] - 1) * 100), (
             "the realized leg is the same figure the performance item shows"
         )
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         assert data["review_run"]["threshold_in_effect"] == 60
         assert data["review_run"]["trigger"] == "on_demand"
 
@@ -603,12 +596,12 @@ SECOND_RUN_AT = datetime(2026, 10, 21, 3, 45, tzinfo=jb.ET)
 def _first_good_run(client, monkeypatch, *, twin=True):
     router = jb.install_world(monkeypatch, twin=twin)
     run_tick()
-    return router, jb.api(client)
+    return router, jb.api_after_run(client)
 
 
 def _assert_previous_review_kept(client, before: dict, ids_before, reason: str, at: datetime):
     assert jb.new_rows_since(ids_before) == [], "a run that fails writes nothing"
-    after = jb.api(client)
+    after = jb.api_after_run(client)
     assert after["review_run"] == before["review_run"], "the previous completed run stays shown"
     assert after["review_entries"] == before["review_entries"]
     assert after["recommendations"] == before["recommendations"]
@@ -663,7 +656,7 @@ class TestAFailedStatisticsReadKeepsThePreviousReview:
         # its array emptied, an edge of the capture).
         router.statistics_by_account[h.SECOND_ACCOUNT_ID] = h.Reply(body={"symphonies": []})
         run_tick()
-        before = jb.api(client)
+        before = jb.api_after_run(client)
         ids_before = jb.all_row_ids()
         router.statistics_by_account[h.SECOND_ACCOUNT_ID] = h.error_reply(503)
         request_count = len(router.requests)
@@ -709,7 +702,7 @@ class TestARateLimitPartWayThroughTheRun:
         assert kinds == ["statistics", "series"], (
             f"nothing may be requested after the first 429, got {kinds}"
         )
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         assert data["review_run"] is not None, "a rate limit ends the evidence, not the run"
         assert len(data["review_entries"]) == len(jb.stored_and_listed_ids())
         reasons = " ".join(
@@ -734,7 +727,7 @@ class TestARateLimitPartWayThroughTheRun:
         run_tick()
 
         assert len(router.requests) > count + 2, "the second run read the Composer again"
-        newest = jb.api(client)
+        newest = jb.api_after_run(client)
         assert len(jb.run_rows()) == 2
         assert jb.entries_by_id(newest)[h.MID_ID]["basis"]["kind"] == "composer"
 
@@ -760,7 +753,7 @@ class TestWhatACompletedRunWrites:
         run_row = max(r["id"] for r in new if r["advisor_role"] == jb.ROLE_RUN)
         rec_ids = [r["id"] for r in new if r["advisor_role"] == jb.ROLE_REC]
         assert rec_ids and max(rec_ids) < run_row, "the recommendation rows are written first"
-        run = jb.api(client)["review_run"]
+        run = jb.api_after_run(client)["review_run"]
         stored = jb.run_rows()[0]
         assert stored["subject_id"] == run["run_id"]
         assert stored["verdict"] == "completed"
@@ -774,7 +767,7 @@ class TestWhatACompletedRunWrites:
 
         run_tick()
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         assert data["review_run"] is not None and data["review_entries"] == []
         assert "No live symphonies" in jb.panel(client).find("tenure-review-no-symphonies").text()
 
@@ -817,7 +810,7 @@ class TestARunThatFailsAfterTheRecommendationsWereWritten:
         )
         orphan = jb.rec_rows()[0]["raw_response"]
         assert orphan["review_run_id"] == seen["run_id"] != before["review_run"]["run_id"]
-        after = jb.api(client)
+        after = jb.api_after_run(client)
         assert after["review_run"] == before["review_run"]
         assert after["recommendations"] == before["recommendations"], (
             "the row of a run that never completed is not listed"
@@ -834,7 +827,7 @@ class TestARunThatFailsAfterTheRecommendationsWereWritten:
     ):
         self._orphaned_run(client, monkeypatch, caplog)
 
-        data = jb.api(client)
+        data = jb.api_after_run(client)
         failed = data["review_status"]["last_failed_attempt"]
         assert isinstance(failed["reason"], str) and failed["reason"].strip()
         assert LEAK not in str(data)
@@ -858,7 +851,7 @@ class TestADecisionMadeWhileAReviewRuns:
     ):
         jb.install_world(monkeypatch, twin=True)
         run_tick()
-        first = jb.api(client)["review_run"]["run_id"]
+        first = jb.api_after_run(client)["review_run"]["run_id"]
         real_runner = runner_module.run_tenure_review
         blocked = jb.BlockingRunner(delegate=real_runner).install(monkeypatch)
         executor = jb.ThreadedExecutor()
@@ -877,7 +870,7 @@ class TestADecisionMadeWhileAReviewRuns:
             node = pb.entry_node(mid_run, jb.TWIN_ID)
             assert node.find("retirement-rec-status").text().lower() == "approved"
             assert mid_run.find("tenure-review-running-notice") is not None
-            assert jb.api(client)["review_run"]["run_id"] == first, (
+            assert jb.api_after_run(client)["review_run"]["run_id"] == first, (
                 "the previous run is shown while the new one runs"
             )
         finally:
@@ -885,7 +878,7 @@ class TestADecisionMadeWhileAReviewRuns:
             executor.wait_all()
             executor.shutdown()
 
-        after = jb.api(client)
+        after = jb.api_after_run(client)
         assert after["review_run"]["run_id"] != first
         entry = jb.entries_by_id(after)[jb.TWIN_ID]
         assert entry["approval_status"] == "approved"
