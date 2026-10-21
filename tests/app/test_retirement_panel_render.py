@@ -2299,6 +2299,7 @@ class _Poison:
     absent: tuple = ()  # patterns the scoped text must not match
     shows: str | None = None  # path of a float the scoped text must still show
     markers: tuple = (_MARK,)  # patterns that must not match anywhere in the panel
+    optional: bool = False  # a line the page may drop instead of wording
 
 
 _BASIS = ("basis",)
@@ -2381,6 +2382,8 @@ def _scoped(panel, victim_id, scope):
         return node.find("tenure-review-basis")
     if kind == "chip":
         return node.find("tenure-review-verdict-chip")
+    if kind == "testid":
+        return node.find(scope[1])
     block = node.find(f"tenure-review-evidence-{scope[1]}")
     if kind == "block":
         return block
@@ -2439,6 +2442,34 @@ _POISONS = [
         [("basis.tenure_begins", _LIST)],
         _BASIS,
         not_recorded=False,
+    ),
+    # the name and the tenure line
+    _case(
+        "display name a list",
+        "watch",
+        [("display_name", _LIST)],
+        ("testid", "tenure-review-name"),
+        not_recorded=False,
+    ),
+    _case(
+        "tenure a boolean",
+        "watch",
+        [("tenure_trading_days", True)],
+        ("testid", "tenure-review-tenure"),
+        not_recorded=False,
+        optional=True,
+        absent=(r"\bTrue\b", r"\b1 trading"),
+        markers=(_MARK, _TRUE),
+    ),
+    _case(
+        "tenure not a whole number",
+        "watch",
+        [("tenure_trading_days", 12.5)],
+        ("testid", "tenure-review-tenure"),
+        not_recorded=False,
+        optional=True,
+        absent=(r"\b12 trading", _TWELVE_POINT_FIVE),
+        markers=(_MARK, _TWELVE_POINT_FIVE),
     ),
     # the verdict chip
     _case("verdict text missing", "watch", [("verdict_text", _GONE)], _CHIP),
@@ -2505,6 +2536,20 @@ _POISONS = [
     ),
     # an evidence item that is not a record
     _case("item is a list", "watch", [("evidence.performance", _LIST)], _block("performance")),
+    _case(
+        "item label a list",
+        "watch",
+        [("evidence.performance.label", _LIST)],
+        _block("performance"),
+        not_recorded=False,
+    ),
+    _case(
+        "item label null",
+        "watch",
+        [("evidence.performance.label", None)],
+        _block("performance"),
+        not_recorded=False,
+    ),
     # subject and source of an available item
     _case(
         "subject missing",
@@ -2944,8 +2989,12 @@ class TestAMissingOrWrongTypedFieldReadsNotRecorded:
         for marker in poison.markers:
             assert not re.search(marker, everything), f"the stored value {marker!r} was printed"
         scoped = _scoped(panel, holder["id"], poison.scope)
+        if scoped is None and poison.optional:
+            _assert_others_unchanged(panel, pristine, holder["id"], poison.scope)
+            return
         assert scoped is not None, "the line that prints the field is dropped, not worded"
         text = scoped.text()
+        assert text, "the field leaves an empty slot"
         if poison.not_recorded:
             assert _NOT_RECORDED in text.lower(), f"nothing says it is not recorded: {text!r}"
         for pattern in poison.absent:
@@ -3401,7 +3450,7 @@ class TestAUnitWordIsNotRepeatedBesideTheFigureItNames:
                     if item["status"] != "available":
                         continue
                     figures = dict(item["figures"])
-                    if item["pair"]:
+                    if item.get("pair"):
                         figures.update({n: item["pair"][n] for n in _PAIR_FIGURES})
                     for fig_name, fig in figures.items():
                         label = fig_name.replace("_", " ")
