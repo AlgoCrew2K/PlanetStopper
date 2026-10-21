@@ -43,10 +43,15 @@ Contract pinned here (the implementer reads this file, not the plan):
   state returned by ``database.load_state()`` (called as ``database.load_state()`` so a patch of
   that module attribute holds); left ``None`` when the state has no entry for the Composer id,
   no ``logic_holdings`` or a null one, or when the state cannot be read.
-- The window of a symphony is asked of ``tenure_review.qualifying_window`` (called as
-  ``tenure_review.qualifying_window(symphony, as_of, threshold)`` so a patch of that module
-  attribute holds); the runner uses no private name of ``advisors.tenure_review``.
-- The run reads in phases: statistics, then every series, then for each symphony with a usable
+- The evidence window of a symphony is asked of ``tenure_review.qualifying_window`` and the
+  window its backtest is requested over of ``tenure_review.backtest_window`` (each called as
+  ``tenure_review.<name>(symphony, as_of, threshold)`` so a patch of that module attribute
+  holds). The holdings start is the earliest qualifying window first day, so a symphony whose
+  backtest window is None (a shadow-basis window with a session that has no usable row) still
+  counts toward it; that symphony gets no definition read and no backtest request, and every
+  other symphony's requests are unchanged. The runner uses no private name of
+  ``advisors.tenure_review`` and does not restate the rule that withholds the backtest.
+- The run reads in phases: statistics, then every series, then for each symphony with a backtest
   window and tenure at least the threshold one definition read and, when the definition is
   non-empty, one dated compact backtest (``run_backtest(..., start_date=<window first>,
   end_date=<window last>, compact_body=True, ...)``), then holdings. An empty definition sets
@@ -261,17 +266,27 @@ def shadow_window_days(bot_by_day, invested_since):
     return len(bot_by_day) + (1 if baseline >= start else 0)
 
 
-def seed_shadow_many(tmp_path, monkeypatch, symphony_ids, count=140):
-    """The same shadow rows (bot and held differ on every day) for each listed Composer id."""
-    days = [d.isoformat() for d in b.last_n_nyse_days(AS_OF, count)]
-    bot = b.sine_returns(count, 3, amp=0.4, drift=0.08)
-    held = b.sine_returns(count, 5, amp=0.9, drift=-0.04)
-    rows = {
-        sid: {d: (s, c) for d, s, c in zip(days, bot, held, strict=True)} for sid in symphony_ids
-    }
+def seed_shadow_many(tmp_path, monkeypatch, symphony_ids, count=140, *, skipped_sessions=None):
+    """The same shadow rows (bot and held differ on every day) for each listed Composer id.
+    ``count`` is one session count for all, or a map from id to its own count;
+    ``skipped_sessions`` maps an id to the 0-based positions among its sessions left without a
+    row (a session inside the window that has no usable row)."""
+    skipped_sessions = skipped_sessions or {}
+    rows = {}
+    for sid in symphony_ids:
+        n = count[sid] if isinstance(count, dict) else count
+        days = [d.isoformat() for d in b.last_n_nyse_days(AS_OF, n)]
+        bot = b.sine_returns(n, 3, amp=0.4, drift=0.08)
+        held = b.sine_returns(n, 5, amp=0.9, drift=-0.04)
+        left_out = set(skipped_sessions.get(sid, ()))
+        rows[sid] = {
+            d: (s, c)
+            for i, (d, s, c) in enumerate(zip(days, bot, held, strict=True))
+            if i not in left_out
+        }
     db_file = seed_state_db(tmp_path, monkeypatch, series_by_symphony=rows)
     monkeypatch.setattr(analytics, "DB_FILE", db_file)
-    return dict(zip(days, bot, strict=True)), db_file
+    return {sid: {d: v[0] for d, v in by_day.items()} for sid, by_day in rows.items()}, db_file
 
 
 def seed_logic_holdings(tmp_path, monkeypatch, logic_holdings_by_key):
@@ -2408,13 +2423,16 @@ def test_a_display_name_is_trimmed_and_a_blank_one_is_the_composer_id_wherever_i
 
 
 # ---------------------------------------------------------------------------
-# The window comes from the review module's public function
+# The windows come from the review module's public functions
 # ---------------------------------------------------------------------------
 
 
-def test_the_windows_come_from_the_review_modules_public_qualifying_window(router, monkeypatch):
-    seen: list[tuple] = []
-    real = tr.qualifying_window
+def test_the_holdings_start_comes_from_qualifying_window_and_the_backtest_dates_from_backtest_window(
+    router, monkeypatch
+):
+    qualifying_seen: list[tuple] = []
+    backtest_seen: list[tuple] = []
+    real_qualifying, real_backtest = tr.qualifying_window, tr.backtest_window
     backtest_first, backtest_last = (
         h.series_dates(h.BACKTEST_ID)[10],
         h.series_dates(h.BACKTEST_ID)[-3],
@@ -2423,27 +2441,152 @@ def test_the_windows_come_from_the_review_modules_public_qualifying_window(route
     mid_first = h.series_dates(h.MID_ID)[0]
     assert oldest_first < mid_first, "fixture sanity: the patched start is the earliest"
 
-    def patched(symphony, as_of, threshold):
-        seen.append((symphony.symphony_id, as_of, threshold))
+    def qualifying(symphony, as_of, threshold):
+        qualifying_seen.append((symphony.symphony_id, as_of, threshold))
+        window = real_qualifying(symphony, as_of, threshold)
+        if symphony.symphony_id == h.OLDEST_ID:
+            return {**window, "first": oldest_first}
+        return window
+
+    def backtest(symphony, as_of, threshold):
+        backtest_seen.append((symphony.symphony_id, as_of, threshold))
         if symphony.symphony_id == h.BACKTEST_ID:
             return {"first": backtest_first, "last": backtest_last, "days": 7}
-        if symphony.symphony_id == h.OLDEST_ID:
-            window = real(symphony, as_of, threshold)
-            return {**window, "first": oldest_first}
-        return real(symphony, as_of, threshold)
+        return real_backtest(symphony, as_of, threshold)
 
-    monkeypatch.setattr(tr, "qualifying_window", patched)
+    monkeypatch.setattr(tr, "qualifying_window", qualifying)
+    monkeypatch.setattr(tr, "backtest_window", backtest)
 
     completed_run()
 
-    assert {sid for sid, _, _ in seen} == set(h.statistics_ids())
-    assert all(as_of == AS_OF and threshold == 126 for _, as_of, threshold in seen)
+    assert {sid for sid, _, _ in qualifying_seen} == set(h.statistics_ids())
+    assert h.BACKTEST_ID in {sid for sid, _, _ in backtest_seen}
+    for seen in (qualifying_seen, backtest_seen):
+        assert all(as_of == AS_OF and threshold == 126 for _, as_of, threshold in seen)
     posts = backtest_posts(router)
     assert len(posts) == 1
     assert posts[0].body_json()["start_date"] == backtest_first
     assert posts[0].body_json()["end_date"] == backtest_last
     holdings_start = _span_params(router.holdings_requests(h.ACCOUNT_ID)[0])[0]
-    assert holdings_start == date.fromisoformat(oldest_first)
+    assert holdings_start == date.fromisoformat(oldest_first), (
+        "the holdings start is the earliest evidence window, not a backtest window"
+    )
+
+
+def test_a_symphony_without_a_backtest_window_gets_no_definition_read_and_no_backtest(
+    router, monkeypatch
+):
+    real_backtest = tr.backtest_window
+    monkeypatch.setattr(
+        tr,
+        "backtest_window",
+        lambda symphony, as_of, threshold: (
+            None
+            if symphony.symphony_id == h.BACKTEST_ID
+            else real_backtest(symphony, as_of, threshold)
+        ),
+    )
+    captured_definition_for(router, h.MID_ID)
+
+    completed_run()
+
+    assert len(backtest_posts(router)) == 1, "fixture sanity: another symphony is still backtested"
+    requested = {r.match["sid"] for r in router.of_kind("score")}
+    assert h.BACKTEST_ID not in requested
+    assert h.MID_ID in requested
+
+
+def test_no_backtest_window_for_any_symphony_leaves_only_the_holdings_read_after_the_series(
+    router, monkeypatch
+):
+    monkeypatch.setattr(tr, "backtest_window", lambda symphony, as_of, threshold: None)
+
+    completed_run()
+
+    assert router.of_kind("score") == []
+    assert backtest_posts(router) == []
+    first_day = date.fromisoformat(h.series_dates(h.OLDEST_ID)[0])
+    assert _span_params(router.holdings_requests(h.ACCOUNT_ID)[0])[0] == first_day, (
+        "the holdings start does not move with the backtest windows"
+    )
+
+
+# A 400-session shadow window with one session in the middle that has no usable row; it starts
+# earlier than every Composer series of the fixture roster.
+HOLE_SESSIONS = 400
+HOLE_POSITION = 200
+
+
+def test_a_shadow_symphony_whose_window_has_a_session_without_a_row_costs_no_backtest_request(
+    router, inputs_seen, tmp_path, monkeypatch
+):
+    """Only the requests of that symphony are gone: the shadow symphony with every session
+    covered and the symphonies on their Composer series are still read and backtested, and the
+    holdings are still read from the hole symphony's own window start. Rejects a runner that
+    requests the qualifying window's backtest (one wasted request and spacing wait), and one
+    that starts the holdings read from the backtest windows."""
+    router.set_series(h.OLDEST_ID, h.error_reply(500))
+    router.set_series(h.MID_ID, h.error_reply(500))
+    seed_shadow_many(
+        tmp_path,
+        monkeypatch,
+        [h.OLDEST_ID, h.MID_ID],
+        count={h.OLDEST_ID: HOLE_SESSIONS, h.MID_ID: 140},
+        skipped_sessions={h.OLDEST_ID: [HOLE_POSITION]},
+    )
+    captured_definition_for(router, h.MID_ID, h.OLDEST_ID)
+
+    outcome = completed_run()
+
+    holey = input_of(inputs_seen, h.OLDEST_ID)
+    whole = input_of(inputs_seen, h.MID_ID)
+    assert holey.series_failure and whole.series_failure, "fixture sanity: both on the shadow basis"
+    window = tr.qualifying_window(holey, AS_OF, 126)
+    assert window is not None and tr.backtest_window(holey, AS_OF, 126) is None
+    assert tr.backtest_window(whole, AS_OF, 126) == tr.qualifying_window(whole, AS_OF, 126)
+    assert window["days"] < window["sessions"], "fixture sanity: a session has no row"
+    assert "has no usable row" in entry(outcome, h.OLDEST_ID)["evidence"]["backtest"]["reason"]
+    first_day = date.fromisoformat(window["first"])
+    assert first_day < date.fromisoformat(h.series_dates(h.MID_ID)[0]), (
+        "fixture sanity: the hole symphony's window is the earliest"
+    )
+
+    expected = _expected_request_counts(router, 1)
+    expected["score"] -= 1
+    expected["backtest"] -= 1
+    expected["holdings"] = -(-((AS_OF - first_day).days + 1) // cpc.HOLDINGS_REQUEST_SPAN_DAYS)
+    assert Counter(r.kind for r in router.requests) == Counter(expected)
+    assert len(router.requests) == sum(expected.values())
+    assert {r.match["sid"] for r in router.of_kind("score")} == {h.MID_ID, h.BACKTEST_ID}
+    assert {r.match["sid"] for r in router.of_kind("series")} == set(h.statistics_ids())
+    spans = [_span_params(r) for r in router.holdings_requests(h.ACCOUNT_ID)]
+    assert spans[0][0] == first_day
+    assert spans[-1][1] == AS_OF
+    assert router.violations == []
+
+
+def test_the_runner_asks_the_review_module_for_both_windows_and_restates_neither_rule():
+    source = (REPO / "advisors" / "tenure_review_runner.py").read_text("utf-8")
+    called = {
+        node.func.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "tenure_review"
+    }
+    assert {"qualifying_window", "backtest_window"} <= called
+    for restated in (
+        "_shadow_hole_reason",
+        "_sessions_between",
+        "_KIND_SHADOW",
+        "no usable row",
+        '"dates"',
+        "'dates'",
+        '"sessions"',
+        "'sessions'",
+    ):
+        assert restated not in source, restated
 
 
 def test_the_runner_uses_no_private_name_of_another_module():
