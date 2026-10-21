@@ -1786,7 +1786,8 @@
                         class="run-trigger-btn"
                         data-testid="tenure-review-run-btn"
                         onclick="retRunReview(this)">Run review now</button>
-                <span class="tenure-review-run-message" data-testid="tenure-review-run-message"></span>
+                <span class="tenure-review-run-message" data-testid="tenure-review-run-message"
+                      role="status" aria-live="polite"></span>
             </div>
             {% if tenure_review_status is mapping and tenure_review_status.get('running') %}
             <div class="tenure-review-notice" data-testid="tenure-review-running-notice">review running since {{ tenure_review_status.get('running_since') | tenure_eastern }}</div>

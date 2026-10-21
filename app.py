@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -494,6 +495,12 @@ for _run_path_logger_name in (
     _run_path_logger = logging.getLogger(_run_path_logger_name)
     _run_path_logger.setLevel(logging.INFO)
     _run_path_logger.addHandler(_daemon_fh)
+    # Without any handler the logging module's last resort printed warnings to standard error
+    # (the journal); the file handler removes it, so a WARNING-level stream handler restores it
+    # without sending the per-request INFO lines there.
+    _run_path_stderr = logging.StreamHandler()
+    _run_path_stderr.setLevel(logging.WARNING)
+    _run_path_logger.addHandler(_run_path_stderr)
 
 
 @app.before_request
@@ -990,7 +997,7 @@ def _round_floats(value, ndigits: int):
     dict/list shapes are walked (into candidate_metrics/sibling_metrics);
     bool/int/str/None pass through unchanged. bool MUST be checked before
     float/int (bool is an int subclass in Python, and int is never rounded
-    here -- see n_obs, which is intentionally compared exactly).
+    here -- see n_obs, which is an int and passes through unchanged).
     """
     if isinstance(value, bool):
         return value
@@ -1026,7 +1033,10 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     """Return a rounded snapshot of every evidence field in `rec` EXCEPT
     "explanation" (the value being reused) and the pair-identity keys
     "candidate_id"/"sibling_id" (already matched by construction to find
-    this prior row -- not citable evidence).
+    this prior row -- not citable evidence) and the run-stamped keys in
+    _EXPLAINER_WITHHELD_KEYS. The explainer is shown a copy of the rec with those
+    withheld keys removed, so the reuse comparison and the explainer's evidence
+    ignore the same keys.
 
     PR#140 /code-review finding 1 (Cycle 2c, AC-4): the whole-dict design
     replaces a curated field-list comparison -- advisors.retirement_
@@ -1205,6 +1215,17 @@ def _tenure_review_settings() -> dict:
     return env
 
 
+def _log_tenure_review_end(trigger: str, run_id: str, ending: str) -> None:
+    """The run's completion line: trigger, US Eastern time, run id and how the run ended."""
+    _daemon_log.info(
+        "Tenure review end: trigger=%s at=%s run_id=%s %s",
+        trigger,
+        datetime.now(_ET).strftime("%Y-%m-%d %H:%M"),
+        run_id,
+        ending,
+    )
+
+
 def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
     """Run one symphony tenure review under the run slot and persist what it found.
 
@@ -1216,7 +1237,8 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
     the rows of a run that no run row describes. Never raises; only
     type(exc).__name__ is logged and recorded.
     """
-    tenure_review = None
+    tenure_review: types.ModuleType | None = None
+    run_id = None
     try:
         from advisors import tenure_review  # lazy (CC-2)
 
@@ -1231,6 +1253,12 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
 
         now_et = datetime.now(_ET)
         run_id = uuid.uuid4().hex
+        _daemon_log.info(
+            "Tenure review start: trigger=%s at=%s run_id=%s",
+            trigger,
+            now_et.strftime("%Y-%m-%d %H:%M"),
+            run_id,
+        )
         env = _tenure_review_settings()
         outcome = tenure_review_runner.run_tenure_review(
             account_ids=tenure_review_runner.configured_account_ids(env),
@@ -1243,6 +1271,7 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
         if not outcome.completed:
             reason = outcome.failure_reason or _TENURE_REVIEW_FAILED_TEXT
             _daemon_log.warning("Tenure review did not complete: %s", reason)
+            _log_tenure_review_end(trigger, run_id, "did not complete")
             tenure_review.REVIEW_RUN_STATE.finish_failure(owner, reason, datetime.now(_ET))
             return
         result = outcome.result
@@ -1263,12 +1292,17 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
             subject_type="tenure_review_run",
             subject_id=run_id,
             verdict="completed",
-            raw_response=tenure_review.run_record(result, datetime.now(_ET)),
+            raw_response={
+                **tenure_review.run_record(result, datetime.now(_ET)),
+                "degraded": bool(outcome.degraded),
+            },
         )
         tenure_review.REVIEW_RUN_STATE.finish_success(owner)
-        _daemon_log.info("Tenure review complete: %d recommendation(s).", len(recs))
+        _log_tenure_review_end(trigger, run_id, "completed")
     except Exception as exc:
         _daemon_log.error("Tenure review failed: %s", type(exc).__name__)
+        if run_id is not None:
+            _log_tenure_review_end(trigger, run_id, f"failed {type(exc).__name__}")
         if tenure_review is not None and owner:
             tenure_review.REVIEW_RUN_STATE.finish_failure(
                 owner, type(exc).__name__, datetime.now(_ET)
@@ -1283,9 +1317,9 @@ def _retirement_recommender_tick_worker(owner: object | None = None) -> None:
     _tenure_review_job("nightly", owner)
 
 
-def _nightly_review_already_done(tenure_review) -> bool:
-    """True when the newest completed nightly run covers the as-of day now and the
-    threshold now in effect. A stored run that cannot be read, or a failed read or
+def _nightly_review_already_done(tenure_review: types.ModuleType) -> bool:
+    """True when the newest nightly run is not degraded and covers the as-of day now and
+    the threshold now in effect. A stored run that cannot be read, or a failed read or
     parse, means the review should run. Never raises."""
     try:
         as_of = tenure_review.as_of_trading_day(datetime.now(_ET)).isoformat()
@@ -1299,7 +1333,8 @@ def _nightly_review_already_done(tenure_review) -> bool:
             raw = row.get("raw_response")
             if isinstance(raw, dict) and raw.get("trigger") == "nightly":
                 return (
-                    raw.get("as_of_trading_day") == as_of
+                    raw.get("degraded") is not True
+                    and raw.get("as_of_trading_day") == as_of
                     and raw.get("threshold_in_effect") == threshold
                 )
         return False

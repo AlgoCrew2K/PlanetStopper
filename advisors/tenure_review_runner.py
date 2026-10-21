@@ -47,6 +47,8 @@ class RunOutcome:
     completed: bool
     result: ReviewResult | None = None
     failure_reason: str | None = None
+    # True when a rate limit was met or any series, definition, backtest or holdings read failed.
+    degraded: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class _RunState:
     """What one run learns as it goes: whether Composer has answered 429."""
 
     rate_limited: bool = False
+    read_failed: bool = False
 
 
 def _configured_accounts(env: Mapping) -> list[tuple[str, str]]:
@@ -148,6 +151,8 @@ def _read_series(
             sym.composer_values = series.values
         else:
             sym.series_failure = series.failure
+            # An empty list is an answer, not a failed read.
+            run.read_failed = run.read_failed or series.failure != "empty"
             run.rate_limited = series.failure == "rate_limited"
     sym.shadow_returns = _shadow_returns(sym.symphony_id)
     return sym
@@ -166,6 +171,7 @@ def _attach_backtest(
             run.rate_limited = True
             sym.backtest = BacktestResult(None, [], error=_RATE_LIMITED_BACKTEST_ERROR)
         elif read.failure or not read.definition:
+            run.read_failed = True
             sym.definition_available = False
         else:
             try:
@@ -182,9 +188,11 @@ def _attach_backtest(
             finally:
                 # The spacing holds whether or not the call returned.
                 time.sleep(spacing)
+            run.read_failed = run.read_failed or bool(sym.backtest.error)
             run.rate_limited = str(sym.backtest.error or "").startswith("HTTP 429")
     except Exception as exc:  # noqa: BLE001 - one symphony's failure is that symphony's item
         logger.warning("tenure review backtest step failed: %s", type(exc).__name__)
+        run.read_failed = True
         sym.backtest = BacktestResult(None, [], error=_BACKTEST_FAILED_ERROR)
 
 
@@ -208,6 +216,7 @@ def _read_holdings(
             continue
         read = composer_portfolio_client.read_daily_holdings(account, earliest, as_of, spacing)
         if read.failed_spans:
+            run.read_failed = True
             failed_days = sum((s.end - s.start).days + 1 for s in read.failed_spans)
             classes = tuple(dict.fromkeys(s.failure for s in read.failed_spans))
             missing.append(_MissingAccount(account, classes, failed_days < requested_days))
@@ -348,7 +357,7 @@ def run_tenure_review(
             _name_missing_accounts(
                 result, {e["id"]: account for account, e in roster}, missing, label_of
             )
-        return RunOutcome(True, result, None)
+        return RunOutcome(True, result, None, run.rate_limited or run.read_failed)
     except Exception as exc:  # noqa: BLE001 - the runner never raises
         name = type(exc).__name__
         logger.warning("tenure review run failed: %s", name)
