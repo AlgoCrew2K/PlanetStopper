@@ -3,13 +3,15 @@
 Mirrors tests/security/test_frontrunner_no_trade_boundary.py's structural, not-policy approach:
 source-scans the REAL modules (not mocked stand-ins) so the guarantee holds regardless of future
 refactors inside a module body. The scan covers the Retirement Recommender and every module of the
-symphony tenure review: the review compute, the runner and the read-only Composer client.
+symphony tenure review: the review compute, the runner, the read-only Composer client and the
+backtest client (the run's only Composer POST, and it is a backtest request, never a write to an
+account).
 
 The rule: a module contains NO trade, order, liquidation, deploy or LIVE_EXECUTION primitive and
 never writes settings. Persistence is advisory-only (insert_advisor_observation forces
 is_advisory_only=1). The recommender, the review compute and the runner never import the execution
 engine at all; the Composer client imports exactly its base URL constant and its credential header
-builder from it and nothing else. No module names the engine's per-account statistics reader, the
+builder from it and nothing else (the backtest client takes the same two names). No module names the engine's per-account statistics reader, the
 panic-sell function, the go-to-cash sell function or a go-to-cash URL: the first reads Composer
 state through a path that cannot tell a failure from an empty account, and the others move money.
 
@@ -32,12 +34,14 @@ _RECOMMENDER = "advisors/retirement_recommender.py"
 _REVIEW = "advisors/tenure_review.py"
 _RUNNER = "advisors/tenure_review_runner.py"
 _CLIENT = "advisors/composer_portfolio_client.py"
-_MODULE_REL_PATHS = (_RECOMMENDER, _REVIEW, _RUNNER, _CLIENT)
+_BACKTEST_CLIENT = "advisors/composer_backtest_client.py"
+_COMPOSER_CLIENTS = (_CLIENT, _BACKTEST_CLIENT)
+_MODULE_REL_PATHS = (_RECOMMENDER, _REVIEW, _RUNNER, _CLIENT, _BACKTEST_CLIENT)
 _NEVER_IMPORT_THE_ENGINE = (_RECOMMENDER, _REVIEW, _RUNNER)
 
 _ENGINE_MODULE = "alpha_bot_execution"
-# The only two names the Composer client may take from the engine: the Composer base URL
-# constant and the credential header builder the two existing read-only clients import.
+# The only two names a Composer client may take from the engine: the Composer base URL
+# constant and the credential header builder.
 _CLIENT_ALLOWED_ENGINE_NAMES = frozenset({"COMPOSER_BASE_URL", "get_composer_headers"})
 
 # Trade/order/liquidation/deploy action tokens that must never appear as a whole
@@ -164,6 +168,44 @@ def _has_wildcard_import(source: str) -> bool:
     )
 
 
+_HTTP_WRITE_METHODS = frozenset({"post", "put", "patch", "delete", "request"})
+_BACKTEST_URL_SOURCE = "f'{COMPOSER_BASE_URL}/backtest'"
+
+
+def _http_write_calls(source: str) -> list[tuple[str, str]]:
+    """``(method, first argument as source)`` of every call to a method named like an HTTP write
+    (post, put, patch, delete, or the generic request), on any object: ``requests.post(url)``,
+    ``session.put(url)``, ``requests.request("POST", url)``."""
+    return [
+        (node.func.attr, ast.unparse(node.args[0]) if node.args else "")
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in _HTTP_WRITE_METHODS
+    ]
+
+
+def _assigned_values(source: str, name: str) -> list[str]:
+    """The source of every value assigned to the plain name ``name``."""
+    return [
+        ast.unparse(node.value)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == name for t in node.targets)
+    ]
+
+
+def _backtest_client_problems(source: str) -> list:
+    """What differs from the shape the backtest client must keep: one POST of the address it
+    built, and that address the backtest endpoint only."""
+    problems = []
+    if _http_write_calls(source) != [("post", "url")]:
+        problems.append(("writes", _http_write_calls(source)))
+    if _assigned_values(source, "url") != [_BACKTEST_URL_SOURCE]:
+        problems.append(("addresses", _assigned_values(source, "url")))
+    return problems
+
+
 def _advisory_flag_mentions(source: str) -> bool:
     return "is_advisory_only" in _executable_source(source)
 
@@ -238,15 +280,37 @@ class TestNoEngineImport:
         )
 
 
-class TestTheComposerClientTakesTwoNamesFromTheEngine:
-    def test_it_imports_exactly_the_base_url_and_the_header_builder(self):
-        imports = _engine_imports(_source_of(_CLIENT))
+@pytest.mark.parametrize("client_rel_path", _COMPOSER_CLIENTS)
+class TestEachComposerClientTakesTwoNamesFromTheEngine:
+    def test_it_imports_exactly_the_base_url_and_the_header_builder(self, client_rel_path):
+        imports = _engine_imports(_source_of(client_rel_path))
         assert [kind for kind, _ in imports] == ["from"], imports
         assert set(imports[0][1]) == _CLIENT_ALLOWED_ENGINE_NAMES, (
             "the client takes COMPOSER_BASE_URL and get_composer_headers from the engine, "
             f"nothing more and nothing less; it imports {imports[0][1]}"
         )
-        assert _engine_import_violations(_source_of(_CLIENT), _CLIENT_ALLOWED_ENGINE_NAMES) == []
+        assert (
+            _engine_import_violations(_source_of(client_rel_path), _CLIENT_ALLOWED_ENGINE_NAMES)
+            == []
+        )
+
+
+class TestTheBacktestClientMakesOnlyTheBacktestPost:
+    """Every request of a review run is a read or a backtest. The reads are GETs by the portfolio
+    client; the backtest client makes the run's only POST, and its only address is the backtest
+    endpoint. The checks read the source for the HTTP write calls and for every address the
+    module builds."""
+
+    def test_its_only_write_call_is_one_post_to_the_address_it_built(self):
+        source = _source_of(_BACKTEST_CLIENT)
+        assert _http_write_calls(source) == [("post", "url")]
+
+    def test_the_address_it_builds_is_the_base_url_and_the_backtest_path_and_nothing_else(self):
+        source = _source_of(_BACKTEST_CLIENT)
+        assert _assigned_values(source, "url") == [_BACKTEST_URL_SOURCE]
+
+    def test_the_portfolio_client_makes_no_write_call_at_all(self):
+        assert _http_write_calls(_source_of(_CLIENT)) == []
 
 
 class TestRoutesAreNotSettingsWrites:
@@ -440,3 +504,61 @@ class TestOtherPlantedPrimitivesAreReported:
         assert _advisory_flag_mentions(_plant("insert(is_advisory_only=0)"))
         assert not _has_wildcard_import(_CLEAN)
         assert _has_wildcard_import("from somewhere import *\n")
+
+
+_BACKTEST_CLIENT_SHAPE = (
+    "import requests\n"
+    "def run_backtest(tree):\n"
+    '    url = f"{COMPOSER_BASE_URL}/backtest"\n'
+    "    return requests.post(url, json=tree)\n"
+)
+
+
+class TestAPlantedSecondRequestInTheBacktestClientIsReported:
+    def test_the_unplanted_shape_is_clean(self):
+        assert _backtest_client_problems(_BACKTEST_CLIENT_SHAPE) == []
+
+    @pytest.mark.parametrize(
+        "statement",
+        [
+            "requests.put(url, json=tree)",
+            "requests.patch(url, json=tree)",
+            "requests.delete(url)",
+            "requests.post(other_url, json=tree)",
+            'requests.post(COMPOSER_BASE_URL + "/deploy/accounts", json=tree)',
+            'requests.request("POST", url, json=tree)',
+            "session.post(url, json=tree)",
+            "client.put(url)",
+        ],
+        ids=[
+            "put",
+            "patch",
+            "delete",
+            "post to another address",
+            "post to a deploy address",
+            "generic request",
+            "session post",
+            "client put",
+        ],
+    )
+    def test_a_second_write_call_is_reported(self, statement):
+        planted = _BACKTEST_CLIENT_SHAPE + f"def planted(tree):\n    {statement}\n"
+        assert _backtest_client_problems(planted) != []
+
+    @pytest.mark.parametrize(
+        "assignment",
+        [
+            'url = f"{COMPOSER_BASE_URL}/deploy/accounts"',
+            'url = f"{COMPOSER_BASE_URL}/portfolio/accounts/x/go-to-cash"',
+            'url = COMPOSER_BASE_URL + "/invest"',
+            'url = "https://other.example/backtest"',
+        ],
+        ids=["deploy", "go to cash", "invest", "another host"],
+    )
+    def test_a_second_address_is_reported(self, assignment):
+        planted = _BACKTEST_CLIENT_SHAPE + f"def planted():\n    {assignment}\n"
+        assert _backtest_client_problems(planted) != []
+
+    def test_the_post_to_a_different_address_than_the_backtest_one_is_reported(self):
+        planted = _BACKTEST_CLIENT_SHAPE.replace("/backtest", "/deploy/accounts")
+        assert _backtest_client_problems(planted) != []

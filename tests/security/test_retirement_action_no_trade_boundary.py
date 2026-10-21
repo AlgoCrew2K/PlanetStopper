@@ -166,6 +166,15 @@ def _find_function_def(
     return None
 
 
+def _find_module_level_function(
+    tree: ast.Module, fn_name: str
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fn_name:
+            return node
+    return None
+
+
 def _references_name_or_attr(subtree: ast.AST, target: str) -> bool:
     """True iff `target` appears as a bare Name or as the trailing attribute
     of an Attribute chain (e.g. `ai_advisor._build_client` or a
@@ -228,11 +237,20 @@ def _collect_transitive_local_call_subtrees(
 
     subtrees: list[ast.AST] = [fn_node]
     for node in ast.walk(fn_node):
+        callee_name = None
         if isinstance(node, ast.Call):
             callee_name = _resolve_bare_name_callee(node)
             if callee_name and callee_name != fn_name and _find_function_def(tree, callee_name):
                 subtrees.extend(
                     _collect_transitive_local_call_subtrees(tree, callee_name, _visited=_visited)
+                )
+        # A function handed over by reference is run by whoever receives it (a thread target, an
+        # executor submit, a callback argument, a partial, a value in a table): follow a Name that
+        # is read and names a module-level function of app.py, not only a call by bare name.
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id != fn_name and _find_module_level_function(tree, node.id) is not None:
+                subtrees.extend(
+                    _collect_transitive_local_call_subtrees(tree, node.id, _visited=_visited)
                 )
     return subtrees
 
@@ -955,8 +973,19 @@ _FORBIDDEN_ENGINE_NAMES = (
     "fetch_symphony_stats",
     "perform_account_liquidation",
     "execute_sell_to_cash",
+    # The codebase's own ways to create or move money, besides a bare save_symphony: the
+    # frontrunner approval (the one route that creates a Composer symphony) and the function it
+    # calls, the invest call, and the panic-sell route (it reads LIVE_EXECUTION and starts the
+    # liquidation thread).
+    "approve_frontrunner_proposal",
+    "ai_advisor_proposal_approve",
+    "invest_in_symphony",
+    "sell_account",
 )
 _GO_TO_CASH_FRAGMENT = "/go-to-cash"
+# Every Composer write endpoint a review path must never name: deploy, invest, rebalance, sell,
+# liquidate and go to cash.
+_RUN_PATH_URL_FRAGMENTS = (*_FORBIDDEN_URL_FRAGMENTS, "/rebalance", _GO_TO_CASH_FRAGMENT)
 
 
 def _hits_forbidden_engine_names(subtrees) -> list[str]:
@@ -967,8 +996,9 @@ def _hits_forbidden_engine_names(subtrees) -> list[str]:
         for name in _FORBIDDEN_ENGINE_NAMES:
             if name in text or _references_name_or_attr(t, name):
                 hits.append(f"{name} via {where}")
-        if _GO_TO_CASH_FRAGMENT in text:
-            hits.append(f"{_GO_TO_CASH_FRAGMENT} via {where}")
+        for fragment in _RUN_PATH_URL_FRAGMENTS:
+            if fragment in text:
+                hits.append(f"{fragment} via {where}")
     return hits
 
 
@@ -1141,6 +1171,29 @@ _PLANTED_ENGINE_CALLS = {
     "panic sell": ("perform_account_liquidation", "perform_account_liquidation(planted_argument)"),
     "go to cash sell": ("execute_sell_to_cash", "execute_sell_to_cash(planted_argument)"),
     "go to cash url": (_GO_TO_CASH_FRAGMENT, 'requests.post(planted_base + "/go-to-cash")'),
+    "frontrunner approval": (
+        "approve_frontrunner_proposal",
+        "frontrunner_builder.approve_frontrunner_proposal(planted_argument)",
+    ),
+    "frontrunner approval by bare name": (
+        "approve_frontrunner_proposal",
+        "approve_frontrunner_proposal(planted_argument)",
+    ),
+    "frontrunner approval route": ("ai_advisor_proposal_approve", "ai_advisor_proposal_approve()"),
+    "invest call": ("invest_in_symphony", "invest_in_symphony(planted_argument)"),
+    "panic sell route": ("sell_account", "sell_account()"),
+    "rebalance url": (
+        "/rebalance",
+        'requests.post(f"{COMPOSER_BASE_URL}/deploy/accounts/{planted_account}'
+        '/symphonies/{planted_symphony}/rebalance")',
+    ),
+    "deploy url": (
+        "/deploy/",
+        'requests.post(f"{COMPOSER_BASE_URL}/deploy/accounts/{planted_account}")',
+    ),
+    "invest url": ("/invest", 'requests.post(planted_base + "/invest")'),
+    "sell url": ("/sell", 'requests.post(planted_base + "/sell")'),
+    "liquidate url": ("/liquidate", 'requests.post(planted_base + "/liquidate")'),
 }
 
 
@@ -1189,6 +1242,111 @@ class TestGroupEScanReportsAPlantedLossyReaderOrMoneyMover:
         assert all(node is not None for node in nodes)
         assert len({id(node) for node in nodes}) == len(_TENURE_RUN_PATH_FN_NAMES)
         assert len({ast.dump(node) for node in nodes}) == len(_TENURE_RUN_PATH_FN_NAMES)
+
+
+# A function the review path hands to something else to run is as reachable as one it calls. The
+# route used to submit the job to an executor and now starts it as a thread target; the tick
+# hands its worker to a thread. Each form below puts a reference to a function into an entry
+# point's body, in memory, and the scan must report what that function does.
+_REFERENCE_FORMS = {
+    "executor submit": "planted_executor.submit({fn})",
+    "executor submit with arguments": "planted_executor.submit({fn}, 'on_demand', planted_owner)",
+    "thread target": "threading.Thread(target={fn}, daemon=True).start()",
+    "thread target with arguments": (
+        "threading.Thread(target={fn}, args=('on_demand', planted_owner), daemon=True).start()"
+    ),
+    "scheduled callback": "schedule.every().day.at('03:45').do({fn})",
+    "callback argument": "register_planted_callback({fn})",
+    "wrapped in a partial": "functools.partial({fn}, planted_argument)()",
+    "value in a table": "planted_handlers = {{'planted': {fn}}}",
+}
+# What is referenced: two functions the feature must never reach (reported by name, and by what
+# their bodies hold), and an innocent-named helper of the app whose body has a symphony creation
+# planted in it (reported only by following the reference).
+_REFERENCED_TARGETS = {
+    "frontrunner approval route": (
+        "ai_advisor_proposal_approve",
+        "ai_advisor_proposal_approve",
+        None,
+    ),
+    "panic sell route": ("sell_account", "sell_account", None),
+    "innocent helper holding a creation call": (
+        "_format_eastern_run_time",
+        _SAVE_SYMPHONY_ATTR,
+        "composer_draft_client.save_symphony(planted_argument)",
+    ),
+}
+_REFERENCING_ENTRY_POINTS = [*_TENURE_RUN_PATH_FN_NAMES, _TENURE_REVIEW_FETCH_FN_NAME]
+
+
+def _tree_with_planted_reference(
+    entry_point: str, statement: str, planted_in: str | None, planted_call: str | None
+) -> ast.Module:
+    tree = _tree_with_planted_call(entry_point, statement)
+    if planted_in is not None:
+        node = _find_function_def(tree, planted_in)
+        if node is None:
+            pytest.fail(f"app.py has no function named {planted_in!r}")
+        node.body.append(ast.parse(planted_call).body[0])
+        ast.fix_missing_locations(tree)
+    return tree
+
+
+class TestGroupEScanFollowsAFunctionHandedOverByReference:
+    @pytest.mark.parametrize("fn_name", _REFERENCING_ENTRY_POINTS)
+    def test_the_unplanted_tree_is_clean_with_the_wider_walk(self, fn_name):
+        assert _exec_seam_hits(_parse_app_py(), fn_name) == []
+
+    @pytest.mark.parametrize("target", list(_REFERENCED_TARGETS))
+    @pytest.mark.parametrize("form", list(_REFERENCE_FORMS))
+    @pytest.mark.parametrize("fn_name", _REFERENCING_ENTRY_POINTS)
+    def test_a_reference_planted_in_an_entry_point_is_reported(self, fn_name, form, target):
+        referenced, expected, planted_call = _REFERENCED_TARGETS[target]
+        statement = _REFERENCE_FORMS[form].format(fn=referenced)
+        tree = _tree_with_planted_reference(
+            fn_name, statement, referenced if planted_call else None, planted_call
+        )
+
+        hits = _exec_seam_hits(tree, fn_name)
+
+        assert any(expected in hit for hit in hits), (
+            f"a {form} of {referenced} planted in {fn_name} was not reported; hits: {hits}"
+        )
+
+    @pytest.mark.parametrize("form", list(_REFERENCE_FORMS))
+    def test_the_walk_opens_the_function_that_is_referenced(self, form):
+        statement = _REFERENCE_FORMS[form].format(fn="_format_eastern_run_time")
+        tree = _tree_with_planted_call(_TENURE_REVIEW_JOB_FN_NAME, statement)
+
+        opened = {
+            getattr(node, "name", None)
+            for node in _collect_transitive_local_call_subtrees(tree, _TENURE_REVIEW_JOB_FN_NAME)
+        }
+
+        assert "_format_eastern_run_time" in opened, f"the {form} was not followed: {opened}"
+
+    def test_a_reference_in_a_callee_is_reported_from_the_entry_point_that_calls_it(self):
+        tree = _tree_with_planted_reference(
+            _RETIREMENT_PREPARE_FN_NAME,
+            "planted_executor.submit(_format_eastern_run_time)",
+            "_format_eastern_run_time",
+            "composer_draft_client.save_symphony(planted_argument)",
+        )
+
+        hits = _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME)
+
+        assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), hits
+
+    def test_a_name_that_is_stored_and_not_read_is_not_followed(self):
+        """A write to a name is not a reference to a function: the walk stays bounded."""
+        tree = _tree_with_planted_call(
+            _TENURE_REVIEW_JOB_FN_NAME, "_format_eastern_run_time = planted_value"
+        )
+        node = _find_function_def(tree, "_format_eastern_run_time")
+        node.body.append(ast.parse("composer_draft_client.save_symphony(planted_argument)").body[0])
+        ast.fix_missing_locations(tree)
+
+        assert _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME) == []
 
 
 class TestEveryTemplateHelperIsAnEntryPointOfTheScan:
@@ -1494,7 +1652,7 @@ class TestEveryRegistrationFormIsSeenByTheDriftGuard:
 # environment, by whatever spelling, must be a function of the app module that the scan lists.
 
 
-def _runtime_unlisted_template_helpers(env, baseline_env, app_module_name: str) -> list[str]:
+def _runtime_unlisted_template_helpers(env, baseline_env, app_module) -> list[str]:
     """``table:name (what it is)`` for each filter, test and global of ``env`` that the
     framework did not put there and that is not a listed function of the app module.
 
@@ -1502,7 +1660,11 @@ def _runtime_unlisted_template_helpers(env, baseline_env, app_module_name: str) 
     entries are excluded by what they are (the very object the baseline holds under that name,
     or an object of flask, jinja2, werkzeug or markupsafe that the baseline also has a name
     for), never by name alone: a name the framework owns can still be re-bound by the app to
-    a function of its own."""
+    a function of its own.
+
+    A helper is listed only when it IS the module-level function of that name in ``app_module``
+    (the object the static scan reads), not merely a function that carries a listed name and
+    claims the app as its module: a nested function or a copy would pass on name alone."""
     framework_roots = ("flask", "jinja2", "werkzeug", "markupsafe")
     unlisted = []
     for table in sorted(_TEMPLATE_REGISTRATION_TABLES):
@@ -1516,8 +1678,9 @@ def _runtime_unlisted_template_helpers(env, baseline_env, app_module_name: str) 
                 continue
             listed = (
                 callable(value)
-                and getattr(value, "__module__", None) == app_module_name
+                and getattr(value, "__module__", None) == app_module.__name__
                 and getattr(value, "__name__", None) in _CYCLE_2C_ENTRY_POINT_FN_NAMES
+                and value is getattr(app_module, value.__name__, None)
             )
             if not listed:
                 described = getattr(value, "__qualname__", None) or type(value).__name__
@@ -1551,7 +1714,7 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
     def test_every_filter_test_and_global_the_app_added_is_a_listed_function(self, running_app):
         app_module, baseline = running_app
         unlisted = _runtime_unlisted_template_helpers(
-            app_module.app.jinja_env, baseline, app_module.__name__
+            app_module.app.jinja_env, baseline, app_module
         )
         assert unlisted == [], f"template helpers outside every scan entry point: {unlisted}"
 
@@ -1568,7 +1731,7 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
         alias["planted_through_an_alias"] = _planted_through_an_alias
         try:
             unlisted = _runtime_unlisted_template_helpers(
-                app_module.app.jinja_env, baseline, app_module.__name__
+                app_module.app.jinja_env, baseline, app_module
             )
         finally:
             del alias["planted_through_an_alias"]
@@ -1576,11 +1739,48 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
             unlisted
         )
         assert (
-            _runtime_unlisted_template_helpers(
-                app_module.app.jinja_env, baseline, app_module.__name__
-            )
-            == []
+            _runtime_unlisted_template_helpers(app_module.app.jinja_env, baseline, app_module) == []
         ), "the planted helper was not removed"
+
+    @pytest.mark.parametrize("listed_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_a_nested_function_that_carries_a_listed_name_and_the_app_module_is_reported(
+        self, running_app, listed_name
+    ):
+        """The static scan reads only the module-level function of a listed name; a nested
+        closure with that name (and ``__module__`` set to the app's) would pass on name alone
+        while holding code the scan never reads."""
+        app_module, baseline = running_app
+
+        def make():
+            def nested(value):
+                return value
+
+            nested.__name__ = listed_name
+            nested.__qualname__ = f"make.<locals>.{listed_name}"
+            nested.__module__ = app_module.__name__
+            return nested
+
+        planted = make()
+        env = app_module.app.jinja_env
+        assert planted is not getattr(app_module, listed_name), "premise: not the listed function"
+        env.filters["planted_nested"] = planted
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
+        finally:
+            del env.filters["planted_nested"]
+        assert len(unlisted) == 1 and unlisted[0].startswith("filters:planted_nested"), unlisted
+
+    def test_the_listed_function_itself_registered_under_another_name_is_not_reported(
+        self, running_app
+    ):
+        app_module, baseline = running_app
+        env = app_module.app.jinja_env
+        env.filters["tenure_text_again"] = app_module._tenure_text
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
+        finally:
+            del env.filters["tenure_text_again"]
+        assert unlisted == []
 
     def test_a_lambda_a_builtin_and_a_function_named_like_a_listed_one_are_reported(
         self, running_app
@@ -1600,7 +1800,7 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
         saved = env.filters.get("tojson")
         env.filters.update(planted)
         try:
-            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module.__name__)
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
         finally:
             for name in planted:
                 env.filters.pop(name, None)

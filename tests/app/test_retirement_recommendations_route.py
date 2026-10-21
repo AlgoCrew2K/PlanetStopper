@@ -960,6 +960,87 @@ class TestFailClosedWhenTheLatestRunIsUnusable:
         assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
 
 
+def _store_orphan_row(candidate_id="orphan-cand", sibling_id="orphan-sib") -> None:
+    """A recommendation row of a run that wrote it and then failed before its run row: it names
+    a run that no run row describes."""
+    pb.store_recommendation(
+        dict(_sample_raw_response(candidate_id, sibling_id), review_run_id=pb.RUN_ID_THIRD)
+    )
+
+
+def _legacy_card_ids(client) -> list[str]:
+    db_module.save_state(
+        {sid: {"name": sid, "logic_holdings": {}} for sid in ("legacy-cand", "orphan-cand")}
+    )
+    response = client.get("/ai-advisor")
+    assert response.status_code == 200
+    panel = pb.panel_of(response.get_data(as_text=True))
+    return [
+        card.attrs.get("data-candidate-id") or card.text()
+        for card in panel.find_all("retirement-recommendation-card")
+    ]
+
+
+class TestRowsOfARunThatNeverCompletedAreIgnoredBeforeTheFirstRunToo:
+    """With no run row at all, the reader lists the newest night's rows. A row that carries a run
+    id belongs to a review run (one that completed has a run row, so it is not in this branch); it
+    is never a legacy row, so it takes no part in choosing the newest night or in the list."""
+
+    def test_rows_that_name_a_run_no_row_describes_are_not_listed(self, client, isolated_db):
+        _store_orphan_row()
+
+        data = _get(client)
+
+        assert data["review_run"] is None, "premise: no run row exists"
+        assert data["recommendations"] == []
+
+    def test_a_row_of_the_same_night_without_a_run_id_is_still_listed_beside_one_that_has_one(
+        self, client, isolated_db
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        _store_orphan_row()
+
+        data = _get(client)
+
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
+
+    def test_a_newer_orphan_row_does_not_hide_the_newest_night_of_rows_without_a_run_id(
+        self, client, isolated_db
+    ):
+        _seed_recommendation_backdated("legacy-cand", "legacy-sib", days_ago=2)
+        _store_orphan_row()
+
+        data = _get(client)
+
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"], (
+            "the orphan row picked the newest date and pushed the real legacy night out"
+        )
+
+    def test_the_fetch_helper_gives_the_same_answer_as_the_route(self, isolated_db):
+        _seed_recommendation_backdated("legacy-cand", "legacy-sib", days_ago=2)
+        _store_orphan_row()
+
+        listed = app_module._fetch_retirement_recommendations()
+
+        assert [r["candidate_id"] for r in listed] == ["legacy-cand"]
+
+    def test_the_panel_lists_the_same_cards_as_the_api(self, client, isolated_db):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        _store_orphan_row()
+
+        cards = _legacy_card_ids(client)
+
+        assert len(cards) == 1, f"the panel shows {len(cards)} recommendation cards, not one"
+        assert not any("orphan-cand" in card for card in cards)
+
+    def test_the_panel_shows_no_recommendation_card_for_orphan_rows_alone(
+        self, client, isolated_db
+    ):
+        _store_orphan_row()
+
+        assert _legacy_card_ids(client) == []
+
+
 # ---------------------------------------------------------------------------
 # The shared review fetch never raises; any failure is an honest empty answer.
 # ---------------------------------------------------------------------------

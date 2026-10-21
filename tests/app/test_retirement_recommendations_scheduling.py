@@ -15,7 +15,12 @@ the scheduler can rely on:
   because the scheduler and the test stand-ins call ``target()``;
 * the tick's worker keeps its name, ``_retirement_recommender_tick_worker``, and now takes its
   recommendations from the review run (``advisors.tenure_review_runner.run_tenure_review``), not
-  from ``build_recommendations``.
+  from ``build_recommendations``;
+* the tick starts nothing when the newest completed NIGHTLY run already covers the as-of day and
+  the threshold the new run would use (the weekend and holiday ticks would repeat a full review of
+  the same session): it writes nothing and logs one INFO line. The decision is the tick's, made
+  before it claims the slot; the worker and the job called directly never skip, and an on-demand
+  run is never skipped.
 
 Mirrors tests/app/test_incubation_scheduling.py's thread-patching style: the wrapper does an inline
 ``import threading`` then ``threading.Thread(...).start()``, so the patch target is
@@ -28,12 +33,14 @@ import inspect
 import logging
 import threading
 import time
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import advisors.tenure_review as tenure_review
 import app as app_module
+import database as db_module
 from tests.advisors import _composer_http_router as h
 from tests.app import _tenure_review_job_builders as jb
 
@@ -326,3 +333,197 @@ class TestTheNightlyTickProducesAReviewPerLiveSymphony:
         assert "2026-10-20 03:45 ET" in panel.find("tenure-review-run-time").text()
         assert jb.state_is_idle()
         assert len(jb.run_rows()) == 1
+
+
+# ---------------------------------------------------------------------------
+# The nightly tick starts nothing for a day it has already reviewed
+# ---------------------------------------------------------------------------
+
+NIGHT_ONE = jb.NOW_ET  # Tuesday 03:45: the as-of day is Monday 2026-10-19
+NIGHT_TWO = datetime(2026, 10, 21, 3, 45, tzinfo=jb.ET)  # as-of Tuesday 2026-10-20
+
+
+def _tick() -> None:
+    with patch("threading.Thread", jb.ImmediateThread):
+        app_module._run_retirement_recommender_tick()
+
+
+@pytest.fixture()
+def env_file(isolated_db):
+    return isolated_db / "scratch.env"
+
+
+@pytest.fixture()
+def first_night(env_file, monkeypatch):
+    """The first nightly review of the as-of day has run and is stored; returns the runner calls."""
+    jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+    calls = jb.patch_runner(monkeypatch, [], isolate=False)
+    _tick()
+    assert len(calls) == 1 and len(jb.run_rows()) == 1, "premise: the first night's review ran"
+    return calls
+
+
+class TestTheNightlyTickStartsNothingForADayItHasAlreadyReviewed:
+    def test_it_starts_nothing_writes_nothing_and_logs_one_info_line(self, first_night, caplog):
+        ids_before = jb.all_row_ids()
+        state_before = tenure_review.REVIEW_RUN_STATE.snapshot()
+        caplog.clear()
+
+        with caplog.at_level(logging.INFO):
+            _tick()
+
+        assert len(first_night) == 1, "the review ran again for the same as-of day"
+        assert jb.new_rows_since(ids_before) == [], "a skipped tick writes nothing"
+        assert jb.state_is_idle() and jb.taken_then_released(), "a skipped tick holds no slot"
+        assert tenure_review.REVIEW_RUN_STATE.snapshot() == state_before
+        notes = [r for r in caplog.records if r.name == "alphabot" and r.levelno == logging.INFO]
+        assert len(notes) == 1, f"expected one INFO line from the daemon logger, got {len(notes)}"
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+            "skipping a day already reviewed is not a warning"
+        )
+
+    def test_a_later_as_of_day_is_reviewed(self, first_night, monkeypatch):
+        jb.freeze_app_clock(monkeypatch, NIGHT_TWO)
+
+        _tick()
+
+        assert len(first_night) == 2 and len(jb.run_rows()) == 2
+
+    def test_a_different_threshold_is_reviewed_and_then_skipped_in_its_turn(
+        self, first_night, env_file
+    ):
+        jb.rewrite_env(env_file, threshold="100")
+
+        _tick()
+        assert len(first_night) == 2, "a changed threshold gives a different review"
+        _tick()
+        assert len(first_night) == 2, "the same day at the same threshold starts nothing"
+        assert [r["raw_response"]["threshold_in_effect"] for r in jb.run_rows()] == [100, 126]
+
+    def test_the_threshold_compared_is_the_one_in_effect_not_the_text_configured(
+        self, first_night, env_file
+    ):
+        jb.rewrite_env(env_file, threshold="abc")  # unusable: the default 126 is in effect
+
+        _tick()
+
+        assert len(first_night) == 1, "126 was in effect for both reviews"
+
+    def test_the_weekend_and_monday_ticks_after_a_fridays_review_start_nothing(
+        self, isolated_db, monkeypatch
+    ):
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        saturday = datetime(2026, 10, 24, 3, 45, tzinfo=jb.ET)
+        instants = [
+            (saturday, 1),
+            (datetime(2026, 10, 25, 3, 45, tzinfo=jb.ET), 1),  # Sunday
+            (datetime(2026, 10, 26, 3, 45, tzinfo=jb.ET), 1),  # Monday, before the open
+            (datetime(2026, 10, 27, 3, 45, tzinfo=jb.ET), 2),  # Tuesday: Monday has closed
+        ]
+        for instant, expected_runs in instants:
+            jb.freeze_app_clock(monkeypatch, instant)
+            _tick()
+            assert len(calls) == expected_runs, f"{instant:%A}: {len(calls)} runs"
+        assert [r["raw_response"]["as_of_trading_day"] for r in jb.run_rows()] == [
+            "2026-10-26",
+            "2026-10-23",
+        ]
+
+    def test_a_worker_called_directly_is_not_skipped(self, first_night):
+        """The decision belongs to the tick, before it claims the slot: the worker the tick's
+        thread runs, and the job it calls, run whatever is stored."""
+        app_module._retirement_recommender_tick_worker()
+
+        assert len(first_night) == 2
+
+
+class TestAnOnDemandRunIsNeverSkipped:
+    def test_a_request_after_a_nightly_review_of_the_same_day_runs_a_new_review(
+        self, first_night, client, monkeypatch
+    ):
+        jb.install_inline_threads(monkeypatch)
+
+        response = client.post("/ai-advisor/retirement/review/run")
+
+        assert response.status_code == 202
+        assert len(first_night) == 2 and len(jb.run_rows()) == 2
+        assert jb.run_rows()[0]["raw_response"]["trigger"] == "on_demand"
+
+    def test_a_stored_on_demand_run_does_not_stop_the_nightly_tick(
+        self, isolated_db, client, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        jb.install_inline_threads(monkeypatch)
+        assert client.post("/ai-advisor/retirement/review/run").status_code == 202
+        assert [c["trigger"] for c in calls] == ["on_demand"]
+
+        _tick()
+
+        assert [c["trigger"] for c in calls] == ["on_demand", "nightly"], (
+            "the newest completed NIGHTLY run is the one that counts"
+        )
+
+
+class TestAStoredRunTheTickCannotReadDoesNotStopIt:
+    @pytest.mark.parametrize(
+        "stored",
+        [
+            '"plain text"',
+            '["not", "a", "record"]',
+            "this is not json {",
+            {},
+            {"trigger": "nightly"},
+            {"trigger": "nightly", "as_of_trading_day": None, "threshold_in_effect": None},
+            {"trigger": "nightly", "as_of_trading_day": "2026-10-19"},
+            {"trigger": "nightly", "as_of_trading_day": "not a date", "threshold_in_effect": 126},
+        ],
+        ids=[
+            "json text",
+            "json list",
+            "unparseable",
+            "empty",
+            "no day or threshold",
+            "null day and threshold",
+            "no threshold",
+            "unreadable day",
+        ],
+    )
+    def test_the_review_runs(self, isolated_db, monkeypatch, stored):
+        jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        db_module.insert_advisor_observation(
+            advisor_role=jb.ROLE_RUN,
+            subject_type="tenure_review_run",
+            subject_id="1" * 32,
+            verdict="completed",
+            raw_response=stored,
+        )
+
+        _tick()
+
+        assert len(calls) == 1, "a stored run the tick cannot read must not stop the review"
+
+    def test_a_failed_read_of_the_stored_runs_does_not_stop_the_review_or_crash_the_tick(
+        self, isolated_db, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        real = db_module.get_advisor_observations_for_role
+
+        def selective(role, *args, **kwargs):
+            if role == jb.ROLE_RUN:
+                raise RuntimeError("simulated read failure")
+            return real(role, *args, **kwargs)
+
+        monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+
+        try:
+            _tick()
+        except Exception as exc:  # noqa: BLE001
+            raise AssertionError(
+                f"the tick propagated {type(exc).__name__} from a failed read: that ends the "
+                "scheduler loop for good"
+            ) from exc
+
+        assert len(calls) == 1

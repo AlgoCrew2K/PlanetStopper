@@ -1,28 +1,33 @@
 """POST /ai-advisor/retirement/review/run: the "Run review now" action.
 
-The route claims the single run slot, submits the review job to the dedicated executor and answers
-at once; the review itself runs on the executor's worker. These tests drive the real route through
-the Flask test client. The executor is replaced by one that runs the job on the spot, one backed by
-a real worker, or one that refuses the submission; the Composer reads are replaced by a runner
-stand-in over the real result types (the real runner is exercised by the end-to-end file).
+The route claims the single run slot, starts the review job on a daemon thread, as the nightly tick
+does, and answers at once; the review itself runs on that thread. A daemon thread is what lets a
+daemon stop or a deploy restart finish without waiting for a review of up to about 80 minutes. These
+tests drive the real route through the Flask test client. The thread is replaced by one that runs
+its target on the spot, by a real recorded thread, or by one that refuses to be built or started;
+the Composer reads are replaced by a runner stand-in over the real result types (the real runner is
+exercised by the end-to-end file).
 
 Contract pinned here (the implementer reads this file and the handoff, not the plan):
 
-* ``app._TENURE_REVIEW_EXECUTOR`` is a module-level single-worker executor (patched here by name;
-  the route must look it up on the module at each request) and the route is
-  ``ai_advisor_retirement_review_run``.
+* The route is ``ai_advisor_retirement_review_run``. There is no review executor: no
+  ``_TENURE_REVIEW_EXECUTOR`` in the app module and no pool worker runs the job.
 * The route reads no request body. It calls ``REVIEW_RUN_STATE.try_start("on_demand")`` (looked up as
   ``tenure_review.REVIEW_RUN_STATE`` at each request); when that is refused it answers 409 with
   ``{"status": "already_running", "message": "a review is already running"}`` and changes nothing.
-  Otherwise it submits the job with the owner token and answers 202 with
-  ``{"status": "started", "message": "review started"}``. When the submission itself raises, it
-  releases the slot with the owner token and answers 200 with ``{"error": <exception type name>}``.
+  Otherwise it starts ``threading.Thread(..., daemon=True)`` (``threading.Thread`` looked up at each
+  request) whose target runs ``_tenure_review_job("on_demand", owner)``, passing the owner token
+  through the target or ``args``, and answers 202 with
+  ``{"status": "started", "message": "review started"}``. When the thread cannot be built or started,
+  it releases the slot with the owner token and answers 200 with ``{"error": <exception type name>}``.
+* Nothing is written until the run has completed: the recommendation rows come first and the run row
+  last, so a run that is abandoned (the daemon stops while the thread works) leaves no run row.
+* Every path out of the job gives the slot back, including a lazy import of the job that fails.
 * Authentication and CSRF come from the global hooks; the route calls neither.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
 import copy
 import inspect
 import logging
@@ -63,11 +68,10 @@ def store(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def executor(monkeypatch):
-    """The executor the route submits to, replaced by one that runs the job at once."""
-    immediate = jb.ImmediateExecutor()
-    monkeypatch.setattr(app_module, "_TENURE_REVIEW_EXECUTOR", immediate, raising=False)
-    return immediate
+def threads(monkeypatch):
+    """The threads the route starts, replaced by ones that run their target on the spot; the
+    list collects each thread that was started."""
+    return jb.install_inline_threads(monkeypatch)
 
 
 def _post(client, **kwargs):
@@ -81,13 +85,13 @@ def _live_recs():
 
 
 class TestTheRouteStartsOneReview:
-    def test_only_post_is_accepted(self, store, client, executor):
+    def test_only_post_is_accepted(self, store, client, threads):
         response = client.get(RUN_ROUTE)
         assert response.status_code == 405
-        assert executor.submitted == []
+        assert threads == []
 
     def test_a_request_is_acknowledged_and_the_review_runs_as_on_demand_with_the_slot_held(
-        self, store, client, executor, monkeypatch
+        self, store, client, threads, monkeypatch
     ):
         seen = {}
 
@@ -100,7 +104,7 @@ class TestTheRouteStartsOneReview:
 
         assert response.status_code == 202
         assert response.get_json() == STARTED
-        assert len(executor.submitted) == 1, "exactly one job is submitted"
+        assert len(threads) == 1, "exactly one thread is started"
         assert len(calls) == 1
         assert calls[0]["trigger"] == "on_demand"
         assert seen["state"]["running"] is True and seen["state"]["trigger"] == "on_demand", (
@@ -109,28 +113,45 @@ class TestTheRouteStartsOneReview:
         assert jb.state_is_idle(), "the job gives the slot back when it ends"
         assert len(jb.run_rows()) == 1 and len(jb.rec_rows()) == 1
 
-    def test_the_response_does_not_wait_for_the_review(self, store, client, monkeypatch):
-        """With a real worker held by the runner, the request still returns 202 and the review
-        finishes by itself afterwards."""
-        threaded = jb.ThreadedExecutor()
-        monkeypatch.setattr(app_module, "_TENURE_REVIEW_EXECUTOR", threaded, raising=False)
-        blocked = jb.BlockingRunner().install(monkeypatch)
+    def test_the_job_runs_on_a_daemon_thread_so_a_stop_never_waits_for_a_review(
+        self, store, client, threads, monkeypatch
+    ):
+        jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
+
+        assert _post(client).status_code == 202
+
+        assert [t.daemon for t in threads] == [True], (
+            "a non-daemon thread would hold a stop or a restart until the review ended"
+        )
+
+    def test_the_response_does_not_wait_for_the_review_and_nothing_is_stored_until_it_ends(
+        self, store, client, monkeypatch
+    ):
+        """With a real thread held by the runner, the request still returns 202 and the review
+        finishes by itself afterwards. While it works no row exists, so a daemon that stops at
+        that moment leaves no run row (and no recommendation row) behind."""
+        recorded = jb.install_recording_threads(monkeypatch)
+        blocked = jb.BlockingRunner(_live_recs()).install(monkeypatch)
         try:
             response = _post(client)
             assert response.status_code == 202
             assert blocked.entered.wait(30)
             assert jb.the_run_state().snapshot()["running"] is True
+            assert len(recorded) == 1 and recorded[0].daemon is True
+            assert jb.run_rows() == [] and jb.rec_rows() == [], (
+                "a review in progress has written nothing"
+            )
         finally:
             blocked.release.set()
-            threaded.wait_all()
-            threaded.shutdown()
+            jb.join_threads(recorded)
         assert jb.state_is_idle()
         assert len(jb.run_rows()) == 1
 
 
 class TestNoTestHereCanMakeALiveCall:
-    def test_a_request_or_a_real_anthropic_client_is_refused_by_the_guard(self):
-        """Mutation proof of the autouse guard: it refuses what it exists to refuse."""
+    def test_a_request_or_a_real_anthropic_client_is_refused_and_recorded_by_the_guard(self):
+        """Mutation proof of the autouse guard: it refuses what it exists to refuse and keeps a
+        record of each refusal."""
         import requests
 
         import ai_advisor
@@ -142,24 +163,59 @@ class TestNoTestHereCanMakeALiveCall:
         with pytest.raises(AssertionError):
             ai_advisor._build_client()
 
+        assert jb.refused_live_calls() == [
+            "requests.get",
+            "requests.sessions.Session.request",
+            "ai_advisor._build_client",
+        ]
+        with pytest.raises(AssertionError, match="live network call"):
+            jb.assert_no_unserved_requests()
+        assert jb.refused_live_calls() == [], "the record is cleared once it has been reported"
 
-class TestTheReviewHasItsOwnWorker:
-    def test_the_executor_is_dedicated_single_worker_and_shut_down_at_exit(self):
-        """A review reads Composer for many minutes, so it must neither share the worker of the
-        short dismiss writes nor the frontrunner build's worker, and runs one at a time."""
-        executor = getattr(app_module, "_TENURE_REVIEW_EXECUTOR", None)
-        assert executor is not None, "app._TENURE_REVIEW_EXECUTOR is missing"
-        assert isinstance(executor, concurrent.futures.ThreadPoolExecutor)
-        assert executor is not app_module._DISMISS_EXECUTOR
-        assert executor is not app_module._FRONTRUNNER_BUILD_EXECUTOR
-        assert executor._max_workers == 1
-        source = inspect.getsource(app_module)
-        assert "atexit.register(_TENURE_REVIEW_EXECUTOR.shutdown" in source
+    def test_a_refusal_that_the_real_explainer_swallows_still_fails_the_test(self):
+        """The explainer catches every error around the client it builds and answers None, so
+        the raise alone would pass unseen."""
+        import advisors.retirement_explainer as explainer_module
+
+        answer = explainer_module.explain_recommendation({"candidate_id": "c", "sibling_id": "s"})
+
+        assert answer is None, "premise: the explainer swallows the refusal"
+        assert jb.refused_live_calls() == ["ai_advisor._build_client"]
+        with pytest.raises(AssertionError, match="live network call"):
+            jb.assert_no_unserved_requests()
+
+    def test_a_refusal_that_the_real_composer_client_swallows_still_fails_the_test(
+        self, monkeypatch
+    ):
+        from advisors import composer_portfolio_client as cpc
+
+        monkeypatch.setattr(cpc.time, "sleep", lambda _seconds: None)
+
+        read = cpc.read_symphony_statistics("account-plain-id", spacing_seconds=1.0)
+
+        assert read.failure == "unavailable", "premise: the client swallows the refusal"
+        assert jb.refused_live_calls() == ["requests.get"]
+        with pytest.raises(AssertionError, match="live network call"):
+            jb.assert_no_unserved_requests()
+
+    def test_a_test_that_makes_no_such_call_passes(self):
+        assert jb.refused_live_calls() == []
+        jb.assert_no_unserved_requests()
+
+
+class TestTheReviewHasNoWorkerPoolToWaitFor:
+    def test_there_is_no_review_executor_and_no_exit_hook_that_would_wait_for_one(self):
+        """A pool worker is not a daemon thread: the interpreter joins it at exit, so a stop or a
+        restart waits for the review to end."""
+        assert not hasattr(app_module, "_TENURE_REVIEW_EXECUTOR"), (
+            "the review is started on a daemon thread, not submitted to a pool"
+        )
+        assert "_TENURE_REVIEW_EXECUTOR" not in inspect.getsource(app_module)
 
 
 class TestTheRunRecordsWhenItStartedAndWhenItFinished:
     def test_a_review_that_takes_time_stores_its_start_and_its_own_completion_time(
-        self, store, client, executor, monkeypatch
+        self, store, client, threads, monkeypatch
     ):
         """The run line of the panel reads "run completed <time>": that time is the moment the
         run finished, read from the clock again after the Composer reads, not the start."""
@@ -178,7 +234,7 @@ class TestTheRunRecordsWhenItStartedAndWhenItFinished:
         assert "2026-10-20 05:05 ET" in jb.panel(client).find("tenure-review-run-time").text()
 
     def test_a_failed_attempt_is_stamped_with_the_time_it_failed(
-        self, store, client, executor, monkeypatch
+        self, store, client, threads, monkeypatch
     ):
         failed_at = datetime(2026, 10, 20, 5, 40, tzinfo=jb.ET)
 
@@ -196,7 +252,7 @@ class TestTheRunRecordsWhenItStartedAndWhenItFinished:
 
 class TestAnOnDemandRunReplacesTheLastReview:
     def test_the_panel_and_the_api_show_the_new_run_and_none_of_the_nightly_rows(
-        self, store, client, executor, monkeypatch
+        self, store, client, threads, monkeypatch
     ):
         nightly = pb.store_full_run(pb.RUN_ID_FIRST)
         pb.seed_roster_state(nightly)
@@ -228,7 +284,7 @@ class TestAnOnDemandRunReplacesTheLastReview:
 
 class TestARunInProgressRefusesASecondOne:
     def test_a_request_during_the_nightly_run_is_refused_and_writes_nothing(
-        self, store, client, executor, monkeypatch
+        self, store, client, threads, monkeypatch
     ):
         calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
         state = jb.the_run_state()
@@ -241,7 +297,7 @@ class TestARunInProgressRefusesASecondOne:
 
         assert response.status_code == 409
         assert response.get_json() == ALREADY_RUNNING
-        assert executor.submitted == [] and calls == [], "no second run starts"
+        assert threads == [] and calls == [], "no second run starts"
         assert jb.new_rows_since(ids_before) == [], "nothing is written"
         assert state.snapshot() == held, "the refusal leaves the running review untouched"
         state.finish_success(token)
@@ -251,9 +307,8 @@ class TestARunInProgressRefusesASecondOne:
     def test_requests_arriving_together_start_exactly_one_review(
         self, store, monkeypatch, simultaneous
     ):
-        threaded = jb.ThreadedExecutor()
-        monkeypatch.setattr(app_module, "_TENURE_REVIEW_EXECUTOR", threaded, raising=False)
         blocked = jb.BlockingRunner(_live_recs()).install(monkeypatch)
+        review_threads = jb.install_recording_threads(monkeypatch)
         barrier = threading.Barrier(simultaneous)
         statuses: list[int] = []
         bodies: list[dict] = []
@@ -267,31 +322,33 @@ class TestARunInProgressRefusesASecondOne:
                 statuses.append(response.status_code)
                 bodies.append(response.get_json())
 
-        threads = [threading.Thread(target=post_together) for _ in range(simultaneous)]
+        posters = [jb.REAL_THREAD(target=post_together) for _ in range(simultaneous)]
         try:
-            for t in threads:
+            for t in posters:
                 t.start()
-            for t in threads:
+            for t in posters:
                 t.join(timeout=60)
             assert blocked.entered.wait(30)
         finally:
             blocked.release.set()
-            threaded.wait_all()
-            threaded.shutdown()
+            jb.join_threads(review_threads)
 
         assert sorted(statuses) == [202] + [409] * (simultaneous - 1), statuses
         assert STARTED in bodies and bodies.count(ALREADY_RUNNING) == simultaneous - 1
-        assert len(threaded.submitted) == 1 and len(blocked.calls) == 1
+        assert len(review_threads) == 1 and len(blocked.calls) == 1
         assert len(jb.run_rows()) == 1 and len(jb.rec_rows()) == 1, "one review, written once"
         assert jb.state_is_idle()
 
 
-class TestASubmissionThatFailsGivesTheSlotBack:
+class TestAThreadThatCannotBeStartedGivesTheSlotBack:
+    @pytest.mark.parametrize("where", ["construct", "start"])
     def test_the_response_names_the_exception_type_only_and_the_next_request_can_start(
-        self, store, client, monkeypatch, caplog
+        self, store, client, monkeypatch, caplog, where
     ):
-        refusing = jb.RefusingExecutor(RuntimeError(f"cannot schedule: {LEAK}"))
-        monkeypatch.setattr(app_module, "_TENURE_REVIEW_EXECUTOR", refusing, raising=False)
+        reached = jb.install_refusing_threads(
+            monkeypatch, RuntimeError(f"can't start new thread: {LEAK}"), where=where
+        )
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
         ids_before = jb.all_row_ids()
 
         with caplog.at_level(logging.DEBUG):
@@ -301,16 +358,16 @@ class TestASubmissionThatFailsGivesTheSlotBack:
         assert response.get_json() == {"error": "RuntimeError"}
         assert LEAK not in response.get_data(as_text=True)
         assert LEAK not in caplog.text, "the log names the exception type only"
-        assert refusing.calls == 1
-        assert jb.taken_then_released(), "a failed submission left the run slot taken"
+        assert reached[0] == "construct" and reached.count("start") == (where == "start")
+        assert jb.taken_then_released(), "a thread that failed to start left the run slot taken"
         assert jb.the_run_state().snapshot()["last_failed_attempt"] is None, (
             "a job that never started is not a failed review attempt"
         )
-        assert jb.new_rows_since(ids_before) == []
-        working = jb.ImmediateExecutor()
-        monkeypatch.setattr(app_module, "_TENURE_REVIEW_EXECUTOR", working, raising=False)
-        jb.patch_runner(monkeypatch, [], isolate=False)
+        assert calls == [] and jb.new_rows_since(ids_before) == []
+        assert jb.state_is_idle()
+        jb.install_inline_threads(monkeypatch)
         assert _post(client).status_code == 202, "the next request must be able to start a run"
+        assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +410,7 @@ class TestAFailedJobNeverShowsItsExceptionText:
         ids=["runner", "recommendation write", "run row write"],
     )
     def test_a_secret_shaped_message_reaches_no_surface_and_the_previous_review_stays(
-        self, store, client, executor, monkeypatch, caplog, where
+        self, store, client, threads, monkeypatch, caplog, where
     ):
         previous = pb.store_full_run(pb.RUN_ID_FIRST)
         pb.seed_roster_state(previous)
@@ -382,6 +439,89 @@ class TestAFailedJobNeverShowsItsExceptionText:
         assert len(jb.run_rows()) == 1, "no run row for a run that failed"
 
 
+class TestEveryPathOutOfTheJobGivesTheSlotBack:
+    """The job's lazy imports sit inside the guarded block, so an import that fails is a failed
+    attempt like any other: the slot comes back and nothing is stored. The job never raises."""
+
+    @pytest.mark.parametrize("claimed_by_caller", [True, False], ids=["token given", "own claim"])
+    def test_a_runner_module_that_cannot_be_imported_is_a_failed_attempt_that_frees_the_slot(
+        self, store, monkeypatch, claimed_by_caller
+    ):
+        calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
+        jb.fail_imports_of(monkeypatch, "advisors.tenure_review_runner")
+        owner = jb.the_run_state().try_start("on_demand") if claimed_by_caller else None
+        assert owner or not claimed_by_caller
+        ids_before = jb.all_row_ids()
+
+        app_module._tenure_review_job("on_demand", owner)
+
+        assert calls == [], "the review was run although its module could not be imported"
+        assert jb.state_is_idle() and jb.taken_then_released(), "the slot stayed taken"
+        failed = jb.the_run_state().snapshot()["last_failed_attempt"]
+        assert failed is not None, "a failed import is a failed attempt and is recorded"
+        assert failed["reason"] == "ImportError", "the exception type name only"
+        assert jb.new_rows_since(ids_before) == []
+
+    @pytest.mark.parametrize("claimed_by_caller", [True, False], ids=["token given", "own claim"])
+    def test_a_recommender_module_that_cannot_be_imported_stores_nothing_and_frees_the_slot(
+        self, store, monkeypatch, claimed_by_caller
+    ):
+        calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
+        jb.fail_imports_of(monkeypatch, "advisors.retirement_recommender")
+        owner = jb.the_run_state().try_start("on_demand") if claimed_by_caller else None
+        assert owner or not claimed_by_caller
+        ids_before = jb.all_row_ids()
+
+        app_module._tenure_review_job("on_demand", owner)
+
+        assert len(calls) == 1, "premise: the review itself ran"
+        assert jb.state_is_idle() and jb.taken_then_released(), "the slot stayed taken"
+        failed = jb.the_run_state().snapshot()["last_failed_attempt"]
+        assert failed is not None and failed["reason"] == "ImportError"
+        assert jb.new_rows_since(ids_before) == [], "no row of a run that did not complete"
+
+    def test_the_job_never_raises_even_when_the_run_state_module_cannot_be_imported(
+        self, store, monkeypatch
+    ):
+        calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
+        jb.fail_imports_of(monkeypatch, "advisors.tenure_review")
+        ids_before = jb.all_row_ids()
+
+        app_module._tenure_review_job("nightly")
+
+        assert calls == [] and jb.new_rows_since(ids_before) == []
+        assert jb.state_is_idle()
+
+
+class TestRowsOfARunThatFailedAfterTheyWereWrittenNeverShowBeforeTheFirstRun:
+    """Recommendation rows are stored before the run row. A run that fails in between leaves
+    rows that carry the id of a run no row describes; before any run has completed, the reader
+    used to fall back to the newest date and listed them as the current recommendations."""
+
+    def test_the_api_and_the_panel_list_none_of_them(self, store, client, threads, monkeypatch):
+        _raise_in_the_run_row_write(monkeypatch)
+
+        assert _post(client).status_code == 202
+
+        stored = jb.rec_rows()
+        assert len(stored) == 1 and jb.run_rows() == [], "premise: an orphan row, no run row"
+        assert stored[0]["raw_response"]["review_run_id"], "premise: the row names its run"
+        data = jb.api(client)
+        assert data["review_run"] is None
+        assert data["recommendations"] == [], "the row of a run that never completed was listed"
+        panel = jb.panel(client)
+        assert panel.find_all("retirement-recommendation-card") == []
+        assert panel.find("tenure-review-empty") is not None, "still 'no review yet'"
+        assert jb.the_run_state().snapshot()["last_failed_attempt"] is not None
+
+    def test_the_job_docstring_says_what_really_happens_to_those_rows(self):
+        doc = " ".join((app_module._tenure_review_job.__doc__ or "").split())
+        assert "never for a failed attempt" not in doc, (
+            "rows can remain from a run that failed after writing them"
+        )
+        assert "review_run_id" in doc, "the docstring names how readers ignore such rows"
+
+
 # ---------------------------------------------------------------------------
 # Refusals by the global hooks: nothing starts, nothing is written
 # ---------------------------------------------------------------------------
@@ -390,15 +530,15 @@ _PASSWORD = "test-pass-review-run-abc123"
 _SECRET_KEY = "test-secret-review-run-xyz789"
 
 
-def _nothing_started(executor, calls, ids_before):
-    assert executor.submitted == [], "a refused request must not reach the executor"
+def _nothing_started(threads, calls, ids_before):
+    assert threads == [], "a refused request must not start a thread"
     assert calls == [], "a refused request must not start a review"
     assert jb.new_rows_since(ids_before) == [], "a refused request writes nothing"
     assert jb.state_is_idle() and jb.taken_then_released()
 
 
 @pytest.fixture()
-def refusal_world(store, executor, monkeypatch):
+def refusal_world(store, threads, monkeypatch):
     calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
     return calls, jb.all_row_ids()
 
@@ -418,7 +558,7 @@ class TestARequestWithoutTheCsrfTokenIsRefused:
 
     @pytest.mark.parametrize("token", [None, "", "not-the-token"], ids=["absent", "empty", "wrong"])
     def test_a_missing_or_wrong_token_gets_403_and_starts_nothing(
-        self, refusal_world, executor, signed_in, token
+        self, refusal_world, threads, signed_in, token
     ):
         calls, ids_before = refusal_world
         headers = dict(XHR)
@@ -428,9 +568,9 @@ class TestARequestWithoutTheCsrfTokenIsRefused:
         response = _post(signed_in, headers=headers)
 
         assert response.status_code == 403
-        _nothing_started(executor, calls, ids_before)
+        _nothing_started(threads, calls, ids_before)
 
-    def test_the_right_token_is_not_refused(self, refusal_world, executor, signed_in):
+    def test_the_right_token_is_not_refused(self, refusal_world, threads, signed_in):
         calls, _ = refusal_world
         token = signed_in.get("/api/csrf-token").get_json()["csrf_token"]
 
@@ -447,26 +587,26 @@ class TestAnUnauthenticatedRequestIsRefused:
         monkeypatch.setenv("SECRET_KEY", _SECRET_KEY)
         monkeypatch.setattr(app_module, "_auth_check_enabled", True)
 
-    def test_an_xhr_request_gets_401_json(self, refusal_world, executor, client, gate):
+    def test_an_xhr_request_gets_401_json(self, refusal_world, threads, client, gate):
         calls, ids_before = refusal_world
 
         response = _post(client, headers=XHR)
 
         assert response.status_code == 401
         assert response.get_json() == {"error": "unauthenticated"}
-        _nothing_started(executor, calls, ids_before)
+        _nothing_started(threads, calls, ids_before)
 
     def test_a_page_style_request_is_redirected_to_the_login_page(
-        self, refusal_world, executor, client, gate
+        self, refusal_world, threads, client, gate
     ):
         calls, ids_before = refusal_world
 
         response = _post(client, follow_redirects=False)
 
         assert response.status_code == 302 and "/login" in response.headers["Location"]
-        _nothing_started(executor, calls, ids_before)
+        _nothing_started(threads, calls, ids_before)
 
-    def test_a_signed_in_operator_is_not_refused(self, refusal_world, executor, client, gate):
+    def test_a_signed_in_operator_is_not_refused(self, refusal_world, threads, client, gate):
         calls, _ = refusal_world
         with client.session_transaction() as session:
             session["authenticated"] = True
@@ -480,7 +620,7 @@ class TestAnUnauthenticatedRequestIsRefused:
 class TestARequestWhenAuthenticationIsNotConfiguredIsRefused:
     @pytest.mark.parametrize("missing", ["secret key", "credential"])
     def test_an_xhr_request_gets_503_and_a_page_style_request_is_redirected(
-        self, refusal_world, executor, client, monkeypatch, missing
+        self, refusal_world, threads, client, monkeypatch, missing
     ):
         calls, ids_before = refusal_world
         monkeypatch.setattr(app_module, "_auth_check_enabled", True)
@@ -502,4 +642,4 @@ class TestARequestWhenAuthenticationIsNotConfiguredIsRefused:
         assert xhr.status_code == 503
         assert xhr.get_json() == {"error": "misconfigured"}
         assert page.status_code == 302 and "/login" in page.headers["Location"]
-        _nothing_started(executor, calls, ids_before)
+        _nothing_started(threads, calls, ids_before)

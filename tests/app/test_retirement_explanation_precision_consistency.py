@@ -47,6 +47,10 @@ decision.
 
 from __future__ import annotations
 
+import json
+import re
+from types import SimpleNamespace
+
 import pytest
 
 from tests.app import _tenure_review_job_builders as jb
@@ -284,12 +288,8 @@ class TestPersistedEvidenceIsRounded:
     def test_n_obs_stays_an_exact_int_never_coerced_to_float(self, isolated_db):
         raw_rec = _sample_raw_response(n_obs=187)
 
-        explain_calls, persisted = _run_worker_with_mocked_prior_rows([], raw_rec)
+        _, persisted = _run_worker_with_mocked_prior_rows([], raw_rec)
 
-        assert explain_calls[0]["n_obs"] == 187
-        assert isinstance(explain_calls[0]["n_obs"], int), (
-            "n_obs must never be coerced to a float by the rounding step."
-        )
         assert persisted[0]["n_obs"] == 187
         assert isinstance(persisted[0]["n_obs"], int)
 
@@ -462,3 +462,128 @@ class TestFullPrecisionPriorTransition:
             "extra LLM call per already-stable pair."
         )
         assert persisted[0]["explanation"] == "pre-2d full-precision explanation"
+
+
+# ===========================================================================
+# The explainer is not shown what the reuse comparison looks through
+# ===========================================================================
+
+# The keys the reuse comparison leaves out because they move with the calendar or name the run:
+# an explanation that cites one of them goes stale while the comparison says it is current, and
+# a later run reuses that text with the old figure in it. The pair identity keys are left out of
+# the comparison too, but they cannot go stale (the prior row is found by them) and the
+# explainer's callers read them, so they stay.
+_STAMPED_AND_MOVING_KEYS = (
+    "explanation",
+    "review_run_id",
+    "as_of_trading_day",
+    "explanation_written_on",
+    "n_obs",
+    "window_last",
+    "window_days",
+    "composite_window_first",
+    "composite_window_last",
+    "composite_window_days",
+)
+_WINDOW_FIELDS = {
+    "window_first": "2025-12-02",
+    "window_last": "2026-10-16",
+    "window_days": 227,
+    "composite_window_first": "2026-04-21",
+    "composite_window_last": "2026-10-16",
+    "composite_window_days": 126,
+    "as_of_trading_day": "2026-10-19",
+    "explanation": "an old explanation carried on the record",
+    "explanation_written_on": "2026-10-01",
+}
+
+
+def _rec_with_window_fields(**overrides):
+    return {**_sample_raw_response(**overrides), **_WINDOW_FIELDS}
+
+
+class TestTheExplainerIsNotShownWhatTheReuseComparisonLooksThrough:
+    @pytest.mark.parametrize("key", _STAMPED_AND_MOVING_KEYS)
+    def test_the_recommendation_it_receives_lacks_the_key(self, isolated_db, key):
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([], _rec_with_window_fields())
+
+        assert len(explain_calls) == 1
+        assert key not in explain_calls[0], (
+            f"the explainer was shown {key!r}, which the reuse comparison ignores: a reused "
+            "explanation could cite its value after it changed"
+        )
+
+    def test_it_still_receives_the_evidence_the_comparison_does_look_at(self, isolated_db):
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([], _rec_with_window_fields())
+
+        seen = explain_calls[0]
+        assert seen["correlation"] == 0.80 and seen["candidate_composite"] == 0.20
+        assert seen["candidate_name"] == _CANDIDATE_NAME and seen["sibling_name"] == _SIBLING_NAME
+        assert seen["window_first"] == "2025-12-02", "the pair's first day is part of the evidence"
+        assert seen["candidate_id"] == _CANDIDATE_HASH and seen["sibling_id"] == _SIBLING_HASH
+
+    def test_the_stored_record_keeps_every_key_the_explainer_was_not_shown(self, isolated_db):
+        _, persisted = _run_worker_with_mocked_prior_rows([], _rec_with_window_fields())
+
+        stored = persisted[0]
+        for key in ("n_obs", "window_last", "window_days", "composite_window_days"):
+            assert key in stored, f"{key} was dropped from the stored record"
+        assert stored["n_obs"] == 200 and stored["window_last"] == "2026-10-16"
+        assert stored["review_run_id"], "the job stamps the run id on the stored record"
+        assert stored["explanation"] == "fresh explanation"
+        assert stored["explanation_written_on"], "a fresh explanation is dated"
+
+    def test_the_explainer_is_given_a_copy_so_the_record_is_not_changed_by_what_it_is_shown(
+        self, isolated_db, monkeypatch
+    ):
+        import advisors.retirement_explainer as explainer_module
+        import advisors.retirement_recommender as recommender_module
+        import app as app_module
+
+        persisted: list[dict] = []
+        monkeypatch.setattr(
+            recommender_module, "persist_recommendations", lambda recs, **kw: persisted.extend(recs)
+        )
+
+        def hostile(rec):
+            rec.clear()  # an explainer that empties what it is given
+            return "text"
+
+        jb.patch_runner(monkeypatch, lambda: [_rec_with_window_fields()])
+        monkeypatch.setattr(explainer_module, "explain_recommendation", hostile)
+
+        app_module._retirement_recommender_tick_worker()
+
+        assert persisted and persisted[0]["candidate_id"] == _CANDIDATE_HASH
+        assert persisted[0]["n_obs"] == 200
+
+    def test_the_prompt_the_real_explainer_sends_carries_none_of_the_keys(
+        self, isolated_db, monkeypatch
+    ):
+        import ai_advisor
+        import app as app_module
+
+        sent: list[dict] = []
+
+        def create(**kwargs):
+            sent.append(kwargs)
+            return SimpleNamespace(content=[SimpleNamespace(text="It repeats a stronger one.")])
+
+        client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        jb.hide_environment(monkeypatch)
+        monkeypatch.setattr(ai_advisor, "_build_client", lambda: client)
+        monkeypatch.setattr(
+            jb.runner_module,
+            "run_tenure_review",
+            jb.fake_runner(lambda: [_rec_with_window_fields()]),
+        )
+
+        app_module._retirement_recommender_tick_worker()
+
+        assert len(sent) == 1, "premise: the real explainer made its one request"
+        prompt = sent[0]["messages"][0]["content"]
+        evidence = json.loads(re.search(r"```json\n(.*?)\n```", prompt, re.S).group(1))
+        for key in _STAMPED_AND_MOVING_KEYS:
+            assert key not in evidence, f"the prompt carries {key!r}"
+        assert evidence["correlation"] == 0.80
+        assert evidence["candidate_name"] == _CANDIDATE_NAME

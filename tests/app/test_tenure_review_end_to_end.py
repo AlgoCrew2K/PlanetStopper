@@ -1,7 +1,7 @@
 """The symphony tenure review end to end: the real job, the real runner, the real stores.
 
 Every test here starts a review the way production does (the 03:45 tick with its thread run on
-the spot, or the "Run review now" route with its executor run on the spot), lets the real runner
+the spot, or the "Run review now" route with its thread run on the spot), lets the real runner
 read the Composer records through the URL router (tests/advisors/_composer_http_router.py serves
 the captured records under tests/fixtures/composer/tenure-review/; nothing reaches the network and
 no sleep is real), and reads the result back through the real
@@ -43,6 +43,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import re
 from datetime import date, datetime
 from unittest.mock import patch
 
@@ -131,10 +132,8 @@ def run_tick() -> None:
 
 
 def run_on_demand(client, monkeypatch):
-    """The "Run review now" request, with the executor it submits to run the job on the spot."""
-    monkeypatch.setattr(
-        app_module, "_TENURE_REVIEW_EXECUTOR", jb.ImmediateExecutor(), raising=False
-    )
+    """The "Run review now" request, with the thread it starts run the job on the spot."""
+    jb.install_inline_threads(monkeypatch)
     return client.post(RUN_ROUTE)
 
 
@@ -437,7 +436,7 @@ class TestAPassingPairBecomesARetirementCandidate:
 
         run_tick()
         jb.freeze_app_clock(monkeypatch, datetime(2026, 10, 20, 15, 0, tzinfo=jb.ET))
-        run_tick()
+        assert run_on_demand(client, monkeypatch).status_code == 202
 
         assert len(explainer_calls) == 1, "the unchanged pair was explained twice"
         runs = jb.run_rows()
@@ -805,7 +804,7 @@ class TestARunThatFailsAfterTheRecommendationsWereWritten:
         jb.freeze_app_clock(monkeypatch, datetime(2026, 10, 20, 15, 0, tzinfo=jb.ET))
         ids_before = jb.all_row_ids()
         with caplog.at_level(logging.DEBUG):
-            run_tick()
+            assert run_on_demand(client, monkeypatch).status_code == 202
         return before, seen, ids_before
 
     def test_no_run_row_is_written_and_the_orphaned_row_is_never_shown(
@@ -863,8 +862,7 @@ class TestADecisionMadeWhileAReviewRuns:
         first = jb.api_after_run(client)["review_run"]["run_id"]
         real_runner = runner_module.run_tenure_review
         blocked = jb.BlockingRunner(delegate=real_runner).install(monkeypatch)
-        executor = jb.ThreadedExecutor()
-        monkeypatch.setattr(app_module, "_TENURE_REVIEW_EXECUTOR", executor, raising=False)
+        review_threads = jb.install_recording_threads(monkeypatch)
         jb.freeze_app_clock(monkeypatch, SECOND_RUN_AT)
         try:
             assert client.post(RUN_ROUTE).status_code == 202
@@ -884,14 +882,115 @@ class TestADecisionMadeWhileAReviewRuns:
             )
         finally:
             blocked.release.set()
-            executor.wait_all()
-            executor.shutdown()
+            jb.join_threads(review_threads)
 
         after = jb.api_after_run(client)
         assert after["review_run"]["run_id"] != first
         entry = jb.entries_by_id(after)[jb.TWIN_ID]
         assert entry["approval_status"] == "approved"
         assert pb.decisions_by_id()[jb.TWIN_ID]["approval_status"] == "approved"
+
+
+# ---------------------------------------------------------------------------
+# The daemon's log file records what a run asked of Composer and why a run did not complete
+# ---------------------------------------------------------------------------
+
+# The client's name for each request kind in its log line, against the router's name for it.
+LOGGED_READ_KINDS = {
+    "statistics": "statistics",
+    "series": "series",
+    "holdings": "holdings",
+    "definition": "score",
+}
+
+
+def _logged_reads(text: str, kind: str) -> list[str]:
+    return re.findall(rf"composer {kind} read: HTTP (\d{{3}})", text)
+
+
+def _logged_backtests(text: str) -> list[str]:
+    return re.findall(r"run_backtest: POST /backtest HTTP (\d{3})", text)
+
+
+class TestTheRunsLogLinesReachTheDaemonsLogFile:
+    """The daemon attaches file handlers to its own logger only; the Composer clients and the
+    runner log under their module names. These tests read what the daemon's file handlers
+    receive, with the root logger at its default level, so a line counts only if the daemon's
+    own setup delivers it (the test runner's log capture on the root logger would show it
+    either way)."""
+
+    def test_every_request_of_a_run_and_the_jobs_own_line_are_written(self, world, monkeypatch):
+        router = jb.install_world(monkeypatch, twin=True)
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        text = log.getvalue()
+        for logged, routed in LOGGED_READ_KINDS.items():
+            asked = len(router.of_kind(routed))
+            assert len(_logged_reads(text, logged)) == asked, (
+                f"the log lists {len(_logged_reads(text, logged))} {logged} reads "
+                f"and the run made {asked}"
+            )
+        assert router.of_kind("statistics") and router.of_kind("series"), "premise: a real run"
+        assert set(_logged_reads(text, "series")) == {"200"}
+        assert len(_logged_backtests(text)) == len(router.of_kind("backtest"))
+        assert "Tenure review complete:" in text
+        assert h.ACCOUNT_ID not in text, "an account id is a credential-grade identifier"
+
+    def test_a_rate_limited_read_is_written_with_its_status(self, world, monkeypatch):
+        router = jb.install_world(monkeypatch)
+        router.set_series(h.MID_ID, h.error_reply(429))
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        text = log.getvalue()
+        assert _logged_reads(text, "series") == ["429"], (
+            "the first 429 ends the run's requests, and the log shows it"
+        )
+        assert len(_logged_reads(text, "series")) == len(router.of_kind("series"))
+
+    def test_a_backtest_request_the_server_refused_as_too_large_is_written_with_its_status(
+        self, world, monkeypatch
+    ):
+        # The dated-backtest setup: the one symphony the run backtests (derived forms of the
+        # capture, as in the test of the backtest window).
+        jb.rewrite_env(world, accounts=[("ACCOUNT_ROTH", h.ACCOUNT_ID)], threshold="60")
+        router = jb.install_world(monkeypatch, invested_since={h.BACKTEST_ID: "2026-07-20"})
+        router.set_backtest(h.error_reply(413))
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        asked = len(router.of_kind("backtest"))
+        assert asked >= 1, "premise: the run asked for a backtest"
+        assert _logged_backtests(log.getvalue()) == ["413"] * asked
+
+    @pytest.mark.parametrize(
+        "reply, reason",
+        [
+            (lambda: h.marked_error_reply(500, LEAK), "Composer statistics unavailable"),
+            (lambda: h.marked_error_reply(401, LEAK), "Composer statistics unavailable"),
+            (lambda: h.non_json_200(), "Composer statistics unreadable"),
+        ],
+        ids=["500", "401", "non-JSON 200"],
+    )
+    def test_a_run_that_did_not_complete_writes_its_fixed_reason_and_nothing_the_server_said(
+        self, world, monkeypatch, reply, reason
+    ):
+        router = jb.install_world(monkeypatch)
+        router.statistics_default = reply()
+        ids_before = jb.all_row_ids()
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        text = log.getvalue()
+        assert reason in text, "the daemon log does not say why the run did not complete"
+        assert LEAK not in text, "the log must not carry what the server answered"
+        assert jb.new_rows_since(ids_before) == [], "premise: the run did not complete"
+        assert len(_logged_reads(text, "statistics")) == len(router.of_kind("statistics"))
 
 
 # ---------------------------------------------------------------------------
@@ -918,6 +1017,9 @@ class TestWhatTheJobHandsTheRunner:
         jb.rewrite_env(env, accounts=[("ACCOUNT_ROTH", "acct-two")], threshold="abc")
         run_tick()
         jb.rewrite_env(env, accounts=[("ACCOUNT_ROTH", "acct-two")])
+        # The same as-of day and the same threshold in effect as the run before: a nightly tick
+        # would start nothing, so the third run is the next night's.
+        jb.freeze_app_clock(monkeypatch, SECOND_RUN_AT)
         run_tick()
 
         assert [c["threshold_raw"] for c in calls] == ["100", "abc", None], (

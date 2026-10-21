@@ -4,9 +4,9 @@ Nothing here is imported by production code.
 
 Four groups live here:
 
-1. Stand-ins for the machinery a run uses: a thread that runs its target on ``start()``,
-   executors that run a submitted job at once, on a real worker, or never (refusing the
-   submission), and a runner that blocks until the test lets it finish.
+1. Stand-ins for the machinery a run uses: threads that run their target on ``start()``
+   (with or without the arguments they were given), a real thread that is also recorded, threads
+   that refuse to be built or started, and a runner that blocks until the test lets it finish.
 2. A frozen clock for ``app.datetime`` (the run reads US Eastern time once, at its start).
 3. A fake runner answer (``patch_runner``) built on the real result types, for the tests
    that exercise what the job does with a run and not the Composer reads. Its recommendation
@@ -24,8 +24,11 @@ tests from the series themselves.
 
 from __future__ import annotations
 
-import concurrent.futures
+import builtins
+import contextlib
 import copy
+import io
+import logging
 import math
 import os
 import threading
@@ -95,62 +98,66 @@ class ImmediateThread:
         return False
 
 
-class ImmediateExecutor:
-    """Runs a submitted job at once, on the caller's thread, and records what it was given."""
+# The real class, captured at import time before any test replaces ``threading.Thread``: a test
+# that needs a real thread of its own (to post two requests together, say) builds it from this.
+REAL_THREAD = threading.Thread
 
-    def __init__(self):
-        self.submitted: list[tuple] = []
 
-    def submit(self, fn, /, *args, **kwargs):
-        self.submitted.append((fn, args, kwargs))
-        future: concurrent.futures.Future = concurrent.futures.Future()
-        try:
-            future.set_result(fn(*args, **kwargs))
-        except BaseException as exc:  # noqa: BLE001 - mirrors an executor holding the error
-            future.set_exception(exc)
-        return future
+class StartedThread:
+    """Stands in for ``threading.Thread`` on the route: ``start()`` calls ``target(*args, **kwargs)``
+    on the caller's thread, with the arguments the thread was given, and the thread is recorded
+    (with its ``daemon`` flag and name) so a test can read how production built it."""
 
-    def shutdown(self, wait=True, **_):
+    def __init__(self, group=None, target=None, name=None, args=(), kwargs=None, *, daemon=None):
+        self._target = target
+        self._args = tuple(args)
+        self._kwargs = dict(kwargs or {})
+        self.name = name
+        self.daemon = daemon
+
+    def start(self):
+        self.started.append(self)
+        if self._target is not None:
+            self._target(*self._args, **self._kwargs)
+
+    def join(self, timeout=None):
         return None
 
-
-class ThreadedExecutor:
-    """A real single-worker executor that keeps every future so a test can wait for the job."""
-
-    def __init__(self):
-        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        self.futures: list[concurrent.futures.Future] = []
-        self.submitted: list[tuple] = []
-        self._lock = threading.Lock()
-
-    def submit(self, fn, /, *args, **kwargs):
-        with self._lock:
-            self.submitted.append((fn, args, kwargs))
-            future = self._pool.submit(fn, *args, **kwargs)
-            self.futures.append(future)
-        return future
-
-    def wait_all(self, timeout: float = 60.0):
-        for future in list(self.futures):
-            future.result(timeout=timeout)
-
-    def shutdown(self, wait=True, **_):
-        self._pool.shutdown(wait=wait)
+    def is_alive(self):
+        return False
 
 
-class RefusingExecutor:
-    """An executor whose ``submit`` raises (a pool that was shut down, no thread available)."""
+def install_inline_threads(monkeypatch) -> list[StartedThread]:
+    """Replace ``threading.Thread`` by ``StartedThread`` for the rest of the test; the returned
+    list collects every thread whose ``start()`` was called, in order."""
+    started: list[StartedThread] = []
 
-    def __init__(self, exc: BaseException):
-        self._exc = exc
-        self.calls = 0
+    class Inline(StartedThread):
+        pass
 
-    def submit(self, fn, /, *args, **kwargs):
-        self.calls += 1
-        raise self._exc
+    Inline.started = started
+    monkeypatch.setattr(threading, "Thread", Inline)
+    return started
 
-    def shutdown(self, wait=True, **_):
-        return None
+
+def install_refusing_threads(monkeypatch, exc: BaseException, *, where: str = "start") -> list[str]:
+    """Replace ``threading.Thread`` by a class whose construction (``where="construct"``) or
+    ``start()`` (``where="start"``) raises ``exc``. The returned list records ``"construct"`` and
+    ``"start"`` for each stage that was reached."""
+    reached: list[str] = []
+
+    class Refusing:
+        def __init__(self, *args, **kwargs):
+            reached.append("construct")
+            if where == "construct":
+                raise exc
+
+        def start(self):
+            reached.append("start")
+            raise exc
+
+    monkeypatch.setattr(threading, "Thread", Refusing)
+    return reached
 
 
 class RecordingThread(threading.Thread):
@@ -161,6 +168,21 @@ class RecordingThread(threading.Thread):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         type(self).instances.append(self)
+
+
+def install_recording_threads(monkeypatch) -> list[RecordingThread]:
+    """Replace ``threading.Thread`` by ``RecordingThread`` (a real thread) for the rest of the
+    test; the returned list collects every thread built since."""
+    RecordingThread.instances.clear()
+    monkeypatch.setattr(threading, "Thread", RecordingThread)
+    return RecordingThread.instances
+
+
+def join_threads(threads, timeout: float = 60.0) -> None:
+    """Wait for each recorded thread to end."""
+    for thread in list(threads):
+        thread.join(timeout=timeout)
+        assert not thread.is_alive(), "a review thread did not end"
 
 
 # ---------------------------------------------------------------------------
@@ -424,43 +446,122 @@ TWIN_WOBBLE = 0.0015
 
 
 _ROUTERS: list = []
+# Every call the guard refused since it was installed. The refusal also raises, but production
+# code catches broad exceptions around its network calls and its client construction, so the
+# raise alone can pass unseen; the record is what the teardown checks.
+_REFUSED: list[str] = []
 
 
 def block_live_calls(monkeypatch) -> None:
-    """Make any real Anthropic client or outbound HTTP request fail the test loudly.
+    """Make any real Anthropic client or outbound HTTP request fail the test.
 
-    Installed before the URL router, which replaces the same ``requests`` entry points and so
-    keeps serving the Composer shapes it knows; ``assert_no_unserved_requests`` then fails the
-    test for any request the router had to refuse."""
+    Each refused call is recorded and raises. A caller that catches the error (the explainer and
+    the Composer clients do) hides the raise, so ``assert_no_unserved_requests`` fails the test
+    from the record whether or not the error was caught. Installed before the URL router, which
+    replaces the same ``requests`` entry points and so keeps serving the Composer shapes it
+    knows; the router's own refusals are checked by the same teardown call."""
     import requests  # noqa: PLC0415
 
     import ai_advisor  # noqa: PLC0415
 
-    def refuse(*_args, **_kwargs):
-        raise AssertionError("a test reached a live network call or a real Anthropic client")
+    def refusing(label: str):
+        def refuse(*_args, **_kwargs):
+            _REFUSED.append(label)
+            raise AssertionError("a test reached a live network call or a real Anthropic client")
 
-    monkeypatch.setattr(ai_advisor, "_build_client", refuse, raising=False)
+        return refuse
+
+    _REFUSED.clear()
+    monkeypatch.setattr(
+        ai_advisor, "_build_client", refusing("ai_advisor._build_client"), raising=False
+    )
     try:
         import anthropic  # noqa: PLC0415
 
-        monkeypatch.setattr(anthropic, "Anthropic", refuse)
+        monkeypatch.setattr(anthropic, "Anthropic", refusing("anthropic.Anthropic"))
     except ImportError:
         pass
     for name in ("get", "post", "put", "patch", "delete", "head", "options", "request"):
-        monkeypatch.setattr(requests, name, refuse)
-    monkeypatch.setattr(requests.sessions.Session, "request", refuse)
+        monkeypatch.setattr(requests, name, refusing(f"requests.{name}"))
+    monkeypatch.setattr(
+        requests.sessions.Session, "request", refusing("requests.sessions.Session.request")
+    )
     _ROUTERS.clear()
+
+
+def refused_live_calls() -> list[str]:
+    """The labels of the calls the guard has refused so far (a copy)."""
+    return list(_REFUSED)
 
 
 def assert_no_unserved_requests() -> None:
-    """Fail when a URL router built by ``install_world`` had to refuse any request."""
+    """Fail when the guard refused any call, or a URL router built by ``install_world`` had to
+    refuse a request. Both records are cleared first, so one failure is reported once."""
+    refused = list(_REFUSED)
+    _REFUSED.clear()
     routers = list(_ROUTERS)
     _ROUTERS.clear()
+    assert refused == [], (
+        f"the test reached a live network call or a real Anthropic client {refused}; "
+        "production code may have caught the error"
+    )
     for router in routers:
         assert router.violations == [], (
             "the run made a request the Composer router does not serve: "
             f"{[(r.method, r.url) for r in router.violations]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The daemon's log file and the import system
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def capturing_daemon_log(monkeypatch):
+    """Yield a buffer that receives everything the daemon would write to its log file.
+
+    The daemon configures no root handler: its log file is written by the file handlers it
+    attaches itself. Every file handler found anywhere in the logging tree that writes to the
+    daemon's log file is given the buffer as its stream, so a line reaches the buffer only by the
+    path it would take to the file. The root logger is held at its default level (``WARNING``)
+    inside the block, so a module logger whose lines reach the file only because a test runner
+    lowered the root level is not mistaken for one that delivers them."""
+    buffer = io.StringIO()
+    wanted = os.path.abspath(app_module.LOG_FILE)
+    loggers = [logging.getLogger(), *logging.root.manager.loggerDict.values()]
+    handlers = {
+        id(h): h
+        for lg in loggers
+        if isinstance(lg, logging.Logger)
+        for h in lg.handlers
+        if isinstance(h, logging.FileHandler) and os.path.abspath(h.baseFilename) == wanted
+    }
+    assert handlers, "no file handler writes to the daemon's log file"
+    for handler in handlers.values():
+        monkeypatch.setattr(handler, "stream", buffer)
+    root = logging.getLogger()
+    previous = root.level
+    root.setLevel(logging.WARNING)
+    try:
+        yield buffer
+    finally:
+        root.setLevel(previous)
+
+
+def fail_imports_of(monkeypatch, *modules: str) -> None:
+    """Make an import statement that names one of ``modules`` (dotted, by ``import a.b``,
+    ``from a.b import x`` or ``from a import b``) raise ``ImportError`` for the rest of the test."""
+    real_import = builtins.__import__
+    wanted = set(modules)
+
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        named = {name, *(f"{name}.{item}" for item in (fromlist or ()))}
+        if level == 0 and named & wanted:
+            raise ImportError(f"planted import failure: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
 
 
 def twin_series_reply(source_id: str = h.MID_ID) -> h.Reply:

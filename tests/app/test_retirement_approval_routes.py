@@ -501,8 +501,20 @@ class TestRefusalsLeaveTheEntryPending:
 
     @pytest.mark.parametrize(
         "bad_id",
-        ["", "x" * 301, 12345, None, ["a"], {"a": 1}, True],
-        ids=["empty", "301 chars", "integer", "null", "list", "object", "boolean"],
+        ["", "x" * 301, 12345, None, ["a"], {"a": 1}, True, " ", "   ", "\t\n", "\u00a0\u2003"],
+        ids=[
+            "empty",
+            "301 chars",
+            "integer",
+            "null",
+            "list",
+            "object",
+            "boolean",
+            "one space",
+            "spaces",
+            "tab and newline",
+            "no-break and em spaces",
+        ],
     )
     @pytest.mark.parametrize("url", [_APPROVE_URL, _REJECT_URL], ids=["approve", "reject"])
     def test_an_invalid_candidate_id_gets_the_existing_refusal_and_writes_nothing(
