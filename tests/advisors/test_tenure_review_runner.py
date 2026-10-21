@@ -123,6 +123,11 @@ LABELS = {h.ACCOUNT_ID: "Individual account", h.SECOND_ACCOUNT_ID: "Roth account
 FIRST_LABEL, SECOND_LABEL = LABELS[h.ACCOUNT_ID], LABELS[h.SECOND_ACCOUNT_ID]
 SHARE_FIGURES = ("peak_share_with", "peak_share_without")
 WIDENED_SPACING_SECONDS = 7.5
+# How the reasons name an account: by the configured label, or by position when none is given.
+NAMING = [
+    pytest.param({"account_labels": LABELS}, (FIRST_LABEL, SECOND_LABEL), id="configured_labels"),
+    pytest.param({}, ("account 1", "account 2"), id="positions"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -1186,13 +1191,14 @@ def test_holdings_of_two_accounts_are_merged_by_date_and_symphony(router, inputs
     assert inputs_seen[0].holdings.days == trading_day_holdings(h.holdings_recent_body())
 
 
+@pytest.mark.parametrize(("labels_kwargs", "names"), NAMING)
 def test_a_partly_failed_holdings_read_feeds_the_days_it_got_and_names_the_account_for_the_shares(
-    router, inputs_seen
+    router, inputs_seen, labels_kwargs, names
 ):
     replies = {0: h.error_reply(500), 1: h.Reply(body=h.holdings_recent_body())}
     router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
 
-    outcome = completed_run(account_labels=LABELS)
+    outcome = completed_run(**labels_kwargs)
 
     got = trading_day_holdings(h.holdings_recent_body())
     assert inputs_seen[0].holdings.failure is None
@@ -1206,7 +1212,7 @@ def test_a_partly_failed_holdings_read_feeds_the_days_it_got_and_names_the_accou
         figure = item["figures"][name]
         assert figure["value"] is None, "a share over an incomplete read is not shown"
         assert_reason_names_accounts(
-            figure["reason"], "Composer unavailable", {FIRST_LABEL: "partly read"}
+            figure["reason"], "Composer unavailable", {names[0]: "partly read"}
         )
 
 
@@ -1769,14 +1775,16 @@ SECOND_ACCOUNT_FAILURES = [
 ]
 
 
+@pytest.mark.parametrize(("labels_kwargs", "names"), NAMING)
 @pytest.mark.parametrize(("make_reply", "class_reason"), SECOND_ACCOUNT_FAILURES)
-def test_an_account_whose_holdings_cannot_be_read_keeps_its_failure_class_and_is_named_by_label(
-    router, inputs_seen, make_reply, class_reason
+def test_an_account_whose_holdings_cannot_be_read_keeps_its_failure_class_and_is_named(
+    router, inputs_seen, make_reply, class_reason, labels_kwargs, names
 ):
+    first, second = names
     mine, theirs = split_roster(router)
     readable = serve_split_holdings(router, mine, lambda index: make_reply())
 
-    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], account_labels=LABELS)
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], **labels_kwargs)
 
     got = trading_day_holdings(readable)
     assert inputs_seen[0].holdings.days == got
@@ -1790,7 +1798,7 @@ def test_an_account_whose_holdings_cannot_be_read_keeps_its_failure_class_and_is
         figure = item["figures"][name]
         assert figure["value"] is None, name
         assert_reason_names_accounts(
-            figure["reason"], class_reason, {SECOND_LABEL: "not read"}, readable=[FIRST_LABEL]
+            figure["reason"], class_reason, {second: "not read"}, readable=[first]
         )
     for sid in (h.BACKTEST_ID, h.OLDEST_ID):
         assert sid in theirs
@@ -1798,7 +1806,7 @@ def test_an_account_whose_holdings_cannot_be_read_keeps_its_failure_class_and_is
         assert missing["status"] == "unavailable", sid
         assert "no holdings for this symphony" not in missing["reason"], sid
         assert_reason_names_accounts(
-            missing["reason"], class_reason, {SECOND_LABEL: "not read"}, readable=[FIRST_LABEL]
+            missing["reason"], class_reason, {second: "not read"}, readable=[first]
         )
         assert all(fig["value"] is None for fig in missing["figures"].values()), sid
 
@@ -1807,21 +1815,22 @@ def test_a_429_on_the_second_accounts_holdings_ends_the_requests_after_that_one(
     mine, _ = split_roster(router)
     serve_split_holdings(router, mine, lambda index: h.error_reply(429))
 
-    completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], account_labels=LABELS)
+    completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
 
-    second = router.holdings_requests(h.SECOND_ACCOUNT_ID)
-    assert len(second) == 1, "the other spans of the account are never requested"
-    _assert_run_ended_at(router, second[0])
+    requested = router.holdings_requests(h.SECOND_ACCOUNT_ID)
+    assert len(requested) == 1, "the other spans of the account are never requested"
+    _assert_run_ended_at(router, requested[0])
 
 
+@pytest.mark.parametrize(("labels_kwargs", "names"), NAMING)
 def test_a_429_on_a_later_holdings_span_keeps_the_rate_limit_reason_and_says_partly_read(
-    router, inputs_seen
+    router, inputs_seen, labels_kwargs, names
 ):
     recent = h.holdings_recent_body()
     replies = {0: h.Reply(body=recent), 1: h.error_reply(429)}
     router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
 
-    outcome = completed_run(account_labels=LABELS)
+    outcome = completed_run(**labels_kwargs)
 
     holdings = router.of_kind("holdings")
     assert len(holdings) == 2, "nothing is requested after the 429"
@@ -1841,20 +1850,22 @@ def test_a_429_on_a_later_holdings_span_keeps_the_rate_limit_reason_and_says_par
             assert_reason_names_accounts(
                 figure["reason"],
                 RATE_LIMIT_REASON,
-                {FIRST_LABEL: "partly read"},
-                readable=[SECOND_LABEL],
+                {names[0]: "partly read"},
+                readable=[names[1]],
             )
 
 
+@pytest.mark.parametrize(("labels_kwargs", "names"), NAMING)
 def test_a_429_after_the_first_accounts_first_span_names_both_accounts_by_what_was_read(
-    router, inputs_seen
+    router, inputs_seen, labels_kwargs, names
 ):
+    first, second = names
     mine, theirs = split_roster(router)
     readable = h.holdings_subset_body(mine)
     replies = {0: h.Reply(body=readable), 1: h.error_reply(429)}
     router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
 
-    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], account_labels=LABELS)
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], **labels_kwargs)
 
     holdings = router.of_kind("holdings")
     assert [r.match["account"] for r in holdings] == [h.ACCOUNT_ID] * 2
@@ -1868,7 +1879,7 @@ def test_a_429_after_the_first_accounts_first_span_names_both_accounts_by_what_w
             assert_reason_names_accounts(
                 item["figures"][name]["reason"],
                 RATE_LIMIT_REASON,
-                {FIRST_LABEL: "partly read", SECOND_LABEL: "not read"},
+                {first: "partly read", second: "not read"},
             )
     for sid in (h.BACKTEST_ID, h.OLDEST_ID):
         assert sid in theirs
@@ -1876,33 +1887,8 @@ def test_a_429_after_the_first_accounts_first_span_names_both_accounts_by_what_w
         assert missing["status"] == "unavailable", sid
         assert "no holdings for this symphony" not in missing["reason"], sid
         assert RATE_LIMIT_REASON in missing["reason"], sid
-        assert f"holdings not read for {SECOND_LABEL}" in missing["reason"], sid
+        assert f"holdings not read for {second}" in missing["reason"], sid
         assert h.SECOND_ACCOUNT_ID not in missing["reason"], sid
-
-
-def test_without_configured_labels_an_account_is_named_by_its_position_and_never_by_its_id(
-    router,
-):
-    mine, theirs = split_roster(router)
-    serve_split_holdings(router, mine, lambda index: h.error_reply(401))
-
-    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
-
-    reasons = [
-        figure["reason"]
-        for item in available_long_vix(outcome).values()
-        for figure in (item["figures"][name] for name in SHARE_FIGURES)
-    ]
-    assert {h.BACKTEST_ID, h.OLDEST_ID} <= set(theirs), "fixture sanity: the second account's"
-    reasons += [
-        entry(outcome, sid)["evidence"]["long_vix"]["reason"]
-        for sid in (h.BACKTEST_ID, h.OLDEST_ID)
-    ]
-    assert reasons
-    for reason in reasons:
-        assert_reason_names_accounts(
-            reason, "Composer refused the request", {"account 2": "not read"}
-        )
 
 
 def test_when_every_account_is_readable_the_shares_have_values(router):
