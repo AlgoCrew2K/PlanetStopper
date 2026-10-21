@@ -380,7 +380,7 @@ def run_backtest(
                 try:
                     data = response.json()
                 except ValueError as exc:
-                    return _error_result(f"invalid JSON in 200 response: {type(exc).__name__}")
+                    return _error_result(f"invalid JSON in 200 response: {exc}")
                 return _parse_response(data, sid)
 
             if response.status_code == 429:
@@ -420,14 +420,14 @@ def run_backtest(
             return _error_result(last_reason)
 
         except requests.Timeout as exc:
-            last_reason = f"request timed out after {_BACKTEST_REQUEST_TIMEOUT}s"
+            last_reason = f"request timed out after {_BACKTEST_REQUEST_TIMEOUT}s: {exc}"
             logger.info("run_backtest: timeout on attempt %d — %s", attempt + 1, type(exc).__name__)
             # Timeout is not worth retrying (the server may still be processing);
             # return an error result immediately.
             return _error_result(last_reason)
 
         except requests.RequestException as exc:
-            last_reason = f"transport error: {type(exc).__name__}"
+            last_reason = f"transport error: {type(exc).__name__}: {exc}"
             logger.info(
                 "run_backtest: transport error on attempt %d — %s",
                 attempt + 1,
