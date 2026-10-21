@@ -632,11 +632,31 @@ class TestReviewRunLeavesOtherSurfacesUnchanged:
         today = datetime.date.today()
         return [(today - datetime.timedelta(days=i)).isoformat() for i in range(n, 0, -1)]
 
+    # Fields of the state poll that count down to the next minute and so differ between
+    # two reads whatever is stored: the seconds left and its mm:ss text.
+    _CLOCK_FIELDS = (("next_run_seconds",), ("meta", "next_run"))
+
+    @classmethod
+    def _without_clock_fields(cls, body: str) -> str:
+        import json
+
+        data = json.loads(body)
+        for path in cls._CLOCK_FIELDS:
+            node = data
+            for key in path[:-1]:
+                node = node.get(key, {}) if isinstance(node, dict) else {}
+            if isinstance(node, dict):
+                node.pop(path[-1], None)
+        return json.dumps(data, sort_keys=True)
+
     def _snapshot(self, client):
         out = {}
         for url in self._URLS:
             resp = client.get(url)
-            out[url] = (resp.status_code, resp.get_data(as_text=True))
+            body = resp.get_data(as_text=True)
+            if url == "/api/state":
+                body = self._without_clock_fields(body)
+            out[url] = (resp.status_code, body)
         return out
 
     def test_storing_a_completed_run_changes_none_of_their_responses(
