@@ -5187,7 +5187,7 @@ class TestAFigureWithNoValueReadsNotComputable:
     def test_no_figure_line_of_any_record_says_not_computed(self, client, isolated_db):
         """A stored reason may itself say a value was not computed; the figure line's own
         wording is what retired."""
-        retired = re.compile(r"^[a-z][a-z ]*: not computed")
+        retired = re.compile(r"^[a-z][a-z ]*: not computed\b")
         checked = 0
         for which in ("full", "edge", "small", "quiet", "gap", "lone", "solo", "apart"):
             _store_record(which)
