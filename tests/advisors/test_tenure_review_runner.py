@@ -49,9 +49,10 @@ Contract pinned here (the implementer reads this file, not the plan):
   read in full (any failed span), the days that were read still feed the review, and the
   long-VIX item of a symphony names the accounts that are missing: its portfolio-wide shares
   (``peak_share_with``, ``peak_share_without``) read ``value`` None with a reason naming each
-  missing account id and no readable one, its own counts (``held_days``, ``co_held_days``) are
-  computed from the days that were read, and a symphony whose own account is missing reads
-  unavailable naming that account. A holdings failure never fails the run.
+  missing account id and no readable one, and its own counts (``held_days``, ``co_held_days``)
+  are computed from the days that were read. A symphony whose own account is missing and that
+  has no holding day in what was read reads unavailable with a reason naming that account,
+  never "no holdings for this symphony in the window". A holdings failure never fails the run.
 - Pacing: at least 3.0 seconds of sleep separate any two consecutive Composer requests of the
   run, whatever their kinds, a retry of the backtest included. The first reply answered 429
   ends the run's Composer requests: nothing is requested after it (the backtest is not retried
@@ -1190,6 +1191,13 @@ def test_a_run_with_failures_still_makes_no_request_outside_the_allowlist(router
     assert all((r.method, r.kind) in ALLOWED for r in router.requests)
 
 
+def tickers_of(inputs_seen, symphony_id):
+    """The sorted tickers handed to the review for one symphony (asserted to be set)."""
+    tickers = input_of(inputs_seen, symphony_id).current_tickers
+    assert tickers is not None, f"{symphony_id} has logic_holdings in the state"
+    return sorted(tickers)
+
+
 def statistics_other_ids():
     """The roster symphonies without a captured series record."""
     return [sid for sid in h.statistics_ids() if sid not in h.CAPTURED_SERIES_IDS]
@@ -1231,6 +1239,7 @@ def test_a_series_read_that_leaves_fewer_than_two_usable_points_falls_back_to_sh
     outcome = completed_run()
 
     sym = input_of(inputs_seen, h.OLDEST_ID)
+    assert sym.shadow_returns is not None, "the shadow rows are read for an unusable series"
     assert dict(sym.shadow_returns) == bot_by_day
     e = entry(outcome, h.OLDEST_ID)
     assert e["basis"]["kind"] == "shadow"
@@ -1273,13 +1282,14 @@ def _expected_request_counts(router, account_count, threshold=126):
     that has a captured series and a tenure of at least the threshold; a backtest per such
     symphony whose definition is served; and holdings spans from the earliest window start to
     the as-of day, once per account."""
-    invested = {e["id"]: e["invested_since"] for e in h.statistics_body()["symphonies"]}
     ids = h.statistics_ids()
+    # a captured series has a point on every NYSE session from its first day, so its points up
+    # to the as-of day are the trading-day tenure (see the fixture README)
     windowed = [
         sid
         for sid in ids
         if sid in h.CAPTURED_SERIES_IDS
-        and b.oracle_count_trading_days(date.fromisoformat(invested[sid]), AS_OF) >= threshold
+        and sum(day <= AS_OF.isoformat() for day in h.series_dates(sid)) >= threshold
     ]
     assert windowed, "fixture sanity: some symphony qualifies"
     assert h.YOUNGEST_ID not in windowed
@@ -1549,8 +1559,8 @@ def test_current_tickers_are_the_logic_holdings_keys_of_the_symphonys_own_state_
 
     completed_run()
 
-    assert sorted(input_of(inputs_seen, h.OLDEST_ID).current_tickers) == ["SPY", "VIXY"]
-    assert sorted(input_of(inputs_seen, h.MID_ID).current_tickers) == ["QQQ"]
+    assert tickers_of(inputs_seen, h.OLDEST_ID) == ["SPY", "VIXY"]
+    assert tickers_of(inputs_seen, h.MID_ID) == ["QQQ"]
     assert not input_of(inputs_seen, h.BACKTEST_ID).current_tickers
     for sid in (h.YOUNGEST_ID, *statistics_other_ids()):
         assert input_of(inputs_seen, sid).current_tickers is None, sid
@@ -1568,7 +1578,7 @@ def test_a_state_entry_kept_under_the_display_name_is_not_the_symphonys_holdings
 
     completed_run()
 
-    assert sorted(input_of(inputs_seen, h.MID_ID).current_tickers) == ["QQQ"]
+    assert tickers_of(inputs_seen, h.MID_ID) == ["QQQ"]
     assert input_of(inputs_seen, h.OLDEST_ID).current_tickers is None
 
 

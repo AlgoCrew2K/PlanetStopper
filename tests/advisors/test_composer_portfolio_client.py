@@ -117,7 +117,7 @@ def test_the_spacing_constant_cites_the_per_minute_limit_and_not_a_per_second_on
     text = " ".join(reversed(comment))
 
     assert comment, "the constant carries a comment"
-    assert "25" in text and "per minute" in text
+    assert re.search(r"\b25\b.*\bminute\b", text), "the 25 a minute figure is cited"
     assert "per second" not in text, "Composer's stricter documented limit is per minute"
 
 
