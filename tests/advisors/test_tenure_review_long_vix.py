@@ -654,3 +654,163 @@ def test_a_value_that_is_not_a_day_of_holdings_under_an_ignored_key_changes_noth
     except Exception as exc:  # the reader skips the key; its value is none of its business
         pytest.fail(f"a value under an ignored key made the reader raise {type(exc).__name__}")
     assert got == _cofire(_holdings(SCENARIO))
+
+
+# ---------------------------------------------------------------------------
+# A session whose holdings cannot be read is an unreadable day, never an error
+# ---------------------------------------------------------------------------
+
+# What can stand for one session's holdings and cannot be read as them: nothing, a number,
+# text, a list, a mapping whose entry for a live symphony is not a mapping of amounts, and
+# amounts that are not numbers. Each is built for a subject and one other live symphony.
+UNREADABLE_DAYS = [
+    pytest.param(lambda subject, peer: None, id="null"),
+    pytest.param(lambda subject, peer: 7, id="an_integer"),
+    pytest.param(lambda subject, peer: 3.5, id="a_float"),
+    pytest.param(lambda subject, peer: "text", id="text"),
+    pytest.param(lambda subject, peer: [], id="an_empty_list"),
+    pytest.param(lambda subject, peer: [subject, peer], id="a_list_naming_live_symphonies"),
+    pytest.param(
+        lambda subject, peer: {subject: None, peer: {"SPY": 100.0}},
+        id="null_holdings_for_the_subject",
+    ),
+    pytest.param(
+        lambda subject, peer: {subject: {"SPY": 100.0}, peer: 5}, id="a_number_for_a_peers_holdings"
+    ),
+    pytest.param(
+        lambda subject, peer: {subject: ["VIXY"], peer: {"SPY": 100.0}},
+        id="a_list_for_the_subjects_holdings",
+    ),
+    pytest.param(
+        lambda subject, peer: {subject: {"VIXY": "ten"}, peer: {"SPY": 100.0}},
+        id="amounts_that_are_text",
+    ),
+]
+
+
+@pytest.mark.parametrize("make_unreadable", UNREADABLE_DAYS)
+def test_a_session_whose_holdings_cannot_be_read_is_a_missing_day_and_raises_nothing(
+    make_unreadable,
+):
+    """One session inside the window carries a value that cannot be holdings. The item equals
+    the item for the same holdings with that session absent, one day fewer than with a readable
+    day. Rejects raising, and a day read as zero holdings."""
+    days = dict(_holdings(SCENARIO).days)
+    days[ISO[2]] = make_unreadable("subj", "o1")
+    try:
+        item = _cofire(tr.HoldingsInput(days=days))
+    except Exception as exc:
+        pytest.fail(f"an unreadable session made the reader raise {type(exc).__name__}")
+    absent = {k: v for k, v in _holdings(SCENARIO).days.items() if k != ISO[2]}
+    assert item == _cofire(tr.HoldingsInput(days=absent))
+    assert item["window"]["days"] == len(ISO) - 1  # fixture sanity: the day was dropped
+
+
+@pytest.mark.parametrize("make_unreadable", UNREADABLE_DAYS)
+def test_an_unreadable_value_under_the_greatest_key_does_not_hide_a_readable_day_of_the_date(
+    make_unreadable,
+):
+    """The stamped key sorts after the bare date and holds the unreadable value, the bare date
+    holds the real day, in either insertion order. The real day stands, as it does for a day with
+    an unknown amount. Rejects letting the greatest key decide the date whatever it holds."""
+    rest = {k: held for k, held in zip(ISO[1:], SCENARIO[1:], strict=True)}
+    for keys in ((ISO[0], f"{ISO[0]}T16:00:00"), (f"{ISO[0]}T16:00:00", ISO[0])):
+        days = {**rest}
+        for key in keys:
+            days[key] = SCENARIO[0] if key == ISO[0] else make_unreadable("subj", "o1")
+        assert _cofire(tr.HoldingsInput(days=days)) == _cofire(_holdings(SCENARIO)), keys
+
+
+@pytest.mark.parametrize("make_unreadable", UNREADABLE_DAYS)
+def test_when_every_session_is_unreadable_the_item_is_unavailable_and_the_review_completes(
+    make_unreadable,
+):
+    """No session of the window can be read, so there is no day to count: every symphony's item
+    is unavailable with no figure, and the rest of the review is the review of a run with no
+    holdings. Rejects a review that stops, and a zero count."""
+    holdings = {d.isoformat(): make_unreadable("vix-1", "vix-2") for d in DAYS_20}
+    try:
+        reviewed = _review_over(holdings)
+    except Exception as exc:
+        pytest.fail(f"the review raised {type(exc).__name__}")
+    without_holdings = _review_over({})
+    for entry in reviewed.entries:
+        item = b.item_of(entry, "long_vix")
+        assert item["status"] == "unavailable", entry["symphony_id"]
+        for fig in item["figures"].values():
+            assert fig["value"] is None, entry["symphony_id"]
+        for name in ("performance", "composite", "redundancy", "backtest", "marginal"):
+            reference = b.item_of(b.entry_of(without_holdings, entry["symphony_id"]), name)
+            assert b.item_of(entry, name) == reference, (entry["symphony_id"], name)
+
+
+# Three symphonies whose windows start on different sessions, so that a session can lie inside
+# the windows of some and outside the others.
+UNEQUAL_SESSIONS = b.last_n_nyse_days(b.AS_OF, 31)
+UNEQUAL_STARTS = {"vix-a": 0, "vix-b": 5, "vix-c": 10}
+IN_EVERY_WINDOW = UNEQUAL_SESSIONS[-8]
+IN_ONE_WINDOW = UNEQUAL_SESSIONS[2]
+UNEQUAL_HELD = {
+    "vix-a": {"VIXY": 10.0, "SPY": 90.0},
+    "vix-b": {"UVXY": 5.0, "SPY": 95.0},
+    "vix-c": {"SPY": 100.0},
+}
+
+
+def _unequal_roster():
+    return [
+        b.composer_symphony(
+            sid,
+            sid.upper(),
+            UNEQUAL_SESSIONS[start:],
+            b.wave_returns(len(UNEQUAL_SESSIONS) - start - 1, freq=0.4 + 0.5 * k),
+        )
+        for k, (sid, start) in enumerate(UNEQUAL_STARTS.items())
+    ]
+
+
+def _unequal_review(holdings_by_day):
+    return b.review(
+        _unequal_roster(),
+        as_of=b.AS_OF,
+        threshold=20,
+        holdings=tr.HoldingsInput(days=holdings_by_day),
+    )
+
+
+@pytest.mark.parametrize("make_unreadable", UNREADABLE_DAYS)
+def test_an_unreadable_session_is_lost_by_every_symphony_whose_window_holds_it_and_by_no_item_else(
+    make_unreadable,
+):
+    """One session lies inside all three windows and one inside only the longest window; both
+    hold a value that cannot be read, and the review completes. The day is unreadable for the
+    whole account: each symphony's long-VIX item states one day fewer per such session inside
+    its own window than the review of readable holdings, equals the review of holdings with those
+    sessions absent, and no other item of any entry differs from the readable review. Rejects a
+    day lost by only the symphony whose holdings were malformed, and a stopped review."""
+    readable = {d.isoformat(): UNEQUAL_HELD for d in UNEQUAL_SESSIONS}
+    bad_days = (IN_EVERY_WINDOW, IN_ONE_WINDOW)
+    bad = {
+        **readable,
+        **{d.isoformat(): make_unreadable("vix-a", "vix-b") for d in bad_days},
+    }
+    absent = {k: v for k, v in readable.items() if k not in {d.isoformat() for d in bad_days}}
+    try:
+        reviewed = _unequal_review(bad)
+    except Exception as exc:
+        pytest.fail(f"the review raised {type(exc).__name__}")
+    assert reviewed.entries == _unequal_review(absent).entries
+    reference = _unequal_review(readable)
+    for sid in UNEQUAL_STARTS:
+        window = b.item_of(b.entry_of(reference, sid), "long_vix")["window"]
+        lost = sum(window["first"] <= d.isoformat() <= window["last"] for d in bad_days)
+        got = b.item_of(b.entry_of(reviewed, sid), "long_vix")["window"]
+        assert lost > 0, sid  # fixture sanity: every window holds an unreadable session
+        assert got["days"] == window["days"] - lost, sid
+        assert got["sessions"] == window["sessions"], sid
+        for name in ("performance", "composite", "redundancy", "backtest", "marginal"):
+            assert b.item_of(b.entry_of(reviewed, sid), name) == b.item_of(
+                b.entry_of(reference, sid), name
+            ), (sid, name)
+    shortest = b.item_of(b.entry_of(reference, "vix-c"), "long_vix")["window"]
+    assert shortest["first"] > IN_ONE_WINDOW.isoformat()  # fixture sanity: outside that window

@@ -605,7 +605,7 @@ def test_a_backtest_that_reproduces_the_realized_returns_leaves_a_gap_of_zero(bu
     of that day's return, 2.5 points here, on a symphony that did exactly what its
     definition says)."""
     symphony, counted = build()
-    window = tr.qualifying_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    window = tr.backtest_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
     assert window is not None
     first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
     sessions_in_window = len(list(b.nyse_days(first, last)))
@@ -691,7 +691,8 @@ def test_a_composer_series_with_a_day_missing_inside_the_window_is_still_compare
     applying the shadow rule to the Composer basis."""
     symphony, returns = _composer_replica()
     symphony.composer_values[REPLICA_SESSIONS[5].isoformat()] = None
-    window = tr.qualifying_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    window = tr.backtest_window(symphony, b.AS_OF, REPLICA_THRESHOLD)
+    assert window is not None
     first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
     assert window["days"] == len(REPLICA_SESSIONS) - 1  # fixture sanity: one day is missing
     symphony.backtest = b.replica_backtest(first, last, returns)

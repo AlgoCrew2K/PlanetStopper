@@ -19,6 +19,7 @@ import pytest
 
 import advisors.tenure_review as tr
 from advisors import composer_backtest_client as client
+from advisors import retirement_recommender
 from tests.advisors import _tenure_review_builders as b
 
 _REPO_ROOT = Path(tr.__file__).resolve().parents[1]
@@ -208,7 +209,9 @@ def test_trading_day_count_includes_both_ends_when_both_are_sessions():
 # build_review: tenure and eligibility
 # ---------------------------------------------------------------------------
 
-THRESHOLD = 20  # small so the history stays small; the rule does not depend on the value
+# The fewest sessions whose comparison of two symphonies still has the days it needs, so a
+# symphony at exactly the threshold gets a verdict from it.
+THRESHOLD = retirement_recommender.MIN_OBS_FLOOR
 
 
 def _pair_of_eligible_symphonies(tenure_days: int):
@@ -586,18 +589,20 @@ def test_the_qualifying_window_of_an_eligible_symphony_is_the_window_its_review_
         "win-a",
     )
     assert window == b.item_of(entry, "performance")["window"]
+    assert tr.backtest_window(roster[0], b.AS_OF, ROSTER_THRESHOLD) == window
     assert set(window) == {"first", "last", "days", "sessions"}
     assert window["sessions"] == len(
         b.nyse_days(date.fromisoformat(window["first"]), date.fromisoformat(window["last"]))
     )
 
     values = {d.isoformat(): 100.0 + i for i, d in enumerate(ROSTER_DAYS)}
+    requested = tr.backtest_window(roster[0], b.AS_OF, ROSTER_THRESHOLD)
     roster[0].backtest = client.BacktestResult(
         stats={},
         data_warnings=[],
         daily_portfolio_values=values,
-        first_day=window["first"],
-        last_market_day=window["last"],
+        first_day=requested["first"],
+        last_market_day=requested["last"],
     )
     item = b.item_of(
         b.entry_of(b.review(roster, as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "win-a"),
@@ -619,6 +624,7 @@ def test_the_qualifying_window_starts_where_a_late_series_starts():
     assert window["first"] == late[0].isoformat()
     assert window["last"] == b.AS_OF.isoformat()
     assert window["days"] == len(late)
+    assert tr.backtest_window(sym, b.AS_OF, ROSTER_THRESHOLD) == window
 
 
 def test_the_qualifying_window_of_a_shadow_basis_symphony_is_its_shadow_window():
@@ -632,6 +638,7 @@ def test_the_qualifying_window_of_a_shadow_basis_symphony_is_its_shadow_window()
     window = tr.qualifying_window(sym, b.AS_OF, ROSTER_THRESHOLD)
     entry = b.entry_of(b.review([sym], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "shadow-win")
     assert window == b.item_of(entry, "performance")["window"]
+    assert tr.backtest_window(sym, b.AS_OF, ROSTER_THRESHOLD) == window
     # thirty rows are thirty returns, measured from the session before the first row
     assert window["first"] == ROSTER_DAYS[0].isoformat()
     assert window["days"] == len(ROSTER_DAYS)
@@ -649,39 +656,76 @@ def _shadow_with_rows_left_out(left_out, *, stored_without_return):
     return b.shadow_symphony("holey", "Holey", ROSTER_DAYS[0].isoformat(), rows)
 
 
-@pytest.mark.parametrize(
+HOLE_POSITIONS = pytest.mark.parametrize(
     "positions", [[7], [3, 4, 9]], ids=["one_session_without_a_row", "three_sessions_without_a_row"]
 )
-@pytest.mark.parametrize(
+HOLE_KINDS = pytest.mark.parametrize(
     "stored_without_return", [False, True], ids=["no_row_stored", "row_stored_with_no_return"]
 )
-def test_a_shadow_window_with_a_session_that_has_no_usable_row_has_no_qualifying_window(
+
+
+@HOLE_POSITIONS
+@HOLE_KINDS
+def test_a_shadow_window_with_a_session_that_has_no_usable_row_keeps_its_qualifying_window(
+    positions, stored_without_return
+):
+    """The qualifying window is the one the review's evidence states, holes and all, because
+    a reader that takes the earliest start among the symphonies' windows (to read holdings from
+    there) must still reach this symphony's first day. The long-VIX item over holdings on every
+    session states the same first and last dates. Rejects a window withheld for a hole, which
+    would leave this symphony's days out of that earliest start."""
+    symphony = _shadow_with_rows_left_out(
+        [ROSTER_DAYS[i] for i in positions], stored_without_return=stored_without_return
+    )
+    held = {"holey": {"VIXY": 1.0, "SPY": 9.0}}
+    holdings = tr.HoldingsInput(days={d.isoformat(): held for d in ROSTER_DAYS})
+    entry = b.entry_of(
+        b.review([symphony], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD, holdings=holdings),
+        "holey",
+    )
+    performance = b.item_of(entry, "performance")
+    assert performance["status"] == "available"  # fixture sanity
+    window = tr.qualifying_window(symphony, b.AS_OF, ROSTER_THRESHOLD)
+    assert window == performance["window"]
+    assert window["days"] < window["sessions"]  # fixture sanity: the hole is inside the window
+    long_vix = b.item_of(entry, "long_vix")["window"]
+    assert (long_vix["first"], long_vix["last"]) == (window["first"], window["last"])
+
+
+@HOLE_POSITIONS
+@HOLE_KINDS
+def test_a_shadow_window_with_a_session_that_has_no_usable_row_has_no_backtest_window(
     positions, stored_without_return
 ):
     """The review withholds the backtest item for such a window, so a runner that asked for the
-    window and fetched a backtest over it would fetch one the review discards. The window is
-    absent exactly when the review's backtest item is withheld for the hole. Rejects a window
-    for a symphony whose backtest item cannot be compared."""
+    window to request a backtest over it would fetch one the review discards. The backtest
+    window is absent exactly when the review's backtest item is withheld for the hole. Rejects
+    a window for a symphony whose backtest item cannot be compared."""
     symphony = _shadow_with_rows_left_out(
         [ROSTER_DAYS[i] for i in positions], stored_without_return=stored_without_return
     )
     entry = b.entry_of(b.review([symphony], as_of=b.AS_OF, threshold=ROSTER_THRESHOLD), "holey")
     assert b.item_of(entry, "performance")["status"] == "available"  # fixture sanity
     assert "has no usable row" in b.item_of(entry, "backtest")["reason"]  # fixture sanity
-    assert tr.qualifying_window(symphony, b.AS_OF, ROSTER_THRESHOLD) is None
+    assert tr.backtest_window(symphony, b.AS_OF, ROSTER_THRESHOLD) is None
 
 
 def test_a_shadow_window_with_every_session_covered_and_a_composer_window_with_a_day_missing_qualify():
     """Rejects widening the hole rule: a shadow window whose sessions all have a row, and a
     Composer window with a missing interior day (a series of levels, which a backtest over the
-    window can still be compared with), both keep their window."""
+    window can still be compared with), both keep their window for the evidence and for the
+    backtest."""
     whole = _shadow_with_rows_left_out([], stored_without_return=False)
     assert tr.qualifying_window(whole, b.AS_OF, ROSTER_THRESHOLD) is not None
+    assert tr.backtest_window(whole, b.AS_OF, ROSTER_THRESHOLD) == tr.qualifying_window(
+        whole, b.AS_OF, ROSTER_THRESHOLD
+    )
     composer = b.composer_symphony("c-gap", "Composer Gap", ROSTER_DAYS, b.wave_returns(30))
     composer.composer_values[ROSTER_DAYS[7].isoformat()] = None
     window = tr.qualifying_window(composer, b.AS_OF, ROSTER_THRESHOLD)
     assert window is not None
     assert window["days"] == len(ROSTER_DAYS) - 1
+    assert tr.backtest_window(composer, b.AS_OF, ROSTER_THRESHOLD) == window
 
 
 @pytest.mark.parametrize(
@@ -708,6 +752,7 @@ def test_a_shadow_window_with_every_session_covered_and_a_composer_window_with_a
 )
 def test_there_is_no_qualifying_window_unless_the_symphony_is_eligible_and_has_history(build):
     assert tr.qualifying_window(build(), b.AS_OF, ROSTER_THRESHOLD) is None
+    assert tr.backtest_window(build(), b.AS_OF, ROSTER_THRESHOLD) is None
 
 
 def _two_composer_points():
@@ -771,20 +816,26 @@ def test_a_symphony_whose_performance_cannot_be_scored_has_no_qualifying_window(
     assert entry["eligible"] is True and entry["basis"]["kind"] != "none"  # fixture sanity
     assert (performance["status"] == "available") is scored  # fixture sanity
     window = tr.qualifying_window(symphony, b.AS_OF, ROSTER_THRESHOLD)
+    backtest_window = tr.backtest_window(symphony, b.AS_OF, ROSTER_THRESHOLD)
     if scored:
         assert window == performance["window"]
+        assert backtest_window == window
     else:
         assert window is None
+        assert backtest_window is None
 
 
 def test_the_threshold_given_decides_whether_a_window_qualifies():
     sym = b.composer_symphony("edge", "Edge", ROSTER_DAYS, b.wave_returns(30))
     assert tr.qualifying_window(sym, b.AS_OF, len(ROSTER_DAYS)) is not None
     assert tr.qualifying_window(sym, b.AS_OF, len(ROSTER_DAYS) + 1) is None
+    assert tr.backtest_window(sym, b.AS_OF, len(ROSTER_DAYS)) is not None
+    assert tr.backtest_window(sym, b.AS_OF, len(ROSTER_DAYS) + 1) is None
 
 
-def test_asking_for_a_qualifying_window_changes_nothing():
+def test_asking_for_a_qualifying_window_or_a_backtest_window_changes_nothing():
     sym = b.composer_symphony("still", "Still", ROSTER_DAYS, b.wave_returns(30))
     snapshot = dict(sym.composer_values)
     tr.qualifying_window(sym, b.AS_OF, ROSTER_THRESHOLD)
+    tr.backtest_window(sym, b.AS_OF, ROSTER_THRESHOLD)
     assert sym.composer_values == snapshot

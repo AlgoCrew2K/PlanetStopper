@@ -16,6 +16,7 @@ from datetime import date, timedelta
 import pytest
 
 import advisors.tenure_review as tr
+from advisors import retirement_recommender
 from tests.advisors import _tenure_review_builders as b
 
 COMPOSER_LABEL = "realized: Composer account, deposit-adjusted"
@@ -24,6 +25,11 @@ SHADOW_LABEL = "PlanetStopper shadow history from the 2026-06-22 go-live floor"
 THRESHOLD = 20
 DAYS = b.last_n_nyse_days(b.AS_OF, 25)
 WINDOW_DAYS = DAYS[-THRESHOLD:]
+
+# A comparison of symphonies needs this many days on which each has a value, so the tests that
+# read the marginal item of a roster use windows this long.
+COMPARISON_THRESHOLD = retirement_recommender.MIN_OBS_FLOOR
+COMPARISON_DAYS = b.last_n_nyse_days(b.AS_OF, COMPARISON_THRESHOLD)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +198,10 @@ def test_a_series_keyed_with_time_parts_is_reviewed_exactly_like_the_same_series
         out = []
         for sid, freq in (("key-a", 0.3), ("key-b", 0.9), ("key-c", 1.7)):
             symphony = b.composer_symphony(
-                sid, sid.upper(), WINDOW_DAYS, b.wave_returns(THRESHOLD - 1, freq=freq)
+                sid,
+                sid.upper(),
+                COMPARISON_DAYS,
+                b.wave_returns(COMPARISON_THRESHOLD - 1, freq=freq),
             )
             symphony.composer_values = {
                 k + key_suffix: v for k, v in symphony.composer_values.items()
@@ -200,8 +209,8 @@ def test_a_series_keyed_with_time_parts_is_reviewed_exactly_like_the_same_series
             out.append(symphony)
         return out
 
-    plain = b.review(roster(""), as_of=b.AS_OF, threshold=THRESHOLD)
-    stamped = b.review(roster("T00:00:00Z"), as_of=b.AS_OF, threshold=THRESHOLD)
+    plain = b.review(roster(""), as_of=b.AS_OF, threshold=COMPARISON_THRESHOLD)
+    stamped = b.review(roster("T00:00:00Z"), as_of=b.AS_OF, threshold=COMPARISON_THRESHOLD)
     first = b.entry_of(plain, "key-a")
     assert b.item_of(first, "composite")["status"] == "available"  # fixture sanity
     assert b.item_of(first, "marginal")["status"] == "available"  # fixture sanity
@@ -281,10 +290,13 @@ def _three_composer_symphonies(*, closed_day_level=None):
     out = []
     for k, (sid, freq) in enumerate((("open-a", 0.3), ("open-b", 0.9), ("open-c", 1.7)), start=1):
         symphony = b.composer_symphony(
-            sid, sid.upper(), WINDOW_DAYS, b.wave_returns(THRESHOLD - 1, freq=freq)
+            sid,
+            sid.upper(),
+            COMPARISON_DAYS,
+            b.wave_returns(COMPARISON_THRESHOLD - 1, freq=freq),
         )
         if closed_day_level is not None:
-            for d in _closed_days_between(WINDOW_DAYS):
+            for d in _closed_days_between(COMPARISON_DAYS):
                 symphony.composer_values[d.isoformat()] = closed_day_level * k
         out.append(symphony)
     return out
@@ -306,12 +318,16 @@ def test_a_composer_series_with_points_on_closed_days_is_reviewed_like_the_same_
     """Every consumer of the kept points (the window, the composite coverage check, the
     pairs, the marginal comparison) must see only sessions. Rejects dropping closed days
     in one place and keeping them in another."""
-    plain = b.review(_three_composer_symphonies(), as_of=b.AS_OF, threshold=THRESHOLD)
+    plain = b.review(_three_composer_symphonies(), as_of=b.AS_OF, threshold=COMPARISON_THRESHOLD)
     extra = b.review(
-        _three_composer_symphonies(closed_day_level=5000.0), as_of=b.AS_OF, threshold=THRESHOLD
+        _three_composer_symphonies(closed_day_level=5000.0),
+        as_of=b.AS_OF,
+        threshold=COMPARISON_THRESHOLD,
     )
     first = b.entry_of(plain, "open-a")
-    assert b.item_of(first, "performance")["window"]["days"] == THRESHOLD  # fixture sanity
+    assert (
+        b.item_of(first, "performance")["window"]["days"] == COMPARISON_THRESHOLD
+    )  # fixture sanity
     assert b.item_of(first, "composite")["status"] == "available"  # fixture sanity
     assert b.item_of(first, "marginal")["status"] == "available"  # fixture sanity
     assert extra.entries == plain.entries

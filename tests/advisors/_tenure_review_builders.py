@@ -755,3 +755,22 @@ def composite_pair(aligned: int, rho: float, *, scale: float = 0.3):
 def has_composite(entry: dict) -> bool:
     """Whether the entry's composite item holds a score."""
     return item_of(entry, "composite")["status"] == "available"
+
+
+def thin_symphony(symphony_id: str, display_name: str, tenure_days: list[date], points: int):
+    """A Composer symphony that is eligible by tenure (invested on the first of
+    ``tenure_days``) and holds a value on only the last ``points`` of them, so it covers a
+    composite window as long as its tenure on none of its sessions but those."""
+    kept = tenure_days[-points:]
+    return make_symphony(
+        symphony_id,
+        display_name,
+        tenure_days[0].isoformat(),
+        composer_values=values_from_returns(kept, [1.0] * (points - 1)),
+    )
+
+
+def flat_symphony(symphony_id: str, display_name: str, days: list[date]):
+    """A Composer symphony whose value never changes: every return is exactly zero, so its
+    Sharpe ratio is undefined and its composite cannot be computed."""
+    return composer_symphony(symphony_id, display_name, days, [0.0] * (len(days) - 1))
