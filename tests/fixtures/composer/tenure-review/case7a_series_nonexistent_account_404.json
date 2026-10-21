@@ -1,0 +1,12 @@
+{
+"_fixture_provenance": "captured-from-producer: live Composer API response to a credentialed request, captured 2026-10-20. Only account id and user id are replaced by placeholders; every other value is verbatim except the trimming recorded in _trimmed.",
+"_case": "7a: series request for an account id that does not exist (HTTP 404)",
+"_capture_date": "2026-10-20",
+"_response_date_header": "Tue, 20 Oct 2026 18:32:09 GMT",
+"_endpoint": "GET /api/v0.1/portfolio/accounts/{account-id}/symphonies/{symphony-id}",
+"_request": {"method":"GET","url":"https://api.composer.trade/api/v0.1/portfolio/accounts/00000000-0000-0000-0000-000000000000/symphonies/n2ooAZTvBRN6ZzpMmWmU","query":{},"credentials":"valid Composer key pair from the repo .env (values not recorded)","account_id":"00000000-0000-0000-0000-000000000000 (deliberately nonexistent; not the operator's account, so not replaced)"},
+"_trimmed": {"kept":"complete response body","dropped":[],"redacted_in_body":"errors[0].meta.user_id replaced by USER_ID_REDACTED"},
+"response_status": 404,
+"response_content_type": "application/json",
+"response_body": {"errors":[{"status":404,"code":"broker-account-not-found","title":"Could not find broker account for user","meta":{"user_id":"USER_ID_REDACTED","account_id":"00000000-0000-0000-0000-000000000000"}}]}
+}

@@ -1,0 +1,12 @@
+{
+"_fixture_provenance": "captured-from-producer: live Composer API response to a credentialed request, captured 2026-10-20. Only account id and user id are replaced by placeholders; every other value is verbatim except the trimming recorded in _trimmed.",
+"_case": "7c: backtest of a well-formed tree holding a nonexistent ticker (HTTP 500, observed once)",
+"_capture_date": "2026-10-20",
+"_response_date_header": "Tue, 20 Oct 2026 18:32:20 GMT",
+"_endpoint": "POST /api/v0.1/backtest",
+"_request": {"method":"POST","url":"https://api.composer.trade/api/v0.1/backtest","query":{},"credentials":"valid Composer key pair from the repo .env (values not recorded)","body_encoding":"compact separators","body_params":{"symphony.raw_value":"root(rebalance daily) > wt-cash-equal > one asset leaf with ticker ZZZZNOTATICKER1, built with advisors.symphony_schema constructors","capital":10000.0,"apply_reg_fee":true,"apply_taf_fee":true,"slippage_percent":0.005,"broker":"alpaca","backtest_version":"v2","start_date":"2026-07-20","end_date":"2026-10-19"}},
+"_trimmed": {"kept":"complete response body","dropped":[]},
+"response_status": 500,
+"response_content_type": "application/json; charset=utf-8",
+"response_body": {"errors":[{"status":500,"title":"Internal server error","code":"internal-server-error"}]}
+}
