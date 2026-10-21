@@ -441,16 +441,34 @@ def span_reply(token):
     return h.error_reply(token)
 
 
-def span_clauses(tokens, label):
-    """The clauses an account whose spans answer ``tokens`` (the last token repeats for every
-    later span) must read: each distinct class in the order first seen, all in one state."""
+def distinct_class_texts(tokens):
+    """The class texts of the spans that were asked (up to the first 429), each once, in the
+    order first seen; "ok" spans carry none."""
     ended = tokens[: tokens.index(429) + 1] if 429 in tokens else tokens
     texts = []
     for token in ended:
         if token != "ok" and CLASS_TEXT_OF_TOKEN[token] not in texts:
             texts.append(CLASS_TEXT_OF_TOKEN[token])
+    return texts
+
+
+def assert_class_texts_in_order(reason, texts):
+    """Each class text appears exactly once, in the given order; no raw account id appears."""
+    cursor = 0
+    for text in texts:
+        assert reason.count(text) == 1, f"{text!r} must appear once in: {reason}"
+        assert reason.find(text) >= cursor, f"{text!r} is out of order in: {reason}"
+        cursor = reason.find(text) + len(text)
+    for raw_id in (h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID):
+        assert raw_id not in reason, reason
+
+
+def span_clauses(tokens, label):
+    """The clauses an account whose spans answer ``tokens`` (the last token repeats for every
+    later span) must read: each distinct class in the order first seen, all in one state."""
+    ended = tokens[: tokens.index(429) + 1] if 429 in tokens else tokens
     state = "partly read" if "ok" in ended else "not read"
-    return [(text, state, label) for text in texts]
+    return [(text, state, label) for text in distinct_class_texts(tokens)]
 
 
 def serve_split_holdings(router, mine, second_account_reply):
@@ -2188,6 +2206,67 @@ def test_a_first_account_with_two_classes_and_an_account_the_429_kept_unrequeste
         assert_class_clauses(
             missing["reason"], [(RATE_LIMIT_REASON, "not read", second)], absent=[first]
         )
+
+
+# No day at all is read, so the item carries the class texts alone (C1's wording): a class
+# of any failed span is still never left out.
+NO_DAY_SEQUENCES = [
+    pytest.param([500, 429], id="500_then_429"),
+    pytest.param([401, 500, 429], id="three_classes"),
+    pytest.param([500, 401], id="500_then_401"),
+    pytest.param([500, 500, 429], id="a_repeated_class_is_named_once"),
+    pytest.param([401, 403, 404], id="401_403_are_one_class_then_404"),
+]
+
+
+@pytest.mark.parametrize("tokens", NO_DAY_SEQUENCES)
+def test_when_no_day_is_read_every_class_of_the_failed_spans_is_still_named_in_the_order_first_seen(
+    router, inputs_seen, tokens
+):
+    router.holdings_handler = lambda request, index: span_reply(tokens[min(index, len(tokens) - 1)])
+
+    outcome = completed_run()
+
+    assert inputs_seen[0].holdings.days == {}
+    requested = router.of_kind("holdings")
+    if 429 in tokens:
+        assert len(requested) == tokens.index(429) + 1
+        _assert_run_ended_at(router, requested[-1])
+    for sid in (h.OLDEST_ID, h.MID_ID):
+        item = entry(outcome, sid)["evidence"]["long_vix"]
+        assert item["status"] == "unavailable", sid
+        assert_class_texts_in_order(item["reason"], distinct_class_texts(tokens))
+        assert all(figure["value"] is None for figure in item["figures"].values()), sid
+
+
+@pytest.mark.parametrize(
+    ("first_tokens", "second_tokens"),
+    [
+        pytest.param([401], [500, 429], id="401_then_500_and_429"),
+        pytest.param([500], [401], id="500_then_401"),
+    ],
+)
+def test_when_no_day_is_read_the_classes_of_two_failing_accounts_are_each_named(
+    router, inputs_seen, first_tokens, second_tokens
+):
+    split_roster(router)
+    by_account = {h.ACCOUNT_ID: first_tokens, h.SECOND_ACCOUNT_ID: second_tokens}
+
+    def handler(request, index):
+        tokens = by_account[request.match["account"]]
+        return span_reply(tokens[min(index, len(tokens) - 1)])
+
+    router.holdings_handler = handler
+
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+
+    assert inputs_seen[0].holdings.days == {}
+    assert router.holdings_requests(h.SECOND_ACCOUNT_ID), "the first account's failure is not a 429"
+    expected = distinct_class_texts(first_tokens + second_tokens)
+    for sid in (h.OLDEST_ID, h.MID_ID):
+        item = entry(outcome, sid)["evidence"]["long_vix"]
+        assert item["status"] == "unavailable", sid
+        assert_class_texts_in_order(item["reason"], expected)
 
 
 PARTIAL_LABELS = [
