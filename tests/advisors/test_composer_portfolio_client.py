@@ -941,9 +941,7 @@ def _read_succeeded(result) -> bool:
 
 @pytest.mark.parametrize("bad", INVALID_SPACINGS)
 @pytest.mark.parametrize("kind", sorted(SPACED_READ_CALLS))
-def test_a_read_given_an_invalid_spacing_returns_normally_and_sleeps_the_default(
-    router, kind, bad
-):
+def test_a_read_given_an_invalid_spacing_returns_normally_and_sleeps_the_default(router, kind, bad):
     _serve_success(router, kind)
 
     result = SPACED_READ_CALLS[kind](bad)
