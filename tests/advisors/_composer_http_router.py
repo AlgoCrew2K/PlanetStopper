@@ -57,10 +57,11 @@ _HOLDINGS_RE = re.compile(r"^/portfolio/accounts/(?P<account>[^/]+)/symphony-his
 _SCORE_RE = re.compile(r"^/symphonies/(?P<sid>[^/]+)/score$")
 _BACKTEST_RE = re.compile(r"^/backtest$")
 
-READ_KINDS = ("statistics", "series", "holdings")
-# Every kind of request a review run may make: the three portfolio reads, the definition
-# read and the backtest.
-COMPOSER_KINDS = (*READ_KINDS, "score", "backtest")
+# The four GET reads of the portfolio client: statistics, value series, holdings and the
+# definition ("score") read.
+READ_KINDS = ("statistics", "series", "holdings", "score")
+# Every kind of request a review run may make: the four reads and the backtest POST.
+COMPOSER_KINDS = (*READ_KINDS, "backtest")
 
 
 # ---------------------------------------------------------------------------
@@ -442,8 +443,9 @@ class ComposerRouter:
 
 
 def assert_reads_paced(router: ComposerRouter, spacing: float) -> None:
-    """Every statistics, series and holdings request is immediately followed by a sleep of
-    ``spacing`` seconds, before the next request of any kind."""
+    """Every statistics, series, holdings and definition request, whether it was answered or
+    raised, is immediately followed by a sleep of ``spacing`` seconds, before the next request
+    of any kind."""
     events = router.events
     for i, event in enumerate(events):
         if event[0] == "request" and event[1].kind in READ_KINDS:

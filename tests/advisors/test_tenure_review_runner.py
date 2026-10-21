@@ -10,8 +10,14 @@ or a backtest. Entries are produced by the real review compute module (advisors.
 
 Contract pinned here (the implementer reads this file, not the plan):
 
-- ``run_tenure_review(*, account_ids, threshold_raw, now_et, run_id, trigger="on_demand")``
-  returns ``RunOutcome(completed, result, failure_reason)`` and never raises. ``result`` is the
+- ``run_tenure_review(*, account_ids, threshold_raw, now_et, run_id, trigger="on_demand",
+  account_labels=None, read_spacing_seconds=3.0)`` returns ``RunOutcome(completed, result,
+  failure_reason)`` and never raises. ``account_labels`` maps an account id to the label the
+  reasons use (``configured_account_labels(env)`` builds it from the configuration keys, for
+  example "Roth account" for ACCOUNT_ROTH); an account without a label reads "account <n>",
+  n being its 1-based position in ``account_ids``. A reason never carries a raw account id.
+  ``read_spacing_seconds`` (keyword-only, default COMPOSER_READ_SPACING_SECONDS) is the sleep
+  after every Composer request of the run, so the nightly job can widen it. ``result`` is the
   ``ReviewResult`` of ``tenure_review.build_review`` (called as ``tenure_review.build_review(...)``
   so a patch of that module attribute holds). It writes nothing to any database.
 - The roster is the union of the statistics responses of ``account_ids`` and nothing else. Any
@@ -48,17 +54,25 @@ Contract pinned here (the implementer reads this file, not the plan):
   ``HoldingsInput.failure`` is the first failed span's class. When some accounts could not be
   read in full (any failed span), the days that were read still feed the review, and the
   long-VIX item of a symphony names the accounts that are missing: its portfolio-wide shares
-  (``peak_share_with``, ``peak_share_without``) read ``value`` None with a reason naming each
-  missing account id and no readable one, and its own counts (``held_days``, ``co_held_days``)
-  are computed from the days that were read. A symphony whose own account is missing and that
-  has no holding day in what was read reads unavailable with a reason naming that account,
-  never "no holdings for this symphony in the window". A holdings failure never fails the run.
-- Pacing: at least 3.0 seconds of sleep separate any two consecutive Composer requests of the
-  run, whatever their kinds, a retry of the backtest included. The first reply answered 429
+  (``peak_share_with``, ``peak_share_without``) read ``value`` None, and its own counts
+  (``held_days``, ``co_held_days``) are computed from the days that were read. A symphony
+  whose own account is missing and that has no holding day in what was read reads
+  unavailable, never "no holdings for this symphony in the window". Every such reason keeps
+  the failure class's own text (a 429 still reads "Composer rate limit", a 401 "Composer
+  refused the request", whatever the other accounts did) and adds, for each missing account,
+  "holdings partly read for <label>" when some of its spans were read, else "holdings not
+  read for <label>" (an account never requested because an earlier request was answered 429
+  is "not read" with the rate-limit class). The share reasons name every missing account and
+  no readable one; an unavailable item names its own account. When no day at all was read
+  the item reads the failure class's text alone. A holdings failure never fails the run.
+- Pacing: at least 3.0 seconds of sleep (``read_spacing_seconds``) separate any two
+  consecutive Composer requests of the run, whatever their kinds and whether the earlier one
+  was answered or raised, a retry of the backtest included. The first reply answered 429
   ends the run's Composer requests: nothing is requested after it (the backtest is not retried
   after a 429), and every item that would have needed a later request reads "Composer rate
   limit". The runner adds no request beyond statistics, series, holdings, definition and
-  backtest; the three portfolio reads do not follow redirects.
+  backtest; none of the five follows a redirect. A symphony id that is not a plain id segment
+  is never requested: its series reads unreadable.
 - An exception inside the definition read or the backtest call makes only that symphony's
   backtest item unavailable; the run still completes.
 - Logs name exception types only: no log line at any level carries a credential header, a
@@ -68,6 +82,7 @@ Contract pinned here (the implementer reads this file, not the plan):
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import logging
 import sqlite3
@@ -102,6 +117,12 @@ COMPOSER_BASIS = "realized: Composer account, deposit-adjusted"
 SHADOW_BASIS = "PlanetStopper shadow history from the 2026-06-22 go-live floor"
 
 _DROP = object()
+
+# Labels as configured_account_labels names them: after the configuration key.
+LABELS = {h.ACCOUNT_ID: "Individual account", h.SECOND_ACCOUNT_ID: "Roth account"}
+FIRST_LABEL, SECOND_LABEL = LABELS[h.ACCOUNT_ID], LABELS[h.SECOND_ACCOUNT_ID]
+SHARE_FIGURES = ("peak_share_with", "peak_share_without")
+WIDENED_SPACING_SECONDS = 7.5
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +349,46 @@ def assert_compact_dated_body(request, *, start, end, definition):
     assert request.headers.get("Content-Type") == "application/json"
 
 
+def available_long_vix(outcome):
+    """Symphony id -> long-VIX item, for every entry whose item is available."""
+    items = {}
+    for e in outcome.result.entries:
+        item = e.get("evidence", {}).get("long_vix")
+        if item and item["status"] == "available":
+            items[e["symphony_id"]] = item
+    return items
+
+
+def assert_reason_names_accounts(reason, class_reason, missing, *, readable=()):
+    """The reason keeps the failure class's own text, says for each missing account (label ->
+    "not read" or "partly read") how much of its holdings was read, names no readable
+    account, and never carries a raw account id."""
+    assert class_reason in reason, reason
+    for label, state in missing.items():
+        assert f"holdings {state} for {label}" in reason, reason
+    for state in {"not read", "partly read"} - set(missing.values()):
+        assert f"holdings {state}" not in reason, reason
+    for label in readable:
+        assert label not in reason, reason
+    for raw_id in (h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID):
+        assert raw_id not in reason, reason
+
+
+def serve_split_holdings(router, mine, second_account_reply):
+    """The first account is readable (its symphonies on its first span, nothing after); the
+    second account answers ``second_account_reply(index of its request)``. Returns the body
+    the first account serves."""
+    readable = h.holdings_subset_body(mine)
+
+    def handler(request, index):
+        if request.match["account"] == h.SECOND_ACCOUNT_ID:
+            return second_account_reply(index)
+        return h.Reply(body=readable if index == 0 else h.holdings_emptied_body())
+
+    router.holdings_handler = handler
+    return readable
+
+
 def imported_modules(path: Path) -> set[str]:
     names: set[str] = set()
     for node in ast.walk(ast.parse(path.read_text("utf-8"))):
@@ -368,6 +429,50 @@ def test_configured_account_ids_read_only_the_mapping_they_are_given(monkeypatch
     monkeypatch.setenv("ACCOUNT_ROTH", "from-the-process-environment")
 
     assert runner.configured_account_ids({}) == []
+
+
+def _label_of(key):
+    """The label rule: the configuration key without its ACCOUNT_ prefix, as a word."""
+    return key.removeprefix("ACCOUNT_").capitalize() + " account"
+
+
+def test_configured_account_labels_name_each_configured_account_after_its_configuration_key():
+    env = {"ACCOUNT_TRAD": "trad-id", "ACCOUNT_INDIVIDUAL": "ind-id", "ACCOUNT_ROTH": "roth-id"}
+
+    labels = runner.configured_account_labels(env)
+
+    assert labels["roth-id"] == "Roth account"
+    assert labels == {
+        "ind-id": _label_of("ACCOUNT_INDIVIDUAL"),
+        "roth-id": _label_of("ACCOUNT_ROTH"),
+        "trad-id": _label_of("ACCOUNT_TRAD"),
+    }
+    assert list(labels) == runner.configured_account_ids(env), "the engine's account order"
+    assert len(set(labels.values())) == len(labels), "no two accounts share a label"
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {},
+        {"ACCOUNT_ROTH": "roth-id"},
+        {"ACCOUNT_INDIVIDUAL": "", "ACCOUNT_ROTH": "roth-id", "ACCOUNT_TRAD": "  "},
+        {"ACCOUNT_INDIVIDUAL": "  ind-id \n", "ACCOUNT_TRAD": "trad-id"},
+    ],
+    ids=["none", "one", "blank_values_skipped", "values_stripped"],
+)
+def test_configured_account_labels_cover_exactly_the_configured_account_ids(env):
+    labels = runner.configured_account_labels(env)
+
+    assert list(labels) == runner.configured_account_ids(env)
+    for account_id, label in labels.items():
+        assert account_id not in label, "a label never carries the id it stands for"
+
+
+def test_configured_account_labels_read_only_the_mapping_they_are_given(monkeypatch):
+    monkeypatch.setenv("ACCOUNT_ROTH", "from-the-process-environment")
+
+    assert runner.configured_account_labels({}) == {}
 
 
 def test_runner_imports_its_collaborators_and_never_the_execution_engine():
@@ -1087,7 +1192,7 @@ def test_a_partly_failed_holdings_read_feeds_the_days_it_got_and_names_the_accou
     replies = {0: h.error_reply(500), 1: h.Reply(body=h.holdings_recent_body())}
     router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
 
-    outcome = completed_run()
+    outcome = completed_run(account_labels=LABELS)
 
     got = trading_day_holdings(h.holdings_recent_body())
     assert inputs_seen[0].holdings.failure is None
@@ -1097,10 +1202,12 @@ def test_a_partly_failed_holdings_read_feeds_the_days_it_got_and_names_the_accou
     assert item["status"] == "available"
     assert item["figures"]["held_days"]["value"] == held
     assert item["figures"]["co_held_days"]["value"] == co_held
-    for name in ("peak_share_with", "peak_share_without"):
+    for name in SHARE_FIGURES:
         figure = item["figures"][name]
         assert figure["value"] is None, "a share over an incomplete read is not shown"
-        assert h.ACCOUNT_ID in figure["reason"]
+        assert_reason_names_accounts(
+            figure["reason"], "Composer unavailable", {FIRST_LABEL: "partly read"}
+        )
 
 
 HOLDINGS_FAILURES = [
@@ -1167,9 +1274,9 @@ def test_a_complete_run_makes_only_reads_and_backtests_and_never_the_engine_stat
     assert len(router.of_kind("series")) == len(h.statistics_ids())
     assert len(backtest_posts(router)) <= len(router.of_kind("score"))
     assert engine_stats_calls == []
+    assert {r.kind for r in router.requests} == set(h.COMPOSER_KINDS), "fixture sanity"
     for r in router.requests:
-        if r.kind in h.READ_KINDS:
-            assert r.kwargs.get("allow_redirects") is False, f"{r.kind} must not follow redirects"
+        assert r.kwargs.get("allow_redirects") is False, f"{r.kind} must not follow redirects"
 
 
 def test_every_request_carries_the_engine_credential_headers(router):
@@ -1361,13 +1468,127 @@ def test_at_least_the_spacing_separates_any_two_consecutive_requests_of_a_run(ro
     h.assert_requests_spaced(router, SPACING_SECONDS)
 
 
-def test_the_spacing_also_separates_a_backtest_from_its_own_retry(router):
-    router.set_backtest(h.error_reply(500))
+BACKTEST_RETRY_TRIGGERS = [
+    pytest.param(lambda: h.error_reply(500), id="500"),
+    pytest.param(lambda: h.error_reply(503), id="503"),
+    pytest.param(lambda: h.raising(requests.ConnectionError("LEAKMARK")), id="ConnectionError"),
+]
+
+
+@pytest.mark.parametrize("second_attempt_succeeds", [False, True], ids=["fails_twice", "recovers"])
+@pytest.mark.parametrize("make_failure", BACKTEST_RETRY_TRIGGERS)
+def test_the_spacing_also_separates_a_backtest_from_its_own_retry(
+    router, inputs_seen, make_failure, second_attempt_succeeds
+):
+    failing = make_failure()
+    success = h.reply_from_record("case5_backtest_dated_compact_nOyb55RMGVCKPiYXv7TI.json")
+    router.backtest_handler = lambda req, i: (
+        success if i == 1 and second_attempt_succeeds else failing
+    )
 
     completed_run()
 
-    assert len(backtest_posts(router)) == 2, "fixture sanity: the 500 is retried once"
+    assert len(backtest_posts(router)) == 2, "fixture sanity: the first failure is retried once"
     h.assert_requests_spaced(router, SPACING_SECONDS)
+    recovered = input_of(inputs_seen, h.BACKTEST_ID).backtest.error is None
+    assert recovered is second_attempt_succeeds
+
+
+@pytest.mark.parametrize("make_exc", [lambda: ValueError(LEAK), lambda: RuntimeError(LEAK)])
+def test_a_backtest_request_that_raises_is_still_followed_by_the_spacing_sleep(router, make_exc):
+    captured_definition_for(router, h.MID_ID)
+    router.set_backtest(h.raising(make_exc()))
+
+    completed_run()
+
+    assert len(backtest_posts(router)) == 2, "the next symphony is still backtested"
+    h.assert_requests_spaced(router, SPACING_SECONDS)
+    h.assert_reads_paced(router, SPACING_SECONDS)
+
+
+def test_a_backtest_call_that_raises_after_posting_is_still_followed_by_the_spacing_sleep(
+    router, monkeypatch
+):
+    captured_definition_for(router, h.MID_ID)
+    real = cbc.run_backtest
+
+    def posts_then_fails(*args, **kwargs):
+        real(*args, **kwargs)
+        raise RuntimeError(LEAK)
+
+    monkeypatch.setattr(cbc, "run_backtest", posts_then_fails)
+
+    completed_run()
+
+    assert len(backtest_posts(router)) == 2
+    h.assert_requests_spaced(router, SPACING_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# The spacing is a parameter of the run
+# ---------------------------------------------------------------------------
+
+
+def test_the_read_spacing_is_a_keyword_only_parameter_that_defaults_to_the_client_constant():
+    parameters = inspect.signature(runner.run_tenure_review).parameters
+    assert "read_spacing_seconds" in parameters
+    parameter = parameters["read_spacing_seconds"]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default == cpc.COMPOSER_READ_SPACING_SECONDS == SPACING_SECONDS
+
+
+def test_a_default_run_sleeps_only_the_default_spacing(router):
+    captured_definition_for(router, h.MID_ID)
+
+    completed_run()
+
+    assert len(backtest_posts(router)) >= 2
+    assert set(router.sleeps) == {SPACING_SECONDS}
+
+
+SPACING_SCENARIOS = [
+    pytest.param(lambda r: None, id="all_answered"),
+    pytest.param(
+        lambda r: r.set_series(h.OLDEST_ID, h.raising(requests.ConnectionError("LEAKMARK"))),
+        id="series_read_raises",
+    ),
+    pytest.param(
+        lambda r: r.definition_by_symphony.update(
+            {h.BACKTEST_ID: h.raising(requests.Timeout("LEAKMARK"))}
+        ),
+        id="definition_read_raises",
+    ),
+    pytest.param(
+        lambda r: r.set_all_holdings(h.raising(requests.Timeout("LEAKMARK"))),
+        id="every_holdings_span_raises",
+    ),
+    pytest.param(lambda r: r.set_backtest(h.error_reply(500)), id="backtest_retried_after_500"),
+    pytest.param(
+        lambda r: r.set_backtest(h.raising(requests.ConnectionError("LEAKMARK"))),
+        id="backtest_retried_after_transport_error",
+    ),
+    pytest.param(
+        lambda r: r.set_backtest(h.raising(RuntimeError("LEAKMARK"))), id="backtest_raises"
+    ),
+]
+
+
+@pytest.mark.parametrize("spacing", [None, WIDENED_SPACING_SECONDS], ids=["default", "widened"])
+@pytest.mark.parametrize("arrange", SPACING_SCENARIOS)
+def test_every_request_of_a_run_is_separated_by_the_read_spacing_whatever_the_one_before_did(
+    router, arrange, spacing
+):
+    captured_definition_for(router, h.MID_ID)
+    arrange(router)
+    expected = SPACING_SECONDS if spacing is None else spacing
+
+    completed_run(**({} if spacing is None else {"read_spacing_seconds": spacing}))
+
+    assert len(router.requests) > 3, "fixture sanity: the run went on after the failure"
+    h.assert_reads_paced(router, expected)
+    h.assert_requests_spaced(router, expected)
+    assert set(router.sleeps) == {expected}, "no other wait appears anywhere in the run"
 
 
 # ---------------------------------------------------------------------------
@@ -1471,6 +1692,50 @@ def test_a_429_on_a_holdings_read_ends_the_requests_and_the_item_reads_rate_limi
 
 
 # ---------------------------------------------------------------------------
+# No request follows a redirect; a symphony id is never sent unless it is a plain id
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_a_redirect_answer_to_the_backtest_is_not_followed_or_retried_and_reads_unavailable(
+    router, status
+):
+    router.set_backtest(h.redirect_reply(status))
+
+    outcome = completed_run()
+
+    posts = backtest_posts(router)
+    assert len(posts) == 1, "a redirect is not retried"
+    assert posts[0].kwargs.get("allow_redirects") is False
+    item = entry(outcome, h.BACKTEST_ID)["evidence"]["backtest"]
+    assert item["status"] == "unavailable"
+    assert item["reason"]
+    assert "redirect.invalid" not in json.dumps(outcome.result.entries, default=str)
+
+
+@pytest.mark.parametrize("bad_id", [".", "..", "ab/cd"])
+def test_a_roster_symphony_whose_id_is_not_a_plain_id_segment_reads_unreadable_and_is_not_requested(
+    router, inputs_seen, bad_id
+):
+    victim = statistics_other_ids()[0]
+    body = h.statistics_body()
+    for item in body["symphonies"]:
+        if item["id"] == victim:
+            item["id"] = bad_id
+    router.statistics_default = h.Reply(body=body)
+
+    outcome = completed_run()
+
+    assert router.violations == []
+    requested = {r.match["sid"] for r in router.of_kind("series") + router.of_kind("score")}
+    assert requested <= set(h.statistics_ids()) - {victim}, "the refused id builds no URL"
+    assert {r.match["sid"] for r in router.of_kind("series")} == set(h.statistics_ids()) - {victim}
+    assert input_of(inputs_seen, bad_id).series_failure == "unreadable"
+    assert entry(outcome, bad_id)["basis"]["fallback_reason"] == "Composer response unreadable"
+    assert entry(outcome, h.OLDEST_ID)["basis"]["kind"] == "composer", "the others are read"
+
+
+# ---------------------------------------------------------------------------
 # Holdings: every account from the one earliest start; an unreadable account is named
 # ---------------------------------------------------------------------------
 
@@ -1491,20 +1756,27 @@ def test_every_account_is_read_from_the_single_earliest_window_start(router):
         assert spans[-1][1] == AS_OF, account
 
 
-def test_an_account_whose_holdings_cannot_be_read_is_named_in_the_shares_and_the_counts_stay(
-    router, inputs_seen
+SECOND_ACCOUNT_FAILURES = [
+    pytest.param(lambda: h.error_reply(401), "Composer refused the request", id="401"),
+    pytest.param(lambda: h.error_reply(404), "Composer returned not found", id="404"),
+    pytest.param(lambda: h.error_reply(422), "Composer rejected the request", id="422"),
+    pytest.param(lambda: h.error_reply(429), "Composer rate limit", id="429"),
+    pytest.param(lambda: h.error_reply(500), "Composer unavailable", id="500"),
+    pytest.param(
+        lambda: h.raising(requests.Timeout("LEAKMARK")), "Composer unavailable", id="Timeout"
+    ),
+    pytest.param(h.non_json_200, "Composer response unreadable", id="non_json_200"),
+]
+
+
+@pytest.mark.parametrize(("make_reply", "class_reason"), SECOND_ACCOUNT_FAILURES)
+def test_an_account_whose_holdings_cannot_be_read_keeps_its_failure_class_and_is_named_by_label(
+    router, inputs_seen, make_reply, class_reason
 ):
     mine, theirs = split_roster(router)
-    readable = h.holdings_subset_body(mine)
+    readable = serve_split_holdings(router, mine, lambda index: make_reply())
 
-    def handler(request, index):
-        if request.match["account"] == h.SECOND_ACCOUNT_ID:
-            return h.error_reply(500)
-        return h.Reply(body=readable if index == 0 else h.holdings_emptied_body())
-
-    router.holdings_handler = handler
-
-    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], account_labels=LABELS)
 
     got = trading_day_holdings(readable)
     assert inputs_seen[0].holdings.days == got
@@ -1514,18 +1786,123 @@ def test_an_account_whose_holdings_cannot_be_read_is_named_in_the_shares_and_the
     assert item["status"] == "available"
     assert item["figures"]["held_days"]["value"] == held
     assert item["figures"]["co_held_days"]["value"] == co_held
-    for name in ("peak_share_with", "peak_share_without"):
+    for name in SHARE_FIGURES:
         figure = item["figures"][name]
         assert figure["value"] is None, name
-        assert h.SECOND_ACCOUNT_ID in figure["reason"], name
-        assert h.ACCOUNT_ID not in figure["reason"], name
+        assert_reason_names_accounts(
+            figure["reason"], class_reason, {SECOND_LABEL: "not read"}, readable=[FIRST_LABEL]
+        )
     for sid in (h.BACKTEST_ID, h.OLDEST_ID):
         assert sid in theirs
         missing = entry(outcome, sid)["evidence"]["long_vix"]
         assert missing["status"] == "unavailable", sid
-        assert h.SECOND_ACCOUNT_ID in missing["reason"], sid
         assert "no holdings for this symphony" not in missing["reason"], sid
+        assert_reason_names_accounts(
+            missing["reason"], class_reason, {SECOND_LABEL: "not read"}, readable=[FIRST_LABEL]
+        )
         assert all(fig["value"] is None for fig in missing["figures"].values()), sid
+
+
+def test_a_429_on_the_second_accounts_holdings_ends_the_requests_after_that_one(router):
+    mine, _ = split_roster(router)
+    serve_split_holdings(router, mine, lambda index: h.error_reply(429))
+
+    completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], account_labels=LABELS)
+
+    second = router.holdings_requests(h.SECOND_ACCOUNT_ID)
+    assert len(second) == 1, "the other spans of the account are never requested"
+    _assert_run_ended_at(router, second[0])
+
+
+def test_a_429_on_a_later_holdings_span_keeps_the_rate_limit_reason_and_says_partly_read(
+    router, inputs_seen
+):
+    recent = h.holdings_recent_body()
+    replies = {0: h.Reply(body=recent), 1: h.error_reply(429)}
+    router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
+
+    outcome = completed_run(account_labels=LABELS)
+
+    holdings = router.of_kind("holdings")
+    assert len(holdings) == 2, "nothing is requested after the 429"
+    _assert_run_ended_at(router, holdings[1])
+    got = trading_day_holdings(recent)
+    assert inputs_seen[0].holdings.days == got
+    assert inputs_seen[0].holdings.failure is None, "days were read, so the read did not fail"
+    items = available_long_vix(outcome)
+    assert h.OLDEST_ID in items, "fixture sanity: the days read give this symphony an item"
+    held, co_held = long_vix_counts(got, h.OLDEST_ID, h.statistics_ids())
+    assert items[h.OLDEST_ID]["figures"]["held_days"]["value"] == held
+    assert items[h.OLDEST_ID]["figures"]["co_held_days"]["value"] == co_held
+    for sid, item in items.items():
+        for name in SHARE_FIGURES:
+            figure = item["figures"][name]
+            assert figure["value"] is None, (sid, name)
+            assert_reason_names_accounts(
+                figure["reason"],
+                RATE_LIMIT_REASON,
+                {FIRST_LABEL: "partly read"},
+                readable=[SECOND_LABEL],
+            )
+
+
+def test_a_429_after_the_first_accounts_first_span_names_both_accounts_by_what_was_read(
+    router, inputs_seen
+):
+    mine, theirs = split_roster(router)
+    readable = h.holdings_subset_body(mine)
+    replies = {0: h.Reply(body=readable), 1: h.error_reply(429)}
+    router.holdings_handler = lambda req, i: replies.get(i, h.Reply(body=h.holdings_emptied_body()))
+
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID], account_labels=LABELS)
+
+    holdings = router.of_kind("holdings")
+    assert [r.match["account"] for r in holdings] == [h.ACCOUNT_ID] * 2
+    _assert_run_ended_at(router, holdings[-1])
+    assert inputs_seen[0].holdings.days == trading_day_holdings(readable)
+    items = available_long_vix(outcome)
+    assert h.MID_ID in items
+    for sid, item in items.items():
+        for name in SHARE_FIGURES:
+            assert item["figures"][name]["value"] is None, (sid, name)
+            assert_reason_names_accounts(
+                item["figures"][name]["reason"],
+                RATE_LIMIT_REASON,
+                {FIRST_LABEL: "partly read", SECOND_LABEL: "not read"},
+            )
+    for sid in (h.BACKTEST_ID, h.OLDEST_ID):
+        assert sid in theirs
+        missing = entry(outcome, sid)["evidence"]["long_vix"]
+        assert missing["status"] == "unavailable", sid
+        assert "no holdings for this symphony" not in missing["reason"], sid
+        assert RATE_LIMIT_REASON in missing["reason"], sid
+        assert f"holdings not read for {SECOND_LABEL}" in missing["reason"], sid
+        assert h.SECOND_ACCOUNT_ID not in missing["reason"], sid
+
+
+def test_without_configured_labels_an_account_is_named_by_its_position_and_never_by_its_id(
+    router,
+):
+    mine, theirs = split_roster(router)
+    serve_split_holdings(router, mine, lambda index: h.error_reply(401))
+
+    outcome = completed_run(account_ids=[h.ACCOUNT_ID, h.SECOND_ACCOUNT_ID])
+
+    reasons = [
+        figure["reason"]
+        for item in available_long_vix(outcome).values()
+        for figure in (item["figures"][name] for name in SHARE_FIGURES)
+    ]
+    assert {h.BACKTEST_ID, h.OLDEST_ID} <= set(theirs), "fixture sanity: the second account's"
+    reasons += [
+        entry(outcome, sid)["evidence"]["long_vix"]["reason"]
+        for sid in (h.BACKTEST_ID, h.OLDEST_ID)
+    ]
+    assert reasons
+    for reason in reasons:
+        assert_reason_names_accounts(
+            reason, "Composer refused the request", {"account 2": "not read"}
+        )
 
 
 def test_when_every_account_is_readable_the_shares_have_values(router):

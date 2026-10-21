@@ -36,6 +36,7 @@ import importlib
 import inspect
 import json
 import pathlib
+import re
 import sys
 import types
 from unittest.mock import MagicMock, patch
@@ -949,3 +950,250 @@ class TestRunBacktestLogs:
         assert result.error is not None
         self._assert_clean(caplog)
         assert type(exc).__name__ in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Redirects, the retry wait floor, the retry log line and the stated wait bound
+# ---------------------------------------------------------------------------
+
+_FLOOR = 3.0  # the tenure review's spacing between any two Composer requests
+_REDIRECT_STATUSES = [301, 302, 307, 308]
+_CLIENT_LOGGER = "advisors.composer_backtest_client"
+
+
+def _scripted(client, minimal_raw_value, replies, **kwargs):
+    """One run_backtest call against scripted replies (a response, or an exception to raise,
+    in turn; the last one repeats). Returns (sleep lengths, result, recorded post calls)."""
+    calls: list = []
+
+    def post(url, **post_kwargs):
+        calls.append({"url": url, **post_kwargs})
+        reply = replies[min(len(calls), len(replies)) - 1]
+        if isinstance(reply, BaseException):
+            raise reply
+        return reply
+
+    with patch("requests.post", side_effect=post), patch("time.sleep") as sleep:
+        result = client.run_backtest(raw_value=minimal_raw_value, **kwargs)
+    return [call.args[0] for call in sleep.call_args_list], result, calls
+
+
+def _failure(branch: str):
+    """A fresh failing reply for a retry branch: a status (a transient one, or 429 with no
+    Retry-After) or a transport error."""
+    if branch == "ConnectionError":
+        return requests.ConnectionError("conn")
+    return _make_mock_response(int(branch))
+
+
+class TestRedirectsAreNeverFollowed:
+    """A redirect would carry the key header to another host, so no caller follows one."""
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {},
+            {"compact_body": True},
+            {"start_date": "2026-07-20", "end_date": "2026-10-19", "compact_body": True},
+        ],
+        ids=["defaults", "compact", "dated_compact"],
+    )
+    @pytest.mark.parametrize("retry", [False, True], ids=["one_post", "retried_post"])
+    def test_every_post_is_sent_with_redirects_disabled(
+        self, minimal_raw_value, response_body, kwargs, retry
+    ):
+        client = _import_client()
+        ok = _make_mock_response(200, body=response_body)
+        replies = [_make_mock_response(503), ok] if retry else [ok]
+
+        _, result, calls = _scripted(client, minimal_raw_value, replies, max_retries=1, **kwargs)
+
+        assert result.error is None
+        assert len(calls) == len(replies)
+        assert all(call.get("allow_redirects") is False for call in calls)
+
+    @pytest.mark.parametrize("status", _REDIRECT_STATUSES)
+    def test_a_redirect_reply_is_an_error_result_that_is_neither_followed_nor_retried(
+        self, minimal_raw_value, status
+    ):
+        client = _import_client()
+        reply = _make_mock_response(status, headers={"Location": "https://redirect.invalid/x"})
+
+        sleeps, result, calls = _scripted(client, minimal_raw_value, [reply])
+
+        assert result.stats is None
+        assert result.error.startswith(f"HTTP {status}")
+        assert len(calls) == 1, "a redirect is not a transient failure"
+        assert sleeps == []
+
+
+class TestRetryWaitFloor:
+    """min_retry_wait_seconds is a floor on every wait before a retry, whatever failure
+    caused the retry; it never shortens a longer wait, and without it the waits are the
+    existing backoff."""
+
+    @pytest.mark.parametrize("branch", ["500", "503", "ConnectionError"])
+    def test_the_floor_lifts_a_shorter_backoff_and_leaves_a_longer_one(
+        self, minimal_raw_value, response_body, branch
+    ):
+        client = _import_client()
+        ok = _make_mock_response(200, body=response_body)
+        replies = [_failure(branch), _failure(branch), _failure(branch), ok]
+
+        sleeps, result, calls = _scripted(
+            client, minimal_raw_value, replies, max_retries=3, min_retry_wait_seconds=_FLOOR
+        )
+
+        assert result.error is None
+        assert len(calls) == 4
+        assert sleeps == [_FLOOR, _FLOOR, 4.0], "backoff 1 s and 2 s are lifted to the floor"
+
+    def test_the_floor_lifts_the_wait_after_a_rate_limit_that_names_no_wait(
+        self, minimal_raw_value, response_body
+    ):
+        client = _import_client()
+        ok = _make_mock_response(200, body=response_body)
+        replies = [_failure("429"), _failure("429"), ok]
+
+        sleeps, result, _ = _scripted(
+            client, minimal_raw_value, replies, max_retries=2, min_retry_wait_seconds=_FLOOR
+        )
+
+        assert result.error is None
+        assert len(sleeps) == 2
+        assert all(wait >= _FLOOR for wait in sleeps)
+
+    def test_the_floor_never_shortens_a_longer_retry_after(self, minimal_raw_value, response_body):
+        client = _import_client()
+        replies = [
+            _make_mock_response(429, headers={"Retry-After": "20"}),
+            _make_mock_response(200, body=response_body),
+        ]
+
+        sleeps, _, _ = _scripted(
+            client, minimal_raw_value, replies, max_retries=1, min_retry_wait_seconds=_FLOOR
+        )
+
+        assert sleeps == [pytest.approx(20.0)]
+
+    @pytest.mark.parametrize("branch", ["500", "ConnectionError"])
+    def test_without_a_floor_the_waits_are_the_existing_backoff(
+        self, minimal_raw_value, response_body, branch
+    ):
+        client = _import_client()
+        ok = _make_mock_response(200, body=response_body)
+
+        sleeps, result, _ = _scripted(
+            client,
+            minimal_raw_value,
+            [_failure(branch), _failure(branch), ok],
+            max_retries=2,
+        )
+
+        assert result.error is None
+        assert sleeps == [1.0, 2.0]
+
+    @pytest.mark.parametrize("branch", ["500", "429", "ConnectionError"])
+    def test_no_wait_follows_the_last_attempt(self, minimal_raw_value, branch):
+        client = _import_client()
+
+        sleeps, result, calls = _scripted(
+            client,
+            minimal_raw_value,
+            [_failure(branch)],
+            max_retries=1,
+            min_retry_wait_seconds=_FLOOR,
+        )
+
+        assert result.stats is None and result.error
+        assert len(calls) == 2
+        assert len(sleeps) == 1, "one wait between the two attempts and none after the last"
+
+    def test_a_timeout_is_not_retried_and_waits_nothing(self, minimal_raw_value):
+        client = _import_client()
+
+        sleeps, result, calls = _scripted(
+            client,
+            minimal_raw_value,
+            [requests.Timeout("slow")],
+            min_retry_wait_seconds=_FLOOR,
+        )
+
+        assert result.stats is None and result.error
+        assert len(calls) == 1
+        assert sleeps == []
+
+
+class TestRetryLogStatesTheRealWait:
+    """The line logged before a retry names the wait that is slept, floor included."""
+
+    @pytest.mark.parametrize("floor", [0.0, _FLOOR], ids=["no_floor", "floor"])
+    @pytest.mark.parametrize("branch", ["500", "429"])
+    def test_the_logged_wait_is_the_slept_wait(
+        self, caplog, minimal_raw_value, response_body, branch, floor
+    ):
+        caplog.set_level("INFO", logger=_CLIENT_LOGGER)
+        client = _import_client()
+        replies = [_failure(branch), _make_mock_response(200, body=response_body)]
+
+        sleeps, result, _ = _scripted(
+            client, minimal_raw_value, replies, max_retries=1, min_retry_wait_seconds=floor
+        )
+
+        assert result.error is None
+        assert len(sleeps) == 1
+        lines = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == _CLIENT_LOGGER and re.search(r"retry|sleep", r.getMessage(), re.I)
+        ]
+        assert len(lines) == 1, lines
+        stated = re.findall(r"(\d+(?:\.\d+)?)\s*s\b", lines[0])
+        assert [float(value) for value in stated] == [pytest.approx(sleeps[0], abs=0.05)], lines[0]
+
+
+def _comment_lines_above(lines, index):
+    comment = []
+    for line in reversed(lines[:index]):
+        if not line.startswith("#"):
+            break
+        comment.append(line)
+    return comment
+
+
+class TestStatedWaitBound:
+    """The module states a total retry wait only if a caller can never exceed it."""
+
+    @staticmethod
+    def _total_wait(minimal_raw_value, replies):
+        client = _import_client()
+        sleeps, _, _ = _scripted(client, minimal_raw_value, replies)
+        return sum(sleeps)
+
+    def test_the_named_bound_covers_the_longest_total_wait_a_default_caller_can_incur(
+        self, minimal_raw_value
+    ):
+        client = _import_client()
+        huge = _make_mock_response(429, headers={"Retry-After": "86400"})
+        totals = [
+            self._total_wait(minimal_raw_value, [huge]),
+            self._total_wait(minimal_raw_value, [_failure("503")]),
+            self._total_wait(minimal_raw_value, [_failure("ConnectionError")]),
+        ]
+
+        assert max(totals) > 0, "fixture sanity: the scenarios did wait"
+        assert max(totals) <= client.BACKTEST_MAX_RETRY_WAIT_SECONDS, totals
+
+    def test_the_constant_and_the_module_text_do_not_claim_a_fifteen_second_total(self):
+        source = (_REPO_ROOT / "advisors" / "composer_backtest_client.py").read_text("utf-8")
+        docstring = ast.get_docstring(ast.parse(source)) or ""
+        lines = source.splitlines()
+        index = next(
+            i for i, line in enumerate(lines) if line.startswith("BACKTEST_MAX_RETRY_WAIT_SECONDS")
+        )
+        constant_text = " ".join([lines[index], *_comment_lines_above(lines, index)])
+
+        assert not re.search(r"\b15\s*s", docstring), "the 15 s sum bounds only the backoff"
+        assert not re.search(r"\b15\s*s", constant_text)
+        assert "Retry-After" in docstring
+        assert re.search(r"\b60\s*s", docstring), "the Retry-After clamp is named"

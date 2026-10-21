@@ -7,9 +7,10 @@ captured records under tests/fixtures/composer/tenure-review/. No test makes a l
 
 Contract pinned here (the implementer reads this file, not the plan):
 
-- Three functions, each returning a frozen result and never raising:
+- Four functions, each returning a frozen result and never raising:
     read_symphony_statistics(account_id) -> StatisticsRead(failure, symphonies)
     read_symphony_value_series(account_id, symphony_id) -> SeriesRead(failure, values)
+    read_symphony_definition(symphony_id) -> DefinitionRead(failure, definition)
     read_daily_holdings(account_id, start: date, end: date)
         -> HoldingsRead(days, failed_spans[FailedSpan(start, end, failure)])
 - ``failure`` is None on success, else one of refused (401, 403), not_found (404),
@@ -17,14 +18,19 @@ Contract pinned here (the implementer reads this file, not the plan):
   is not the expected JSON shape), empty (a series of three empty arrays) or rejected (any
   other status). A failed read carries an empty ``symphonies``/``values``/``days``.
 - Reads are not retried, each carries the engine credential headers and a 15 second timeout,
-  and each HTTP reply is followed by one sleep of COMPOSER_READ_SPACING_SECONDS (via
+  and each request is followed by one sleep of COMPOSER_READ_SPACING_SECONDS (via
   ``time.sleep``, called as ``time.sleep(...)`` so the tests' patch of the ``time`` module
-  attribute holds). COMPOSER_READ_SPACING_SECONDS is 3.0: 20 requests a minute, under the 25
-  a minute Composer documents, which leaves room for the engine's own per-minute read.
+  attribute holds), whether the request was answered or raised: the sleep runs in a
+  ``finally``, so a failed read never lets the next request follow at once.
+  COMPOSER_READ_SPACING_SECONDS is 3.0: 20 requests a minute, under the 25 a minute Composer
+  documents, which leaves room for the engine's own per-minute read.
 - Reads never follow a redirect (``allow_redirects=False``: a followed redirect would carry the
-  key header to another host), so a 3xx reply is a rejected read. The account id, the symphony
-  id and nothing else in a URL path are percent-quoted with no safe characters, so an id
-  holding "/", "?" or "#" stays one path segment.
+  key header to another host), so a 3xx reply is a rejected read, the definition read
+  included. The account id is one percent-quoted path segment (no safe characters), so an id
+  holding "/", "?" or "#" stays one segment. A symphony id is refused before any URL is built
+  unless it is a plain id segment: "." and ".." (which a URL normaliser turns into another
+  route), the empty id and any id holding a path, query, fragment, percent or space
+  character read unreadable and cost no request.
 - After a holdings span answered 429 no further span is requested; that span and every later
   span of the range are listed as failed spans of class rate_limited, in order, without a gap.
 - A holdings row whose ``symbol`` is not a string (a list, an object, a number or null) makes
@@ -91,6 +97,39 @@ def router(monkeypatch):
 
 
 _MISSING = object()
+
+RECENT_START, RECENT_END = date(2026, 9, 20), date(2026, 10, 19)  # exactly 30 days
+THREE_SPAN_START, THREE_SPAN_END = date(2026, 4, 6), date(2026, 6, 19)  # 75 days: 3 spans
+
+# One call per read kind, each against ids the other tests also use. The id of the
+# symphony-level reads is the oldest captured one, so a leak of it into a log is detectable.
+READ_CALLS = {
+    "statistics": lambda: cpc.read_symphony_statistics(h.ACCOUNT_ID),
+    "series": lambda: cpc.read_symphony_value_series(h.ACCOUNT_ID, h.OLDEST_ID),
+    "definition": lambda: cpc.read_symphony_definition(h.OLDEST_ID),
+    "holdings": lambda: cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END),
+}
+
+
+def _serve(router, kind, reply):
+    """Answer every request of one read kind with ``reply``."""
+    if kind == "statistics":
+        router.statistics_default = reply
+    elif kind == "series":
+        router.set_series(h.OLDEST_ID, reply)
+    elif kind == "definition":
+        router.definition_by_symphony[h.OLDEST_ID] = reply
+    else:
+        router.set_all_holdings(reply)
+
+
+def _serve_success(router, kind):
+    """Make the kind's request succeed with its captured record (statistics, series and
+    holdings succeed by default; the definition read needs the captured tree served)."""
+    if kind == "definition":
+        router.definition_by_symphony[h.OLDEST_ID] = h.reply_from_record(
+            "case4_definition_nOyb55RMGVCKPiYXv7TI.json"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +448,6 @@ def test_series_read_is_followed_by_the_spacing_sleep_after_success_and_after_42
 # Daily holdings
 # ---------------------------------------------------------------------------
 
-RECENT_START, RECENT_END = date(2026, 9, 20), date(2026, 10, 19)  # exactly 30 days
-
 
 def _span_params(request):
     return (
@@ -679,6 +716,126 @@ def test_holdings_a_string_symbol_in_the_long_form_is_kept_as_it_is(router):
 
 
 # ---------------------------------------------------------------------------
+# Definition
+# ---------------------------------------------------------------------------
+
+
+def test_definition_request_shape(router):
+    cpc.read_symphony_definition(h.BACKTEST_ID)
+
+    assert len(router.requests) == 1
+    request = router.requests[0]
+    assert request.method == "GET"
+    assert request.kind == "score"
+    assert request.match == {"sid": h.BACKTEST_ID}
+    assert request.query == {}
+    assert request.headers == alpha_bot_execution.get_composer_headers()
+    assert request.timeout == cpc.COMPOSER_READ_TIMEOUT_SECONDS
+    assert request.kwargs.get("allow_redirects") is False
+
+
+def test_definition_success_keeps_the_captured_tree_whole(router):
+    result = cpc.read_symphony_definition(h.BACKTEST_ID)
+
+    assert result.failure is None
+    assert result.definition == h.definition_body()
+
+
+@pytest.mark.parametrize(("status", "failure"), STATUS_CLASSES)
+def test_definition_status_maps_to_its_failure_class_with_one_request_and_no_retry(
+    router, status, failure
+):
+    router.definition_by_symphony[h.BACKTEST_ID] = h.error_reply(status)
+
+    result = cpc.read_symphony_definition(h.BACKTEST_ID)
+
+    assert result.failure == failure, "the status is kept; a 429 is not an empty definition"
+    assert not result.definition
+    assert len(router.requests) == 1
+
+
+@pytest.mark.parametrize("make_exc", EXCEPTION_FACTORIES)
+def test_definition_transport_failures_are_unavailable_and_never_raise(router, make_exc):
+    router.definition_by_symphony[h.BACKTEST_ID] = h.raising(make_exc())
+
+    result = cpc.read_symphony_definition(h.BACKTEST_ID)
+
+    assert result.failure == "unavailable"
+    assert not result.definition
+    assert len(router.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "make_reply",
+    [
+        pytest.param(h.non_json_200, id="non_json_html"),
+        pytest.param(lambda: h.Reply(status=200, body=""), id="empty_body"),
+        pytest.param(
+            lambda: h.Reply(status=200, body="null", content_type="application/json"),
+            id="json_null",
+        ),
+        pytest.param(lambda: h.Reply(body=[{"step": "root"}]), id="json_list"),
+    ],
+)
+def test_definition_200_that_is_not_a_json_object_is_unreadable(router, make_reply):
+    router.definition_by_symphony[h.BACKTEST_ID] = make_reply()
+
+    result = cpc.read_symphony_definition(h.BACKTEST_ID)
+
+    assert result.failure == "unreadable"
+    assert not result.definition
+
+
+def test_definition_read_is_followed_by_the_spacing_sleep_after_success_and_after_429(router):
+    cpc.read_symphony_definition(h.BACKTEST_ID)
+    router.definition_by_symphony[h.BACKTEST_ID] = h.error_reply(429)
+    cpc.read_symphony_definition(h.BACKTEST_ID)
+
+    h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
+    assert router.sleeps == [cpc.COMPOSER_READ_SPACING_SECONDS] * 2
+
+
+# ---------------------------------------------------------------------------
+# Spacing holds whether or not a request was answered
+# ---------------------------------------------------------------------------
+
+RAISED = [
+    pytest.param(lambda: requests.ConnectionError("LEAKMARK-reset"), id="ConnectionError"),
+    pytest.param(lambda: requests.Timeout("LEAKMARK-timeout"), id="Timeout"),
+    pytest.param(
+        lambda: requests.exceptions.ChunkedEncodingError("LEAKMARK-chunk"), id="ChunkedEncoding"
+    ),
+    pytest.param(lambda: RuntimeError("LEAKMARK-unexpected"), id="unexpected_error"),
+]
+
+
+@pytest.mark.parametrize("make_exc", RAISED)
+@pytest.mark.parametrize("kind", sorted(READ_CALLS))
+def test_a_read_that_raises_is_still_followed_by_the_spacing_sleep(router, kind, make_exc):
+    _serve(router, kind, h.raising(make_exc()))
+
+    result = READ_CALLS[kind]()
+
+    assert len(router.requests) == 1
+    assert (getattr(result, "failure", None) or result.failed_spans[0].failure) == "unavailable"
+    h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
+    assert router.sleeps == [cpc.COMPOSER_READ_SPACING_SECONDS]
+
+
+@pytest.mark.parametrize("make_exc", RAISED)
+def test_every_holdings_span_that_raises_is_followed_by_the_spacing_sleep(router, make_exc):
+    router.set_all_holdings(h.raising(make_exc()))
+
+    result = cpc.read_daily_holdings(h.ACCOUNT_ID, THREE_SPAN_START, THREE_SPAN_END)
+
+    assert len(router.requests) == 3, "a failed span does not stop the later spans"
+    assert [s.failure for s in result.failed_spans] == ["unavailable"] * 3
+    h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
+    h.assert_requests_spaced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
+    assert router.sleeps == [cpc.COMPOSER_READ_SPACING_SECONDS] * 3
+
+
+# ---------------------------------------------------------------------------
 # URL paths and redirects
 # ---------------------------------------------------------------------------
 
@@ -699,32 +856,60 @@ def test_the_account_id_is_one_percent_quoted_path_segment_on_all_three_reads(ro
         assert request.query.get("x") is None, "a raw ? would start a query string"
 
 
-def test_the_symphony_id_is_one_percent_quoted_path_segment(router):
-    router.set_series(AWKWARD_ID, h.error_reply(404))
+NOT_A_PLAIN_ID_SEGMENT = [
+    pytest.param(".", id="single_dot"),
+    pytest.param("..", id="double_dot"),
+    pytest.param("", id="empty"),
+    pytest.param("ab/cd", id="slash"),
+    pytest.param("ab?x=1", id="query"),
+    pytest.param("ab#frag", id="fragment"),
+    pytest.param("ab%2Fcd", id="percent_escape"),
+    pytest.param("ab cd", id="space"),
+    pytest.param("ab\\cd", id="backslash"),
+    pytest.param("ab\ncd", id="newline"),
+    pytest.param(AWKWARD_ID, id="awkward_mix"),
+]
 
-    cpc.read_symphony_value_series(h.ACCOUNT_ID, AWKWARD_ID)
 
+@pytest.mark.parametrize("symphony_id", NOT_A_PLAIN_ID_SEGMENT)
+def test_a_symphony_id_that_is_not_a_plain_id_segment_is_refused_before_any_request(
+    router, symphony_id
+):
+    series = cpc.read_symphony_value_series(h.ACCOUNT_ID, symphony_id)
+    definition = cpc.read_symphony_definition(symphony_id)
+
+    assert series.failure == "unreadable"
+    assert not series.values
+    assert definition.failure == "unreadable"
+    assert not definition.definition
+    assert router.requests == [], "a refused id builds no URL, so nothing is sent"
     assert router.violations == []
-    assert [r.kind for r in router.requests] == ["series"]
-    assert router.requests[0].match == {
-        "account": h.ACCOUNT_ID,
-        "sid": quote(AWKWARD_ID, safe=""),
-    }
+
+
+def test_a_refused_symphony_id_does_not_stop_the_next_read(router):
+    cpc.read_symphony_value_series(h.ACCOUNT_ID, "..")
+
+    result = cpc.read_symphony_value_series(h.ACCOUNT_ID, h.MID_ID)
+
+    assert result.failure is None
+    assert [r.match["sid"] for r in router.requests] == [h.MID_ID]
 
 
 @pytest.mark.parametrize("status", [301, 302, 307, 308])
 def test_a_redirect_answer_is_a_rejected_read_that_is_neither_followed_nor_retried(router, status):
     router.statistics_default = h.redirect_reply(status)
     router.set_series(h.OLDEST_ID, h.redirect_reply(status))
+    router.definition_by_symphony[h.OLDEST_ID] = h.redirect_reply(status)
     router.set_all_holdings(h.redirect_reply(status))
 
     stats = cpc.read_symphony_statistics(h.ACCOUNT_ID)
     series = cpc.read_symphony_value_series(h.ACCOUNT_ID, h.OLDEST_ID)
+    definition = cpc.read_symphony_definition(h.OLDEST_ID)
     holdings = cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END)
 
-    assert stats.failure == series.failure == "rejected"
+    assert stats.failure == series.failure == definition.failure == "rejected"
     assert [s.failure for s in holdings.failed_spans] == ["rejected"]
-    assert len(router.requests) == 3
+    assert len(router.requests) == 4
     assert all(r.kwargs.get("allow_redirects") is False for r in router.requests)
 
 
@@ -753,22 +938,6 @@ def test_logs_carry_the_exception_type_and_never_its_message_or_a_credential(rou
 LEAK = "LEAKMARK-reply-body-5521"
 CLIENT_LOGGER = "advisors.composer_portfolio_client"
 
-READ_CALLS = {
-    "statistics": lambda: cpc.read_symphony_statistics(h.ACCOUNT_ID),
-    "series": lambda: cpc.read_symphony_value_series(h.ACCOUNT_ID, h.OLDEST_ID),
-    "holdings": lambda: cpc.read_daily_holdings(h.ACCOUNT_ID, RECENT_START, RECENT_END),
-}
-
-
-def _serve(router, kind, reply):
-    """Answer every request of one read kind with ``reply``."""
-    if kind == "statistics":
-        router.statistics_default = reply
-    elif kind == "series":
-        router.set_series(h.OLDEST_ID, reply)
-    else:
-        router.set_all_holdings(reply)
-
 
 @pytest.mark.parametrize("status", [200, 400, 401, 404, 429, 500])
 @pytest.mark.parametrize("kind", sorted(READ_CALLS))
@@ -776,6 +945,7 @@ def test_every_reply_logs_one_info_line_with_the_endpoint_kind_and_the_status_on
     router, caplog, kind, status
 ):
     caplog.set_level(logging.INFO)
+    _serve_success(router, kind)
     if status != 200:
         _serve(router, kind, h.marked_error_reply(status, LEAK))
 
@@ -858,6 +1028,7 @@ def test_every_public_function_has_a_docstring_and_annotated_parameters_and_retu
     assert {fn.__name__ for fn in public} >= {
         "read_symphony_statistics",
         "read_symphony_value_series",
+        "read_symphony_definition",
         "read_daily_holdings",
     }
     for fn in public:
