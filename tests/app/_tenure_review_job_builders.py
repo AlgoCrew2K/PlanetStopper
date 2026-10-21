@@ -546,6 +546,15 @@ class DaemonLog:
         """One line per record: level, logger name and message."""
         return "\n".join(f"{r.levelname} {r.name} {r.getMessage()}" for r in self.records)
 
+    def positions_naming(self, needle: str) -> list[int]:
+        """The position, in the order the records reached the file, of each record whose message
+        holds ``needle``."""
+        return [i for i, r in enumerate(self.records) if needle in r.getMessage()]
+
+    def positions_of_loggers(self, *names: str) -> list[int]:
+        """The position of each record logged on one of the named loggers."""
+        return [i for i, r in enumerate(self.records) if r.name in names]
+
 
 @contextlib.contextmanager
 def capturing_daemon_log(monkeypatch):
@@ -586,6 +595,57 @@ def capturing_daemon_log(monkeypatch):
         yield log
     finally:
         root.setLevel(previous)
+
+
+# The loggers whose lines are the per-request record of a run (the Composer reads, the backtest
+# POST, the runner's own warnings). None of them is a child of the daemon's logger.
+RUN_PATH_LOGGER_NAMES = (
+    "advisors.composer_portfolio_client",
+    "advisors.composer_backtest_client",
+    "advisors.tenure_review_runner",
+)
+
+
+def daemon_file_handlers() -> list[logging.FileHandler]:
+    """Every file handler anywhere in the logging tree that writes to the daemon's log file."""
+    wanted = os.path.abspath(app_module.LOG_FILE)
+    loggers = [logging.getLogger(), *logging.root.manager.loggerDict.values()]
+    found = {
+        id(h): h
+        for lg in loggers
+        if isinstance(lg, logging.Logger)
+        for h in lg.handlers
+        if isinstance(h, logging.FileHandler) and os.path.abspath(h.baseFilename) == wanted
+    }
+    return list(found.values())
+
+
+def handlers_a_record_of(logger_name: str) -> list[logging.Handler]:
+    """The handlers a record logged on ``logger_name`` is handed to, in the order the logging
+    module walks them (the logger's own, then each ancestor's while propagation is on). The
+    test runner's own capture handlers are left out: they exist only under a test run, and this
+    is about what the daemon process does."""
+    handlers: list[logging.Handler] = []
+    logger: logging.Logger | None = logging.getLogger(logger_name)
+    while logger is not None:
+        handlers.extend(h for h in logger.handlers if not type(h).__module__.startswith("_pytest"))
+        if not logger.propagate:
+            break
+        logger = logger.parent
+    return handlers
+
+
+def writes_warnings_to_stderr(handler: logging.Handler) -> bool:
+    """A stream handler (not a file handler) on standard error that passes a warning and nothing
+    below it: what a logger without any handler gets from the logging module's last resort."""
+    import sys  # noqa: PLC0415
+
+    return (
+        isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+        and getattr(handler, "stream", None) in (sys.stderr, sys.__stderr__)
+        and handler.level == logging.WARNING
+    )
 
 
 def fail_imports_of(monkeypatch, *modules: str) -> None:
@@ -663,6 +723,22 @@ def install_world(
     router.statistics_default = statistics_reply(invested_since=invested_since, twin=twin)
     if twin:
         router.set_series(TWIN_ID, twin_series_reply())
+    return router
+
+
+def install_clean_world(
+    monkeypatch, *, twin: bool = True, invested_since: dict[str, str] | None = None
+) -> h.ComposerRouter:
+    """``install_world`` with every read the run makes answered.
+
+    The router's default for a definition no record exists for is a refusal (HTTP 404); here the
+    one captured definition is served for every symphony of the roster too, so no request of the
+    run fails. A symphony the capture holds an empty series answer for stays so: an empty list is
+    an answer, not a failed read."""
+    router = install_world(monkeypatch, twin=twin, invested_since=invested_since)
+    captured = router.definition_by_symphony[h.BACKTEST_ID]
+    for symphony_id in (*stored_and_listed_ids(), TWIN_ID):
+        router.definition_by_symphony.setdefault(symphony_id, captured)
     return router
 
 

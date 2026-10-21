@@ -33,6 +33,17 @@ Contract pinned here (the implementer reads this file and the handoff, not the p
   ``tenure_review.run_record``) LAST, then releases the slot. On an outcome that did not complete,
   or any exception, it writes nothing and records the failure on the run state with a fixed text
   or the exception type name, never ``str(exc)``, and logs the exception type name only.
+* The stored run record carries ``degraded``: ``True`` when the run met a Composer rate limit or
+  any series, definition, backtest or holdings read of it failed (a refusal, a missing record, a
+  server error, a body that cannot be read), ``False`` otherwise. A series answered with an empty
+  list is an answer, not a failed read. The 03:45 tick does not count a degraded run as the day's
+  review, so the next tick of the same as-of day reviews again; a run with no flag counts as it
+  did before.
+* The job writes one start line, after it has its run id and before its first request, and one
+  completion line, after its last request, each naming the trigger, the US Eastern time and the
+  run id; the completion line also says how the run ended: ``completed``, ``did not complete``,
+  or ``failed`` followed by the exception type name. The lines go to the daemon's log file through
+  the daemon's file handler, which keeps the format it has (no formatter is set on it).
 * An explanation is dated with the US Eastern calendar day the run started (ISO ``YYYY-MM-DD``),
   which is not the as-of day when the run starts before the close; a reused explanation keeps the
   day it was first written; a missing explanation has no day.
@@ -935,7 +946,8 @@ class TestTheRunsLogLinesReachTheDaemonsLogFile:
         assert router.of_kind("statistics") and router.of_kind("series"), "premise: a real run"
         assert set(_logged_reads(text, "series")) == {"200"}
         assert len(_logged_backtests(text)) == len(router.of_kind("backtest"))
-        assert "Tenure review complete:" in text
+        run_id = jb.run_rows()[0]["raw_response"]["run_id"]
+        assert len(log.positions_naming(run_id)) == 2, "the job's start line and completion line"
         assert h.ACCOUNT_ID not in text, "an account id is a credential-grade identifier"
 
     def test_a_rate_limited_read_is_written_with_its_status(self, world, monkeypatch):
@@ -991,6 +1003,285 @@ class TestTheRunsLogLinesReachTheDaemonsLogFile:
         assert LEAK not in text, "the log must not carry what the server answered"
         assert jb.new_rows_since(ids_before) == [], "premise: the run did not complete"
         assert len(_logged_reads(text, "statistics")) == len(router.of_kind("statistics"))
+
+
+class TestEachRunPathLoggerWritesToTheDaemonFile:
+    """The Composer clients and the runner log under their module names, so each carries the
+    daemon's file handler itself. Their lines still propagate, and a warning of theirs still
+    reaches standard error (the journal) as it did before the file handler was added: a logger
+    that has a handler of its own no longer falls back to the logging module's last resort, so
+    standard error needs a handler of its own once the file handler is there."""
+
+    @pytest.mark.parametrize("name", jb.RUN_PATH_LOGGER_NAMES)
+    def test_an_info_line_and_a_warning_of_the_logger_reach_the_file(self, monkeypatch, name):
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            logging.getLogger(name).info("probe info line of %s", name)
+            logging.getLogger(name).warning("probe warning line of %s", name)
+
+        assert f"INFO {name} probe info line of {name}" in log.text()
+        assert f"WARNING {name} probe warning line of {name}" in log.text()
+
+    @pytest.mark.parametrize("name", jb.RUN_PATH_LOGGER_NAMES)
+    def test_a_debug_line_of_the_logger_does_not_reach_the_file(self, monkeypatch, name):
+        """The backtest client's debug line names the symphony and the address; the file takes
+        the per-request lines at INFO and above only."""
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            logging.getLogger(name).debug("probe debug line of %s", name)
+
+        assert "probe debug line" not in log.text()
+
+    @pytest.mark.parametrize("name", jb.RUN_PATH_LOGGER_NAMES)
+    def test_the_logger_still_propagates(self, name):
+        assert logging.getLogger(name).propagate is True
+
+    @pytest.mark.parametrize("name", jb.RUN_PATH_LOGGER_NAMES)
+    def test_a_warning_of_the_logger_still_reaches_standard_error(self, name):
+        chain = jb.handlers_a_record_of(name)
+
+        assert any(jb.writes_warnings_to_stderr(handler) for handler in chain), (
+            f"a warning logged on {name} reaches no handler that writes to standard error: "
+            f"{[type(handler).__name__ for handler in chain]}"
+        )
+
+    @pytest.mark.parametrize("name", jb.RUN_PATH_LOGGER_NAMES)
+    def test_an_info_line_of_the_logger_does_not_reach_standard_error(self, name):
+        """Every request of a run logs an info line; only warnings went to the journal before."""
+        chain = jb.handlers_a_record_of(name)
+        streams = [
+            handler
+            for handler in chain
+            if isinstance(handler, logging.StreamHandler)
+            and not isinstance(handler, logging.FileHandler)
+        ]
+
+        assert [handler for handler in streams if handler.level < logging.WARNING] == []
+
+    def test_the_daemons_file_handler_keeps_the_format_it_has(self):
+        handlers = jb.daemon_file_handlers()
+
+        assert handlers, "premise: the daemon has a file handler"
+        assert [handler for handler in handlers if handler.formatter is not None] == [], (
+            "a formatter on the shared handler would change every line of every other caller"
+        )
+
+
+class TestTheJobWritesAStartLineAndACompletionLine:
+    """The two lines carry the trigger, the US Eastern time and the run id, so the request lines
+    between them in the file can be counted by position. The clock is frozen at 03:45 in US
+    Eastern, which is 07:45 in UTC."""
+
+    @staticmethod
+    def _the_two_lines(log, run_id: str) -> tuple[int, int]:
+        positions = log.positions_naming(run_id)
+        assert len(positions) == 2, (
+            f"expected one start line and one completion line naming run {run_id}, "
+            f"got {len(positions)}: {log.text()}"
+        )
+        return positions[0], positions[1]
+
+    @staticmethod
+    def _assert_names_trigger_and_eastern_time(message: str, trigger: str) -> None:
+        assert trigger in message, f"the trigger is missing: {message!r}"
+        assert "2026-10-20" in message and "03:45" in message, (
+            f"the US Eastern date and time are missing: {message!r}"
+        )
+        assert "07:45" not in message, f"the time is UTC, not US Eastern: {message!r}"
+
+    def test_every_request_of_a_completed_run_is_counted_between_them(self, world, monkeypatch):
+        router = jb.install_clean_world(monkeypatch)
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        run_id = jb.run_rows()[0]["raw_response"]["run_id"]
+        start, end = self._the_two_lines(log, run_id)
+        requests_logged = log.positions_of_loggers(
+            "advisors.composer_portfolio_client", "advisors.composer_backtest_client"
+        )
+        assert len(requests_logged) == len(router.requests) > 0, (
+            "premise: one logged line for each request the run made"
+        )
+        assert start < min(requests_logged) and max(requests_logged) < end
+        self._assert_names_trigger_and_eastern_time(log.records[start].getMessage(), "nightly")
+        self._assert_names_trigger_and_eastern_time(log.records[end].getMessage(), "nightly")
+        assert "completed" in log.records[end].getMessage()
+        for outcome in ("completed", "did not complete", "failed"):
+            assert outcome not in log.records[start].getMessage(), (
+                f"the start line cannot say how the run ended ({outcome})"
+            )
+
+    def test_an_on_demand_run_names_its_own_trigger(self, world, client, monkeypatch):
+        jb.install_clean_world(monkeypatch)
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            assert run_on_demand(client, monkeypatch).status_code == 202
+
+        run_id = jb.run_rows()[0]["raw_response"]["run_id"]
+        start, end = self._the_two_lines(log, run_id)
+        for position in (start, end):
+            self._assert_names_trigger_and_eastern_time(
+                log.records[position].getMessage(), "on_demand"
+            )
+            assert "nightly" not in log.records[position].getMessage()
+
+    @pytest.mark.parametrize(
+        "reply",
+        [lambda: h.error_reply(500), lambda: h.error_reply(401), lambda: h.non_json_200()],
+        ids=["500", "401", "non-JSON 200"],
+    )
+    def test_a_run_that_did_not_complete_says_so_after_its_one_request(
+        self, world, monkeypatch, reply
+    ):
+        router = jb.install_clean_world(monkeypatch)
+        router.statistics_default = reply()
+        seen: dict = {}
+        real_runner = runner_module.run_tenure_review
+
+        def spy(**kwargs):
+            seen["run_id"] = kwargs["run_id"]
+            return real_runner(**kwargs)
+
+        monkeypatch.setattr(runner_module, "run_tenure_review", spy)
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        start, end = self._the_two_lines(log, seen["run_id"])
+        requests_logged = log.positions_of_loggers("advisors.composer_portfolio_client")
+        assert len(requests_logged) == len(router.requests) == 1
+        assert start < requests_logged[0] < end
+        self._assert_names_trigger_and_eastern_time(log.records[start].getMessage(), "nightly")
+        self._assert_names_trigger_and_eastern_time(log.records[end].getMessage(), "nightly")
+        assert "did not complete" in log.records[end].getMessage()
+        assert jb.run_rows() == []
+
+    def test_a_run_that_fails_says_so_with_the_type_name_and_never_the_message(
+        self, world, monkeypatch
+    ):
+        def explode(kwargs):
+            raise RuntimeError(f"disk said {LEAK}")
+
+        calls = jb.patch_runner(monkeypatch, [], isolate=False, hook=explode)
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        start, end = self._the_two_lines(log, calls[0]["run_id"])
+        self._assert_names_trigger_and_eastern_time(log.records[start].getMessage(), "nightly")
+        ending = log.records[end].getMessage()
+        self._assert_names_trigger_and_eastern_time(ending, "nightly")
+        assert "failed" in ending and "RuntimeError" in ending
+        assert LEAK not in log.text(), "the log names the exception type only"
+        assert "did not complete" not in ending and "completed" not in ending
+
+
+# ---------------------------------------------------------------------------
+# A degraded run is not the night's review
+# ---------------------------------------------------------------------------
+
+
+def _fail_definition(router, reply):
+    router.definition_by_symphony[h.BACKTEST_ID] = reply
+
+
+def _second_account_holdings_fail(router, env):
+    jb.rewrite_env(
+        env,
+        accounts=[("ACCOUNT_INDIVIDUAL", h.ACCOUNT_ID), ("ACCOUNT_ROTH", h.SECOND_ACCOUNT_ID)],
+    )
+    router.statistics_by_account[h.SECOND_ACCOUNT_ID] = h.Reply(body={"symphonies": []})
+    served = router.holdings_handler
+    router.holdings_handler = lambda request, index: (
+        h.error_reply(500)
+        if request.match["account"] == h.SECOND_ACCOUNT_ID
+        else served(request, index)
+    )
+
+
+# Each way a read of a run can fail, with the kind of request it fails. The setup takes the
+# router and the environment file.
+DEGRADING_READS = {
+    "series rate limited": ("series", lambda r, env: r.set_series(h.MID_ID, h.error_reply(429))),
+    "series server error": ("series", lambda r, env: r.set_series(h.MID_ID, h.error_reply(500))),
+    "series not found": ("series", lambda r, env: r.set_series(h.MID_ID, h.error_reply(404))),
+    "series unreadable": ("series", lambda r, env: r.set_series(h.MID_ID, h.non_json_200())),
+    "definition server error": ("score", lambda r, env: _fail_definition(r, h.error_reply(500))),
+    "definition not found": ("score", lambda r, env: _fail_definition(r, h.error_reply(404))),
+    "definition unreadable": ("score", lambda r, env: _fail_definition(r, h.non_json_200())),
+    "backtest too large": ("backtest", lambda r, env: r.set_backtest(h.error_reply(413))),
+    "backtest rate limited": ("backtest", lambda r, env: r.set_backtest(h.error_reply(429))),
+    "backtest server error": ("backtest", lambda r, env: r.set_backtest(h.error_reply(500))),
+    "backtest unreadable": ("backtest", lambda r, env: r.set_backtest(h.non_json_200())),
+    "holdings server error": ("holdings", lambda r, env: r.set_all_holdings(h.error_reply(500))),
+    "holdings rate limited": ("holdings", lambda r, env: r.set_all_holdings(h.error_reply(429))),
+    "holdings unreadable": ("holdings", lambda r, env: r.set_all_holdings(h.non_json_200())),
+    "holdings of a second account": ("holdings", _second_account_holdings_fail),
+}
+
+
+class TestADegradedRunIsRecordedAndTheNightIsReviewedAgain:
+    @pytest.mark.parametrize("name", list(DEGRADING_READS))
+    def test_a_run_that_met_a_failed_read_is_recorded_as_degraded_and_the_next_tick_reviews_again(
+        self, world, monkeypatch, name
+    ):
+        kind, make_failing = DEGRADING_READS[name]
+        router = jb.install_clean_world(monkeypatch)
+        make_failing(router, world)
+
+        run_tick()
+
+        assert router.of_kind(kind), f"premise: the run made a {kind} request"
+        (row,) = jb.run_rows()
+        assert row["raw_response"]["degraded"] is True, f"{name}: the run is not marked degraded"
+        count = len(router.requests)
+        run_tick()
+        assert len(router.requests) > count, "the same as-of day is reviewed again"
+        assert len(jb.run_rows()) == 2
+
+    def test_a_run_whose_every_read_was_answered_is_recorded_as_not_degraded_and_ends_the_day(
+        self, world, monkeypatch
+    ):
+        router = jb.install_clean_world(monkeypatch)
+
+        run_tick()
+
+        assert {r.kind for r in router.requests} == {
+            "statistics",
+            "series",
+            "holdings",
+            "score",
+            "backtest",
+        }, "premise: a run that reads everything it can"
+        (row,) = jb.run_rows()
+        assert row["raw_response"]["degraded"] is False
+        count = len(router.requests)
+        run_tick()
+        assert len(router.requests) == count, "an undegraded night is not reviewed twice"
+        assert len(jb.run_rows()) == 1
+
+    def test_the_day_ends_with_the_first_review_that_read_everything(self, world, monkeypatch):
+        router = jb.install_clean_world(monkeypatch)
+        router.set_series(h.MID_ID, h.error_reply(500))
+        run_tick()
+        router.set_series(h.MID_ID, h.reply_from_record(h.series_record_name(h.MID_ID)))
+
+        run_tick()
+
+        newest, older = [r["raw_response"]["degraded"] for r in jb.run_rows()]
+        assert (older, newest) == (True, False)
+        count = len(router.requests)
+        run_tick()
+        assert len(router.requests) == count and len(jb.run_rows()) == 2
+
+    def test_an_on_demand_run_is_recorded_with_the_flag_too(self, world, client, monkeypatch):
+        router = jb.install_clean_world(monkeypatch)
+        router.set_series(h.MID_ID, h.error_reply(429))
+
+        assert run_on_demand(client, monkeypatch).status_code == 202
+
+        (row,) = jb.run_rows()
+        assert row["raw_response"]["trigger"] == "on_demand"
+        assert row["raw_response"]["degraded"] is True
 
 
 # ---------------------------------------------------------------------------

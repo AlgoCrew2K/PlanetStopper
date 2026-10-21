@@ -184,6 +184,11 @@ def _references_name_or_attr(subtree: ast.AST, target: str) -> bool:
             return True
         if isinstance(node, ast.Attribute) and node.attr == target:
             return True
+        # An import that names the target (``from x import target as other``) is a reference.
+        if isinstance(node, ast.alias) and (
+            node.name.split(".")[-1] == target or node.asname == target
+        ):
+            return True
     return False
 
 
@@ -202,8 +207,65 @@ def _resolve_bare_name_callee(call_node: ast.Call) -> str | None:
     return None
 
 
+def _stored_names(target: ast.AST) -> set[str]:
+    """The plain names an assignment target stores (a tuple or list target stores each element)."""
+    return {
+        n.id for n in ast.walk(target) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    }
+
+
+def _module_level_binding_statements(body: list[ast.stmt]):
+    """Every statement that binds a name at module level, including those inside a module-level
+    ``if``, ``try``, ``with`` or loop (a conditional import is still an import). A def or class
+    body is not entered: what it binds is local to it."""
+    for stmt in body:
+        yield stmt
+        for field in ("body", "orelse", "finalbody"):
+            inner = getattr(stmt, field, None)
+            if inner and not isinstance(
+                stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                yield from _module_level_binding_statements(inner)
+        for handler in getattr(stmt, "handlers", None) or []:
+            yield from _module_level_binding_statements(handler.body)
+
+
+def _module_level_bindings(tree: ast.Module) -> dict[str, list[ast.stmt]]:
+    """Name to the module-level statements that bind it by an import (``import a.b as c``,
+    ``from a import b as c``), an assignment (plain, annotated, augmented, tuple), or a table (a
+    dict, list or tuple literal assigned to a name). A function a def binds is not listed: the
+    walk opens a def by name."""
+    bindings: dict[str, list[ast.stmt]] = {}
+    for stmt in _module_level_binding_statements(tree.body):
+        names: set[str] = set()
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            names = {(a.asname or a.name.split(".")[0]) for a in stmt.names}
+        elif isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                names |= _stored_names(target)
+        elif isinstance(stmt, (ast.AnnAssign, ast.AugAssign)):
+            names = _stored_names(stmt.target)
+        for name in names:
+            bindings.setdefault(name, []).append(stmt)
+    return bindings
+
+
+def _function_defs_by_name(tree: ast.Module) -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Each function name to the first def of it ``_find_function_def`` would find (the walk
+    reads the whole tree, so the walk below builds this once instead of once per call)."""
+    defs: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(node.name, node)
+    return defs
+
+
 def _collect_transitive_local_call_subtrees(
-    tree: ast.Module, fn_name: str, *, _visited: set[str] | None = None
+    tree: ast.Module,
+    fn_name: str,
+    *,
+    _visited: set | None = None,
+    _context: tuple | None = None,
 ) -> list[ast.AST]:
     """Real (bounded) call-graph walk, fixing a review finding (2026-08-26,
     ret2-review) against the original Group C implementation: a single-hop
@@ -224,35 +286,64 @@ def _collect_transitive_local_call_subtrees(
     builtin like `int(...)` or a Flask helper like `jsonify(...)` simply
     fails the `_find_function_def` lookup and is not recursed into -- correct,
     since those aren't local functions this scan needs to open up further).
+
+    A name that is read and bound at module level by an import alias, an assignment or a table
+    is followed too: the statement that binds it is added to the walk (and the names that
+    statement reads are followed in turn), so ``from x import f as g`` then ``g()``, ``g = f``
+    then ``g()``, and ``TABLE = {"k": f}`` then ``TABLE["k"]()`` reach what ``f`` is.
     """
     if _visited is None:
         _visited = set()
+        _SCAN_TEXTS.clear()
+    if _context is None:
+        _context = (_function_defs_by_name(tree), _module_level_bindings(tree))
     if fn_name in _visited:
         return []
     _visited.add(fn_name)
 
-    fn_node = _find_function_def(tree, fn_name)
+    fn_node = _context[0].get(fn_name)
     if fn_node is None:
         return []
+    return [fn_node, *_subtrees_reached_from(tree, fn_node, fn_name, _visited, _context)]
 
-    subtrees: list[ast.AST] = [fn_node]
-    for node in ast.walk(fn_node):
-        callee_name = None
+
+def _subtrees_reached_from(
+    tree: ast.Module, root: ast.AST, own_name: str | None, visited: set, context: tuple
+) -> list[ast.AST]:
+    """What ``root`` reaches: the functions it calls by bare name, the module-level functions it
+    hands over by reference, and the statements that bind a module-level name it reads."""
+    defs, bindings = context
+    module_level_functions = {
+        node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    reached: list[ast.AST] = []
+    for node in ast.walk(root):
         if isinstance(node, ast.Call):
             callee_name = _resolve_bare_name_callee(node)
-            if callee_name and callee_name != fn_name and _find_function_def(tree, callee_name):
-                subtrees.extend(
-                    _collect_transitive_local_call_subtrees(tree, callee_name, _visited=_visited)
+            if callee_name and callee_name != own_name and callee_name in defs:
+                reached.extend(
+                    _collect_transitive_local_call_subtrees(
+                        tree, callee_name, _visited=visited, _context=context
+                    )
                 )
         # A function handed over by reference is run by whoever receives it (a thread target, an
         # executor submit, a callback argument, a partial, a value in a table): follow a Name that
         # is read and names a module-level function of app.py, not only a call by bare name.
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            if node.id != fn_name and _find_module_level_function(tree, node.id) is not None:
-                subtrees.extend(
-                    _collect_transitive_local_call_subtrees(tree, node.id, _visited=_visited)
+            if node.id != own_name and node.id in module_level_functions:
+                reached.extend(
+                    _collect_transitive_local_call_subtrees(
+                        tree, node.id, _visited=visited, _context=context
+                    )
                 )
-    return subtrees
+            for statement in bindings.get(node.id, ()):
+                key = ("binding", id(statement))
+                if key in visited:
+                    continue
+                visited.add(key)
+                reached.append(statement)
+                reached.extend(_subtrees_reached_from(tree, statement, None, visited, context))
+    return reached
 
 
 def _unparse_without_docstrings(node: ast.AST) -> str:
@@ -933,11 +1024,25 @@ def _registered_template_function_names(tree: ast.Module) -> set[str]:
 _SAVE_SYMPHONY_ATTR = "save_symphony"
 
 
+# The text of each subtree of the scan in progress, with the node itself held so its identity
+# cannot be reused while the text is kept. The collector empties it at the start of every walk,
+# and nothing changes a node between a walk and the predicates that read its result.
+_SCAN_TEXTS: dict[int, tuple[ast.AST, str]] = {}
+
+
+def _text_of(node: ast.AST) -> str:
+    """``_unparse_without_docstrings`` of a subtree of the current scan, computed once."""
+    held = _SCAN_TEXTS.get(id(node))
+    if held is None:
+        held = _SCAN_TEXTS[id(node)] = (node, _unparse_without_docstrings(node))
+    return held[1]
+
+
 def _hits_composer_draft_client(subtrees) -> list[str]:
     return [
         f"composer_draft_client via {getattr(t, 'name', '?')}"
         for t in subtrees
-        if "composer_draft_client" in _unparse_without_docstrings(t)
+        if "composer_draft_client" in _text_of(t)
     ]
 
 
@@ -953,7 +1058,7 @@ def _hits_alpha_bot_execution(subtrees) -> list[str]:
     return [
         f"alpha_bot_execution via {getattr(t, 'name', '?')}"
         for t in subtrees
-        if "alpha_bot_execution" in _unparse_without_docstrings(t)
+        if "alpha_bot_execution" in _text_of(t)
     ]
 
 
@@ -961,7 +1066,7 @@ def _hits_live_execution(subtrees) -> list[str]:
     return [
         f"LIVE_EXECUTION via {getattr(t, 'name', '?')}"
         for t in subtrees
-        if "LIVE_EXECUTION" in _unparse_without_docstrings(t)
+        if "LIVE_EXECUTION" in _text_of(t)
     ]
 
 
@@ -981,6 +1086,17 @@ _FORBIDDEN_ENGINE_NAMES = (
     "ai_advisor_proposal_approve",
     "invest_in_symphony",
     "sell_account",
+    # The two other ways the application changes what is live: the per-symphony live-mode write
+    # (the one place a symphony is switched to trade for real, besides the global flag) and the
+    # settings route that calls it, and every order the Alpaca order module can submit (the
+    # managed sleeves' module is the one approved order path, with its own arming ladder, and a
+    # review path never touches it). Reached by any path: a call, a lazy import, an alias.
+    "set_symphony_live_mode",
+    "save_symphony_settings",
+    "submit_order",
+    "submit_bracket_order",
+    "submit_trailing_stop_order",
+    "alpaca_orders",
 )
 _GO_TO_CASH_FRAGMENT = "/go-to-cash"
 # Every Composer write endpoint a review path must never name: deploy, invest, rebalance, sell,
@@ -991,7 +1107,7 @@ _RUN_PATH_URL_FRAGMENTS = (*_FORBIDDEN_URL_FRAGMENTS, "/rebalance", _GO_TO_CASH_
 def _hits_forbidden_engine_names(subtrees) -> list[str]:
     hits = []
     for t in subtrees:
-        text = _unparse_without_docstrings(t)
+        text = _text_of(t)
         where = getattr(t, "name", "?")
         for name in _FORBIDDEN_ENGINE_NAMES:
             if name in text or _references_name_or_attr(t, name):
@@ -999,6 +1115,58 @@ def _hits_forbidden_engine_names(subtrees) -> list[str]:
         for fragment in _RUN_PATH_URL_FRAGMENTS:
             if fragment in text:
                 hits.append(f"{fragment} via {where}")
+    return hits
+
+
+# A review path reads Composer and never writes to it. Every method a Composer write goes through
+# is named like an HTTP write, on whatever object makes the request (the requests module, a
+# session, a client), so the scan reports the name wherever it appears on the path: called, handed
+# over as a thread target or a partial, looked up by a string, or imported under another name. A
+# raw write to ``{COMPOSER_BASE_URL}/symphonies`` is then reported whatever its address spells.
+_HTTP_WRITE_NAMES = frozenset({"post", "put", "patch", "delete", "request"})
+# The libraries a name of that kind can be imported from; ``request`` is also the name of the web
+# framework's request object, so a bare import of it counts only from one of these.
+_HTTP_CLIENT_MODULES = frozenset({"requests", "httpx", "urllib3", "aiohttp", "http", "urllib"})
+
+
+def _http_write_reference(node: ast.AST) -> str | None:
+    """The write method a node names, when it names one: an attribute of that name, a bare call of
+    it, a ``getattr`` with it as a string, or an import of it."""
+    if isinstance(node, ast.Attribute) and node.attr in _HTTP_WRITE_NAMES:
+        return node.attr
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in _HTTP_WRITE_NAMES
+    ):
+        return node.func.id
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value in _HTTP_WRITE_NAMES
+    ):
+        return node.args[1].value
+    if isinstance(node, ast.ImportFrom):
+        from_client = (node.module or "").split(".")[0] in _HTTP_CLIENT_MODULES
+        for alias in node.names:
+            if alias.name in _HTTP_WRITE_NAMES - {"request"} or (
+                from_client and alias.name in _HTTP_WRITE_NAMES
+            ):
+                return alias.name
+    return None
+
+
+def _hits_http_writes(subtrees) -> list[str]:
+    hits = []
+    for t in subtrees:
+        where = getattr(t, "name", "?")
+        for node in ast.walk(t):
+            name = _http_write_reference(node)
+            if name is not None:
+                hits.append(f"HTTP write {name} via {where}")
     return hits
 
 
@@ -1012,6 +1180,7 @@ def _exec_seam_hits(tree: ast.Module, fn_name: str) -> list[str]:
         + _hits_alpha_bot_execution(subtrees)
         + _hits_live_execution(subtrees)
         + _hits_forbidden_engine_names(subtrees)
+        + _hits_http_writes(subtrees)
     )
 
 
@@ -1101,6 +1270,14 @@ class TestCycle2cCallPathsNeverReachExecSeam:
             f"review path must never use, or a go-to-cash URL: {hits}"
         )
 
+    @pytest.mark.parametrize("fn_name", _CYCLE_2C_ENTRY_POINT_FN_NAMES)
+    def test_entry_point_never_makes_an_http_write(self, fn_name):
+        hits = _hits_http_writes(self._get_transitive_subtrees(fn_name))
+        assert hits == [], (
+            f"{fn_name}'s transitive call graph names an HTTP write method ({hits}): a review "
+            "path reads Composer and never writes to it, whatever address it writes to."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Mutation proof for Group E: a scan that cannot fail proves nothing. Each test plants
@@ -1120,8 +1297,7 @@ def _tree_with_planted_call(fn_name: str, statement: str) -> ast.Module:
     node = _find_function_def(tree, fn_name)
     if node is None:
         pytest.fail(f"app.py has no function named {fn_name!r}")
-    node.body.append(ast.parse(statement).body[0])
-    ast.fix_missing_locations(tree)
+    node.body.extend(ast.parse(statement).body)
     return tree
 
 
@@ -1194,6 +1370,88 @@ _PLANTED_ENGINE_CALLS = {
     "invest url": ("/invest", 'requests.post(planted_base + "/invest")'),
     "sell url": ("/sell", 'requests.post(planted_base + "/sell")'),
     "liquidate url": ("/liquidate", 'requests.post(planted_base + "/liquidate")'),
+    # A raw write to the Composer symphonies address (the create call without the draft client,
+    # and the update and delete that go with it), in every spelling the requests library has.
+    "raw create post": (
+        "HTTP write post",
+        'requests.post(f"{COMPOSER_BASE_URL}/symphonies", json=planted_body)',
+    ),
+    "raw update put": (
+        "HTTP write put",
+        'requests.put(f"{COMPOSER_BASE_URL}/symphonies/{planted_id}", json=planted_body)',
+    ),
+    "raw update patch": (
+        "HTTP write patch",
+        'requests.patch(f"{COMPOSER_BASE_URL}/symphonies/{planted_id}", json=planted_body)',
+    ),
+    "raw delete": (
+        "HTTP write delete",
+        'requests.delete(f"{COMPOSER_BASE_URL}/symphonies/{planted_id}")',
+    ),
+    "generic request": (
+        "HTTP write request",
+        'requests.request("POST", planted_url, json=planted_body)',
+    ),
+    "session post": ("HTTP write post", "planted_session.post(planted_url, json=planted_body)"),
+    "session built on the spot": ("HTTP write post", "requests.Session().post(planted_url)"),
+    "post as a thread target": (
+        "HTTP write post",
+        "threading.Thread(target=requests.post, args=(planted_url,)).start()",
+    ),
+    "post in a partial": ("HTTP write post", "functools.partial(requests.post, planted_url)()"),
+    "post looked up by name": ("HTTP write post", 'getattr(requests, "post")(planted_url)'),
+    "bare post": ("HTTP write post", "post(planted_url)"),
+    "post imported under another name": (
+        "HTTP write post",
+        "from requests import post as planted_post\nplanted_post(planted_url)",
+    ),
+    # The other two ways the application changes what is live: a symphony's own live mode and
+    # an Alpaca order, each by a call, by name, by reference and through a lazy import.
+    "live-mode write": (
+        "set_symphony_live_mode",
+        "database.set_symphony_live_mode(planted_name, 1, 'tenure')",
+    ),
+    "live-mode write by bare name": (
+        "set_symphony_live_mode",
+        "set_symphony_live_mode(planted_name, 1, 'tenure')",
+    ),
+    "live-mode write by reference": (
+        "set_symphony_live_mode",
+        "planted_executor.submit(database.set_symphony_live_mode, planted_name, 1, 'tenure')",
+    ),
+    "live-mode write imported lazily": (
+        "set_symphony_live_mode",
+        "from database import set_symphony_live_mode as planted_set\n"
+        "planted_set(planted_name, 1, 'tenure')",
+    ),
+    "settings route": ("save_symphony_settings", "save_symphony_settings(planted_name)"),
+    "settings route by reference": (
+        "save_symphony_settings",
+        "planted_executor.submit(save_symphony_settings, planted_name)",
+    ),
+    "alpaca order": (
+        "submit_order",
+        "sleeves.alpaca_orders.submit_order(planted_client, planted_order)",
+    ),
+    "alpaca order by bare name": ("submit_order", "submit_order(planted_order)"),
+    "alpaca order imported lazily": (
+        "submit_order",
+        "from sleeves.alpaca_orders import submit_order as planted_submit\n"
+        "planted_submit(planted_order)",
+    ),
+    "alpaca order through the module": (
+        "submit_order",
+        "from sleeves import alpaca_orders as planted_orders\n"
+        "planted_orders.submit_order(planted_order)",
+    ),
+    "alpaca bracket order": (
+        "submit_bracket_order",
+        "alpaca_orders.submit_bracket_order(planted_client, planted_order)",
+    ),
+    "alpaca trailing stop order": (
+        "submit_trailing_stop_order",
+        "alpaca_orders.submit_trailing_stop_order(planted_client, planted_order)",
+    ),
 }
 
 
@@ -1345,6 +1603,172 @@ class TestGroupEScanFollowsAFunctionHandedOverByReference:
         node = _find_function_def(tree, "_format_eastern_run_time")
         node.body.append(ast.parse("composer_draft_client.save_symphony(planted_argument)").body[0])
         ast.fix_missing_locations(tree)
+
+        assert _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME) == []
+
+
+# A name bound at module level reaches what it is bound to. The walk used to open a module-level
+# def and nothing else, so a call through an import alias, an assignment alias or a table of
+# functions read as a call of an unknown name. Each form below binds ``planted_alias`` (or a
+# table) at module level of the in-memory tree and uses it from an entry point; the scan must
+# report what the binding holds.
+_ALIAS_FORMS = {
+    "import-from alias of the creation call": (
+        "from advisors.composer_draft_client import save_symphony as planted_alias",
+        "planted_alias(planted_argument)",
+        "save_symphony",
+    ),
+    "import alias of the draft client module": (
+        "import advisors.composer_draft_client as planted_alias",
+        "planted_alias.save_symphony(planted_argument)",
+        "composer_draft_client",
+    ),
+    "import-from alias of an order": (
+        "from sleeves.alpaca_orders import submit_order as planted_alias",
+        "planted_alias(planted_order)",
+        "submit_order",
+    ),
+    "import-from alias of the live-mode write": (
+        "from database import set_symphony_live_mode as planted_alias",
+        "planted_alias(planted_name, 1, 'tenure')",
+        "set_symphony_live_mode",
+    ),
+    "import-from alias of an HTTP write": (
+        "from requests import post as planted_alias",
+        "planted_alias(planted_url)",
+        "HTTP write post",
+    ),
+    "assignment alias of a route": (
+        "planted_alias = ai_advisor_proposal_approve",
+        "planted_alias()",
+        "ai_advisor_proposal_approve",
+    ),
+    "assignment alias of an HTTP write": (
+        "planted_alias = requests.post",
+        "planted_alias(planted_url)",
+        "HTTP write post",
+    ),
+    "assignment alias of the live-mode write": (
+        "planted_alias = database.set_symphony_live_mode",
+        "planted_alias(planted_name, 1, 'tenure')",
+        "set_symphony_live_mode",
+    ),
+    "annotated assignment alias": (
+        "planted_alias: object = sell_account",
+        "planted_alias()",
+        "sell_account",
+    ),
+    "tuple assignment alias": (
+        "planted_alias, planted_other = sell_account, len",
+        "planted_alias()",
+        "sell_account",
+    ),
+    "alias of an alias": (
+        "planted_first = sell_account\nplanted_alias = planted_first",
+        "planted_alias()",
+        "sell_account",
+    ),
+    "dict table": ("PLANTED_TABLE = {'go': sell_account}", "PLANTED_TABLE['go']()", "sell_account"),
+    "list table": (
+        "PLANTED_TABLE = [('go', requests.post)]",
+        "for planted_label, planted_fn in PLANTED_TABLE:\n    planted_fn(planted_url)",
+        "HTTP write post",
+    ),
+    "table of an alias": (
+        "planted_alias = ai_advisor_proposal_approve\nPLANTED_TABLE = {'go': planted_alias}",
+        "PLANTED_TABLE['go']()",
+        "ai_advisor_proposal_approve",
+    ),
+    "conditional import": (
+        "try:\n"
+        "    from advisors.composer_draft_client import save_symphony as planted_alias\n"
+        "except ImportError:\n"
+        "    planted_alias = None",
+        "planted_alias(planted_argument)",
+        "save_symphony",
+    ),
+}
+
+
+def _tree_with_planted_binding(entry_point: str, binding: str, use: str) -> ast.Module:
+    tree = _tree_with_planted_call(entry_point, use)
+    tree.body.extend(ast.parse(binding).body)
+    return tree
+
+
+class TestGroupEScanFollowsAModuleLevelNameBoundToSomethingForbidden:
+    @pytest.mark.parametrize("form", list(_ALIAS_FORMS))
+    @pytest.mark.parametrize("fn_name", _REFERENCING_ENTRY_POINTS)
+    def test_a_use_of_the_name_is_reported_from_the_entry_point(self, fn_name, form):
+        binding, use, expected = _ALIAS_FORMS[form]
+
+        hits = _exec_seam_hits(_tree_with_planted_binding(fn_name, binding, use), fn_name)
+
+        assert any(expected in hit for hit in hits), (
+            f"{form}: a use planted in {fn_name} was not reported; hits: {hits}"
+        )
+
+    @pytest.mark.parametrize("form", list(_ALIAS_FORMS))
+    @pytest.mark.parametrize(
+        "planted_in, entry_point",
+        [
+            (_RETIREMENT_PREPARE_FN_NAME, _TENURE_REVIEW_JOB_FN_NAME),
+            (_TENURE_REVIEW_JOB_FN_NAME, _RETIREMENT_TICK_WORKER_FN_NAME),
+        ],
+        ids=["preparation step reached from the job", "job reached from the tick worker"],
+    )
+    def test_a_use_in_a_callee_is_reported_from_the_entry_point_that_calls_it(
+        self, planted_in, entry_point, form
+    ):
+        binding, use, expected = _ALIAS_FORMS[form]
+
+        hits = _exec_seam_hits(_tree_with_planted_binding(planted_in, binding, use), entry_point)
+
+        assert any(expected in hit for hit in hits), (
+            f"{form}: {planted_in} is not on the call graph of {entry_point}; hits: {hits}"
+        )
+
+    @pytest.mark.parametrize("form", list(_ALIAS_FORMS))
+    def test_the_walk_opens_the_statement_that_binds_the_name(self, form):
+        binding, use, _ = _ALIAS_FORMS[form]
+        tree = _tree_with_planted_binding(_TENURE_REVIEW_JOB_FN_NAME, binding, use)
+
+        opened = _collect_transitive_local_call_subtrees(tree, _TENURE_REVIEW_JOB_FN_NAME)
+
+        planted_statements = [
+            node
+            for node in opened
+            if isinstance(node, ast.stmt) and "planted" in ast.unparse(node).lower()
+        ]
+        assert planted_statements, f"the {form} was not opened by the walk"
+
+    def test_a_function_reached_through_an_alias_is_followed_into_its_body(self):
+        tree = _tree_with_planted_binding(
+            _TENURE_REVIEW_JOB_FN_NAME,
+            "planted_alias = _format_eastern_run_time",
+            "planted_alias(planted_value)",
+        )
+        node = _find_function_def(tree, "_format_eastern_run_time")
+        node.body.append(ast.parse("composer_draft_client.save_symphony(planted_argument)").body[0])
+        ast.fix_missing_locations(tree)
+
+        hits = _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME)
+
+        assert any(_SAVE_SYMPHONY_ATTR in hit for hit in hits), hits
+
+    def test_a_binding_the_entry_point_never_reads_is_not_followed(self):
+        tree = _tree_with_planted_binding(
+            _TENURE_REVIEW_JOB_FN_NAME, "planted_alias = sell_account", "planted_other = 1"
+        )
+
+        assert _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME) == []
+
+    def test_names_bound_to_each_other_end_the_walk(self):
+        tree = _tree_with_planted_binding(
+            _TENURE_REVIEW_JOB_FN_NAME,
+            "planted_first = planted_second\nplanted_second = planted_first",
+            "planted_first()",
+        )
 
         assert _exec_seam_hits(tree, _TENURE_REVIEW_JOB_FN_NAME) == []
 

@@ -883,6 +883,25 @@ class TestRunButton:
         assert message is not None
         assert message.text() == "", "no message is shown before a request"
 
+    @pytest.mark.parametrize("a_review_is_stored", [True, False], ids=["review", "no review yet"])
+    def test_the_message_slot_announces_what_it_says_without_interrupting(
+        self, client, isolated_db, a_review_is_stored
+    ):
+        """The slot is the only feedback for the button, and the client writes it after the
+        page loaded: a status region that is polite, so a screen reader reads it out once the
+        reader is idle and never over what is being read."""
+        if a_review_is_stored:
+            _stored_full_run()
+        panel = _panel(client)
+        message = panel.find("tenure-review-run-message")
+        assert message is not None
+        assert message.attrs.get("role") == "status"
+        assert message.attrs.get("aria-live") == "polite"
+        button = panel.find("tenure-review-run-btn")
+        assert "aria-live" not in button.attrs and "role" not in button.attrs, (
+            "the live region is the message slot, not the button"
+        )
+
     def test_the_button_is_shown_while_a_run_is_in_progress_so_the_refusal_can_be_read(
         self, client, isolated_db
     ):

@@ -25,6 +25,7 @@ import ast
 import importlib
 import importlib.util
 import pathlib
+import textwrap
 
 import pytest
 
@@ -66,7 +67,19 @@ _PUBLIC_SYMBOL_EXEMPTIONS = {_REVIEW: frozenset({"EVIDENCE_ITEM_ORDER"})}
 _FORBIDDEN_URL_FRAGMENTS = ("/deploy/", "/invest", "/sell", "/liquidate", "/go-to-cash")
 
 # Engine and dashboard functions that read account state through a lossy path or move money.
-_FORBIDDEN_NAMES = ("fetch_symphony_stats", "perform_account_liquidation", "execute_sell_to_cash")
+_FORBIDDEN_NAMES = (
+    "fetch_symphony_stats",
+    "perform_account_liquidation",
+    "execute_sell_to_cash",
+    # The two other ways the application changes what is live: a symphony's own live mode (and
+    # the settings route that sets it), and every order the Alpaca order module can submit.
+    "set_symphony_live_mode",
+    "save_symphony_settings",
+    "submit_order",
+    "submit_bracket_order",
+    "submit_trailing_stop_order",
+    "alpaca_orders",
+)
 
 
 def _source_of(rel_path: str) -> str:
@@ -195,14 +208,45 @@ def _assigned_values(source: str, name: str) -> list[str]:
     ]
 
 
+def _binds(node: ast.AST, name: str) -> bool:
+    """Whether ``node`` binds ``name``: a store or delete of the name, a parameter, an import
+    alias, an exception name, a def or class of that name, a pattern capture, or a ``global`` or
+    ``nonlocal`` declaration."""
+    if isinstance(node, ast.Name):
+        return node.id == name and isinstance(node.ctx, (ast.Store, ast.Del))
+    if isinstance(node, ast.arg):
+        return node.arg == name
+    if isinstance(node, ast.alias):
+        return (node.asname or node.name.split(".")[0]) == name
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == name
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    return False
+
+
+def _binding_sites(source: str, name: str) -> list[ast.AST]:
+    """Every place the module binds ``name``, by any means: an assignment (plain, annotated,
+    augmented, chained, unpacked, or the walrus), a loop or comprehension variable, a context
+    manager or exception name, an import alias, a parameter, a def or class of that name, a
+    pattern capture, or a ``global`` or ``nonlocal`` declaration."""
+    return [node for node in ast.walk(ast.parse(source)) if _binds(node, name)]
+
+
 def _backtest_client_problems(source: str) -> list:
     """What differs from the shape the backtest client must keep: one POST of the address it
-    built, and that address the backtest endpoint only."""
+    built, and that address the backtest endpoint only, bound once, by a plain assignment."""
     problems = []
     if _http_write_calls(source) != [("post", "url")]:
         problems.append(("writes", _http_write_calls(source)))
     if _assigned_values(source, "url") != [_BACKTEST_URL_SOURCE]:
         problems.append(("addresses", _assigned_values(source, "url")))
+    if len(_binding_sites(source, "url")) != 1:
+        problems.append(("bindings of the address", len(_binding_sites(source, "url"))))
     return problems
 
 
@@ -309,6 +353,12 @@ class TestTheBacktestClientMakesOnlyTheBacktestPost:
         source = _source_of(_BACKTEST_CLIENT)
         assert _assigned_values(source, "url") == [_BACKTEST_URL_SOURCE]
 
+    def test_the_address_is_bound_once_and_never_rebound_in_any_way(self):
+        """A plain assignment is the only binding of ``url``: an augmented or annotated
+        assignment, a walrus, a loop variable or a parameter after it would change the address
+        the one POST goes to, and a check of plain assignments alone would not see it."""
+        assert len(_binding_sites(_source_of(_BACKTEST_CLIENT), "url")) == 1
+
     def test_the_portfolio_client_makes_no_write_call_at_all(self):
         assert _http_write_calls(_source_of(_CLIENT)) == []
 
@@ -354,6 +404,15 @@ def _plant(statement: str, *, head: str = "") -> str:
         "execute_sell_to_cash(account)",
         "alpha_bot_execution.execute_sell_to_cash(account)",
         'getattr(module, "fetch_symphony_stats")(account)',
+        "database.set_symphony_live_mode(account, 1, 'tenure')",
+        "return set_symphony_live_mode",
+        "save_symphony_settings(account)",
+        "sleeves.alpaca_orders.submit_order(client, account)",
+        "submit_order(account)",
+        "alpaca_orders.submit_bracket_order(client, account)",
+        "alpaca_orders.submit_trailing_stop_order(client, account)",
+        "from sleeves.alpaca_orders import submit_order as go",
+        'getattr(module, "submit_order")(account)',
     ],
     ids=[
         "stats reader call",
@@ -364,6 +423,15 @@ def _plant(statement: str, *, head: str = "") -> str:
         "sell to cash call",
         "sell to cash attribute call",
         "stats reader by string",
+        "live-mode write",
+        "live-mode write reference",
+        "settings route call",
+        "alpaca order attribute call",
+        "alpaca order call",
+        "alpaca bracket order",
+        "alpaca trailing stop order",
+        "alpaca order import",
+        "alpaca order by string",
     ],
 )
 class TestAPlantedForbiddenNameIsReported:
@@ -558,6 +626,65 @@ class TestAPlantedSecondRequestInTheBacktestClientIsReported:
     def test_a_second_address_is_reported(self, assignment):
         planted = _BACKTEST_CLIENT_SHAPE + f"def planted():\n    {assignment}\n"
         assert _backtest_client_problems(planted) != []
+
+    @pytest.mark.parametrize(
+        "rebinding",
+        [
+            'url += "/../symphonies"',
+            'url: str = f"{COMPOSER_BASE_URL}/symphonies"',
+            '(url := f"{COMPOSER_BASE_URL}/symphonies")',
+            'url, planted_other = (f"{COMPOSER_BASE_URL}/symphonies", 1)',
+            'url = planted_other = f"{COMPOSER_BASE_URL}/symphonies"',
+            'for url in (f"{COMPOSER_BASE_URL}/symphonies",):\n    pass',
+            "with planted_open() as url:\n    pass",
+            "import planted_module as url",
+            "try:\n    pass\nexcept Exception as url:\n    pass",
+            '[url for url in (f"{COMPOSER_BASE_URL}/symphonies",)]',
+            "global url",
+            'url = f"{COMPOSER_BASE_URL}/symphonies"',
+        ],
+        ids=[
+            "augmented assignment",
+            "annotated assignment",
+            "walrus",
+            "tuple unpacking",
+            "chained assignment",
+            "loop variable",
+            "context manager",
+            "import alias",
+            "exception name",
+            "comprehension variable",
+            "global declaration",
+            "second plain assignment",
+        ],
+    )
+    @pytest.mark.parametrize("where", ["between the address and the post", "in another function"])
+    def test_a_rebinding_of_the_address_in_any_form_is_reported(self, rebinding, where):
+        body = textwrap.indent(rebinding, "    ")
+        if where == "between the address and the post":
+            planted = _BACKTEST_CLIENT_SHAPE.replace(
+                "    return requests.post", body + "\n    return requests.post"
+            )
+        else:
+            planted = _BACKTEST_CLIENT_SHAPE + "def planted(tree):\n" + body + "\n"
+        assert planted != _BACKTEST_CLIENT_SHAPE
+        assert _backtest_client_problems(planted) != []
+
+    @pytest.mark.parametrize(
+        "planted",
+        [
+            _BACKTEST_CLIENT_SHAPE.replace("run_backtest(tree)", "run_backtest(tree, url=None)"),
+            _BACKTEST_CLIENT_SHAPE + "def planted(url):\n    return url\n",
+            _BACKTEST_CLIENT_SHAPE + "planted = lambda url: url\n",
+            _BACKTEST_CLIENT_SHAPE + "def url():\n    return None\n",
+        ],
+        ids=["parameter with a default", "parameter of another function", "lambda", "def"],
+    )
+    def test_a_parameter_def_or_lambda_named_like_the_address_is_reported(self, planted):
+        assert _backtest_client_problems(planted) != []
+
+    def test_the_unplanted_shape_binds_the_address_once(self):
+        assert len(_binding_sites(_BACKTEST_CLIENT_SHAPE, "url")) == 1
 
     def test_the_post_to_a_different_address_than_the_backtest_one_is_reported(self):
         planted = _BACKTEST_CLIENT_SHAPE.replace("/backtest", "/deploy/accounts")

@@ -20,7 +20,9 @@ the scheduler can rely on:
   the threshold the new run would use (the weekend and holiday ticks would repeat a full review of
   the same session): it writes nothing and logs one INFO line. The decision is the tick's, made
   before it claims the slot; the worker and the job called directly never skip, and an on-demand
-  run is never skipped.
+  run is never skipped. A run that carries ``degraded: true`` in its stored record (a Composer
+  rate limit was met, or a read of it failed) is not counted as that review, so the next tick of
+  the same as-of day reviews again; a record without the flag counts as it did before.
 
 Mirrors tests/app/test_incubation_scheduling.py's thread-patching style: the wrapper does an inline
 ``import threading`` then ``threading.Thread(...).start()``, so the patch target is
@@ -527,3 +529,64 @@ class TestAStoredRunTheTickCannotReadDoesNotStopIt:
             ) from exc
 
         assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# A degraded nightly run does not count as the day's review
+# ---------------------------------------------------------------------------
+
+
+class TestADegradedNightlyRunDoesNotCountAsTheDaysReview:
+    """The tick reads the stored record: a run that carries ``degraded: true`` (a Composer rate
+    limit was met, or a read of it failed) is not the day's review, so the next tick of the same
+    as-of day reviews again. A record without the flag is a run from before the flag existed and
+    counts as it did. The newest NIGHTLY run is the only one that counts."""
+
+    @staticmethod
+    def _store(position: int, **fields) -> None:
+        record = {
+            "trigger": "nightly",
+            "as_of_trading_day": "2026-10-19",
+            "threshold_in_effect": 126,
+            **fields,
+        }
+        db_module.insert_advisor_observation(
+            advisor_role=jb.ROLE_RUN,
+            subject_type="tenure_review_run",
+            subject_id=f"{position:032d}",
+            verdict="completed",
+            raw_response=record,
+        )
+
+    @pytest.mark.parametrize(
+        "stored, reviews",
+        [
+            ([{"degraded": True}], 1),
+            ([{"degraded": False}], 0),
+            ([{}], 0),
+            ([{"degraded": False}, {"degraded": True}], 1),
+            ([{"degraded": True}, {"degraded": False}], 0),
+            ([{"degraded": False}, {"trigger": "on_demand", "degraded": True}], 0),
+            ([{"degraded": True}, {"trigger": "on_demand", "degraded": False}], 1),
+        ],
+        ids=[
+            "degraded",
+            "not degraded",
+            "no flag",
+            "degraded after a clean one",
+            "clean after a degraded one",
+            "degraded on-demand run after a clean nightly one",
+            "clean on-demand run after a degraded nightly one",
+        ],
+    )
+    def test_the_tick_reviews_again_only_when_the_newest_nightly_run_is_degraded(
+        self, isolated_db, monkeypatch, stored, reviews
+    ):
+        jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        for position, fields in enumerate(stored, start=1):
+            self._store(position, **fields)
+
+        _tick()
+
+        assert len(calls) == reviews
