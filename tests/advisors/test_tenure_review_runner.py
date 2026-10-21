@@ -213,6 +213,15 @@ def seed_shadow(tmp_path, monkeypatch, symphony_id, count=140, *, roster_extra=(
     return dict(zip(days, bot, strict=True)), db_file
 
 
+def shadow_window_days(bot_by_day, invested_since):
+    """The day count of a shadow-basis window: the stored rows plus the session before the
+    first row, which opens the window as a baseline when it falls on or after the
+    invested-since date (otherwise the first row is the baseline and adds none)."""
+    baseline = b.session_before(date.fromisoformat(min(bot_by_day)))
+    start = date.fromisoformat(invested_since[:10]) if invested_since else date.min
+    return len(bot_by_day) + (1 if baseline >= start else 0)
+
+
 def seed_shadow_many(tmp_path, monkeypatch, symphony_ids, count=140):
     """The same shadow rows (bot and held differ on every day) for each listed Composer id."""
     days = [d.isoformat() for d in b.last_n_nyse_days(AS_OF, count)]
@@ -770,7 +779,7 @@ def test_a_series_failure_falls_back_to_shadow_history_labelled_with_its_reason(
     assert all(item["label"] != COMPOSER_BASIS for item in e["evidence"].values())
     perf = e["evidence"]["performance"]
     assert perf["label"] == SHADOW_BASIS
-    assert perf["window"]["days"] == 140
+    assert perf["window"]["days"] == shadow_window_days(bot_by_day, sym.invested_since)
     assert perf["figures"]["total_return"]["value"] == pytest.approx(
         b.oracle_metrics(list(bot_by_day.values()))["total_return"], rel=1e-9
     ), "the shadow basis is the bot series (shadow_return), over all history"
@@ -1247,7 +1256,7 @@ def test_a_series_read_that_leaves_fewer_than_two_usable_points_falls_back_to_sh
     assert e["basis"]["fallback_reason"] == SHORT_SERIES_REASON
     perf = e["evidence"]["performance"]
     assert perf["label"] == SHADOW_BASIS
-    assert perf["window"]["days"] == len(bot_by_day)
+    assert perf["window"]["days"] == shadow_window_days(bot_by_day, sym.invested_since)
     assert perf["figures"]["total_return"]["value"] == pytest.approx(
         b.oracle_metrics(list(bot_by_day.values()))["total_return"], rel=1e-9
     )
