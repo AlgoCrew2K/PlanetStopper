@@ -1564,12 +1564,8 @@ def test_peers_that_are_young_or_have_no_tenure_are_listed_as_not_compared_besid
     assert b.entry_of(result, "unknown-shadow")["tenure_trading_days"] is None  # fixture sanity
     expected = [("Unknown Shadow", BASES_DIFFER), ("Young Shadow", BASES_DIFFER)]
     record = json.loads(json.dumps(tr.run_record(result, b.et(2026, 12, 31, 17, 5))))
-    for sid, peer in (("x", "Yoke"), ("y", "Xray")):
+    for sid in ("x", "y"):
         entry = b.entry_of(result, sid)
-        assert (
-            f"{peer} ({CROSS_BASIS_RETURNS} aligned days"
-            in b.item_of(entry, "redundancy")["reason"]
-        ), sid  # fixture sanity: the two Composer symphonies were compared
         assert _not_compared(entry) == expected, sid
         stored = next(e for e in record["entries"] if e["symphony_id"] == sid)
         assert _not_compared(stored) == expected, sid

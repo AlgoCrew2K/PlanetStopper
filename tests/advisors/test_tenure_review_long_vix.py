@@ -649,4 +649,8 @@ def test_a_value_that_is_not_a_day_of_holdings_under_an_ignored_key_changes_noth
     that is not a mapping."""
     days = dict(_holdings(SCENARIO).days)
     days[key] = value
-    assert _cofire(tr.HoldingsInput(days=days)) == _cofire(_holdings(SCENARIO))
+    try:
+        got = _cofire(tr.HoldingsInput(days=days))
+    except Exception as exc:  # the reader skips the key; its value is none of its business
+        pytest.fail(f"a value under an ignored key made the reader raise {type(exc).__name__}")
+    assert got == _cofire(_holdings(SCENARIO))
