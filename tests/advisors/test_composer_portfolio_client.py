@@ -870,6 +870,41 @@ def test_every_public_function_has_a_docstring_and_annotated_parameters_and_retu
             )
 
 
+HOLDINGS_RECORDS = [
+    "case3_holdings_recent_2026-09-20_2026-10-19.json",
+    "case3_holdings_older_2026-04-06_2026-05-05.json",
+]
+
+
+def test_the_statistics_and_holdings_records_are_subsets_that_declare_what_they_keep():
+    """The committed records are the symphonies and days the tests distinguish, not whole
+    responses: each record's own trim note matches its data, and the data is smaller than the
+    request it answers."""
+    statistics = h.load_record("case1_statistics_roth.json")
+    roster = [entry["id"] for entry in statistics["response_body"]["symphonies"]]
+    trimmed = statistics["_trimmed"]
+    assert trimmed["symphonies_kept"] == len(roster) < trimmed["symphonies_in_response"]
+    assert set(trimmed["symphonies_dropped_ids"]).isdisjoint(roster)
+
+    for name in HOLDINGS_RECORDS:
+        record = h.load_record(name)
+        by_symphony = record["response_body"]["by_symphony"]
+        query = record["_request"]["query"]
+        span_days = (
+            date.fromisoformat(query["end_date"]) - date.fromisoformat(query["start_date"])
+        ).days + 1
+        kept_days = record["_trimmed"]["days_kept"]
+        assert {day for days in by_symphony.values() for day in days} == set(kept_days), name
+        assert {len(days) for days in by_symphony.values()} == {len(kept_days)}, name
+        assert len(kept_days) < span_days, name
+        assert (
+            record["_trimmed"]["symphonies_kept"]
+            == len(by_symphony)
+            < (record["_trimmed"]["symphonies_in_response"])
+        ), name
+        assert set(by_symphony) <= set(roster), name
+
+
 def test_the_client_imports_exactly_the_base_url_and_the_header_builder_from_the_engine():
     tree = ast.parse((REPO / "advisors" / "composer_portfolio_client.py").read_text("utf-8"))
     from_engine: set[str] = set()
