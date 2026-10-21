@@ -38,6 +38,7 @@ Contract under test (pinned in .claude/tdd-handoff.md "app.py -- route"):
 from __future__ import annotations
 
 import ast
+import functools
 import inspect
 import json
 import math
@@ -1322,3 +1323,59 @@ class TestNoEntryListsItselfAsLeftOut:
             listed += len(names)
         if which != "edge":
             assert listed, "fixture sanity: some entry lists a left-out symphony"
+
+
+_SERVED_RECORDS = {
+    "gap": pb.gap_record,
+    "lone": pb.lone_record,
+    "solo": pb.solo_record,
+    "apart": pb.apart_record,
+    "shadow_start": pb.shadow_start_record,
+    **{
+        f"state:{kind}": functools.partial(pb.state_record, kind)
+        for kind in ("below_floor_no_hit", "at_floor", "structural_undefined")
+    },
+}
+
+
+class TestTheApiServesTheItemStatesAndWindowsAsStored:
+    """The panel renders the stored item, so the API serves the same item as it is: the
+    days a window used beside the sessions its span holds, the comparison portfolio's
+    exclusions with their labels, the reason of an item that decided nothing and a shadow
+    series that has no first return."""
+
+    @pytest.mark.parametrize("which", sorted(_SERVED_RECORDS))
+    def test_the_served_entry_carries_the_stored_evidence_basis_and_missing_items(
+        self, client, isolated_db, which
+    ):
+        record = _SERVED_RECORDS[which]()
+        pb.store_run(record)
+        got = _entries_by_id(_get(client))
+        assert set(got) == {e["symphony_id"] for e in record["entries"]}
+        for stored in record["entries"]:
+            served = got[stored["symphony_id"]]
+            where = f"{which} / {stored['display_name']}"
+            expected = json.loads(json.dumps(stored))
+            assert served["evidence"] == expected["evidence"], where
+            assert served["basis"] == expected["basis"], where
+            assert served["missing_items"] == expected["missing_items"], where
+            assert served["verdict_text"] == expected["verdict_text"], where
+
+    def test_every_served_window_states_the_days_used_and_the_sessions_its_span_holds(
+        self, client, isolated_db
+    ):
+        short = 0
+        for which in ("gap", "apart"):
+            record = _SERVED_RECORDS[which]()
+            pb.store_run(record)
+            for served in _get(client)["review_entries"]:
+                for name, item in served["evidence"].items():
+                    window = item.get("window")
+                    if not window:
+                        continue
+                    where = f"{which} / {served['display_name']} / {name}"
+                    assert isinstance(window["days"], int), where
+                    assert isinstance(window["sessions"], int), where
+                    assert window["days"] <= window["sessions"], where
+                    short += window["days"] < window["sessions"]
+        assert short >= 6, "the gap record must serve windows that use fewer days than they span"

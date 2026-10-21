@@ -12,7 +12,9 @@ prove escaping; those edits are named at the call site.
 
 Three groups live here:
 
-1. Rosters and run records (``full_record``, ``small_record``, ``edge_record``).
+1. Rosters and run records (``full_record``, ``small_record``, ``edge_record``,
+   ``quiet_record``, ``gap_record``, ``lone_record``, ``solo_record``, ``apart_record``,
+   ``shadow_start_record`` and ``state_record``, one record per redundancy state).
 2. Storage helpers that write rows exactly as the pipeline does
    (``store_run``, ``store_recommendation``, ``seed_bot_state``).
 3. A tolerant stdlib HTML tree (``parse_html``) so panel tests can scope assertions to
@@ -22,9 +24,13 @@ Three groups live here:
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import math
 import re
-from functools import lru_cache
+import string
+from datetime import date
+from functools import cache, lru_cache
 from html.parser import HTMLParser
 
 import advisors.composer_backtest_client as backtest_client
@@ -91,9 +97,11 @@ QUIET_NAMES = {
     "second": "Quiet Harbor Carry",
     "third": "Quiet Ridge Hedge",
 }
-# Aligned days enough for "no redundant sibling" to be evidence: more than the
-# recommender's minimum of thirty, with the series built from mutually orthogonal waves.
-QUIET_DAYS = 40
+# Aligned days enough for "no redundant sibling" to be evidence: more than the aligned days
+# the structural gate needs (the larger of the recommender's two floors), with the series
+# built from mutually orthogonal waves.
+QUIET_MARGIN_DAYS = 19
+QUIET_DAYS = b.days_needed_for_structural_gate() + QUIET_MARGIN_DAYS
 
 SMALL_THRESHOLD = 30
 TICKERS = {
@@ -270,9 +278,10 @@ def _edge_base_record() -> dict:
 @lru_cache(maxsize=1)
 def _quiet_base_record() -> dict:
     """Three live symphonies on the Composer basis, threshold 20, whose series are
-    mutually orthogonal over enough aligned days: no pair reaches the screen and every
-    comparison is long enough, so each redundancy item is available with no pair and says
-    "no redundant sibling", and none of them lists redundancy as missing."""
+    mutually orthogonal over more aligned days than the structural gate needs: no pair
+    reaches the screen and every comparison is long enough, so each redundancy item is
+    available with no pair and says "no redundant sibling", and none of them lists
+    redundancy as missing."""
     days = b.last_n_nyse_days(b.AS_OF, QUIET_DAYS + 1)
     symphonies = [
         b.composer_symphony(
@@ -288,6 +297,310 @@ def _quiet_base_record() -> dict:
         assert item["summary"], "the quiet roster must yield the no-sibling statement"
         assert "redundancy" not in stored["missing_items"], stored["display_name"]
     return record
+
+
+# ---------------------------------------------------------------------------
+# Further records: day counts against sessions, the comparison portfolio, the shadow
+# start and one record per redundancy state. The rosters come from the review compute's
+# own test builders; only the ids and names are replaced, by invented names and
+# Composer-hash-shaped ids, so a stored run has the shape the producer writes.
+# ---------------------------------------------------------------------------
+
+_ID_ALPHABET = string.ascii_letters + string.digits
+_ID_LENGTH = 20
+_NAME_POOL = (
+    "Amber Ledger Rotation",
+    "Birch Canal Carry",
+    "Cobalt Dune Hedge",
+    "Dusk Orchard Tilt",
+    "Ember Pier Spread",
+    "Fennel Quay Drift",
+    "Garnet Loft Swing",
+)
+
+
+def composer_hash_like(kind: str, index: int) -> str:
+    """A deterministic id of the real shape: twenty letters and digits."""
+    digest = hashlib.sha256(f"{kind}/{index}".encode()).digest()
+    return "".join(_ID_ALPHABET[byte % len(_ID_ALPHABET)] for byte in digest[:_ID_LENGTH])
+
+
+def relabel(roster: list, kind: str) -> list:
+    """Replace the id and display name of every symphony of a roster, in roster order."""
+    assert len(roster) <= len(_NAME_POOL), "the name pool is shorter than the roster"
+    for index, sym in enumerate(roster):
+        sym.symphony_id = composer_hash_like(kind, index)
+        sym.display_name = _NAME_POOL[index]
+    return roster
+
+
+def _record_of(roster, *, threshold, holdings=None) -> dict:
+    result = b.review(roster, as_of=b.AS_OF, threshold=threshold, holdings=holdings)
+    return tr.run_record(result, b.et(2026, 12, 31, 17, 5))
+
+
+def _fresh(base: dict, run_id: str, trigger: str) -> dict:
+    record = copy.deepcopy(base)
+    record["run_id"] = run_id
+    record["trigger"] = trigger
+    return record
+
+
+GAP_RETURNS = 60
+GAP_SESSIONS_WITHOUT_A_VALUE = 2
+GAP_SESSIONS_WITHOUT_HOLDINGS = 3
+# The sessions without holdings are early in the first symphony's window, and the second
+# symphony's series begins after them, so its long-VIX days are every session of its window.
+GAP_HOLDINGS_GAP_START = 3
+GAP_PEER_SERIES_STARTS_AT = 8
+
+
+@lru_cache(maxsize=1)
+def _gap_base_record() -> dict:
+    """Two correlated Composer symphonies, threshold 20. The first has no value on two
+    interior sessions, so its performance window uses fewer days than its span holds; the
+    holdings are missing on three sessions of the window, so the long-VIX days are fewer
+    than the sessions; a backtest over its window gives every item a window. The second
+    has a value on every session of a shorter series that begins after the missing holdings,
+    so its long-VIX days are every session of its window."""
+    roster, threshold = b.composite_pair(GAP_RETURNS, 0.9)
+    lead, peer = relabel(roster, "gap")
+    keys = sorted(lead.composer_values)
+    peer.composer_values = {
+        k: v for k, v in peer.composer_values.items() if k >= keys[GAP_PEER_SERIES_STARTS_AT]
+    }
+    for key in keys[10 : 10 + GAP_SESSIONS_WITHOUT_A_VALUE]:
+        lead.composer_values[key] = None
+    window = tr.qualifying_window(lead, b.AS_OF, threshold)
+    first, last = date.fromisoformat(window["first"]), date.fromisoformat(window["last"])
+    lead.backtest = b.replica_backtest(
+        first, last, b.wave_returns(len(b.nyse_days(first, last)) - 1, amp=0.2)
+    )
+    held = {lead.symphony_id: {"VIXY": 10.0, "SPY": 90.0}, peer.symphony_id: {"SPY": 100.0}}
+    without = set(
+        keys[GAP_HOLDINGS_GAP_START : GAP_HOLDINGS_GAP_START + GAP_SESSIONS_WITHOUT_HOLDINGS]
+    )
+    holdings = tr.HoldingsInput(days={key: held for key in keys if key not in without})
+    record = _record_of(roster, threshold=threshold, holdings=holdings)
+    short = {
+        name
+        for e in record["entries"]
+        for name in ("performance", "long_vix")
+        if (e["evidence"][name]["window"] or {}).get("days", 0)
+        < (e["evidence"][name]["window"] or {}).get("sessions", 0)
+    }
+    assert short == {"performance", "long_vix"}, short
+    assert any(
+        e["evidence"]["performance"]["window"]["days"]
+        == e["evidence"]["performance"]["window"]["sessions"]
+        for e in record["entries"]
+    ), "the gap record must also hold a window that uses every session"
+    return record
+
+
+@lru_cache(maxsize=1)
+def _lone_base_record() -> dict:
+    """One eligible Composer symphony beside one that is not yet eligible and one with no
+    history: no other symphony is eligible, so its comparison item is not applicable, no
+    same-basis peer has a composite, and no backtest was run, so it has no verdict."""
+    days = b.last_n_nyse_days(b.AS_OF, 41)
+    roster = relabel(
+        [
+            b.composer_symphony("s", "s", days, b.wave_returns(40, amp=0.4, drift=0.05)),
+            b.composer_symphony(
+                "y", "y", b.last_n_nyse_days(b.AS_OF, 10), b.wave_returns(9, amp=0.3, freq=0.8)
+            ),
+            b.no_history_symphony("n", "n", days[0].isoformat()),
+        ],
+        "lone",
+    )
+    record = _record_of(roster, threshold=30)
+    subject = _entry(record, roster[0].symphony_id)
+    assert subject["evidence"]["marginal"]["status"] == "not_applicable"
+    assert subject["verdict"] is None and "marginal" in subject["missing_items"]
+    return record
+
+
+@lru_cache(maxsize=1)
+def _solo_base_record() -> dict:
+    """A single live symphony: nothing to compare it with, so its redundancy and comparison
+    items are both not applicable."""
+    days = b.last_n_nyse_days(b.AS_OF, 41)
+    roster = relabel(
+        [b.composer_symphony("s", "s", days, b.wave_returns(40, amp=0.4, drift=0.05))], "solo"
+    )
+    record = _record_of(roster, threshold=30)
+    subject = record["entries"][0]
+    assert subject["evidence"]["redundancy"]["status"] == "not_applicable"
+    assert subject["evidence"]["marginal"]["status"] == "not_applicable"
+    return record
+
+
+@lru_cache(maxsize=1)
+def _apart_base_record() -> dict:
+    """One eligible Composer symphony and two eligible symphonies on the shadow-history
+    fallback basis: the Composer one has no same-basis peer, so its comparison item is
+    not applicable and lists both as excluded for their basis; each fallback one has the
+    other on its basis and still has no comparison for want of position values."""
+    days = b.last_n_nyse_days(b.AS_OF, 41)
+    roster = relabel(
+        [
+            b.composer_symphony("c", "c", days, b.wave_returns(40, amp=0.4, drift=0.05)),
+            b.shadow_symphony(
+                "f1", "f1", days[0].isoformat(), b.by_date(days[1:], b.wave_returns(40, amp=0.3))
+            ),
+            b.shadow_symphony(
+                "f2",
+                "f2",
+                days[0].isoformat(),
+                b.by_date(days[1:], b.wave_returns(40, amp=0.5, freq=1.3)),
+            ),
+        ],
+        "apart",
+    )
+    record = _record_of(roster, threshold=30)
+    composer = _entry(record, roster[0].symphony_id)
+    marginal = composer["evidence"]["marginal"]
+    assert marginal["status"] == "not_applicable"
+    assert [x["reason"] for x in marginal["excluded"]] == ["excluded: different basis"] * 2
+    assert _entry(record, roster[1].symphony_id)["evidence"]["marginal"]["status"] == "unavailable"
+    return record
+
+
+SHADOW_START_THRESHOLD = 1
+SHADOW_START_FIRST_ROW = date(2026, 12, 22)
+
+
+@lru_cache(maxsize=1)
+def _shadow_start_base_record() -> dict:
+    """Two shadow-basis symphonies. The first has its first stored row on its invested-since
+    date, so that row is its own baseline and the first shadow return is the next row's.
+    The second has a single stored row on its invested-since date, so no return exists to
+    date and the basis states no first-return date."""
+    sessions = list(b.nyse_days(SHADOW_START_FIRST_ROW, b.AS_OF))
+    only = b.AS_OF
+    roster = relabel(
+        [
+            b.shadow_symphony(
+                "a",
+                "a",
+                sessions[0].isoformat(),
+                b.by_date(sessions, b.wave_returns(len(sessions), amp=2.0)),
+            ),
+            b.shadow_symphony("b", "b", only.isoformat(), {only.isoformat(): 1.5}),
+        ],
+        "start",
+    )
+    record = _record_of(roster, threshold=SHADOW_START_THRESHOLD)
+    first = _entry(record, roster[0].symphony_id)
+    assert first["basis"]["series_begins"] == sessions[1].isoformat()
+    assert first["evidence"]["performance"]["window"]["first"] == sessions[0].isoformat()
+    assert _entry(record, roster[1].symphony_id)["basis"]["series_begins"] is None
+    return record
+
+
+# One roster per state of the redundancy item that the plan names. Each builder returns
+# (roster in order, threshold); the roster's symphonies take their ids and names from
+# ``relabel`` in that order.
+_NOTE_DAYS = b.NOTE_RETURNS + 1
+_FLOOR_DAYS = b.days_needed_for_structural_gate()
+_ENOUGH_DAYS = _FLOOR_DAYS + QUIET_MARGIN_DAYS
+_SHORT_PEER_RETURNS = 150
+_STRESS_TAIL_DAYS = 10
+_BELOW_SCREEN_RHO = 0.64
+_ABOVE_SCREEN_RHO = 0.66
+_SHORT_HIT_RETURNS = 100
+_DIVERGING_LONG_RETURNS = 265
+
+
+def _pair_roster(first, second):
+    return b.two_composer_symphonies(first, second), b.COMPOSITE_PAIR_THRESHOLD
+
+
+def _roster_peer_without_composite_on_another_basis():
+    days = b.last_n_nyse_days(b.AS_OF, _NOTE_DAYS)
+    subject_returns, _ = b.orthogonal_pair(b.NOTE_RETURNS, 0.4, k=26)
+    return [
+        b.composer_symphony("subject", "subject", days, subject_returns),
+        b.composer_symphony("sibling", "sibling", days[-10:], b.wave_returns(9)),
+        b.shadow_symphony(
+            "extra",
+            "extra",
+            days[0].isoformat(),
+            b.by_date(days[1:], b.wave_returns(b.NOTE_RETURNS, freq=1.1)),
+        ),
+    ], b.NOTE_THRESHOLD
+
+
+def _roster_compared_peer_beside_one_peer_of_each_kind_without_a_composite():
+    days = b.last_n_nyse_days(b.AS_OF, _ENOUGH_DAYS + 1)
+    lead, steady = b.orthogonal_pair(_ENOUGH_DAYS, 0.4, k=_ENOUGH_DAYS // 10, scale=0.3)
+    thin = b.composer_symphony("thin", "thin", days[-40:], [-r for r in lead[-39:]])
+    thin.composer_values[days[-5].isoformat()] = None
+    return [
+        b.composer_symphony("lead", "lead", days, lead),
+        b.composer_symphony("steady", "steady", days, steady),
+        b.composer_symphony("young", "young", days[-10:], [-r for r in lead[-9:]]),
+        b.shadow_symphony(
+            "fallback",
+            "fallback",
+            days[-31].isoformat(),
+            b.by_date(days[-30:], b.wave_returns(30, freq=1.1)),
+        ),
+        thin,
+        b.composer_symphony("flat", "flat", days[-40:], [0.05] * 39),
+    ], b.COMPOSITE_PAIR_THRESHOLD
+
+
+def _roster_flagged_candidate_beside_a_short_peer():
+    roster = b.roster_with_a_candidate_in_two_passing_pairs(stronger_sorts_first=True)
+    days = b.last_n_nyse_days(b.AS_OF, _NOTE_DAYS)
+    roster.append(
+        b.composer_symphony(
+            "short",
+            "short",
+            days[-(_SHORT_PEER_RETURNS + 1) :],
+            b.sine_returns(_SHORT_PEER_RETURNS, 4, amp=0.4),
+        )
+    )
+    return roster, b.NOTE_THRESHOLD
+
+
+def _roster_stressed_window_without_variance():
+    calm_a, calm_b = b.calm_block(_FLOOR_DAYS - 1)
+    first = calm_a + [-50.0] * _STRESS_TAIL_DAYS
+    second = calm_b + [-50.0 + 0.05 * math.sin(0.9 * i) for i in range(_STRESS_TAIL_DAYS)]
+    assert b.oracle_stressed_correlation(first, second) is None
+    return _pair_roster(first, second)
+
+
+STATE_ROSTERS = {
+    "thin_coverage": lambda: (b.note_family_roster("thin_coverage"), b.NOTE_THRESHOLD),
+    "flat_window": lambda: (b.note_family_roster("flat_window"), b.NOTE_THRESHOLD),
+    "no_peer_composite": _roster_peer_without_composite_on_another_basis,
+    "below_floor_no_hit": lambda: b.composite_pair(_FLOOR_DAYS - 1, _BELOW_SCREEN_RHO),
+    "below_floor_hit": lambda: b.composite_pair(_SHORT_HIT_RETURNS, _ABOVE_SCREEN_RHO),
+    "at_floor": lambda: b.composite_pair(_FLOOR_DAYS, _BELOW_SCREEN_RHO),
+    "peers_without_composite": (
+        _roster_compared_peer_beside_one_peer_of_each_kind_without_a_composite
+    ),
+    "flagged_beside_short_peer": _roster_flagged_candidate_beside_a_short_peer,
+    "structural_undefined": _roster_stressed_window_without_variance,
+    "interval_not_met": lambda: _pair_roster(*b.block_pair(_FLOOR_DAYS, "diverging")),
+    "structural_not_met": lambda: _pair_roster(*b.block_pair(_DIVERGING_LONG_RETURNS, "diverging")),
+}
+
+
+@cache
+def _state_base_record(kind: str) -> dict:
+    roster, threshold = STATE_ROSTERS[kind]()
+    relabel(roster, f"state-{kind}")
+    return _record_of(roster, threshold=threshold)
+
+
+def state_id(kind: str, index: int) -> str:
+    """The id of the symphony at ``index`` of the roster the state ``kind`` is built from."""
+    return composer_hash_like(f"state-{kind}", index)
 
 
 def _entry(record: dict, symphony_id: str) -> dict:
@@ -334,6 +647,36 @@ def quiet_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dic
     record["run_id"] = run_id
     record["trigger"] = trigger
     return record
+
+
+def gap_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record whose windows use fewer days than their spans hold."""
+    return _fresh(_gap_base_record(), run_id, trigger)
+
+
+def lone_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record whose one eligible symphony has no eligible peer."""
+    return _fresh(_lone_base_record(), run_id, trigger)
+
+
+def solo_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record of a single live symphony."""
+    return _fresh(_solo_base_record(), run_id, trigger)
+
+
+def apart_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record of one Composer-basis and two fallback-basis symphonies."""
+    return _fresh(_apart_base_record(), run_id, trigger)
+
+
+def shadow_start_record(run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record whose shadow baselines sit on the tenure's first day."""
+    return _fresh(_shadow_start_base_record(), run_id, trigger)
+
+
+def state_record(kind: str, run_id: str = RUN_ID_FIRST, *, trigger: str = "nightly") -> dict:
+    """A fresh copy of the record built from the roster ``STATE_ROSTERS[kind]``."""
+    return _fresh(_state_base_record(kind), run_id, trigger)
 
 
 def empty_record(run_id: str = RUN_ID_FIRST) -> dict:
@@ -482,6 +825,16 @@ def seed_quiet_bot_state() -> None:
         {
             sid: {"name": QUIET_NAMES[key], "logic_holdings": {"QQQ": 1.0}}
             for key, sid in QUIET_IDS.items()
+        }
+    )
+
+
+def seed_roster_state(record: dict) -> None:
+    """The live roster of any record: each entry's display name with one holding."""
+    db_module.save_state(
+        {
+            e["symphony_id"]: {"name": e["display_name"], "logic_holdings": {"QQQ": 1.0}}
+            for e in record["entries"]
         }
     )
 
