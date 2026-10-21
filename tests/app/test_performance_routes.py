@@ -632,9 +632,9 @@ class TestReviewRunLeavesOtherSurfacesUnchanged:
         today = datetime.date.today()
         return [(today - datetime.timedelta(days=i)).isoformat() for i in range(n, 0, -1)]
 
-    # Fields of the state poll that count down to the next minute and so differ between
-    # two reads whatever is stored: the seconds left and its mm:ss text.
-    _CLOCK_FIELDS = (("next_run_seconds",), ("meta", "next_run"))
+    # Fields of the state poll that follow the wall clock and so differ between two reads
+    # whatever is stored: the seconds to the next minute, its mm:ss text and the clock.
+    _CLOCK_FIELDS = (("next_run_seconds",), ("meta", "next_run"), ("meta", "clock_et"))
 
     @classmethod
     def _without_clock_fields(cls, body: str) -> str:
