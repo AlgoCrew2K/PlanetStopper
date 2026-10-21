@@ -136,25 +136,23 @@ def _target_of(args: tuple, kwargs: dict):
 
 
 def install_inline_threads(monkeypatch) -> list[StartedThread]:
-    """Replace ``threading.Thread`` for the rest of the test by a factory of ``StartedThread``;
+    """Replace ``threading.Thread`` for the rest of the test by a subclass of ``StartedThread``;
     the returned list collects every thread whose ``start()`` was called, in order.
 
-    The loop of a ``concurrent.futures`` pool worker never returns, so a pool worker is built
-    as the real thread it is: code that still submits its job to a pool gets a worker that
-    works, and the test fails on what it asserts and does not hang."""
+    It stays a class: a library imported while it is in place (the panel page imports one lazily)
+    may subclass ``threading.Thread``. The loop of a ``concurrent.futures`` pool worker never
+    returns, so a pool worker is built as the real thread it is: code that still submits its job
+    to a pool gets a worker that works, and the test fails on what it asserts and does not hang."""
     started: list[StartedThread] = []
 
     class Inline(StartedThread):
-        pass
+        def __new__(cls, *args, **kwargs):
+            if is_pool_worker(_target_of(args, kwargs)):
+                return REAL_THREAD(*args, **kwargs)
+            return super().__new__(cls)
 
     Inline.started = started
-
-    def make(*args, **kwargs):
-        if is_pool_worker(_target_of(args, kwargs)):
-            return REAL_THREAD(*args, **kwargs)
-        return Inline(*args, **kwargs)
-
-    monkeypatch.setattr(threading, "Thread", make)
+    monkeypatch.setattr(threading, "Thread", Inline)
     return started
 
 
