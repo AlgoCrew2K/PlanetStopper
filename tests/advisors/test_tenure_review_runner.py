@@ -1679,7 +1679,8 @@ def test_a_read_spacing_that_is_not_a_finite_number_of_zero_or_more_falls_back_t
 
     completed_run(read_spacing_seconds=bad)
 
-    assert set(router.sleeps) == {cpc.COMPOSER_READ_SPACING_SECONDS}
+    assert router.sleeps
+    assert all(slept == cpc.COMPOSER_READ_SPACING_SECONDS for slept in router.sleeps)
     h.assert_reads_paced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
     h.assert_requests_spaced(router, cpc.COMPOSER_READ_SPACING_SECONDS)
     assert len(spacing_warnings(caplog)) == 1, "one WARNING line names the parameter"
