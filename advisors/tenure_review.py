@@ -1948,6 +1948,7 @@ class _ReviewRunState:
         self._running_since: str | None = None
         self._trigger: str | None = None
         self._last_failed: dict | None = None
+        self._owner: object | None = None
 
     def try_start(self, trigger: str) -> object | None:
         """Claim the single run slot; the owner token, or None while a run holds it."""

@@ -434,11 +434,6 @@ atexit.register(_DISMISS_EXECUTOR.shutdown, wait=True)
 _FRONTRUNNER_BUILD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 atexit.register(_FRONTRUNNER_BUILD_EXECUTOR.shutdown, wait=True)
 
-# Dedicated single-worker pool for on-demand tenure reviews: a review makes many
-# paced Composer reads, so it must not queue behind the dismiss or frontrunner work.
-_TENURE_REVIEW_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-atexit.register(_TENURE_REVIEW_EXECUTOR.shutdown, wait=True)
-
 # CC-NEW-001: serializes flush_resync's background load+modify+save against any
 # other intra-process writer of the state DB.  This is an INTRA-PROCESS guard
 # only: it serializes concurrent _flush_state_async submissions running on the
@@ -489,6 +484,16 @@ _daemon_log.setLevel(logging.DEBUG)
 _daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
 _daemon_fh.setLevel(logging.DEBUG)
 _daemon_log.addHandler(_daemon_fh)
+# The tenure review's run path logs one INFO line per Composer request; these loggers are
+# not children of "alphabot", so the daemon's file handler is attached to each directly.
+for _run_path_logger_name in (
+    "advisors.composer_portfolio_client",
+    "advisors.composer_backtest_client",
+    "advisors.tenure_review_runner",
+):
+    _run_path_logger = logging.getLogger(_run_path_logger_name)
+    _run_path_logger.setLevel(logging.INFO)
+    _run_path_logger.addHandler(_daemon_fh)
 
 
 @app.before_request
@@ -998,6 +1003,25 @@ def _round_floats(value, ndigits: int):
     return value
 
 
+# Run-stamped and moving-window keys: they change every run without changing what an
+# explanation was written about, so the reuse comparison ignores them and the explainer is
+# never shown them. window_first stays in the comparison (the pair's first day is evidence).
+_EXPLAINER_WITHHELD_KEYS = frozenset(
+    {
+        "explanation",
+        "review_run_id",
+        "as_of_trading_day",
+        "explanation_written_on",
+        "n_obs",
+        "window_last",
+        "window_days",
+        "composite_window_first",
+        "composite_window_last",
+        "composite_window_days",
+    }
+)
+
+
 def _canonical_evidence_snapshot(rec: dict) -> dict:
     """Return a rounded snapshot of every evidence field in `rec` EXCEPT
     "explanation" (the value being reused) and the pair-identity keys
@@ -1009,7 +1033,7 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     explainer._build_explain_messages json.dumps()s the WHOLE rec and
     instructs the LLM to ground claims in ALL supplied evidence, so a
     curated subset could miss a materially-drifted field (e.g.
-    stressed_correlation, ci_lower/ci_upper, n_obs, or an individual
+    stressed_correlation, ci_lower/ci_upper, or an individual
     candidate_metrics/sibling_metrics value) the LLM could still cite. Every
     float is rounded recursively (including into nested metrics dicts); a
     key missing on either side of the comparison makes the two snapshots
@@ -1018,23 +1042,7 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     with zero special-casing. Future-proof against schema growth: a NEW
     raw_response field automatically joins the comparison.
     """
-    excluded = {
-        "explanation",
-        "candidate_id",
-        "sibling_id",
-        # Run-stamped and moving-window keys: they change every run without
-        # changing what the explanation was written about. window_first stays
-        # in the comparison (the pair's first day is part of the evidence).
-        "review_run_id",
-        "as_of_trading_day",
-        "explanation_written_on",
-        "n_obs",
-        "window_last",
-        "window_days",
-        "composite_window_first",
-        "composite_window_last",
-        "composite_window_days",
-    }
+    excluded = {"explanation", "candidate_id", "sibling_id", *_EXPLAINER_WITHHELD_KEYS}
     snapshot = {k: v for k, v in rec.items() if k not in excluded}
     return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
 
@@ -1165,7 +1173,10 @@ def _prepare_retirement_recs_for_persist(recs: list[dict], *, written_on: str) -
             rec["explanation_written_on"] = prior_raw.get("explanation_written_on")
             continue
         try:
-            rec["explanation"] = explain_recommendation(rec)
+            # The explainer is not shown what the reuse comparison looks through, so a
+            # fresh text cannot cite a figure that a later run would reuse with a stale value.
+            shown = {k: v for k, v in rec.items() if k not in _EXPLAINER_WITHHELD_KEYS}
+            rec["explanation"] = explain_recommendation(shown)
         except Exception as exc:
             _daemon_log.warning(
                 "Retirement explainer failed for %s: %s",
@@ -1199,17 +1210,23 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
 
     `owner` is the token from the caller's REVIEW_RUN_STATE.try_start; with none,
     the job claims the slot itself and returns doing nothing when it is taken.
-    Recommendation rows are written before the run row and never for a failed
-    attempt. Never raises; only type(exc).__name__ is logged and recorded.
+    Recommendation rows are written before the run row and never for a run that
+    did not complete. A failure after they were written (the run row's write)
+    leaves them stored; each carries the review_run_id, and the readers ignore
+    the rows of a run that no run row describes. Never raises; only
+    type(exc).__name__ is logged and recorded.
     """
-    from advisors import tenure_review  # lazy (CC-2)
-
-    if owner is None:
-        owner = tenure_review.REVIEW_RUN_STATE.try_start(trigger)
-        if not owner:
-            _daemon_log.info("Tenure review (%s) skipped: a review is already running.", trigger)
-            return
+    tenure_review = None
     try:
+        from advisors import tenure_review  # lazy (CC-2)
+
+        if owner is None:
+            owner = tenure_review.REVIEW_RUN_STATE.try_start(trigger)
+            if not owner:
+                _daemon_log.info(
+                    "Tenure review (%s) skipped: a review is already running.", trigger
+                )
+                return
         from advisors import tenure_review_runner  # lazy (CC-2)
 
         now_et = datetime.now(_ET)
@@ -1224,9 +1241,9 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
             account_labels=tenure_review_runner.configured_account_labels(env),
         )
         if not outcome.completed:
-            tenure_review.REVIEW_RUN_STATE.finish_failure(
-                owner, outcome.failure_reason or _TENURE_REVIEW_FAILED_TEXT, datetime.now(_ET)
-            )
+            reason = outcome.failure_reason or _TENURE_REVIEW_FAILED_TEXT
+            _daemon_log.warning("Tenure review did not complete: %s", reason)
+            tenure_review.REVIEW_RUN_STATE.finish_failure(owner, reason, datetime.now(_ET))
             return
         result = outcome.result
         recs = result.recommendations
@@ -1252,14 +1269,42 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
         _daemon_log.info("Tenure review complete: %d recommendation(s).", len(recs))
     except Exception as exc:
         _daemon_log.error("Tenure review failed: %s", type(exc).__name__)
-        tenure_review.REVIEW_RUN_STATE.finish_failure(owner, type(exc).__name__, datetime.now(_ET))
+        if tenure_review is not None and owner:
+            tenure_review.REVIEW_RUN_STATE.finish_failure(
+                owner, type(exc).__name__, datetime.now(_ET)
+            )
     finally:
-        tenure_review.REVIEW_RUN_STATE.release(owner)
+        if tenure_review is not None and owner:
+            tenure_review.REVIEW_RUN_STATE.release(owner)
 
 
 def _retirement_recommender_tick_worker(owner: object | None = None) -> None:
     """The nightly review (03:45 slot) as a run of the tenure review job."""
     _tenure_review_job("nightly", owner)
+
+
+def _nightly_review_already_done(tenure_review) -> bool:
+    """True when the newest completed nightly run covers the as-of day now and the
+    threshold now in effect. A stored run that cannot be read, or a failed read or
+    parse, means the review should run. Never raises."""
+    try:
+        as_of = tenure_review.as_of_trading_day(datetime.now(_ET)).isoformat()
+        threshold = tenure_review.parse_threshold(
+            _tenure_review_settings().get(_TENURE_REVIEW_THRESHOLD_KEY)
+        ).value
+        rows = database.get_advisor_observations_for_role(
+            tenure_review.TENURE_REVIEW_RUN_ROLE, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+        )
+        for row in rows:
+            raw = row.get("raw_response")
+            if isinstance(raw, dict) and raw.get("trigger") == "nightly":
+                return (
+                    raw.get("as_of_trading_day") == as_of
+                    and raw.get("threshold_in_effect") == threshold
+                )
+        return False
+    except Exception:
+        return False
 
 
 def _run_retirement_recommender_tick() -> None:
@@ -1275,13 +1320,18 @@ def _run_retirement_recommender_tick() -> None:
     try:
         from advisors import tenure_review  # lazy (CC-2)
 
+        if _nightly_review_already_done(tenure_review):
+            _daemon_log.info(
+                "Nightly tenure review skipped: the as-of day is already reviewed "
+                "at the threshold in effect."
+            )
+            return
         owner = tenure_review.REVIEW_RUN_STATE.try_start("nightly")
         if not owner:
             _daemon_log.info("Nightly tenure review skipped: a review is already running.")
             return
-        held = owner
         threading.Thread(
-            target=lambda: _retirement_recommender_tick_worker(held),
+            target=lambda: _retirement_recommender_tick_worker(owner),
             daemon=True,
             name="retirement-recommender-tick",
         ).start()
@@ -4276,8 +4326,9 @@ def _refresh_retirement_display_names(
         return fresh
 
     for rec in recs:
-        # A stored id that is not text (a list, a dict) cannot be resolved: that field
-        # keeps whatever name it carries; the other field and the other rows are unaffected.
+        # A stored id that is not usable text (not text, empty, blank, a number, a boolean,
+        # a list, a dict) cannot be resolved: that field keeps whatever name it carries;
+        # the other field and the other rows are unaffected.
         if isinstance(rec.get("candidate_id"), str) and rec["candidate_id"].strip():
             rec["candidate_name"] = _resolved_or_persisted_or_hash(
                 rec["candidate_id"], rec.get("candidate_name")
@@ -4363,7 +4414,17 @@ def _fetch_retirement_recommendations(
             if isinstance(raw, dict) and raw.get("review_run_id") == review_run_id:
                 out.append(raw)
     else:
-        dated_rows = [row for row in rows if row.get("created_at")]
+        # Rows stamped with a review_run_id belong to a run; with no completed run row
+        # to name, they may be the remains of a run that failed, so they are not listed.
+        dated_rows = [
+            row
+            for row in rows
+            if row.get("created_at")
+            and not (
+                isinstance(row.get("raw_response"), dict)
+                and "review_run_id" in row["raw_response"]
+            )
+        ]
         if not dated_rows:
             return []
         latest_date = max(row["created_at"][:10] for row in dated_rows)
@@ -8194,7 +8255,7 @@ def _dispatch_retirement_decision(approval_status: str):
     """
     body = request.get_json(silent=True) or {}
     candidate_id = body.get("candidate_id")
-    if not isinstance(candidate_id, str) or not candidate_id or len(candidate_id) > 300:
+    if not isinstance(candidate_id, str) or not candidate_id.strip() or len(candidate_id) > 300:
         return jsonify(
             {"success": False, "approval_status": None, "error": "invalid candidate_id"}
         ), 200
@@ -8246,9 +8307,10 @@ def ai_advisor_retirement_review_run():
     """Start one on-demand symphony tenure review in the background.
 
     Reads no body. Claims the single run slot (409 when a review is running),
-    submits the job to the dedicated executor and answers 202 at once. A refused
-    submission gives the slot back and answers 200 with the exception type name
-    only. Advisory only: no Composer write, no trade primitive.
+    runs the job on a daemon thread (a stop never waits on a review) and answers
+    202 at once. A thread that cannot be built or started gives the slot back
+    and answers 200 with the exception type name only. Advisory only: no
+    Composer write, no trade primitive.
     """
     from advisors import tenure_review  # lazy (CC-2)
 
@@ -8256,10 +8318,15 @@ def ai_advisor_retirement_review_run():
     if not owner:
         return jsonify({"status": "already_running", "message": "a review is already running"}), 409
     try:
-        _TENURE_REVIEW_EXECUTOR.submit(_tenure_review_job, "on_demand", owner)
+        threading.Thread(
+            target=_tenure_review_job,
+            args=("on_demand", owner),
+            daemon=True,
+            name="tenure-review-on-demand",
+        ).start()
     except Exception as exc:
         tenure_review.REVIEW_RUN_STATE.release(owner)
-        _daemon_log.error("Tenure review could not be submitted: %s", type(exc).__name__)
+        _daemon_log.error("Tenure review could not be started: %s", type(exc).__name__)
         return jsonify({"error": type(exc).__name__}), 200
     return jsonify({"status": "started", "message": "review started"}), 202
 
