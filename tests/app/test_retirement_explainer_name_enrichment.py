@@ -43,6 +43,15 @@ _SIBLING_HASH = "sib-enrich-bbb"
 _SIBLING_NAME = "Value Tilt Core"
 
 
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
 def _sample_rec(candidate_id=_CANDIDATE_HASH, sibling_id=_SIBLING_HASH):
     return {
         "candidate_id": candidate_id,

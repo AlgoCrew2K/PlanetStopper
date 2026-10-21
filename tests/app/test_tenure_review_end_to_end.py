@@ -93,6 +93,15 @@ RECOMMENDATION_FIELDS = {
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
 @pytest.fixture()
 def explainer_calls(monkeypatch):
     """Replace the LLM explainer; the list collects a copy of every recommendation it saw."""

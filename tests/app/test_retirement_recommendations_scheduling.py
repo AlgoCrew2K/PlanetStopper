@@ -38,6 +38,15 @@ from tests.advisors import _composer_http_router as h
 from tests.app import _tenure_review_job_builders as jb
 
 
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
 @pytest.fixture()
 def isolated_db(tmp_path, monkeypatch):
     jb.use_scratch_db(monkeypatch, tmp_path, "test_retirement_recommendations_scheduling.db")

@@ -76,6 +76,15 @@ _DEFAULT_SIBLING_METRICS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
 def _sample_raw_response(
     candidate_id=_CANDIDATE_HASH,
     sibling_id=_SIBLING_HASH,

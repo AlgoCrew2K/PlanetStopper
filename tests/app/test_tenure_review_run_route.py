@@ -27,6 +27,7 @@ import copy
 import inspect
 import logging
 import threading
+from datetime import datetime
 
 import pytest
 
@@ -41,6 +42,15 @@ XHR = {"X-Requested-With": "XMLHttpRequest"}
 STARTED = {"status": "started", "message": "review started"}
 ALREADY_RUNNING = {"status": "already_running", "message": "a review is already running"}
 LEAK = "sk-ant-LEAKMARK-4d82b0e7c1"
+
+
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
 
 
 @pytest.fixture()
@@ -118,6 +128,21 @@ class TestTheRouteStartsOneReview:
         assert len(jb.run_rows()) == 1
 
 
+class TestNoTestHereCanMakeALiveCall:
+    def test_a_request_or_a_real_anthropic_client_is_refused_by_the_guard(self):
+        """Mutation proof of the autouse guard: it refuses what it exists to refuse."""
+        import requests
+
+        import ai_advisor
+
+        with pytest.raises(AssertionError):
+            requests.get("https://api.example.invalid/anything", timeout=1)
+        with pytest.raises(AssertionError):
+            requests.Session().request("GET", "https://api.example.invalid/anything")
+        with pytest.raises(AssertionError):
+            ai_advisor._build_client()
+
+
 class TestTheReviewHasItsOwnWorker:
     def test_the_executor_is_dedicated_single_worker_and_shut_down_at_exit(self):
         """A review reads Composer for many minutes, so it must neither share the worker of the
@@ -130,6 +155,43 @@ class TestTheReviewHasItsOwnWorker:
         assert executor._max_workers == 1
         source = inspect.getsource(app_module)
         assert "atexit.register(_TENURE_REVIEW_EXECUTOR.shutdown" in source
+
+
+class TestTheRunRecordsWhenItStartedAndWhenItFinished:
+    def test_a_review_that_takes_time_stores_its_start_and_its_own_completion_time(
+        self, store, client, executor, monkeypatch
+    ):
+        """The run line of the panel reads "run completed <time>": that time is the moment the
+        run finished, read from the clock again after the Composer reads, not the start."""
+        finished_at = datetime(2026, 10, 20, 5, 5, tzinfo=jb.ET)
+
+        def time_passes(_kwargs):
+            jb.freeze_app_clock(monkeypatch, finished_at)
+
+        jb.patch_runner(monkeypatch, _live_recs(), hook=time_passes, isolate=False)
+
+        assert _post(client).status_code == 202
+
+        run = jb.api_after_run(client)["review_run"]
+        assert datetime.fromisoformat(run["started_at"]) == jb.NOW_ET
+        assert datetime.fromisoformat(run["completed_at"]) == finished_at
+        assert "2026-10-20 05:05 ET" in jb.panel(client).find("tenure-review-run-time").text()
+
+    def test_a_failed_attempt_is_stamped_with_the_time_it_failed(
+        self, store, client, executor, monkeypatch
+    ):
+        failed_at = datetime(2026, 10, 20, 5, 40, tzinfo=jb.ET)
+
+        def time_passes_then_fails(_kwargs):
+            jb.freeze_app_clock(monkeypatch, failed_at)
+
+        outcome = jb.runner_module.RunOutcome(False, None, "Composer statistics unavailable")
+        jb.patch_runner(monkeypatch, outcome=outcome, hook=time_passes_then_fails, isolate=False)
+
+        assert _post(client).status_code == 202
+
+        failed = jb.the_run_state().snapshot()["last_failed_attempt"]
+        assert datetime.fromisoformat(failed["at"]) == failed_at
 
 
 class TestAnOnDemandRunReplacesTheLastReview:

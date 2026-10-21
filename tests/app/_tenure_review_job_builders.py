@@ -423,6 +423,46 @@ TWIN_SCALE = 0.6
 TWIN_WOBBLE = 0.0015
 
 
+_ROUTERS: list = []
+
+
+def block_live_calls(monkeypatch) -> None:
+    """Make any real Anthropic client or outbound HTTP request fail the test loudly.
+
+    Installed before the URL router, which replaces the same ``requests`` entry points and so
+    keeps serving the Composer shapes it knows; ``assert_no_unserved_requests`` then fails the
+    test for any request the router had to refuse."""
+    import requests  # noqa: PLC0415
+
+    import ai_advisor  # noqa: PLC0415
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("a test reached a live network call or a real Anthropic client")
+
+    monkeypatch.setattr(ai_advisor, "_build_client", refuse, raising=False)
+    try:
+        import anthropic  # noqa: PLC0415
+
+        monkeypatch.setattr(anthropic, "Anthropic", refuse)
+    except ImportError:
+        pass
+    for name in ("get", "post", "put", "patch", "delete", "head", "options", "request"):
+        monkeypatch.setattr(requests, name, refuse)
+    monkeypatch.setattr(requests.sessions.Session, "request", refuse)
+    _ROUTERS.clear()
+
+
+def assert_no_unserved_requests() -> None:
+    """Fail when a URL router built by ``install_world`` had to refuse any request."""
+    routers = list(_ROUTERS)
+    _ROUTERS.clear()
+    for router in routers:
+        assert router.violations == [], (
+            "the run made a request the Composer router does not serve: "
+            f"{[(r.method, r.url) for r in router.violations]}"
+        )
+
+
 def twin_series_reply(source_id: str = h.MID_ID) -> h.Reply:
     """A derived series: the source's captured dates and start value, every daily return
     scaled by ``TWIN_SCALE`` with ``TWIN_WOBBLE * sin(1.3 * day index)`` added."""
@@ -479,6 +519,7 @@ def install_world(
     """Serve the captured Composer records through the URL router, with the renamed
     statistics (and the derived twin when asked)."""
     router = h.ComposerRouter().install(monkeypatch)
+    _ROUTERS.append(router)
     router.statistics_default = statistics_reply(invested_since=invested_since, twin=twin)
     if twin:
         router.set_series(TWIN_ID, twin_series_reply())

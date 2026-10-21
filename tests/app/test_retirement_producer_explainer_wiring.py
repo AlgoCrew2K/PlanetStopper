@@ -38,6 +38,15 @@ _RUN = "advisors.tenure_review_runner.run_tenure_review"
 
 
 @pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
+@pytest.fixture(autouse=True)
 def _scratch_environment(monkeypatch):
     """The run reads account and threshold settings from the environment file: never the
     developer's real one."""
