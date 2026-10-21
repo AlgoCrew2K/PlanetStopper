@@ -1180,11 +1180,12 @@
     window.frApprove = frApprove;
     window.frReject = frReject;
     window.retDispatchDecision = retDispatchDecision;
-    // "Run review now": one bodyless POST. The message is chosen from the HTTP
-    // status alone and is fixed text set with textContent, never response text or
-    // a thrown error's message. The global hooks answer an unauthenticated XHR with
-    // 401 JSON and a missing CSRF token with a 403 HTML page; neither body is
-    // parsed. A refusal gets the negative-token class; the next attempt clears it.
+    // "Run review now": one bodyless POST. Statuses 202, 409, 401, 403 and any
+    // other non-200 show fixed text; a 200 carrying an error key shows the
+    // server's error text (an exception type name). Every message is set with
+    // textContent, never a thrown error's message. The global hooks answer an
+    // unauthenticated XHR with 401 JSON and a missing CSRF token with a 403 HTML
+    // page; neither body is parsed. A refusal gets the negative-token class; the next attempt clears it.
     function retRunReview(btnEl) {
         if (!btnEl || btnEl.disabled) { return; }
         btnEl.disabled = true;
