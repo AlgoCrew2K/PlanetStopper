@@ -1332,9 +1332,10 @@ def _runtime_unlisted_template_helpers(env, baseline_env, app_module_name: str) 
     framework did not put there and that is not a listed function of the app module.
 
     ``baseline_env`` is a fresh environment of the same framework, so the framework's own
-    entries are excluded by what they are (an object of flask, jinja2, werkzeug or markupsafe
-    that the baseline also holds under that name), never by name alone: a name the framework
-    owns can still be re-bound by the app to a function of its own."""
+    entries are excluded by what they are (the very object the baseline holds under that name,
+    or an object of flask, jinja2, werkzeug or markupsafe that the baseline also has a name
+    for), never by name alone: a name the framework owns can still be re-bound by the app to
+    a function of its own."""
     framework_roots = ("flask", "jinja2", "werkzeug", "markupsafe")
     unlisted = []
     for table in sorted(_TEMPLATE_REGISTRATION_TABLES):
@@ -1342,7 +1343,9 @@ def _runtime_unlisted_template_helpers(env, baseline_env, app_module_name: str) 
         baseline = getattr(baseline_env, table)
         for name, value in sorted(registered.items()):
             owner = getattr(value, "__module__", None) or type(value).__module__
-            if name in baseline and owner.split(".")[0] in framework_roots:
+            if name in baseline and (
+                baseline[name] is value or owner.split(".")[0] in framework_roots
+            ):
                 continue
             listed = (
                 callable(value)
