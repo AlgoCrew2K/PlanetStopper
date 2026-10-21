@@ -3161,7 +3161,7 @@ class TestNoticeTimesAreEastern:
         panel = _panel(client)
         failed = _ET_STAMP.search(panel.find("tenure-review-failed-notice").text())
         completed = _ET_STAMP.search(panel.find("tenure-review-run-time").text())
-        assert failed and completed
+        assert failed and completed, "a notice or the run line carries no Eastern time stamp"
         assert failed.group(0).startswith("2026-12-31 16:45")
         assert failed.group(0) < completed.group(0), "the order of events reads backwards"
 
@@ -3541,7 +3541,7 @@ class TestPeersNotComparedAreListedWithTheirReason:
         watch = pb.entry_with_verdict(record, "watch")
         block = pb.entry_node(panel, watch["symphony_id"]).find("tenure-review-evidence-redundancy")
         lines = pb.leaf_nodes_containing(block, peer["display_name"])
-        assert any(peer["reason"] in line.text() for line in lines)
+        assert any(peer["reason"] in line.text() for line in lines), "the stored peer is not listed"
         assert pb.FULL_NAMES["shadow"] not in block.text(), "a peer the record does not list"
 
     @pytest.mark.parametrize("stored", [[], _GONE], ids=["empty list", "key absent"])
