@@ -21,10 +21,14 @@ Two independently-overridable knobs by design:
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import dataclasses
 import enum
+import logging
 import os
-import time  # noqa: F401  (clock seam: tests patch model_config.time)
+import threading
+import time  # module attribute on purpose: tests replace model_config.time
+from datetime import UTC, datetime
 
 _ADVISOR_SUGGESTION_MODEL_ENV_VAR = "ADVISOR_SUGGESTION_MODEL"
 _ADVISOR_SUGGESTION_MODEL_DEFAULT = "claude-fable-5"
@@ -42,13 +46,23 @@ def get_advisor_suggestion_model() -> str:
     return os.environ.get(_ADVISOR_SUGGESTION_MODEL_ENV_VAR, _ADVISOR_SUGGESTION_MODEL_DEFAULT)
 
 
-# --- import-signature stubs for the model-resolution cycle; the implementer replaces every body ---
+logger = logging.getLogger(__name__)
+
 MODEL_UNAVAILABLE_TEXT = "model unavailable"
+
+# The Models API listing is refreshed when the last successful one is older than this.
+_RELIST_INTERVAL_SECONDS = 24 * 60 * 60  # seconds
+_LIST_PAGE_LIMIT = 1000  # records per page (API maximum)
+_LIST_TIMEOUT_SECONDS = 30.0  # seconds; bounds the wait while the listing lock is held
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class Knob(enum.Enum):
     SUGGESTION = "ADVISOR_SUGGESTION_MODEL"
     SYNTHESIS = "ADVISOR_SYNTHESIS_MODEL"
+
+
+_KNOB_FAMILY = {Knob.SUGGESTION: "fable", Knob.SYNTHESIS: "opus"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,25 +71,149 @@ class ModelChoice:
     display_name: str = ""
     source: str = "unavailable"
     env_var: str = ""
-    badge_text = ""  # stub: becomes a property
+
+    @property
+    def badge_text(self) -> str:
+        if self.source == "override":
+            return self.model_id
+        if self.source == "resolved":
+            return self.display_name
+        return MODEL_UNAVAILABLE_TEXT
 
 
-def resolve(knob, client):
-    return ModelChoice()
+_UNAVAILABLE = ModelChoice()
+
+# Module-level mutable state; _reset_registry() clears it.
+_registry: dict[str, ModelChoice] = {}
+_last_success: float | None = None
+_attempt_seq = 0
+_listing_lock = threading.Lock()
+_run_pin: contextvars.ContextVar[dict[str, ModelChoice] | None] = contextvars.ContextVar(
+    "model_config_run_pin", default=None
+)
 
 
-def peek(knob):
-    return ModelChoice()
+def _override(knob: Knob) -> ModelChoice | None:
+    value = os.environ.get(knob.value, "").strip()
+    if not value:
+        return None
+    return ModelChoice(model_id=value, display_name=value, source="override", env_var=knob.value)
 
 
-def invalidate(knob, model_id, client):
-    return ModelChoice()
+def _created_at(item) -> datetime:
+    value = getattr(item, "created_at", None)
+    if not isinstance(value, datetime):
+        return _EPOCH
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _select(records: list, family: str, line_mode: bool) -> ModelChoice:
+    best = None
+    for item in records:
+        extra = getattr(item, "model_extra", None) or {}
+        if line_mode:
+            if extra.get("line") != family:
+                continue
+        elif not str(item.id).startswith(f"claude-{family}-"):
+            continue
+        if extra.get("lifecycle") not in (None, "active"):
+            continue
+        if best is None or _created_at(item) > _created_at(best):
+            best = item
+    if best is None:
+        return _UNAVAILABLE
+    return ModelChoice(model_id=best.id, display_name=best.display_name, source="resolved")
+
+
+def _list_all(client) -> dict[str, ModelChoice]:
+    records = list(client.models.list(limit=_LIST_PAGE_LIMIT, timeout=_LIST_TIMEOUT_SECONDS))
+    line_mode = any("line" in (getattr(r, "model_extra", None) or {}) for r in records)
+    found = {f: _select(records, f, line_mode) for f in _KNOB_FAMILY.values()}
+    return {f: c for f, c in found.items() if c.source == "resolved"}
+
+
+def _list_once(client, seq_before: int) -> None:
+    """One listing attempt shared by every caller that was waiting on it."""
+    global _registry, _last_success, _attempt_seq
+    with _listing_lock:
+        if _attempt_seq != seq_before:
+            return
+        try:
+            _registry = _list_all(client)
+            _last_success = time.monotonic()
+        except Exception as exc:
+            logger.warning("model listing failed: %s", type(exc).__name__)
+        _attempt_seq += 1
+
+
+def _is_fresh() -> bool:
+    last = _last_success
+    return last is not None and time.monotonic() - last < _RELIST_INTERVAL_SECONDS
+
+
+def _pin(family: str, choice: ModelChoice) -> None:
+    pins = _run_pin.get()
+    if pins is None:
+        return
+    if choice.source == "resolved":
+        pins[family] = choice
+    else:
+        pins.pop(family, None)
+
+
+def resolve(knob: Knob, client) -> ModelChoice:
+    """Resolve the knob's model; never raises."""
+    override = _override(knob)
+    if override is not None:
+        return override
+    family = _KNOB_FAMILY[knob]
+    pins = _run_pin.get()
+    if pins is not None and family in pins:
+        return pins[family]
+    seq_before = _attempt_seq
+    if not _is_fresh():
+        _list_once(client, seq_before)
+    choice = _registry.get(family, _UNAVAILABLE)
+    _pin(family, choice)
+    return choice
+
+
+def peek(knob: Knob) -> ModelChoice:
+    """The cached resolution without listing or locking."""
+    return _override(knob) or _registry.get(_KNOB_FAMILY[knob], _UNAVAILABLE)
+
+
+def invalidate(knob: Knob, model_id: str, client) -> ModelChoice:
+    """Drop the family's resolution and re-list once (shared by concurrent callers)."""
+    global _last_success
+    family = _KNOB_FAMILY[knob]
+    seq_before = _attempt_seq
+    _registry.pop(family, None)
+    _last_success = None  # a failed listing must be retried by the next call
+    pins = _run_pin.get()
+    if pins is not None:
+        pins.pop(family, None)
+    _list_once(client, seq_before)
+    choice = _registry.get(family, _UNAVAILABLE)
+    _pin(family, choice)
+    return choice
 
 
 @contextlib.contextmanager
 def pinned_run():
-    yield
+    """Keep each family's first resolution for the duration of one run."""
+    if _run_pin.get() is not None:
+        yield
+        return
+    token = _run_pin.set({})
+    try:
+        yield
+    finally:
+        _run_pin.reset(token)
 
 
-def _reset_registry():
-    return None
+def _reset_registry() -> None:
+    global _registry, _last_success, _attempt_seq
+    _registry = {}
+    _last_success = None
+    _attempt_seq = 0
