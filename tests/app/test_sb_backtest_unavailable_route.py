@@ -275,22 +275,31 @@ def _display_name_of(model_id: str) -> str:
     return next(r["display_name"] for r in CAPTURED_MODELS["data"] if r["id"] == model_id)
 
 
-def test_a_run_whose_resolved_model_answered_404_names_no_model_in_the_response(
-    client, monkeypatch
-):
+def _run_route_after_a_404_on_the_resolved_model(client, monkeypatch):
     fake = fake_with_captured_page()
     fake.queue_message(error_outcome("404_not_found.json"))
     fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
     body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
-
     assert len(fake.message_requests) == 1
     assert fake.listing_sequences == 1
-    rejected_model = fake.message_requests[0].body["model"]
     assert body["built_new_count"] == 0
     assert body["atlas_count"] == 1
+    return body, fake.message_requests[0].body["model"]
+
+
+def test_a_run_whose_resolved_model_answered_404_names_no_model_in_its_provenance(
+    client, monkeypatch
+):
+    body, _rejected_model = _run_route_after_a_404_on_the_resolved_model(client, monkeypatch)
+
     assert body["provenance"]["generation_model"] == "", (
         f"no reply arrived, so the run names no model; got {body['provenance']['generation_model']!r}"
     )
+
+
+def test_the_notice_after_a_404_on_the_resolved_model_names_no_model(client, monkeypatch):
+    body, rejected_model = _run_route_after_a_404_on_the_resolved_model(client, monkeypatch)
+
     notice = body["mode_notice"]
     assert isinstance(notice, str) and "model_unavailable" in notice
     lowered = notice.lower()
