@@ -107,6 +107,15 @@ The if-held counterfactual (`current_return`) stays excluded.
   CSRF header the file already uses, disables the button, writes status via `textContent`, polls
   `GET /api/retirement-recommendations` every 5 s for up to 3 min until `last_run.run_id` changes,
   then reloads the page; on timeout it says the run is still going and to reload later.
+- [ ] **AC-7b (Run now is closed during market hours — added mid-cycle, PM ruling 2026-10-22).**
+  Composer's rate limit is per API key, and the live engine bursts Composer calls at :00 every
+  market minute; a Run-now fetch loop (~1 req/s for 11+ symphonies) during the session could push
+  the engine's own calls into HTTP 429. When `market_calendar.get_market_state(<now ET>) == "open"`
+  the route returns `409 {"status": "market_open"}` WITHOUT taking the single-flight lock or
+  starting a thread (so a POST after the close returns 202). `pre_market` and `closed_frozen` are
+  allowed. The JS shows a `textContent` message naming the reason (market open, shared Composer
+  API) and does not poll; the panel shows a static hint that Run now is available outside market
+  hours. The 03:45 scheduled tick is unaffected (always outside the session).
 - [ ] **AC-8 (no-trade boundary).** `tests/security/test_retirement_action_no_trade_boundary.py`
   Group E gains the new route + worker entry points; a new source scan proves
   `advisors/composer_series_client.py` contains no `/deploy/`, `/trading/`, `go-to-cash`,
