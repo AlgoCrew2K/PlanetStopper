@@ -76,7 +76,7 @@ from tests._anthropic_site_harness import (
     served_by,
     text_of,
 )
-from tests.llm_request.conftest import error_outcome
+from tests.llm_request.conftest import error_outcome, fake  # noqa: F401  (the shared fixture)
 
 # ---------------------------------------------------------------------------
 # Repo root helpers
@@ -1594,11 +1594,6 @@ _SYNTHESIS_JSON = json.dumps(
 # budget leaves room for thinking plus the JSON answer. With no timeout passed the SDK refuses
 # a budget above SDK_NO_TIMEOUT_MAX_TOKENS. Request settings are the per-site table of the approach.
 _MIN_SYNTHESIS_MAX_TOKENS = 8000
-
-
-@pytest.fixture
-def fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
 
 
 def _run_nightly_worker(fake) -> dict:

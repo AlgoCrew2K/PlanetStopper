@@ -39,7 +39,7 @@ from tests._anthropic_site_harness import (
     served_by,
     text_of,
 )
-from tests.llm_request.conftest import error_outcome
+from tests.llm_request.conftest import error_outcome, fake  # noqa: F401  (the shared fixture)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE_REL_PATH = "advisors/retirement_explainer.py"
@@ -314,11 +314,6 @@ EXPLAINER_LOGGER = "advisors.retirement_explainer"
 MIN_EXPLAINER_MAX_TOKENS = 4000
 MIN_EXPLAINER_TIMEOUT_SECONDS = 120.0
 THINKING_THEN_TEXT = "thinking_text.json"
-
-
-@pytest.fixture
-def fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
 
 
 def _explain(fake, recommendation=None):
