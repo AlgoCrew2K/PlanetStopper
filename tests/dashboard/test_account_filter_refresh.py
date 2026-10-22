@@ -573,10 +573,11 @@ class TestNewestRequestWins:
         )
         assert result["afterOlder"]["captionsHidden"] == [False, False]
 
-    def test_poll_issued_before_a_pick_does_not_restore_other_accounts_cards(
+    def test_poll_issued_before_a_pick_does_not_overwrite_the_picked_account_response(
         self, fx, monkeypatch, tmp_path
     ):
         account = fx["accounts"]["first"]
+        routes = _routes(fx, monkeypatch)
         html = harness.render_dashboard_html(fx["bot_state"])
         out = harness.run_page(
             tmp_path,
@@ -584,25 +585,38 @@ class TestNewestRequestWins:
             + LOAD_PAGE
             + SNAPSHOT_JS
             + """
+              // The two bodies differ in one hero figure so the older snapshot is recognisable.
+              const body = function (key, armed) {
+                const b = JSON.parse(JSON.stringify(H.params.routes[key]));
+                b.meta.armed = armed;
+                return b;
+              };
+              const armed = function () { return H.byId('hero-armed').textContent; };
               H.deferState(true);
               H.poll();
               H.window.switchAccount(H.params.account);
-              H.release(1);
+              H.release(1, body('/api/state|' + H.params.account, 5));
               await H.flush();
-              const afterPick = snap();
-              H.release(0);
+              const afterPick = Object.assign({ armed: armed() }, snap());
+              H.release(0, body('/api/state', 2));
               await H.flush();
-              return { urls: H.deferredUrls(), afterPick: afterPick, afterPoll: snap() };
+              return { urls: H.deferredUrls(), afterPick: afterPick,
+                       afterPoll: Object.assign({ armed: armed() }, snap()) };
             }""",
             html=html,
-            routes=_routes(fx, monkeypatch),
-            params={"account": account},
+            routes=routes,
+            params={"account": account, "routes": routes},
         )
         result = out["result"]
         expected = self._expected(fx, account)
         assert result["urls"][0] == "/api/state", "the poll was issued before the pick"
         assert _query(result["urls"][1]) == {"account": [account]}
         assert sorted(result["afterPick"]["visible"]) == expected["visible"]
+        assert str(result["afterPick"]["armed"]) == "5"
+        assert str(result["afterPoll"]["armed"]) == "5", (
+            "a poll issued before the pick and landing after it is the older snapshot and must "
+            "not replace the picked account's response"
+        )
         assert sorted(result["afterPoll"]["visible"]) == expected["visible"], (
             "a poll issued before the pick must not bring back every account's cards"
         )
