@@ -411,6 +411,9 @@ class TestExplanationRequestThroughTheWorker:
         (request,) = fake.message_requests
         assert request.body["model"] == override
         assert fake.listing_requests == []
+        assert request.body.get("output_config") == {"effort": "high"}, (
+            "an override request is still the request helper's request (explicit effort)"
+        )
         assert persisted[0]["explanation"], "the override reply is stored as the explanation"
 
     def test_with_no_model_available_every_recommendation_is_stored_without_an_explanation(

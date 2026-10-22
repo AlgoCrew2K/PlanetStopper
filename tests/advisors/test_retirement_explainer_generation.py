@@ -357,7 +357,7 @@ class TestExplainerRequestOnTheWire:
         (request,) = fake.message_requests
         assert request.body["model"] == override, "the suggestion override is sent verbatim"
         assert fake.listing_requests == [], "an override is never validated against the Models API"
-        assert request.body["output_config"] == {"effort": "high"}, (
+        assert request.body.get("output_config") == {"effort": "high"}, (
             "an override request is still the request helper's request (explicit effort)"
         )
         assert result == text_of(message_body(THINKING_THEN_TEXT)).strip()
@@ -371,10 +371,10 @@ class TestExplainerRequestOnTheWire:
 
         (request,) = fake.message_requests
         body = request.body
-        assert body["output_config"] == {"effort": "high"}
+        assert body.get("output_config") == {"effort": "high"}
         assert body["max_tokens"] >= MIN_EXPLAINER_MAX_TOKENS
-        assert body["fallbacks"] == "default"
-        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+        assert body.get("fallbacks") == "default"
+        assert request.headers.get("anthropic-beta") == FALLBACK_BETA
         assert request.timeout["read"] >= MIN_EXPLAINER_TIMEOUT_SECONDS
         assert FORBIDDEN_PARAMETERS.isdisjoint(body)
         assert "tools" not in body and "tool_choice" not in body, "plain text, not tool use"
@@ -409,10 +409,10 @@ class TestExplainerReadsOnlyTheTextBlock:
 
         assert result == text_of(body).strip()
         (request,) = fake.message_requests
-        assert request.body["fallbacks"] == "default", (
+        assert request.body.get("fallbacks") == "default", (
             "a fallback model can only answer a request that asked for fallback"
         )
-        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+        assert request.headers.get("anthropic-beta") == FALLBACK_BETA
 
     @pytest.mark.parametrize("block_type", ["fallback", "thinking", "redacted_thinking"])
     def test_no_other_block_type_contributes_text_even_when_it_carries_a_text_attribute(

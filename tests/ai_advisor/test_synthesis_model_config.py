@@ -1000,8 +1000,8 @@ class TestLensPipelineRunPipelineModelWiring:
         (request,) = fake.message_requests
         assert request.body["model"] == override
         assert fake.listing_requests == [], "an override is never listed or validated"
-        assert request.body["output_config"] == {"effort": "high"}
-        assert request.body["fallbacks"] == "default"
+        assert request.body.get("output_config") == {"effort": "high"}
+        assert request.body.get("fallbacks") == "default"
 
 
 # ---------------------------------------------------------------------------

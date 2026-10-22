@@ -1664,10 +1664,10 @@ class TestSynthesisRequestThroughTheWorker:
 
         (request,) = fake.message_requests
         body = request.body
-        assert body["output_config"] == {"effort": "high"}
+        assert body.get("output_config") == {"effort": "high"}
         assert _MIN_SYNTHESIS_MAX_TOKENS <= body["max_tokens"] <= SDK_NO_TIMEOUT_MAX_TOKENS
-        assert body["fallbacks"] == "default"
-        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+        assert body.get("fallbacks") == "default"
+        assert request.headers.get("anthropic-beta") == FALLBACK_BETA
         assert FORBIDDEN_PARAMETERS.isdisjoint(body)
         assert "tools" not in body and "tool_choice" not in body, "plain text, not tool use"
         assert [m["role"] for m in body["messages"]] == ["user"], "no assistant prefill"
@@ -1698,8 +1698,8 @@ class TestSynthesisReadsOnlyTheTextBlock:
         assert row["raw_response"]["overall_sentiment"] == "risk-off"
         assert row["raw_response"]["sentiment_rationale"] == _SYNTHESIS_RATIONALE
         (request,) = fake.message_requests
-        assert request.body["fallbacks"] == "default"
-        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+        assert request.body.get("fallbacks") == "default"
+        assert request.headers.get("anthropic-beta") == FALLBACK_BETA
 
     @pytest.mark.parametrize("block_type", ["fallback", "thinking", "redacted_thinking"])
     def test_no_other_block_type_contributes_text_even_when_it_carries_a_text_attribute(
