@@ -24,6 +24,7 @@ import pytest
 from model_config import Knob
 from tests._anthropic_http_fake import AnthropicHttpFake
 from tests._suggest_and_chat_routes import (
+    anthropic_fake,  # noqa: F401  (fixture)
     assert_names_no_model_or_exception_text,
     captured_id_outside,
     error_outcome,
@@ -40,14 +41,9 @@ from tests._suggest_and_chat_routes import (
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
-
-
 @pytest.fixture(autouse=True)
-def _site_client(monkeypatch, fake):
-    use_client(monkeypatch, fake)
+def _site_client(monkeypatch, anthropic_fake):
+    use_client(monkeypatch, anthropic_fake)
 
 
 @pytest.fixture
@@ -66,25 +62,25 @@ def _minimal_symphony_context() -> dict:
 
 class TestSuggestionModelResolution:
     def test_run_advisor_names_the_newest_fable_line_model_the_listing_returned(
-        self, fake, flask_client, unresolved_models
+        self, anthropic_fake, flask_client, unresolved_models
     ):
-        fake.queue_message(message_body("thinking_structured.json"))
+        anthropic_fake.queue_message(message_body("thinking_structured.json"))
 
         response = post_suggest(flask_client)
 
         assert response.status_code == 200 and "error" not in response.get_json()
-        assert models_named(fake) == [ids_newest_first("fable")[0]]
-        assert fake.listing_sequences == 1
-        assert fake.misuse == []
+        assert models_named(anthropic_fake) == [ids_newest_first("fable")[0]]
+        assert anthropic_fake.listing_sequences == 1
+        assert anthropic_fake.misuse == []
 
     def test_run_advisor_never_names_a_model_of_the_other_line(
-        self, fake, flask_client, unresolved_models
+        self, anthropic_fake, flask_client, unresolved_models
     ):
-        fake.queue_message(message_body("thinking_structured.json"))
+        anthropic_fake.queue_message(message_body("thinking_structured.json"))
 
         post_suggest(flask_client)
 
-        assert only_message_request(fake).body["model"] not in ids_newest_first("opus")
+        assert only_message_request(anthropic_fake).body["model"] not in ids_newest_first("opus")
 
 
 class TestSuggestionOverride:
@@ -99,48 +95,48 @@ class TestSuggestionOverride:
         ],
     )
     def test_run_advisor_names_exactly_the_override_with_no_listing(
-        self, fake, flask_client, monkeypatch, unresolved_models, override_of
+        self, anthropic_fake, flask_client, monkeypatch, unresolved_models, override_of
     ):
         override = override_of()
         monkeypatch.setenv(Knob.SUGGESTION.value, override)
-        fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
-        fake.queue_message(message_body("thinking_structured.json"))
+        anthropic_fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        anthropic_fake.queue_message(message_body("thinking_structured.json"))
 
         response = post_suggest(flask_client)
 
         assert "error" not in response.get_json()
-        assert models_named(fake) == [override]
-        assert fake.listing_requests == []
+        assert models_named(anthropic_fake) == [override]
+        assert anthropic_fake.listing_requests == []
 
     def test_a_request_to_an_override_carries_the_same_settings_as_any_other(
-        self, fake, flask_client, monkeypatch
+        self, anthropic_fake, flask_client, monkeypatch
     ):
         monkeypatch.setenv(Knob.SUGGESTION.value, ids_newest_first("fable")[1])
-        fake.queue_message(message_body("thinking_structured.json"))
+        anthropic_fake.queue_message(message_body("thinking_structured.json"))
 
         post_suggest(flask_client)
 
-        body = only_message_request(fake).body
+        body = only_message_request(anthropic_fake).body
         assert body["output_config"]["effort"] == "high"
         assert body["output_config"]["format"]["type"] == "json_schema"
         assert body["fallbacks"] == "default"
 
     def test_the_synthesis_override_never_reaches_the_suggestion_request(
-        self, fake, flask_client, monkeypatch
+        self, anthropic_fake, flask_client, monkeypatch
     ):
         monkeypatch.setenv(Knob.SYNTHESIS.value, captured_id_outside(*ids_newest_first("fable")))
-        fake.queue_message(message_body("thinking_structured.json"))
+        anthropic_fake.queue_message(message_body("thinking_structured.json"))
 
         post_suggest(flask_client)
 
-        assert models_named(fake) == [ids_newest_first("fable")[0]]
+        assert models_named(anthropic_fake) == [ids_newest_first("fable")[0]]
 
     def test_an_override_the_api_does_not_find_is_reported_on_the_page_and_not_replaced(
-        self, fake, flask_client, monkeypatch
+        self, anthropic_fake, flask_client, monkeypatch
     ):
         override = captured_id_outside(*ids_newest_first("fable"))
         monkeypatch.setenv(Knob.SUGGESTION.value, override)
-        fake.queue_message(error_outcome("404_not_found.json"))
+        anthropic_fake.queue_message(error_outcome("404_not_found.json"))
 
         data = post_suggest(flask_client).get_json()
 
@@ -148,7 +144,7 @@ class TestSuggestionOverride:
         assert Knob.SUGGESTION.value in data["error"]
         assert "override_model_not_found" in data["error"]
         assert_names_no_model_or_exception_text(data["error"])
-        assert models_named(fake) == [override]
+        assert models_named(anthropic_fake) == [override]
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +218,11 @@ def test_ac16_both_suggestion_call_sites_share_the_same_accessor_default(monkeyp
 
     monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-shared")
 
-    fake = AnthropicHttpFake.with_captured_page()
-    fake.queue_message(message_body("thinking_structured.json"))
-    use_client(monkeypatch, fake)
+    anthropic_fake = AnthropicHttpFake.with_captured_page()
+    anthropic_fake.queue_message(message_body("thinking_structured.json"))
+    use_client(monkeypatch, anthropic_fake)
     ai_advisor.request_suggestions(_minimal_symphony_context())
-    request_suggestions_model = only_message_request(fake).body["model"]
+    request_suggestions_model = only_message_request(anthropic_fake).body["model"]
 
     fake_create_client = _client_returning_empty_plans()
     with patch.object(bpg, "_build_client", return_value=fake_create_client):

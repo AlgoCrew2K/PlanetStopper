@@ -38,9 +38,10 @@ import pytest
 import app as app_module
 from advisors.advisor_chat import CHAT_UNAVAILABLE_PREFIX
 from model_config import Knob
-from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._anthropic_http_fake import load_fixture
 from tests._suggest_and_chat_routes import (
     FALLBACK_BETA,
+    anthropic_fake,  # noqa: F401  (fixture)
     assert_names_no_model_or_exception_text,
     captured_id_outside,
     derive_reply,
@@ -1498,11 +1499,6 @@ class TestB2RateLimiterBoundedGrowth:
 CHAT_EFFORT = "high"
 CHAT_MAX_TOKENS = 8000
 CHAT_TIMEOUT_SECONDS = 120.0
-
-
-@pytest.fixture
-def anthropic_fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
 
 
 def _send_chat(client, csrf_token):

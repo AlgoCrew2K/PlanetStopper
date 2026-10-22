@@ -41,8 +41,9 @@ import pytest
 
 import model_config
 from model_config import Knob
-from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._anthropic_http_fake import load_fixture
 from tests._suggest_and_chat_routes import (
+    anthropic_fake,  # noqa: F401  (fixture)
     assert_names_no_model_or_exception_text,
     captured_id_outside,
     error_outcome,
@@ -631,11 +632,6 @@ class TestDivergenceExplainerRetiredFromSurface:
 # the model the suggestion family resolved to (or the operator's override) into the immutable
 # audit row, read without waiting on the Models API.
 # ===========================================================================
-
-
-@pytest.fixture
-def anthropic_fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
 
 
 class TestRunAdvisorWithoutAKnownFableModel:

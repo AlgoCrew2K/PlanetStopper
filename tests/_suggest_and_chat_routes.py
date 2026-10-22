@@ -19,8 +19,12 @@ import json
 from contextlib import ExitStack
 from unittest.mock import patch
 
+import pytest
+
+from tests._anthropic_http_fake import AnthropicHttpFake
 from tests.llm_request.conftest import CAPTURED, error_outcome, message_body, newest_id
 from tests.llm_request.test_message_fixture_schemas import schema_check
+from tests.llm_request.test_send import models_named
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 FORBIDDEN_PARAMETERS = frozenset({"temperature", "top_p", "top_k", "thinking", "budget_tokens"})
@@ -54,6 +58,12 @@ SUGGEST_CONTEXT = {
     "risk_invariants": [],
     "symphony_logic": None,
 }
+
+
+@pytest.fixture
+def anthropic_fake() -> AnthropicHttpFake:
+    """A fresh in-process Anthropic API serving the captured Models page."""
+    return AnthropicHttpFake.with_captured_page()
 
 
 def ids_newest_first(line: str, records=None) -> list[str]:
@@ -124,10 +134,6 @@ def fallback_reply(text: str, *, declined_id: str, served_id: str) -> dict:
                 block["to"] = {"model": served_id}
 
     return derive_reply("fallback_served_text.json", edit)
-
-
-def models_named(fake) -> list[str]:
-    return [r.body["model"] for r in fake.message_requests]
 
 
 def only_message_request(fake):
