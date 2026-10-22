@@ -347,11 +347,14 @@ class TestAttempts:
         assert result.reason == "refusal"
 
     def test_plans_in_a_tool_block_that_a_refusal_followed_are_discarded(self, monkeypatch, fake):
-        fake.queue_message(refusal_after_partial_plans(conforming_diversify_plans()))
+        reply = refusal_after_partial_plans(conforming_diversify_plans())
+        category = reply["stop_details"]["category"]
+        fake.queue_message(reply)
         result = generate(monkeypatch, fake)
 
+        assert len(fake.message_requests) == 1, "the refused request is never re-sent"
         assert result.plans == []
-        assert result.reason == "refusal"
+        assert result.reason == f"refusal: {category}"
 
     def test_a_refusal_reply_still_names_the_model_that_answered(self, monkeypatch, fake):
         reply = refusal_reply("refusal_null_category.json")

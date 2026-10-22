@@ -354,7 +354,7 @@ def test_gate_signature_unchanged_reasoning_context_never_leaks_into_gate_math()
 
 def test_proposal_run_dataclass_gains_only_run_id_and_provenance():
     """AC-8 (adversarial, narrow scope): ProposalRun's field set must be the
-    PRE-R2-1 8 fields PLUS exactly {run_id, provenance} — never a surprise
+    PRE-R2-1 8 fields PLUS exactly {run_id, provenance, generation_reason} — never a surprise
     extra field that would indicate scope creep beyond the plan's contract."""
     pre_r2_1_fields = {
         "candidates",
@@ -367,10 +367,10 @@ def test_proposal_run_dataclass_gains_only_run_id_and_provenance():
         "backtest_unavailable_count",
     }
     actual = {f.name for f in dataclass_fields(sbe.ProposalRun)}
-    expected = pre_r2_1_fields | {"run_id", "provenance"}
+    expected = pre_r2_1_fields | {"run_id", "provenance", "generation_reason"}
     assert actual == expected, (
         f"AC-8 GAP: ProposalRun field set is {sorted(actual)}, expected exactly "
-        f"{sorted(expected)} (pre-R2-1 8 fields + run_id + provenance, nothing else)."
+        f"{sorted(expected)} (pre-R2-1 8 fields + run_id + provenance + generation_reason, nothing else)."
     )
 
 
