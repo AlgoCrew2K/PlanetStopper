@@ -11158,3 +11158,174 @@ Producer: **`perf-data`** (the audit team's `sqlite-specialist`, retired — wor
 **Tracked fast-follow, NOT fixed this cycle — per-card alpha-badge portfolio/per-symphony gating mismatch.** Independently verified against source (`templates/index.html:1316-1318`/`1427-1429` for `mdd-alpha-badge`; `:1296`/`:1407` for `tc-alpha-badge`): the per-card `mdd-alpha-badge` gates its render on `_card_mdd_insufficient = meta.portfolio.insufficient_history` — a PORTFOLIO-level flag — not the individual symphony's own MDD-leg sufficiency. A `<2`-trading-day symphony inside an otherwise-sufficient-history portfolio can render a fabricated `α` delta on first SSR paint (self-corrects within ≤1 JS poll once `updateCards` re-renders from `/api/state`'s own None-safe `_tc_cr_mdd_floats` fields — F-016 locus 3 — a codepath this cycle does not touch). The sibling `tc-alpha-badge` (Today-change) is gated LESS: it has NO insufficient-history check at all, portfolio- or symphony-level. Currently dormant on production data (requires a symphony with <2 trading days of shadow_history inside an otherwise-≥30-day-history portfolio — not the droplet's current shape as of this writing). A proper fix needs SSR/JS parity across both badges and is scoped as a separate follow-up cycle, not bundled into this BLOCK-close.
 
 **Files:** `app.py`, `templates/index.html`, `tests/app/test_mdd_window_truth_routes.py`, `tests/app/test_f023_performance_symphony_id_mismatch.py`. Branch `fix/mdd-window-truth`, worktree `.claude/worktrees/mdd-truth`, GREEN + mdd-review-approved at `923a3b2a`. See the parent `DE-PERF-WINDOW-TRUTH-001` entry above for the metric-fix half of this cycle and the full audit trail; see `docs/generated/app.md`'s updated `_safe_analytics` and new hero-row-guard sections for the doc-side reconciliation, including the correction to the `_cr`/`_mdd` scope-boundary language `DE-DISPLAY-TRUTH-001` originally set (now `_cr`-only).
+
+## DE-RETIRE-VISIBILITY-001 — Retirement Recommender Cycle 2e: real data depth + visible nightly runs (2026-10-22)
+
+Branch `claude/keen-hopper-6m06jk` | Shared checkout | Base `de45213` (the plan commit, on top of `ed7f43c`, PR #142) | Plan `feature-plans/retirement-visibility.md` (hand-written in `/scaffold` format; the TDD skills are not installed in the cloud container, so the team followed the protocol by hand)
+
+**Operator, 2026-10-22: "It's not exposed on the droplet or in the UI so it's not done."** The Retirement Recommender (Cycles 2a–2d, PRs #138–#141, `DE-RETIRE-CORE-001` / `DE-RETIRE-APPROVAL-001` / `DE-RETIRE-POLISH-001`) had merged and deployed, yet it had never surfaced a recommendation on the droplet. The UI also could not show whether it had run at all.
+
+### Root cause — two independent gaps, both verified against the code
+
+1. **Data depth.** The only series source was `analytics.get_symphony_bot_and_held_daily_returns` over `shadow_history`.
+   - `shadow_history` begins at the **2026-06-22 production go-live floor**, about 87 trading days on 2026-10-22. That is the go-live floor, not retention pruning, per `DE-PERF-WINDOW-TRUTH-001`'s correction of record, which this entry repeats and does not re-litigate.
+   - The structural-redundancy gate needs `ceil(STRESS_WINDOW_FRACTION * n) >= STRESS_MIN_OBS`, i.e. **n >= 181 aligned days**. It therefore failed closed for every pair, and would have kept doing so until about March 2027.
+   - This is the F2 limitation `DE-RETIRE-CORE-001` Revise round 2 accepted as "correct conservative behaviour". It was correct, but it was also the whole production outcome.
+   - The Cycle 2d entry's "~49-day retention" explanation for the droplet's 0 recs was already corrected to "go-live floor" by `DE-PERF-WINDOW-TRUTH-001`. That entry is not edited here.
+2. **No run trace.** The 03:45 tick persisted only recommendation rows. A night that screened the whole fleet and blocked every pair wrote nothing, so the panel showed the same static "No retirement recommendations yet" whether the tick ran, crashed, or never fired.
+
+**Fix.** Source each symphony's daily returns from Composer's account-scoped realized series. That series was live-probed on 2026-09-03 at 538 daily points back to 2024-07-12 with zero truncation (`docs/audit/PERF-WINDOW-TRUTH-2026-09-03.md` E-24). Then persist a run summary every night, render it in the panel, and add a "Run now" button. **Gates, thresholds, the stress fraction, composite weights and candidate selection are unchanged.**
+
+### [PM-ASSUMED] basis change, and the limits of that assumption
+
+AC-2 of Cycle 2a pinned the basis to "actual-traded, never the if-held counterfactual". The PM ruled that the Composer series is *faithful* to that rule rather than a relaxation of it.
+
+- The droplet runs `LIVE_EXECUTION=False`, per the project record (`DE-AUDIT-BL4-001`, the 2026-09-04 deploy notes). This cycle did not re-verify that live. Under that setting, `shadow_return` is a *simulation* of what the bot would have done.
+- Composer's realized series is what the account actually earned. The if-held counterfactual (`current_return`) stays excluded on both sources.
+
+This doc-writer records two qualifications so the assumption is not over-read later:
+
+- **(i) `deposit_adjusted_series` semantics are `[Unverified]`.** Composer documents the field by name only. The reading "positive value series with capital flows removed, so consecutive ratios are returns" is inference: `docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md`, its open question 4 and its `[Unverified]` row. It has not been checked against a known deposit or withdrawal date. The client docstring, the fixture `_note` and the generated doc all carry the caveat.
+- **(ii) What the realized series measures.** While `LIVE_EXECUTION=False`, Planet Stopper places no real exits, so the series measures each symphony **as actually held, without Guard Alpha's exits**. It is real data rather than a simulation, but it does not reflect the stop logic. It would include real exits only under `LIVE_EXECUTION=True`. This follows from the plan's own rationale and does not contradict it.
+
+### What shipped, per AC (from `git diff de45213..5ad13a8`, not from the plan's intent)
+
+- **AC-1 — `advisors/composer_series_client.py` (new, `001c79b`, hardened `b255e95`).** Provides `fetch_symphony_daily_returns(account_id, symphony_id) -> SeriesResult`.
+  - The request is `GET {COMPOSER_BASE_URL}/portfolio/accounts/{account}/symphonies/{symphony}` with `get_composer_headers()` and `REQUEST_TIMEOUT_SECONDS=30`.
+  - Up to `MAX_ATTEMPTS=3` attempts are made on 429/5xx/transport errors, with exponential backoff `min(1*2**n, 30)`. A 429 integer `Retry-After` is clamped to `[0, RETRY_AFTER_CAP_SECONDS=30]`; `b255e95` fixed a negative value producing a negative sleep. `MAX_TOTAL_RETRY_WAIT_SECONDS=60`.
+  - The client parses `epoch_ms` + `deposit_adjusted_series` and never the raw `series`. Points map to America/New_York dates; the last point per date wins; today and later dates are dropped. Output is close-to-close simple returns `(v_t/v_{t-1}-1)*100` in **percent** scale.
+  - A non-positive or non-finite endpoint on either side skips that return (PM ruling, hypothesis-pinned). An epoch below `1e11` ms rejects the whole body.
+  - It never raises. The D-1 `error` carries only an HTTP status, an exception type or a fixed phrase, and only GET requests are issued.
+- **AC-2 — the `source` seam (`001c79b`).** `build_recommendations(..., source="shadow")` produces the same recommendations as before; the pre-existing recommender suite passes unchanged.
+  - `source="composer"` reads `bot_state[sym]["account"]`, spaces fetches by `COMPOSER_FETCH_MIN_INTERVAL_SECONDS=1.0`, keeps the most recent `days` (250) returns, and labels the basis `"realized daily returns (Composer, deposit-adjusted)"`.
+  - It excludes `no_account`, `fetch_error: <reason>` and `series_too_short` (fewer than 2 returns). It never backfills from shadow, so each run uses one basis.
+  - The client's percent-scale returns reach `compute_quantstats_metrics` unchanged; a test pins this.
+- **AC-3 — `build_recommendations_with_summary()` (`001c79b`, `cc11f53`).** It returns `(recs, summary)`, and `build_recommendations` returns `[0]` of that.
+  - The summary carries every key on every status. The status is one of `ok` / `insufficient_symphonies` / `series_unavailable` / `internal_error`.
+  - Gate counts are per pair and reconcile: `pairs_screened = blocked_uncertainty + blocked_stress_too_thin + blocked_stress_below_threshold + blocked_no_candidate + producing pairs`.
+  - The summary also records exclusions with reasons, the series depth range, and `stress_gate_min_aligned_days`. That last value comes from `STRESS_GATE_MIN_ALIGNED_DAYS=181`, **derived** from the two stress constants and never a literal. `cc11f53` bounded its derivation (`_STRESS_GATE_SEARCH_LIMIT`) so a bad constant raises at import instead of hanging start-up; this was a ret5-review LOW finding.
+  - On an internal failure the function returns `([], summary)` with `status="internal_error"` and a type-name-only `error_type`.
+  - **This closes `DE-RETIRE-CORE-001` F2's tracked follow-up** at run level: `blocked_stress_too_thin` ("don't know yet") is now distinct from `blocked_stress_below_threshold` ("decorrelates under stress").
+- **AC-4 — the tick persists the summary (`9805b21`).** `_retirement_recommender_tick_worker` calls `build_recommendations_with_summary(source="composer")`.
+  - It stamps `run_id` on every rec **before** enrichment/explain, persists the recs, then always writes exactly ONE `RETIREMENT_RUN_SUMMARY` row. That row comes **after** the recs, so the Run-now reload never lands before the cards. It is written on 0 recs, a failed build, a failed persist, or any later failure.
+  - A post-build failure downgrades `ok` to `internal_error`. `recommendations` is overwritten with the rows actually persisted.
+  - `_retirement_internal_error_summary` uses `None`, never `0`, for counts it never observed; `8b8c9f6` documents why it hard-codes `source="composer"`.
+  - `RETIREMENT_RUN_SUMMARY` is not in `_ADVISOR_ROLES`.
+  - `run_id` is excluded from `_canonical_evidence_snapshot`, so a stable pair still reuses its prior explanation and no new nightly LLM spend is added.
+- **AC-5 — read path (`9805b21`).** Adds `_fetch_retirement_last_run()`, which raises on DB failure so callers degrade.
+  - `_fetch_retirement_recommendations(..., *, last_run=<sentinel>)` scoped cards by `run_id`, with the legacy latest-calendar-date filter kept when no usable summary exists. **As first built**, the scope was the latest summary of *any* status; AC-5b below revised this.
+  - The route and the panel each read the summary ONCE and pass that snapshot in, so the block and the cards can never disagree.
+  - `GET /api/retirement-recommendations` returns `{recommendations, last_run}`, and `_json_safe` now recurses into lists.
+- **AC-5b — a failed run never hides earlier cards (added mid-cycle; plan `3d31bda` on ret5-review finding 1).** **Why.** ret5-review finding 1, ruled in-scope by the PM. As first built, a `series_unavailable` / `internal_error` night, e.g. a Composer outage at 03:45, scoped the cards to a run with zero rows. Every earlier card vanished, **including operator-approved cards and their wind-down checklists**, which the operator would read as lost approvals.
+
+**Fix (RED `24fe4cb`, GREEN `5ad13a8`).**
+- New `_fetch_retirement_cards_run(last_run)` returns the newest summary with `status == "ok"` and a `run_id`. It takes a fast path when the already-read `last_run` is itself `ok`, and otherwise scans `_RETIREMENT_CARDS_RUN_SCAN_LIMIT = 365` rows. It raises on DB failure, and callers degrade.
+- `_fetch_retirement_recommendations`' keyword `last_run` is renamed `cards_run`.
+- The last-run block still shows the latest run of ANY status.
+- When the latest run is not the cards run, a `data-testid="retirement-cards-from-earlier-run"` note names the earlier run's `run_at` date (UTC).
+- An `ok` run that found nothing still empties the panel, because it is a successful look at the fleet.
+- With no `ok` run carrying a `run_id`, the legacy latest-calendar-date filter applies unchanged.
+- `GET /api/retirement-recommendations` gains an additive `cards_run`, so the body is now exactly `{recommendations, last_run, cards_run}`.
+- The Run-now poll still keys off `last_run.run_id`, so a failed Run now still completes and reloads.
+- `static/ai_advisor.js` is untouched by AC-5b.
+- **AC-6 — the panel shows every run (`9805b21`).** An always-present `data-testid="retirement-last-run"` block sits above the cards.
+  - It shows run time (UTC), source/basis, symphonies analysed vs roster, series depth, pairs screened at the threshold, and the blocked count per gate. When `blocked_stress_too_thin > 0` it states the stress-gate minimum, read from the summary rather than re-declared.
+  - It also shows the recommendation count and the excluded symphonies by display name, via the shared `resolve_incumbent_display_name` with a hash fallback.
+  - Each of never-run, `series_unavailable`, `insufficient_symphonies` and `internal_error` gets distinct honest copy.
+  - Everything is autoescaped, with no `| safe` anywhere in the panel; a test pins this.
+- **AC-7 — "Run now" (`9805b21`).** `POST /ai-advisor/retirement/run` returns `202 started` or `409 already_running`. A non-blocking single-flight `_RETIREMENT_RUN_LOCK` is shared with the 03:45 tick, whose thread body `_retirement_scheduled_tick_body` skips with an INFO log when a run is in flight.
+  - The worker runs on a daemon thread, never inline. If `Thread.start()` fails, the route releases the lock and returns `500`.
+  - CSRF and auth come from the global hooks. The route is not in `_SETTINGS_WRITE_ALLOWLIST` and has no `LIVE_EXECUTION`.
+  - `static/ai_advisor.js` `retirementRunNow()` sends a CSRF POST, then polls the API every 5 s for up to 3 min until `last_run.run_id` changes, then reloads. It writes `textContent` only.
+- **AC-7b — Run now closed during market hours (added mid-cycle; plan `20c3134`, RED `b6ab20b`, GREEN `599a904`).** Composer's rate limit is per API key, and the live engine bursts Composer calls at `:00` every market minute.
+  - While `get_market_state(now ET) == "open"`, the route returns `409 {"status":"market_open"}` **before** touching the lock: no lock, no thread, no worker.
+  - The JS handles that response before its generic 409 branch, shows the reason, and does not poll. A static hint renders in every panel state.
+  - The 03:45 tick stays ungated; Group H proves this both ways.
+- **AC-8 — no-trade boundary (`0a994e0`, `361b8e7`, `b6ab20b`, `974b3d0`).**
+  - **Group E** gains `ai_advisor_retirement_run`, `_fetch_retirement_last_run` and `_run_retirement_recommender_tick`.
+  - **Group G (new)** source-scans `composer_series_client.py`'s executable text. It looks for forbidden trade/deploy/draft fragments, any `alpha_bot_execution` import beyond `COMPOSER_BASE_URL`/`get_composer_headers`, other HTTP stacks, non-GET `requests` use including aliases and `from requests import post/Session`, and mutating verbs on any receiver. Every rule is proven able to fail by appended-mutation non-vacuity tests.
+  - **Group H (new)** pins the market gate to the route.
+  - **Group I (new, `974b3d0`)**: see the coverage-gap section below.
+- **AC-9 — the byte pin is replaced by the invariant it protected (`0a994e0`/`361b8e7`).** The Cycle-2b golden sha256 pin on `retirement_recommender.py` is replaced by an AST scan proving the module imports nothing LLM-related. The scan covers module-level, lazy, relative and dynamic string-constant imports of `anthropic`, `advisors.retirement_explainer`, `model_config`, `advisor_chat`/`advisors.advisor_chat` and `ai_advisor`, and is proven non-vacuous.
+  - **Scope:** this file's own imports only, not transitive ones. The Composer client it lazily imports is covered by Group G instead.
+  - **Superseded statements, preserved here rather than edited:** `DE-RETIRE-APPROVAL-001`'s Cycle-2b/2c sections and `DE-RETIRE-POLISH-001` say `retirement_recommender.py` is "byte-unchanged … pinned by a golden-hash test". Each was true of its own cycle. As of this cycle the module has changed, the hash test no longer exists, and the LLM-free invariant is enforced by the AST scan. The generated docs that repeated the claim (`advisors_retirement_explainer.md`, `app.md`, the INDEX row) carry `[SUPERSEDED, Cycle 2e AC-9]` annotations, and the CLAUDE.md draft proposes the same for its three occurrences.
+- **AC-10 — fixture.** `tests/fixtures/composer/symphony_daily_series_v1.json` has 21 points of `epoch_ms` / `series` / `deposit_adjusted_series`. The raw `series` jumps about +48.7% (a deposit) and about -12.2% (a withdrawal); the deposit-adjusted series never moves more than about 2% a day. Its provenance is `"_fixture_provenance": "synthetic-from-docs"`, and a `_note` says to recapture it.
+
+**Byte-frozen, verified empty:** `git diff de45213..5ad13a8 -- alpha_bot_execution.py math_engine.py advisors/retirement_explainer.py advisors/retirement_checklist.py advisors/correlation_diagnostic.py database.py analytics.py` returns nothing. There is no schema migration; `advisor_observations` already stores arbitrary roles.
+
+### No live Composer call was possible from the build container
+
+The cloud container's network policy blocks `api.composer.trade` (verified 2026-10-22). **`advisors/composer_series_client.py` has therefore been verified only against a patched `requests.get` and the `synthetic-from-docs` fixture.** It has not been run against a single real Composer response. The 2026-09-03 live probe (E-24) proved the endpoint exists and reaches 2024-07-12, but it predates this client and did not exercise this parser.
+
+### Coverage gap found during the doc pass, then fixed (`974b3d0`)
+
+This doc-writer probed the no-trade scan by injecting `save_symphony({})` into each new `app.py` helper in an **in-memory** copy of `app.py` at `599a904`; no repo file was touched. Three of the seven new helpers went **uncaught by every group**: `_retirement_run_now_body`, `_retirement_scheduled_tick_body` and `_retirement_resolve_excluded_symphonies`.
+
+- **Why.** Group E's walker followed only bare-Name *calls*, and `threading.Thread(target=_body)` passes the body as a keyword Name. The third helper is called from `ai_advisor_tab()`, which is deliberately not a Group E entry point, and its body lies outside Group F's window.
+- **History.** This is the **third** recurrence of the same gap class, after Cycle 2c's finding (c) and Cycle 2d's `bot_state_getter` landmine.
+- **Fix (ret5-test, `974b3d0`).** The walker now also follows `Thread(target=<bare name>)`. A new **Group I** sweeps every module-level `app.py` function with `retirement` in its name (18) for the four exec-seam tokens, with a non-vacuity guard. The sweep is meant to stop relying on hand-maintained entry lists.
+- **Re-verified.** This doc-writer re-ran the same probe at `974b3d0`. The two thread bodies are now caught by Group E (via the route and the tick wrapper), and all seven helpers are caught by Group I.
+- **What Group I still misses.** It is a name pattern, so it does not reach nested closures. `_ensure_ai_advisor_bot_state` still depends on Group F's window, and the Cycle 2d landmine note stands.
+
+### Doc-audit findings sent to owners (all LOW)
+
+- **ret5-client — docstring wording, fixed in `529c54b`:**
+  - the recommender's stage-1 docstring read as shadow-only;
+  - `build_recommendations_with_summary` pointed at a schema `persist_recommendations` does not document;
+  - the series-client "Source contract" stated `deposit_adjusted_series` semantics as fact ahead of its own `[Unverified]` caveat.
+- **ret5-client — accepted as a limitation:** `_run_pipeline` computes the full pairwise correlation set twice, once for `pairs_evaluated` and once inside `screen_correlated_pairs`. This extends `DE-RETIRE-CORE-001` F6 and is off-hours and negligible.
+- **ret5-app — `_retirement_internal_error_summary`:** it re-types the run-time format literal and hard-codes `source="composer"`. `8b8c9f6` documents the latter.
+- **ret5-app — panel copy:** the panel shows run time in UTC while "runs nightly at 03:45" is the scheduler's server-local slot.
+- **ret5-app — partial-persist edge:** became known limitation (c) below.
+
+### Known limitations, accepted by the PM on 2026-10-22 (no code change)
+
+- **(a) The market-hours gate is checked only when a run starts.** A run started just before 09:30 ET, or one dragging through a long Composer outage, can overlap the open.
+  - *How long a run can last.* The PM's figure is about 17 min for 11 symphonies when every attempt times out: per symphony, 3 × 30 s + 1 s + 2 s of backoff, plus 1 s of spacing. This doc-writer re-derived a stricter theoretical bound of about 28 min: `MAX_ATTEMPTS*REQUEST_TIMEOUT_SECONDS + MAX_TOTAL_RETRY_WAIT_SECONDS` = 150 s per symphony, reached only if every attempt is a slow 429 returning just inside the timeout with a capped `Retry-After`. Explainer LLM time comes on top of either figure.
+  - *Not gated against the close.* Run now is also not gated against the 16:00 ET end-of-day stage-2 Composer calls. Those are reporting-only, so the engine's trading decisions are not at stake after the close.
+- **(b) `_RETIREMENT_RUN_LOCK` is process-local.** That is correct for the single-process daemon.
+- **(c) Partial persist.** If `persist_recommendations` raises part-way through its loop (a rare mid-loop SQLite failure), the rows already written stay in the ledger stamped with that run's `run_id`. The summary reads `internal_error` / `recommendations: 0`, so the failure itself is never hidden.
+
+This doc-writer re-checked the effect against the final code, because **AC-5b, which landed after the PM worded this limitation, changes what renders:**
+- That run is not `ok`, so it can never be the `cards_run`. Whenever an earlier successful run exists, the partial rows do **not** render; the cards stay on the earlier run, with the earlier-run note.
+- Only on the legacy path, where no `ok` run with a `run_id` exists yet, can the latest-calendar-date filter surface them next to the `internal_error` block.
+
+### Follow-ups (tracked, operator-gated)
+
+1. **First real Run now (ret5-review's recommendation).** After deploy, the operator should press Run now once, **outside market hours**, against live Composer. Then confirm four things: a `RETIREMENT_RUN_SUMMARY` row lands with `source="composer"`; `series_days_min`/`series_days_max` are well above 181; there are no unexpected `fetch_error:` exclusions; and the panel renders the block. This is the first time the client meets a real response.
+2. **AC-10 recapture.** Recapture `tests/fixtures/composer/symphony_daily_series_v1.json` with `/api-fixture` from a network-enabled session, keeping the 3 response keys. Validate the `deposit_adjusted_series` reading against a known deposit or withdrawal date, which settles the `[Unverified]` caveat.
+3. Out of scope, unchanged from the plan: a retirement indicator in the global header.
+
+### Verification (re-run by this doc-writer, `-n0` only, at the final HEAD `5ad13a8`)
+
+All runs below were made at `5ad13a8`. `git log de45213..HEAD` was re-checked immediately before writing, and the code tree was clean apart from this doc pass's own files. Literal results:
+
+- **The 11 new or modified cycle test files.** That is the 5 new files `tests/advisors/test_composer_series_client.py` (85 tests), `tests/advisors/test_retirement_recommender_composer_source.py` (41), `tests/app/test_retirement_run_now_route.py` (33), `tests/app/test_retirement_run_panel_render.py` (63) and `tests/app/test_retirement_run_summary.py` (58), plus the 6 modified `tests/app/test_retirement_{producer_explainer_wiring (24),explainer_name_enrichment,explanation_precision_consistency,explanation_reuse,live_join,recommendations_scheduling}.py`. Result: **366 passed**, 2 warnings, both a quantstats `divide by zero` `RuntimeWarning` in one degenerate-metrics test.
+- `tests/security/test_retirement_action_no_trade_boundary.py` alone: **137 passed**. It was 63 at the Cycle 2d HEAD and 116 at `599a904`, before the `974b3d0` coverage fix.
+- That file together with `tests/security/test_retirement_recommender_no_trade_boundary.py` and `tests/js_syntax/test_js_syntax.py`: **157 passed**.
+- A full `tests/ -k "retirement or composer_series"` sweep: **818 passed, 1 skipped** (`tests/ui/test_advisor_card_overflow.py`, playwright not installed), 12068 deselected. The same sweep at `599a904`, before the docstring/coverage/AC-5b commits, was 768 passed, 1 skipped.
+- `ruff check` + `ruff format --check` on the 2 advisors modules, `app.py` and 8 test files: the 5 new test files, the `_retirement_run_summary_stub.py` helper, the AC-9-rewritten wiring file and the security file: all checks passed, 11 files already formatted. These ran with the container's ruff **0.16.9**, not CI's pinned 0.15.11.
+- **Byte-frozen check:** `git diff de45213..5ad13a8 -- alpha_bot_execution.py math_engine.py advisors/retirement_explainer.py advisors/retirement_checklist.py advisors/correlation_diagnostic.py database.py analytics.py` is empty.
+- **Diff size** (`git diff --numstat de45213..5ad13a8`): `advisors/composer_series_client.py` +324/-0, `advisors/retirement_recommender.py` +341/-97, `app.py` +496/-30, `static/ai_advisor.js` +113/-0, `templates/ai_advisor.html` +169/-0.
+- **No-trade mutation probe.** This was run in memory against a parsed copy of `app.py`, never the shared tree, at `599a904`, `974b3d0` and `5ad13a8`. At `5ad13a8`, all 8 new helpers with `save_symphony({})` injected are caught by Group I, and 7 of the 8 are also caught by Group E; see the coverage-gap section above.
+- **Not run:** the full uncapped tree, any `-n` > 0, and anything against a live droplet or live Composer. The PM's post-review live behavioral test is a separate gate.
+
+### Reference
+
+Commit chain. Every commit carries the shared `Claude` git author identity. The agent attribution below is inferred from commit-message prefixes and the PM's team roster, not read from author fields.
+
+`de45213` (plan) → `0a994e0` (RED AC-1..AC-10, ret5-test) → `001c79b` (GREEN: series client + `source` seam + run summary, ret5-client) → `b255e95` (negative `Retry-After` clamped to 0, ret5-client) → `cc11f53` (bounded `STRESS_GATE_MIN_ALIGNED_DAYS` derivation, ret5-review LOW finding) → `361b8e7` (RED addendum for review findings: lock leak, mid-run failure, fallback render, percent-through, scan evasions; ret5-test) → `9805b21` (GREEN: run-summary row, last-run panel block, Run-now route + JS; ret5-app) → `20c3134` (plan AC-7b) → `b6ab20b` (RED AC-7b) → `599a904` (GREEN AC-7b) → `529c54b` (docstring accuracy from this doc audit, ret5-client) → `974b3d0` (no-trade coverage gap closed: walker follows `Thread(target=)` + Group I; ret5-test, from this doc audit's finding) → `3d31bda` (plan AC-5b) → `8b8c9f6` (docstring: why the fallback summary hard-codes `source="composer"`, ret5-app) → `24fe4cb` (RED AC-5b) → `5ad13a8` (GREEN AC-5b, ret5-app) → [this doc pass, ret5-doc].
+
+**Review.** ret5-review approved at `974b3d0` with no production defects. Its finding 1 became AC-5b. Per the PM's message, it then gave an unconditional APPROVE for the whole cycle at `5ad13a8`, AC-5b included. This doc-writer relays that verdict and did not observe it directly.
+
+**Team.** ret5-test (RED), ret5-client (`advisors/` GREEN), ret5-app (`app.py`/template/JS GREEN), ret5-review (independent reviewer), ret5-doc (this entry), PM `main`.
+
+**Cross-links:**
+- `DE-RETIRE-CORE-001` (Cycle 2a math core; its F2/F6 limitations are updated above, not edited);
+- `DE-RETIRE-APPROVAL-001` / `DE-RETIRE-POLISH-001` (Cycles 2b–2d; their "byte-unchanged / golden-hash-pinned" statements are superseded by AC-9, see above);
+- `DE-PERF-WINDOW-TRUTH-001` (go-live-floor correction, plus E-24, the Composer series probe);
+- `docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md` (the `[Unverified]` semantics);
+- `docs/generated/advisors_composer_series_client.md` (new), `advisors_retirement_recommender.md`, `app.md`, `static_ai_advisor_js.md`, `advisors_retirement_explainer.md`, `INDEX.md`;
+- the proposed `.claude/CLAUDE.md` Key Files edits in `.claude/claude-md-draft-retirement-visibility.md`, awaiting PM approval.
+
+---
