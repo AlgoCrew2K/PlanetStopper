@@ -58,6 +58,7 @@ from typing import Any
 
 import ai_advisor
 import database
+import llm_request
 import model_config
 from advisors import symphony_schema
 from advisors.backtest_gate_engine import (
@@ -308,12 +309,12 @@ MAX_SUGGESTED_CANDIDATES: int = 30
 # LLM proposes freely; the full set is never injected verbatim (Q3).
 _MAX_ASSETS_LISTED_IN_PROMPT: int = 40
 
-# Output budget for the reasoned generator's structured tool-use response — a
-# bounded list of incumbent/candidate/rationale pairs, small.
-_MAX_OUTPUT_TOKENS: int = 2048
+# Output budget for one reasoned-generation request (tokens). Sized for adaptive
+# thinking plus the structured tool call on the resolved suggestion model.
+_MAX_OUTPUT_TOKENS: int = 16000
 
-# Explicit client-side timeout — never rely on the SDK/urllib3 default.
-_REQUEST_TIMEOUT_SECONDS: float = 30.0
+# Explicit client-side read timeout per request (seconds), never the SDK default.
+_REQUEST_TIMEOUT_SECONDS: float = 120.0
 
 
 # ---------------------------------------------------------------------------
@@ -1082,6 +1083,61 @@ def _build_reasoned_swap_generation_prompt(
     return "\n\n".join(sections)
 
 
+def _generation_model_at_mint() -> str:
+    """Model id the suggestion knob names right now, without listing the Models API."""
+    return model_config.peek(model_config.Knob.SUGGESTION).model_id
+
+
+def _adopt_reply(provenance: dict, replies: list):
+    """Record the serving model of the last reply in ``provenance``; return that reply."""
+    reply = replies[-1] if replies else None
+    model = getattr(reply, "model", "")
+    if isinstance(model, str) and model:
+        provenance["generation_model"] = model
+    return reply
+
+
+def _empty_run_message(reply) -> str:
+    """Run message when nothing was generated: the reply's reason when it has one."""
+    reason = getattr(reply, "reason", None)
+    if reason:
+        return f"no swap was generated this run ({reply.reason_text()})"
+    return NO_SURVIVORS_MESSAGE
+
+
+def _resolve_swap_pairs(
+    raw_candidates: list,
+    held: frozenset,
+    universe: frozenset,
+    max_candidates: int,
+) -> list:
+    """Resolve proposed pairs against the real holdings and tradeable universe."""
+    results: list[SwapCandidate] = []
+    for entry in raw_candidates:
+        if not isinstance(entry, dict):
+            continue
+        incumbent = entry.get("incumbent_asset")
+        candidate = entry.get("candidate_asset")
+        if not isinstance(incumbent, str) or not isinstance(candidate, str):
+            continue
+        # SECURITY-CRITICAL: the incumbent must be a REAL holding and the candidate
+        # must clear the real tradeable universe; the LLM's own claims are never
+        # trusted. Swap-into-self is a no-op that wastes a backtest.
+        if incumbent not in held or candidate not in universe or candidate == incumbent:
+            continue
+        raw_rationale = entry.get("rationale", "")
+        results.append(
+            SwapCandidate(
+                incumbent_asset=incumbent,
+                candidate_asset=candidate,
+                rationale=raw_rationale if isinstance(raw_rationale, str) else "",
+            )
+        )
+        if len(results) >= max_candidates:
+            break
+    return results
+
+
 def generate_reasoned_swap_candidates(
     symphony_id: str,
     raw_value: dict,
@@ -1092,57 +1148,47 @@ def generate_reasoned_swap_candidates(
     available_assets: list | None = None,
     tradeable_universe: frozenset | None = None,
     max_candidates: int = MAX_SUGGESTED_CANDIDATES,
+    reply_sink: list | None = None,
 ) -> list:
     """Generate a bounded set of LLM-REASONED ``SwapCandidate`` pairs (R2-3).
 
-    Replaces the fixed-statistical-sort deterministic generator (deleted, Q4):
-    an LLM proposes objective-directed incumbent->candidate pairs
-    over the operator's real holdings, never a fixed correlation/variance sort.
+    An LLM proposes objective-directed incumbent->candidate pairs over the
+    operator's real holdings, sent through ``llm_request.send`` on the
+    suggestion knob. A reply with no tool call is retried up to
+    ``llm_request.NO_TOOL_CALL_ATTEMPTS`` times; a refusal, truncation, missing
+    model or rejected override stops at once.
 
     SECURITY-CRITICAL: each proposed pair's ``incumbent_asset`` is resolved
-    against the REAL ``raw_value`` tree (``extract_tickers``) — a pair whose
-    incumbent does not resolve to a real holding is DROPPED, never fabricated
-    into a ``SwapCandidate``. Each ``candidate_asset`` is independently
-    validated against the real tradeable universe (``get_tradeable_set()``, or
-    a caller-supplied ``tradeable_universe`` override, intersected with
-    ``available_assets`` when supplied) — the LLM's own claim of tradeability
-    in free-text rationale is NEVER trusted (Q3).
+    against the REAL ``raw_value`` tree (``extract_tickers``) and each
+    ``candidate_asset`` against the real tradeable universe (``get_tradeable_set()``,
+    or a caller-supplied ``tradeable_universe`` override, intersected with
+    ``available_assets`` when supplied). A pair that fails either check is dropped.
 
-    D-1: never raises. ``_build_client()`` raising, the SDK call raising, or a
-    malformed tool_use payload (missing/non-list ``"candidates"``) all degrade
-    to ``[]``.
+    D-1: never raises; every failure degrades to ``[]``.
 
     Args:
         symphony_id: the Composer symphony UUID (traceability only).
         raw_value: the real symphony decision tree.
         objective: the ``SwapObjective`` driving generation.
-        reasoning_context: optional operator-context text block (see
-            ``ai_advisor.build_reasoning_context``) injected verbatim into the
-            prompt when truthy. Falsy (``None``/``""``) -> zero trace of it in
-            the prompt.
-        correlation_data: optional dict of entity_id -> return series (Q4:
-            retained as prompt EVIDENCE — its entity keys are surfaced to the
-            LLM — never used for a programmatic ranking anymore).
-        available_assets: optional caller-supplied candidate pool. When
-            supplied, narrows (never widens) the tradeable-universe membership
-            check — the effective set is the INTERSECTION.
-        tradeable_universe: optional caller-supplied override of the real
-            tradeable set. When supplied, ``get_tradeable_set()`` is NEVER
-            called (a genuine bypass, not an additional filter layer).
+        reasoning_context: optional operator-context block injected verbatim into
+            the prompt when truthy.
+        correlation_data: optional entity_id -> return series; only its keys reach
+            the prompt as evidence.
+        available_assets: optional candidate pool; narrows the tradeable universe.
+        tradeable_universe: optional override; ``get_tradeable_set()`` is never
+            called when supplied.
         max_candidates: upper bound on the number of returned candidates.
+        reply_sink: optional list; the last classified ``llm_request.Reply`` is
+            appended so the caller can report why nothing was generated.
 
     Returns:
         A bounded list of ``SwapCandidate`` objects (at most ``max_candidates``).
-        Empty when there are no real holdings, the LLM proposes nothing
-        usable, or any failure occurs.
     """
     try:
         held = extract_tickers(raw_value)
         if not held:
             return []
 
-        # Q3: resolve the effective candidate-membership universe. A caller-
-        # supplied override bypasses the live fetch entirely (never called).
         if tradeable_universe is not None:
             universe = frozenset(tradeable_universe)
         else:
@@ -1158,66 +1204,33 @@ def generate_reasoned_swap_candidates(
         )
 
         client = _build_client()
-        response = client.messages.create(
-            model=model_config.get_advisor_suggestion_model(),
-            max_tokens=_MAX_OUTPUT_TOKENS,
-            tools=[_EMIT_SWAP_CANDIDATES_TOOL],
-            tool_choice={"type": "tool", "name": "emit_swap_candidates"},
-            messages=[{"role": "user", "content": prompt}],
-            timeout=_REQUEST_TIMEOUT_SECONDS,
-        )
-
-        tool_block = None
-        for block in getattr(response, "content", None) or []:
-            if getattr(block, "type", None) == "tool_use":
-                tool_block = block
+        tool = llm_request.strict_tool(_EMIT_SWAP_CANDIDATES_TOOL)
+        reply = None
+        for _attempt in range(llm_request.NO_TOOL_CALL_ATTEMPTS):
+            reply = llm_request.send(
+                client,
+                model_config.Knob.SUGGESTION,
+                effort="high",
+                max_tokens=_MAX_OUTPUT_TOKENS,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[tool],
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+            )
+            if reply.reason != llm_request.REASON_NO_TOOL_CALL:
                 break
-        if tool_block is None:
+        if reply_sink is not None:
+            reply_sink.append(reply)
+        if reply.reason is not None:
             return []
 
-        raw_candidates = (
-            tool_block.input.get("candidates") if isinstance(tool_block.input, dict) else None
-        )
+        tool_input = reply.tool_input()
+        raw_candidates = tool_input.get("candidates") if isinstance(tool_input, dict) else None
         if not isinstance(raw_candidates, list):
             return []
-
-        results: list[SwapCandidate] = []
-        for entry in raw_candidates:
-            if not isinstance(entry, dict):
-                continue
-            incumbent = entry.get("incumbent_asset")
-            candidate = entry.get("candidate_asset")
-            if not isinstance(incumbent, str) or not isinstance(candidate, str):
-                continue
-
-            # SECURITY-CRITICAL: incumbent must resolve to a REAL holding —
-            # never trust the LLM's own claim.
-            if incumbent not in held:
-                continue
-            # SECURITY-CRITICAL: candidate must clear the real tradeable
-            # universe (+ available_assets intersection) — never trust any
-            # LLM free-text claim of tradeability.
-            if candidate not in universe:
-                continue
-            # Swap-into-self is a no-op that wastes a backtest — drop.
-            if candidate == incumbent:
-                continue
-
-            raw_rationale = entry.get("rationale", "")
-            results.append(
-                SwapCandidate(
-                    incumbent_asset=incumbent,
-                    candidate_asset=candidate,
-                    rationale=raw_rationale if isinstance(raw_rationale, str) else "",
-                )
-            )
-            if len(results) >= max_candidates:
-                break
-
-        return results
+        return _resolve_swap_pairs(raw_candidates, held, universe, max_candidates)
 
     except Exception as exc:
-        # D-1: degrade cleanly — never propagate an exception from the generator path.
+        # D-1: degrade cleanly, never propagate an exception from the generator path.
         logger.debug(
             "generate_reasoned_swap_candidates: error (%s)", type(exc).__name__, exc_info=True
         )
@@ -1433,7 +1446,7 @@ def propose_operator_swap(
     # fabricated, never nulled. Mirrors logic_change_engine.propose_operator_logic_change.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": model_config.get_advisor_suggestion_model(),
+        "generation_model": _generation_model_at_mint(),
         "mode": "asset-swap",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1479,18 +1492,21 @@ def propose_operator_swap(
             provenance=provenance,
         )
 
+    replies: list = []
     candidates = generate_reasoned_swap_candidates(
         symphony_id,
         score_tree,
         objective,
         reasoning_context=reasoning_context,
         max_candidates=1,
+        reply_sink=replies,
     )
+    last_reply = _adopt_reply(provenance, replies)
 
     if not candidates:
         return SwapRunResult(
             gate_batch=_empty_gate_batch(),
-            message=NO_SURVIVORS_MESSAGE,
+            message=_empty_run_message(last_reply),
             objective=objective,
             run_id=run_id,
             provenance=provenance,
@@ -1597,7 +1613,7 @@ def suggest_swaps(
     # nulled. Mirrors logic_change_engine.suggest_logic_changes.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": model_config.get_advisor_suggestion_model(),
+        "generation_model": _generation_model_at_mint(),
         "mode": "asset-swap",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1619,6 +1635,7 @@ def suggest_swaps(
         )
 
     # Objective-directed, LLM-reasoned candidate generation (R2-3).
+    replies: list = []
     candidates = generate_reasoned_swap_candidates(
         symphony_id,
         score_tree,
@@ -1627,12 +1644,14 @@ def suggest_swaps(
         correlation_data=correlation_data,
         available_assets=available_assets,
         max_candidates=MAX_SUGGESTED_CANDIDATES,
+        reply_sink=replies,
     )
+    last_reply = _adopt_reply(provenance, replies)
 
     if not candidates:
         return SwapRunResult(
             gate_batch=_empty_gate_batch(),
-            message=NO_SURVIVORS_MESSAGE,
+            message=_empty_run_message(last_reply),
             objective=objective,
             run_id=run_id,
             provenance=provenance,
