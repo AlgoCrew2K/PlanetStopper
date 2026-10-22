@@ -1116,7 +1116,11 @@ class TestListingFailureDiagnostics:
 
         model_config.resolve(Knob.SUGGESTION, fake.client)
 
-        debug = [r for r in caplog.records if r.levelno == logging.DEBUG and r.exc_info]
+        debug = [
+            r
+            for r in caplog.records
+            if r.name == model_config.__name__ and r.levelno == logging.DEBUG and r.exc_info
+        ]
         assert debug, "full detail belongs in a DEBUG record carrying exc_info"
         assert debug[0].exc_info[0].__name__ == expected_type
         assert len(warnings_logged(caplog)) == 1, "the WARNING stays one type-only record"
@@ -1130,7 +1134,11 @@ class TestListingFailureDiagnostics:
 
         model_config.resolve(Knob.SUGGESTION, client)
 
-        debug = [r for r in caplog.records if r.levelno == logging.DEBUG and r.exc_info]
+        debug = [
+            r
+            for r in caplog.records
+            if r.name == model_config.__name__ and r.levelno == logging.DEBUG and r.exc_info
+        ]
         assert debug and debug[0].exc_info[0] is RuntimeError
 
 
