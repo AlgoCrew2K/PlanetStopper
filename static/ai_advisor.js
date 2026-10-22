@@ -1173,6 +1173,118 @@
         }());
     }
 
+    // ---------------------------------------------------------------------------
+    // Retirement "Run now" (Cycle 2e, AC-7).
+    //
+    // Poll cadence. This is NOT a background auto-refresh: it only ever runs
+    // after an explicit operator click, is bounded to RETIREMENT_POLL_TIMEOUT_MS
+    // (3 minutes), and reads one cheap read-only DB endpoint
+    // (GET /api/retirement-recommendations) that never touches the engine's
+    // minute-by-minute loop. The dashboard's 15 s floor applies to unattended
+    // auto-refresh; a bounded, click-initiated wait for a ~1-2 minute job
+    // warrants the tighter 5 s cadence so the page reloads promptly when the
+    // run lands.
+    // ---------------------------------------------------------------------------
+    var RETIREMENT_POLL_INTERVAL_MS = 5000;
+    var RETIREMENT_POLL_TIMEOUT_MS = 180000;
+
+    /**
+     * Start a retirement-recommender run on demand and reload the page when it
+     * lands.
+     *
+     * POSTs to /ai-advisor/retirement/run (CSRF header from /api/csrf-token),
+     * which hands the multi-minute worker to a background thread and answers
+     * 202 immediately -- or 409 {"status": "market_open"} while the market is
+     * open (Run now is refused: the Composer API is shared with the live
+     * engine; nothing starts and nothing is polled), or 409
+     * {"status": "already_running"} when a run
+     * (this one, or the scheduled 03:45 tick) is already in flight, in which
+     * case we simply wait for THAT run. Then polls GET
+     * /api/retirement-recommendations every RETIREMENT_POLL_INTERVAL_MS, for
+     * at most RETIREMENT_POLL_TIMEOUT_MS, until last_run.run_id differs from
+     * the run id on file before the POST, and calls location.reload() so the
+     * server-rendered panel shows the new run. On timeout it says the run is
+     * still going. Every status string is written with textContent (never
+     * innerHTML).
+     */
+    async function retirementRunNow(btnEl) {
+        var statusEl = document.querySelector('[data-testid="retirement-run-now-status"]');
+        function setStatus(text) {
+            if (statusEl) { statusEl.textContent = text; }
+        }
+        function sleep(ms) {
+            return new Promise(function (resolve) { setTimeout(resolve, ms); });
+        }
+        // Run id of the latest recorded run (null when no run exists yet).
+        async function readLastRunId() {
+            var r = await fetch('/api/retirement-recommendations', {
+                headers: { 'Accept': 'application/json' },
+            });
+            if (!r.ok) { throw new Error('HTTP ' + r.status); }
+            var body = await r.json();
+            return (body && body.last_run && body.last_run.run_id) ? body.last_run.run_id : null;
+        }
+
+        if (btnEl) { btnEl.disabled = true; }
+        setStatus('Starting…');
+
+        try {
+            // The run id on file BEFORE we start: the poll below is done when it changes.
+            var priorRunId = await readLastRunId();
+
+            var csrfToken = _csrfToken;
+            if (!csrfToken) {
+                var tokenResp = await fetch('/api/csrf-token');
+                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                var tokenData = await tokenResp.json();
+                csrfToken = tokenData.csrf_token;
+            }
+
+            var resp = await fetch('/ai-advisor/retirement/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+            });
+            var data = null;
+            try { data = await resp.json(); } catch (parseErr) { data = null; }
+
+            // The route answers 409 for BOTH market_open and already_running, so
+            // this check must come first or the generic 409 branch swallows it.
+            if (data && data.status === 'market_open') {
+                setStatus('Run now is available outside market hours: the Composer API is shared with the live engine.');
+                if (btnEl) { btnEl.disabled = false; }
+                return;
+            }
+            if (resp.status === 409 || (data && data.status === 'already_running')) {
+                setStatus('A run is already in progress — waiting for it to finish…');
+            } else if (resp.status === 202 || (data && data.status === 'started')) {
+                setStatus('Run started — this takes a minute or two…');
+            } else {
+                setStatus('Could not start the run' + (data && data.error ? ' (' + data.error + ')' : '') + '.');
+                if (btnEl) { btnEl.disabled = false; }
+                return;
+            }
+
+            var deadline = Date.now() + RETIREMENT_POLL_TIMEOUT_MS;
+            while (Date.now() < deadline) {
+                await sleep(RETIREMENT_POLL_INTERVAL_MS);
+                try {
+                    var currentRunId = await readLastRunId();
+                    if (currentRunId && currentRunId !== priorRunId) {
+                        setStatus('Run complete — reloading…');
+                        location.reload();
+                        return;
+                    }
+                } catch (pollErr) {
+                    // Transient read failure: keep polling until the deadline.
+                }
+            }
+            setStatus('The run is still going — reload this page in a few minutes to see the result.');
+        } catch (err) {
+            setStatus('Request failed: ' + err.message);
+        }
+        if (btnEl) { btnEl.disabled = false; }
+    }
+
     // Expose on window so Jinja onclick="..." handlers can call them.
     window.openChatWithArtifact = openChatWithArtifact;
     window.sbRunAnalysis = sbRunAnalysis;
@@ -1180,5 +1292,6 @@
     window.frApprove = frApprove;
     window.frReject = frReject;
     window.retDispatchDecision = retDispatchDecision;
+    window.retirementRunNow = retirementRunNow;
 
 })();

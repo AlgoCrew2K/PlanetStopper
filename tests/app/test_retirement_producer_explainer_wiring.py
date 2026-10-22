@@ -6,7 +6,16 @@ explain_recommendation per recommendation AFTER build_recommendations() and
 BEFORE persist_recommendations(), stamping `explanation` (str | None) into
 each rec's raw_response dict. The LLM never runs on the render path or the
 approve/checklist path. advisors/retirement_recommender.py stays LLM-free --
-pinned via a golden sha256 hash (this cycle's diff to that file MUST be zero).
+originally pinned via a golden sha256 byte hash; Cycle 2e (retirement-
+visibility AC-9) REPLACED that pin with an AST check of the invariant it
+protected (the module imports nothing LLM-related), because the byte pin
+forbade the cycle's legitimate edits to that module (source seam + run
+summary) without protecting anything the AST check does not.
+
+Cycle 2e: the worker now calls build_recommendations_with_summary
+(source="composer") instead of build_recommendations; every patch below
+targets the new entry point (via the ``with_summary`` stub adapter), keeping
+each test's original intent.
 
 Lazy-import mocking note: _retirement_recommender_tick_worker does
 `from advisors.retirement_recommender import (build_recommendations,
@@ -22,7 +31,7 @@ extended to call advisors.retirement_explainer.explain_recommendation.
 
 from __future__ import annotations
 
-import hashlib
+import ast
 import logging
 import pathlib
 from unittest.mock import patch
@@ -30,39 +39,79 @@ from unittest.mock import patch
 import pytest
 
 import app as app_module
+from tests.app._retirement_run_summary_stub import with_summary
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# Golden immutability pin (NOT a producer-computed value -- a file-integrity
-# guard, same convention as this codebase's other "byte-preserved, pinned
-# against a golden fixture" tests): advisors/retirement_recommender.py must
-# carry ZERO diff for this cycle (AC-2: "stays LLM-free"). Computed against
-# the file as it exists at RED-phase authoring time (Cycle-2a, already
-# shipped) -- if this hash mismatches, retirement_recommender.py was touched
-# this cycle, which AC-2 forbids.
-#
-# CI-caught false failure (2026-08-26, root-caused by team-lead): this used
-# to hash RAW file bytes, which differ by line-ending convention alone --
-# CRLF on a Windows checkout (this repo's default git config) vs LF on CI's
-# Linux checkout. `git diff 1c449941 HEAD -- advisors/retirement_recommender.py`
-# is genuinely empty (confirmed) -- the file IS byte-unchanged in the sense
-# that matters (no real edit), but a raw-byte hash is not line-ending-stable
-# across platforms. Fixed: hash the LF-NORMALIZED content instead (CRLF ->
-# LF before hashing) via _lf_normalized_sha256, so the guard is platform-
-# independent while still catching any REAL content modification (the
-# normalization only collapses \r\n -> \n, it does not touch anything else).
-_RETIREMENT_RECOMMENDER_GOLDEN_SHA256 = (
-    "b8ffb354e584a42ffbfc84f3d4697f4e221dab48210dba0f67741f1ad878cad6"
+# AC-9 (Cycle 2e): the invariant the retired golden-SHA pin protected was
+# "advisors/retirement_recommender.py stays LLM-free" (Cycle 2b AC-2). A byte
+# hash cannot distinguish a harmless source-seam edit from an LLM import, so
+# it is replaced by an AST scan of exactly what matters: the module imports
+# nothing LLM-related. Forbidden = the Anthropic SDK, the explainer module
+# this module's output feeds, the model-selection config, the chat advisor,
+# and ai_advisor (the sanctioned LLM client seam).
+_LLM_FORBIDDEN_MODULES = (
+    "anthropic",
+    "advisors.retirement_explainer",
+    "model_config",
+    "advisor_chat",
+    "advisors.advisor_chat",
+    "ai_advisor",
 )
 
 
-def _lf_normalized_sha256(path: pathlib.Path) -> str:
-    """sha256 of `path`'s content with CRLF normalized to LF first -- makes
-    the golden-hash pin stable across a Windows (CRLF) checkout and a Linux
-    CI (LF) checkout of the identical logical file content."""
-    raw = path.read_bytes()
-    normalized = raw.replace(b"\r\n", b"\n")
-    return hashlib.sha256(normalized).hexdigest()
+# Relative imports carry no package prefix (`from . import retirement_explainer`
+# resolves `advisors.retirement_explainer` only at import time), so they are
+# matched on the final dotted component of each forbidden module.
+_LLM_FORBIDDEN_LEAVES = frozenset(bad.split(".")[-1] for bad in _LLM_FORBIDDEN_MODULES)
+
+
+def _llm_related_imports(source: str) -> list[str]:
+    """Return every LLM-related import (or dynamic-import target) found
+    ANYWHERE in `source` -- module level, inside functions, and lazy imports.
+
+    Covers: ``import x``, ``import x.y``, ``from x import y`` (both the
+    module and the dotted ``x.y`` it names), ``from advisors import
+    retirement_explainer`` (module + imported name combined), relative
+    imports, and dynamic imports via a string constant exactly equal to a
+    forbidden module name (``importlib.import_module("anthropic")``,
+    ``__import__("anthropic")``). Exact-equality (not substring) on string
+    constants so prose in a docstring never false-positives.
+    """
+    tree = ast.parse(source)
+    found: list[str] = []
+
+    def _is_forbidden(dotted: str) -> bool:
+        return any(dotted == bad or dotted.startswith(bad + ".") for bad in _LLM_FORBIDDEN_MODULES)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _is_forbidden(alias.name):
+                    found.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.level > 0:
+            # `from . import x`, `from .x import y`, `from ..pkg import x`
+            parts = (node.module or "").split(".") if node.module else []
+            if any(part in _LLM_FORBIDDEN_LEAVES for part in parts):
+                found.append(f"from {'.' * node.level}{node.module} import ...")
+            for alias in node.names:
+                if alias.name in _LLM_FORBIDDEN_LEAVES:
+                    found.append(f"from {'.' * node.level}{node.module or ''} import {alias.name}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module and _is_forbidden(module):
+                found.append(f"from {module} import ...")
+            for alias in node.names:
+                combined = f"{module}.{alias.name}" if module else alias.name
+                if _is_forbidden(combined):
+                    found.append(f"from {module or '.'} import {alias.name}")
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value in _LLM_FORBIDDEN_MODULES
+        ):
+            found.append(f"string constant {node.value!r} (dynamic import?)")
+    return found
 
 
 def _sample_recs() -> list[dict]:
@@ -73,63 +122,105 @@ def _sample_recs() -> list[dict]:
 
 
 # ===========================================================================
-# AC-2 core: retirement_recommender.py stays byte-unchanged (LLM-free)
+# AC-2 core (Cycle 2b) / AC-9 (Cycle 2e): retirement_recommender.py stays
+# LLM-free -- enforced by an AST import scan, not a byte pin.
 # ===========================================================================
 
 
-def test_retirement_recommender_module_is_byte_unchanged_this_cycle():
-    """AC-2: 'advisors/retirement_recommender.py stays LLM-free (the
+def test_retirement_recommender_module_imports_nothing_llm_related():
+    """AC-9: 'advisors/retirement_recommender.py stays LLM-free (the
     explainer call lives in the producer orchestration, not in
-    build_recommendations)' -- enforced as a hard zero-diff pin, not just a
-    prose promise."""
+    build_recommendations)' -- enforced by scanning the module's real AST."""
     path = REPO_ROOT / "advisors" / "retirement_recommender.py"
     assert path.exists(), (
         "advisors/retirement_recommender.py must exist (Cycle-2a, already shipped)."
     )
-    actual_hash = _lf_normalized_sha256(path)
-    assert actual_hash == _RETIREMENT_RECOMMENDER_GOLDEN_SHA256, (
-        "advisors/retirement_recommender.py was modified this cycle -- AC-2 requires "
-        "it to stay byte-unchanged (LLM-free); the explainer wiring belongs in "
-        "app.py's producer orchestration only, never inside build_recommendations."
+    offending = _llm_related_imports(path.read_text(encoding="utf-8"))
+    assert offending == [], (
+        "advisors/retirement_recommender.py imports something LLM-related: "
+        f"{offending}. The explainer wiring belongs in app.py's producer "
+        "orchestration only, never inside the recommender math module."
     )
 
 
-class TestLfNormalizedSha256GuardIntentPreserved:
-    """The CRLF-normalization fix (2026-08-26) must only neutralize
-    line-ending differences -- it must still catch a REAL content
-    modification. Proven against tmp_path-created files, never the real
-    production file (this test-writer's role never edits production code,
-    not even transiently for a test)."""
+class TestLlmImportScanIsNonVacuous:
+    """AC-9 non-vacuity (PM requirement): the replacement for the golden-SHA
+    pin must demonstrably FAIL when an LLM import is added. Proven two ways:
+    (1) here, by running the scan over synthetic module sources containing
+    each forbidden import shape; (2) by the cycle's mutation check against a
+    scratch copy of the real module (inject ``import anthropic`` /
+    ``from advisors import retirement_explainer``, confirm the real test
+    above fails, revert) -- recorded in the RED handoff report."""
 
-    def test_two_files_differing_only_by_line_ending_hash_identically(self, tmp_path):
-        content = "line one\nline two\nline three\n"
-        crlf_path = tmp_path / "crlf.py"
-        lf_path = tmp_path / "lf.py"
-        crlf_path.write_bytes(content.replace("\n", "\r\n").encode("utf-8"))
-        lf_path.write_bytes(content.encode("utf-8"))
+    _CLEAN = "import math\nfrom advisors import correlation_diagnostic\n\ndef f():\n    return 1\n"
 
-        assert _lf_normalized_sha256(crlf_path) == _lf_normalized_sha256(lf_path), (
-            "A CRLF and an LF copy of the SAME logical content must hash identically "
-            "-- otherwise this guard still false-fails across a Windows/Linux "
-            "checkout boundary, the exact CI-red bug being fixed."
+    def test_clean_source_has_no_findings(self):
+        assert _llm_related_imports(self._CLEAN) == []
+
+    def test_plain_import_anthropic_is_detected(self):
+        assert _llm_related_imports("import anthropic\n" + self._CLEAN) != []
+
+    def test_from_anthropic_import_is_detected(self):
+        assert _llm_related_imports("from anthropic import Anthropic\n") != []
+
+    def test_from_advisors_import_retirement_explainer_is_detected(self):
+        assert _llm_related_imports("from advisors import retirement_explainer\n") != []
+
+    def test_from_retirement_explainer_import_name_is_detected(self):
+        assert (
+            _llm_related_imports(
+                "from advisors.retirement_explainer import explain_recommendation\n"
+            )
+            != []
         )
 
-    def test_two_files_with_genuinely_different_content_hash_differently(self, tmp_path):
-        original = tmp_path / "original.py"
-        modified = tmp_path / "modified.py"
-        original.write_bytes(b"def foo():\r\n    return 1\r\n")
-        modified.write_bytes(b"def foo():\r\n    return 2\r\n")  # a real content change
+    def test_import_model_config_and_advisor_chat_are_detected(self):
+        assert _llm_related_imports("import model_config\n") != []
+        assert _llm_related_imports("from advisors import advisor_chat\n") != []
+        assert _llm_related_imports("from model_config import get_advisor_suggestion_model\n") != []
 
-        assert _lf_normalized_sha256(original) != _lf_normalized_sha256(modified), (
-            "The LF-normalization fix must NOT weaken the guard's actual intent -- "
-            "a genuine content modification (not just a line-ending difference) must "
-            "still produce a different hash."
-        )
+    def test_lazy_import_inside_a_function_body_is_detected(self):
+        src = "def f():\n    import anthropic\n    return anthropic\n"
+        assert _llm_related_imports(src) != []
+
+    def test_dynamic_import_via_string_constant_is_detected(self):
+        src = "import importlib\n\ndef f():\n    return importlib.import_module('anthropic')\n"
+        assert _llm_related_imports(src) != []
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "from . import retirement_explainer\n",
+            "from .retirement_explainer import explain_recommendation\n",
+            "from .. import ai_advisor\n",
+            "from ..advisors import advisor_chat\n",
+            "from . import model_config\n",
+            "def f():\n    from . import retirement_explainer\n",
+        ],
+        ids=[
+            "dot_import_explainer",
+            "dot_module_explainer",
+            "dotdot_import_ai_advisor",
+            "dotdot_pkg_import_advisor_chat",
+            "dot_import_model_config",
+            "lazy_relative_in_function",
+        ],
+    )
+    def test_relative_imports_of_llm_modules_are_detected(self, source):
+        assert _llm_related_imports(source) != []
+
+    def test_a_harmless_relative_import_is_not_a_finding(self):
+        assert _llm_related_imports("from . import correlation_diagnostic\n") == []
+        assert _llm_related_imports("from .correlation_diagnostic import PairResult\n") == []
+
+    def test_prose_mentioning_anthropic_in_a_docstring_is_not_a_finding(self):
+        src = '"""This module never touches the anthropic SDK."""\nimport math\n'
+        assert _llm_related_imports(src) == []
 
 
 def test_retirement_recommender_module_never_imports_ai_advisor():
     """Corroborating source-scan: the math module must never import the LLM
-    seam module at all, regardless of the hash pin above."""
+    seam module at all (substring-level backstop to the AST import scan above)."""
     path = REPO_ROOT / "advisors" / "retirement_recommender.py"
     source = path.read_text(encoding="utf-8")
     assert "ai_advisor" not in source, (
@@ -146,7 +237,10 @@ def test_retirement_recommender_module_never_imports_ai_advisor():
 def test_worker_calls_explainer_once_per_recommendation():
     recs = _sample_recs()
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(
+            "advisors.retirement_recommender.build_recommendations_with_summary",
+            side_effect=with_summary(lambda **kw: recs),
+        ),
         patch("advisors.retirement_recommender.persist_recommendations", return_value=len(recs)),
         patch(
             "advisors.retirement_explainer.explain_recommendation", return_value="explanation text"
@@ -169,7 +263,10 @@ def test_worker_stamps_explanation_into_each_recs_raw_response_before_persist():
         return len(recs_arg)
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(
+            "advisors.retirement_recommender.build_recommendations_with_summary",
+            side_effect=with_summary(lambda **kw: recs),
+        ),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch(
             "advisors.retirement_explainer.explain_recommendation",
@@ -207,7 +304,10 @@ def test_explainer_runs_after_build_and_before_persist_ordering():
         return len(recs_arg)
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", side_effect=_fake_build),
+        patch(
+            "advisors.retirement_recommender.build_recommendations_with_summary",
+            side_effect=with_summary(_fake_build),
+        ),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch("advisors.retirement_explainer.explain_recommendation", side_effect=_fake_explain),
     ):
@@ -239,7 +339,10 @@ def test_explainer_failure_none_does_not_block_persistence():
         return len(recs_arg)
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(
+            "advisors.retirement_recommender.build_recommendations_with_summary",
+            side_effect=with_summary(lambda **kw: recs),
+        ),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch("advisors.retirement_explainer.explain_recommendation", return_value=None),
     ):
@@ -255,7 +358,10 @@ def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(ca
     all (nothing to explain), persist_recommendations is still called
     (honoring the existing Cycle-2a contract) with an empty list."""
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=[]),
+        patch(
+            "advisors.retirement_recommender.build_recommendations_with_summary",
+            side_effect=with_summary(lambda **kw: []),
+        ),
         patch(
             "advisors.retirement_recommender.persist_recommendations", return_value=0
         ) as mock_persist,
@@ -280,7 +386,10 @@ def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(
     recs = _sample_recs()
 
     with (
-        patch("advisors.retirement_recommender.build_recommendations", return_value=recs),
+        patch(
+            "advisors.retirement_recommender.build_recommendations_with_summary",
+            side_effect=with_summary(lambda **kw: recs),
+        ),
         patch("advisors.retirement_recommender.persist_recommendations", return_value=len(recs)),
         patch(
             "advisors.retirement_explainer.explain_recommendation",

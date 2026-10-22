@@ -1050,6 +1050,51 @@
         }
         .retirement-checklist-steps li { margin-bottom: 0.25rem; }
 
+        /* Cycle 2e (retirement-visibility AC-6/AC-7): "last run" block + the
+           Run-now button. Design tokens only; every value is Jinja-
+           autoescaped, nothing is marked safe. */
+        .retirement-last-run {
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 0.625rem 1rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+        }
+        .retirement-last-run-line { margin-bottom: 0.25rem; }
+        .retirement-last-run-state {
+            color: var(--studio-ink);
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+        .retirement-last-run-state--internal_error { color: var(--studio-neg); }
+        .retirement-last-run-excluded ul { margin: 0.125rem 0 0; padding-left: 1.25rem; }
+        .retirement-run-now-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .retirement-run-now-row .discuss-btn { margin-top: 0; }
+        .retirement-run-now-row .discuss-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .retirement-run-now-status {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+        }
+        .retirement-cards-from-earlier-run {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            border-left: 3px solid var(--studio-border);
+            padding-left: 0.625rem;
+            margin-bottom: 0.75rem;
+        }
+        .retirement-run-now-hint {
+            font-size: 0.6875rem;
+            font-style: italic;
+            color: var(--studio-ink-dim);
+            margin: -0.375rem 0 0.75rem;
+        }
+
         /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
         .prism-verification {
             margin-top: 0.75rem;
@@ -1532,6 +1577,130 @@
         <!-- ============================================================ -->
         <section class="matrix-card" data-testid="retirement-recommendations-panel">
             <div class="matrix-card-header">Retirement Recommendations</div>
+
+            {# Cycle 2e (retirement-visibility AC-6): the "last run" block is #}
+            {# ALWAYS present, above the cards, so a run that recommended     #}
+            {# nothing is still visibly distinct from "never ran". All values #}
+            {# come from the persisted RETIREMENT_RUN_SUMMARY row (the        #}
+            {# thresholds/minimums are read from it, never re-declared here), #}
+            {# are autoescaped, and nothing is marked safe.                   #}
+            <div class="retirement-last-run" data-testid="retirement-last-run">
+                {% if retirement_last_run %}
+                    {% set _lr = retirement_last_run %}
+                    {% set _st = _lr.get('status') %}
+                    {% set _ra = _lr.get('run_at') %}
+                    <div class="retirement-last-run-line" data-testid="retirement-last-run-time">
+                        Last run:
+                        {%- if _ra is string and _ra | length >= 16 %} {{ _ra[:10] }} {{ _ra[11:16] }} UTC
+                        {%- else %} {{ _ra if _ra else 'time unknown' }}
+                        {%- endif %}
+                    </div>
+
+                    {% if _st == 'ok' %}
+                        {% set _n_with = _lr.get('symphonies_with_series') %}
+                        {% set _n_roster = _lr.get('roster_size') %}
+                        {% set _d_min = _lr.get('series_days_min') %}
+                        {% set _d_max = _lr.get('series_days_max') %}
+                        {% set _p_scr = _lr.get('pairs_screened') %}
+                        {% set _p_all = _lr.get('pairs_evaluated') %}
+                        {% set _b_unc = _lr.get('blocked_uncertainty') %}
+                        {% set _b_thin = _lr.get('blocked_stress_too_thin') %}
+                        {% set _b_low = _lr.get('blocked_stress_below_threshold') %}
+                        {% set _b_none = _lr.get('blocked_no_candidate') %}
+                        {% set _n_recs = _lr.get('recommendations') %}
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-basis">
+                            Basis: {{ _lr.get('source') or 'unknown' }} &mdash; {{ _lr.get('basis_label') or 'basis not recorded' }}
+                        </div>
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-symphonies">
+                            Symphonies analysed: {{ _n_with if _n_with is not none else '—' }} of {{ _n_roster if _n_roster is not none else '—' }}
+                        </div>
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-depth">
+                            Return history per symphony (days): {{ _d_min if _d_min is not none else '—' }}{% if _d_max is not none and _d_max != _d_min %}&ndash;{{ _d_max }}{% endif %}
+                        </div>
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-pairs">
+                            Pairs clearing the correlation screen (&ge; {{ _lr.get('screen_threshold') if _lr.get('screen_threshold') is not none else '—' }}): {{ _p_scr if _p_scr is not none else '—' }} of {{ _p_all if _p_all is not none else '—' }}
+                        </div>
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-blocked">
+                            Blocked by a gate &mdash; uncertainty: {{ _b_unc if _b_unc is not none else '—' }};
+                            stress window too thin: {{ _b_thin if _b_thin is not none else '—' }}
+                            {%- if _b_thin and _b_thin > 0 %} (needs &ge; {{ _lr.get('stress_gate_min_aligned_days') if _lr.get('stress_gate_min_aligned_days') is not none else '—' }} aligned days){% endif %};
+                            stress below threshold: {{ _b_low if _b_low is not none else '—' }};
+                            no candidate selected: {{ _b_none if _b_none is not none else '—' }}
+                        </div>
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-recommendations">
+                            Recommendations from this run: {{ _n_recs if _n_recs is not none else '—' }}
+                        </div>
+                    {% elif _st == 'series_unavailable' %}
+                        <div class="retirement-last-run-state">
+                            Composer series unavailable &mdash; no symphony had a usable daily return series, so nothing was compared.
+                        </div>
+                        {% set _n_with = _lr.get('symphonies_with_series') %}
+                        {% set _n_roster = _lr.get('roster_size') %}
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-symphonies">
+                            Symphonies analysed: {{ _n_with if _n_with is not none else '—' }} of {{ _n_roster if _n_roster is not none else '—' }}
+                        </div>
+                    {% elif _st == 'insufficient_symphonies' %}
+                        <div class="retirement-last-run-state">
+                            Insufficient symphonies &mdash; a comparison needs at least two live symphonies; this run found {{ _lr.get('roster_size') if _lr.get('roster_size') is not none else '—' }}.
+                        </div>
+                    {% elif _st == 'internal_error' %}
+                        <div class="retirement-last-run-state retirement-last-run-state--internal_error">
+                            Internal error ({{ _lr.get('error_type') or 'unknown error' }}) &mdash; this run did not complete, so no recommendations were produced.
+                        </div>
+                    {% else %}
+                        <div class="retirement-last-run-state">
+                            Last run status: {{ _st if _st else 'unknown' }}
+                        </div>
+                    {% endif %}
+
+                    {% if retirement_last_run_excluded %}
+                    <div class="retirement-last-run-excluded" data-testid="retirement-last-run-excluded">
+                        Excluded from this run:
+                        <ul>
+                            {% for _ex in retirement_last_run_excluded %}
+                            <li title="{{ _ex.symphony_id }}">{{ _ex.name }}{% if _ex.reason %} &mdash; {{ _ex.reason }}{% endif %}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45, or use Run now.</div>
+                {% endif %}
+            </div>
+            <div class="retirement-run-now-row">
+                <button type="button"
+                        class="discuss-btn"
+                        data-testid="retirement-run-now-btn"
+                        title="Runs the same analysis as the nightly 03:45 job; takes a minute or two."
+                        onclick="retirementRunNow(this)">Run now</button>
+                <span class="retirement-run-now-status"
+                      data-testid="retirement-run-now-status"
+                      role="status"
+                      aria-live="polite"></span>
+            </div>
+            {# Cycle 2e AC-7b: static hint (rendered in every state, whatever the #}
+            {# market state at render time) -- Run now is refused while the       #}
+            {# market is open because Composer's rate limit is shared with the    #}
+            {# live engine.                                                       #}
+            <div class="retirement-run-now-hint" data-testid="retirement-run-now-hint">
+                Run now is available outside market hours only &mdash; the Composer API is shared with the live engine.
+            </div>
+
+            {# Cycle 2e AC-5b: the cards below are scoped to the latest SUCCESSFUL #}
+            {# run, so when the most recent run (shown in the block above) was    #}
+            {# not that run -- it failed -- say which run the cards come from.    #}
+            {# Absent when nothing has run, when the latest run is the cards run  #}
+            {# (ok then ok, or an ok run that found nothing), and on the legacy   #}
+            {# calendar-date path (no cards run). Autoescaped, nothing is safe.   #}
+            {% if retirement_cards_run and retirement_last_run
+                  and retirement_cards_run.get('run_id') != retirement_last_run.get('run_id') %}
+            {% set _cr_at = retirement_cards_run.get('run_at') %}
+            <div class="retirement-cards-from-earlier-run" data-testid="retirement-cards-from-earlier-run">
+                The most recent run (above) was not successful; the results below are from the latest successful run
+                ({{ _cr_at[:10] if _cr_at is string and _cr_at | length >= 10 else 'date unknown' }} UTC).
+            </div>
+            {% endif %}
+
             {% if retirement_recommendations %}
                 {% for rec in retirement_recommendations %}
                 <div class="retirement-rec-card" data-testid="retirement-recommendation-card">

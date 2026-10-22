@@ -5,7 +5,9 @@ Flags a live symphony as a *retirement candidate* when it is BOTH redundant
 correlated pair. Three stages, each conservative and fail-closed:
 
 1. **Screen** (AC-1/AC-2): pairwise Pearson correlation over each symphony's
-   CONTINUOUS actual-traded (bot) daily return series -- a thin wrapper over
+   continuous daily return series -- by default (``source="shadow"``) the
+   actual-traded (bot) series, or (``source="composer"``) Composer's realized
+   deposit-adjusted series, one basis per run -- a thin wrapper over
    ``advisors.correlation_diagnostic.compute_pairwise_correlations``.
 2. **Composite rank** (AC-3/AC-4): a CAGR-dominant, fleet-normalized
    performance score identifies which member of a flagged pair is the
@@ -15,6 +17,15 @@ correlated pair. Three stages, each conservative and fail-closed:
    survives if the correlation estimate is statistically robust (uncertainty
    gate) AND the redundancy holds across regimes, not just in calm markets
    (structural-redundancy gate).
+
+Two return-series sources feed the same pipeline (Cycle 2e): ``"shadow"`` (the
+default -- each symphony's continuous actual-traded series from shadow_history)
+and ``"composer"`` (each symphony's realized, deposit-adjusted daily returns from
+Composer's account-scoped history, fetched read-only through
+``advisors.composer_series_client``). One basis per run -- the Composer source
+never backfills from shadow_history. ``build_recommendations_with_summary``
+additionally returns an honest per-run summary (counts per gate outcome,
+exclusion reasons) so a run with zero recommendations is still explainable.
 
 This module has NO trade, order, liquidation, deploy, or live-execution
 primitive of any kind -- it never moves money and never writes settings.
@@ -27,7 +38,10 @@ from __future__ import annotations
 
 import logging
 import math
+import time
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import analytics
 import database
@@ -120,6 +134,69 @@ _METRIC_WEIGHTS: dict[str, float] = {
 # basis, never claim a held/if-held basis (the AC-2 basis pin, surfaced to
 # the operator alongside every recommendation).
 _BASIS_LABEL: str = "actual-traded (bot) daily returns"
+
+# Cycle 2e: the two selectable return-series sources.
+SOURCE_SHADOW: str = "shadow"
+SOURCE_COMPOSER: str = "composer"
+
+# Cycle 2e AC-2: basis label for recommendations built from Composer's realized
+# deposit-adjusted daily series. Exact literal pinned by the operator-facing
+# basis disclosure -- never claims the actual-traded (bot) basis.
+_COMPOSER_BASIS_LABEL: str = "realized daily returns (Composer, deposit-adjusted)"
+
+# Cycle 2e AC-2: minimum spacing (seconds) between consecutive Composer fetches.
+# Composer's documented rate limit is 1 request/second; one fetch per symphony is
+# issued back-to-back, so each fetch after the first waits this long first.
+COMPOSER_FETCH_MIN_INTERVAL_SECONDS: float = 1.0
+
+# Upper bound for the STRESS_GATE_MIN_ALIGNED_DAYS derivation below -- a sanity
+# ceiling (about 3,900 trading years of daily data), never a tuned value.
+_STRESS_GATE_SEARCH_LIMIT: int = 1_000_000
+
+
+# Cycle 2e AC-3: the smallest aligned-day count at which the stress sub-window can
+# be estimable at all -- the smallest n with ceil(STRESS_WINDOW_FRACTION * n) >=
+# STRESS_MIN_OBS (the exact test _compute_stressed_correlation applies). DERIVED
+# from the two stress constants, never a second hand-typed literal, so retuning
+# either constant can never leave this disclosed minimum stale. Surfaced in the
+# run summary so an operator seeing "blocked: stress window too thin" knows the
+# aligned-history length at which that gate can first pass.
+def _derive_stress_gate_min_aligned_days() -> int:
+    """Smallest n with ceil(STRESS_WINDOW_FRACTION * n) >= STRESS_MIN_OBS.
+
+    The search is bounded: a nonsensical stress constant (e.g. a zero fraction,
+    for which no n ever qualifies) must fail LOUDLY at import instead of hanging
+    application start-up in an unbounded loop.
+    """
+    for n in range(1, _STRESS_GATE_SEARCH_LIMIT + 1):
+        if math.ceil(STRESS_WINDOW_FRACTION * n) >= STRESS_MIN_OBS:
+            return n
+    raise ValueError(
+        "STRESS_WINDOW_FRACTION/STRESS_MIN_OBS admit no aligned-day count within "
+        f"{_STRESS_GATE_SEARCH_LIMIT} days"
+    )
+
+
+STRESS_GATE_MIN_ALIGNED_DAYS: int = _derive_stress_gate_min_aligned_days()
+
+# Cycle 2e AC-3: run-summary status values.
+STATUS_OK: str = "ok"
+STATUS_INSUFFICIENT_SYMPHONIES: str = "insufficient_symphonies"
+STATUS_SERIES_UNAVAILABLE: str = "series_unavailable"
+STATUS_INTERNAL_ERROR: str = "internal_error"
+
+# Cycle 2e AC-2/AC-3: per-symphony exclusion reasons (exact strings are pinned).
+_REASON_NO_ACCOUNT: str = "no_account"
+_REASON_SERIES_TOO_SHORT: str = "series_too_short"
+_REASON_FETCH_ERROR_PREFIX: str = "fetch_error: "
+_REASON_SHADOW_UNAVAILABLE: str = "shadow_series_unavailable"
+
+# AC-2 / AC-11: a symphony needs at least this many daily returns to be kept
+# (a single return has no variance, so no correlation or CAGR can be derived).
+_MIN_RETURNS_TO_KEEP: int = 2
+
+# Run-timestamp format (UTC, tz-aware ISO-8601 with a literal Z suffix).
+_RUN_AT_FORMAT: str = "%Y-%m-%dT%H:%M:%SZ"
 
 
 # ---------------------------------------------------------------------------
@@ -445,109 +522,257 @@ def _evidence_strength(raw_response: dict) -> float:
     return raw_response["correlation"]
 
 
-def build_recommendations(
+def _new_run_summary(*, source: str, days: int | None) -> dict:
+    """The full run-summary envelope with every key present (Cycle 2e AC-3).
+
+    Counters start at their zero/None "nothing happened" values and are filled in
+    as the pipeline progresses, so even an early exit or an internal failure still
+    returns a complete, honest envelope.
+    """
+    return {
+        "run_id": uuid.uuid4().hex,
+        "run_at": datetime.now(UTC).strftime(_RUN_AT_FORMAT),
+        "source": source,
+        "basis_label": _COMPOSER_BASIS_LABEL if source == SOURCE_COMPOSER else _BASIS_LABEL,
+        "status": STATUS_OK,
+        "error_type": None,
+        "roster_size": 0,
+        "symphonies_with_series": 0,
+        "symphonies_without_series": [],
+        "series_days_min": None,
+        "series_days_max": None,
+        "lookback_days": days,
+        "pairs_evaluated": 0,
+        "pairs_screened": 0,
+        "blocked_uncertainty": 0,
+        "blocked_stress_too_thin": 0,
+        "blocked_stress_below_threshold": 0,
+        "blocked_no_candidate": 0,
+        "recommendations": 0,
+        "screen_threshold": CORRELATION_SCREEN_THRESHOLD,
+        "stress_gate_min_aligned_days": STRESS_GATE_MIN_ALIGNED_DAYS,
+    }
+
+
+def _collect_shadow_series(
+    symphony_ids: list[str],
+    bot_state: dict,
+    *,
+    db_file: str | None,
+    days: int | None,
+    excluded: list[dict],
+) -> tuple[dict[str, dict[str, float]], dict[str, dict]]:
+    """Per-symphony continuous actual-traded (bot) series from shadow_history."""
+    series_by_symphony: dict[str, dict[str, float]] = {}
+    holdings_by_symphony: dict[str, dict] = {}
+    for sym in symphony_ids:
+        result = analytics.get_symphony_bot_and_held_daily_returns(sym, db_file=db_file, days=days)
+        if result is None:
+            excluded.append({"symphony_id": sym, "reason": _REASON_SHADOW_UNAVAILABLE})
+            continue
+        dates, bot_returns, _held_returns = result  # AC-2: bot ([1]), never held ([2])
+        series_by_symphony[sym] = dict(zip(dates, bot_returns, strict=True))
+        holdings_by_symphony[sym] = bot_state[sym].get("logic_holdings") or {}
+    return series_by_symphony, holdings_by_symphony
+
+
+def _collect_composer_series(
+    symphony_ids: list[str],
+    bot_state: dict,
+    *,
+    days: int | None,
+    excluded: list[dict],
+) -> tuple[dict[str, dict[str, float]], dict[str, dict]]:
+    """Per-symphony realized daily-return series from Composer (Cycle 2e AC-2).
+
+    One basis per run: a symphony without an account id, or whose fetch fails, is
+    EXCLUDED with a reason -- it is never backfilled from shadow_history. Fetches
+    are spaced COMPOSER_FETCH_MIN_INTERVAL_SECONDS apart (Composer's 1 req/s limit).
+    """
+    # CC-2 lazy import, resolved as a module attribute at CALL time so the shadow
+    # source never loads the Composer client and tests can patch the seam.
+    from advisors import composer_series_client  # noqa: PLC0415
+
+    series_by_symphony: dict[str, dict[str, float]] = {}
+    holdings_by_symphony: dict[str, dict] = {}
+    fetched_any = False
+    for sym in symphony_ids:
+        account = bot_state[sym].get("account")
+        if not account:
+            excluded.append({"symphony_id": sym, "reason": _REASON_NO_ACCOUNT})
+            continue
+
+        if fetched_any:
+            time.sleep(COMPOSER_FETCH_MIN_INTERVAL_SECONDS)
+        fetched_any = True
+        result = composer_series_client.fetch_symphony_daily_returns(account, sym)
+        if result.error:
+            excluded.append(
+                {"symphony_id": sym, "reason": f"{_REASON_FETCH_ERROR_PREFIX}{result.error}"}
+            )
+            continue
+
+        ordered = sorted(result.returns.items())
+        if days is not None:
+            ordered = ordered[-days:]  # most recent `days` returns
+        if len(ordered) < _MIN_RETURNS_TO_KEEP:
+            excluded.append({"symphony_id": sym, "reason": _REASON_SERIES_TOO_SHORT})
+            continue
+        series_by_symphony[sym] = dict(ordered)
+        holdings_by_symphony[sym] = bot_state[sym].get("logic_holdings") or {}
+    return series_by_symphony, holdings_by_symphony
+
+
+def _run_pipeline(
+    summary: dict, *, db_file: str | None, days: int | None, source: str
+) -> list[dict]:
+    """Discover roster -> collect series -> screen -> score -> gate -> recommend.
+
+    Mutates ``summary`` in place with the counts it observes. May raise; the
+    caller (build_recommendations_with_summary) owns the D-1 never-raise guard.
+    """
+    if source not in (SOURCE_SHADOW, SOURCE_COMPOSER):
+        raise ValueError("unknown return-series source")
+
+    bot_state = database.load_state()
+    symphony_ids = _live_symphony_roster(bot_state)
+    summary["roster_size"] = len(symphony_ids)
+    if len(symphony_ids) < 2:
+        summary["status"] = STATUS_INSUFFICIENT_SYMPHONIES
+        return []
+
+    excluded: list[dict] = summary["symphonies_without_series"]
+    if source == SOURCE_COMPOSER:
+        series_by_symphony, holdings_by_symphony = _collect_composer_series(
+            symphony_ids, bot_state, days=days, excluded=excluded
+        )
+    else:
+        series_by_symphony, holdings_by_symphony = _collect_shadow_series(
+            symphony_ids, bot_state, db_file=db_file, days=days, excluded=excluded
+        )
+
+    summary["symphonies_with_series"] = len(series_by_symphony)
+    if series_by_symphony:
+        lengths = [len(series) for series in series_by_symphony.values()]
+        summary["series_days_min"] = min(lengths)
+        summary["series_days_max"] = max(lengths)
+    if len(series_by_symphony) < 2:
+        summary["status"] = STATUS_SERIES_UNAVAILABLE
+        return []
+
+    summary["pairs_evaluated"] = len(
+        correlation_diagnostic.compute_pairwise_correlations(series_by_symphony)
+    )
+    pairs = screen_correlated_pairs(series_by_symphony)
+    summary["pairs_screened"] = len(pairs)
+    if not pairs:
+        return []
+
+    # AC-3: "normalized across the current fleet" -- the FULL live roster
+    # with a usable return series (series_by_symphony's keys), never just
+    # the narrower subset of symphonies that happen to appear in a
+    # flagged pair. A pair-only population is not a fleet at all, and is
+    # mathematically degenerate for min-max normalization (every
+    # non-tied metric collapses to a winner-take-all {0, 1}, discarding
+    # all magnitude information) -- confirmed to flip which symphony is
+    # selected as the retirement candidate purely as a function of
+    # whether an unrelated third live symphony exists in the roster
+    # (quant-code-reviewer Finding 1).
+    metrics_by_symphony = {
+        sym: analytics.compute_quantstats_metrics(list(series_by_symphony[sym].values()))
+        for sym in series_by_symphony
+    }
+    scores = compute_composite_scores(metrics_by_symphony)
+    basis_label = summary["basis_label"]
+
+    candidates_by_id: dict[str, dict] = {}
+    for pair in pairs:
+        uncertainty_verdict = evaluate_uncertainty_gate(pair)
+        if not uncertainty_verdict.passed:
+            summary["blocked_uncertainty"] += 1
+            continue
+
+        vals_a, vals_b, _window = correlation_diagnostic._extract_aligned_pairs(  # noqa: SLF001
+            series_by_symphony[pair.sym_a], series_by_symphony[pair.sym_b]
+        )
+        stressed_corr = _compute_stressed_correlation(vals_a, vals_b)
+        holdings_overlap = _compute_holdings_overlap(
+            holdings_by_symphony.get(pair.sym_a) or {},
+            holdings_by_symphony.get(pair.sym_b) or {},
+        )
+
+        redundancy_verdict = evaluate_structural_redundancy_gate(
+            pair, stressed_corr=stressed_corr, holdings_overlap=holdings_overlap
+        )
+        if not redundancy_verdict.passed:
+            # stressed_corr is None = window too thin / undefined; otherwise the
+            # stressed correlation was estimable but below the redundancy bar.
+            if stressed_corr is None:
+                summary["blocked_stress_too_thin"] += 1
+            else:
+                summary["blocked_stress_below_threshold"] += 1
+            continue
+
+        candidate_id = select_retirement_candidate(pair.sym_a, pair.sym_b, scores)
+        if candidate_id is None:
+            summary["blocked_no_candidate"] += 1
+            continue
+        sibling_id = pair.sym_b if candidate_id == pair.sym_a else pair.sym_a
+
+        raw_response = {
+            "candidate_id": candidate_id,
+            "sibling_id": sibling_id,
+            "correlation": pair.correlation,
+            "ci_lower": uncertainty_verdict.ci_lower,
+            "ci_upper": uncertainty_verdict.ci_upper,
+            "n_obs": pair.n_obs,
+            "candidate_composite": scores[candidate_id].composite,
+            "sibling_composite": scores[sibling_id].composite,
+            "candidate_metrics": dict(scores[candidate_id].metrics),
+            "sibling_metrics": dict(scores[sibling_id].metrics),
+            "uncertainty_gate_passed": uncertainty_verdict.passed,
+            "structural_redundancy_gate_passed": redundancy_verdict.passed,
+            "stressed_correlation": stressed_corr,
+            "holdings_overlap": holdings_overlap,
+            "basis_label": basis_label,
+        }
+
+        existing = candidates_by_id.get(candidate_id)
+        if existing is None or _evidence_strength(raw_response) > _evidence_strength(existing):
+            candidates_by_id[candidate_id] = raw_response
+
+    return [candidates_by_id[k] for k in sorted(candidates_by_id)]
+
+
+def build_recommendations_with_summary(
     *,
     db_file: str | None = None,
     days: int | None = RETIREMENT_LOOKBACK_DAYS,
-) -> list[dict]:
+    source: str = SOURCE_SHADOW,
+) -> tuple[list[dict], dict]:
     """Orchestrator: discover the live roster, screen, score, gate, and
     assemble the raw_response evidence dict for every surviving
-    recommendation (AC-1..AC-11). Never raises -- any unexpected failure
-    degrades to an empty, honest result.
+    recommendation (AC-1..AC-11), together with an honest run summary
+    (Cycle 2e AC-3). Never raises -- any unexpected failure degrades to an
+    empty recommendation list and a summary with status "internal_error".
 
-    Returns a list of flat dicts, each shaped exactly like the raw_response
-    schema documented in the module docstring / persist_recommendations.
+    ``source`` selects the return-series basis: "shadow" (default, shadow_history
+    actual-traded series) or "composer" (Composer realized deposit-adjusted daily
+    returns). ``days`` is the lookback: the most recent ``days`` returns per
+    symphony (None = all available).
+
+    Returns ``(recommendations, summary)``. Each recommendation is a flat dict
+    whose keys are the raw_response evidence schema assembled in
+    ``_run_pipeline`` (persisted verbatim by persist_recommendations). The
+    summary carries every key ``_new_run_summary`` defines, on every
+    status; its per-gate counts are per PAIR, so
+    ``pairs_screened == sum(blocked_*) + pairs that produced a recommendation``
+    (per-candidate dedup can then collapse several produced pairs into fewer
+    recommendations).
     """
+    summary = _new_run_summary(source=source, days=days)
     try:
-        bot_state = database.load_state()
-        symphony_ids = _live_symphony_roster(bot_state)
-        if len(symphony_ids) < 2:
-            return []
-
-        series_by_symphony: dict[str, dict[str, float]] = {}
-        holdings_by_symphony: dict[str, dict] = {}
-        for sym in symphony_ids:
-            result = analytics.get_symphony_bot_and_held_daily_returns(
-                sym, db_file=db_file, days=days
-            )
-            if result is None:
-                continue
-            dates, bot_returns, _held_returns = result  # AC-2: bot ([1]), never held ([2])
-            series_by_symphony[sym] = dict(zip(dates, bot_returns, strict=True))
-            holdings_by_symphony[sym] = bot_state[sym].get("logic_holdings") or {}
-
-        if len(series_by_symphony) < 2:
-            return []
-
-        pairs = screen_correlated_pairs(series_by_symphony)
-        if not pairs:
-            return []
-
-        # AC-3: "normalized across the current fleet" -- the FULL live roster
-        # with a usable return series (series_by_symphony's keys), never just
-        # the narrower subset of symphonies that happen to appear in a
-        # flagged pair. A pair-only population is not a fleet at all, and is
-        # mathematically degenerate for min-max normalization (every
-        # non-tied metric collapses to a winner-take-all {0, 1}, discarding
-        # all magnitude information) -- confirmed to flip which symphony is
-        # selected as the retirement candidate purely as a function of
-        # whether an unrelated third live symphony exists in the roster
-        # (quant-code-reviewer Finding 1).
-        metrics_by_symphony = {
-            sym: analytics.compute_quantstats_metrics(list(series_by_symphony[sym].values()))
-            for sym in series_by_symphony
-        }
-        scores = compute_composite_scores(metrics_by_symphony)
-
-        candidates_by_id: dict[str, dict] = {}
-        for pair in pairs:
-            uncertainty_verdict = evaluate_uncertainty_gate(pair)
-            if not uncertainty_verdict.passed:
-                continue
-
-            vals_a, vals_b, _window = correlation_diagnostic._extract_aligned_pairs(  # noqa: SLF001
-                series_by_symphony[pair.sym_a], series_by_symphony[pair.sym_b]
-            )
-            stressed_corr = _compute_stressed_correlation(vals_a, vals_b)
-            holdings_overlap = _compute_holdings_overlap(
-                holdings_by_symphony.get(pair.sym_a) or {},
-                holdings_by_symphony.get(pair.sym_b) or {},
-            )
-
-            redundancy_verdict = evaluate_structural_redundancy_gate(
-                pair, stressed_corr=stressed_corr, holdings_overlap=holdings_overlap
-            )
-            if not redundancy_verdict.passed:
-                continue
-
-            candidate_id = select_retirement_candidate(pair.sym_a, pair.sym_b, scores)
-            if candidate_id is None:
-                continue
-            sibling_id = pair.sym_b if candidate_id == pair.sym_a else pair.sym_a
-
-            raw_response = {
-                "candidate_id": candidate_id,
-                "sibling_id": sibling_id,
-                "correlation": pair.correlation,
-                "ci_lower": uncertainty_verdict.ci_lower,
-                "ci_upper": uncertainty_verdict.ci_upper,
-                "n_obs": pair.n_obs,
-                "candidate_composite": scores[candidate_id].composite,
-                "sibling_composite": scores[sibling_id].composite,
-                "candidate_metrics": dict(scores[candidate_id].metrics),
-                "sibling_metrics": dict(scores[sibling_id].metrics),
-                "uncertainty_gate_passed": uncertainty_verdict.passed,
-                "structural_redundancy_gate_passed": redundancy_verdict.passed,
-                "stressed_correlation": stressed_corr,
-                "holdings_overlap": holdings_overlap,
-                "basis_label": _BASIS_LABEL,
-            }
-
-            existing = candidates_by_id.get(candidate_id)
-            if existing is None or _evidence_strength(raw_response) > _evidence_strength(existing):
-                candidates_by_id[candidate_id] = raw_response
-
-        return [candidates_by_id[k] for k in sorted(candidates_by_id)]
+        recs = _run_pipeline(summary, db_file=db_file, days=days, source=source)
     except Exception as exc:
         # D-1 contract: log only type(exc).__name__, never str(exc) -- an
         # exception message could carry a file path, DB row content, or
@@ -556,7 +781,26 @@ def build_recommendations(
         # internal crash from an honest "no recommendations tonight" empty
         # result (PR-level /code-review Finding 5).
         logger.warning("build_recommendations: internal failure: %s", type(exc).__name__)
-        return []
+        summary["status"] = STATUS_INTERNAL_ERROR
+        summary["error_type"] = type(exc).__name__
+        summary["recommendations"] = 0
+        return [], summary
+    summary["recommendations"] = len(recs)
+    return recs, summary
+
+
+def build_recommendations(
+    *,
+    db_file: str | None = None,
+    days: int | None = RETIREMENT_LOOKBACK_DAYS,
+    source: str = SOURCE_SHADOW,
+) -> list[dict]:
+    """The recommendations half of build_recommendations_with_summary.
+
+    Same keyword arguments, same never-raises contract; returns exactly
+    ``build_recommendations_with_summary(...)[0]``.
+    """
+    return build_recommendations_with_summary(db_file=db_file, days=days, source=source)[0]
 
 
 def persist_recommendations(recs: list[dict], *, db_file: str | None = None) -> int:

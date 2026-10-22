@@ -28,8 +28,9 @@ Coverage:
   SCHED3: 03:45 is distinct from the existing 03:00 lens-pipeline and 03:30
     incubation slots (no same-minute contention).
   WORKER: the tick's worker function actually calls the real producer chain
-    -- build_recommendations() then persist_recommendations(<its result>) --
-    not just spawns a thread that does nothing. This is the part that
+    -- build_recommendations_with_summary(source="composer") (Cycle 2e; was
+    build_recommendations() before) then persist_recommendations(<its recs>)
+    -- not just spawns a thread that does nothing. This is the part that
     actually closes retire-doc's completeness gap; a thread-spawn test alone
     would pass even if the thread's target body were empty.
 """
@@ -40,6 +41,7 @@ import inspect
 from unittest.mock import MagicMock, patch
 
 import app as app_module
+from tests.app._retirement_run_summary_stub import make_summary
 
 
 class TestRetirementRecommendationsTickThreadSpawn:
@@ -139,11 +141,13 @@ class TestRetirementRecommendationsTickWorkerCallsProducer:
         import advisors.retirement_recommender as rr_module
 
         sentinel_recs = [{"candidate_id": "sentinel-candidate"}]
-        build_mock = MagicMock(return_value=sentinel_recs)
+        # Cycle 2e: the worker now calls build_recommendations_with_summary
+        # (source="composer"), which returns (recs, summary).
+        build_mock = MagicMock(return_value=(sentinel_recs, make_summary(recommendations=1)))
         persist_mock = MagicMock(return_value=1)
 
         with (
-            patch.object(rr_module, "build_recommendations", build_mock),
+            patch.object(rr_module, "build_recommendations_with_summary", build_mock),
             patch.object(rr_module, "persist_recommendations", persist_mock),
             patch("threading.Thread", side_effect=lambda target, **kw: _ImmediateThread(target)),
         ):
@@ -188,7 +192,7 @@ class TestRetirementRecommendationsTickWorkerCallsProducer:
         with (
             patch.object(
                 rr_module,
-                "build_recommendations",
+                "build_recommendations_with_summary",
                 MagicMock(side_effect=RuntimeError("simulated producer failure")),
             ),
             patch("threading.Thread", side_effect=lambda target, **kw: _ImmediateThread(target)),

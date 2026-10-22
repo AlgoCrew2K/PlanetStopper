@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.app._retirement_run_summary_stub import with_summary
+
 _CANDIDATE_HASH = "cand-enrich-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
 _SIBLING_HASH = "sib-enrich-bbb"
@@ -91,7 +93,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: [rec])
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: [rec]),
+            )
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
@@ -132,7 +138,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: [rec])
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: [rec]),
+            )
             mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
             mp.setattr(explainer_module, "explain_recommendation", lambda r: "explanation text")
 
@@ -161,7 +171,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: [rec])
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: [rec]),
+            )
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
@@ -187,7 +201,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: [rec])
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: [rec]),
+            )
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
@@ -221,7 +239,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: [rec])
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: [rec]),
+            )
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
@@ -259,7 +281,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: [rec])
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: [rec]),
+            )
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
@@ -294,7 +320,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: recs)
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: recs),
+            )
             mp.setattr(recommender_module, "persist_recommendations", lambda r, **kw: len(r))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
