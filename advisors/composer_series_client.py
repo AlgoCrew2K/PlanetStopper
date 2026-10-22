@@ -237,15 +237,17 @@ def _default_backoff(attempt_index: int) -> float:
 
 
 def _retry_after_delay(response: Any, default: float) -> float:
-    """Sleep for a 429: the integer-seconds ``Retry-After`` capped at
-    ``RETRY_AFTER_CAP_SECONDS``; a missing / unparseable value (e.g. an HTTP-date)
-    falls back to ``default``. The header value itself is never logged."""
+    """Sleep for a 429: the integer-seconds ``Retry-After`` clamped into
+    ``[0, RETRY_AFTER_CAP_SECONDS]`` (a negative value clamps to 0 -- never a
+    negative sleep); a missing / unparseable value (e.g. an HTTP-date) falls back
+    to ``default``. The header value itself is never logged."""
     try:
         raw = response.headers.get(_RETRY_AFTER_HEADER)
         if isinstance(raw, str):
             text = raw.strip()
-            if text.isascii() and text.isdigit():
-                return float(min(int(text), RETRY_AFTER_CAP_SECONDS))
+            digits = text[1:] if text.startswith("-") else text
+            if digits.isascii() and digits.isdigit():
+                return float(min(max(int(text), 0), RETRY_AFTER_CAP_SECONDS))
     except (AttributeError, TypeError, ValueError):
         pass
     return default
