@@ -74,7 +74,6 @@ def invalidate(knob, model_id, client):
 
 @contextlib.contextmanager
 def pinned_run():
-    raise NotImplementedError("Not implemented")
     yield
 
 

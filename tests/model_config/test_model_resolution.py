@@ -85,6 +85,14 @@ def captured_fake():
     return AnthropicHttpFake(pages=[CAPTURED])
 
 
+def first_resolution(fake, knob=Knob.SUGGESTION):
+    """Resolve once against the captured page and check the baseline later assertions compare to."""
+    choice = model_config.resolve(knob, fake.client)
+    assert choice.source == "resolved"
+    assert choice.model_id == newest_id(CAPTURED["data"], LINE[knob])
+    return choice
+
+
 def failure_type_name(make_outcome):
     """The exception type the SDK raises for a scripted listing failure, probed on a separate fake."""
     probe = AnthropicHttpFake()
@@ -341,12 +349,18 @@ class TestFamilySelection:
             model_config.resolve(knob, fake.client) for knob in (Knob.SUGGESTION, Knob.SYNTHESIS)
         ]
 
+        assert fake.listing_sequences >= 1, (
+            "an empty page is a listing that succeeded with nothing in it"
+        )
         assert [c.source for c in choices] == ["unavailable", "unavailable"]
         assert [c.model_id for c in choices] == ["", ""]
 
     def test_a_client_whose_listing_is_empty_gives_an_unavailable_choice_without_raising(self):
-        choice = model_config.resolve(Knob.SUGGESTION, MagicMock())
+        client = MagicMock()
 
+        choice = model_config.resolve(Knob.SUGGESTION, client)
+
+        assert client.models.list.called, "the listing was attempted through the caller's client"
         assert choice.source == "unavailable" and choice.model_id == ""
 
 
@@ -421,6 +435,7 @@ class TestNeverResolved:
 
         choice = model_config.resolve(Knob.SUGGESTION, fake.client)
 
+        assert len(fake.listing_requests) == 2, "page two was requested and failed"
         assert choice.source == "unavailable", "the newest model may be on the page that failed"
         assert choice.model_id == ""
 
@@ -439,7 +454,7 @@ class TestNeverResolved:
 class TestRelisting:
     def test_resolution_is_reused_inside_a_day_and_relisted_after_it(self, clock):
         fake = captured_fake()
-        first = model_config.resolve(Knob.SUGGESTION, fake.client)
+        first = first_resolution(fake, Knob.SUGGESTION)
         newer_page = load_fixture("models/relisted_newer_fable.json")
         newer_id = newest_id(newer_page["data"], "fable")
         assert newer_id != first.model_id, "fixture precondition"
@@ -459,7 +474,7 @@ class TestRelisting:
 
     def test_an_opus_family_resolution_follows_the_same_daily_refresh(self, clock):
         fake = captured_fake()
-        first = model_config.resolve(Knob.SYNTHESIS, fake.client)
+        first = first_resolution(fake, Knob.SYNTHESIS)
         newer_page = load_fixture("models/relisted_newer_opus.json")
         fake.set_pages([newer_page])
 
@@ -473,7 +488,7 @@ class TestRelisting:
         self, make_outcome, clock, caplog
     ):
         fake = captured_fake()
-        first = model_config.resolve(Knob.SUGGESTION, fake.client)
+        first = first_resolution(fake, Knob.SUGGESTION)
         clock.advance(DAY + 1)
         fake.queue_listing_outcome(make_outcome())
         caplog.set_level(logging.DEBUG)
@@ -496,7 +511,7 @@ class TestRelisting:
     def test_a_relisting_that_fails_on_a_later_page_keeps_the_last_resolved_model(self, clock):
         pages = load_fixture("models/paged.json")["pages"]
         fake = captured_fake()
-        first = model_config.resolve(Knob.SUGGESTION, fake.client)
+        first = first_resolution(fake, Knob.SUGGESTION)
         clock.advance(DAY + 1)
         fake.set_pages(pages)
         fake.queue_listing_outcome(pages[0])
@@ -510,7 +525,7 @@ class TestRelisting:
         self, clock
     ):
         fake = captured_fake()
-        first = model_config.resolve(Knob.SUGGESTION, fake.client)
+        first = first_resolution(fake, Knob.SUGGESTION)
         clock.advance(DAY + 1)
 
         for attempt in range(2):  # the next call after a failed attempt attempts the listing again
@@ -653,7 +668,7 @@ class TestOverrides:
 
     def test_the_override_is_read_on_every_call_without_a_restart(self, monkeypatch):
         fake = captured_fake()
-        resolved = model_config.resolve(Knob.SUGGESTION, fake.client)
+        resolved = first_resolution(fake, Knob.SUGGESTION)
         monkeypatch.setenv(ENV_VAR[Knob.SUGGESTION], "operator-chosen-model-x")
         assert (
             model_config.resolve(Knob.SUGGESTION, fake.client).model_id == "operator-chosen-model-x"
@@ -679,7 +694,7 @@ class TestRunPin:
         newer_page = load_fixture("models/relisted_newer_fable.json")
 
         with model_config.pinned_run():
-            first = model_config.resolve(Knob.SUGGESTION, fake.client)
+            first = first_resolution(fake, Knob.SUGGESTION)
             fake.set_pages([newer_page])
             clock.advance(DAY + 1)
             inside = model_config.resolve(Knob.SUGGESTION, fake.client)
@@ -694,7 +709,7 @@ class TestRunPin:
         newer_page = load_fixture("models/relisted_newer_fable.json")
 
         with model_config.pinned_run():
-            first = model_config.resolve(Knob.SUGGESTION, fake.client)
+            first = first_resolution(fake, Knob.SUGGESTION)
             fake.set_pages([newer_page])
             clock.advance(DAY + 1)
             elsewhere = contextvars.Context().run(
@@ -708,7 +723,7 @@ class TestRunPin:
         newer_page = load_fixture("models/relisted_newer_fable.json")
 
         with model_config.pinned_run():
-            first = model_config.resolve(Knob.SUGGESTION, fake.client)
+            first = first_resolution(fake, Knob.SUGGESTION)
             fake.set_pages([newer_page])
             clock.advance(DAY + 1)
             with model_config.pinned_run():
@@ -757,7 +772,7 @@ class TestRunPin:
 class TestInvalidate:
     def test_a_model_the_messages_api_stopped_serving_is_replaced_by_one_new_listing(self):
         fake = captured_fake()
-        stale = model_config.resolve(Knob.SUGGESTION, fake.client)
+        stale = first_resolution(fake, Knob.SUGGESTION)
         newer_page = load_fixture("models/relisted_newer_fable.json")
         fake.set_pages([newer_page])
 
@@ -770,7 +785,7 @@ class TestInvalidate:
 
     def test_a_listing_that_names_the_same_model_returns_that_same_choice(self):
         fake = captured_fake()
-        stale = model_config.resolve(Knob.SUGGESTION, fake.client)
+        stale = first_resolution(fake, Knob.SUGGESTION)
 
         replacement = model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.client)
 
@@ -781,7 +796,7 @@ class TestInvalidate:
 
     def test_a_failed_listing_after_a_404_is_unavailable_and_never_the_dropped_model(self):
         fake = captured_fake()
-        stale = model_config.resolve(Knob.SUGGESTION, fake.client)
+        stale = first_resolution(fake, Knob.SUGGESTION)
         fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
 
         replacement = model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.client)
@@ -793,7 +808,7 @@ class TestInvalidate:
 
     def test_concurrent_404s_share_one_new_listing(self):
         fake = captured_fake()
-        stale = model_config.resolve(Knob.SUGGESTION, fake.client)
+        stale = first_resolution(fake, Knob.SUGGESTION)
         newer_page = load_fixture("models/relisted_newer_fable.json")
         fake.set_pages([newer_page])
 
@@ -811,7 +826,7 @@ class TestInvalidate:
         newer_page = load_fixture("models/relisted_newer_fable.json")
 
         with model_config.pinned_run():
-            stale = model_config.resolve(Knob.SUGGESTION, fake.client)
+            stale = first_resolution(fake, Knob.SUGGESTION)
             fake.set_pages([newer_page])
             replacement = model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.client)
             later = model_config.resolve(Knob.SUGGESTION, fake.client)
@@ -835,7 +850,7 @@ class TestPeek:
         self, clock
     ):
         fake = captured_fake()
-        resolved = model_config.resolve(Knob.SUGGESTION, fake.client)
+        resolved = first_resolution(fake, Knob.SUGGESTION)
         clock.advance(10 * DAY)
 
         peeked = model_config.peek(Knob.SUGGESTION)
@@ -852,7 +867,7 @@ class TestPeek:
     )
     def test_peek_never_waits_for_a_listing_in_flight(self, resolved_first, clock):
         fake = captured_fake()
-        resolved = model_config.resolve(Knob.SUGGESTION, fake.client) if resolved_first else None
+        resolved = first_resolution(fake) if resolved_first else None
         clock.advance(DAY + 1)
         gate = fake.hold_listings()
         listing = threading.Thread(
@@ -921,4 +936,5 @@ class TestSecurity:
 
         choice = model_config.resolve(Knob.SUGGESTION, fake.client)
 
+        assert choice.source == "resolved"
         assert FAKE_API_KEY not in repr(choice)
