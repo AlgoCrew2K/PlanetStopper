@@ -60,6 +60,12 @@ _LLM_FORBIDDEN_MODULES = (
 )
 
 
+# Relative imports carry no package prefix (`from . import retirement_explainer`
+# resolves `advisors.retirement_explainer` only at import time), so they are
+# matched on the final dotted component of each forbidden module.
+_LLM_FORBIDDEN_LEAVES = frozenset(bad.split(".")[-1] for bad in _LLM_FORBIDDEN_MODULES)
+
+
 def _llm_related_imports(source: str) -> list[str]:
     """Return every LLM-related import (or dynamic-import target) found
     ANYWHERE in `source` -- module level, inside functions, and lazy imports.
@@ -83,6 +89,14 @@ def _llm_related_imports(source: str) -> list[str]:
             for alias in node.names:
                 if _is_forbidden(alias.name):
                     found.append(f"import {alias.name}")
+        elif isinstance(node, ast.ImportFrom) and node.level > 0:
+            # `from . import x`, `from .x import y`, `from ..pkg import x`
+            parts = (node.module or "").split(".") if node.module else []
+            if any(part in _LLM_FORBIDDEN_LEAVES for part in parts):
+                found.append(f"from {'.' * node.level}{node.module} import ...")
+            for alias in node.names:
+                if alias.name in _LLM_FORBIDDEN_LEAVES:
+                    found.append(f"from {'.' * node.level}{node.module or ''} import {alias.name}")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             if module and _is_forbidden(module):
@@ -172,6 +186,32 @@ class TestLlmImportScanIsNonVacuous:
     def test_dynamic_import_via_string_constant_is_detected(self):
         src = "import importlib\n\ndef f():\n    return importlib.import_module('anthropic')\n"
         assert _llm_related_imports(src) != []
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "from . import retirement_explainer\n",
+            "from .retirement_explainer import explain_recommendation\n",
+            "from .. import ai_advisor\n",
+            "from ..advisors import advisor_chat\n",
+            "from . import model_config\n",
+            "def f():\n    from . import retirement_explainer\n",
+        ],
+        ids=[
+            "dot_import_explainer",
+            "dot_module_explainer",
+            "dotdot_import_ai_advisor",
+            "dotdot_pkg_import_advisor_chat",
+            "dot_import_model_config",
+            "lazy_relative_in_function",
+        ],
+    )
+    def test_relative_imports_of_llm_modules_are_detected(self, source):
+        assert _llm_related_imports(source) != []
+
+    def test_a_harmless_relative_import_is_not_a_finding(self):
+        assert _llm_related_imports("from . import correlation_diagnostic\n") == []
+        assert _llm_related_imports("from .correlation_diagnostic import PairResult\n") == []
 
     def test_prose_mentioning_anthropic_in_a_docstring_is_not_a_finding(self):
         src = '"""This module never touches the anthropic SDK."""\nimport math\n'

@@ -347,6 +347,79 @@ class TestStressMinimumOnlyWhenTooThin:
         assert not _has_number(text, 173), text
 
 
+class TestWorkerFallbackSummaryRendersHonestly:
+    """When the producer dies the worker writes a MINIMAL summary row. The panel
+    and API must render exactly that shape -- a template that formats a missing
+    key would 500 the whole /ai-advisor page precisely when something failed."""
+
+    _FALLBACK = {
+        "run_id": "run-fallback",
+        "run_at": "2026-10-22T03:45:00Z",
+        "status": "internal_error",
+        "error_type": "RuntimeError",
+        "recommendations": 0,
+    }
+
+    def _seed_minimal_fallback(self) -> None:
+        db_module.insert_advisor_observation(
+            advisor_role=_SUMMARY_ROLE,
+            subject_type="fleet",
+            subject_id="retirement",
+            verdict="internal_error",
+            raw_response=dict(self._FALLBACK),
+        )
+
+    def test_the_minimal_five_key_fallback_row_renders_the_internal_error_state(
+        self, client, isolated_db
+    ):
+        self._seed_minimal_fallback()
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        text = _block_text(body)
+        assert "internal error" in text.lower()
+        assert "RuntimeError" in text
+        assert _NEVER_RUN_TEXT not in text
+        assert 'data-testid="retirement-run-now-btn"' in _panel(body)
+
+    def test_the_minimal_fallback_row_does_not_hide_an_earlier_runs_cards_incorrectly(
+        self, client, isolated_db
+    ):
+        """The fallback run has run_id 'run-fallback' and persisted no recs, so
+        the cards area is the honest empty state (run-scoped read)."""
+        _seed_roster({"cand-render": "Render Candidate", "sib-render": "Render Sibling"})
+        _seed_rec("run-earlier", "cand-render", "sib-render")
+        self._seed_minimal_fallback()
+        panel = _panel(_render(client))
+        assert 'data-testid="retirement-recommendation-card"' not in panel
+        assert 'data-testid="retirement-recommendations-empty"' in panel
+
+    def test_a_producer_failure_end_to_end_renders_the_panel_and_the_api(
+        self, client, isolated_db, monkeypatch
+    ):
+        """Real worker, producer raises -> persisted fallback -> panel + API."""
+        import advisors.retirement_recommender as recommender_module  # noqa: PLC0415
+
+        def _boom(**kwargs):
+            raise RuntimeError("producer down")
+
+        monkeypatch.setattr(recommender_module, "build_recommendations_with_summary", _boom)
+        app_module._retirement_recommender_tick_worker()
+
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        text = _block_text(resp.get_data(as_text=True))
+        assert "internal error" in text.lower()
+        assert "RuntimeError" in text
+
+        api = client.get("/api/retirement-recommendations")
+        assert api.status_code == 200
+        payload = api.get_json()
+        assert payload["last_run"]["status"] == "internal_error"
+        assert payload["last_run"]["error_type"] == "RuntimeError"
+        assert payload["recommendations"] == []
+
+
 class TestExcludedListAbsentWhenNothingWasExcluded:
     def test_no_exclusions_means_no_excluded_entries(self, client, isolated_db):
         _seed_roster(_OK_NAMES)
@@ -519,7 +592,9 @@ class TestEscaping:
 
     def test_the_template_never_marks_last_run_fields_safe(self):
         template = (REPO_ROOT / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
-        start = template.index('data-testid="retirement-last-run"')
+        # Scan the WHOLE panel (heading, last-run block, button, status, cards), not just
+        # the last-run block: markup placed above that block must be covered too.
+        start = template.index('data-testid="retirement-recommendations-panel"')
         end = template.index("</section>{# /retirement-recommendations-panel #}", start)
         assert "| safe" not in template[start:end] and "|safe" not in template[start:end]
 

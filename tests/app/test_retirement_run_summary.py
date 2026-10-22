@@ -390,6 +390,35 @@ class TestTickFailureIsolation:
         assert len(_rows(_REC_ROLE)) == 1
         assert _rows(_SUMMARY_ROLE) == []
 
+    @pytest.mark.parametrize(
+        "seam", ["_round_floats", "_retirement_find_reusable_prior_explanation"]
+    )
+    def test_an_exception_between_a_good_build_and_persist_still_yields_one_internal_error_row(
+        self, isolated_db, monkeypatch, caplog, seam
+    ):
+        """AC-4 'ALWAYS exactly one summary row': the producer succeeded (status
+        ok, 1 rec) but the worker blows up in its enrichment pass BEFORE persist.
+        The run must not vanish (the Run-now UI would poll for 3 minutes on a run
+        that died silently) and must not read 'ok'."""
+        _seed_roster({_CAND: "Candidate Name", _SIB: "Sibling Name"})
+        _Producer(monkeypatch, [_rec()], summary=make_summary(status="ok", recommendations=1))
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("secret-between-4321")
+
+        monkeypatch.setattr(app_module, seam, _boom)
+        _run_worker()  # must not raise
+
+        assert _rows(_REC_ROLE) == [], "persist was never reached"
+        (row,) = _rows(_SUMMARY_ROLE)
+        raw = row["raw_response"]
+        assert raw["status"] == "internal_error"
+        assert raw["error_type"] == "RuntimeError"
+        assert raw["recommendations"] == 0
+        assert raw["run_id"], "the run keeps an id the UI can see change"
+        assert "secret-between-4321" not in json.dumps(raw), "D-1: type name only"
+        assert "secret-between-4321" not in caplog.text
+
     def test_an_explainer_failure_does_not_stop_the_summary(self, isolated_db, monkeypatch):
         import advisors.retirement_explainer as explainer_module  # noqa: PLC0415
 
@@ -652,6 +681,49 @@ class TestApiLastRun:
         assert data["recommendations"] == []
         assert data["last_run"]["run_id"] == "run-afternoon"
 
+    def test_the_workers_minimal_fallback_summary_is_served_by_the_api(self, client, isolated_db):
+        """The 5-key fallback row the worker writes when the producer died (no
+        roster_size, no symphonies_without_series, ...) must round-trip through
+        the API untouched -- never a 500, never missing-key crashes."""
+        fallback = {
+            "run_id": "run-fallback",
+            "run_at": "2026-10-22T03:45:00Z",
+            "status": "internal_error",
+            "error_type": "RuntimeError",
+            "recommendations": 0,
+        }
+        db_module.insert_advisor_observation(
+            advisor_role=_SUMMARY_ROLE,
+            subject_type="fleet",
+            subject_id="retirement",
+            verdict="internal_error",
+            raw_response=fallback,
+        )
+
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["last_run"] == fallback
+        assert data["recommendations"] == []
+
+    def test_a_producer_failure_run_is_visible_through_the_api_end_to_end(
+        self, client, isolated_db, monkeypatch
+    ):
+        import advisors.retirement_recommender as recommender_module  # noqa: PLC0415
+
+        def _boom(**kwargs):
+            raise RuntimeError("producer down")
+
+        monkeypatch.setattr(recommender_module, "build_recommendations_with_summary", _boom)
+        _run_worker()
+
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["last_run"]["status"] == "internal_error"
+        assert data["last_run"]["error_type"] == "RuntimeError"
+        assert data["recommendations"] == []
+
     def test_a_last_run_read_failure_degrades_to_null_without_a_500(
         self, client, isolated_db, monkeypatch
     ):
@@ -676,7 +748,17 @@ class TestApiLastRun:
         conn.execute(
             "UPDATE advisor_observations SET raw_response = ? WHERE advisor_role = ?",
             (
-                json.dumps({"run_id": "run-nan", "status": "ok", "screen_threshold": float("nan")}),
+                json.dumps(
+                    {
+                        "run_id": "run-nan",
+                        "status": "ok",
+                        "screen_threshold": float("nan"),
+                        "symphonies_without_series": [
+                            {"symphony_id": "x", "reason": "r", "ratio": float("inf")}
+                        ],
+                        "nested": {"deep": {"v": float("-inf")}},
+                    }
+                ),
                 _SUMMARY_ROLE,
             ),
         )
@@ -692,3 +774,7 @@ class TestApiLastRun:
         )
         assert parsed["last_run"]["run_id"] == "run-nan"
         assert parsed["last_run"]["screen_threshold"] is None, "NaN must be sanitised to null"
+        entry = parsed["last_run"]["symphonies_without_series"][0]
+        assert entry["ratio"] is None, "Infinity inside a list-of-dicts must be sanitised too"
+        assert entry["reason"] == "r"
+        assert parsed["last_run"]["nested"]["deep"]["v"] is None

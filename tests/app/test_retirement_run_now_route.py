@@ -252,6 +252,52 @@ class TestSingleFlight:
         assert fake.finished.wait(_WAIT_SECONDS)
         assert _post_until_not_conflict(client) == 202
 
+    def test_the_lock_is_released_when_the_worker_thread_cannot_start(self, client, build):
+        """The route acquires the lock BEFORE spawning the thread. If
+        Thread.start() raises (e.g. 'can't start new thread') and the lock were
+        not released, every later Run-now would be 409 and every 03:45 tick a
+        skip until a restart."""
+        fake = build()
+
+        class _ExplodingThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("can't start new thread")
+
+        with patch("threading.Thread", _ExplodingThread):
+            try:
+                first = _post(client).status_code
+            except RuntimeError:
+                first = 500  # TESTING propagates view exceptions; production answers a handled 5xx
+        assert first not in (202, 409), (
+            "a failed start must not claim 'started' or 'already_running'"
+        )
+        assert fake.calls == []
+
+        # Thread restored: the very next POST must start normally -- NOT 409.
+        assert _post(client).status_code == 202
+        assert fake.started.wait(_WAIT_SECONDS)
+
+    def test_a_scheduled_tick_still_runs_after_a_failed_run_now_start(self, client, build):
+        fake = build()
+
+        class _ExplodingThread:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("can't start new thread")
+
+        with patch("threading.Thread", _ExplodingThread):
+            try:
+                _post(client)
+            except RuntimeError:
+                pass
+        app_module._run_retirement_recommender_tick()
+        assert fake.started.wait(_WAIT_SECONDS), "the lock leaked: the scheduled tick skipped"
+
     def test_concurrent_posts_start_exactly_one_run(self, client, build):
         fake = build(block=True)
         results: list[int] = []

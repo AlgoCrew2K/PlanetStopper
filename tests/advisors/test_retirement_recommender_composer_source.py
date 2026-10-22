@@ -332,6 +332,45 @@ class TestComposerSourceProducesRecommendations:
         assert expected <= set(rec)
         assert rec["correlation"] >= rr.CORRELATION_SCREEN_THRESHOLD
 
+    def test_percent_scale_client_returns_reach_the_metrics_unchanged(self, rr, composer):
+        """Client -> recommender unit boundary: Pearson and the min-max composite
+        are scale-invariant, so only the per-symphony METRICS (computed by
+        analytics.compute_quantstats_metrics, which divides percent returns by
+        100 itself) can reveal an extra /100 or x100 in the recommender. The
+        recommendation's metrics must equal the production metric function over
+        that symphony's series exactly as the client supplied it (percent in,
+        percent through, date order)."""
+        import analytics  # noqa: PLC0415
+
+        scenario = _series_pair_scenario()
+        composer(scenario)
+        (rec,) = _run(rr)[0]
+
+        keys = ("annualized_return", "sharpe", "sortino", "max_drawdown", "calmar")
+        for field, symphony_id in (
+            ("candidate_metrics", rec["candidate_id"]),
+            ("sibling_metrics", rec["sibling_id"]),
+        ):
+            series = list(scenario[symphony_id].values())  # date order, percent scale
+            expected = analytics.compute_quantstats_metrics(series)
+            for key in keys:
+                # rel=1e-9: the identical function over identical inputs; slack only for
+                # run-to-run float summation order inside pandas/numpy.
+                assert rec[field][key] == pytest.approx(expected[key], rel=1e-9, abs=1e-12), (
+                    field,
+                    key,
+                )
+            # Non-vacuity: the same series rescaled by /100 or x100 yields DIFFERENT
+            # annualized returns, so a recommender that rescaled would fail above.
+            for factor in (0.01, 100.0):
+                rescaled = analytics.compute_quantstats_metrics([v * factor for v in series])
+                other = rescaled["annualized_return"]
+                if isinstance(other, float) and math.isfinite(other):
+                    assert rec[field]["annualized_return"] != pytest.approx(other, rel=1e-3), (
+                        field,
+                        factor,
+                    )
+
     def test_the_shadow_analytics_reader_is_never_called_under_the_composer_source(
         self, rr, composer, monkeypatch
     ):

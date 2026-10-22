@@ -388,12 +388,13 @@ class TestDuplicateAndTodayHandling:
 
 
 class TestNonPositiveAndNonFiniteValues:
-    def test_returns_after_a_non_positive_value_are_skipped_without_dividing_by_zero(
-        self, client_mod, monkeypatch
-    ):
-        """Symphony emptied then re-funded: [100, 110, 0, 50, 55]. The return
-        whose previous value is 0 (day 4) must be skipped; later returns that
-        have a positive previous value (day 5 = 55/50 - 1 = 10%) are kept."""
+    def test_a_return_is_skipped_when_either_endpoint_is_zero(self, client_mod, monkeypatch):
+        """Symphony emptied then re-funded: [100, 110, 0, 50, 55].
+
+        PM ruling (RED addendum): skip the return when EITHER endpoint is
+        non-positive. Day 3 (v_t == 0) must NOT emit a fabricated -100% day,
+        day 4 (v_{t-1} == 0) must not divide by zero; the healthy days around
+        the gap (110/100 -> 10%, 55/50 -> 10%) are kept."""
         dates = ["2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05", "2026-02-06"]
         epochs = [_et_ms(d, 16) for d in dates]
         res = _fetch(
@@ -402,11 +403,14 @@ class TestNonPositiveAndNonFiniteValues:
             monkeypatch,
         )
         assert res.error is None
+        assert "2026-02-04" not in res.returns, "v_t == 0 -> no fabricated -100% day"
         assert "2026-02-05" not in res.returns, "v_{t-1} == 0 -> return must be skipped"
-        assert res.returns["2026-02-06"] == pytest.approx(10.0, abs=1e-9)  # abs: exact ratio
+        assert list(res.returns) == ["2026-02-03", "2026-02-06"]
+        assert res.returns["2026-02-03"] == pytest.approx(10.0, abs=1e-9)  # abs: exact ratio
+        assert res.returns["2026-02-06"] == pytest.approx(10.0, abs=1e-9)
         assert all(math.isfinite(v) for v in res.returns.values())
 
-    def test_a_negative_previous_value_never_yields_a_return(self, client_mod, monkeypatch):
+    def test_a_return_is_skipped_when_either_endpoint_is_negative(self, client_mod, monkeypatch):
         dates = ["2026-02-02", "2026-02-03", "2026-02-04", "2026-02-05"]
         epochs = [_et_ms(d, 16) for d in dates]
         res = _fetch(
@@ -415,9 +419,51 @@ class TestNonPositiveAndNonFiniteValues:
             monkeypatch,
         )
         assert res.error is None
+        assert "2026-02-03" not in res.returns, "v_t < 0 -> return must be skipped"
         assert "2026-02-04" not in res.returns, "v_{t-1} < 0 -> return must be skipped"
+        assert list(res.returns) == ["2026-02-05"]
         assert res.returns["2026-02-05"] == pytest.approx(10.0, abs=1e-9)  # abs: exact ratio
         assert all(math.isfinite(v) for v in res.returns.values())
+
+    def test_a_zero_value_never_emits_a_minus_100_percent_return(self, client_mod, monkeypatch):
+        dates = ["2026-02-02", "2026-02-03", "2026-02-04"]
+        epochs = [_et_ms(d, 16) for d in dates]
+        res = _fetch(client_mod, _Http([_resp(200, _body(epochs, [100.0, 0.0, 0.0]))]), monkeypatch)
+        assert res.error is None
+        assert res.returns == {}
+        assert res.points == 0
+
+    @settings(
+        max_examples=60,
+        deadline=None,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+    )
+    @given(
+        values=st.lists(
+            # Exact zeros, negatives, and positives bounded away from 0: a positive-to-positive
+            # return of ~-100% would round to exactly -100.0 for a denormal-scale value (a float
+            # artefact, not a fabricated day), so positives stay >= 1e-3 (min ratio 1e-9).
+            st.one_of(
+                st.just(0.0),
+                st.floats(min_value=-50.0, max_value=-1e-3),
+                st.floats(min_value=1e-3, max_value=1e6),
+            ),
+            min_size=2,
+            max_size=30,
+        )
+    )
+    def test_no_return_at_or_below_minus_100_percent_is_ever_emitted(self, client_mod, values):
+        """For ANY value series (zeros and negatives included): every emitted
+        return is finite and strictly above -100% -- a return with both
+        endpoints positive can never reach -100%, so anything <= -100 would be
+        a fabricated observation."""
+        start = date(2025, 3, 3)
+        epochs = [_et_ms((start + timedelta(days=i)).isoformat(), 16) for i in range(len(values))]
+        http = _Http([_resp(200, _body(epochs, values))])
+        with patch.object(requests, "get", http):
+            res = client_mod.fetch_symphony_daily_returns(_ACCOUNT, _SYMPHONY)
+        assert res.error is None
+        assert all(math.isfinite(r) and r > -100.0 for r in res.returns.values())
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_values_are_skipped_never_propagated(self, client_mod, monkeypatch, bad):
@@ -634,6 +680,38 @@ class TestRetryAfterHandling:
         sleeps = client_mod._test_sleeps  # noqa: SLF001
         assert len(sleeps) == 1
         assert 0 <= sleeps[0] <= cap
+
+    @pytest.mark.parametrize(
+        "header",
+        ["-5", "-1", "0", "1.5", "", "   ", "abc", "nan", "inf", "-inf"],
+        ids=[
+            "neg5",
+            "neg1",
+            "zero",
+            "fractional",
+            "empty",
+            "blank",
+            "word",
+            "nan",
+            "inf",
+            "neginf",
+        ],
+    )
+    def test_odd_retry_after_values_never_cause_a_negative_or_oversized_sleep(
+        self, client_mod, monkeypatch, header
+    ):
+        """A hostile/buggy Retry-After must be handled: the fetch recovers, never
+        raises (time.sleep(-5) would raise ValueError), and every sleep lands in
+        [0, RETRY_AFTER_CAP_SECONDS] -- a negative header is clamped to 0."""
+        cap = client_mod.RETRY_AFTER_CAP_SECONDS
+        http = _Http([_resp(429, headers={"Retry-After": header}), _good_resp()])
+        res = _fetch(client_mod, http, monkeypatch)
+
+        assert res.error is None, header
+        assert len(res.returns) == 1
+        sleeps = client_mod._test_sleeps  # noqa: SLF001
+        assert len(sleeps) <= 1
+        assert all(0 <= sl <= cap for sl in sleeps), sleeps
 
     def test_429_without_a_retry_after_header_still_retries_with_a_bounded_sleep(
         self, client_mod, monkeypatch

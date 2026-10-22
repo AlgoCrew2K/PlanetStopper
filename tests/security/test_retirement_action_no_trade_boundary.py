@@ -933,7 +933,16 @@ def _series_client_violations(source: str) -> list[str]:
     if "import *" in source:
         found.append("wildcard import")
 
-    for node in ast.walk(ast.parse(source)):
+    tree = ast.parse(source)
+    # `import requests as r` -> the attribute scan below must follow the alias.
+    requests_names = {"requests"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "requests" and alias.asname:
+                    requests_names.add(alias.asname)
+
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 root = alias.name.split(".")[0]
@@ -941,6 +950,11 @@ def _series_client_violations(source: str) -> list[str]:
                     found.append("whole-module import of alpha_bot_execution")
                 if root in _OTHER_HTTP_MODULES:
                     found.append(f"imports non-requests HTTP stack {alias.name!r}")
+                if alias.name.startswith("requests.") and not (
+                    alias.name == "requests.exceptions"
+                    or alias.name.startswith("requests.exceptions.")
+                ):
+                    found.append(f"imports requests submodule {alias.name!r}")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             root = module.split(".")[0]
@@ -950,8 +964,19 @@ def _series_client_violations(source: str) -> list[str]:
                     found.append(f"imports {sorted(extra)} from alpha_bot_execution")
             if root in _OTHER_HTTP_MODULES:
                 found.append(f"imports from non-requests HTTP stack {module!r}")
+            if root == "requests":
+                # `from requests import post` / `Session` would dodge the requests.<attr>
+                # scan below, so the imported NAMES are checked at the import site.
+                if module == "requests":
+                    extra = {a.name for a in node.names} - _SERIES_CLIENT_ALLOWED_REQUESTS_ATTRS
+                    if extra:
+                        found.append(f"imports {sorted(extra)} from requests")
+                elif module != "requests.exceptions" and not module.startswith(
+                    "requests.exceptions."
+                ):
+                    found.append(f"imports from requests submodule {module!r}")
         elif isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id == "requests":
+            if isinstance(node.value, ast.Name) and node.value.id in requests_names:
                 if node.attr not in _SERIES_CLIENT_ALLOWED_REQUESTS_ATTRS:
                     found.append(f"uses requests.{node.attr}")
             if node.attr in _MUTATING_VERB_ATTRS:
@@ -988,9 +1013,25 @@ def fetch(account_id, symphony_id):
 '''
 
 
+def _violations_after_appending(extra: str) -> list[str]:
+    """Scan the clean reference source with `extra` appended AFTER it. (Appending,
+    never prepending: text placed before the reference's leading docstring would
+    demote that docstring to executable code and trip the fragment rule for the
+    wrong reason.)"""
+    return _series_client_violations(_CLEAN_CLIENT_SOURCE + "\n" + extra + "\n")
+
+
+def _assert_detected(extra: str, expected_substring: str) -> None:
+    violations = _violations_after_appending(extra)
+    assert any(expected_substring in v for v in violations), (
+        f"expected a violation mentioning {expected_substring!r}; got {violations}"
+    )
+
+
 class TestSeriesClientScanIsNonVacuous:
     """Each rule of the Group G scan must demonstrably fire on a mutated
-    source -- otherwise a green scan of the real module would prove nothing."""
+    source -- otherwise a green scan of the real module would prove nothing.
+    Every case asserts the SPECIFIC rule that fired, not just 'something'."""
 
     def test_the_clean_reference_source_has_no_violations(self):
         assert _series_client_violations(_CLEAN_CLIENT_SOURCE) == []
@@ -998,38 +1039,59 @@ class TestSeriesClientScanIsNonVacuous:
 
     @pytest.mark.parametrize("fragment", _SERIES_CLIENT_FORBIDDEN_FRAGMENTS)
     def test_each_forbidden_fragment_in_executable_code_is_detected(self, fragment):
-        mutated = _CLEAN_CLIENT_SOURCE + f"\n\ndef sneaky():\n    return {fragment!r}\n"
-        assert any(fragment in v for v in _series_client_violations(mutated)), fragment
+        _assert_detected(f"def sneaky():\n    return {fragment!r}\n", fragment)
 
     def test_a_post_call_is_detected(self):
-        mutated = (
-            _CLEAN_CLIENT_SOURCE + "\n\ndef sneaky(u):\n    return requests.post(u, json={})\n"
-        )
-        assert _series_client_violations(mutated)
+        _assert_detected("def sneaky(u):\n    return requests.post(u, json={})\n", "requests.post")
 
     def test_a_mutating_verb_on_any_receiver_is_detected(self):
-        mutated = _CLEAN_CLIENT_SOURCE + "\n\ndef sneaky(s, u):\n    return s.put(u)\n"
-        assert _series_client_violations(mutated)
+        _assert_detected("def sneaky(s, u):\n    return s.put(u)\n", ".put")
 
     def test_a_requests_session_is_detected(self):
-        mutated = _CLEAN_CLIENT_SOURCE + "\n\ndef sneaky():\n    return requests.Session()\n"
-        assert _series_client_violations(mutated)
+        _assert_detected("def sneaky():\n    return requests.Session()\n", "requests.Session")
 
-    def test_another_http_stack_is_detected(self):
-        assert _series_client_violations("import httpx\n" + _CLEAN_CLIENT_SOURCE)
-        assert _series_client_violations(
-            "from urllib.request import urlopen\n" + _CLEAN_CLIENT_SOURCE
+    def test_from_requests_import_a_mutating_verb_is_detected(self):
+        """`from requests import post` then `post(u)` evades the requests.<attr> scan."""
+        _assert_detected(
+            "from requests import post\n\ndef sneaky(u):\n    return post(u)\n", "post"
         )
 
+    def test_from_requests_import_session_is_detected(self):
+        _assert_detected("from requests import Session\n", "Session")
+
+    def test_from_a_requests_submodule_import_is_detected(self):
+        _assert_detected("from requests.sessions import Session\n", "requests.sessions")
+        _assert_detected("import requests.sessions\n", "requests.sessions")
+
+    def test_an_aliased_requests_module_is_followed(self):
+        _assert_detected(
+            "import requests as r\n\ndef sneaky():\n    return r.Session()\n", "Session"
+        )
+
+    def test_allowed_requests_imports_are_not_violations(self):
+        ok = (
+            "from requests import get\n"
+            "from requests.exceptions import Timeout, ConnectionError\n"
+            "import requests.exceptions\n"
+        )
+        assert _violations_after_appending(ok) == []
+
+    def test_another_http_stack_is_detected(self):
+        _assert_detected("import httpx\n", "httpx")
+        _assert_detected("from urllib.request import urlopen\n", "urllib")
+
     def test_a_whole_module_alpha_bot_execution_import_is_detected(self):
-        assert _series_client_violations("import alpha_bot_execution\n" + _CLEAN_CLIENT_SOURCE)
+        _assert_detected(
+            "import alpha_bot_execution\n", "whole-module import of alpha_bot_execution"
+        )
 
     def test_importing_an_execution_function_from_alpha_bot_execution_is_detected(self):
-        mutated = _CLEAN_CLIENT_SOURCE + "\nfrom alpha_bot_execution import execute_sell_to_cash\n"
-        assert _series_client_violations(mutated)
+        _assert_detected(
+            "from alpha_bot_execution import execute_sell_to_cash\n", "execute_sell_to_cash"
+        )
 
     def test_a_wildcard_import_is_detected(self):
-        assert _series_client_violations(_CLEAN_CLIENT_SOURCE + "\nfrom os import *\n")
+        _assert_detected("from os import *\n", "wildcard")
 
     def test_prose_in_docstrings_and_comments_is_not_a_violation(self):
         # _CLEAN_CLIENT_SOURCE already carries /trading/, save_symphony and go-to-cash in
