@@ -1663,22 +1663,30 @@ def _atlas_cache_health() -> dict:
 
 
 # --- 2. Web Dashboard Routes ---
-def _inject_guard_alpha(entries: dict) -> None:
+def _inject_guard_alpha(*entry_maps: dict) -> None:
     """Stamp guard_alpha onto triggered symphony entries (keyed by id) for card verdicts.
+
+    Several maps share one read of the exit rows.
 
     Shared by GET / (first paint) and get_state (poll) so both carry one number.
     setdefault keeps a value already on the entry; any failure leaves verdicts at the dash.
     """
     try:
-        triggered_ids = [
-            k for k, v in entries.items() if isinstance(v, dict) and v.get("triggered")
-        ]
+        triggered_ids = list(
+            {
+                k
+                for entries in entry_maps
+                for k, v in entries.items()
+                if isinstance(v, dict) and v.get("triggered")
+            }
+        )
         if not triggered_ids:
             return
         for sid, ga in database.get_guard_alpha_by_symphony(triggered_ids).items():
-            if sid in entries and isinstance(entries[sid], dict):
-                cr = entries[sid].get("current_return") or 0.0
-                entries[sid].setdefault("guard_alpha", round(float(ga) - float(cr), 6))
+            for entries in entry_maps:
+                if sid in entries and isinstance(entries[sid], dict):
+                    cr = entries[sid].get("current_return") or 0.0
+                    entries[sid].setdefault("guard_alpha", round(float(ga) - float(cr), 6))
     except Exception:
         pass
 
@@ -1697,6 +1705,7 @@ def _active_fleet_alert() -> dict | None:
 _DIAL_DASH = "—"
 _DIAL_EMPTY_OFFSET = "94.25"  # circumference of the r=15 dial arc, 2*pi*15, in SVG user units
 _DIAL_SENTINEL_ABS = 900  # engine uses +-999 as "not set"; the client treats abs >= 900 as unset
+_JS_TO_FIXED_MAX = 1e21  # Number.prototype.toFixed prints exponent text from this magnitude up
 _DIAL_WARN_BELOW_PCT = 15  # arc turns warn colour below this reading (percent)
 _DIAL_DIM_ABOVE_PCT = 80  # arc turns dim above this reading (percent)
 
@@ -1704,7 +1713,12 @@ _DIAL_DIM_ABOVE_PCT = 80  # arc turns dim above this reading (percent)
 def _first_paint_verdict(sym: dict) -> dict:
     """Verdict text for a triggered card, worded as static/index.js writes it on a poll."""
     ga = sym.get("guard_alpha")
-    if isinstance(ga, bool) or not isinstance(ga, (int, float)) or not math.isfinite(ga):
+    if (
+        isinstance(ga, bool)
+        or not isinstance(ga, (int, float))
+        or not math.isfinite(ga)
+        or abs(ga) >= _JS_TO_FIXED_MAX
+    ):
         return {"_verdict_text": _DIAL_DASH, "_verdict_has_value": False}
     magnitude = analytics.js_to_fixed(abs(ga), 1)
     text = f"Good call · saved +{magnitude}%α" if ga > 0 else f"Early exit · gave up {magnitude}%α"
@@ -1741,7 +1755,7 @@ def _first_paint_dial(sym: dict) -> dict:
     }
 
 
-def _js_count(value) -> str:
+def _js_count(value: int | float | str | None) -> str:
     """A count as the client's string concatenation prints it ('?' when absent)."""
     if value is None:
         return "?"
@@ -1880,8 +1894,9 @@ def dashboard():
 
     # First paint carries the verdict and dial text the client would write on its
     # first poll, so the card never shows a placeholder before then.
-    _inject_guard_alpha(bot_state)
-    _inject_guard_alpha({s["id"]: s for s in symphonies if isinstance(s, dict) and s.get("id")})
+    _inject_guard_alpha(
+        bot_state, {s["id"]: s for s in symphonies if isinstance(s, dict) and s.get("id")}
+    )
     for _s in symphonies:
         if isinstance(_s, dict):
             _s.update(_first_paint_verdict(_s))
@@ -3605,7 +3620,8 @@ def get_state():
             }
         )
     except Exception as e:
-        _daemon_log.error("api route failed: %s", e, exc_info=True)
+        _daemon_log.error("api route failed: %s", type(e).__name__)
+        _daemon_log.debug("api route failure detail", exc_info=True)
         return jsonify({"status": "error", "message": "An internal error occurred"}), 500
     finally:
         try:

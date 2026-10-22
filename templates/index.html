@@ -1781,6 +1781,8 @@
     })();
 
     function updateBanners(data) {
+      // An error or partial body carries no alert key; it must not hide a shown banner.
+      if (!data || typeof data !== 'object' || !('fleet_correlation_alert' in data)) return;
       // Fleet correlation alert banner — show real situation text
       var fleetBanner = document.getElementById('fleet-correlation-banner');
       if (fleetBanner) {

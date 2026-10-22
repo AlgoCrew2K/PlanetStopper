@@ -2258,12 +2258,17 @@ def compute_windowed_portfolio_strip(
     }
 
 
+_JS_TO_FIXED_EXPONENT_FROM = 1e21  # ECMAScript Number::toString switches to exponent form here
+
+
 def js_to_fixed(value: float, places: int) -> str:
-    """Round exactly as the browser's Number.prototype.toFixed (finite, below 1e21).
+    """Round as the browser's Number.prototype.toFixed (finite; from 1e21 up, exponent text).
 
     Ties go away from zero over the exact binary value, so server-rendered text that
     the client rewrites on the next poll never flickers between two roundings.
     """
+    if abs(value) >= _JS_TO_FIXED_EXPONENT_FROM:
+        return repr(float(value))
     quantum = Decimal(1).scaleb(-places)
     text = str(Decimal(value).quantize(quantum, rounding=ROUND_HALF_UP))
     # The browser prints (-0).toFixed(2) as "0.00", but keeps the sign of -0.04 at one place.
