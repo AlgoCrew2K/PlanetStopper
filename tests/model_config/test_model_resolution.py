@@ -135,8 +135,11 @@ def assert_logged_type_only(caplog, expected_type_name, *forbidden_fragments):
     assert record.exc_info is None and record.exc_text is None, (
         "a traceback would carry the exception text"
     )
+    # A body fragment can legitimately be part of the type name (the 529 body says
+    # "Overloaded", the SDK type is OverloadedError), so judge the text around the name.
+    remainder = message.replace(expected_type_name, "")
     for fragment in (FAKE_API_KEY, *forbidden_fragments):
-        assert fragment not in message
+        assert fragment not in remainder
 
 
 def call_concurrently(fake, call, count):
