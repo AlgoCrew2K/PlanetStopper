@@ -941,29 +941,26 @@ def _run_lens_pipeline() -> None:
 
 
 def _model_warmup_worker() -> None:
-    """Resolve both model knobs once so page badges show names (never raises).
+    """Resolve both model knobs so page badges show display names (never raises).
 
-    Imported lazily to keep the advisors off the execution path (CC-2).
-    Only type(exc).__name__ is logged: exception text can carry credentials.
+    Runs off the request and execution paths. Only the exception type is logged
+    at WARNING because exception text can carry credentials; the traceback goes
+    to DEBUG.
     """
     try:
-        import ai_advisor
-        import model_config as _mc
-
         client = ai_advisor._build_client()
-        first = _mc.resolve(_mc.Knob.SUGGESTION, client)
+        first = model_config.resolve(model_config.Knob.SUGGESTION, client)
         # One listing fills both families; after a failed listing a second
         # resolve would just send another request, so stop.
         if first.source != "unavailable":
-            _mc.resolve(_mc.Knob.SYNTHESIS, client)
+            model_config.resolve(model_config.Knob.SYNTHESIS, client)
     except Exception as exc:
         _daemon_log.warning("Model warm-up failed: %s", type(exc).__name__)
+        _daemon_log.debug("Model warm-up failure detail", exc_info=True)
 
 
 def _start_model_warmup() -> None:
     """Run the model warm-up on a daemon thread; returns immediately."""
-    import threading
-
     threading.Thread(target=_model_warmup_worker, daemon=True, name="model-warmup").start()
 
 
@@ -1465,6 +1462,8 @@ def run_scheduler():
     # incubation slot so all three off-hours jobs run without same-minute
     # contention.
     schedule.every().day.at("03:45").do(_run_retirement_recommender_tick)
+    # Daily re-list (only when the registry is stale) so new model releases reach the badges.
+    schedule.every().day.at("04:15").do(_start_model_warmup)
     while True:
         schedule.run_pending()
         time.sleep(1)
