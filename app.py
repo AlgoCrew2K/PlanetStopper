@@ -3,6 +3,7 @@
 import atexit
 import concurrent.futures
 import hmac
+import inspect
 import io
 import logging
 import math
@@ -1830,7 +1831,13 @@ def dashboard():
     )
 
 
-def _dashboard_initial_data(meta, bot_state) -> dict:
+# The day cap the /api/state poll series carries; the page needs it to judge a fallback series.
+_HERO_POLL_DAY_CAP = (
+    inspect.signature(analytics.get_portfolio_bot_and_held_daily_returns).parameters["days"].default
+)
+
+
+def _dashboard_initial_data(meta: dict | None, bot_state: dict) -> dict:
     """Chart data embedded in the dashboard render so the charts draw at first paint.
 
     ``hero`` is the default-window series (local shadow history only, no network);
@@ -1860,6 +1867,7 @@ def _dashboard_initial_data(meta, bot_state) -> dict:
     return {
         "hero": _hero_chart_body(_DEFAULT_HERO_WINDOW),
         "hero_poll_tail": tail,
+        "hero_poll_cap": _HERO_POLL_DAY_CAP,
         "sparks": sparks,
     }
 
@@ -3597,7 +3605,7 @@ def _slice_series_by_window_cutoff(
     return [dates[i] for i in idx], [series_a[i] for i in idx], [series_b[i] for i in idx]
 
 
-def _hero_chart_body(window):
+def _hero_chart_body(window: str) -> dict[str, object]:
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
     window values: 30d, 60d, 90d, 125d, ytd, 1y, all
@@ -3647,8 +3655,10 @@ def _hero_chart_body(window):
                 "insufficient_history": insufficient,
                 "available_days": len(dates),
             }
-    except Exception:
-        _daemon_log.error("get_hero_chart bot/held series failed", exc_info=True)
+    except Exception as exc:
+        # Exception text can carry paths and data, so only the type reaches the ERROR line.
+        _daemon_log.error("get_hero_chart bot/held series failed: %s", type(exc).__name__)
+        _daemon_log.debug("get_hero_chart bot/held series detail", exc_info=True)
 
     return {
         "hist_dates": [],

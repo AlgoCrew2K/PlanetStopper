@@ -2,7 +2,15 @@
     'use strict';
 
     var _cumChart = null;
-    var _sparks = {};
+    // One source of line colour tokens per chart kind, read at build and on tweakchange.
+    var CHART_LINE_TOKENS = {
+        hero: ['--studio-accent', '--studio-ink-dim'],
+        spark: ['--studio-accent', '--studio-ink-dim'],
+        detail: ['--studio-accent', '--studio-ink-faint', '--studio-neg',
+                 '--studio-accent', '--studio-cyan', '--studio-warn']
+    };
+    function lineToken(kind, i) { return cs(CHART_LINE_TOKENS[kind][i]); }
+    var _pollCap = null;
     var _heroWindow = '30d';
     var _pollSeries = null;   // the latest poll's dated hero series (fallback source)
     var _pollTail = null;     // what the last poll's series ended with (change detection)
@@ -132,7 +140,7 @@
                     {
                         label: 'Planet Stopper',
                         data: bot,
-                        borderColor: cs('--studio-accent'),
+                        borderColor: lineToken('hero', 0),
                         backgroundColor: 'transparent',
                         borderWidth: 2,
                         pointRadius: 0,
@@ -142,7 +150,7 @@
                     {
                         label: 'If held',
                         data: held,
-                        borderColor: cs('--studio-ink-dim'),
+                        borderColor: lineToken('hero', 1),
                         backgroundColor: 'transparent',
                         borderWidth: 1.5,
                         pointRadius: 0,
@@ -176,6 +184,14 @@
         var k = 0;
         if (cutoff) { while (k < dates.length && dates[k] < cutoff) k++; }
         if (k >= dates.length) return;
+        // The caption describes the series drawn: it falls short of the window when the
+        // poll series starts after the cutoff, or (all time) fills the poll's own cap.
+        var naEl = document.getElementById('hero-chart-na');
+        if (naEl) {
+            var short = cutoff ? dates[0] > cutoff
+                : (_pollCap !== null && dates.length >= _pollCap);
+            naEl.style.display = short ? 'block' : 'none';
+        }
         function rebase(cumulative) {
             var base = k === 0 ? 0 : cumulative[k - 1];
             return cumulative.slice(k).map(function (c) {
@@ -412,7 +428,7 @@
     function sparkHeldDataset(data) {
         return {
             data: data.map(function (d) { return d.held != null ? d.held : null; }),
-            borderColor: cs('--studio-ink-dim'),
+            borderColor: lineToken('spark', 1),
             borderWidth: 1,
             pointRadius: 0,
             tension: 0.3,
@@ -469,7 +485,7 @@
             }
             var datasets = [{
                 data: returns,
-                borderColor: cs('--studio-accent'),
+                borderColor: lineToken('spark', 0),
                 borderWidth: 1.5,
                 pointRadius: 0,
                 tension: 0.3,
@@ -492,7 +508,6 @@
                 },
                 plugins: [sparkMarkerPlugin(symId)]
             });
-            _sparks[symId] = chart;
             setSparkStatus(canvas, '');
             held.push(chart);
         });
@@ -569,6 +584,7 @@
         if (hero) whenDrawn(hero, hold());
         else showHeroEmpty();
         _pollTail = (block && block.hero_poll_tail) || null;
+        _pollCap = (block && typeof block.hero_poll_cap === 'number') ? block.hero_poll_cap : null;
         var sparks = (block && block.sparks) || {};
         var seen = {};
         document.querySelectorAll('[data-testid="card-spark"][data-sym-id]').forEach(function (canvas) {
@@ -845,12 +861,12 @@
             data: {
                 labels: labels,
                 datasets: [
-                    { label: 'Bot', data: botData, borderColor: cs('--studio-accent'), borderWidth: 2, pointRadius: 0, tension: 0.2, fill: false, yAxisID: 'y' },
-                    { label: 'Held', data: heldData, borderColor: cs('--studio-ink-faint'), borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false, borderDash: [4,4], yAxisID: 'y' },
-                    { label: 'Stop', data: stopData, borderColor: cs('--studio-neg'), borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false, borderDash: [4,3], yAxisID: 'y', hidden: false },
-                    { label: 'Breakeven', data: breakevenData, borderColor: cs('--studio-accent'), borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false, yAxisID: 'y', hidden: false },
-                    { label: 'VWAP', data: vwapData, borderColor: cs('--studio-cyan'), borderWidth: 1.4, pointRadius: 0, tension: 0.2, fill: false, yAxisID: 'y', hidden: true },
-                    { label: 'MC %', data: mcData, borderColor: cs('--studio-warn'), borderWidth: 1.4, pointRadius: 0, tension: 0.3, fill: false, borderDash: [1,2], yAxisID: 'mc', hidden: true }
+                    { label: 'Bot', data: botData, borderColor: lineToken('detail', 0), borderWidth: 2, pointRadius: 0, tension: 0.2, fill: false, yAxisID: 'y' },
+                    { label: 'Held', data: heldData, borderColor: lineToken('detail', 1), borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false, borderDash: [4,4], yAxisID: 'y' },
+                    { label: 'Stop', data: stopData, borderColor: lineToken('detail', 2), borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false, borderDash: [4,3], yAxisID: 'y', hidden: false },
+                    { label: 'Breakeven', data: breakevenData, borderColor: lineToken('detail', 3), borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false, yAxisID: 'y', hidden: false },
+                    { label: 'VWAP', data: vwapData, borderColor: lineToken('detail', 4), borderWidth: 1.4, pointRadius: 0, tension: 0.2, fill: false, yAxisID: 'y', hidden: true },
+                    { label: 'MC %', data: mcData, borderColor: lineToken('detail', 5), borderWidth: 1.4, pointRadius: 0, tension: 0.3, fill: false, borderDash: [1,2], yAxisID: 'mc', hidden: true }
                 ]
             },
             options: {
@@ -1879,7 +1895,7 @@
                 // The picker drives the chart lines (latest click wins) and the
                 // headline VALUE (windowed strip) -- NOT the three vs-rows, which stay
                 // gated to genuine /api/state polls only (DE-CLOSED-BOUNCE-001).
-                drawHeroWindow(token, fetch('/api/hero-chart/' + token));
+                requestHeroWindow(token);
                 // Re-window the headline guard-alpha VALUE so the label always matches
                 // the actual window (kills the F1 mislabel). Does NOT re-window the
                 // three vs-rows (DE-CLOSED-BOUNCE-001) -- fetchWindowedStrip's payload
@@ -1893,27 +1909,22 @@
     });
 
     // A theme or accent change recolours the drawn charts in place (no rebuild, no animation).
-    var DETAIL_LINE_TOKENS = {
-        'Bot': '--studio-accent', 'Held': '--studio-ink-faint', 'Stop': '--studio-neg',
-        'Breakeven': '--studio-accent', 'VWAP': '--studio-cyan', 'MC %': '--studio-warn'
-    };
-
     function recolourCharts() {
         if (_cumChart) {
-            _cumChart.data.datasets[0].borderColor = cs('--studio-accent');
-            _cumChart.data.datasets[1].borderColor = cs('--studio-ink-dim');
+            _cumChart.data.datasets[0].borderColor = lineToken('hero', 0);
+            _cumChart.data.datasets[1].borderColor = lineToken('hero', 1);
             _cumChart.update('none');
         }
         document.querySelectorAll('[data-testid="card-spark"]').forEach(function (canvas) {
             var chart = Chart.getChart(canvas);
             if (!chart) return;
-            chart.data.datasets[0].borderColor = cs('--studio-accent');
-            if (chart.data.datasets[1]) chart.data.datasets[1].borderColor = cs('--studio-ink-dim');
+            chart.data.datasets[0].borderColor = lineToken('spark', 0);
+            if (chart.data.datasets[1]) chart.data.datasets[1].borderColor = lineToken('spark', 1);
             chart.update('none');
         });
         if (_intradayChart) {
-            _intradayChart.data.datasets.forEach(function (ds) {
-                if (DETAIL_LINE_TOKENS[ds.label]) ds.borderColor = cs(DETAIL_LINE_TOKENS[ds.label]);
+            _intradayChart.data.datasets.forEach(function (ds, i) {
+                if (CHART_LINE_TOKENS.detail[i]) ds.borderColor = lineToken('detail', i);
             });
             _intradayChart.update('none');
         }
