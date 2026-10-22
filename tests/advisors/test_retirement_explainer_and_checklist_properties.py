@@ -65,7 +65,7 @@ class TestExplainerNeverMutatesInput:
         before = copy.deepcopy(rec)
         fake_client = MagicMock()
         fake_client.messages.create.return_value = SimpleNamespace(
-            content=[SimpleNamespace(text="some explanation")]
+            content=[SimpleNamespace(type="text", text="some explanation")]
         )
         with patch("ai_advisor._build_client", return_value=fake_client):
             re_mod.explain_recommendation(rec)

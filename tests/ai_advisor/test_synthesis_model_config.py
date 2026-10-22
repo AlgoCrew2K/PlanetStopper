@@ -8,8 +8,8 @@ Acceptance criteria (AC-1..AC-7):
   AC-1  advisors/lens_pipeline._synthesize_via_claude reads the model from the
         ADVISOR_SYNTHESIS_MODEL env var, not a hardcoded literal.
 
-  AC-2  Default (env var unset) resolves to the Opus 4.8 model ID in production.
-        When ADVISOR_SYNTHESIS_MODEL is set, that value is passed to the SDK.
+  AC-2  Default (env var unset) resolves to the newest opus-line model the Models
+        API lists. When ADVISOR_SYNTHESIS_MODEL is set, that value is passed to the SDK.
         No production path fires a real Opus call during a pytest run.
 
   AC-3  _extract_json_object (lens_pipeline) is preserved byte-for-byte: fence
@@ -58,6 +58,9 @@ import re
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._anthropic_site_harness import newest_id, older_id, reply_with_text, served_by
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -168,13 +171,11 @@ class TestLensPipelineSynthesisModelEnvVar:
             f"Got: {actual_model!r}."
         )
 
-    def test_env_var_unset_uses_opus_default(self, monkeypatch):
-        """When ADVISOR_SYNTHESIS_MODEL is not set, _synthesize_via_claude must
-        use the Opus 4.8 model ID as the default.
-
-        This is RED on the current implementation which defaults to Haiku, not Opus.
-        """
+    def test_env_var_unset_uses_the_newest_opus_line_model(self, monkeypatch):
+        """With no override the synthesis request names the newest active opus-line
+        model of the Models API listing (the suggestion knob never reaches it)."""
         monkeypatch.delenv("ADVISOR_SYNTHESIS_MODEL", raising=False)
+        monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", older_id("fable"))
         mock_client = _make_mock_client()
 
         import advisors.lens_pipeline as pipeline
@@ -190,13 +191,11 @@ class TestLensPipelineSynthesisModelEnvVar:
             pipeline._synthesize_via_claude(per_lens, per_lens_digest, available_count=1)
 
         mock_client.messages.create.assert_called_once()
-        # Extract the model kwarg robustly from call_args (positional or keyword).
         call_args = mock_client.messages.create.call_args
         actual_model = call_args.kwargs.get("model") if call_args.kwargs else None
-        assert actual_model == _EXPECTED_DEFAULT_MODEL, (
-            f"When ADVISOR_SYNTHESIS_MODEL is not set, _synthesize_via_claude "
-            f"must default to {_EXPECTED_DEFAULT_MODEL!r}. Got: {actual_model!r}. "
-            f"The implementation currently hardcodes 'claude-haiku-4-5-20251001'."
+        assert actual_model == newest_id("opus"), (
+            f"With ADVISOR_SYNTHESIS_MODEL unset, _synthesize_via_claude must name the "
+            f"newest opus-line model {newest_id('opus')!r}. Got: {actual_model!r}."
         )
 
     def test_no_real_claude_call_escapes_in_pytest(self, monkeypatch):
@@ -245,49 +244,6 @@ class TestLensPipelineSynthesisModelEnvVar:
         assert sentiment == "limited-inputs", (
             "With 0 available lenses, _synthesize_via_claude must return "
             "'limited-inputs' without calling the LLM."
-        )
-
-
-# ---------------------------------------------------------------------------
-# AC-2 — Opus 4.8 default value contract
-# ---------------------------------------------------------------------------
-
-
-class TestOpus48DefaultContract:
-    """AC-2: The default model is Opus 4.8 — pinned to the exact model ID."""
-
-    def test_default_model_is_opus_48_not_haiku(self, monkeypatch):
-        """The hardcoded Haiku model ('claude-haiku-4-5-20251001') must NOT be
-        used as the default. The default must be the Opus 4.8 model ID.
-
-        This test is adversarial: it will pass if the env var is unset AND the
-        implementation defaults to _EXPECTED_DEFAULT_MODEL, and fail if any
-        other model (including Haiku) is used.
-        """
-        monkeypatch.delenv("ADVISOR_SYNTHESIS_MODEL", raising=False)
-        mock_client = _make_mock_client()
-
-        import advisors.lens_pipeline as pipeline
-        import ai_advisor
-
-        _HAIKU_LITERAL = "claude-haiku-4-5-20251001"
-
-        with patch.object(ai_advisor, "_build_client", return_value=mock_client):
-            per_lens = {"macro": {"available": True, "summary": "stable", "sources": []}}
-            per_lens_digest = {"macro": {"available": True, "summary": "stable"}}
-            pipeline._synthesize_via_claude(per_lens, per_lens_digest, available_count=1)
-
-        call_args = mock_client.messages.create.call_args
-        actual_model = call_args.kwargs.get("model") if call_args.kwargs else None
-
-        assert actual_model != _HAIKU_LITERAL, (
-            f"_synthesize_via_claude must NOT use the legacy Haiku literal "
-            f"{_HAIKU_LITERAL!r} as its default. Got: {actual_model!r}. "
-            f"Replace the hardcoded literal with os.environ.get('ADVISOR_SYNTHESIS_MODEL', "
-            f"{_EXPECTED_DEFAULT_MODEL!r})."
-        )
-        assert actual_model == _EXPECTED_DEFAULT_MODEL, (
-            f"Default must be {_EXPECTED_DEFAULT_MODEL!r}, got {actual_model!r}."
         )
 
 
@@ -620,13 +576,12 @@ class TestNoHardcodedModelLiterals:
             "Replace with os.environ.get('ADVISOR_SYNTHESIS_MODEL', ...)."
         )
 
-    def test_env_var_name_appears_in_all_three_files(self):
-        """The string 'ADVISOR_SYNTHESIS_MODEL' must appear in every file that
-        makes LLM calls, confirming the env var is used (not just absent from call sites).
-        """
+    def test_env_var_name_appears_in_the_files_that_read_it_directly(self):
+        """The string 'ADVISOR_SYNTHESIS_MODEL' must appear in every file that reads
+        the variable itself. The lens pipeline no longer does: it resolves its model
+        through the request helper's synthesis knob, so it is not in this list."""
         _ENV_VAR_NAME = "ADVISOR_SYNTHESIS_MODEL"
         for rel_path in (
-            "advisors/lens_pipeline.py",
             "advisors/advisor_chat.py",
             "ai_advisor.py",
         ):
@@ -984,6 +939,69 @@ class TestLensPipelineRunPipelineModelWiring:
             f"run_pipeline with available lenses must pass env model "
             f"{_TEST_MODEL_OVERRIDE!r} to messages.create. Got {actual_model!r}."
         )
+
+    def test_override_request_names_exactly_that_id_through_the_request_helper(self, monkeypatch):
+        """An ADVISOR_SYNTHESIS_MODEL override is sent verbatim and never validated against
+        the Models API, as the request helper's own request (explicit effort, fallback
+        opt-in); the suggestion override never reaches the synthesis."""
+        override = older_id("opus")
+        assert override != newest_id("opus")
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", override)
+        monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", older_id("fable"))
+        fake = AnthropicHttpFake.with_captured_page()
+        fake.queue_message(
+            reply_with_text(
+                "thinking_text.json",
+                '{"overall_sentiment": "neutral", "sentiment_rationale": "steady"}',
+            )
+        )
+
+        import ai_advisor
+        import database
+
+        with (
+            served_by(fake),
+            patch.object(
+                ai_advisor,
+                "_build_technicals_section",
+                return_value={
+                    "lens": "technicals",
+                    "available": True,
+                    "summary": "bullish",
+                    "sources": [],
+                },
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_sentiment_section",
+                return_value={"lens": "sentiment", "available": False, "sources": []},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_derivatives_section",
+                return_value={"lens": "derivatives", "available": False, "sources": []},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_macro_section",
+                return_value={"lens": "macro", "available": False, "sources": []},
+            ),
+            patch.object(
+                ai_advisor,
+                "_build_fundamentals_section",
+                return_value={"lens": "fundamentals", "available": False, "sources": []},
+            ),
+            patch.object(database, "insert_advisor_observation", return_value=99),
+        ):
+            from advisors.lens_pipeline import run_pipeline
+
+            run_pipeline(dry_run=False)
+
+        (request,) = fake.message_requests
+        assert request.body["model"] == override
+        assert fake.listing_requests == [], "an override is never listed or validated"
+        assert request.body["output_config"] == {"effort": "high"}
+        assert request.body["fallbacks"] == "default"
 
 
 # ---------------------------------------------------------------------------

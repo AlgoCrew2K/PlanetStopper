@@ -33,9 +33,20 @@ explain_recommendation.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._anthropic_site_harness import (
+    message_body,
+    newest_id,
+    older_id,
+    served_by,
+    text_of,
+)
 from tests.app._retirement_run_summary_stub import with_summary
+from tests.llm_request.conftest import error_outcome
 
 _CANDIDATE_HASH = "cand-enrich-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
@@ -334,3 +345,106 @@ class TestExplainerReceivesResolvedNames:
         by_candidate = {c["candidate_id"]: c for c in captured_calls}
         assert by_candidate[_CANDIDATE_HASH]["candidate_name"] == _CANDIDATE_NAME
         assert by_candidate[other_candidate]["candidate_name"] == other_name
+
+
+# ---------------------------------------------------------------------------
+# The worker with the real explainer, a real client over the HTTP fake: which
+# model each explanation request names, and what is stored when none can be asked
+# ---------------------------------------------------------------------------
+
+
+def _run_worker_with_the_real_explainer(fake, recs):
+    """Run the tick worker; return the recommendation dicts handed to persistence."""
+    import app as app_module
+
+    persisted: list[dict] = []
+
+    def _persist(recs_to_store, **kw):
+        persisted.extend(recs_to_store)
+        return len(recs_to_store)
+
+    with pytest.MonkeyPatch.context() as mp, served_by(fake):
+        import advisors.retirement_recommender as recommender_module
+
+        mp.setattr(
+            recommender_module,
+            "build_recommendations_with_summary",
+            with_summary(lambda **kw: recs),
+        )
+        mp.setattr(recommender_module, "persist_recommendations", _persist)
+        app_module._retirement_recommender_tick_worker()
+    return persisted
+
+
+class TestExplanationRequestThroughTheWorker:
+    @pytest.mark.parametrize(
+        "page_fixture",
+        ["models/page_captured.json", "models/relisted_newer_fable.json"],
+        ids=["captured_listing", "listing_with_a_later_fable_model"],
+    )
+    def test_the_request_names_the_newest_fable_line_model_listed_at_run_time(
+        self, isolated_db, unresolved_models, page_fixture
+    ):
+        page = load_fixture(page_fixture)
+        fake = AnthropicHttpFake(pages=[page])
+        fake.queue_message(message_body("thinking_text.json"))
+
+        persisted = _run_worker_with_the_real_explainer(fake, [_sample_rec()])
+
+        (request,) = fake.message_requests
+        assert request.body["model"] == newest_id("fable", page["data"])
+        assert fake.listing_requests, "the model is resolved through the Models API, not a literal"
+        assert persisted[0]["explanation"] == text_of(message_body("thinking_text.json")).strip()
+        assert fake.misuse == []
+
+    def test_the_suggestion_override_names_exactly_that_id_and_is_never_listed(
+        self, isolated_db, monkeypatch
+    ):
+        override = older_id("fable")
+        monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", override)
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", older_id("opus"))
+        fake = AnthropicHttpFake.with_captured_page()
+        fake.queue_message(message_body("thinking_text.json"))
+
+        persisted = _run_worker_with_the_real_explainer(fake, [_sample_rec()])
+
+        (request,) = fake.message_requests
+        assert request.body["model"] == override
+        assert fake.listing_requests == []
+        assert persisted[0]["explanation"], "the override reply is stored as the explanation"
+
+    def test_with_no_model_available_every_recommendation_is_stored_without_an_explanation(
+        self, isolated_db, unresolved_models, caplog
+    ):
+        fake = AnthropicHttpFake.with_captured_page()
+        for _ in range(4):
+            fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        recs = [_sample_rec(), _sample_rec(candidate_id="cand-enrich-other")]
+
+        with caplog.at_level(logging.WARNING):
+            persisted = _run_worker_with_the_real_explainer(fake, recs)
+
+        assert len(persisted) == 2, "a failed explanation never drops a recommendation"
+        assert all("explanation" in rec and rec["explanation"] is None for rec in persisted)
+        assert fake.message_requests == [], "no request is sent for a family that is unresolved"
+        reason_logs = [
+            r
+            for r in caplog.records
+            if r.name == "advisors.retirement_explainer"
+            and r.levelno >= logging.WARNING
+            and "model_unavailable" in r.getMessage()
+        ]
+        assert reason_logs, "a WARNING or above must name model_unavailable"
+
+    def test_a_truncated_explanation_is_not_stored_while_the_next_recommendation_still_is(
+        self, isolated_db
+    ):
+        fake = AnthropicHttpFake.with_captured_page()
+        fake.queue_message(message_body("max_tokens.json"))
+        fake.queue_message(message_body("thinking_text.json"))
+        recs = [_sample_rec(), _sample_rec(candidate_id="cand-enrich-other")]
+
+        persisted = _run_worker_with_the_real_explainer(fake, recs)
+
+        assert persisted[0]["explanation"] is None, "the truncated reply's partial text is dropped"
+        assert persisted[1]["explanation"] == text_of(message_body("thinking_text.json")).strip()

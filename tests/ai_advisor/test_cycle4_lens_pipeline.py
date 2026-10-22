@@ -58,9 +58,25 @@ import json
 import logging
 import pathlib
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._anthropic_site_harness import (
+    FALLBACK_BETA,
+    FORBIDDEN_PARAMETERS,
+    SDK_NO_TIMEOUT_MAX_TOKENS,
+    message_body,
+    newest_id,
+    older_id,
+    refusal_reason_text,
+    reply_with_text,
+    served_by,
+    text_of,
+)
+from tests.llm_request.conftest import error_outcome
 
 # ---------------------------------------------------------------------------
 # Repo root helpers
@@ -1346,17 +1362,17 @@ class TestGoldenFixtureSchemaContract:
 # ---------------------------------------------------------------------------
 
 
-def _make_claude_response_mock(text: str) -> MagicMock:
-    """Build a MagicMock that mimics anthropic SDK response.content[0].text."""
-    block = MagicMock()
-    block.text = text
-    response = MagicMock()
-    response.content = [block]
-    return response
+def _make_claude_response_mock(text: str) -> SimpleNamespace:
+    """A reply as the request helper reads it: one text-typed block carrying the answer."""
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        model="a-served-model",
+        stop_reason="end_turn",
+    )
 
 
 def _make_client_mock(response_text: str) -> MagicMock:
-    """Build a MagicMock client whose messages.create returns the given text."""
+    """Build a MagicMock client whose messages.create returns a reply holding the given text."""
     response = _make_claude_response_mock(response_text)
     client = MagicMock()
     client.messages.create.return_value = response
@@ -1562,3 +1578,232 @@ class TestRobustClaudeJsonParsing:
             f"D-1: rationale for a parse failure must contain 'JSONDecodeError' (type name); "
             f"got {rationale!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The nightly worker with a real client over the HTTP fake: which model the
+# synthesis request names, how it reads a thinking model's reply, and what row
+# is written when no answer can be had
+# ---------------------------------------------------------------------------
+
+_SYNTHESIS_RATIONALE = "Breadth is narrowing while momentum fades."
+_SYNTHESIS_JSON = json.dumps(
+    {"overall_sentiment": "risk-off", "sentiment_rationale": _SYNTHESIS_RATIONALE}
+)
+# The old budget (256) is exhausted inside the thinking block on a thinking model; the request
+# budget leaves room for thinking plus the JSON answer. With no timeout passed the SDK refuses
+# a budget above SDK_NO_TIMEOUT_MAX_TOKENS. Request settings are the per-site table of the approach.
+_MIN_SYNTHESIS_MAX_TOKENS = 8000
+
+
+@pytest.fixture
+def fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
+
+
+def _run_nightly_worker(fake) -> dict:
+    """Run the 03:00 worker with one available lens; return the MARKET_PRISM write's kwargs."""
+    import app as app_module
+
+    captured: list[dict] = []
+
+    def _capture(**kwargs):
+        captured.append(kwargs)
+        return 900
+
+    with (
+        patch(
+            "ai_advisor._build_technicals_section",
+            return_value=_stub_lens_available("technicals"),
+        ),
+        patch(
+            "ai_advisor._build_sentiment_section", return_value=_stub_lens_unavailable("sentiment")
+        ),
+        patch(
+            "ai_advisor._build_derivatives_section",
+            return_value=_stub_lens_unavailable("derivatives"),
+        ),
+        patch("ai_advisor._build_macro_section", return_value=_stub_lens_unavailable("macro")),
+        patch(
+            "ai_advisor._build_fundamentals_section",
+            return_value=_stub_lens_unavailable("fundamentals"),
+        ),
+        served_by(fake),
+        patch("database.insert_advisor_observation", side_effect=_capture),
+    ):
+        app_module._lens_pipeline_worker()
+
+    market_prism = [c for c in captured if c.get("advisor_role") == "MARKET_PRISM"]
+    assert len(market_prism) == 1, "the worker must write exactly one MARKET_PRISM row"
+    row = market_prism[0]
+    if isinstance(row["raw_response"], str):
+        row["raw_response"] = json.loads(row["raw_response"])
+    return row
+
+
+class TestSynthesisRequestThroughTheWorker:
+    @pytest.mark.parametrize(
+        "page_fixture",
+        ["models/page_captured.json", "models/relisted_newer_opus.json"],
+        ids=["captured_listing", "listing_with_a_later_opus_model"],
+    )
+    def test_the_request_names_the_newest_opus_line_model_listed_at_run_time(
+        self, unresolved_models, page_fixture
+    ):
+        page = load_fixture(page_fixture)
+        fake = AnthropicHttpFake(pages=[page])
+        fake.queue_message(reply_with_text("thinking_text.json", _SYNTHESIS_JSON))
+
+        row = _run_nightly_worker(fake)
+
+        (request,) = fake.message_requests
+        assert request.body["model"] == newest_id("opus", page["data"])
+        assert fake.listing_requests, "the model is resolved through the Models API, not a literal"
+        assert row["verdict"] == "risk-off"
+        assert fake.misuse == []
+
+    def test_the_request_body_leaves_room_for_thinking_and_keeps_the_sites_prompt(self, fake):
+        fake.queue_message(reply_with_text("thinking_text.json", _SYNTHESIS_JSON))
+
+        _run_nightly_worker(fake)
+
+        (request,) = fake.message_requests
+        body = request.body
+        assert body["output_config"] == {"effort": "high"}
+        assert _MIN_SYNTHESIS_MAX_TOKENS <= body["max_tokens"] <= SDK_NO_TIMEOUT_MAX_TOKENS
+        assert body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+        assert FORBIDDEN_PARAMETERS.isdisjoint(body)
+        assert "tools" not in body and "tool_choice" not in body, "plain text, not tool use"
+        assert [m["role"] for m in body["messages"]] == ["user"], "no assistant prefill"
+        prompt = body["messages"][0]["content"]
+        assert "technicals:" in prompt, "the available lens digest is part of the prompt"
+        assert '"overall_sentiment"' in prompt, "the prompt still asks for the JSON answer"
+
+
+class TestSynthesisReadsOnlyTheTextBlock:
+    def test_sentiment_and_rationale_are_parsed_from_the_text_block_after_thinking(self, fake):
+        body = reply_with_text("thinking_text.json", _SYNTHESIS_JSON)
+        assert [b["type"] for b in body["content"]] == ["thinking", "text"]
+        fake.queue_message(body)
+
+        row = _run_nightly_worker(fake)
+
+        assert row["verdict"] == "risk-off"
+        assert row["raw_response"]["overall_sentiment"] == "risk-off"
+        assert row["raw_response"]["sentiment_rationale"] == _SYNTHESIS_RATIONALE
+
+    def test_a_fallback_served_reply_is_parsed_and_the_request_opted_into_fallback(self, fake):
+        body = reply_with_text("fallback_served_text.json", _SYNTHESIS_JSON)
+        assert [b["type"] for b in body["content"]] == ["fallback", "thinking", "text"]
+        fake.queue_message(body)
+
+        row = _run_nightly_worker(fake)
+
+        assert row["raw_response"]["overall_sentiment"] == "risk-off"
+        assert row["raw_response"]["sentiment_rationale"] == _SYNTHESIS_RATIONALE
+        (request,) = fake.message_requests
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+
+    @pytest.mark.parametrize("block_type", ["fallback", "thinking", "redacted_thinking"])
+    def test_no_other_block_type_contributes_text_even_when_it_carries_a_text_attribute(
+        self, block_type
+    ):
+        import advisors.lens_pipeline as pipeline
+
+        contrary = json.dumps(
+            {"overall_sentiment": "risk-on", "sentiment_rationale": "text of a non-text block"}
+        )
+        client = MagicMock()
+        client.messages.create.return_value = SimpleNamespace(
+            content=[
+                SimpleNamespace(type=block_type, text=contrary),
+                SimpleNamespace(type="text", text=_SYNTHESIS_JSON),
+            ],
+            model="a-served-model",
+            stop_reason="end_turn",
+        )
+        digest = {"technicals": {"available": True, "summary": "x"}}
+
+        with patch("ai_advisor._build_client", return_value=client):
+            sentiment, rationale = pipeline._synthesize_via_claude({}, digest, available_count=1)
+
+        assert (sentiment, rationale) == ("risk-off", _SYNTHESIS_RATIONALE)
+
+
+class TestSynthesisDegradesWithTheReasonText:
+    @pytest.mark.parametrize("name", ["max_tokens.json", "max_tokens_in_thinking.json"])
+    def test_a_truncated_reply_writes_limited_inputs_naming_max_tokens_and_no_partial_text(
+        self, fake, name
+    ):
+        body = message_body(name)
+        fake.queue_message(body)
+
+        row = _run_nightly_worker(fake)
+
+        assert row["verdict"] == "limited-inputs"
+        assert row["raw_response"]["sentiment_rationale"] == "Synthesis unavailable (max_tokens)."
+        partial = text_of(body)
+        assert not partial or partial[:40] not in json.dumps(row["raw_response"])
+        assert len(fake.message_requests) == 1, "the synthesis never retries a truncated reply"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "refusal_reasoning_extraction.json",
+            "refusal_null_category.json",
+            "refusal_after_partial_text.json",
+        ],
+    )
+    def test_a_refused_reply_writes_limited_inputs_naming_the_refusal_and_no_partial_text(
+        self, fake, name
+    ):
+        body = message_body(name)
+        fake.queue_message(body)
+
+        row = _run_nightly_worker(fake)
+
+        assert row["verdict"] == "limited-inputs"
+        assert row["raw_response"]["sentiment_rationale"] == (
+            f"Synthesis unavailable ({refusal_reason_text(name)})."
+        )
+        partial = text_of(body)
+        assert not partial or partial[:40] not in json.dumps(row["raw_response"])
+        assert len(fake.message_requests) == 1
+
+    def test_no_model_available_writes_limited_inputs_naming_model_unavailable(
+        self, fake, unresolved_models
+    ):
+        fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+
+        row = _run_nightly_worker(fake)
+
+        assert row["verdict"] == "limited-inputs"
+        assert (
+            row["raw_response"]["sentiment_rationale"]
+            == "Synthesis unavailable (model_unavailable)."
+        )
+        assert row["raw_response"]["available_lens_count"] == 1, "the lens digest is still written"
+        assert fake.message_requests == [], "no request is sent for a family that is unresolved"
+
+    @pytest.mark.parametrize(
+        ("error_fixture", "reason_code"),
+        [
+            ("404_not_found.json", "override_model_not_found"),
+            ("400_invalid_request.json", "override_request_rejected"),
+        ],
+    )
+    def test_a_rejected_override_writes_limited_inputs_naming_the_reason_and_the_variable(
+        self, fake, monkeypatch, error_fixture, reason_code
+    ):
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", older_id("opus"))
+        fake.queue_message(error_outcome(error_fixture))
+
+        row = _run_nightly_worker(fake)
+
+        assert row["verdict"] == "limited-inputs"
+        assert row["raw_response"]["sentiment_rationale"] == (
+            f"Synthesis unavailable ({reason_code}: ADVISOR_SYNTHESIS_MODEL)."
+        )
+        assert len(fake.message_requests) == 1, "an override is never retried"

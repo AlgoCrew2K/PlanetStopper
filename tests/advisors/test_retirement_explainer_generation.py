@@ -1,20 +1,22 @@
 """RED tests -- advisors/retirement_explainer.py (AC-1, AC-9).
 
 feature-plans/retirement-approval-lifecycle.md AC-1: explain_recommendation(
-recommendation: dict) -> str | None. Uses ai_advisor._build_client() +
-model_config.get_advisor_suggestion_model() + client.messages.create(...)
-plain text (NOT tool-use), mirroring advisor_chat.explain_artifact. D-1
-never-raises: any failure returns None (honest empty), log only
-type(exc).__name__, never str(exc). Read-only -- no DB write, no trade/exec
-primitive.
+recommendation: dict) -> str | None. Uses ai_advisor._build_client() and sends
+one plain text (NOT tool-use) request through llm_request.send on the
+suggestion knob. D-1 never-raises: any failure, and any reply the request
+helper classifies with a reason (model_unavailable, refusal, max_tokens, an
+override rejection), returns None (honest empty); the log carries the reason
+text or type(exc).__name__, never str(exc) and never reply content. Read-only
+-- no DB write, no trade/exec primitive.
 
-Mocking idiom copied verbatim from tests/ai_advisor/test_chat_engine.py's own
-_make_fake_client/_make_fake_llm_response pattern (SimpleNamespace content
-blocks with a .text attribute, patch "ai_advisor._build_client") -- the
-established convention for this exact LLM seam in this codebase. NO live
-Anthropic call anywhere in this file.
-
-Expected state: RED until advisors/retirement_explainer.py exists.
+Two harnesses, both patching "ai_advisor._build_client" and neither reaching
+the network. The first classes drive a MagicMock client with SimpleNamespace
+content blocks (type "text" and a .text attribute: the shape the request
+helper reads), the convention of tests/ai_advisor/test_chat_engine.py. The
+last classes drive a real anthropic client over the in-process HTTP fake
+(tests/_anthropic_http_fake.py), so the request is asserted as sent on the
+wire and the SDK parses captured replies; model IDs come from the captured
+Models page, never typed.
 """
 
 from __future__ import annotations
@@ -25,6 +27,19 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._anthropic_site_harness import (
+    FALLBACK_BETA,
+    FORBIDDEN_PARAMETERS,
+    message_body,
+    newest_id,
+    older_id,
+    refusal_reason_text,
+    served_by,
+    text_of,
+)
+from tests.llm_request.conftest import error_outcome
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _MODULE_REL_PATH = "advisors/retirement_explainer.py"
@@ -55,8 +70,8 @@ _SAMPLE_RECOMMENDATION = {
 def _make_fake_llm_response(
     text: str = "A concise explanation of why this candidate is redundant.",
 ):
-    content_block = SimpleNamespace(text=text)
-    return SimpleNamespace(content=[content_block], model="claude-fable-5", stop_reason="end_turn")
+    content_block = SimpleNamespace(type="text", text=text)
+    return SimpleNamespace(content=[content_block], model="a-served-model", stop_reason="end_turn")
 
 
 def _make_fake_client(text: str | None = None):
@@ -142,28 +157,6 @@ def test_prompt_is_grounded_in_the_recommendations_own_evidence():
             f"Expected {expected_value!r} (from the rec's own raw_response) to "
             f"appear in the prompt sent to the LLM; call kwargs were: {call_kwargs!r}"
         )
-
-
-def test_uses_the_advisor_suggestion_model_accessor():
-    """AC-1: model_config.get_advisor_suggestion_model() (fable-5, the cheap
-    suggestion-family knob) -- never a hardcoded model string, never the
-    opus synthesis knob."""
-    import advisors.retirement_explainer as re_mod
-
-    fake_client = _make_fake_client()
-    sentinel_model = "sentinel-explainer-model-xyz"
-    with (
-        patch("ai_advisor._build_client", return_value=fake_client),
-        patch("model_config.get_advisor_suggestion_model", return_value=sentinel_model),
-    ):
-        re_mod.explain_recommendation(_SAMPLE_RECOMMENDATION)
-
-    _, call_kwargs = fake_client.messages.create.call_args
-    assert call_kwargs.get("model") == sentinel_model, (
-        f"explain_recommendation must source its model from "
-        f"model_config.get_advisor_suggestion_model(); expected {sentinel_model!r}, "
-        f"got {call_kwargs.get('model')!r}."
-    )
 
 
 def test_uses_plain_text_messages_create_not_tool_use():
@@ -309,3 +302,223 @@ def test_source_does_not_reference_composer_draft_client_or_alpha_bot_execution(
     source = _read_source()
     assert "composer_draft_client" not in source
     assert "alpha_bot_execution" not in source
+
+
+# ===========================================================================
+# Real client over the HTTP fake: the request as sent, and the reply as parsed
+# ===========================================================================
+
+EXPLAINER_LOGGER = "advisors.retirement_explainer"
+# The old budget (512) held no thinking: the request must leave room for thinking plus a
+# 2-4 sentence answer. Request settings are the per-site table of the approach.
+MIN_EXPLAINER_MAX_TOKENS = 4000
+MIN_EXPLAINER_TIMEOUT_SECONDS = 120.0
+THINKING_THEN_TEXT = "thinking_text.json"
+
+
+@pytest.fixture
+def fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
+
+
+def _explain(fake, recommendation=None):
+    import advisors.retirement_explainer as re_mod
+
+    with served_by(fake):
+        return re_mod.explain_recommendation(recommendation or _SAMPLE_RECOMMENDATION)
+
+
+def _warning_texts(caplog, logger_name=EXPLAINER_LOGGER) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == logger_name and r.levelno >= logging.WARNING
+    ]
+
+
+class TestExplainerRequestOnTheWire:
+    def test_request_names_the_newest_fable_line_model(self, fake):
+        fake.queue_message(message_body(THINKING_THEN_TEXT))
+
+        _explain(fake)
+
+        (request,) = fake.message_requests
+        assert request.body["model"] == newest_id("fable"), (
+            "the explainer must resolve the suggestion family's newest active model"
+        )
+        assert fake.misuse == []
+
+    def test_override_request_names_exactly_that_id_through_the_request_helper(
+        self, fake, monkeypatch
+    ):
+        override = older_id("fable")
+        assert override != newest_id("fable")
+        monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", override)
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", older_id("opus"))
+        fake.queue_message(message_body(THINKING_THEN_TEXT))
+
+        result = _explain(fake)
+
+        (request,) = fake.message_requests
+        assert request.body["model"] == override, "the suggestion override is sent verbatim"
+        assert fake.listing_requests == [], "an override is never validated against the Models API"
+        assert request.body["output_config"] == {"effort": "high"}, (
+            "an override request is still the request helper's request (explicit effort)"
+        )
+        assert result == text_of(message_body(THINKING_THEN_TEXT)).strip()
+
+    def test_request_body_is_the_sites_prompt_with_thinking_model_settings(self, fake):
+        import advisors.retirement_explainer as re_mod
+
+        fake.queue_message(message_body(THINKING_THEN_TEXT))
+
+        _explain(fake)
+
+        (request,) = fake.message_requests
+        body = request.body
+        assert body["output_config"] == {"effort": "high"}
+        assert body["max_tokens"] >= MIN_EXPLAINER_MAX_TOKENS
+        assert body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+        assert request.timeout["read"] >= MIN_EXPLAINER_TIMEOUT_SECONDS
+        assert FORBIDDEN_PARAMETERS.isdisjoint(body)
+        assert "tools" not in body and "tool_choice" not in body, "plain text, not tool use"
+        assert body["system"] == re_mod._EXPLAIN_SYSTEM_PROMPT, "prompt text is unchanged"
+        assert body["messages"] == re_mod._build_explain_messages(_SAMPLE_RECOMMENDATION), (
+            "the evidence message is unchanged and ends on the user turn (no assistant prefill)"
+        )
+
+
+class TestExplainerReadsOnlyTheTextBlock:
+    def test_explanation_after_a_thinking_block_is_the_text_block_only(self, fake):
+        body = message_body(THINKING_THEN_TEXT)
+        assert [b["type"] for b in body["content"]] == ["thinking", "text"]
+        fake.queue_message(body)
+
+        result = _explain(fake)
+
+        assert result == text_of(body).strip()
+        assert body["content"][0]["signature"] not in result
+        assert fake.message_requests[0].body["max_tokens"] >= MIN_EXPLAINER_MAX_TOKENS, (
+            "the request must leave room for the thinking block this reply carries"
+        )
+
+    def test_a_fallback_served_reply_yields_the_serving_models_text_and_the_request_opted_in(
+        self, fake
+    ):
+        body = message_body("fallback_served_text.json")
+        assert [b["type"] for b in body["content"]] == ["fallback", "thinking", "text"]
+        fake.queue_message(body)
+
+        result = _explain(fake)
+
+        assert result == text_of(body).strip()
+        (request,) = fake.message_requests
+        assert request.body["fallbacks"] == "default", (
+            "a fallback model can only answer a request that asked for fallback"
+        )
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+
+    @pytest.mark.parametrize("block_type", ["fallback", "thinking", "redacted_thinking"])
+    def test_no_other_block_type_contributes_text_even_when_it_carries_a_text_attribute(
+        self, block_type
+    ):
+        import advisors.retirement_explainer as re_mod
+
+        leaked = "TEXT-CARRIED-BY-A-NON-TEXT-BLOCK"
+        answer = "The candidate is redundant with its sibling."
+        client = MagicMock()
+        client.messages.create.return_value = SimpleNamespace(
+            content=[
+                SimpleNamespace(type=block_type, text=leaked),
+                SimpleNamespace(type="text", text=answer),
+            ],
+            model="a-served-model",
+            stop_reason="end_turn",
+        )
+
+        with patch("ai_advisor._build_client", return_value=client):
+            result = re_mod.explain_recommendation(_SAMPLE_RECOMMENDATION)
+
+        assert result == answer, (
+            f"a {block_type} block's text attribute must never enter the explanation"
+        )
+
+
+class TestExplainerReturnsNothingOnAnyReason:
+    @pytest.mark.parametrize("name", ["max_tokens.json", "max_tokens_in_thinking.json"])
+    def test_a_truncated_reply_stores_no_explanation_and_the_log_names_max_tokens(
+        self, fake, caplog, name
+    ):
+        body = message_body(name)
+        fake.queue_message(body)
+
+        with caplog.at_level(logging.WARNING):
+            result = _explain(fake)
+
+        assert result is None, "a truncated reply's partial text must not become the explanation"
+        logged = _warning_texts(caplog)
+        assert any("max_tokens" in text for text in logged), logged
+        partial = text_of(body)
+        assert not partial or partial[:40] not in " ".join(logged)
+        assert len(fake.message_requests) == 1, "the explainer never retries a truncated reply"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "refusal_reasoning_extraction.json",
+            "refusal_null_category.json",
+            "refusal_after_partial_text.json",
+        ],
+    )
+    def test_a_refused_reply_stores_no_explanation_and_logs_the_reason_text_only(
+        self, fake, caplog, name
+    ):
+        body = message_body(name)
+        fake.queue_message(body)
+        expected = refusal_reason_text(name)
+
+        with caplog.at_level(logging.WARNING):
+            result = _explain(fake)
+
+        assert result is None, "no partial output survives a refusal"
+        logged = _warning_texts(caplog)
+        assert any(expected in text for text in logged), (expected, logged)
+        if expected == "refusal":
+            assert not any("None" in text for text in logged), "a null category is not rendered"
+        partial = text_of(body)
+        assert not partial or partial[:40] not in " ".join(logged)
+        assert len(fake.message_requests) == 1
+
+    @pytest.mark.parametrize(
+        ("error_fixture", "reason_code"),
+        [
+            ("404_not_found.json", "override_model_not_found"),
+            ("400_invalid_request.json", "override_request_rejected"),
+        ],
+    )
+    def test_a_rejected_override_stores_no_explanation_and_logs_the_reason_with_the_variable(
+        self, fake, caplog, monkeypatch, error_fixture, reason_code
+    ):
+        monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", older_id("fable"))
+        fake.queue_message(error_outcome(error_fixture))
+
+        with caplog.at_level(logging.WARNING):
+            result = _explain(fake)
+
+        assert result is None
+        logged = _warning_texts(caplog)
+        assert any(f"{reason_code}: ADVISOR_SUGGESTION_MODEL" in text for text in logged), logged
+        assert len(fake.message_requests) == 1, "an override is never retried"
+
+    def test_an_unresolved_family_sends_nothing_returns_none_and_logs_model_unavailable(
+        self, fake, caplog, unresolved_models
+    ):
+        fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+
+        with caplog.at_level(logging.WARNING):
+            result = _explain(fake)
+
+        assert result is None
+        assert fake.message_requests == []
+        assert any("model_unavailable" in text for text in _warning_texts(caplog))
