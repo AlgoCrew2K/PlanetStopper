@@ -941,11 +941,30 @@ def _run_lens_pipeline() -> None:
 
 
 def _model_warmup_worker() -> None:
-    raise NotImplementedError("Not implemented")
+    """Resolve both model knobs once so page badges show names (never raises).
+
+    Imported lazily to keep the advisors off the execution path (CC-2).
+    Only type(exc).__name__ is logged: exception text can carry credentials.
+    """
+    try:
+        import ai_advisor
+        import model_config as _mc
+
+        client = ai_advisor._build_client()
+        first = _mc.resolve(_mc.Knob.SUGGESTION, client)
+        # One listing fills both families; after a failed listing a second
+        # resolve would just send another request, so stop.
+        if first.source != "unavailable":
+            _mc.resolve(_mc.Knob.SYNTHESIS, client)
+    except Exception as exc:
+        _daemon_log.warning("Model warm-up failed: %s", type(exc).__name__)
 
 
 def _start_model_warmup() -> None:
-    raise NotImplementedError("Not implemented")
+    """Run the model warm-up on a daemon thread; returns immediately."""
+    import threading
+
+    threading.Thread(target=_model_warmup_worker, daemon=True, name="model-warmup").start()
 
 
 def _incubation_tick_worker() -> None:
@@ -6525,29 +6544,6 @@ def _low_power(validation_days: "int | None") -> bool:
     return validation_days is not None and validation_days < MIN_POWER_FOLD_DAYS
 
 
-# AC-1/AC-2/AC-3/AC-16 (attribution honesty + coherence): every model-name
-# badge/copy string in the AI Advisor UI reads a resolved accessor value at
-# render time — never a hardcoded "Opus"/"Fable" literal. This map is
-# display-only humanization (mirrors the map-known/fallback-to-raw idiom in
-# advisors/prism_render.py) — an UNKNOWN model ID (a future model, or a test
-# monkeypatch marker) passes through unchanged rather than being dropped, so
-# a new model or a test fixture can never silently vanish from the badge.
-_MODEL_DISPLAY_NAMES = {
-    "claude-opus-4-8": "Claude Opus 4.8",
-    "claude-opus-4-7": "Claude Opus 4.7",
-    "claude-sonnet-5": "Claude Sonnet 5",
-    "claude-haiku-4-5": "Claude Haiku 4.5",
-    "claude-fable-5": "Claude Fable 5",
-    "claude-mythos-5": "Claude Mythos 5",
-}
-
-
-def _humanize_model_name(model_id: str) -> str:
-    """Map a raw model ID to a display-ready name; unmapped IDs (a future
-    model, or a test's monkeypatched marker string) pass through unchanged."""
-    return _MODEL_DISPLAY_NAMES.get(model_id, model_id)
-
-
 def _build_verification_count_line(summary: "dict") -> str:
     """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
     human-readable status line for the Overview tab's Numeric Verification
@@ -7170,16 +7166,10 @@ def ai_advisor_tab():
     except Exception:
         pass  # Empty-state rendered by template on [].
 
-    # AC-1/AC-2/AC-3 (attribution honesty): resolved at request time so a
-    # monkeypatch or an env-var change takes effect without a daemon restart —
-    # same pattern as every other accessor-driven value on this page.
-    # ADVISOR_SUGGESTION_MODEL (model_config) drives Strategy Builder's
-    # built-new label + the SB run-controls-note (AC-1/AC-3). ADVISOR_
-    # SYNTHESIS_MODEL (ai_advisor.resolve_advisor_model) drives Chat's badge
-    # + the Market Prism attribution (AC-1/AC-2) — a separate, independent
-    # knob per AC-16.
-    advisor_suggestion_model = _humanize_model_name(model_config.get_advisor_suggestion_model())
-    advisor_synthesis_model = _humanize_model_name(ai_advisor.resolve_advisor_model())
+    # Badges read the cached resolution only; the render never lists models,
+    # so it can never wait on the Models API (the startup warm-up fills it).
+    advisor_suggestion_model = model_config.peek(model_config.Knob.SUGGESTION).badge_text
+    advisor_synthesis_model = model_config.peek(model_config.Knob.SYNTHESIS).badge_text
 
     return render_template(
         "ai_advisor.html",
@@ -9022,6 +9012,7 @@ if __name__ == "__main__":
 
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
+    _start_model_warmup()
     port = int(os.environ.get("PORT", 5000))
     print(f"\nStarting Alpha Bot Control Center at http://localhost:{port}\n")
 
