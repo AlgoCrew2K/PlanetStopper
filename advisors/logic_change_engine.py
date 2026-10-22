@@ -958,14 +958,16 @@ def generate_reasoned_logic_candidates(
 # ---------------------------------------------------------------------------
 
 
-def _reply_model_and_message(sink: list) -> tuple[str, str]:
+def _reply_model_and_message(sink: list) -> tuple[str | None, str]:
     """Serving model and empty-run message from the collected final reply.
 
-    A patched or failed generator leaves ``sink`` empty: no model, gate message.
+    A patched or failed generator leaves ``sink`` empty: model ``None`` (no reply
+    arrived, so the caller keeps its resolved model) and the gate message. A reply
+    with an empty model (``model_unavailable``) returns ``""``, which clears it.
     """
     reply = sink[-1] if sink else None
     if reply is None:
-        return "", NO_SURVIVORS_MESSAGE
+        return None, NO_SURVIVORS_MESSAGE
     if reply.reason is None:
         return reply.model, NO_SURVIVORS_MESSAGE
     return reply.model, f"no logic change was generated this run ({reply.reason_text()})"
@@ -1118,7 +1120,7 @@ def propose_operator_logic_change(
         )
         tweak = reasoned[0] if reasoned else None
         reply_model, empty_message = _reply_model_and_message(reply_sink)
-        if reply_model:
+        if reply_model is not None:
             provenance["generation_model"] = reply_model
 
     symphony_name = (
@@ -1341,7 +1343,7 @@ def suggest_logic_changes(
         reply_sink=reply_sink,
     )
     reply_model, empty_message = _reply_model_and_message(reply_sink)
-    if reply_model:
+    if reply_model is not None:
         provenance["generation_model"] = reply_model
 
     if not candidate_tweaks:
