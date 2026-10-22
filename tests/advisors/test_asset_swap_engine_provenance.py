@@ -40,8 +40,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import llm_request
-
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
     _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
@@ -76,15 +74,7 @@ def _fake_backtest_result():
 
 
 def _run_suggest(
-    ase,
-    fixture_tree,
-    monkeypatch,
-    *,
-    reasoning_manifest=None,
-    run_id=None,
-    has_key=True,
-    n_pairs=1,
-    reply=None,
+    ase, fixture_tree, monkeypatch, *, reasoning_manifest=None, run_id=None, has_key=True, n_pairs=1
 ):
     monkeypatch.setattr(ase, "_has_composer_key", lambda: has_key)
     monkeypatch.setattr(
@@ -96,15 +86,12 @@ def _run_suggest(
 
     tickers = ["AGG", "IALT", "GLD"][:n_pairs]
     gen_mock = MagicMock(
-        return_value=(
-            [
-                ase.SwapCandidate(incumbent_asset=_REAL_INCUMBENT, candidate_asset=t, rationale="x")
-                for t in tickers
-            ],
-            reply,
-        )
+        return_value=[
+            ase.SwapCandidate(incumbent_asset=_REAL_INCUMBENT, candidate_asset=t, rationale="x")
+            for t in tickers
+        ]
     )
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_mock)
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_mock)
 
     kwargs = {}
     if reasoning_manifest is not None:
@@ -120,14 +107,7 @@ def _run_suggest(
 
 
 def _run_operator(
-    ase,
-    fixture_tree,
-    monkeypatch,
-    *,
-    reasoning_manifest=None,
-    run_id=None,
-    has_key=True,
-    reply=None,
+    ase, fixture_tree, monkeypatch, *, reasoning_manifest=None, run_id=None, has_key=True
 ):
     monkeypatch.setattr(ase, "_has_composer_key", lambda: has_key)
     monkeypatch.setattr(ase, "get_tradeable_set", lambda **kwargs: frozenset({"AGG"}))
@@ -136,16 +116,11 @@ def _run_operator(
     monkeypatch.setattr(ase.database, "insert_advisor_observation", insert_mock)
 
     gen_mock = MagicMock(
-        return_value=(
-            [
-                ase.SwapCandidate(
-                    incumbent_asset=_REAL_INCUMBENT, candidate_asset="AGG", rationale="x"
-                )
-            ],
-            reply,
-        )
+        return_value=[
+            ase.SwapCandidate(incumbent_asset=_REAL_INCUMBENT, candidate_asset="AGG", rationale="x")
+        ]
     )
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_mock)
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_mock)
 
     kwargs = {}
     if reasoning_manifest is not None:
@@ -163,7 +138,7 @@ def _run_operator(
 
 
 # ===========================================================================
-# AC-5: provenance shape, accessor-driven model, mode="asset-swap".
+# AC-5: provenance shape, override-driven model, mode="asset-swap".
 # ===========================================================================
 
 
@@ -226,32 +201,23 @@ _RUNNERS = [pytest.param(_run_suggest, id="suggest"), pytest.param(_run_operator
 
 
 @pytest.mark.parametrize("runner", _RUNNERS)
-def test_provenance_model_is_the_resolved_model_when_no_reply_came_back(
+def test_provenance_model_is_the_resolved_model_when_no_request_was_made(
     ase, fixture_tree, monkeypatch, runner
 ):
+    """The generator stand-in returns a plain list, so no reply travels back: the model of
+    the run is what the registry resolved, never a literal."""
     from tests.llm_request.conftest import newest_id
 
-    result, _insert = runner(ase, fixture_tree, monkeypatch, reply=None)
+    result, _insert = runner(ase, fixture_tree, monkeypatch)
 
-    assert result.provenance["generation_model"] == newest_id("fable"), (
-        "the model of a run with no reply is what the registry resolved, never a literal"
-    )
+    assert result.provenance["generation_model"] == newest_id("fable")
 
 
 @pytest.mark.parametrize("runner", _RUNNERS)
-def test_provenance_model_is_the_model_the_reply_came_from(ase, fixture_tree, monkeypatch, runner):
-    reply = llm_request.Reply(model="model-the-reply-named")
-
-    result, _insert = runner(ase, fixture_tree, monkeypatch, reply=reply)
-
-    assert result.provenance["generation_model"] == "model-the-reply-named"
-
-
-@pytest.mark.parametrize("runner", _RUNNERS)
-def test_provenance_model_is_empty_when_no_family_is_resolved_and_no_reply_came_back(
+def test_provenance_model_is_empty_when_no_family_is_resolved_and_no_request_was_made(
     ase, fixture_tree, monkeypatch, unresolved_models, runner
 ):
-    result, _insert = runner(ase, fixture_tree, monkeypatch, reply=None)
+    result, _insert = runner(ase, fixture_tree, monkeypatch)
 
     assert result.provenance["generation_model"] == ""
 
@@ -375,8 +341,8 @@ def test_no_composer_key_never_reaches_llm_seam__operator_reasoned_mode(
     — a valid ANTHROPIC_API_KEY with no Composer credentials must never bill a
     live Anthropic call for a run guaranteed to be discarded."""
     monkeypatch.setattr(ase, "_has_composer_key", lambda: False)
-    gen_spy = MagicMock(return_value=([], None))
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_spy)
+    gen_spy = MagicMock(return_value=[])
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_spy)
     monkeypatch.setattr(ase.database, "insert_advisor_observation", MagicMock(return_value=1))
 
     objective = ase.SwapObjective(
@@ -397,8 +363,8 @@ def test_no_composer_key_never_reaches_llm_seam__operator_reasoned_mode(
 
 def test_no_composer_key_never_reaches_llm_seam__suggest(ase, fixture_tree, monkeypatch):
     monkeypatch.setattr(ase, "_has_composer_key", lambda: False)
-    gen_spy = MagicMock(return_value=([], None))
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_spy)
+    gen_spy = MagicMock(return_value=[])
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_spy)
     monkeypatch.setattr(ase.database, "insert_advisor_observation", MagicMock(return_value=1))
 
     objective = ase.SwapObjective(

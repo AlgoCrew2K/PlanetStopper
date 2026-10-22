@@ -245,8 +245,8 @@ def test_propose_operator_swap_threads_reasoning_context_to_generator(
     supplied) must forward reasoning_context/reasoning_manifest to
     generate_reasoned_swap_candidates(...) unchanged."""
     _patch_common(ase, monkeypatch)
-    gen_mock = MagicMock(return_value=([], None))
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_mock)
+    gen_mock = MagicMock(return_value=[])
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_mock)
 
     objective = ase.SwapObjective(
         objective_type="reduce_drawdown", target_pair=None, measured_value=0.0
@@ -272,8 +272,8 @@ def test_suggest_swaps_threads_reasoning_context_to_generator(ase, fixture_tree,
     generate_reasoned_swap_candidates(...) unchanged (weekly-scheduler entry
     point, signature-symmetric with propose_operator_swap)."""
     _patch_common(ase, monkeypatch)
-    gen_mock = MagicMock(return_value=([], None))
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_mock)
+    gen_mock = MagicMock(return_value=[])
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_mock)
 
     objective = ase.SwapObjective(
         objective_type="reduce_correlation", target_pair=None, measured_value=0.0
@@ -302,8 +302,8 @@ def test_suggest_swaps_omitted_reasoning_context_defaults_to_none(ase, fixture_t
     untouched this cycle) must still reach the generator with
     reasoning_context=None, not raise a TypeError for a missing required arg."""
     _patch_common(ase, monkeypatch)
-    gen_mock = MagicMock(return_value=([], None))
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_mock)
+    gen_mock = MagicMock(return_value=[])
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_mock)
 
     objective = ase.SwapObjective(
         objective_type="reduce_correlation", target_pair=None, measured_value=0.0

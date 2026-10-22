@@ -277,8 +277,8 @@ class TestLensSourcesKwargOnSuggestSwaps:
                 ),
                 patch("database.insert_advisor_observation"),
                 patch(
-                    "advisors.asset_swap_engine._generate_reasoned_swap_candidates",
-                    return_value=(reasoned_pairs, None),
+                    "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                    return_value=reasoned_pairs,
                 ),
             ):
                 result = engine.suggest_swaps(
@@ -355,8 +355,8 @@ class TestLensSourcesKwargOnSuggestSwaps:
             ),
             patch("database.insert_advisor_observation", side_effect=_capture),
             patch(
-                "advisors.asset_swap_engine._generate_reasoned_swap_candidates",
-                return_value=(reasoned_pairs, None),
+                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
+                return_value=reasoned_pairs,
             ),
         ):
             engine.suggest_swaps(

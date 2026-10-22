@@ -205,9 +205,7 @@ def test_reasoning_manifest_absent_lenses_reflected_honestly_not_fabricated(
     monkeypatch.setattr(
         ase, "run_backtest", MagicMock(side_effect=RuntimeError("no backtest needed"))
     )
-    monkeypatch.setattr(
-        ase, "_generate_reasoned_swap_candidates", MagicMock(return_value=([], None))
-    )
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", MagicMock(return_value=[]))
 
     manifest = {
         "tree": "absent",

@@ -1082,10 +1082,6 @@ def _build_reasoned_swap_generation_prompt(
     return "\n\n".join(sections)
 
 
-def _generate_reasoned_swap_candidates(*args, **kwargs):
-    raise NotImplementedError("Not implemented")
-
-
 def generate_reasoned_swap_candidates(
     symphony_id: str,
     raw_value: dict,

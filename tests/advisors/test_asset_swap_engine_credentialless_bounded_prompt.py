@@ -171,8 +171,8 @@ def test_explicit_pair_operator_path_never_reaches_llm_seam_credential_less(
     _wipe_cred_env(monkeypatch)
     monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
 
-    gen_spy = MagicMock(return_value=([], None))
-    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_spy)
+    gen_spy = MagicMock(return_value=[])
+    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_spy)
     universe_spy = MagicMock(return_value=frozenset({"AGG"}))
     monkeypatch.setattr(ase, "get_tradeable_set", universe_spy)
     monkeypatch.setattr(ase, "run_backtest", lambda *a, **k: _fake_backtest_result())
