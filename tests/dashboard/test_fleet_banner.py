@@ -379,9 +379,21 @@ class TestFleetBannerTemplate:
 
     def test_js_dismiss_button_calls_fleet_alert_dismiss_route(self):
         """
-        The fleet banner must include a dismiss button that POSTs to /api/fleet-alert/dismiss.
+        The fleet banner must include a dismiss button wired to a client handler, and
+        that handler (in static/index.js) must POST to /api/fleet-alert/dismiss. The
+        request lives in the script, not inline in the template, so it can carry the
+        CSRF header every other dashboard POST sends.
         """
-        assert "/api/fleet-alert/dismiss" in self._template_src, (
-            "templates/index.html must include a button or link that POSTs to "
-            "/api/fleet-alert/dismiss per AC-V3.3 operator manual-dismiss requirement."
+        assert "dismissFleetAlert(this)" in self._template_src, (
+            "templates/index.html: the Dismiss button must call dismissFleetAlert(this) "
+            "(AC-V3.3 operator manual-dismiss requirement)."
+        )
+        script_path = pathlib.Path(__file__).parent.parent.parent / "static" / "index.js"
+        script_src = script_path.read_text(encoding="utf-8")
+        assert "/api/fleet-alert/dismiss" in script_src, (
+            "static/index.js must POST to /api/fleet-alert/dismiss from dismissFleetAlert."
+        )
+        assert "fetch('/api/fleet-alert/dismiss'" not in self._template_src, (
+            "the template must not carry its own dismiss request: an inline fetch sends no "
+            "CSRF header and the global CSRF hook refuses it."
         )
