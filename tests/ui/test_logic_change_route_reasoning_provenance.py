@@ -371,6 +371,7 @@ def test_unresolved_family_message_names_no_model_and_no_exception_text(
 
     data = support.evaluate_via_route(flask_client)
 
+    assert "model_unavailable" in data["message"], "self-guard: the run must have degraded"
     assert listing_error_text not in data["message"]
     assert not any(model_id in data["message"] for model_id in known_ids)
     assert "fable" not in data["message"].lower()

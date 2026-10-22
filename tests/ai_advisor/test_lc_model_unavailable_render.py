@@ -66,15 +66,6 @@ setTimeout(() => {
 """
 
 
-@pytest.fixture(scope="module")
-def flask_client():
-    import app as _app
-
-    _app.app.config["TESTING"] = True
-    with _app.app.test_client() as client:
-        yield client
-
-
 def _render(route_json: dict) -> str:
     assert shutil.which("node"), "node is required to run the real panel script"
     result = subprocess.run(
@@ -94,21 +85,19 @@ def _provenance_line(html: str) -> str:
     return html[start : html.find("</div>", start)]
 
 
-def _route_json(flask_client, monkeypatch, *replies, page=support.CAPTURED_MODELS_PAGE) -> dict:
+def _route_json(monkeypatch, *replies, page=support.CAPTURED_MODELS_PAGE) -> dict:
     fake = support.new_fake(page)
     support.install_route_world(monkeypatch, fake)
     for reply in replies:
         fake.queue_message(reply)
-    return support.evaluate_via_route(flask_client)
+    return support.evaluate_via_route()
 
 
-def test_unresolved_family_model_line_reads_model_unavailable(
-    flask_client, monkeypatch, unresolved_models
-):
+def test_unresolved_family_model_line_reads_model_unavailable(monkeypatch, unresolved_models):
     fake = support.new_fake()
     support.install_route_world(monkeypatch, fake)
     support.queue_failing_listings(fake)
-    data = support.evaluate_via_route(flask_client)
+    data = support.evaluate_via_route()
     assert data["provenance"]["generation_model"] == "", (
         "self-guard: the route must report no model"
     )
@@ -120,9 +109,9 @@ def test_unresolved_family_model_line_reads_model_unavailable(
     )
 
 
-def test_model_line_names_the_reply_model_when_a_reply_arrived(flask_client, monkeypatch):
+def test_model_line_names_the_reply_model_when_a_reply_arrived(monkeypatch):
     reply = support.reply_with_tool_edit(support.real_edit())
-    data = _route_json(flask_client, monkeypatch, reply)
+    data = _route_json(monkeypatch, reply)
 
     line = _provenance_line(_render(data))
 
@@ -130,15 +119,9 @@ def test_model_line_names_the_reply_model_when_a_reply_arrived(flask_client, mon
     assert "model unavailable" not in line
 
 
-def test_model_line_is_rendered_on_an_error_response_too(
-    flask_client, monkeypatch, unresolved_models
-):
+def test_model_line_is_rendered_on_an_error_response_too(monkeypatch, unresolved_models):
     monkeypatch.setattr("advisors.logic_change_engine._has_composer_key", lambda: False)
-    resp = flask_client.post(
-        "/ai-advisor/logic-changes/evaluate",
-        json={"symphony_id": support.ROUTE_SYMPHONY_NAME, "change_description": "x"},
-    )
-    data = resp.get_json()
+    data = support.post_evaluate().get_json()
     assert "error" in data, "self-guard: the no-key path answers with an error"
 
     line = _provenance_line(_render(data))
@@ -146,8 +129,8 @@ def test_model_line_is_rendered_on_an_error_response_too(
     assert "model unavailable" in line
 
 
-def test_security_model_text_is_escaped_in_the_model_line(flask_client, monkeypatch):
-    data = _route_json(flask_client, monkeypatch, support.reply_with_tool_edit(support.real_edit()))
+def test_security_model_text_is_escaped_in_the_model_line(monkeypatch):
+    data = _route_json(monkeypatch, support.reply_with_tool_edit(support.real_edit()))
     data["provenance"]["generation_model"] = '<img src=x onerror=alert(1)>"&'
 
     line = _provenance_line(_render(data))

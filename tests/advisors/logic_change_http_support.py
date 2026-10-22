@@ -160,6 +160,16 @@ def reply_with_tool_edit(edit: dict) -> dict:
     return _with_tool_edit(load_fixture(TOOL_REPLY), edit)
 
 
+def reply_with_thinking_then_tool_edit(edit: dict) -> dict:
+    """The captured tool reply preceded by the captured thinking block of the thinking-text reply."""
+    body = reply_with_tool_edit(edit)
+    thinking = next(
+        b for b in load_fixture("messages/thinking_text.json")["content"] if b["type"] == "thinking"
+    )
+    body["content"] = [copy.deepcopy(thinking), *body["content"]]
+    return body
+
+
 def fallback_served_reply(edit: dict) -> dict:
     return _with_tool_edit(load_fixture(FALLBACK_REPLY), edit)
 
@@ -217,11 +227,23 @@ def install_route_world(monkeypatch, fake: AnthropicHttpFake) -> MagicMock:
     return spy
 
 
-def evaluate_via_route(client) -> dict:
-    resp = client.post(
-        "/ai-advisor/logic-changes/evaluate",
-        json={"symphony_id": ROUTE_SYMPHONY_NAME, "change_description": ROUTE_CHANGE_DESCRIPTION},
-    )
+def post_evaluate(payload: dict | None = None, client=None):
+    """POST the route (default payload: the route symphony and change description)."""
+    import app as app_module
+
+    body = payload or {
+        "symphony_id": ROUTE_SYMPHONY_NAME,
+        "change_description": ROUTE_CHANGE_DESCRIPTION,
+    }
+    if client is not None:
+        return client.post("/ai-advisor/logic-changes/evaluate", json=body)
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as own_client:
+        return own_client.post("/ai-advisor/logic-changes/evaluate", json=body)
+
+
+def evaluate_via_route(client=None) -> dict:
+    resp = post_evaluate(client=client)
     assert resp.status_code == 200, resp.get_data(as_text=True)
     data = resp.get_json()
     assert data is not None

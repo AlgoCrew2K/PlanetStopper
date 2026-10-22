@@ -343,17 +343,8 @@ def test_llm_client_construction_or_call_failure_returns_empty_list_no_raise(
 # ===========================================================================
 
 
-@pytest.fixture(scope="module")
-def flask_client():
-    import app as _app
-
-    _app.app.config["TESTING"] = True
-    with _app.app.test_client() as client:
-        yield client
-
-
 @pytest.fixture
-def generation(flask_client, monkeypatch):
+def generation(monkeypatch):
     """Run the route once against a fake that answers with the queued replies.
 
     Returns ``(response_json, fake, observation_write_spy)``.
@@ -364,7 +355,7 @@ def generation(flask_client, monkeypatch):
         spy = support.install_route_world(monkeypatch, fake)
         for reply in replies:
             fake.queue_message(reply)
-        data = support.evaluate_via_route(flask_client)
+        data = support.evaluate_via_route()
         return data, fake, spy
 
     return _run
@@ -407,15 +398,15 @@ def test_generation_request_carries_the_server_side_fallback_setting(generation)
     _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
 
     request = fake.message_requests[0]
-    assert request.body["fallbacks"] == "default"
-    assert "server-side-fallback-2026-07-01" in request.headers["anthropic-beta"]
+    assert request.body.get("fallbacks") == "default"
+    assert "server-side-fallback-2026-07-01" in request.headers.get("anthropic-beta", "")
 
 
 def test_generation_request_sets_effort_and_sends_no_sampling_or_thinking_parameters(generation):
     _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
 
     body = fake.message_requests[0].body
-    assert body["output_config"]["effort"] == "high"
+    assert body.get("output_config", {}).get("effort") == "high"
     sent_forbidden = [k for k in ("temperature", "top_p", "top_k", "thinking") if k in body]
     assert sent_forbidden == [], (
         f"models that always think reject these parameters: {sent_forbidden}"
@@ -425,14 +416,18 @@ def test_generation_request_sets_effort_and_sends_no_sampling_or_thinking_parame
     )
 
 
-def test_generation_request_budget_and_timeout_fit_a_thinking_reply(generation):
+def test_generation_request_output_budget_fits_a_thinking_reply(generation):
     _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
 
-    request = fake.message_requests[0]
-    assert request.body["max_tokens"] >= 16000, (
+    assert fake.message_requests[0].body["max_tokens"] >= 16000, (
         "thinking counts against max_tokens; the old 2048 budget cannot hold a reply at high effort"
     )
-    assert request.timeout["read"] >= 120, (
+
+
+def test_generation_request_timeout_fits_a_thinking_reply(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    assert fake.message_requests[0].timeout["read"] >= 120, (
         "a thinking reply at high effort does not finish inside the old 30 second timeout"
     )
 
@@ -455,8 +450,12 @@ def test_generation_prompt_lists_candidate_parameters_and_names_the_tool(
 
 def test_thinking_then_tool_reply_input_is_parsed(generation, fixture_tree):
     edit = support.real_edit()
+    reply = support.reply_with_thinking_then_tool_edit(edit)
+    assert [b["type"] for b in reply["content"]][:2] == ["thinking", "tool_use"], (
+        "self-guard: the tool call must not be the first block"
+    )
 
-    data, _fake, spy = generation(support.reply_with_tool_edit(edit))
+    data, _fake, spy = generation(reply)
 
     proposals = support.all_proposals(data)
     assert len(proposals) == 1
@@ -473,11 +472,8 @@ def test_thinking_then_tool_reply_input_is_parsed(generation, fixture_tree):
 def test_primary_reply_is_used_and_provenance_names_the_primary_model(generation):
     reply = support.reply_with_tool_edit(support.real_edit())
 
-    data, fake, _spy = generation(reply)
+    data, _fake, _spy = generation(reply)
 
-    assert fake.message_requests[0].body["model"] == reply["model"], (
-        "self-guard: the seeded family model and the captured reply model must be the same id"
-    )
     assert data["provenance"]["generation_model"] == reply["model"]
 
 

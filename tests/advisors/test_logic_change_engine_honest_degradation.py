@@ -214,17 +214,8 @@ def test_engine_never_raises_across_failure_modes__suggest(
 _EMPTY_RUN_PREFIX = "no logic change was generated this run"
 
 
-@pytest.fixture(scope="module")
-def flask_client():
-    import app as _app
-
-    _app.app.config["TESTING"] = True
-    with _app.app.test_client() as client:
-        yield client
-
-
 @pytest.fixture
-def degraded(flask_client, monkeypatch):
+def degraded(monkeypatch):
     """Run the route once against a fake that answers with the queued outcomes.
 
     Returns ``(response_json, fake, observation_write_spy)``.
@@ -235,7 +226,7 @@ def degraded(flask_client, monkeypatch):
         spy = support.install_route_world(monkeypatch, fake)
         for outcome in outcomes:
             fake.queue_message(outcome)
-        data = support.evaluate_via_route(flask_client)
+        data = support.evaluate_via_route()
         return data, fake, spy
 
     return _run
@@ -261,6 +252,7 @@ def test_each_attempt_is_a_fresh_user_turn_with_the_same_prompt(degraded):
     _data, fake, _spy = degraded(text_only, text_only, text_only)
 
     bodies = [r.body for r in fake.message_requests]
+    assert len(bodies) == 3, "self-guard: the three attempts must have been sent"
     assert all(b["messages"][-1]["role"] == "user" for b in bodies), (
         "a retry must not end on an assistant turn (a prefill is rejected by models that think)"
     )
