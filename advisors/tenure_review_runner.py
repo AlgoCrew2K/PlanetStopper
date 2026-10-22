@@ -62,7 +62,8 @@ class _MissingAccount:
 
 @dataclass
 class _RunState:
-    """What one run learns as it goes: whether Composer has answered 429."""
+    """What one run learns as it goes: whether Composer has answered 429 (rate_limited) and
+    whether any read failed without ending the run (read_failed, which marks it degraded)."""
 
     rate_limited: bool = False
     read_failed: bool = False

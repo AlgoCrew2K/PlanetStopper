@@ -1799,6 +1799,9 @@
             {% if tenure_review is mapping %}
             <div class="tenure-review-run">
                 <span data-testid="tenure-review-as-of">as of trading day {{ tenure_review.get('as_of_trading_day') | tenure_text }}</span>
+                {% if tenure_review.get('degraded') is true %}
+                <div class="tenure-review-notice" data-testid="tenure-review-degraded-notice">Some Composer reads did not complete in this run; the affected items say why.</div>
+                {% endif %}
                 <span data-testid="tenure-review-run-time">run completed {% if tenure_review_completed_et %}{{ tenure_review_completed_et }} ET{% else %}time not recorded{% endif %}</span>
                 {% if tenure_review.get('trigger') is string %}
                 <span data-testid="tenure-review-trigger">trigger: {{ tenure_review.get('trigger') | tenure_text | replace('_', ' ') }}</span>

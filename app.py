@@ -1215,14 +1215,26 @@ def _tenure_review_settings() -> dict:
     return env
 
 
-def _log_tenure_review_end(trigger: str, run_id: str, ending: str) -> None:
-    """The run's completion line: trigger, US Eastern time, run id and how the run ended."""
+def _eastern_stamp(moment: datetime) -> str:
+    """moment as "YYYY-MM-DD HH:MM" US Eastern; the one builder of that text."""
+    return moment.astimezone(_ET).strftime("%Y-%m-%d %H:%M")
+
+
+def _log_tenure_review_end(
+    trigger: str, run_id: str, ending: str, recommendations: int | None = None
+) -> None:
+    """The run's completion line: trigger, US Eastern time, run id and how the run ended.
+
+    A completed run also names how many recommendation rows it wrote.
+    """
+    count = "" if recommendations is None else f" recommendations={recommendations}"
     _daemon_log.info(
-        "Tenure review end: trigger=%s at=%s run_id=%s %s",
+        "Tenure review end: trigger=%s at=%s run_id=%s %s%s",
         trigger,
-        datetime.now(_ET).strftime("%Y-%m-%d %H:%M") + " ET",
+        f"{_eastern_stamp(datetime.now(_ET))} ET",
         run_id,
         ending,
+        count,
     )
 
 
@@ -1238,7 +1250,7 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
     type(exc).__name__ is logged and recorded.
     """
     tenure_review: types.ModuleType | None = None
-    run_id = None
+    run_id: str | None = None
     try:
         from advisors import tenure_review  # lazy (CC-2)
 
@@ -1256,7 +1268,7 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
         _daemon_log.info(
             "Tenure review start: trigger=%s at=%s run_id=%s",
             trigger,
-            now_et.strftime("%Y-%m-%d %H:%M") + " ET",
+            f"{_eastern_stamp(now_et)} ET",
             run_id,
         )
         env = _tenure_review_settings()
@@ -1298,7 +1310,7 @@ def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
             },
         )
         tenure_review.REVIEW_RUN_STATE.finish_success(owner)
-        _log_tenure_review_end(trigger, run_id, "completed")
+        _log_tenure_review_end(trigger, run_id, "completed", len(recs))
     except Exception as exc:
         _daemon_log.error("Tenure review failed: %s", type(exc).__name__)
         if run_id is not None:
@@ -4483,7 +4495,7 @@ def _format_eastern_run_time(completed_at: object) -> str | None:
         moment = datetime.fromisoformat(completed_at)
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=UTC)
-        return moment.astimezone(_ET).strftime("%Y-%m-%d %H:%M")
+        return _eastern_stamp(moment)
     except (ValueError, OverflowError):
         return None
 
