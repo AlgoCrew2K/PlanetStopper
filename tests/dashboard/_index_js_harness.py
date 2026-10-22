@@ -33,6 +33,7 @@ A missing ``node`` binary fails the test; it never skips.
 
 from __future__ import annotations
 
+import ast
 import datetime as _dt_mod
 import json
 import math
@@ -41,6 +42,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import types
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -52,11 +54,37 @@ INDEX_JS = STATIC_DIR / "index.js"
 TOKENS_CSS = STATIC_DIR / "tokens.css"
 _BOT_STATE_CAPTURE = _REPO / "tests" / "fixtures" / "prod_droplet" / "bot_state_positions.json"
 
-# The real functions, captured at import (collection) time, before any
-# per-test fixture patches ``app.get_api_state_dict`` (tests/dashboard/conftest.py).
 import app as _app_module  # noqa: E402
+import database as _database_module  # noqa: E402
 
-_REAL_GET_API_STATE_DICT = _app_module.get_api_state_dict
+
+def _real_function(module, name: str):
+    """The module's own function ``name``, whatever per-test stubs are installed now.
+
+    tests/dashboard, tests/ui and tests/app conftests each replace some of these
+    functions per test, and this module is imported lazily by tests in all three, so
+    the attribute read at import may already be a stub. A stub (anything that is not
+    a plain function) is replaced by the function compiled from the module's source,
+    run against the live module namespace.
+    """
+    current = getattr(module, name)
+    if isinstance(current, types.FunctionType):
+        return current
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            isolated = ast.Module(body=[node], type_ignores=[])
+            namespace = module.__dict__
+            before = namespace.get(name)
+            exec(compile(isolated, module.__file__, "exec", dont_inherit=True), namespace)  # noqa: S102
+            rebuilt = namespace[name]
+            namespace[name] = before
+            return rebuilt
+    raise RuntimeError(f"{module.__name__}.{name} has no top-level definition to rebuild")
+
+
+_REAL_GET_API_STATE_DICT = _real_function(_app_module, "get_api_state_dict")
+_REAL_DATABASE_LOAD_STATE = _real_function(_database_module, "load_state")
 
 HERO_TOKENS = ["30d", "60d", "90d", "125d", "ytd", "1y", "all"]
 
@@ -396,6 +424,7 @@ def _build_world(name: str) -> dict:
         patch.setattr(_app_module, "ENV_FILE_PATH", env_file)
         patch.setattr(analytics, "DB_FILE", db_path)
         patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
+        patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
         patch.setattr(_app_module, "get_market_state", lambda *_a, **_k: "open")
         database.init_db()
         database.save_state(bot_state)
@@ -506,6 +535,10 @@ def run_scenario(
             [node_binary(), runtime_path, world_path],
             capture_output=True,
             text=True,
+            # node writes UTF-8; the host's locale codec (cp1252 on Windows) would turn
+            # U+2014 into mojibake. "replace" keeps a stray byte from masking the real failure.
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     finally:
