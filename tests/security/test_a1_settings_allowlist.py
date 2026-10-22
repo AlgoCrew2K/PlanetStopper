@@ -400,3 +400,46 @@ def test_settings_allowlist_covers_operator_configurable_globals():
             f"It is legitimately set by the operator from the dashboard. "
             f"Current allowlist: {sorted(allowlist) if hasattr(allowlist, '__iter__') else allowlist!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The model override knobs are operator configuration made in .env, never through the dashboard
+# ---------------------------------------------------------------------------
+
+_MODEL_OVERRIDE_KNOBS = ["ADVISOR_SUGGESTION_MODEL", "ADVISOR_SYNTHESIS_MODEL"]
+
+
+@pytest.fixture
+def real_env_file(monkeypatch, tmp_path):
+    """A real ``.env`` on disk (real ``set_key``), so a write shows up as changed bytes."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("EXECUTION_START_TIME=09:35\n", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
+    return env_file
+
+
+@pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
+def test_post_settings_rejects_a_model_override_knob_and_leaves_the_env_file_unchanged(
+    knob, client, real_env_file, _stub_database
+):
+    before = real_env_file.read_bytes()
+
+    resp = client.post("/api/settings", json={"globals": {knob: "any-model-id"}, "symphonies": {}})
+
+    assert resp.status_code == 400
+    assert knob in resp.get_json()["message"]
+    assert real_env_file.read_bytes() == before
+    assert knob not in app_module._SETTINGS_WRITE_ALLOWLIST
+
+
+@pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
+def test_post_settings_writes_nothing_when_a_model_knob_rides_with_an_allowed_key(
+    knob, client, real_env_file, _stub_database
+):
+    before = real_env_file.read_bytes()
+    payload = {"globals": {"EXECUTION_START_TIME": "09:40", knob: "any-model-id"}}
+
+    resp = client.post("/api/settings", json={**payload, "symphonies": {}})
+
+    assert resp.status_code == 400
+    assert real_env_file.read_bytes() == before

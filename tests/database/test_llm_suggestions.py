@@ -946,3 +946,80 @@ def test_get_suggestions_for_session_row_dict_has_all_expected_keys(isolated_db)
         f"get_suggestions_for_session returned a row dict missing columns: {missing_keys}. "
         "The accessor must return all audit columns."
     )
+
+
+# ---------------------------------------------------------------------------
+# Rows written before the model-unpin change keep the model_id they were written with
+# ---------------------------------------------------------------------------
+
+# What the accept and reject routes wrote before the change: the synthesis-family default.
+# The value is one of the captured Models API records, so it is a real model ID.
+_LEGACY_MODEL_ID = "claude-opus-4-8"
+
+
+def _model_ids_by_row(db_path: str) -> list[tuple[int, str]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT id, model_id FROM llm_suggestions ORDER BY id").fetchall()
+    finally:
+        conn.close()
+
+
+def test_rows_written_before_the_change_keep_their_model_id_beside_a_new_decision(isolated_db):
+    from unittest.mock import patch  # noqa: PLC0415
+
+    import app as app_module  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
+    from tests._suggest_and_chat_routes import CAPTURED_IDS, ids_newest_first  # noqa: PLC0415
+
+    assert _LEGACY_MODEL_ID in CAPTURED_IDS
+    record_llm_suggestion(**{**_make_accepted_kwargs(), "model_id": _LEGACY_MODEL_ID})
+    record_llm_suggestion(
+        **{**_make_rejected_kwargs(session_id="sess-002"), "model_id": _LEGACY_MODEL_ID}
+    )
+    legacy_rows = _fetch_all_rows(isolated_db)
+
+    app_module.app.config["TESTING"] = True
+    with (
+        app_module.app.test_client() as client,
+        patch(
+            "app.ai_advisor.revalidate_suggestion_oos",
+            return_value={"passed": True, "detail": "holdout fold passed"},
+        ),
+    ):
+        response = client.post(
+            "/ai-advisor/accept",
+            json={
+                "symphony_id": "example symphony",
+                "suggestion": {
+                    "config_key": "MAX_SQUEEZE_FLOOR",
+                    "current_value": 0.2,
+                    "suggested_value": 0.18,
+                    "rationale": "tighten",
+                    "risk_direction": "tightens",
+                    "confidence": "medium",
+                    "data_sufficiency": "sufficient",
+                },
+            },
+        )
+
+    assert response.get_json() == {"status": "accepted"}
+    rows = _fetch_all_rows(isolated_db)
+    assert rows[: len(legacy_rows)] == legacy_rows
+    assert [model for _id, model in _model_ids_by_row(isolated_db)] == [
+        _LEGACY_MODEL_ID,
+        _LEGACY_MODEL_ID,
+        ids_newest_first("fable")[0],
+    ]
+
+
+def test_starting_up_again_does_not_rewrite_the_model_id_of_existing_rows(isolated_db):
+    from database import record_llm_suggestion  # noqa: PLC0415
+
+    record_llm_suggestion(**{**_make_accepted_kwargs(), "model_id": _LEGACY_MODEL_ID})
+    record_llm_suggestion(**{**_make_accepted_kwargs(session_id="sess-002"), "model_id": ""})
+    before = _fetch_all_rows(isolated_db)
+
+    init_db()
+
+    assert _fetch_all_rows(isolated_db) == before

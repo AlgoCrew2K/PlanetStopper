@@ -36,6 +36,22 @@ from unittest.mock import patch
 import pytest
 
 import app as app_module
+from advisors.advisor_chat import CHAT_UNAVAILABLE_PREFIX
+from model_config import Knob
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._suggest_and_chat_routes import (
+    FALLBACK_BETA,
+    assert_names_no_model_or_exception_text,
+    captured_id_outside,
+    derive_reply,
+    error_outcome,
+    ids_newest_first,
+    message_body,
+    models_named,
+    only_message_request,
+    text_of,
+    use_client,
+)
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -1465,3 +1481,338 @@ class TestB2RateLimiterBoundedGrowth:
             f"The dict must not exceed CHAT_RATE_LIMITER_MAX_TRACKED_IPS. "
             f"Implement eviction when the cap is hit."
         )
+
+
+# ===========================================================================
+# Model resolution on the chat route (POST /ai-advisor/chat/send)
+#
+# These tests run the real route and the real ``explain_artifact`` over a real
+# ``anthropic.Anthropic`` on the in-process HTTP fake: the model, effort and budget are read off
+# the outgoing request, replies are captured or derived bodies, and expected texts and model IDs
+# come from the fixtures. Chat is the Opus-line site (``ADVISOR_SYNTHESIS_MODEL``).
+# ===========================================================================
+
+# Per-site request settings the approach fixes for chat (effort: Q-4; output budget and the
+# per-attempt timeout: Items Raised 2 and 3). The old 1024 budget and 30 s timeout cannot hold a
+# reply from a model that always thinks.
+CHAT_EFFORT = "high"
+CHAT_MAX_TOKENS = 8000
+CHAT_TIMEOUT_SECONDS = 120.0
+
+
+@pytest.fixture
+def anthropic_fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
+
+
+def _send_chat(client, csrf_token):
+    return client.post(
+        "/ai-advisor/chat/send", json=_MINIMAL_BODY, headers={"X-CSRF-Token": csrf_token}
+    )
+
+
+def _answer_of(body: dict) -> str:
+    return text_of(body).strip()
+
+
+class TestChatSendModelResolution:
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    def test_chat_names_the_newest_opus_line_model_the_listing_returned(
+        self, client, csrf_token, anthropic_fake, unresolved_models
+    ):
+        relisted = load_fixture("models/relisted_newer_opus.json")
+        anthropic_fake.set_pages([relisted])
+        reply = message_body("thinking_text.json")
+        anthropic_fake.queue_message(reply)
+
+        response = _send_chat(client, csrf_token)
+
+        newest = ids_newest_first("opus", relisted["data"])[0]
+        assert newest != ids_newest_first("opus")[0]  # the page really changes the answer
+        assert models_named(anthropic_fake) == [newest]
+        assert anthropic_fake.listing_sequences == 1
+        assert response.get_json() == {"reply": _answer_of(reply)}
+        assert anthropic_fake.misuse == []
+
+    def test_chat_never_names_a_model_of_the_fable_line(
+        self, client, csrf_token, anthropic_fake, unresolved_models
+    ):
+        anthropic_fake.queue_message(message_body("thinking_text.json"))
+
+        _send_chat(client, csrf_token)
+
+        assert only_message_request(anthropic_fake).body["model"] not in ids_newest_first("fable")
+
+    def test_the_suggestion_override_never_reaches_the_chat_request(
+        self, client, csrf_token, anthropic_fake, monkeypatch
+    ):
+        monkeypatch.setenv(Knob.SUGGESTION.value, captured_id_outside(*ids_newest_first("opus")))
+        anthropic_fake.queue_message(message_body("thinking_text.json"))
+
+        _send_chat(client, csrf_token)
+
+        assert models_named(anthropic_fake) == [ids_newest_first("opus")[0]]
+
+
+class TestChatSendWithoutAKnownOpusModel:
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    def test_a_failed_listing_answers_200_with_the_reason_code_and_sends_nothing(
+        self, client, csrf_token, anthropic_fake, unresolved_models
+    ):
+        anthropic_fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+
+        response = _send_chat(client, csrf_token)
+
+        data = response.get_json()
+        assert response.status_code == 200 and "reply" not in data
+        assert "model_unavailable" in data["error"]
+        assert data["error"].startswith(CHAT_UNAVAILABLE_PREFIX)
+        assert_names_no_model_or_exception_text(data["error"], "Service temporarily unavailable.")
+        assert anthropic_fake.message_requests == []
+        assert anthropic_fake.misuse == []
+
+    def test_the_next_message_after_a_failed_listing_lists_again_and_answers(
+        self, client, csrf_token, anthropic_fake, unresolved_models
+    ):
+        anthropic_fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        reply = message_body("thinking_text.json")
+        anthropic_fake.queue_message(reply)
+
+        first = _send_chat(client, csrf_token).get_json()
+        second = _send_chat(client, csrf_token).get_json()
+
+        assert "model_unavailable" in first["error"]
+        assert second == {"reply": _answer_of(reply)}
+        assert anthropic_fake.listing_sequences == 2
+
+
+class TestChatSendOverride:
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    @pytest.fixture
+    def override(self, monkeypatch):
+        served = ids_newest_first("opus")[1]
+        monkeypatch.setenv(Knob.SYNTHESIS.value, served)
+        return served
+
+    def test_chat_names_exactly_the_override_with_no_listing(
+        self, client, csrf_token, anthropic_fake, override, unresolved_models
+    ):
+        anthropic_fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        reply = message_body("thinking_text.json")
+        anthropic_fake.queue_message(reply)
+
+        response = _send_chat(client, csrf_token)
+
+        assert response.get_json() == {"reply": _answer_of(reply)}
+        assert models_named(anthropic_fake) == [override]
+        assert anthropic_fake.listing_requests == []
+
+    def test_a_request_to_an_override_carries_the_same_settings_as_any_other(
+        self, client, csrf_token, anthropic_fake, override
+    ):
+        anthropic_fake.queue_message(message_body("thinking_text.json"))
+
+        _send_chat(client, csrf_token)
+
+        request = only_message_request(anthropic_fake)
+        assert request.body["output_config"] == {"effort": CHAT_EFFORT}
+        assert request.body["max_tokens"] == CHAT_MAX_TOKENS
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+
+    def test_an_override_whose_request_the_api_rejects_names_its_variable_and_is_not_retried(
+        self, client, csrf_token, anthropic_fake, override
+    ):
+        outcome = error_outcome("400_invalid_request.json")
+        anthropic_fake.queue_message(outcome)
+
+        response = _send_chat(client, csrf_token)
+
+        data = response.get_json()
+        assert response.status_code == 200 and "reply" not in data
+        assert Knob.SYNTHESIS.value in data["error"]
+        assert "override_request_rejected" in data["error"]
+        assert_names_no_model_or_exception_text(data["error"], outcome["body"]["error"]["message"])
+        assert models_named(anthropic_fake) == [override]
+        assert anthropic_fake.listing_requests == []
+
+    def test_an_override_the_api_does_not_find_names_its_variable_and_is_not_replaced(
+        self, client, csrf_token, anthropic_fake, override
+    ):
+        anthropic_fake.queue_message(error_outcome("404_not_found.json"))
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert "reply" not in data
+        assert Knob.SYNTHESIS.value in data["error"]
+        assert "override_model_not_found" in data["error"]
+        assert models_named(anthropic_fake) == [override]
+        assert anthropic_fake.listing_requests == []
+
+
+class TestChatSendRetiredModel:
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    def test_a_404_for_the_resolved_model_lists_again_once_and_answers_on_the_new_model(
+        self, client, csrf_token, anthropic_fake
+    ):
+        retired = ids_newest_first("opus")[0]
+        relisted = load_fixture("models/relisted_newer_opus.json")
+        replacement = ids_newest_first("opus", relisted["data"])[0]
+        assert replacement != retired
+        anthropic_fake.set_pages([relisted])
+        reply = message_body("thinking_text.json")
+
+        def respond(recorded):
+            if recorded.body["model"] == retired:
+                return error_outcome("404_not_found.json")
+            return reply
+
+        anthropic_fake.set_message_responder(respond)
+
+        first = _send_chat(client, csrf_token)
+        second = _send_chat(client, csrf_token)
+
+        assert first.get_json() == {"reply": _answer_of(reply)}
+        assert models_named(anthropic_fake) == [retired, replacement, replacement]
+        assert anthropic_fake.listing_sequences == 1
+        assert second.get_json() == {"reply": _answer_of(reply)}
+        assert anthropic_fake.misuse == []
+
+    def test_a_relisting_that_names_the_same_model_degrades_with_the_reason_code(
+        self, client, csrf_token, anthropic_fake
+    ):
+        anthropic_fake.queue_message(error_outcome("404_not_found.json"))
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert "reply" not in data and "model_unavailable" in data["error"]
+        assert len(anthropic_fake.message_requests) == 1
+        assert anthropic_fake.listing_sequences == 1
+        assert_names_no_model_or_exception_text(data["error"])
+
+    def test_a_relisting_that_fails_degrades_with_the_reason_code_and_sends_nothing_more(
+        self, client, csrf_token, anthropic_fake
+    ):
+        anthropic_fake.queue_message(error_outcome("404_not_found.json"))
+        anthropic_fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert "reply" not in data and "model_unavailable" in data["error"]
+        assert len(anthropic_fake.message_requests) == 1
+
+
+class TestChatSendReplies:
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    def test_the_answer_is_the_text_block_only_when_the_reply_thinks_first(
+        self, client, csrf_token, anthropic_fake
+    ):
+        marker = "internal reasoning that must never reach the operator"
+        reply = derive_reply(
+            "thinking_text.json",
+            lambda body: body["content"][0].update(thinking=marker),
+        )
+        anthropic_fake.queue_message(reply)
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert data == {"reply": _answer_of(reply)}
+        assert marker not in json.dumps(data)
+
+    def test_the_request_is_asked_with_an_effort_and_a_budget_that_fit_a_reply_that_thinks(
+        self, client, csrf_token, anthropic_fake
+    ):
+        anthropic_fake.queue_message(message_body("thinking_text.json"))
+
+        _send_chat(client, csrf_token)
+
+        request = only_message_request(anthropic_fake)
+        assert request.body["output_config"] == {"effort": CHAT_EFFORT}
+        assert request.body["max_tokens"] == CHAT_MAX_TOKENS
+        assert set(request.timeout.values()) == {CHAT_TIMEOUT_SECONDS}
+
+    def test_a_reply_served_by_the_fallback_model_is_the_answer_and_the_request_opted_in(
+        self, client, csrf_token, anthropic_fake
+    ):
+        reply = message_body("fallback_served_text.json")
+        anthropic_fake.queue_message(reply)
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert data == {"reply": _answer_of(reply)}
+        assert "None" not in data["reply"]
+        request = only_message_request(anthropic_fake)
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+
+    def test_a_refusal_without_a_category_names_the_refusal_and_no_category(
+        self, client, csrf_token, anthropic_fake
+    ):
+        anthropic_fake.queue_message(message_body("refusal_null_category.json"))
+        other = message_body("refusal_reasoning_extraction.json")["stop_details"]["category"]
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert "reply" not in data and "refusal" in data["error"]
+        assert data["error"].startswith(CHAT_UNAVAILABLE_PREFIX)
+        assert other not in data["error"]
+        assert "None" not in data["error"] and "null" not in data["error"]
+
+    def test_a_refusal_with_a_category_names_both(self, client, csrf_token, anthropic_fake):
+        body = message_body("refusal_reasoning_extraction.json")
+        anthropic_fake.queue_message(body)
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert "refusal" in data["error"]
+        assert body["stop_details"]["category"] in data["error"]
+
+    def test_a_refusal_after_partial_text_shows_none_of_it(
+        self, client, csrf_token, anthropic_fake
+    ):
+        body = message_body("refusal_after_partial_text.json")
+        anthropic_fake.queue_message(body)
+
+        response = _send_chat(client, csrf_token)
+
+        data = response.get_json()
+        assert "reply" not in data and "refusal" in data["error"]
+        assert text_of(body) not in response.get_data(as_text=True)
+
+    def test_a_reply_cut_off_at_max_tokens_reports_max_tokens_and_returns_no_partial_text(
+        self, client, csrf_token, anthropic_fake
+    ):
+        body = message_body("max_tokens.json")
+        anthropic_fake.queue_message(body)
+
+        response = _send_chat(client, csrf_token)
+
+        data = response.get_json()
+        assert response.status_code == 200 and "reply" not in data
+        assert "max_tokens" in data["error"]
+        assert text_of(body)[:60] not in response.get_data(as_text=True)
+        assert len(anthropic_fake.message_requests) == 1
+
+    def test_a_reply_cut_off_inside_the_thinking_block_reports_max_tokens(
+        self, client, csrf_token, anthropic_fake
+    ):
+        anthropic_fake.queue_message(message_body("max_tokens_in_thinking.json"))
+
+        data = _send_chat(client, csrf_token).get_json()
+
+        assert "reply" not in data and "max_tokens" in data["error"]

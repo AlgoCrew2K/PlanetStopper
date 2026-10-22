@@ -30,12 +30,28 @@ No live API calls; no live engine that hits the network; function-scoped fixture
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import pathlib
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+import model_config
+from model_config import Knob
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._suggest_and_chat_routes import (
+    assert_names_no_model_or_exception_text,
+    captured_id_outside,
+    error_outcome,
+    ids_newest_first,
+    message_body,
+    models_named,
+    post_suggest,
+    use_client,
+)
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -605,3 +621,186 @@ class TestDivergenceExplainerRetiredFromSurface:
             f"Roles returned: {sorted(r for r in roles_returned if r)}. "
             "DE-retire: the producer surface must exclude DE entirely."
         )
+
+
+# ===========================================================================
+# Run Advisor with no model known for the Fable line, and the audit-row model_id
+#
+# The suggestions call degrades through the page's existing error channel with the reason code
+# when the Fable family was never resolved, and sends nothing. The accept and reject routes write
+# the model the suggestion family resolved to (or the operator's override) into the immutable
+# audit row, read without waiting on the Models API.
+# ===========================================================================
+
+
+@pytest.fixture
+def anthropic_fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
+
+
+class TestRunAdvisorWithoutAKnownFableModel:
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    @pytest.mark.parametrize(
+        "make_unavailable",
+        [
+            pytest.param(
+                lambda fake: fake.queue_listing_outcome(error_outcome("503_unavailable.json")),
+                id="listing-fails",
+            ),
+            pytest.param(
+                lambda fake: fake.set_pages([load_fixture("models/no_fable.json")]),
+                id="listing-holds-no-fable-model",
+            ),
+        ],
+    )
+    def test_the_error_text_carries_the_reason_code_and_no_request_is_sent(
+        self, flask_client, anthropic_fake, unresolved_models, make_unavailable
+    ):
+        make_unavailable(anthropic_fake)
+
+        response = post_suggest(flask_client)
+
+        data = response.get_json()
+        assert response.status_code == 200 and "suggestions" not in data
+        assert "model_unavailable" in data["error"]
+        assert_names_no_model_or_exception_text(data["error"], "Service temporarily unavailable.")
+        assert anthropic_fake.message_requests == []
+        assert anthropic_fake.misuse == []
+
+    def test_the_next_click_after_a_failed_listing_lists_again_and_succeeds(
+        self, flask_client, anthropic_fake, unresolved_models
+    ):
+        anthropic_fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        anthropic_fake.queue_message(message_body("thinking_structured.json"))
+
+        first = post_suggest(flask_client).get_json()
+        second = post_suggest(flask_client).get_json()
+
+        assert "model_unavailable" in first["error"]
+        assert "error" not in second
+        assert anthropic_fake.listing_sequences == 2
+        assert models_named(anthropic_fake) == [ids_newest_first("fable")[0]]
+
+
+_DECISION_BODY = {
+    "symphony_id": _SYM_NAME,
+    "suggestion": {
+        "config_key": "MOMENTUM_LOOKBACK_DAYS",
+        "current_value": 20,
+        "suggested_value": 10,
+        "rationale": "tighten",
+        "risk_direction": "neutral",
+        "confidence": "medium",
+        "data_sufficiency": "sufficient",
+    },
+}
+_DECISION_ROUTES = [
+    pytest.param("/ai-advisor/accept", "accepted", id="accept"),
+    pytest.param("/ai-advisor/reject", "rejected", id="reject"),
+]
+
+
+@contextlib.contextmanager
+def _accept_gates_open():
+    """The four accept-route gates pass and the strategy and audit writes are captured."""
+    with (
+        patch("app.ai_advisor.enforce_suggestion_allowlist", return_value=(["k"], [])) as allow,
+        patch("app.ai_advisor.check_risk_direction_agreement", return_value=None) as risk,
+        patch("app.database.get_symphony_strategy", return_value={"params": {}, "locked_vars": []}),
+        patch(
+            "app.ai_advisor.revalidate_suggestion_oos",
+            return_value={"passed": True, "detail": "holdout fold passed"},
+        ) as oos,
+        patch("app.database.save_symphony_strategy") as save,
+        patch("app.database.record_llm_suggestion") as record,
+    ):
+        yield SimpleNamespace(allow=allow, risk=risk, oos=oos, save=save, record=record)
+
+
+def _decide(flask_client, route):
+    with _accept_gates_open() as seen:
+        response = flask_client.post(route, json=_DECISION_BODY)
+    return response, seen
+
+
+def _recorded_model_id(seen) -> str:
+    seen.record.assert_called_once()
+    return seen.record.call_args.kwargs["model_id"]
+
+
+class TestAuditRowModelId:
+    @pytest.mark.parametrize(("route", "decision"), _DECISION_ROUTES)
+    def test_the_row_holds_the_model_the_suggestion_family_resolved_to(
+        self, flask_client, route, decision
+    ):
+        response, seen = _decide(flask_client, route)
+
+        assert response.get_json() == {"status": decision}
+        assert seen.record.call_args.kwargs["operator_decision"] == decision
+        assert _recorded_model_id(seen) == ids_newest_first("fable")[0]
+
+    def test_an_accepted_suggestion_still_runs_every_gate_and_writes_the_config(self, flask_client):
+        response, seen = _decide(flask_client, "/ai-advisor/accept")
+
+        assert response.get_json() == {"status": "accepted"}
+        seen.allow.assert_called_once()
+        seen.risk.assert_called_once()
+        seen.oos.assert_called_once()
+        seen.save.assert_called_once()
+        assert _recorded_model_id(seen) == ids_newest_first("fable")[0]
+
+    def test_a_rejected_suggestion_writes_no_config(self, flask_client):
+        _, seen = _decide(flask_client, "/ai-advisor/reject")
+
+        seen.save.assert_not_called()
+        assert _recorded_model_id(seen) == ids_newest_first("fable")[0]
+
+    @pytest.mark.parametrize(("route", "decision"), _DECISION_ROUTES)
+    def test_the_synthesis_override_never_lands_in_the_row(
+        self, flask_client, monkeypatch, route, decision
+    ):
+        monkeypatch.setenv(Knob.SYNTHESIS.value, captured_id_outside(*ids_newest_first("fable")))
+
+        _, seen = _decide(flask_client, route)
+
+        assert _recorded_model_id(seen) == ids_newest_first("fable")[0]
+
+    @pytest.mark.parametrize(("route", "decision"), _DECISION_ROUTES)
+    @pytest.mark.parametrize("family_resolved", [True, False], ids=["resolved", "never-resolved"])
+    def test_a_suggestion_override_is_recorded_verbatim(
+        self, flask_client, monkeypatch, request, route, decision, family_resolved
+    ):
+        if not family_resolved:
+            request.getfixturevalue("unresolved_models")
+        override = captured_id_outside(*ids_newest_first("fable"))
+        monkeypatch.setenv(Knob.SUGGESTION.value, override)
+
+        response, seen = _decide(flask_client, route)
+
+        assert response.get_json() == {"status": decision}
+        assert _recorded_model_id(seen) == override
+
+    @pytest.mark.parametrize(("route", "decision"), _DECISION_ROUTES)
+    def test_a_family_never_resolved_is_recorded_empty_without_waiting_on_the_models_api(
+        self, flask_client, monkeypatch, anthropic_fake, unresolved_models, route, decision
+    ):
+        use_client(monkeypatch, anthropic_fake)
+        anthropic_fake.hold_listings()  # a listing would block until the fake gives up
+
+        def _must_not_resolve(*_args, **_kwargs):
+            raise AssertionError("the audit write must read the registry without resolving")
+
+        monkeypatch.setattr(model_config, "resolve", _must_not_resolve)
+        monkeypatch.setattr(model_config, "invalidate", _must_not_resolve)
+
+        response, seen = _decide(flask_client, route)
+
+        assert response.get_json() == {"status": decision}
+        assert _recorded_model_id(seen) == ""
+        assert anthropic_fake.listing_requests == []
+        if decision == "accepted":
+            seen.oos.assert_called_once()
+            seen.save.assert_called_once()

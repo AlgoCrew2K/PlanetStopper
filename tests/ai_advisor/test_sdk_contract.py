@@ -1,343 +1,376 @@
-"""
-Cycle fix-live-claude — RED: SDK return-shape contract for `request_suggestions`.
+"""The Run Advisor call: what goes on the wire and how every reply is read.
 
-The 3 live tests in ``test_live_claude_advisor.py`` ERROR under a real Claude
-call with::
+``request_suggestions`` calls the Messages API through the shared request helper, asks for JSON in
+the suggestions schema (``output_config.format``) and validates the reply text itself, because the
+SDK's ``messages.parse`` validates every text block inside the SDK and raises on a refusal's or a
+truncation's partial JSON before the stop reason can be read.
 
-    Claude returned an unparseable response (no structured output).
+Every test hands the site a real ``anthropic.Anthropic`` over the in-process HTTP fake
+(``tests/_anthropic_http_fake.py``): request facts are read off the outgoing HTTP request and the
+SDK's own reply parsing runs. Replies are the captured bodies, or derived from them by one named
+edit and re-checked against the public API references (``tests/_suggest_and_chat_routes.py``).
+Model IDs and expected texts come from the fixtures, never from literals.
 
-That error originates in ``ai_advisor.request_suggestions`` where the code
-reads ``sdk_response.parsed``. The anthropic Python SDK (version 0.85.0,
-declared dependency) does NOT expose a top-level ``.parsed`` on the
-``ParsedMessage`` returned by ``client.messages.parse(...)``. Instead, the
-validated structured-output instance lives on each ``ParsedTextBlock`` inside
-``response.content``::
-
-    response.content[i].parsed_output : Optional[ConfigSuggestionsResponse]
-
-Reading the wrong attribute silently degrades to ``getattr(..., 'parsed', None)
-is None`` and yields the unparseable-response error path. The implementation
-is reading from a phantom field that has never existed on this SDK version.
-
-These tests pin the REAL SDK return shape — they cannot be satisfied by a
-``MagicMock`` whose ``.parsed`` attribute is wired to a Pydantic instance.
-
-Mocking strategy
-----------------
-We construct genuine ``anthropic.types.parsed_message.ParsedMessage`` /
-``ParsedTextBlock`` instances (the same classes the live SDK returns) and
-inject them through the ``_build_client`` factory seam. This makes the tests
-adversarial: a stub that returns a bare-mock-with-``.parsed``-attribute will
-FAIL these tests, because real ``ParsedMessage`` has no ``.parsed`` field.
-
-The 3 live tests in ``test_live_claude_advisor.py`` are the Tier-2 runtime
-validators for the same contract; this file is the Tier-1 adversarial
-companion that fails locally (no network) the moment the SDK surface drifts
-or the implementation reads the wrong field.
+Patch targets and forms production must keep:
+- ``ai_advisor._build_client()`` stays the client seam, called as a module global by
+  ``request_suggestions``.
+- ``request_suggestions(context) -> (ConfigSuggestionsResponse | None, str | None)`` never raises;
+  the error string carries the reply's reason text (``model_unavailable``, ``refusal: <category>``,
+  ``max_tokens``, ``<code>: <ENV_VAR>``) and never a model ID, reply text or exception message.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
+import anthropic
+import httpx
 import pytest
 
-# ---------------------------------------------------------------------------
-# Helpers — build genuine SDK return objects, not bare mocks.
-# ---------------------------------------------------------------------------
+import ai_advisor
+from model_config import Knob
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._suggest_and_chat_routes import (
+    FALLBACK_BETA,
+    FORBIDDEN_PARAMETERS,
+    SUGGEST_CONTEXT,
+    SUGGESTION_ITEM,
+    assert_names_no_model_or_exception_text,
+    captured_id_outside,
+    derive_reply,
+    error_outcome,
+    fallback_reply,
+    ids_newest_first,
+    message_body,
+    only_message_request,
+    post_suggest,
+    structured_reply,
+    text_reply,
+    use_client,
+)
+
+# Per-site request settings the approach fixes for the suggestions site (effort ruled in Q-4, the
+# output budget and the per-attempt timeout in Items Raised 2 and 3): a model that always thinks
+# spends part of ``max_tokens`` on thinking, so the old 2048 budget and 30 s timeout cannot hold a
+# reply at this effort.
+SUGGESTION_EFFORT = "high"
+SUGGESTION_MAX_TOKENS = 16000
+SUGGESTION_TIMEOUT_SECONDS = 120.0
 
 
-def _make_parsed_message(parsed_output_obj):
-    """Construct a real ``ParsedMessage`` carrying ``parsed_output_obj``.
-
-    Mirrors the live ``client.messages.parse(...)`` return shape on anthropic
-    0.85.0: one ``ParsedTextBlock`` in ``content`` whose ``parsed_output``
-    field holds the validated Pydantic instance.
-
-    ``parsed_output_obj`` may be ``None`` to model the truly-malformed live
-    response (Claude returns text but the SDK could not validate it against
-    the supplied ``output_format``).
-    """
-    from anthropic.types.parsed_message import ParsedMessage, ParsedTextBlock
-    from anthropic.types.usage import Usage
-
-    # ``parsed_output`` is typed ``Optional[ResponseFormatT]`` where
-    # ``ResponseFormatT`` is a TypeVar resolved at SDK call time. Direct
-    # construction with a concrete Pydantic instance fails Pydantic's
-    # ``Input should be None`` check on the unresolved TypeVar. ``model_construct``
-    # bypasses validation — this is how the live SDK populates the field
-    # internally after a successful parse.
-    block = ParsedTextBlock.model_construct(
-        type="text",
-        text='{"suggestions": []}',
-        parsed_output=parsed_output_obj,
-        citations=None,
-    )
-    return ParsedMessage.model_construct(
-        id="msg_test",
-        type="message",
-        role="assistant",
-        model="claude-opus-4-7",
-        content=[block],
-        stop_reason="end_turn",
-        stop_sequence=None,
-        usage=Usage(input_tokens=1, output_tokens=1),
-    )
+@pytest.fixture
+def fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
 
 
-def _empty_context() -> dict:
-    """Minimal valid context for request_suggestions. Shape, not values."""
-    return {
-        "scope": "global",
-        "param_definitions": {},
-        "valid_ranges": {},
-        "current_values": {},
-        "locked_vars": [],
-        "volatility_regime": {},
-        "data_window": {},
-        "risk_invariants": {},
-        "symphony_logic": {},
-        "autotune_signal": {},
-    }
+@pytest.fixture(autouse=True)
+def _site_client(monkeypatch, fake):
+    use_client(monkeypatch, fake)
 
 
-# ---------------------------------------------------------------------------
-# Test 1 — The SDK return shape contract.
-# request_suggestions must extract the structured output from
-# response.content[i].parsed_output, NOT from a non-existent .parsed.
-# ---------------------------------------------------------------------------
+@pytest.fixture
+def flask_client():
+    import app as app_module
+
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as client:
+        yield client
 
 
-def test_request_suggestions_reads_parsed_output_from_content_block():
-    """``request_suggestions`` must extract the validated Pydantic instance
-    from ``sdk_response.content[i].parsed_output`` — the real anthropic 0.85.0
-    surface for ``messages.parse``. Reading ``sdk_response.parsed`` is the
-    documented defect (no such attribute exists on ``ParsedMessage``)."""
-    import ai_advisor
-
-    expected = ai_advisor.ConfigSuggestionsResponse(suggestions=[])
-    sdk_response = _make_parsed_message(parsed_output_obj=expected)
-
-    fake_client = MagicMock(name="fake_anthropic_client_real_shape")
-    fake_client.messages.parse.return_value = sdk_response
-
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        response, error = ai_advisor.request_suggestions(_empty_context())
-
-    assert error is None, (
-        f"happy path with a real-shape ParsedMessage must return error=None; "
-        f"got {error!r}. If error mentions 'unparseable response', "
-        f"request_suggestions is still reading the phantom .parsed field "
-        f"instead of content[i].parsed_output."
-    )
-    assert isinstance(response, ai_advisor.ConfigSuggestionsResponse), (
-        "request_suggestions must yield a ConfigSuggestionsResponse extracted "
-        "from content[i].parsed_output"
-    )
-    assert response.suggestions == [], (
-        "the empty-suggestions ParsedMessage must round-trip as suggestions=[]"
-    )
-
-
-def test_request_suggestions_yields_populated_suggestions_from_content_block():
-    """A populated parsed_output round-trips through request_suggestions —
-    every ConfigSuggestion field reaches the caller intact."""
-    import ai_advisor
-
-    populated = ai_advisor.ConfigSuggestionsResponse(
-        suggestions=[
-            ai_advisor.ConfigSuggestion(
-                config_key="MAX_SQUEEZE_FLOOR",
-                current_value=0.20,
-                suggested_value=0.18,
-                rationale="placeholder rationale — shape, not value",
-                risk_direction="tightens",
-                confidence="medium",
-                data_sufficiency="sufficient",
-            )
-        ]
-    )
-    sdk_response = _make_parsed_message(parsed_output_obj=populated)
-
-    fake_client = MagicMock(name="fake_client_populated")
-    fake_client.messages.parse.return_value = sdk_response
-
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        response, error = ai_advisor.request_suggestions(_empty_context())
-
-    assert error is None
-    assert isinstance(response, ai_advisor.ConfigSuggestionsResponse)
-    assert len(response.suggestions) == 1
-    s = response.suggestions[0]
-    # Shape assertions, not value pins — per
-    # [[feedback_no_hardcoded_test_values]].
-    assert isinstance(s.config_key, str) and s.config_key
-    assert isinstance(s.suggested_value, (float, int, str))
-    assert s.risk_direction in {"loosens", "tightens", "neutral"}
+def run_request_suggestions(fake, reply=None):
+    fake.queue_message(message_body("thinking_structured.json") if reply is None else reply)
+    result = ai_advisor.request_suggestions(SUGGEST_CONTEXT)
+    assert fake.misuse == []
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — The truly-malformed real response degrades gracefully.
-# Live Claude can return a ParsedMessage whose ParsedTextBlock has
-# parsed_output=None (SDK could not validate against output_format). The
-# graceful-degradation contract still applies on the REAL shape.
+# The request: JSON output in the suggestions schema, explicit effort, a budget that fits thinking
 # ---------------------------------------------------------------------------
 
 
-def test_parsed_output_none_on_real_shape_degrades_gracefully():
-    """A genuine ParsedMessage whose ParsedTextBlock has ``parsed_output=None``
-    is the real-world malformed response. ``request_suggestions`` must
-    return ``(None, error_message)`` — never raise."""
-    import ai_advisor
+class TestRequestOnTheWire:
+    def test_the_request_carries_the_suggestions_schema_as_the_json_output_format(self, fake):
+        run_request_suggestions(fake)
 
-    sdk_response = _make_parsed_message(parsed_output_obj=None)
+        output_config = only_message_request(fake).body["output_config"]
+        assert output_config["format"] == {
+            "type": "json_schema",
+            "schema": anthropic.transform_schema(ai_advisor.ConfigSuggestionsResponse),
+        }
 
-    fake_client = MagicMock(name="fake_client_malformed_real")
-    fake_client.messages.parse.return_value = sdk_response
+    def test_the_request_sets_its_effort_explicitly(self, fake):
+        run_request_suggestions(fake)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        try:
-            response, error = ai_advisor.request_suggestions(_empty_context())
-        except Exception as exc:  # noqa: BLE001 - the whole point is no-raise
-            pytest.fail(
-                f"request_suggestions raised {type(exc).__name__} on a "
-                f"parsed_output=None response — must degrade gracefully."
-            )
+        assert only_message_request(fake).body["output_config"]["effort"] == SUGGESTION_EFFORT
 
-    assert response is None
-    assert isinstance(error, str) and error.strip(), (
-        "a malformed real-shape response must yield a non-empty error message"
-    )
+    def test_the_output_budget_and_timeout_hold_a_reply_that_thinks(self, fake):
+        run_request_suggestions(fake)
 
+        request = only_message_request(fake)
+        assert request.body["max_tokens"] == SUGGESTION_MAX_TOKENS
+        assert set(request.timeout.values()) == {SUGGESTION_TIMEOUT_SECONDS}
 
-def test_no_text_blocks_in_content_degrades_gracefully():
-    """A ParsedMessage with empty ``content`` (no ParsedTextBlock at all —
-    possible if Claude refuses or only emits tool_use blocks) must degrade
-    gracefully, not crash on an IndexError or AttributeError."""
-    from anthropic.types.parsed_message import ParsedMessage
-    from anthropic.types.usage import Usage
+    def test_the_request_names_the_newest_fable_line_model(self, fake):
+        run_request_suggestions(fake)
 
-    import ai_advisor
+        assert only_message_request(fake).body["model"] == ids_newest_first("fable")[0]
 
-    sdk_response = ParsedMessage.model_construct(
-        id="msg_empty",
-        type="message",
-        role="assistant",
-        model="claude-opus-4-7",
-        content=[],
-        stop_reason="end_turn",
-        stop_sequence=None,
-        usage=Usage(input_tokens=1, output_tokens=0),
-    )
+    def test_the_site_messages_go_out_unchanged_and_end_on_the_user_turn(self, fake):
+        run_request_suggestions(fake)
 
-    fake_client = MagicMock(name="fake_client_empty_content")
-    fake_client.messages.parse.return_value = sdk_response
+        messages = only_message_request(fake).body["messages"]
+        assert messages == ai_advisor._build_messages(SUGGEST_CONTEXT)
+        assert messages[-1]["role"] == "user"
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        try:
-            response, error = ai_advisor.request_suggestions(_empty_context())
-        except Exception as exc:  # noqa: BLE001
-            pytest.fail(
-                f"request_suggestions raised {type(exc).__name__} on empty "
-                f"content list — must degrade gracefully."
-            )
+    def test_the_request_sends_no_sampling_thinking_budget_or_tool_parameter(self, fake):
+        run_request_suggestions(fake)
 
-    assert response is None
-    assert isinstance(error, str) and error.strip()
+        body = only_message_request(fake).body
+        assert FORBIDDEN_PARAMETERS.isdisjoint(body)
+        assert "tools" not in body and "tool_choice" not in body
+
+    def test_the_request_opts_in_to_the_server_side_fallback(self, fake):
+        run_request_suggestions(fake)
+
+        request = only_message_request(fake)
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+
+    def test_the_example_suggestion_has_every_field_the_schema_requires(self):
+        schema = anthropic.transform_schema(ai_advisor.ConfigSuggestionsResponse)
+        item = schema["$defs"]["ConfigSuggestion"]
+
+        assert set(item["required"]) <= set(SUGGESTION_ITEM)
+        assert set(SUGGESTION_ITEM) <= set(item["properties"])
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — The SDK call signature contract.
-# request_suggestions must invoke client.messages.parse(...) with the keyword
-# arguments documented for anthropic 0.85.0: model, max_tokens, messages, and
-# output_format (the Pydantic class). Drift here (e.g. renaming output_format
-# -> response_format prematurely) breaks the live integration.
+# The reply: the structured text block, wherever it sits, validated by the site
 # ---------------------------------------------------------------------------
 
 
-def test_request_suggestions_calls_messages_parse_with_documented_kwargs():
-    """The SDK call uses ``messages.parse`` with the documented kwargs.
+class TestReplyRead:
+    def test_an_empty_suggestion_list_is_a_valid_answer_not_an_error(self, fake):
+        response, error = run_request_suggestions(fake)
 
-    Pins the call surface so a refactor to ``messages.create`` + manual JSON
-    parsing — or a rename of ``output_format`` — is caught here, not in the
-    live test."""
-    import ai_advisor
+        assert error is None
+        assert isinstance(response, ai_advisor.ConfigSuggestionsResponse)
+        assert response.suggestions == []
 
-    sdk_response = _make_parsed_message(
-        parsed_output_obj=ai_advisor.ConfigSuggestionsResponse(suggestions=[])
+    def test_a_populated_reply_round_trips_every_field(self, fake):
+        response, error = run_request_suggestions(fake, structured_reply([SUGGESTION_ITEM]))
+
+        assert error is None
+        (suggestion,) = response.suggestions
+        assert suggestion.model_dump(include=set(SUGGESTION_ITEM)) == SUGGESTION_ITEM
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            pytest.param(lambda: message_body("thinking_text.json"), id="prose-not-json"),
+            pytest.param(
+                lambda: text_reply('{"suggestions": [{"config_key": "MAX_SQUEEZE_FLOOR"}]}'),
+                id="suggestion-missing-fields",
+            ),
+            pytest.param(lambda: text_reply('{"items": []}'), id="wrong-top-level-key"),
+            pytest.param(
+                lambda: derive_reply(
+                    "thinking_structured.json",
+                    lambda body: body.update(
+                        content=[b for b in body["content"] if b["type"] != "text"]
+                    ),
+                ),
+                id="no-text-block",
+            ),
+        ],
     )
-    fake_client = MagicMock(name="fake_client_call_sig")
-    fake_client.messages.parse.return_value = sdk_response
+    def test_a_reply_that_is_not_the_suggestions_schema_degrades_and_shows_no_reply_text(
+        self, fake, reply
+    ):
+        body = reply()
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        ai_advisor.request_suggestions(_empty_context())
+        response, error = run_request_suggestions(fake, body)
 
-    # The method we expect to be called.
-    assert fake_client.messages.parse.call_count == 1, (
-        "request_suggestions must invoke client.messages.parse exactly once"
+        assert response is None
+        assert isinstance(error, str) and error.strip()
+        for block in body["content"]:
+            if block["type"] == "text":
+                assert block["text"] not in error
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            pytest.param(error_outcome("401_authentication.json"), id="401"),
+            pytest.param(error_outcome("403_permission.json"), id="403"),
+            pytest.param(error_outcome("429_rate_limit.json"), id="429"),
+            pytest.param(error_outcome("500_api_error.json"), id="500"),
+            pytest.param(error_outcome("529_overloaded.json"), id="529"),
+            pytest.param(httpx.ConnectError("example connection failure"), id="connect"),
+            pytest.param(httpx.ReadTimeout("example read timeout"), id="timeout"),
+        ],
     )
-    _args, kwargs = fake_client.messages.parse.call_args
+    def test_a_failed_request_degrades_with_the_exception_type_only(self, fake, outcome):
+        fake.queue_message(outcome)
 
-    # Documented kwargs for anthropic 0.85.0 messages.parse — all keyword-only
-    # (the SDK signature is `*, max_tokens, messages, model, ...`).
-    for required in ("model", "max_tokens", "messages", "output_format"):
-        assert required in kwargs, (
-            f"messages.parse call missing required kwarg {required!r}; got kwargs={list(kwargs)}"
+        response, error = ai_advisor.request_suggestions(SUGGEST_CONTEXT)
+
+        assert response is None
+        assert isinstance(error, str) and error.strip()
+        assert len(fake.message_requests) == 1
+        exception_text = (
+            outcome["body"]["error"]["message"] if isinstance(outcome, dict) else str(outcome)
         )
+        assert_names_no_model_or_exception_text(error, exception_text)
 
-    # output_format must be the Pydantic schema class itself — passing an
-    # instance, a dict, or a string here is the documented misuse.
-    assert kwargs["output_format"] is ai_advisor.ConfigSuggestionsResponse, (
-        "output_format must be the ConfigSuggestionsResponse class itself, "
-        f"not {kwargs['output_format']!r}"
-    )
+    def test_a_400_for_the_resolved_model_degrades_with_the_exception_type_only(self, fake):
+        outcome = error_outcome("400_invalid_request.json")
+        fake.queue_message(outcome)
 
-    # messages must be a non-empty list of message-shaped dicts.
-    msgs = kwargs["messages"]
-    assert isinstance(msgs, list) and msgs, "messages kwarg must be a non-empty list"
-    for m in msgs:
-        assert isinstance(m, dict)
-        assert "role" in m and "content" in m
+        response, error = ai_advisor.request_suggestions(SUGGEST_CONTEXT)
 
-    # model must be a non-empty string. We do NOT pin the literal value —
-    # the model constant lives in ai_advisor and may change; we pin shape.
-    assert isinstance(kwargs["model"], str) and kwargs["model"], (
-        "model kwarg must be a non-empty string"
-    )
-
-    # max_tokens must be a positive int.
-    assert isinstance(kwargs["max_tokens"], int) and kwargs["max_tokens"] > 0
+        assert response is None
+        assert "BadRequestError" in error
+        assert_names_no_model_or_exception_text(error, outcome["body"]["error"]["message"])
+        assert len(fake.message_requests) == 1
 
 
-def test_messages_parse_method_exists_on_installed_sdk():
-    """Sanity check on the installed SDK: ``client.messages.parse`` exists.
-
-    Guards against a future anthropic upgrade removing the method (in which
-    case the integration must be reworked to ``messages.create`` + manual
-    Pydantic validation, and this test is the early-warning signal)."""
-    import anthropic
-
-    client = anthropic.Anthropic(api_key="dummy-key-for-attr-check")
-    assert hasattr(client.messages, "parse"), (
-        "anthropic SDK no longer exposes client.messages.parse — "
-        "request_suggestions needs reworking onto messages.create"
-    )
+# ---------------------------------------------------------------------------
+# POST /ai-advisor/suggest: reply shapes that reach the operator
+# ---------------------------------------------------------------------------
 
 
-def test_parsed_message_has_no_top_level_parsed_field():
-    """Locks in the SDK shape that made the original integration silently
-    fail: ``ParsedMessage`` does NOT expose a top-level ``.parsed`` attribute.
+class TestSuggestRouteReplies:
+    def test_a_structured_reply_that_follows_a_thinking_block_is_parsed(self, fake, flask_client):
+        fake.queue_message(structured_reply([SUGGESTION_ITEM]))
 
-    If a future anthropic release adds ``.parsed``, this test fails loudly so
-    the code review catches the new convenience attribute and we can decide
-    whether to consume it — rather than the integration silently relying on
-    it again."""
-    from anthropic.types.parsed_message import ParsedMessage
+        response = post_suggest(flask_client)
 
-    assert "parsed" not in ParsedMessage.model_fields, (
-        "ParsedMessage now exposes a 'parsed' field — the historical "
-        "implementation that read sdk_response.parsed may now work by "
-        "accident. Re-audit ai_advisor.request_suggestions before relying on "
-        "it: structured output should still be sourced from "
-        "content[i].parsed_output (the per-block validated instance)."
-    )
+        data = response.get_json()
+        assert response.status_code == 200 and "error" not in data
+        assert [s["config_key"] for s in data["suggestions"]] == [SUGGESTION_ITEM["config_key"]]
+        assert fake.misuse == []
+
+    def test_a_reply_served_by_the_fallback_model_gives_its_suggestions(self, fake, flask_client):
+        declined = ids_newest_first("fable")[0]
+        served = ids_newest_first("opus")[0]
+        reply = fallback_reply(
+            structured_reply([SUGGESTION_ITEM])["content"][-1]["text"],
+            declined_id=declined,
+            served_id=served,
+        )
+        fake.queue_message(reply)
+
+        response = post_suggest(flask_client)
+
+        data = response.get_json()
+        assert "error" not in data
+        assert [s["config_key"] for s in data["suggestions"]] == [SUGGESTION_ITEM["config_key"]]
+        request = only_message_request(fake)
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == FALLBACK_BETA
+
+    def test_a_refusal_from_every_model_reports_refusal_and_the_last_category(
+        self, fake, flask_client
+    ):
+        body = message_body("refusal_reasoning_extraction.json")
+        category = body["stop_details"]["category"]
+        fake.queue_message(body)
+
+        response = post_suggest(flask_client)
+
+        data = response.get_json()
+        assert response.status_code == 200 and "suggestions" not in data
+        assert "refusal" in data["error"] and category in data["error"]
+        assert_names_no_model_or_exception_text(data["error"])
+
+    def test_a_refusal_without_a_category_names_no_category(self, fake, flask_client):
+        fake.queue_message(message_body("refusal_null_category.json"))
+        other = message_body("refusal_reasoning_extraction.json")["stop_details"]["category"]
+
+        response = post_suggest(flask_client)
+
+        error = response.get_json()["error"]
+        assert "refusal" in error
+        assert other not in error and "None" not in error and "null" not in error
+
+    def test_a_refusal_after_partial_output_shows_none_of_it(self, fake, flask_client):
+        body = message_body("refusal_after_partial_text.json")
+        fake.queue_message(body)
+
+        response = post_suggest(flask_client)
+
+        data = response.get_json()
+        assert "suggestions" not in data and "refusal" in data["error"]
+        partial = next(b["text"] for b in body["content"] if b["type"] == "text")
+        assert partial not in response.get_data(as_text=True)
+
+    def test_a_refusal_whose_text_is_a_complete_suggestion_list_still_returns_none(
+        self, fake, flask_client
+    ):
+        body = derive_reply(
+            "thinking_structured.json",
+            lambda b: b.update(
+                content=structured_reply([SUGGESTION_ITEM])["content"],
+                stop_reason="refusal",
+                stop_details={"type": "refusal", "category": None, "explanation": None},
+            ),
+        )
+        fake.queue_message(body)
+
+        data = post_suggest(flask_client).get_json()
+
+        assert "suggestions" not in data and "refusal" in data["error"]
+
+    def test_a_reply_cut_off_at_max_tokens_reports_max_tokens_and_no_suggestion(
+        self, fake, flask_client
+    ):
+        fake.queue_message(message_body("max_tokens.json"))
+
+        data = post_suggest(flask_client).get_json()
+
+        assert "suggestions" not in data and "max_tokens" in data["error"]
+        assert len(fake.message_requests) == 1
+
+    def test_a_reply_cut_off_at_max_tokens_is_not_used_even_when_its_text_parses(
+        self, fake, flask_client
+    ):
+        fake.queue_message(structured_reply([SUGGESTION_ITEM], stop_reason="max_tokens"))
+
+        data = post_suggest(flask_client).get_json()
+
+        assert "suggestions" not in data and "max_tokens" in data["error"]
+
+
+# ---------------------------------------------------------------------------
+# An override the API rejects is reported by variable name and never replaced
+# ---------------------------------------------------------------------------
+
+
+class TestOverrideRejected:
+    @pytest.fixture
+    def override(self, monkeypatch):
+        served = captured_id_outside(*ids_newest_first("fable"))
+        monkeypatch.setenv(Knob.SUGGESTION.value, served)
+        return served
+
+    def test_an_override_the_api_does_not_find_names_its_variable_and_is_not_replaced(
+        self, fake, override
+    ):
+        fake.queue_message(error_outcome("404_not_found.json"))
+
+        response, error = ai_advisor.request_suggestions(SUGGEST_CONTEXT)
+
+        assert response is None
+        assert Knob.SUGGESTION.value in error and "override_model_not_found" in error
+        assert_names_no_model_or_exception_text(error)
+        assert [r.body["model"] for r in fake.message_requests] == [override]
+        assert fake.listing_requests == []
+
+    def test_an_override_whose_request_the_api_rejects_names_its_variable(self, fake, override):
+        fake.queue_message(error_outcome("400_invalid_request.json"))
+
+        response, error = ai_advisor.request_suggestions(SUGGEST_CONTEXT)
+
+        assert response is None
+        assert Knob.SUGGESTION.value in error and "override_request_rejected" in error
+        assert len(fake.message_requests) == 1
+        assert fake.listing_requests == []

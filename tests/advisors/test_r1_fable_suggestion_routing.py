@@ -1,34 +1,18 @@
-"""RED tests — AC-16 (operator directive 2026-07-13: "anything it suggests
-should be using fable"): every suggestion-producing LLM call routes through
-Fable (claude-fable-5) via a single named, env-overridable accessor, not a
-hardcoded claude-opus-4-8 literal.
+"""The Run Advisor call names the model its family resolves to, or the operator's override.
 
-Two call sites named by the plan, both confirmed hardcoded pre-fix:
-  (a) ai_advisor.request_suggestions -> client.messages.parse(model=
-      os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"), ...)
-      (ai_advisor.py:1760) — note this reads ADVISOR_SYNTHESIS_MODEL, a
-      DIFFERENT env var already used for the Market Prism synthesis model
-      (resolve_advisor_model(), ai_advisor.py:73-79) — AC-16 wants a
-      SEPARATE suggestion-model accessor so flipping the nightly Prism
-      synthesis model can never accidentally also flip config-suggestion
-      routing, and vice versa.
-  (b) advisors.build_plan_generator.generate_build_plans -> client.messages.
-      create(model="claude-opus-4-8", ...) (build_plan_generator.py:1079) —
-      a bare literal, no env var read at all today.
+Every suggestion-producing call used to name a pinned model through a named accessor with a
+literal default. The suggestions site now asks the Models API for the newest active model of the
+Fable line (``model_config``, through ``llm_request.send``) unless ``ADVISOR_SUGGESTION_MODEL``
+holds a value, which is sent verbatim and never replaced when the API rejects it.
 
-TEST TECHNIQUE (per the plan's own AC-16 text: "accessor-monkeypatch pattern
-... assert the resolved model reaches the SDK call"): monkeypatch the
-ADVISOR_SUGGESTION_MODEL env var (the plan's own example name — see
-Questions-for-User in tdd-handoff.md: the exact accessor name/location is an
-assumption pending r1-engine/review confirmation) and assert the model
-actually reaching the mocked SDK call reflects it — env-var-level, not
-accessor-function-level, so these tests don't lock a specific accessor
-function name/location the plan didn't pin.
+The suggestions half of this file drives the real route over a real ``anthropic.Anthropic`` on the
+in-process HTTP fake (``tests/_anthropic_http_fake.py``): the model is read off the outgoing HTTP
+request. IDs come from the captured Models page. The build-plan half (below) still pins the
+build-plan site's own accessor and moves onto the request helper in its own cycle.
 
-WHAT IS MOCKED: both modules' `_build_client()` factory seam only (the
-established pattern in both test suites — tests/ai_advisor/test_ai_advisor.py
-and tests/advisors/test_build_plan_generator.py already patch this exact
-seam). The real request_suggestions / generate_build_plans logic runs.
+Patch targets and forms production must keep:
+- ``ai_advisor._build_client()`` stays the client seam for ``request_suggestions``.
+- ``advisors.build_plan_generator._build_client`` stays the seam for the build-plan half.
 """
 
 from __future__ import annotations
@@ -37,102 +21,134 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from model_config import Knob
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._suggest_and_chat_routes import (
+    assert_names_no_model_or_exception_text,
+    captured_id_outside,
+    error_outcome,
+    ids_newest_first,
+    message_body,
+    models_named,
+    only_message_request,
+    post_suggest,
+    use_client,
+)
+
 # ---------------------------------------------------------------------------
-# (a) ai_advisor.request_suggestions
+# (a) ai_advisor.request_suggestions, through POST /ai-advisor/suggest
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_parse_client():
-    """Minimal fake anthropic client for request_suggestions — mirrors
-    tests/ai_advisor/test_ai_advisor.py's _make_fake_anthropic_client, trimmed
-    to only what AC-16's model-routing assertion needs (we never inspect the
-    parsed content, only the model= kwarg reaching .messages.parse)."""
-    import ai_advisor
+@pytest.fixture
+def fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
 
-    client = MagicMock()
-    empty_response = ai_advisor.ConfigSuggestionsResponse(suggestions=[])
-    block = MagicMock()
-    block.parsed_output = empty_response
-    sdk_response = MagicMock()
-    sdk_response.content = [block]
-    client.messages.parse.return_value = sdk_response
-    return client
+
+@pytest.fixture(autouse=True)
+def _site_client(monkeypatch, fake):
+    use_client(monkeypatch, fake)
+
+
+@pytest.fixture
+def flask_client():
+    import app as app_module
+
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as client:
+        yield client
 
 
 def _minimal_symphony_context() -> dict:
-    """A minimal context dict for request_suggestions. The exact shape does
-    not matter for AC-16 (which targets the model= kwarg only) as long as
-    _build_messages(context) does not raise — request_suggestions' D-1
-    contract means even a malformed context degrades to (None, error) rather
-    than crashing, so a minimal dict is safe regardless."""
+    """A minimal context dict for request_suggestions; only the model named on the wire matters."""
     return {}
 
 
-def test_ac16_request_suggestions_defaults_to_fable_not_opus(monkeypatch):
-    """MUST FAIL pre-fix: today the model is always claude-opus-4-8 regardless
-    of any env var (ADVISOR_SYNTHESIS_MODEL only affects Market Prism
-    synthesis, a different call site) — request_suggestions has no
-    Fable-routing accessor at all yet."""
-    import ai_advisor
+class TestSuggestionModelResolution:
+    def test_run_advisor_names_the_newest_fable_line_model_the_listing_returned(
+        self, fake, flask_client, unresolved_models
+    ):
+        fake.queue_message(message_body("thinking_structured.json"))
 
-    monkeypatch.delenv("ADVISOR_SUGGESTION_MODEL", raising=False)
-    fake_client = _make_fake_parse_client()
+        response = post_suggest(flask_client)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        ai_advisor.request_suggestions(_minimal_symphony_context())
+        assert response.status_code == 200 and "error" not in response.get_json()
+        assert models_named(fake) == [ids_newest_first("fable")[0]]
+        assert fake.listing_sequences == 1
+        assert fake.misuse == []
 
-    assert fake_client.messages.parse.called, "request_suggestions must call client.messages.parse"
-    resolved_model = fake_client.messages.parse.call_args.kwargs.get("model")
-    assert resolved_model == "claude-fable-5", (
-        f"AC-16 GAP: request_suggestions's default suggestion model is "
-        f"{resolved_model!r}, expected 'claude-fable-5' (the operator "
-        f"directive default) when no override env var is set."
+    def test_run_advisor_never_names_a_model_of_the_other_line(
+        self, fake, flask_client, unresolved_models
+    ):
+        fake.queue_message(message_body("thinking_structured.json"))
+
+        post_suggest(flask_client)
+
+        assert only_message_request(fake).body["model"] not in ids_newest_first("opus")
+
+
+class TestSuggestionOverride:
+    @pytest.mark.parametrize(
+        "override_of",
+        [
+            pytest.param(lambda: ids_newest_first("fable")[1], id="older-fable-line-model"),
+            pytest.param(
+                lambda: captured_id_outside(*ids_newest_first("fable")),
+                id="served-model-of-another-line",
+            ),
+        ],
     )
+    def test_run_advisor_names_exactly_the_override_with_no_listing(
+        self, fake, flask_client, monkeypatch, unresolved_models, override_of
+    ):
+        override = override_of()
+        monkeypatch.setenv(Knob.SUGGESTION.value, override)
+        fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        fake.queue_message(message_body("thinking_structured.json"))
 
+        response = post_suggest(flask_client)
 
-def test_ac16_request_suggestions_honors_suggestion_model_env_override(monkeypatch):
-    """Env-var-level proof the model is resolved at CALL TIME from a named
-    accessor, not hardcoded — monkeypatching a distinctive marker value and
-    observing it reach the SDK call proves real wiring, not a coincidental
-    default match."""
-    import ai_advisor
+        assert "error" not in response.get_json()
+        assert models_named(fake) == [override]
+        assert fake.listing_requests == []
 
-    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-suggestion-model")
-    fake_client = _make_fake_parse_client()
+    def test_a_request_to_an_override_carries_the_same_settings_as_any_other(
+        self, fake, flask_client, monkeypatch
+    ):
+        monkeypatch.setenv(Knob.SUGGESTION.value, ids_newest_first("fable")[1])
+        fake.queue_message(message_body("thinking_structured.json"))
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        ai_advisor.request_suggestions(_minimal_symphony_context())
+        post_suggest(flask_client)
 
-    resolved_model = fake_client.messages.parse.call_args.kwargs.get("model")
-    assert resolved_model == "test-marker-suggestion-model", (
-        f"AC-16 GAP: setting ADVISOR_SUGGESTION_MODEL did not reach the SDK "
-        f"call — got model={resolved_model!r}. The accessor must read the env "
-        f"var at call time (mirrors resolve_advisor_model()'s pattern)."
-    )
+        body = only_message_request(fake).body
+        assert body["output_config"]["effort"] == "high"
+        assert body["output_config"]["format"]["type"] == "json_schema"
+        assert body["fallbacks"] == "default"
 
+    def test_the_synthesis_override_never_reaches_the_suggestion_request(
+        self, fake, flask_client, monkeypatch
+    ):
+        monkeypatch.setenv(Knob.SYNTHESIS.value, captured_id_outside(*ids_newest_first("fable")))
+        fake.queue_message(message_body("thinking_structured.json"))
 
-def test_ac16_request_suggestions_suggestion_model_independent_of_synthesis_model(monkeypatch):
-    """The two accessors must be independently overridable — setting
-    ADVISOR_SYNTHESIS_MODEL (the pre-existing Market Prism accessor) must NOT
-    change request_suggestions' resolved model, and vice versa is covered by
-    the override test above. This guards against a lazy fix that reuses
-    ADVISOR_SYNTHESIS_MODEL for both purposes, which would silently couple
-    nightly Prism model changes to config-suggestion routing."""
-    import ai_advisor
+        post_suggest(flask_client)
 
-    monkeypatch.delenv("ADVISOR_SUGGESTION_MODEL", raising=False)
-    monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "test-marker-synthesis-only")
-    fake_client = _make_fake_parse_client()
+        assert models_named(fake) == [ids_newest_first("fable")[0]]
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        ai_advisor.request_suggestions(_minimal_symphony_context())
+    def test_an_override_the_api_does_not_find_is_reported_on_the_page_and_not_replaced(
+        self, fake, flask_client, monkeypatch
+    ):
+        override = captured_id_outside(*ids_newest_first("fable"))
+        monkeypatch.setenv(Knob.SUGGESTION.value, override)
+        fake.queue_message(error_outcome("404_not_found.json"))
 
-    resolved_model = fake_client.messages.parse.call_args.kwargs.get("model")
-    assert resolved_model != "test-marker-synthesis-only", (
-        "AC-16 GAP: request_suggestions' resolved model was driven by "
-        "ADVISOR_SYNTHESIS_MODEL — the suggestion-model accessor must be "
-        "independent of the Market Prism synthesis-model accessor."
-    )
+        data = post_suggest(flask_client).get_json()
+
+        assert "suggestions" not in data
+        assert Knob.SUGGESTION.value in data["error"]
+        assert "override_model_not_found" in data["error"]
+        assert_names_no_model_or_exception_text(data["error"])
+        assert models_named(fake) == [override]
 
 
 # ---------------------------------------------------------------------------
@@ -195,22 +211,22 @@ def test_ac16_build_plan_generator_honors_suggestion_model_env_override(monkeypa
 
 
 def test_ac16_both_suggestion_call_sites_share_the_same_accessor_default(monkeypatch):
-    """Both call sites must resolve to the IDENTICAL default (claude-fable-5)
-    and the IDENTICAL override behavior — a fix that wires one site to a
-    genuine shared accessor and the other to an independent hardcoded
-    'claude-fable-5' string would pass every test above individually but
-    silently diverge the moment the operator overrides the env var on only
-    one path in production. This test proves both paths respond to the SAME
-    env var, not just the same default value."""
+    """Both call sites must resolve to the IDENTICAL override behavior — a fix that wires one
+    site to a genuine shared knob and the other to an independent hardcoded string would pass
+    every test above individually but silently diverge the moment the operator overrides the
+    env var on only one path in production. This test proves both paths respond to the SAME env
+    var. The suggestions side goes over the HTTP fake; the build-plan side keeps its client
+    double until its own site moves onto the request helper."""
     import advisors.build_plan_generator as bpg
     import ai_advisor
 
     monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-shared")
 
-    fake_parse_client = _make_fake_parse_client()
-    with patch.object(ai_advisor, "_build_client", return_value=fake_parse_client, create=True):
-        ai_advisor.request_suggestions(_minimal_symphony_context())
-    request_suggestions_model = fake_parse_client.messages.parse.call_args.kwargs.get("model")
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_message(message_body("thinking_structured.json"))
+    use_client(monkeypatch, fake)
+    ai_advisor.request_suggestions(_minimal_symphony_context())
+    request_suggestions_model = only_message_request(fake).body["model"]
 
     fake_create_client = _client_returning_empty_plans()
     with patch.object(bpg, "_build_client", return_value=fake_create_client):

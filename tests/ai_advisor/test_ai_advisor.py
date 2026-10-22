@@ -65,9 +65,19 @@ from __future__ import annotations
 
 import json
 import pathlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
+import httpx
 import pytest
+
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._suggest_and_chat_routes import (
+    derive_reply,
+    error_outcome,
+    message_body,
+    structured_reply,
+    text_reply,
+)
 
 # ---------------------------------------------------------------------------
 # Network hermeticity — module-scoped autouse.
@@ -710,48 +720,18 @@ def test_symphony_scope_requires_symphony_id():
 # ===========================================================================
 
 
-def _make_fake_anthropic_client(parsed_obj=None, raise_exc=None):
-    """Build a MagicMock standing in for anthropic.Anthropic().
+def _make_fake_anthropic_client(reply=None, outcome=None):
+    """A real ``anthropic.Anthropic`` on the in-process HTTP fake, answering one request.
 
-    The research doc (claude-api-mechanics.md §3) shows the structured-output
-    call as client.messages.parse(...). We model that surface. If GREEN uses
-    a different SDK method, this helper is the one place to adjust — and the
-    Tier 2 live test is what authoritatively pins the real SDK surface.
-
-    Returns a real-shape ParsedMessage (same type the live SDK returns) so
-    these Tier-1 tests are compatible with test_sdk_contract.py's adversarial
-    contract. The validated Pydantic instance sits on
-    content[0].parsed_output — NOT on a top-level .parsed field (which does
-    not exist on ParsedMessage in anthropic 0.85.0).
-
-    parsed_obj: ConfigSuggestionsResponse placed in content[0].parsed_output.
-    raise_exc:  if set, client.messages.parse raises it instead.
+    ``reply`` is a Messages response body (a captured fixture or one derived from it);
+    ``outcome`` is any scripted outcome of the fake (an error fixture or a transport
+    exception). The suggestions site calls the Messages API through the shared request helper
+    with JSON output, so the reply is read from its text block and validated by the site; no SDK
+    ``parse`` result is involved and nothing here builds a ``.parsed`` or ``.parsed_output``.
     """
-    from anthropic.types.parsed_message import ParsedMessage, ParsedTextBlock
-    from anthropic.types.usage import Usage
-
-    client = MagicMock(name="fake_anthropic_client")
-    if raise_exc is not None:
-        client.messages.parse.side_effect = raise_exc
-    else:
-        block = ParsedTextBlock.model_construct(
-            type="text",
-            text='{"suggestions": []}',
-            parsed_output=parsed_obj,
-            citations=None,
-        )
-        sdk_response = ParsedMessage.model_construct(
-            id="msg_fake",
-            type="message",
-            role="assistant",
-            model="claude-opus-4-7",
-            content=[block],
-            stop_reason="end_turn",
-            stop_sequence=None,
-            usage=Usage(input_tokens=1, output_tokens=1),
-        )
-        client.messages.parse.return_value = sdk_response
-    return client
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_message(reply if outcome is None else outcome)
+    return fake.client
 
 
 def test_request_suggestions_happy_path_parses_into_schema(
@@ -761,8 +741,9 @@ def test_request_suggestions_happy_path_parses_into_schema(
     and the response validates against the Pydantic schema."""
     import ai_advisor
 
-    parsed = ai_advisor.ConfigSuggestionsResponse(**sample_response_payload)
-    fake_client = _make_fake_anthropic_client(parsed_obj=parsed)
+    fake_client = _make_fake_anthropic_client(
+        reply=structured_reply(sample_response_payload["suggestions"])
+    )
 
     with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(symphony_context)
@@ -780,8 +761,9 @@ def test_request_suggestions_happy_path_all_fields_populated(
     path — pin the schema contract, not the specific values."""
     import ai_advisor
 
-    parsed = ai_advisor.ConfigSuggestionsResponse(**sample_response_payload)
-    fake_client = _make_fake_anthropic_client(parsed_obj=parsed)
+    fake_client = _make_fake_anthropic_client(
+        reply=structured_reply(sample_response_payload["suggestions"])
+    )
 
     with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(symphony_context)
@@ -834,57 +816,34 @@ def test_request_suggestions_fixture_covers_all_risk_directions(sample_response_
 # ===========================================================================
 
 
-def _anthropic_exc_classes():
-    """Yield (label, exception_instance) for the SDK failure modes.
+def _failed_request_outcomes():
+    """Yield (label, outcome) for the failure modes of a Messages request.
 
-    Falls back to generic Exception subclasses if a given anthropic exception
-    class is not importable in the installed SDK version — the contract under
-    test is 'no SDK exception escapes request_suggestions', regardless of the
-    exact class.
+    Each outcome is what the in-process API answers or raises at the transport; the SDK turns
+    it into the exception a live failure raises. The contract under test is 'no failure escapes
+    request_suggestions', whatever its class.
     """
-    cases = []
-    try:
-        import anthropic
-
-        # RateLimitError / APITimeoutError / APIStatusError / APIError exist
-        # across modern anthropic SDK versions; guard each individually.
-        for name in (
-            "RateLimitError",
-            "APITimeoutError",
-            "APIConnectionError",
-            "APIStatusError",
-            "APIError",
-        ):
-            exc_cls = getattr(anthropic, name, None)
-            if exc_cls is not None:
-                cases.append((name, exc_cls))
-    except ImportError:  # pragma: no cover - SDK is a declared dependency
-        pass
-
-    if not cases:  # pragma: no cover - safety net
-        cases = [("RuntimeError", RuntimeError)]
-    return cases
+    return [
+        ("RateLimitError", error_outcome("429_rate_limit.json")),
+        ("AuthenticationError", error_outcome("401_authentication.json")),
+        ("APIStatusError", error_outcome("500_api_error.json")),
+        ("APIConnectionError", httpx.ConnectError("example connection failure")),
+        ("APITimeoutError", httpx.ReadTimeout("example read timeout")),
+    ]
 
 
 @pytest.mark.parametrize(
-    "exc_label,exc_cls",
-    _anthropic_exc_classes(),
+    "exc_label,outcome",
+    _failed_request_outcomes(),
     ids=lambda v: v if isinstance(v, str) else "",
 )
-def test_request_suggestions_degrades_gracefully_on_sdk_error(symphony_context, exc_label, exc_cls):
-    """Every anthropic SDK failure mode degrades to (None, error_message) —
+def test_request_suggestions_degrades_gracefully_on_sdk_error(symphony_context, exc_label, outcome):
+    """Every failure mode of the request degrades to (None, error_message) —
     request_suggestions must NEVER raise. The feature is on-demand operator-
     assist; a failure is 'no suggestion this click', zero engine impact."""
     import ai_advisor
 
-    # Construct the exception as cheaply as possible — different anthropic
-    # exception classes have different __init__ signatures across versions.
-    try:
-        exc_instance = exc_cls("simulated SDK failure")
-    except TypeError:
-        exc_instance = exc_cls.__new__(exc_cls)
-
-    fake_client = _make_fake_anthropic_client(raise_exc=exc_instance)
+    fake_client = _make_fake_anthropic_client(outcome=outcome)
 
     with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
@@ -892,14 +851,13 @@ def test_request_suggestions_degrades_gracefully_on_sdk_error(symphony_context, 
         except Exception as exc:  # noqa: BLE001 - the whole point is to catch
             pytest.fail(
                 f"request_suggestions raised {type(exc).__name__} on a "
-                f"{exc_label} SDK failure — it MUST degrade gracefully to "
+                f"{exc_label} failure — it MUST degrade gracefully to "
                 f"(None, error_message), never raise."
             )
 
-    assert response is None, f"on a {exc_label} SDK failure, response must be None"
+    assert response is None, f"on a {exc_label} failure, response must be None"
     assert isinstance(error, str) and error.strip(), (
-        f"on a {exc_label} SDK failure, error must be a non-empty string the "
-        f"UI can show the operator"
+        f"on a {exc_label} failure, error must be a non-empty string the UI can show the operator"
     )
 
 
@@ -931,16 +889,16 @@ def test_request_suggestions_handles_client_construction_failure(symphony_contex
 
 
 def test_request_suggestions_malformed_response_missing_required_field(symphony_context):
-    """SDK returns a suggestion missing a required field — request_suggestions
+    """A reply whose suggestion is missing a required field — request_suggestions
     must NOT raise; it must return (None, error_message)."""
     import ai_advisor
 
-    # A dict that is NOT a valid ConfigSuggestionsResponse — suggestion is
-    # missing 'rationale', 'risk_direction', etc.
-    malformed = MagicMock(name="malformed_sdk_response")
-    malformed.parsed = None  # parse produced nothing usable
-    fake_client = MagicMock()
-    fake_client.messages.parse.return_value = malformed
+    fake_client = _make_fake_anthropic_client(
+        reply=text_reply(
+            '{"suggestions": [{"config_key": "MAX_SQUEEZE_FLOOR"}]}',
+            base="thinking_structured.json",
+        )
+    )
 
     with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         try:
@@ -951,33 +909,37 @@ def test_request_suggestions_malformed_response_missing_required_field(symphony_
                 f"malformed response — it must return (None, error_message)."
             )
 
-    assert response is None, "a malformed/unparseable SDK response must yield response=None"
+    assert response is None, "a malformed/unparseable reply must yield response=None"
     assert isinstance(error, str) and error.strip(), (
         "a malformed response must yield a non-empty error message"
     )
 
 
 def test_request_suggestions_malformed_response_wrong_shape(symphony_context):
-    """SDK returns a structurally wrong object (e.g. a bare string where a
-    ConfigSuggestionsResponse was expected) — graceful (None, error)."""
+    """A reply that is not JSON in the suggestions schema at all (prose where the
+    structured answer was expected, or a reply with no text block) — graceful (None, error)."""
     import ai_advisor
 
-    bad_response = MagicMock(name="wrong_shape_response")
-    bad_response.parsed = "this is not a ConfigSuggestionsResponse"
-    fake_client = MagicMock()
-    fake_client.messages.parse.return_value = bad_response
+    for reply in (
+        message_body("thinking_text.json"),
+        derive_reply(
+            "thinking_structured.json",
+            lambda body: body.update(content=[b for b in body["content"] if b["type"] != "text"]),
+        ),
+    ):
+        fake_client = _make_fake_anthropic_client(reply=reply)
 
-    with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
-        try:
-            response, error = ai_advisor.request_suggestions(symphony_context)
-        except Exception as exc:  # noqa: BLE001
-            pytest.fail(
-                f"request_suggestions raised {type(exc).__name__} on a "
-                f"wrong-shape response — it must degrade gracefully."
-            )
+        with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
+            try:
+                response, error = ai_advisor.request_suggestions(symphony_context)
+            except Exception as exc:  # noqa: BLE001
+                pytest.fail(
+                    f"request_suggestions raised {type(exc).__name__} on a "
+                    f"wrong-shape response — it must degrade gracefully."
+                )
 
-    assert response is None
-    assert isinstance(error, str) and error.strip()
+        assert response is None
+        assert isinstance(error, str) and error.strip()
 
 
 def test_malformed_payload_fails_pydantic_validation():
@@ -1010,8 +972,7 @@ def test_request_suggestions_empty_list_is_valid_non_error(symphony_context):
     (ConfigSuggestionsResponse with [] suggestions, None) — NOT as an error."""
     import ai_advisor
 
-    empty = ai_advisor.ConfigSuggestionsResponse(suggestions=[])
-    fake_client = _make_fake_anthropic_client(parsed_obj=empty)
+    fake_client = _make_fake_anthropic_client(reply=message_body("thinking_structured.json"))
 
     with patch.object(ai_advisor, "_build_client", return_value=fake_client, create=True):
         response, error = ai_advisor.request_suggestions(symphony_context)
