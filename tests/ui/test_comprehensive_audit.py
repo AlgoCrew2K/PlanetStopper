@@ -103,53 +103,34 @@ def _patch_db():
 
 
 def test_dashboard_renderSparkline_destroys_prior_chart_before_new():
-    """D-CARD-01: renderSparkline must not call `new Chart()` without first destroying
-    any prior Chart instance on the same canvas.
-
-    Required pattern (one of):
-    (a) A per-canvas registry (e.g. _sparks[symId]) followed by .destroy() before new Chart()
-    (b) chart.data mutation + chart.update('none') pattern (no new Chart() on repeat call)
-
-    Without this, Chart.js throws "Canvas is already in use" on the 2nd poll,
-    killing all subsequent sparkline renders.
-
-    Fix: add a _sparks registry object, store each Chart instance keyed by canvas,
-    call existing.destroy() before re-creating, OR mutate + update like renderHeroChart does.
+    """D-CARD-01: a second poll must not collide with the chart already on a card
+    canvas ("Canvas is already in use" blanks every sparkline) -- and a refresh
+    must not destroy and rebuild a chart that holds data either (it replays the
+    entry animation and flashes the card): the chart on each canvas is updated in
+    place. Asserted by running the whole of static/index.js under node with a
+    recording Chart stub that throws on a second construct over a live canvas,
+    not by reading the source for a destroy() call.
     """
-    src = _INDEX_JS.read_text(encoding="utf-8")
-    # Extract renderSparkline function body
-    m = re.search(r"function\s+renderSparkline\s*\([^)]*\)\s*\{", src)
-    assert m, "renderSparkline function not found in static/index.js"
-    start = m.start()
-    # Find matching closing brace by counting depth
-    depth = 0
-    i = src.index("{", start)
-    body_start = i
-    while i < len(src):
-        if src[i] == "{":
-            depth += 1
-        elif src[i] == "}":
-            depth -= 1
-            if depth == 0:
-                body_end = i
-                break
-        i += 1
-    body = src[body_start : body_end + 1]
+    from tests.dashboard import _index_js_harness as hx
 
-    has_destroy = ".destroy()" in body
-    # Acceptable pattern B: no new Chart() inside repeated call (uses update() instead)
-    has_new_chart = "new Chart(" in body
-    uses_update_pattern = "chart.update(" in body or ".update(" in body
-
-    # Either destroy() before new Chart(), or no new Chart() at all (mutate-update pattern)
-    assert has_destroy or (not has_new_chart) or uses_update_pattern, (
-        "renderSparkline calls `new Chart(canvas, ...)` on every poll without destroying "
-        "the prior Chart instance. On the 2nd poll, Chart.js throws "
-        "'Canvas is already in use.' and all sparklines go blank. "
-        "Fix: add a per-canvas Chart registry (e.g. _sparks = {}), call "
-        "_sparks[canvasId].destroy() before re-creating, OR switch to the mutate+update "
-        "pattern used by renderHeroChart (no `new Chart()` on repeat call)."
-    )
+    world = hx.get_world("default")
+    scenario = r"""
+    await H.boot({});
+    for (let i = 0; i < 3; i++) { await H.tick(); await H.completeAnimations(); }
+    return { summary: H.summary() };
+    """
+    result = hx.run_scenario(world, scenario)
+    summary = result["result"]["summary"]
+    assert not [e for e in result["consoleErrors"] if "Canvas is already in use" in e], result[
+        "consoleErrors"
+    ]
+    for sym_id in world["ids"]:
+        spark = summary[f"spark:{sym_id}"]
+        assert spark["live"], f"{sym_id}: the sparkline vanished after repeated polls"
+        assert spark["constructs"] == 1, f"{sym_id}: rebuilt {spark['constructs']} times"
+        assert spark["destroys"] == 0, (
+            f"{sym_id}: destroyed and rebuilt instead of updated in place"
+        )
 
 
 # ---------------------------------------------------------------------------

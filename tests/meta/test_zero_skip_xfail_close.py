@@ -519,7 +519,7 @@ def test_full_suite_reports_zero_skips_and_zero_xfails() -> None:
             "-o",
             "addopts=",
             "-m",
-            "not live and not slow and not perf",
+            "not live and not slow and not perf and not browser",
             # Exclude this meta-file from recursive invocation to keep the run
             # tractable and avoid recursion (subprocess shells the runner).
             "--deselect",
