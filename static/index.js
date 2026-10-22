@@ -1489,17 +1489,24 @@
         if (dataAsOf) { dataAsOf.textContent = 'connection lost'; }
     }
 
+    // Newest-request-wins: every call takes a sequence number and only the
+    // response (or failure) of the most recently issued call is applied, so a
+    // slow earlier response cannot overwrite a newer snapshot or account pick.
+    var _stateRequestSeq = 0;
     function loadState() {
+        var seq = ++_stateRequestSeq;
         var query = window.activeAccount
             ? '?account=' + encodeURIComponent(window.activeAccount)
             : '';
         fetch('/api/state' + query)
             .then(function (r) { return r.json(); })
             .then(function (data) {
+                if (seq !== _stateRequestSeq) return;
                 lastSuccessfulPollAt = Date.now();
                 updateDashboard(data);
             })
             .catch(function (err) {
+                if (seq !== _stateRequestSeq) return;
                 showConnectionLost();
                 console.error('state load failed', err);
             });

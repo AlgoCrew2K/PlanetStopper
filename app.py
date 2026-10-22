@@ -2043,6 +2043,18 @@ def _project_today_change_floor(vw_tc: dict) -> dict:
     return {"if_held": vw_tc.get("if_held"), "dry_run": vw_tc.get("dry_run")}
 
 
+def _is_symphony_in_account(value, account_filter):
+    """True for a symphony state entry (a dict with a name) in the filtered account.
+
+    An empty filter matches every symphony entry; non-symphony dicts never match.
+    """
+    return (
+        isinstance(value, dict)
+        and "name" in value
+        and (not account_filter or value.get("account") == account_filter)
+    )
+
+
 def _compute_portfolio_strip(
     bot_state: dict, trading_day: str | None = None, conn: sqlite3.Connection | None = None
 ) -> dict:
@@ -3143,10 +3155,12 @@ def get_state():
                 _waiting_body["portfolio_strip"] = _injected_portfolio_strip
             return jsonify(_waiting_body)
 
-        # FP-T3-03 backend: optional ?account=<uuid> filter on bot_state. The filter
-        # narrows only the per-symphony outputs (cards, state, bot_state, symphonies);
-        # the hero strip and mini-stats stay whole-portfolio, so state_data itself
-        # is never narrowed.
+        # Optional ?account=<id> narrows the per-symphony outputs: cards (html),
+        # state, bot_state and symphonies. Dict-valued non-symphony metadata keys
+        # (last_market_close_snapshot, post_mortem_run) are dropped from a filtered
+        # state/bot_state, as the shared predicate treats them as non-members;
+        # string metadata (date, last_successful_cycle_at) stays. portfolio_strip
+        # and meta always come from the whole state, so state_data is never narrowed.
         _account_filter = request.args.get("account")
 
         env_vars = dotenv_values(".env")
@@ -3165,11 +3179,7 @@ def get_state():
         # last_market_close_snapshot) cannot leak into the cards/standby list.
         # Matches the SSR/meta paths (app.py:433/544) which already require "name".
         symphony_keys = [
-            k
-            for k in state_data.keys()
-            if isinstance(state_data[k], dict)
-            and "name" in state_data[k]
-            and (not _account_filter or state_data[k].get("account") == _account_filter)
+            k for k, v in state_data.items() if _is_symphony_in_account(v, _account_filter)
         ]
         accounts_map = {}
         for k in symphony_keys:
@@ -3484,7 +3494,9 @@ def get_state():
         _narrowed_state = {
             k: v
             for k, v in state_data.items()
-            if not _account_filter or not isinstance(v, dict) or v.get("account") == _account_filter
+            if not _account_filter
+            or not isinstance(v, dict)
+            or _is_symphony_in_account(v, _account_filter)
         }
         return jsonify(
             {
