@@ -1135,3 +1135,64 @@ class TestComposerSeriesClientNoTradeBoundary:
         source = self._source()
         assert "ai_advisor" not in source
         assert "anthropic" not in source.lower()
+
+
+# ===========================================================================
+# Group H (Cycle 2e, AC-7b): the market-hours gate belongs to the Run-now ROUTE
+# only. The 03:45 scheduled tick (always outside the session) is never gated.
+# ===========================================================================
+
+_MARKET_STATE_FN_NAME = "get_market_state"
+
+
+def _thread_target_name(tree: ast.Module, fn_name: str) -> str | None:
+    """The bare-name `target=` passed to a `*.Thread(...)` call inside `fn_name`."""
+    fn_node = _find_function_def(tree, fn_name)
+    if fn_node is None:
+        return None
+    for node in ast.walk(fn_node):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "Thread"
+        ):
+            for kw in node.keywords:
+                if kw.arg == "target" and isinstance(kw.value, ast.Name):
+                    return kw.value.id
+    return None
+
+
+class TestMarketGateScope:
+    def test_the_run_now_route_consults_the_market_state(self):
+        tree = _parse_app_py()
+        node = _find_function_def(tree, _RETIREMENT_RUN_ROUTE_FN_NAME)
+        assert node is not None
+        assert _references_name_or_attr(node, _MARKET_STATE_FN_NAME), (
+            f"{_RETIREMENT_RUN_ROUTE_FN_NAME} must call {_MARKET_STATE_FN_NAME}() (AC-7b gate)"
+        )
+
+    def test_the_scheduled_tick_thread_target_is_found_and_reaches_the_worker(self):
+        """Non-vacuity for the scan below."""
+        tree = _parse_app_py()
+        target = _thread_target_name(tree, _RETIREMENT_TICK_WRAPPER_FN_NAME)
+        assert target, (
+            f"{_RETIREMENT_TICK_WRAPPER_FN_NAME} must start a thread with a bare-name target"
+        )
+        visited = {
+            getattr(n, "name", None) for n in _collect_transitive_local_call_subtrees(tree, target)
+        }
+        assert _RETIREMENT_TICK_WORKER_FN_NAME in visited, (
+            f"the scheduled tick's thread body {target!r} must reach the shared worker; got {visited}"
+        )
+
+    def test_the_scheduled_tick_path_never_references_the_market_state(self):
+        tree = _parse_app_py()
+        target = _thread_target_name(tree, _RETIREMENT_TICK_WRAPPER_FN_NAME)
+        assert target
+        for subtree in _collect_transitive_local_call_subtrees(tree, target):
+            assert not _references_name_or_attr(subtree, _MARKET_STATE_FN_NAME), (
+                f"{getattr(subtree, 'name', '?')} (reachable from the scheduled tick) references "
+                f"{_MARKET_STATE_FN_NAME}: the 03:45 tick must never be market-gated"
+            )
+        wrapper = _find_function_def(tree, _RETIREMENT_TICK_WRAPPER_FN_NAME)
+        assert not _references_name_or_attr(wrapper, _MARKET_STATE_FN_NAME)

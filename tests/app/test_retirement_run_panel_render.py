@@ -619,6 +619,51 @@ def _function_body(source: str, name: str) -> str:
     raise AssertionError(f"unbalanced braces in {name}")
 
 
+class TestRunNowMarketHoursHint:
+    """AC-7b: a STATIC hint in the panel that Run now is available outside market
+    hours (rendered in every state, whatever the market state at render time)."""
+
+    def _hint_text(self, body: str) -> str:
+        return _text(_element_html(_panel(body), "retirement-run-now-hint"))
+
+    def test_the_hint_is_present_when_no_run_exists(self, client, isolated_db):
+        body = _render(client)
+        assert "outside market hours" in self._hint_text(body).lower()
+
+    @pytest.mark.parametrize(
+        "status", ["ok", "series_unavailable", "insufficient_symphonies", "internal_error"]
+    )
+    def test_the_hint_is_present_in_every_run_state(self, client, isolated_db, status):
+        _seed_summary(status=status, error_type="KeyError" if status == "internal_error" else None)
+        body = _render(client)
+        assert "outside market hours" in self._hint_text(body).lower()
+
+    @pytest.mark.parametrize("market_state", ["open", "pre_market", "closed_frozen"])
+    def test_the_hint_is_static_regardless_of_the_market_state_at_render_time(
+        self, client, isolated_db, monkeypatch, market_state
+    ):
+        monkeypatch.setattr(app_module, "get_market_state", lambda *a, **k: market_state)
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        assert "outside market hours" in self._hint_text(resp.get_data(as_text=True)).lower()
+
+    def test_the_hint_is_inside_the_retirement_panel_and_outside_the_cards(
+        self, client, isolated_db
+    ):
+        _seed_roster({"cand-render": "Render Candidate", "sib-render": "Render Sibling"})
+        _seed_rec("run-now", "cand-render", "sib-render")
+        _seed_summary(run_id="run-now", recommendations=1)
+        panel = _panel(_render(client))
+        assert 'data-testid="retirement-run-now-hint"' in panel
+        assert panel.index('data-testid="retirement-run-now-hint"') < panel.index(
+            'data-testid="retirement-recommendation-card"'
+        )
+
+    def test_the_hint_text_is_autoescaped_markup_free(self, client, isolated_db):
+        hint_html = _element_html(_panel(_render(client)), "retirement-run-now-hint")
+        assert "<script" not in hint_html.lower()
+
+
 @pytest.fixture(scope="module")
 def js() -> str:
     return (REPO_ROOT / "static" / "ai_advisor.js").read_text(encoding="utf-8")
@@ -661,6 +706,61 @@ class TestRunNowWiring:
         assert "textContent" in body
         assert "retirement-run-now-status" in body
         assert "innerHTML" not in body
+
+    def _market_open_branch(self, js: str) -> str:
+        """Source of the `if (...market_open...) { ... }` block inside
+        retirementRunNow (brace-matched)."""
+        body = _function_body(js, "retirementRunNow")
+        match = re.search(r"if\s*\([^)]*market_open[^)]*\)\s*\{", body)
+        assert match, (
+            "retirementRunNow must handle the 'market_open' status in its own "
+            "`if (... market_open ...) { ... }` block"
+        )
+        depth = 0
+        for i in range(match.end() - 1, len(body)):
+            if body[i] == "{":
+                depth += 1
+            elif body[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return body[match.end() - 1 : i + 1]
+        raise AssertionError("unbalanced braces in the market_open branch")
+
+    def test_js_checks_market_open_before_the_generic_409_already_running_branch(self, js):
+        """The route answers 409 for BOTH market_open and already_running; a
+        generic `status === 409` check placed first would swallow market_open."""
+        body = _function_body(js, "retirementRunNow")
+        assert "market_open" in body
+        assert body.index("market_open") < body.index("already_running")
+
+    def test_js_market_open_branch_explains_the_reason_via_textcontent(self, js):
+        branch = self._market_open_branch(js)
+        assert "textContent" in branch or "setStatus(" in branch, "status text must be written"
+        literals = re.findall(r"'((?:[^'\\\n]|\\.)*)'|\"((?:[^\"\\\n]|\\.)*)\"", branch)
+        messages = [a or b for a, b in literals]
+        assert any(
+            "outside market hours" in m.lower()
+            and "composer" in m.lower()
+            and "shared" in m.lower()
+            for m in messages
+        ), (
+            "the market_open message must say Run now is available outside market hours "
+            f"because the Composer API is shared with the live engine; literals: {messages}"
+        )
+
+    def test_js_market_open_branch_does_not_start_polling(self, js):
+        branch = self._market_open_branch(js)
+        assert "return" in branch, "the market_open branch must return before the polling loop"
+        for polling_token in (
+            "sleep(",
+            "setTimeout",
+            "setInterval",
+            "while",
+            "readLastRunId",
+            "fetch(",
+        ):
+            assert polling_token not in branch, f"market_open must not poll ({polling_token!r})"
+        assert "location.reload" not in branch
 
     def test_js_disables_the_button_while_a_run_is_in_flight(self, js):
         assert ".disabled = true" in _function_body(js, "retirementRunNow")

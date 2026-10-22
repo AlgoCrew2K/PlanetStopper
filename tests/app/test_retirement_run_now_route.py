@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -131,6 +132,39 @@ def auth_client(monkeypatch):
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _market_closed(monkeypatch):
+    """AC-7b: POST /ai-advisor/retirement/run refuses while the market is OPEN, so
+    every test in this file pins the market state (default closed) instead of
+    depending on the wall clock. The AC-7b tests below override this per test."""
+    monkeypatch.setattr(app_module, "get_market_state", lambda *a, **k: "closed_frozen")
+
+
+@pytest.fixture(autouse=True)
+def _no_lock_leak_between_tests():
+    """Hygiene: a failing test (e.g. a recorder thread that never runs the worker
+    body) must not leave the shared single-flight lock held and cascade 409s into
+    every later test."""
+    yield
+    lock = app_module._RETIREMENT_RUN_LOCK
+    if lock.locked():
+        try:
+            lock.release()
+        except RuntimeError:
+            pass
+
+
+def _set_market(monkeypatch, state: str, calls: list | None = None) -> None:
+    """Patch the bare name `get_market_state` in app.py (where the route reads it)."""
+
+    def _fake(current_et, *args, **kwargs):
+        if calls is not None:
+            calls.append(current_et)
+        return state
+
+    monkeypatch.setattr(app_module, "get_market_state", _fake)
 
 
 def _post(client, **kwargs):
@@ -374,6 +408,147 @@ class TestSingleFlight:
 
         assert captured.get("daemon") is True
         assert captured.get("started") is True
+
+
+# ===========================================================================
+# AC-7b: Run now is closed during market hours
+# ===========================================================================
+
+
+class TestMarketHoursGate:
+    """Composer's rate limit is per API key and the live engine bursts Composer
+    calls at :00 every market minute, so a Run-now fetch loop during the
+    session could push the engine into HTTP 429. While
+    ``get_market_state(<now ET>) == "open"`` the route answers
+    ``409 {"status": "market_open"}`` WITHOUT taking the single-flight lock and
+    WITHOUT starting a thread. ``pre_market`` and ``closed_frozen`` proceed
+    exactly as before."""
+
+    def test_post_while_the_market_is_open_is_409_market_open(self, client, build, monkeypatch):
+        fake = build()
+        _set_market(monkeypatch, "open")
+
+        resp = _post(client)
+
+        assert resp.status_code == 409
+        assert resp.is_json
+        assert resp.get_json() == {"status": "market_open"}
+        time.sleep(0.1)
+        assert fake.calls == [], "no run may start while the market is open"
+
+    def test_a_market_open_refusal_never_takes_the_single_flight_lock(
+        self, client, build, monkeypatch
+    ):
+        build()
+        _set_market(monkeypatch, "open")
+        assert _post(client).status_code == 409
+        assert not app_module._RETIREMENT_RUN_LOCK.locked(), "the gate must run BEFORE the lock"
+
+    def test_a_market_open_refusal_never_starts_a_thread(self, client, build, monkeypatch):
+        build()
+        _set_market(monkeypatch, "open")
+        constructed: list = []
+
+        class _RecordingThread:
+            def __init__(self, *args, **kwargs):
+                constructed.append((args, kwargs))
+
+            def start(self):
+                constructed.append("started")
+
+        with patch("threading.Thread", _RecordingThread):
+            resp = _post(client)
+
+        assert resp.status_code == 409
+        assert constructed == [], "a refused request must not construct or start any thread"
+
+    def test_after_the_close_the_same_post_starts_a_run(self, client, build, monkeypatch):
+        """Open -> 409 market_open, then closed_frozen -> 202 started: proves the
+        refusal neither took the lock (which would now answer already_running)
+        nor started anything."""
+        fake = build()
+        _set_market(monkeypatch, "open")
+        first = _post(client)
+        assert first.status_code == 409
+        assert first.get_json() == {"status": "market_open"}
+
+        _set_market(monkeypatch, "closed_frozen")
+        second = _post(client)
+        assert second.status_code == 202
+        assert second.get_json() == {"status": "started"}
+        assert fake.started.wait(_WAIT_SECONDS)
+        assert fake.calls == [{"source": "composer"}]
+
+    @pytest.mark.parametrize("state", ["pre_market", "closed_frozen"])
+    def test_pre_market_and_closed_states_proceed_as_before(
+        self, client, build, monkeypatch, state
+    ):
+        fake = build()
+        _set_market(monkeypatch, state)
+
+        resp = _post(client)
+
+        assert resp.status_code == 202
+        assert resp.get_json() == {"status": "started"}
+        assert fake.started.wait(_WAIT_SECONDS)
+
+    @pytest.mark.parametrize("state", ["pre_market", "closed_frozen"])
+    def test_outside_market_hours_an_in_flight_run_is_still_already_running(
+        self, client, build, monkeypatch, state
+    ):
+        fake = build(block=True)
+        _set_market(monkeypatch, state)
+        assert _post(client).status_code == 202
+        assert fake.started.wait(_WAIT_SECONDS)
+
+        second = _post(client)
+        assert second.status_code == 409
+        assert second.get_json() == {"status": "already_running"}
+
+    def test_market_open_wins_over_an_in_flight_run(self, client, build, monkeypatch):
+        """Gate ordering: the market check comes BEFORE the single-flight check,
+        so an open market reports market_open even while a run holds the lock."""
+        fake = build(block=True)
+        _set_market(monkeypatch, "closed_frozen")
+        assert _post(client).status_code == 202
+        assert fake.started.wait(_WAIT_SECONDS)
+        assert app_module._RETIREMENT_RUN_LOCK.locked(), "sanity: a run is in flight"
+
+        _set_market(monkeypatch, "open")
+        resp = _post(client)
+
+        assert resp.status_code == 409
+        assert resp.get_json() == {"status": "market_open"}, (
+            "market_open must win over already_running"
+        )
+        assert len(fake.calls) == 1
+        assert app_module._RETIREMENT_RUN_LOCK.locked(), "the in-flight run keeps its lock"
+
+    def test_the_gate_reads_the_current_time_in_eastern(self, client, build, monkeypatch):
+        build()
+        seen: list = []
+        _set_market(monkeypatch, "closed_frozen", calls=seen)
+        before = datetime.now(UTC)
+
+        assert _post(client).status_code == 202
+
+        assert seen, "the route never consulted get_market_state"
+        stamp = seen[-1]
+        assert isinstance(stamp, datetime) and stamp.tzinfo is not None
+        assert getattr(stamp.tzinfo, "key", None) == "America/New_York"
+        assert (
+            abs((stamp.astimezone(UTC) - before).total_seconds()) < 30
+        )  # "now", not a stale value
+
+    def test_the_scheduled_tick_runs_even_when_the_market_is_open(self, build, monkeypatch):
+        """The 03:45 tick is never gated (it is always outside the session)."""
+        fake = build()
+        _set_market(monkeypatch, "open")
+
+        app_module._run_retirement_recommender_tick()
+
+        assert fake.started.wait(_WAIT_SECONDS), "the scheduled tick must ignore the market state"
+        assert fake.calls == [{"source": "composer"}]
 
 
 # ===========================================================================
