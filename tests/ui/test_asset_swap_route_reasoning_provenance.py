@@ -565,21 +565,17 @@ class TestObjectiveModeNamesTheResolvedModel:
     def test_the_request_names_the_newest_listed_model_of_the_family(
         self, flask_client, fake, unresolved_models
     ):
-        page = load_fixture("models/relisted_newer_fable.json")
-        fake.set_pages([page])
         fake.queue_message(sup.swap_tool_reply())
 
         run = _evaluate(flask_client, fake)
 
-        expected = newest_id("fable", records=page["data"])
-        assert expected != newest_id("fable"), (
-            "self-guard: the relisted page must change the answer"
-        )
         assert run.status == 200
-        assert sup.request_models(fake) == [expected]
+        assert fake.listing_sequences == 1
+        assert sup.request_models(fake) == [newest_id("fable")]
+        assert newest_id("fable") != _older_fable_id(), "self-guard: the page lists two models"
         assert not fake.misuse
 
-    def test_an_override_is_named_exactly_and_the_models_api_is_never_listed(
+    def test_an_override_changes_only_the_model_named_and_nothing_is_listed(
         self, flask_client, fake, unresolved_models, monkeypatch
     ):
         override = _older_fable_id()
@@ -591,8 +587,12 @@ class TestObjectiveModeNamesTheResolvedModel:
 
         run = _evaluate(flask_client, fake)
 
-        assert sup.request_models(fake) == [override]
+        (request,) = fake.message_requests
+        assert request.body["model"] == override
         assert fake.listing_requests == [], "an override is never listed or validated"
+        assert request.body["output_config"] == {"effort": "high"}
+        assert request.body["tool_choice"] == {"type": "auto"}
+        assert request.body["fallbacks"] == "default"
         assert sup.evaluated_pairs(run.data) == [sup.captured_pair()]
 
     def test_the_request_carries_the_fallback_setting_and_auto_tool_choice(
