@@ -8326,6 +8326,16 @@ def ai_advisor_retirement_run():
     immediately; the page learns the outcome by polling GET
     /api/retirement-recommendations until last_run.run_id changes.
 
+    Market-hours gate (AC-7b): Composer's rate limit is per API key and the
+    live engine bursts Composer calls at :00 every market minute, so while
+    get_market_state(<now ET>) == "open" this answers 409
+    {"status": "market_open"} BEFORE touching the single-flight lock -- no lock
+    is taken, no thread is started, no worker runs. pre_market and
+    closed_frozen proceed as below. The gate is checked first, so an open
+    market reports market_open even while a run holds the lock. Only this
+    route is gated: the scheduled 03:45 tick is always outside the session
+    and stays ungated.
+
     Single-flight: _RETIREMENT_RUN_LOCK is shared with the scheduled tick and
     acquired NON-blocking in the request thread -- a run already in flight
     answers 409 {"status": "already_running"} and starts nothing; otherwise the
@@ -8339,6 +8349,9 @@ def ai_advisor_retirement_run():
     worker persists advisory rows and the run summary, nothing else. D-1: an
     error response carries type(exc).__name__ only.
     """
+    if get_market_state(datetime.now(_ET)) == "open":
+        return jsonify({"status": "market_open"}), 409
+
     if not _RETIREMENT_RUN_LOCK.acquire(blocking=False):
         return jsonify({"status": "already_running"}), 409
 

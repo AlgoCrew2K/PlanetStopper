@@ -1081,6 +1081,12 @@
             font-size: 0.75rem;
             color: var(--studio-ink-dim);
         }
+        .retirement-run-now-hint {
+            font-size: 0.6875rem;
+            font-style: italic;
+            color: var(--studio-ink-dim);
+            margin: -0.375rem 0 0.75rem;
+        }
 
         /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
         .prism-verification {
@@ -1664,6 +1670,13 @@
                       data-testid="retirement-run-now-status"
                       role="status"
                       aria-live="polite"></span>
+            </div>
+            {# Cycle 2e AC-7b: static hint (rendered in every state, whatever the #}
+            {# market state at render time) -- Run now is refused while the       #}
+            {# market is open because Composer's rate limit is shared with the    #}
+            {# live engine.                                                       #}
+            <div class="retirement-run-now-hint" data-testid="retirement-run-now-hint">
+                Run now is available outside market hours only &mdash; the Composer API is shared with the live engine.
             </div>
 
             {% if retirement_recommendations %}

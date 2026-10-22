@@ -1194,7 +1194,10 @@
      *
      * POSTs to /ai-advisor/retirement/run (CSRF header from /api/csrf-token),
      * which hands the multi-minute worker to a background thread and answers
-     * 202 immediately -- or 409 {"status": "already_running"} when a run
+     * 202 immediately -- or 409 {"status": "market_open"} while the market is
+     * open (Run now is refused: the Composer API is shared with the live
+     * engine; nothing starts and nothing is polled), or 409
+     * {"status": "already_running"} when a run
      * (this one, or the scheduled 03:45 tick) is already in flight, in which
      * case we simply wait for THAT run. Then polls GET
      * /api/retirement-recommendations every RETIREMENT_POLL_INTERVAL_MS, for
@@ -1244,6 +1247,13 @@
             var data = null;
             try { data = await resp.json(); } catch (parseErr) { data = null; }
 
+            // The route answers 409 for BOTH market_open and already_running, so
+            // this check must come first or the generic 409 branch swallows it.
+            if (data && data.status === 'market_open') {
+                setStatus('Run now is available outside market hours: the Composer API is shared with the live engine.');
+                if (btnEl) { btnEl.disabled = false; }
+                return;
+            }
             if (resp.status === 409 || (data && data.status === 'already_running')) {
                 setStatus('A run is already in progress — waiting for it to finish…');
             } else if (resp.status === 202 || (data && data.status === 'started')) {
