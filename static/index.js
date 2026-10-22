@@ -3,8 +3,13 @@
 
     var _cumChart = null;
     var _sparks = {};
-    var _heroFull = { dates: [], bot: [], held: [] };
     var _heroWindow = '30d';
+    var _pollSeries = null;   // the latest poll's dated hero series (fallback source)
+    var _pollTail = null;     // what the last poll's series ended with (change detection)
+    var _heroRequestSeq = 0;  // only the latest hero-window request may draw
+    var _sparkMarkers = {};   // symphony id -> exit-marker fields, read at draw time
+    var _refreshCount = 0;
+    var _dashboardReady = false;
     var _botState = {};
     var _symIds = [];
     var _intradayChart = null;
@@ -21,6 +26,45 @@
 
     function cs(varName) {
         return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    }
+
+    // Builds a chart with its entry animation kept. The chart is "drawn" once its
+    // entry animation completes, or a render pass ends with no animation running (a
+    // render that ran none). chart.__drawn is a promise of that moment; whenDrawn()
+    // runs a callback synchronously at it.
+    function createChart(canvas, config) {
+        var state = { done: false, callbacks: [] };
+        var resolveDrawn;
+        var drawn = new Promise(function (resolve) { resolveDrawn = resolve; });
+        function fire() {
+            if (state.done) return;
+            state.done = true;
+            resolveDrawn();
+            state.callbacks.forEach(function (cb) { cb(); });
+        }
+        config.options = config.options || {};
+        config.options.animation = { onComplete: fire };
+        config.plugins = (config.plugins || []).concat([{
+            id: 'drawnSignal',
+            afterRender: function (chart) {
+                if (!(Chart.animator && Chart.animator.running(chart))) fire();
+            }
+        }]);
+        var chart = new Chart(canvas, config);
+        chart.__drawn = drawn;
+        chart.__drawnState = state;
+        return chart;
+    }
+
+    function whenDrawn(chart, callback) {
+        if (chart.__drawnState.done) callback();
+        else chart.__drawnState.callbacks.push(callback);
+    }
+
+    function markDashboardReady() {
+        if (_dashboardReady || !document.body) return;
+        _dashboardReady = true;
+        document.body.dataset.dashboardReady = '1';
     }
 
     // Engine uses ±999 as "not-set" sentinel. Treat any abs(v) >= 900 as unset.
@@ -46,69 +90,48 @@
     // Hero chart (bot vs held cumulative returns)
     // ---------------------------------------------------------------------------
 
-    function applyHeroWindow(days) {
-        if (!_cumChart) return;
-        var dates = _heroFull.dates;
-        var bot = _heroFull.bot;
-        var held = _heroFull.held;
-        var sliced;
-        if (days === 'ytd') {
-            var jan1 = new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
-            var idx = 0;
-            while (idx < dates.length && dates[idx] < jan1) idx++;
-            sliced = { dates: dates.slice(idx), bot: bot.slice(idx), held: held.slice(idx) };
-        } else if (days === 'all') {
-            // DE-GAS-COHERENCE-001 (sufficiency-review finding): explicit lifetime --
-            // no slice. Previously this fell into the else branch below and only
-            // "worked" because dates.slice(-NaN) coincidentally returns the full
-            // array; made deliberate so it survives the token-parsing fix below.
-            sliced = { dates: dates, bot: bot, held: held };
-        } else {
-            // DE-GAS-COHERENCE-001 (sufficiency-review finding): _heroWindow is now
-            // ALWAYS one of the window-picker's string tokens ('30d'/'60d'/'90d'/
-            // '125d'/'1y'/'ytd'/'all') -- never a bare number. Parse the '<N>d'
-            // shape and the '1y' special-case (365, matching the app-wide
-            // analytics._WINDOW_TRAILING_DAYS['1y'] this cycle's server-side AC-2
-            // fix already established) before falling back to parseInt for a bare
-            // numeric argument (defensive compatibility -- parseInt(30, 10) still
-            // yields 30 via string coercion).
-            var n = days === '1y' ? 365 : parseInt(days, 10);
-            sliced = { dates: dates.slice(-n), bot: bot.slice(-n), held: held.slice(-n) };
-        }
-        _cumChart.data.labels = sliced.dates;
-        _cumChart.data.datasets[0].data = sliced.bot;
-        _cumChart.data.datasets[1].data = sliced.held;
-        _cumChart.update('none');
+    var _WINDOW_TRAILING_DAYS = { '30d': 30, '60d': 60, '90d': 90, '125d': 125, '1y': 365 };
+
+    // Mirrors analytics._window_cutoff_date: UTC today, inclusive lower bound (ISO date), null = lifetime.
+    function windowCutoffIso(token) {
+        var today = new Date().toISOString().slice(0, 10);
+        if (token === 'ytd') return today.slice(0, 4) + '-01-01';
+        var days = _WINDOW_TRAILING_DAYS[token];
+        if (!days) return null;
+        return new Date(Date.parse(today + 'T00:00:00Z') - days * 86400000).toISOString().slice(0, 10);
     }
 
-    function renderHeroChart(meta) {
-        var portfolio = (meta || {}).portfolio || {};
-        var hist_dates = portfolio.hist_dates || [];
-        var hist_bot = portfolio.hist_bot || [];
-        var hist_held = portfolio.hist_held || [];
+    function showHeroEmpty() {
+        var el = document.getElementById('hero-chart-empty');
+        if (el) el.hidden = false;
+    }
 
-        _heroFull.dates = hist_dates;
-        _heroFull.bot = hist_bot;
-        _heroFull.held = hist_held;
-
+    // Draws a /api/hero-chart-shaped series: in place when the chart exists. A body
+    // with no points never replaces a drawn series. Returns the chart, or null when nothing was drawn.
+    function setHeroSeries(series) {
+        var dates = series && series.hist_dates;
+        if (!Array.isArray(dates) || !dates.length) return null;
+        var bot = series.hist_bot || [];
+        var held = series.hist_held || [];
         var canvas = document.getElementById('cum-chart');
-        if (!canvas) return;
-
+        if (!canvas) return null;
+        var emptyEl = document.getElementById('hero-chart-empty');
+        if (emptyEl) emptyEl.hidden = true;
         if (_cumChart) {
-            applyHeroWindow(_heroWindow);
-            return;
+            _cumChart.data.labels = dates;
+            _cumChart.data.datasets[0].data = bot;
+            _cumChart.data.datasets[1].data = held;
+            _cumChart.update('none');
+            return _cumChart;
         }
-
-        if (!hist_dates.length) return;
-
-        _cumChart = new Chart(canvas, {
+        _cumChart = createChart(canvas, {
             type: 'line',
             data: {
-                labels: hist_dates,
+                labels: dates,
                 datasets: [
                     {
                         label: 'Planet Stopper',
-                        data: hist_bot,
+                        data: bot,
                         borderColor: cs('--studio-accent'),
                         backgroundColor: 'transparent',
                         borderWidth: 2,
@@ -118,7 +141,7 @@
                     },
                     {
                         label: 'If held',
-                        data: hist_held,
+                        data: held,
                         borderColor: cs('--studio-ink-dim'),
                         backgroundColor: 'transparent',
                         borderWidth: 1.5,
@@ -141,7 +164,73 @@
                 scales: { x: { display: false }, y: { display: true } }
             }
         });
-        applyHeroWindow(_heroWindow);
+        return _cumChart;
+    }
+
+    // Window fallback when /api/hero-chart fails: the poll's own dated series cut by
+    // the calendar cutoff and rebased so each curve compounds from 1.0 at the window start.
+    function applyHeroFallback(token) {
+        if (!_pollSeries) return;
+        var cutoff = windowCutoffIso(token);
+        var dates = _pollSeries.dates;
+        var k = 0;
+        if (cutoff) { while (k < dates.length && dates[k] < cutoff) k++; }
+        if (k >= dates.length) return;
+        function rebase(cumulative) {
+            var base = k === 0 ? 0 : cumulative[k - 1];
+            return cumulative.slice(k).map(function (c) {
+                return ((1 + c / 100) / (1 + base / 100) - 1) * 100;
+            });
+        }
+        setHeroSeries({
+            hist_dates: dates.slice(k),
+            hist_bot: rebase(_pollSeries.bot),
+            hist_held: rebase(_pollSeries.held)
+        });
+    }
+
+    // Draws the answer to a /api/hero-chart request; only the latest request may draw.
+    function drawHeroWindow(token, request) {
+        var seq = ++_heroRequestSeq;
+        request
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (seq !== _heroRequestSeq) return;
+                var naEl = document.getElementById('hero-chart-na');
+                // Always plot whatever data is available; caption when history is shorter than the window.
+                if (naEl) naEl.style.display = d.insufficient_history ? 'block' : 'none';
+                setHeroSeries(d);
+            })
+            .catch(function () {
+                if (seq === _heroRequestSeq) applyHeroFallback(token);
+            });
+    }
+
+    function requestHeroWindow(token) {
+        drawHeroWindow(token, fetch('/api/hero-chart/' + token));
+    }
+
+    // A poll never redraws the hero from its own series. It only notes the series and,
+    // when that series changed since the last poll, asks for the selected window again.
+    function renderHeroChart(meta) {
+        var portfolio = (meta || {}).portfolio;
+        if (!portfolio || typeof portfolio !== 'object') return;
+        var dates = portfolio.hist_dates;
+        var bot = portfolio.hist_bot;
+        var held = portfolio.hist_held;
+        if (!Array.isArray(dates) || !dates.length || !Array.isArray(bot) || !Array.isArray(held)) return;
+        _pollSeries = { dates: dates, bot: bot, held: held };
+        var tail = {
+            length: dates.length,
+            last_date: dates[dates.length - 1],
+            last_bot: bot[bot.length - 1],
+            last_held: held[held.length - 1]
+        };
+        var changed = !_pollTail || ['length', 'last_date', 'last_bot', 'last_held'].some(function (k) {
+            return _pollTail[k] !== tail[k];
+        });
+        _pollTail = tail;
+        if (changed) requestHeroWindow(_heroWindow);
     }
 
     // ---------------------------------------------------------------------------
@@ -207,11 +296,16 @@
     // Returns a Chart.js v4 inline plugin that draws a vertical hairline + badge.
     // exitIdx: index into the labels array; label: badge text; color: hex/rgb string
     // isMini: true for sparkline (smaller badge), false for detail chart
-    function makeExitLinePlugin(exitIdx, label, color, isMini) {
+    // exitIdx, label and color may be functions, resolved at draw (a poll moves the
+    // labels and a theme change moves the colour).
+    function makeExitLinePlugin(exitIdxArg, labelArg, colorArg, isMini) {
         return {
             id: 'exitLine',
             afterDraw: function (chart) {
+                var exitIdx = typeof exitIdxArg === 'function' ? exitIdxArg(chart) : exitIdxArg;
                 if (exitIdx < 0 || exitIdx >= chart.data.labels.length) return;
+                var label = typeof labelArg === 'function' ? labelArg() : labelArg;
+                var color = typeof colorArg === 'function' ? colorArg() : colorArg;
                 var ctx = chart.ctx;
                 var xScale = chart.scales.x;
                 var yScale = chart.scales.y;
@@ -273,94 +367,224 @@
     // Per-symphony sparklines
     // ---------------------------------------------------------------------------
 
+    var SPARK_NO_DATA_TEXT = 'No intraday data yet';
+    var SPARK_UNAVAILABLE_TEXT = 'Chart unavailable';
+
+    function exitIndexFor(labels, sym) {
+        if (!sym || !sym.triggered || !sym.triggered_at_time) return -1;
+        var idx = labels.indexOf(sym.triggered_at_time);
+        if (idx === -1) {
+            // Partial match: find nearest label that starts with the exit time prefix
+            var prefix = sym.triggered_at_time.slice(0, 5);
+            idx = labels.findIndex(function (l) { return l && l.slice(0, 5) === prefix; });
+        }
+        return idx;
+    }
+
+    function sparkMarkerPlugin(symId) {
+        return makeExitLinePlugin(
+            function (chart) { return exitIndexFor(chart.data.labels, _sparkMarkers[symId]); },
+            function () { return exitReasonLabel((_sparkMarkers[symId] || {}).triggered_reason); },
+            function () { return exitReasonColor((_sparkMarkers[symId] || {}).triggered_reason); },
+            true
+        );
+    }
+
+    // Text shown where a card holds no chart; cleared once the canvas holds one.
+    function setSparkStatus(canvas, text) {
+        var parent = canvas.parentNode;
+        if (!parent) return;
+        var el = parent.querySelector('.spark-status');
+        if (!el) {
+            if (!text) return;
+            parent.style.position = 'relative';
+            el = document.createElement('span');
+            el.className = 'spark-status legend-as-of';
+            el.style.position = 'absolute';
+            el.style.top = '50%';
+            el.style.left = '50%';
+            el.style.transform = 'translate(-50%, -50%)';
+            parent.appendChild(el);
+        }
+        el.textContent = text;
+    }
+
+    function sparkHeldDataset(data) {
+        return {
+            data: data.map(function (d) { return d.held != null ? d.held : null; }),
+            borderColor: cs('--studio-ink-dim'),
+            borderWidth: 1,
+            pointRadius: 0,
+            tension: 0.3,
+            fill: false,
+            borderDash: [3, 3],
+            spanGaps: false
+        };
+    }
+
+    // Explicit y range: Chart.js default can clip lines when return values exceed [0,1].
+    function sparkYRange(returns) {
+        var vals = returns.filter(function (v) { return v != null; });
+        var dataMin = vals.length ? Math.min.apply(null, vals) : 0;
+        var dataMax = vals.length ? Math.max.apply(null, vals) : 1;
+        var dataPad = Math.max(Math.abs(dataMax - dataMin) * 0.08, 0.001);
+        return { min: dataMin - dataPad, max: dataMax + dataPad };
+    }
+
+    // chartData null = the request failed. Returns the charts the card holds.
     function renderSparkline(symId, chartData, sym) {
+        if (sym) _sparkMarkers[symId] = sym;
+        var data = chartData && Array.isArray(chartData.data) ? chartData.data : null;
+        var held = [];
         var canvases = document.querySelectorAll('[data-testid="card-spark"][data-sym-id="' + symId + '"]');
         canvases.forEach(function (canvas) {
-            var data = chartData.data || [];
-            if (!data.length) return;
+            var chart = Chart.getChart(canvas);
+            if (!data || !data.length) {
+                // A drawn chart stays as it is; only a canvas with none gets the status text.
+                if (chart) { held.push(chart); return; }
+                setSparkStatus(canvas, data ? SPARK_NO_DATA_TEXT : SPARK_UNAVAILABLE_TEXT);
+                return;
+            }
             var ctx = canvas.getContext('2d');
             if (!ctx) return;
-            if (_sparks[symId]) { _sparks[symId].destroy(); }
-            var hasHeld = data.some(function (d) { return d.held != null; });
             var labels = data.map(function (d) { return d.time || ''; });
+            var returns = data.map(function (d) { return d['return'] !== undefined ? d['return'] : 0; });
+            var hasHeld = data.some(function (d) { return d.held != null; });
+            var range = sparkYRange(returns);
+            var padTop = exitIndexFor(labels, _sparkMarkers[symId]) >= 0 ? 18 : 2;
+            if (chart) {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = returns;
+                if (chart.data.datasets[1]) {
+                    chart.data.datasets[1].data = sparkHeldDataset(data).data;
+                } else if (hasHeld) {
+                    chart.data.datasets.push(sparkHeldDataset(data));
+                }
+                chart.options.scales.y.min = range.min;
+                chart.options.scales.y.max = range.max;
+                chart.options.layout.padding.top = padTop;
+                chart.update('none');
+                held.push(chart);
+                return;
+            }
             var datasets = [{
-                data: data.map(function (d) { return d['return'] !== undefined ? d['return'] : 0; }),
+                data: returns,
                 borderColor: cs('--studio-accent'),
                 borderWidth: 1.5,
                 pointRadius: 0,
                 tension: 0.3,
                 fill: false
             }];
-            if (hasHeld) {
-                datasets.push({
-                    data: data.map(function (d) { return d.held != null ? d.held : null; }),
-                    borderColor: cs('--studio-ink-dim'),
-                    borderWidth: 1,
-                    pointRadius: 0,
-                    tension: 0.3,
-                    fill: false,
-                    borderDash: [3, 3],
-                    spanGaps: false
-                });
-            }
-
-            var sparkPlugins = [];
-            if (sym && sym.triggered && sym.triggered_at_time) {
-                var exitIdx = labels.indexOf(sym.triggered_at_time);
-                if (exitIdx === -1) {
-                    // Partial match: find nearest label that starts with the exit time prefix
-                    var prefix = sym.triggered_at_time.slice(0, 5);
-                    exitIdx = labels.findIndex(function (l) { return l && l.slice(0, 5) === prefix; });
-                }
-                if (exitIdx >= 0) {
-                    var exitColor = exitReasonColor(sym.triggered_reason);
-                    var exitLabel = exitReasonLabel(sym.triggered_reason);
-                    sparkPlugins.push(makeExitLinePlugin(exitIdx, exitLabel, exitColor, true));
-                }
-            }
-
-            // Compute data range for explicit y auto-scaling; Chart.js default can
-            // clip lines when return values exceed [0,1] if a previous Chart
-            // instance left stale scale state on the canvas.
-            var returnVals = datasets[0].data.filter(function (v) { return v != null; });
-            var dataMin = returnVals.length ? Math.min.apply(null, returnVals) : 0;
-            var dataMax = returnVals.length ? Math.max.apply(null, returnVals) : 1;
-            var dataPad = Math.max(Math.abs(dataMax - dataMin) * 0.08, 0.001);
-
-            _sparks[symId] = new Chart(canvas, {
+            if (hasHeld) datasets.push(sparkHeldDataset(data));
+            chart = createChart(canvas, {
                 type: 'line',
                 data: { labels: labels, datasets: datasets },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     // Top padding carves space above the chart area for the exit badge.
-                    layout: { padding: { top: sparkPlugins.length ? 18 : 2, bottom: 2, left: 2, right: 2 } },
+                    layout: { padding: { top: padTop, bottom: 2, left: 2, right: 2 } },
                     plugins: { legend: { display: false } },
                     scales: {
                         x: { display: false },
-                        y: { display: false, min: dataMin - dataPad, max: dataMax + dataPad }
+                        y: { display: false, min: range.min, max: range.max }
                     }
                 },
-                plugins: sparkPlugins
+                plugins: [sparkMarkerPlugin(symId)]
             });
+            _sparks[symId] = chart;
+            setSparkStatus(canvas, '');
+            held.push(chart);
         });
+        return held;
     }
 
-    function loadCharts(botState) {
-        Object.values(botState || {}).forEach(function (sym) {
-            if (!sym || !sym.id) return;
-            fetch('/api/chart/' + sym.id)
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                    renderSparkline(sym.id, data, sym);
+    function drawnPromise(charts) {
+        return Promise.all(charts.map(function (c) { return c.__drawn; }));
+    }
+
+    // Fetches one card's intraday series and draws it. Never rejects; resolves once the
+    // request has settled and the card's chart has drawn (a card showing status text
+    // holds none). onCharts, when given, receives the card's charts as soon as the
+    // request has settled.
+    function loadSpark(sym, onCharts) {
+        var symId = sym.id;
+        return fetch('/api/chart/' + symId)
+            .then(function (r) {
+                if (!r.ok) throw new Error('chart request failed');
+                return r.json();
+            })
+            .then(function (data) {
+                if (!data || typeof data !== 'object') throw new Error('chart body unreadable');
+                var charts = renderSparkline(symId, data, sym);
+                if (onCharts) onCharts(charts);
+                try {
                     // Thread the triggered/exited flag onto chartData so renderMcDial
                     // can actively render the honest exited state instead of scanning
                     // history for a (possibly stale, resurrected) reading.
                     data.triggered = sym.triggered;
                     renderMcDial(sym.id, data);
-                })
-                .catch(function () {});
+                } catch (e) { console.error('mc dial render error:', e); }
+                return drawnPromise(charts);
+            })
+            .catch(function () {
+                var charts = renderSparkline(symId, null, sym);
+                if (onCharts) onCharts(charts);
+                return drawnPromise(charts);
+            });
+    }
+
+    function loadCharts(botState) {
+        var settled = [];
+        Object.values(botState || {}).forEach(function (sym) {
+            if (!sym || !sym.id) return;
+            settled.push(loadSpark(sym));
         });
+        return Promise.all(settled);
+    }
+
+    // Draws the hero and the card sparklines from the server render, before any
+    // /api/state answer, then marks the page ready once everything has drawn.
+    function paintFirstFrame() {
+        var block = null;
+        var node = document.getElementById('dashboard-initial-data');
+        if (node) {
+            try { block = JSON.parse(node.textContent); } catch (e) { block = null; }
+        }
+        // Ready is set synchronously at the moment the last held item is released.
+        var holds = 0;
+        function hold() {
+            var released = false;
+            holds += 1;
+            return function () {
+                if (released) return;
+                released = true;
+                holds -= 1;
+                if (holds === 0) markDashboardReady();
+            };
+        }
+        var setupDone = hold();
+
+        var hero = block ? setHeroSeries(block.hero) : null;
+        if (hero) whenDrawn(hero, hold());
+        else showHeroEmpty();
+        _pollTail = (block && block.hero_poll_tail) || null;
+        var sparks = (block && block.sparks) || {};
+        var seen = {};
+        document.querySelectorAll('[data-testid="card-spark"][data-sym-id]').forEach(function (canvas) {
+            var id = canvas.getAttribute('data-sym-id');
+            if (!id || seen[id]) return;
+            seen[id] = true;
+            var release = hold();
+            loadSpark(Object.assign({ id: id }, sparks[id]), function (charts) {
+                var left = charts.length;
+                if (!left) release();
+                charts.forEach(function (c) {
+                    whenDrawn(c, function () { left -= 1; if (left === 0) release(); });
+                });
+            });
+        });
+        setupDone();
     }
 
     // ---------------------------------------------------------------------------
@@ -610,7 +834,7 @@
                 intradayPlugins.push(makeExitLinePlugin(
                     iExitIdx,
                     exitReasonLabel(sym.triggered_reason),
-                    exitReasonColor(sym.triggered_reason),
+                    function () { return exitReasonColor(sym.triggered_reason); },
                     false
                 ));
             }
@@ -881,16 +1105,21 @@
         // history for a stale pre-trigger reading (that would resurrect it as
         // "current"), and never silently skip the render (that freezes the
         // dial at whatever was last drawn) -- both are the F7 defects.
-        if (chartData && chartData.triggered) {
+        // The arc colour is a token reference, never a computed colour, so a theme
+        // change recolours it with no redraw.
+        function showNoReading() {
             dials.forEach(function (svg) {
                 var arc = svg.querySelector('.mc-arc');
                 var text = svg.querySelector('.mc-text');
                 if (arc) {
                     arc.setAttribute('stroke-dashoffset', MC_CIRCUMFERENCE.toFixed(2));
-                    arc.style.stroke = cs('--studio-ink-faint');
+                    arc.style.stroke = 'var(--studio-ink-faint)';
                 }
                 if (text) text.textContent = '—';
             });
+        }
+        if (chartData && chartData.triggered) {
+            showNoReading();
             return;
         }
 
@@ -903,15 +1132,20 @@
         }
         if (mcProb === null) mcProb = chartData.mc_prob != null ? chartData.mc_prob : (chartData.mc_pct != null ? chartData.mc_pct : null);
         if (mcProb === null) return;
+        // The engine's +/-999 means "no reading": the same dash a first paint shows.
+        if (isSentinel(mcProb)) {
+            showNoReading();
+            return;
+        }
 
         // Normalise: values arrive as 0-100 percentage
         var pct = Math.max(0, Math.min(100, mcProb)) / 100;
         var offset = MC_CIRCUMFERENCE * (1 - pct);
         var label = (pct * 100).toFixed(0) + '%';
         // Threshold color per design Dial: <15 → warn (amber), >80 → inkDim, else accent
-        var arcColor = mcProb < 15 ? cs('--studio-warn')
-                     : mcProb > 80 ? cs('--studio-ink-dim')
-                     : cs('--studio-accent');
+        var arcColor = mcProb < 15 ? 'var(--studio-warn)'
+                     : mcProb > 80 ? 'var(--studio-ink-dim)'
+                     : 'var(--studio-accent)';
         dials.forEach(function (svg) {
             var arc = svg.querySelector('.mc-arc');
             var text = svg.querySelector('.mc-text');
@@ -1383,6 +1617,7 @@
 
         _botState = botState;
         _symIds = Object.keys(botState);
+        var chartsSettled = Promise.resolve();
 
         // C-10: per-renderer try/catch so one failure doesn't kill subsequent renderers
         [
@@ -1392,7 +1627,7 @@
             function () { updateVerdicts(botState); },
             function () { updateMiniStats(meta); },
             function () { updateStatusStrip(meta); },
-            function () { loadCharts(botState); },
+            function () { chartsSettled = loadCharts(botState); },
             function () {
                 var elTicker = document.getElementById('hero-ticker');
                 if (elTicker && data.ticker_price != null) elTicker.textContent = data.ticker_price;
@@ -1410,6 +1645,7 @@
         ].forEach(function (fn) {
             try { fn(); } catch (e) { console.error('updateDashboard renderer error:', e); }
         });
+        return chartsSettled;
     }
 
     function updateMiniStats(meta) {
@@ -1466,16 +1702,22 @@
         if (dataAsOf) { dataAsOf.textContent = 'connection lost'; }
     }
 
+    // A refresh is counted once it has settled: its renderers ran (or its failure was
+    // handled), every card's chart request has answered and every chart it built has drawn.
     function loadState() {
-        fetch('/api/state')
+        return fetch('/api/state')
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 lastSuccessfulPollAt = Date.now();
-                updateDashboard(data);
+                return updateDashboard(data);
             })
             .catch(function (err) {
                 showConnectionLost();
                 console.error('state load failed', err);
+            })
+            .then(function () {
+                _refreshCount += 1;
+                if (document.body) document.body.dataset.refreshCount = String(_refreshCount);
             });
     }
 
@@ -1588,6 +1830,8 @@
     }
 
     document.addEventListener('DOMContentLoaded', function () {
+        try { paintFirstFrame(); } catch (e) { console.error('first paint error:', e); }
+
         // Poll floor is 15 s — matches the engine's minute cadence (see POLL_INTERVAL_MS).
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
@@ -1632,26 +1876,10 @@
                 _heroWindow = token;
                 var winLabel = document.getElementById('guard-alpha-window-label');
                 if (winLabel) winLabel.textContent = winLabelMap[testid] || btn.textContent;
-                // The picker drives the chart lines (fetch + _cumChart update) and the
+                // The picker drives the chart lines (latest click wins) and the
                 // headline VALUE (windowed strip) -- NOT the three vs-rows, which stay
                 // gated to genuine /api/state polls only (DE-CLOSED-BOUNCE-001).
-                fetch('/api/hero-chart/' + token)
-                    .then(function (r) { return r.json(); })
-                    .then(function (d) {
-                        var naEl = document.getElementById('hero-chart-na');
-                        // Always plot whatever data is available; caption when history is shorter than the window.
-                        if (naEl) naEl.style.display = d.insufficient_history ? 'block' : 'none';
-                        if (!_cumChart) return;
-                        if (d.hist_dates && d.hist_dates.length) {
-                            _cumChart.data.labels = d.hist_dates;
-                            _cumChart.data.datasets[0].data = d.hist_bot;
-                            _cumChart.data.datasets[1].data = d.hist_held;
-                            _cumChart.update('none');
-                        }
-                    })
-                    .catch(function () {
-                        applyHeroWindow(_heroWindow);
-                    });
+                drawHeroWindow(token, fetch('/api/hero-chart/' + token));
                 // Re-window the headline guard-alpha VALUE so the label always matches
                 // the actual window (kills the F1 mislabel). Does NOT re-window the
                 // three vs-rows (DE-CLOSED-BOUNCE-001) -- fetchWindowedStrip's payload
@@ -1663,6 +1891,34 @@
             });
         });
     });
+
+    // A theme or accent change recolours the drawn charts in place (no rebuild, no animation).
+    var DETAIL_LINE_TOKENS = {
+        'Bot': '--studio-accent', 'Held': '--studio-ink-faint', 'Stop': '--studio-neg',
+        'Breakeven': '--studio-accent', 'VWAP': '--studio-cyan', 'MC %': '--studio-warn'
+    };
+
+    function recolourCharts() {
+        if (_cumChart) {
+            _cumChart.data.datasets[0].borderColor = cs('--studio-accent');
+            _cumChart.data.datasets[1].borderColor = cs('--studio-ink-dim');
+            _cumChart.update('none');
+        }
+        document.querySelectorAll('[data-testid="card-spark"]').forEach(function (canvas) {
+            var chart = Chart.getChart(canvas);
+            if (!chart) return;
+            chart.data.datasets[0].borderColor = cs('--studio-accent');
+            if (chart.data.datasets[1]) chart.data.datasets[1].borderColor = cs('--studio-ink-dim');
+            chart.update('none');
+        });
+        if (_intradayChart) {
+            _intradayChart.data.datasets.forEach(function (ds) {
+                if (DETAIL_LINE_TOKENS[ds.label]) ds.borderColor = cs(DETAIL_LINE_TOKENS[ds.label]);
+            });
+            _intradayChart.update('none');
+        }
+    }
+    window.addEventListener('tweakchange', recolourCharts);
 
     // ---------------------------------------------------------------------------
     // Managed Sleeves panel (AC-16) — arm-to-paper / disarm controls.
