@@ -436,7 +436,7 @@ class TestGeneratorRequest:
 
 
 class TestGeneratorReadsTheToolCall:
-    def test_a_thinking_then_tool_reply_is_parsed_into_the_swap_pair(self, ase, swap_fake):
+    def test_a_reply_that_is_only_a_tool_call_is_parsed_into_the_swap_pair(self, ase, swap_fake):
         reply_body = sup.swap_tool_reply()
         swap_fake.queue_message(reply_body)
         incumbent, candidate = sup.captured_pair()
@@ -451,6 +451,17 @@ class TestGeneratorReadsTheToolCall:
         ]
         assert reply.reason is None
         assert reply.model == reply_body["model"]
+
+    def test_a_tool_call_after_fallback_and_thinking_blocks_is_found(self, ase, swap_fake):
+        served = load_fixture("messages/fallback_served_tool.json")
+        assert [b["type"] for b in served["content"]][-1] == "tool_use"
+        assert served["content"][0]["type"] != "tool_use", "self-guard: blocks precede the call"
+        swap_fake.queue_message(served)
+
+        candidates, reply = _generate(ase)
+
+        assert [(c.incumbent_asset, c.candidate_asset) for c in candidates] == [sup.captured_pair()]
+        assert reply.model == served["model"]
 
     def test_a_reply_that_names_an_asset_the_symphony_does_not_hold_is_dropped(
         self, ase, swap_fake

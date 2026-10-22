@@ -782,6 +782,9 @@ _GENERATION_FAILURES = [
     ),
     pytest.param(["messages/max_tokens.json"], "max_tokens", 1, id="truncated"),
     pytest.param(
+        ["messages/max_tokens_in_thinking.json"], "max_tokens", 1, id="truncated-inside-thinking"
+    ),
+    pytest.param(
         ["messages/text_only_with_tools.json"] * 3, "no_tool_call", 3, id="no-tool-call-three-times"
     ),
 ]
