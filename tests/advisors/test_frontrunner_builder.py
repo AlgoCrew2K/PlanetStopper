@@ -772,6 +772,68 @@ class TestOverlayModelResolution:
         assert "claude-" not in result.error
         assert not any(text in result.error for text in _LISTING_FAILURE_TEXTS)
 
+    @pytest.mark.parametrize(
+        ("rejection", "code"),
+        [
+            pytest.param("404_not_found.json", "override_model_not_found", id="not-found"),
+            pytest.param(
+                "400_invalid_request.json", "override_request_rejected", id="request-rejected"
+            ),
+        ],
+    )
+    def test_rejected_override_ends_the_loop_after_one_request_naming_the_code(
+        self, fbld, overlay_fake, monkeypatch, rejection, code
+    ):
+        override = _non_fable_served_id()
+        monkeypatch.setenv(_ENV_SUGGESTION_MODEL, override)
+        bodies = [error_outcome(rejection)] * fbld.MAX_GENERATION_ATTEMPTS
+
+        result = _generate_overlay(fbld, overlay_fake, monkeypatch, *bodies)
+
+        assert _models_named(overlay_fake) == [override], (
+            "a missing or rejected override will not appear on a retry: one request, then stop"
+        )
+        assert result.candidate is None
+        assert code in result.error and _ENV_SUGGESTION_MODEL in result.error
+
+    def test_a_resolved_model_that_is_gone_ends_the_loop_after_one_request_naming_the_code(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        gone = error_outcome("404_not_found.json")
+
+        result = _generate_overlay(
+            fbld, overlay_fake, monkeypatch, *[gone] * fbld.MAX_GENERATION_ATTEMPTS
+        )
+
+        assert len(overlay_fake.message_requests) == 1, (
+            "the relisting names the same model again, so a retry cannot succeed"
+        )
+        assert result.candidate is None
+        assert "model_unavailable" in result.error
+        assert "claude-" not in result.error
+
+    @pytest.mark.parametrize("kind", _UNRESOLVED_KINDS)
+    def test_unresolved_family_is_resolved_once_per_run_not_once_per_attempt(
+        self, fbld, monkeypatch, unresolved_models, kind
+    ):
+        import model_config  # noqa: PLC0415
+
+        single_attempt_fake = _unresolved_fake(kind)
+        _generate_overlay(fbld, single_attempt_fake, monkeypatch, n_attempts=1)
+        listings_for_one_attempt = single_attempt_fake.listing_sequences
+        model_config._reset_registry()
+        fake = _unresolved_fake(kind)
+
+        result = _generate_overlay(fbld, fake, monkeypatch)
+
+        assert listings_for_one_attempt >= 1
+        assert fake.listing_sequences == listings_for_one_attempt, (
+            "an unavailable model will not appear on a retry: the loop must stop after the "
+            "first attempt instead of listing again"
+        )
+        assert fake.message_requests == []
+        assert "model_unavailable" in result.error
+
     def test_a_rejected_request_to_a_resolved_model_degrades_with_the_exception_type_only(
         self, fbld, overlay_fake, monkeypatch
     ):
@@ -1078,6 +1140,30 @@ class TestFrontrunnerRunOverlayJob:
         shown = " ".join(warnings)
         assert "claude-" not in shown
         assert not any(text in shown for text in _LISTING_FAILURE_TEXTS)
+
+    @pytest.mark.parametrize(
+        ("rejection", "code"),
+        [
+            pytest.param("404_not_found.json", "override_model_not_found", id="not-found"),
+            pytest.param(
+                "400_invalid_request.json", "override_request_rejected", id="request-rejected"
+            ),
+        ],
+    )
+    def test_rejected_override_queues_nothing_after_one_request_and_logs_the_code_at_warning(
+        self, fbld, overlay_fake, overlay_job, monkeypatch, caplog, rejection, code
+    ):
+        override = _non_fable_served_id()
+        monkeypatch.setenv(_ENV_SUGGESTION_MODEL, override)
+        bodies = [error_outcome(rejection)] * fbld.MAX_GENERATION_ATTEMPTS
+
+        with caplog.at_level(logging.WARNING, logger="advisors.frontrunner_builder"):
+            _run_job(fbld, overlay_fake, monkeypatch, *bodies)
+
+        assert _models_named(overlay_fake) == [override]
+        overlay_job.assert_not_called()
+        warnings = _generation_warnings(caplog)
+        assert any(code in text for text in warnings), warnings
 
     def test_replies_without_a_tool_call_queue_nothing_and_log_no_tool_call_at_warning(
         self, fbld, overlay_fake, overlay_job, monkeypatch, caplog
