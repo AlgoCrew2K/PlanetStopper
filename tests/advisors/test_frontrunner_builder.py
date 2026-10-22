@@ -812,7 +812,9 @@ class TestOverlayModelResolution:
         assert "model_unavailable" in result.error
         assert "claude-" not in result.error
 
-    @pytest.mark.parametrize("kind", _UNRESOLVED_KINDS)
+    # A listing that succeeds without the family is cached, so a retry lists nothing more and
+    # the loop's decision is unobservable there; only a failed listing is retried per attempt.
+    @pytest.mark.parametrize("kind", ["listing-503", "listing-connect-error"])
     def test_unresolved_family_is_resolved_once_per_run_not_once_per_attempt(
         self, fbld, monkeypatch, unresolved_models, kind
     ):
