@@ -14,6 +14,7 @@ integers and large magnitudes).
 
 from __future__ import annotations
 
+import re
 import subprocess
 
 import pytest
@@ -76,18 +77,22 @@ def test_returns_a_string_with_exactly_the_requested_places():
     assert analytics.js_to_fixed(7, 3) == node_to_fixed([7], 3)[0]
 
 
-def test_every_rounding_of_shared_text_goes_through_the_one_function():
-    """One Python implementation exists: no second mirror of the browser's rule in
-    production code (a copy drifts)."""
+def test_the_browser_rounding_rule_has_one_python_implementation():
+    """One Python implementation exists: no second function mirroring the browser's
+    rounding in production code (a copy drifts), and the app renders through it.
+    Unrelated Decimal rounding elsewhere (an order-price tick quantizer) is not a mirror."""
     tracked = subprocess.run(
         ["git", "ls-files", "*.py"], capture_output=True, text=True, timeout=60, check=True
     ).stdout.split()
     production = [p for p in tracked if not p.startswith(("tests/", ".claude/"))]
-    holders = []
+    mirror = re.compile(r"^\s*def\s+_?(js_to_fixed|to_fixed|tofixed|js_tofixed)\s*\(", re.MULTILINE)
+    definers = []
     for path in production:
         with open(path, encoding="utf-8", errors="replace") as handle:
-            if "ROUND_HALF_UP" in handle.read():
-                holders.append(path)
-    assert holders == ["analytics.py"], (
-        f"ROUND_HALF_UP must appear in analytics.py only (the one implementation); found {holders}"
+            if mirror.search(handle.read()):
+                definers.append(path)
+    assert definers == ["analytics.py"], (
+        f"the browser-rounding function must be defined in analytics.py only; found {definers}"
     )
+    with open("app.py", encoding="utf-8") as handle:
+        assert "js_to_fixed" in handle.read(), "app.py must render shared text through js_to_fixed"
