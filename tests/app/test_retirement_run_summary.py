@@ -667,7 +667,7 @@ class TestApiLastRun:
             "sibling_name",
         ):
             assert key in rec, key
-        assert set(data) == {"recommendations", "last_run"}
+        assert set(data) == {"recommendations", "last_run", "cards_run"}
 
     def test_a_latest_zero_rec_run_empties_recommendations_but_keeps_last_run(
         self, client, isolated_db
@@ -778,3 +778,288 @@ class TestApiLastRun:
         assert entry["ratio"] is None, "Infinity inside a list-of-dicts must be sanitised too"
         assert entry["reason"] == "r"
         assert parsed["last_run"]["nested"]["deep"]["v"] is None
+
+
+# ===========================================================================
+# AC-5b: a failed run never hides earlier cards
+# ===========================================================================
+
+_NON_OK_STATUSES = ["series_unavailable", "internal_error", "insufficient_symphonies"]
+_OK_RUN_AT = "2026-10-18T03:45:00Z"
+_FAILED_RUN_AT = "2026-10-21T03:45:00Z"
+
+
+def _seed_two_roster() -> None:
+    _seed_roster(
+        {
+            "cand-old": "Old Candidate",
+            "sib-old": "Old Sibling",
+            "cand-new": "New Candidate",
+            "sib-new": "New Sibling",
+        }
+    )
+
+
+class TestCardsScopedToTheLatestSuccessfulRun:
+    """Cards are scoped to the latest summary with status == "ok" AND a run_id --
+    the latest SUCCESSFUL run -- not the latest summary of any status. (Under the
+    first AC-5 build a Composer outage at 03:45 hid every earlier card, approved
+    ones and their wind-down checklists included.)"""
+
+    @pytest.mark.parametrize("status", _NON_OK_STATUSES)
+    def test_a_failed_night_keeps_the_latest_successful_runs_cards(self, isolated_db, status):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        _insert_summary(
+            run_id="run-failed", status=status, recommendations=0, run_at=_FAILED_RUN_AT
+        )
+
+        recs = app_module._fetch_retirement_recommendations()
+        assert [r["candidate_id"] for r in recs] == ["cand-old"]
+
+    def test_an_approved_card_survives_a_failed_night_with_its_status(self, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        db_module.upsert_retirement_decision("cand-old", approval_status="approved")
+        _insert_summary(
+            run_id="run-failed",
+            status="series_unavailable",
+            recommendations=0,
+            run_at=_FAILED_RUN_AT,
+        )
+
+        (rec,) = app_module._fetch_retirement_recommendations()
+        assert rec["candidate_id"] == "cand-old"
+        assert rec["approval_status"] == "approved"
+
+    def test_many_failed_nights_after_an_ok_run_still_keep_its_cards(self, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        # An orphan card (its run never persisted a summary). It makes the legacy
+        # date filter return a DIFFERENT set than the run-scoped read, so a read
+        # that gives up before reaching the ok summary cannot pass by accident.
+        _insert_rec("run-orphan", "cand-new", "sib-new")
+        for night in range(12):
+            _insert_summary(
+                run_id=f"run-failed-{night}", status="series_unavailable", recommendations=0
+            )
+
+        recs = app_module._fetch_retirement_recommendations()
+        assert [r["candidate_id"] for r in recs] == ["cand-old"]
+
+    def test_the_latest_ok_run_wins_over_an_earlier_ok_run(self, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok-1", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok-1", recommendations=1)
+        _insert_rec("run-ok-2", "cand-new", "sib-new")
+        _insert_summary(run_id="run-ok-2", recommendations=1)
+
+        recs = app_module._fetch_retirement_recommendations()
+        assert [r["candidate_id"] for r in recs] == ["cand-new"]
+
+    def test_a_failed_night_between_two_ok_runs_is_ignored(self, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok-1", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok-1", recommendations=1)
+        _insert_summary(run_id="run-failed", status="internal_error", recommendations=0)
+        _insert_rec("run-ok-2", "cand-new", "sib-new")
+        _insert_summary(run_id="run-ok-2", recommendations=1)
+
+        recs = app_module._fetch_retirement_recommendations()
+        assert [r["candidate_id"] for r in recs] == ["cand-new"]
+
+    def test_an_ok_summary_without_a_run_id_is_not_a_scope(self, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok", recommendations=1)
+        # Orphan card: legacy filtering would return it too; run-scoping must not.
+        _insert_rec("run-orphan", "cand-new", "sib-new")
+        summary_id, _ = _insert_summary(recommendations=0)
+        conn = db_module.get_connection()
+        conn.execute(
+            "UPDATE advisor_observations SET raw_response = ? WHERE id = ?",
+            (json.dumps({"status": "ok", "recommendations": 0}), summary_id),
+        )
+        conn.commit()
+        conn.close()
+
+        recs = app_module._fetch_retirement_recommendations()
+        assert [r["candidate_id"] for r in recs] == ["cand-old"]
+
+    def test_an_ok_run_that_found_nothing_still_hides_earlier_cards(self, isolated_db):
+        """A successful run with zero recommendations is authoritative."""
+        _seed_two_roster()
+        _insert_rec("run-ok-1", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok-1", recommendations=1)
+        _insert_summary(run_id="run-ok-2", recommendations=0)
+
+        assert app_module._fetch_retirement_recommendations() == []
+
+    def test_an_ok_empty_run_stays_authoritative_across_later_failed_nights(self, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok-1", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok-1", recommendations=1)
+        _insert_summary(run_id="run-ok-2", recommendations=0)
+        _insert_summary(run_id="run-failed", status="series_unavailable", recommendations=0)
+
+        assert app_module._fetch_retirement_recommendations() == []
+
+    def test_only_failed_summaries_fall_back_to_the_legacy_calendar_date_filter(self, isolated_db):
+        _seed_two_roster()
+        old_id = _insert_rec(None, "cand-old", "sib-old")
+        new_id = _insert_rec(None, "cand-new", "sib-new")
+        _set_created_at(old_id, "2026-10-19 03:45:00")
+        _set_created_at(new_id, "2026-10-20 03:45:00")
+        _insert_summary(run_id="run-failed", status="series_unavailable", recommendations=0)
+
+        recs = app_module._fetch_retirement_recommendations()
+        assert [r["candidate_id"] for r in recs] == ["cand-new"]
+
+
+class TestApiCardsRun:
+    """GET /api/retirement-recommendations: `last_run` stays the latest summary of
+    ANY status; the additive `cards_run` is the summary the cards were scoped to
+    (null on the legacy path)."""
+
+    def _get(self, client) -> dict:
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        return resp.get_json()
+
+    def test_cards_run_is_null_when_no_run_exists(self, client, isolated_db):
+        data = self._get(client)
+        assert "cards_run" in data
+        assert data["cards_run"] is None
+        assert data["last_run"] is None
+
+    def test_after_a_failed_night_last_run_is_the_failure_and_cards_run_the_earlier_ok_run(
+        self, client, isolated_db
+    ):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _id, ok_summary = _insert_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        _id, failed = _insert_summary(
+            run_id="run-failed",
+            status="series_unavailable",
+            recommendations=0,
+            run_at=_FAILED_RUN_AT,
+        )
+
+        data = self._get(client)
+
+        assert data["last_run"] == failed
+        assert data["last_run"]["status"] == "series_unavailable"
+        assert data["cards_run"] == ok_summary
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["cand-old"]
+
+    def test_an_internal_error_night_behaves_the_same(self, client, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _id, ok_summary = _insert_summary(run_id="run-ok", recommendations=1)
+        db_module.insert_advisor_observation(
+            advisor_role=_SUMMARY_ROLE,
+            subject_type="fleet",
+            subject_id="retirement",
+            verdict="internal_error",
+            raw_response={
+                "run_id": "run-fallback",
+                "run_at": _FAILED_RUN_AT,
+                "status": "internal_error",
+                "error_type": "RuntimeError",
+                "recommendations": 0,
+            },
+        )
+
+        data = self._get(client)
+        assert data["last_run"]["status"] == "internal_error"
+        assert data["cards_run"] == ok_summary
+        assert len(data["recommendations"]) == 1
+
+    def test_many_failed_nights_after_an_ok_run_still_report_it_as_the_cards_run(
+        self, client, isolated_db
+    ):
+        _seed_two_roster()
+        _insert_rec("run-ok", "cand-old", "sib-old")
+        _id, ok_summary = _insert_summary(run_id="run-ok", recommendations=1)
+        for night in range(12):
+            _insert_summary(
+                run_id=f"run-failed-{night}", status="series_unavailable", recommendations=0
+            )
+
+        data = self._get(client)
+
+        assert data["cards_run"] == ok_summary
+        assert data["last_run"]["run_id"] == "run-failed-11"
+
+    def test_when_the_latest_run_is_ok_cards_run_equals_last_run(self, client, isolated_db):
+        _seed_two_roster()
+        _insert_rec("run-ok-1", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok-1", recommendations=1)
+        _insert_rec("run-ok-2", "cand-new", "sib-new")
+        _id, latest = _insert_summary(run_id="run-ok-2", recommendations=1)
+
+        data = self._get(client)
+
+        assert data["last_run"] == latest
+        assert data["cards_run"] == latest
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["cand-new"]
+
+    def test_an_ok_run_that_found_nothing_is_the_cards_run_and_hides_earlier_cards(
+        self, client, isolated_db
+    ):
+        _seed_two_roster()
+        _insert_rec("run-ok-1", "cand-old", "sib-old")
+        _insert_summary(run_id="run-ok-1", recommendations=1)
+        _id, empty = _insert_summary(run_id="run-ok-2", recommendations=0)
+
+        data = self._get(client)
+
+        assert data["recommendations"] == []
+        assert data["cards_run"] == empty
+
+    def test_cards_run_is_null_on_the_legacy_path(self, client, isolated_db):
+        _seed_two_roster()
+        _insert_rec(None, "cand-new", "sib-new")
+        _id, failed = _insert_summary(
+            run_id="run-failed", status="series_unavailable", recommendations=0
+        )
+
+        data = self._get(client)
+
+        assert data["cards_run"] is None, (
+            "no ok summary with a run_id -> legacy filter, no cards_run"
+        )
+        assert data["last_run"] == failed
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["cand-new"]
+
+    def test_cards_run_is_strict_json_safe(self, client, isolated_db):
+        _insert_summary(run_id="run-ok", recommendations=0)
+        conn = db_module.get_connection()
+        conn.execute(
+            "UPDATE advisor_observations SET raw_response = ? WHERE advisor_role = ?",
+            (
+                json.dumps(
+                    {
+                        "run_id": "run-ok",
+                        "status": "ok",
+                        "screen_threshold": float("nan"),
+                        "symphonies_without_series": [{"symphony_id": "x", "ratio": float("inf")}],
+                    }
+                ),
+                _SUMMARY_ROLE,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = client.get("/api/retirement-recommendations")
+        parsed = json.loads(
+            resp.get_data(as_text=True),
+            parse_constant=lambda tok: pytest.fail(f"non-strict JSON token {tok} in response"),
+        )
+        assert parsed["cards_run"]["run_id"] == "run-ok"
+        assert parsed["cards_run"]["screen_threshold"] is None
+        assert parsed["cards_run"]["symphonies_without_series"][0]["ratio"] is None

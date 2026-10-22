@@ -382,17 +382,34 @@ class TestWorkerFallbackSummaryRendersHonestly:
         assert _NEVER_RUN_TEXT not in text
         assert 'data-testid="retirement-run-now-btn"' in _panel(body)
 
-    def test_the_minimal_fallback_row_does_not_hide_an_earlier_runs_cards_incorrectly(
+    def test_a_fallback_row_after_an_ok_run_keeps_that_runs_cards_and_says_so(
         self, client, isolated_db
     ):
-        """The fallback run has run_id 'run-fallback' and persisted no recs, so
-        the cards area is the honest empty state (run-scoped read)."""
+        """AC-5b (reverses the first AC-5 build): the fallback run persisted no cards,
+        but cards are scoped to the latest SUCCESSFUL run, so the earlier ok run's
+        card stays visible with a note naming that run."""
         _seed_roster({"cand-render": "Render Candidate", "sib-render": "Render Sibling"})
         _seed_rec("run-earlier", "cand-render", "sib-render")
+        _seed_summary(run_id="run-earlier", recommendations=1, run_at="2026-10-18T03:45:00Z")
+        self._seed_minimal_fallback()
+        body = _render(client)
+        panel = _panel(body)
+        assert 'data-testid="retirement-recommendation-card"' in panel
+        assert 'data-testid="retirement-recommendations-empty"' not in panel
+        assert "2026-10-18" in _text(_element_html(panel, "retirement-cards-from-earlier-run"))
+        assert "internal error" in _block_text(body).lower()
+
+    def test_a_fallback_row_with_no_successful_run_falls_back_to_the_legacy_cards(
+        self, client, isolated_db
+    ):
+        """No ok summary with a run_id exists, so the legacy latest-calendar-date filter
+        applies (and there is no earlier-run note to show)."""
+        _seed_roster({"cand-render": "Render Candidate", "sib-render": "Render Sibling"})
+        _seed_rec("run-legacy", "cand-render", "sib-render")
         self._seed_minimal_fallback()
         panel = _panel(_render(client))
-        assert 'data-testid="retirement-recommendation-card"' not in panel
-        assert 'data-testid="retirement-recommendations-empty"' in panel
+        assert 'data-testid="retirement-recommendation-card"' in panel
+        assert 'data-testid="retirement-cards-from-earlier-run"' not in panel
 
     def test_a_producer_failure_end_to_end_renders_the_panel_and_the_api(
         self, client, isolated_db, monkeypatch
@@ -418,6 +435,144 @@ class TestWorkerFallbackSummaryRendersHonestly:
         assert payload["last_run"]["status"] == "internal_error"
         assert payload["last_run"]["error_type"] == "RuntimeError"
         assert payload["recommendations"] == []
+
+
+_FAILED_STATUS_MARKERS = {
+    "series_unavailable": "series unavailable",
+    "internal_error": "internal error",
+    "insufficient_symphonies": "insufficient symphonies",
+}
+_NOTE_TESTID = "retirement-cards-from-earlier-run"
+_OK_RUN_AT = "2026-10-18T03:45:00Z"
+_FAILED_RUN_AT = "2026-10-21T03:45:00Z"
+
+
+def _seed_failed_night(status: str) -> None:
+    _seed_summary(
+        run_id="run-failed",
+        status=status,
+        run_at=_FAILED_RUN_AT,
+        recommendations=0,
+        error_type="KeyError" if status == "internal_error" else None,
+    )
+
+
+class TestCardsFromEarlierRunNote:
+    """AC-5b: a failed night never hides the latest successful run's cards (approved
+    ones and their wind-down checklists included); the last-run block still shows the
+    failure; a note names the successful run the cards come from."""
+
+    _ROSTER = {
+        "cand-old": "Old Candidate",
+        "sib-old": "Old Sibling",
+        "cand-new": "New Candidate",
+        "sib-new": "New Sibling",
+    }
+
+    @pytest.mark.parametrize("status", sorted(_FAILED_STATUS_MARKERS))
+    def test_a_failed_night_keeps_the_earlier_cards_with_a_note_and_the_failure_block(
+        self, client, isolated_db, status
+    ):
+        _seed_roster(self._ROSTER)
+        _seed_rec("run-ok", "cand-old", "sib-old")
+        _seed_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        _seed_failed_night(status)
+
+        body = _render(client)
+        panel = _panel(body)
+
+        assert 'data-testid="retirement-recommendation-card"' in panel
+        assert 'data-testid="retirement-recommendations-empty"' not in panel
+        note = _text(_element_html(panel, _NOTE_TESTID))
+        assert "2026-10-18" in note, "the note names the successful run's run_at"
+        assert "UTC" in note
+        assert "2026-10-21" not in note, "it must not name the failed night"
+        assert panel.index(f'data-testid="{_NOTE_TESTID}"') < panel.index(
+            'data-testid="retirement-recommendation-card"'
+        )
+        # The last-run block still renders the latest summary of ANY status.
+        assert _FAILED_STATUS_MARKERS[status] in _block_text(body).lower()
+
+    def test_an_approved_card_and_its_checklist_survive_a_failed_night(self, client, isolated_db):
+        """The finding that motivated AC-5b: an outage must not read as lost approvals."""
+        _seed_roster(self._ROSTER)
+        _seed_rec("run-ok", "cand-old", "sib-old")
+        _seed_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        db_module.upsert_retirement_decision("cand-old", approval_status="approved")
+        _seed_failed_night("series_unavailable")
+
+        panel = _panel(_render(client))
+
+        assert 'data-testid="retirement-recommendation-card"' in panel
+        assert 'data-testid="retirement-checklist"' in panel
+        assert 'data-testid="retirement-approve-btn"' not in panel, (
+            "an approved card keeps no Approve button"
+        )
+        assert 'data-testid="retirement-rec-status"' in panel
+        assert "approved" in _text(_element_html(panel, "retirement-rec-status")).lower()
+        assert _NOTE_TESTID in panel
+
+    def test_an_ok_run_after_an_ok_run_shows_only_the_newest_cards_and_no_note(
+        self, client, isolated_db
+    ):
+        _seed_roster(self._ROSTER)
+        _seed_rec("run-ok-1", "cand-old", "sib-old")
+        _seed_summary(run_id="run-ok-1", recommendations=1, run_at=_OK_RUN_AT)
+        _seed_rec("run-ok-2", "cand-new", "sib-new")
+        _seed_summary(run_id="run-ok-2", recommendations=1, run_at=_FAILED_RUN_AT)
+
+        panel = _panel(_render(client))
+
+        assert panel.count('data-testid="retirement-recommendation-card"') == 1
+        assert "New Candidate" in panel and "Old Candidate" not in panel
+        assert _NOTE_TESTID not in panel
+
+    def test_an_ok_run_that_found_nothing_hides_earlier_cards_without_a_note(
+        self, client, isolated_db
+    ):
+        _seed_roster(self._ROSTER)
+        _seed_rec("run-ok-1", "cand-old", "sib-old")
+        _seed_summary(run_id="run-ok-1", recommendations=1, run_at=_OK_RUN_AT)
+        _seed_summary(run_id="run-ok-2", recommendations=0, run_at=_FAILED_RUN_AT)
+
+        panel = _panel(_render(client))
+
+        assert 'data-testid="retirement-recommendation-card"' not in panel
+        assert 'data-testid="retirement-recommendations-empty"' in panel
+        assert _NOTE_TESTID not in panel
+
+    def test_only_failed_nights_plus_legacy_rows_use_the_legacy_filter_without_a_note(
+        self, client, isolated_db
+    ):
+        _seed_roster(self._ROSTER)
+        _seed_rec("legacy", "cand-new", "sib-new")
+        _seed_failed_night("series_unavailable")
+
+        body = _render(client)
+        panel = _panel(body)
+
+        assert 'data-testid="retirement-recommendation-card"' in panel
+        assert _NOTE_TESTID not in panel
+        assert "series unavailable" in _block_text(body).lower()
+
+    def test_no_note_when_nothing_has_run_or_the_latest_run_is_ok(self, client, isolated_db):
+        assert _NOTE_TESTID not in _panel(_render(client))
+        _seed_roster(self._ROSTER)
+        _seed_rec("run-ok", "cand-old", "sib-old")
+        _seed_summary(run_id="run-ok", recommendations=1, run_at=_OK_RUN_AT)
+        assert _NOTE_TESTID not in _panel(_render(client))
+
+    def test_the_note_is_autoescaped(self, client, isolated_db):
+        _seed_roster(self._ROSTER)
+        _seed_rec("run-ok", "cand-old", "sib-old")
+        _seed_summary(run_id="run-ok", recommendations=1, run_at="2026-10-18T<b>03</b>:45:00Z")
+        _seed_failed_night("series_unavailable")
+
+        note_html = _element_html(_panel(_render(client)), _NOTE_TESTID)
+
+        # Whether the template echoes the raw run_at or reformats it, markup must never
+        # reach the page unescaped.
+        assert "<b>" not in note_html
 
 
 class TestExcludedListAbsentWhenNothingWasExcluded:
