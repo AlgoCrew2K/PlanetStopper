@@ -59,6 +59,7 @@ from typing import Any
 
 import ai_advisor
 import database
+import llm_request
 import model_config
 from advisors import symphony_schema
 from advisors.backtest_gate_engine import (
@@ -715,12 +716,15 @@ def _evaluate_single_variant(
 # the prompt's output budget; the listing is capped, never proportional).
 _MAX_PARAMS_LISTED_IN_PROMPT: int = 40
 
-# Output budget for the reasoned generator's structured tool-use response — a
-# bounded list of node_path/param_key/new_value/rationale edits, small.
-_MAX_OUTPUT_TOKENS: int = 2048
+# Output budget for the reasoned generator's response: the model may think before
+# it emits the edits, and thinking tokens count against this limit.
+_MAX_OUTPUT_TOKENS: int = 16000
 
-# Explicit client-side timeout — never rely on the SDK/urllib3 default.
-_REQUEST_TIMEOUT_SECONDS: float = 30.0
+# Explicit client-side read timeout, sized for a thinking reply.
+_REQUEST_TIMEOUT_SECONDS: float = 120.0
+
+# Reasoning effort requested for generation.
+_GENERATION_EFFORT: str = "high"
 
 _EMIT_LOGIC_EDITS_TOOL = {
     "name": "emit_logic_edits",
@@ -830,6 +834,7 @@ def generate_reasoned_logic_candidates(
     reasoning_context: str | None = None,
     change_description: str | None = None,
     max_candidates: int = MAX_SUGGESTED_CANDIDATES,
+    reply_sink: list | None = None,
 ) -> list:
     """Generate a bounded set of LLM-REASONED ``LogicTweak`` candidates (R2-2).
 
@@ -858,6 +863,9 @@ def generate_reasoned_logic_candidates(
         change_description: optional operator free-text steering hint,
             injected verbatim into the prompt when truthy.
         max_candidates: upper bound on the number of returned candidates.
+        reply_sink: optional list; the final classified ``llm_request.Reply`` is
+            appended to it so the caller can report the reason code and serving
+            model beside the candidate list.
 
     Returns:
         A bounded list of ``LogicTweak`` objects (at most ``max_candidates``).
@@ -877,24 +885,26 @@ def generate_reasoned_logic_candidates(
         )
 
         client = _build_client()
-        response = client.messages.create(
-            model=model_config.get_advisor_suggestion_model(),
-            max_tokens=_MAX_OUTPUT_TOKENS,
-            tools=[_EMIT_LOGIC_EDITS_TOOL],
-            tool_choice={"type": "tool", "name": "emit_logic_edits"},
-            messages=[{"role": "user", "content": prompt}],
-            timeout=_REQUEST_TIMEOUT_SECONDS,
-        )
-
-        tool_block = None
-        for block in getattr(response, "content", None) or []:
-            if getattr(block, "type", None) == "tool_use":
-                tool_block = block
+        reply = None
+        for _ in range(llm_request.NO_TOOL_CALL_ATTEMPTS):
+            reply = llm_request.send(
+                client,
+                model_config.Knob.SUGGESTION,
+                effort=_GENERATION_EFFORT,
+                max_tokens=_MAX_OUTPUT_TOKENS,
+                messages=[{"role": "user", "content": prompt}],
+                tools=[llm_request.strict_tool(_EMIT_LOGIC_EDITS_TOOL)],
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+            )
+            if reply.reason != llm_request.REASON_NO_TOOL_CALL:
                 break
-        if tool_block is None:
+        if reply_sink is not None:
+            reply_sink.append(reply)
+        if reply.reason is not None:
             return []
 
-        raw_edits = tool_block.input.get("edits") if isinstance(tool_block.input, dict) else None
+        tool_input = reply.tool_input()
+        raw_edits = tool_input.get("edits") if isinstance(tool_input, dict) else None
         if not isinstance(raw_edits, list):
             return []
 
@@ -946,6 +956,19 @@ def generate_reasoned_logic_candidates(
 # ---------------------------------------------------------------------------
 # Baseline return extractor
 # ---------------------------------------------------------------------------
+
+
+def _reply_model_and_message(sink: list) -> tuple[str, str]:
+    """Serving model and empty-run message from the collected final reply.
+
+    A patched or failed generator leaves ``sink`` empty: no model, gate message.
+    """
+    reply = sink[-1] if sink else None
+    if reply is None:
+        return "", NO_SURVIVORS_MESSAGE
+    if reply.reason is None:
+        return reply.model, NO_SURVIVORS_MESSAGE
+    return reply.model, f"no logic change was generated this run ({reply.reason_text()})"
 
 
 def _backtest_returns_from_tree(raw_value: dict, symphony_id: str) -> list:
@@ -1040,7 +1063,7 @@ def propose_operator_logic_change(
     # fabricated, never nulled. Mirrors strategy_builder_engine.propose_strategies.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": model_config.get_advisor_suggestion_model(),
+        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
         "mode": "logic-change",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1081,7 +1104,9 @@ def propose_operator_logic_change(
     # Resolve the tweak: caller may supply a LogicTweak directly, or a
     # change_description steered through the reasoned generator (R2-2 — replaces
     # the old deterministic _parse_change_description_to_tweak).
+    empty_message = NO_SURVIVORS_MESSAGE
     if tweak is None and change_description is not None:
+        reply_sink: list = []
         reasoned = generate_reasoned_logic_candidates(
             symphony_id,
             score_tree,
@@ -1089,8 +1114,12 @@ def propose_operator_logic_change(
             reasoning_context=reasoning_context,
             change_description=change_description,
             max_candidates=1,
+            reply_sink=reply_sink,
         )
         tweak = reasoned[0] if reasoned else None
+        reply_model, empty_message = _reply_model_and_message(reply_sink)
+        if reply_model:
+            provenance["generation_model"] = reply_model
 
     symphony_name = (
         (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
@@ -1103,7 +1132,7 @@ def propose_operator_logic_change(
     if tweak is None:
         return LogicChangeRunResult(
             gate_batch=_empty_gate_batch(),
-            message=NO_SURVIVORS_MESSAGE,
+            message=empty_message,
             objective=objective,
             run_id=run_id,
             provenance=provenance,
@@ -1281,7 +1310,7 @@ def suggest_logic_changes(
     # nulled. Mirrors strategy_builder_engine.propose_strategies.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": model_config.get_advisor_suggestion_model(),
+        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
         "mode": "logic-change",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1302,18 +1331,23 @@ def suggest_logic_changes(
         )
 
     # Objective-directed candidate generation (bounded by MAX_SUGGESTED_CANDIDATES).
+    reply_sink: list = []
     candidate_tweaks = generate_reasoned_logic_candidates(
         symphony_id,
         score_tree,
         objective,
         reasoning_context=reasoning_context,
         max_candidates=MAX_SUGGESTED_CANDIDATES,
+        reply_sink=reply_sink,
     )
+    reply_model, empty_message = _reply_model_and_message(reply_sink)
+    if reply_model:
+        provenance["generation_model"] = reply_model
 
     if not candidate_tweaks:
         return LogicChangeRunResult(
             gate_batch=_empty_gate_batch(),
-            message=NO_SURVIVORS_MESSAGE,
+            message=empty_message,
             objective=objective,
             run_id=run_id,
             provenance=provenance,
