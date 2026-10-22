@@ -244,11 +244,21 @@ def _collect_transitive_local_call_subtrees(
     subtrees: list[ast.AST] = [fn_node]
     for node in ast.walk(fn_node):
         if isinstance(node, ast.Call):
+            callees = []
             callee_name = _resolve_bare_name_callee(node)
-            if callee_name and callee_name != fn_name and _find_function_def(tree, callee_name):
-                subtrees.extend(
-                    _collect_transitive_local_call_subtrees(tree, callee_name, _visited=_visited)
-                )
+            if callee_name:
+                callees.append(callee_name)
+            # Cycle 2e (ret5-doc finding): `threading.Thread(target=_some_body)` hands a LOCAL
+            # function to another thread without CALLING it, so a call-only walk stopped at
+            # the spawn and never reached the thread body. Follow `target=<bare name>` too.
+            for kw in node.keywords:
+                if kw.arg == "target" and isinstance(kw.value, ast.Name):
+                    callees.append(kw.value.id)
+            for callee in callees:
+                if callee != fn_name and _find_function_def(tree, callee):
+                    subtrees.extend(
+                        _collect_transitive_local_call_subtrees(tree, callee, _visited=_visited)
+                    )
     return subtrees
 
 
@@ -1196,3 +1206,75 @@ class TestMarketGateScope:
             )
         wrapper = _find_function_def(tree, _RETIREMENT_TICK_WRAPPER_FN_NAME)
         assert not _references_name_or_attr(wrapper, _MARKET_STATE_FN_NAME)
+
+
+# ===========================================================================
+# Group I (Cycle 2e, ret5-doc finding): name-pattern SWEEP over every
+# module-level app.py function with "retirement" in its name. Groups E/F cover
+# explicit entry points + their call closure, which let three new Cycle-2e
+# helpers through (two thread bodies reachable only via Thread(target=...), and
+# a helper called from ai_advisor_tab(), which is deliberately not an entry
+# point). This gap CLASS has now recurred three times, so instead of one more
+# hand-maintained name list the sweep covers whatever retirement function exists
+# -- present or future -- by name pattern.
+# ===========================================================================
+
+
+def _retirement_function_names_in_app() -> list[str]:
+    tree = _parse_app_py()
+    return sorted(
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and "retirement" in node.name
+    )
+
+
+_ALL_RETIREMENT_FN_NAMES = _retirement_function_names_in_app()
+
+# Known members the sweep must contain (non-vacuity: guards the name pattern itself).
+_SWEEP_MUST_INCLUDE = (
+    "_retirement_recommender_tick_worker",
+    "_run_retirement_recommender_tick",
+    "_fetch_retirement_last_run",
+    "_fetch_retirement_recommendations",
+    "_dispatch_retirement_decision",
+    "ai_advisor_retirement_run",
+    "ai_advisor_retirement_approve",
+    "ai_advisor_retirement_reject",
+    "api_retirement_recommendations",
+)
+
+
+class TestEveryRetirementFunctionNeverReachesExecSeam:
+    def test_the_sweep_is_non_vacuous(self):
+        assert len(_ALL_RETIREMENT_FN_NAMES) >= len(_SWEEP_MUST_INCLUDE)
+        missing = [n for n in _SWEEP_MUST_INCLUDE if n not in _ALL_RETIREMENT_FN_NAMES]
+        assert missing == [], f"the retirement name sweep lost known functions: {missing}"
+
+    def test_thread_bodies_are_followed_by_the_group_e_walker(self):
+        """The walker fix itself: the run-now route and the scheduled-tick wrapper
+        must reach their thread bodies and, through them, the shared worker."""
+        tree = _parse_app_py()
+        for entry in (_RETIREMENT_RUN_ROUTE_FN_NAME, _RETIREMENT_TICK_WRAPPER_FN_NAME):
+            target = _thread_target_name(tree, entry)
+            assert target, f"{entry} must start a thread with a bare-name target"
+            visited = {
+                getattr(n, "name", None)
+                for n in _collect_transitive_local_call_subtrees(tree, entry)
+            }
+            assert target in visited, (
+                f"the walk from {entry} never reached its thread body {target}"
+            )
+            assert _RETIREMENT_TICK_WORKER_FN_NAME in visited
+
+    @pytest.mark.parametrize("fn_name", _ALL_RETIREMENT_FN_NAMES)
+    def test_function_references_no_exec_or_trade_primitive(self, fn_name):
+        tree = _parse_app_py()
+        node = _find_function_def(tree, fn_name)
+        assert node is not None
+        source_segment = _unparse_without_docstrings(node)
+        for token in ("composer_draft_client", "alpha_bot_execution", "LIVE_EXECUTION"):
+            assert token not in source_segment, f"{fn_name} references {token}"
+        assert not _references_name_or_attr(node, _SAVE_SYMPHONY_ATTR), (
+            f"{fn_name} references {_SAVE_SYMPHONY_ATTR}"
+        )
