@@ -41,7 +41,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._anthropic_http_fake import AnthropicHttpFake
 from tests.advisors._prompt_cache_test_helpers import extract_text, find_cache_control_blocks
+from tests.llm_request.conftest import message_body
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _GOLDEN_FIXTURE_PATH = (
@@ -362,3 +364,66 @@ def test_static_tool_schema_contains_no_timestamp_or_uuid_markers(frb, monkeypat
     assert not _UUID_RE.search(tools_json), (
         "the static tools=[...] schema contains a UUID-shaped substring."
     )
+
+
+# ===========================================================================
+# On the wire: the request the resolved-model helper actually sends.
+#
+# The tests above hand a recording double to the site and read the kwargs it was
+# called with. These read the HTTP body a real anthropic client puts on the wire
+# (in-process fake behind the _build_client seam), so a request helper that
+# reshapes messages, drops the breakpoint or forces the tool is caught where the
+# API would see it. Patch target and form to keep: advisors.frontrunner_builder.
+# _build_client() returns the client; the overlay request is the first Messages
+# request that client receives.
+# ===========================================================================
+
+
+def _wire_body(frb, monkeypatch, signal_context) -> dict:
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_message(message_body("thinking_tool_emit_frontrunner_overlay.json"))
+    monkeypatch.setattr(frb, "_build_client", lambda: fake.client)
+
+    frb.generate_candidate_overlay(signal_context, n_attempts=1)
+
+    assert len(fake.message_requests) == 1, "the overlay call must send exactly one Messages request"
+    return fake.message_requests[0].body
+
+
+def test_wire_request_leaves_the_tool_choice_to_the_model_and_still_instructs_the_call(
+    frb, monkeypatch
+):
+    body = _wire_body(frb, monkeypatch, _SIGNAL_CONTEXT_A)
+
+    assert body["tool_choice"] == {"type": "auto"}, (
+        "the overlay request must not force the tool: with a model that always thinks, "
+        "a forced tool choice is rejected, so the prompt instruction carries the call"
+    )
+    assert "emit_frontrunner_overlay" in extract_text(body["messages"][0]["content"]), (
+        "with tool_choice auto, the prompt must still tell the model to call the tool by name"
+    )
+
+
+def test_wire_request_keeps_the_breakpoint_on_the_stable_prefix_and_nothing_else(frb, monkeypatch):
+    """Preserved behaviour (breakpoint position and prompt text unchanged by the move to
+    the shared request helper): true on the base too, and fails if the helper reshapes
+    the messages."""
+    body = _wire_body(frb, monkeypatch, _SIGNAL_CONTEXT_A)
+
+    content = body["messages"][0]["content"]
+    assert isinstance(content, list) and len(content) == 2
+    assert content[0] == {
+        "type": "text",
+        "text": frb._build_stable_instructional_prefix(),
+        "cache_control": {"type": "ephemeral"},
+    }
+    assert "cache_control" not in content[1]
+    assert extract_text(content) == frb._build_generation_prompt(_SIGNAL_CONTEXT_A)
+
+
+def test_wire_cached_prefix_is_byte_identical_across_different_signal_contexts(frb, monkeypatch):
+    content_a = _wire_body(frb, monkeypatch, _SIGNAL_CONTEXT_A)["messages"][0]["content"]
+    content_b = _wire_body(frb, monkeypatch, _SIGNAL_CONTEXT_B)["messages"][0]["content"]
+
+    assert content_a[0] == content_b[0], "a real cache read needs identical prefix bytes"
+    assert content_a[1] != content_b[1], "the contexts must differ in the uncached tail"

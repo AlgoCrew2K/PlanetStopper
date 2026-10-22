@@ -21,7 +21,8 @@ CONTRACT SOURCES:
     ONLY public entry point — see advisors/plan_tree_compiler.py:394) and is
     spliced into the symphony replacing the incumbent overlay, producing a
     full valid symphony (symphony_schema.validate_tree(...) == []).
-  - Model: Fable (claude-fable-5) via the Anthropic SDK, mirroring
+  - Model: the suggestion-family (Fable line) model that model_config resolves, sent
+    through llm_request.send, over the Anthropic SDK, mirroring
     build_plan_generator's _build_client() factory seam
     (advisors/build_plan_generator.py:153) so tests patch
     advisors.frontrunner_builder._build_client — NO live network, ever.
@@ -47,11 +48,19 @@ vocabulary source of truth, imported live so nothing here hardcodes it):
 from __future__ import annotations
 
 import copy
+import importlib.util
+import logging
+import pathlib
+import re
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from advisors import symphony_schema
+from tests._anthropic_http_fake import FIXTURES_DIR, AnthropicHttpFake, load_fixture
+from tests.advisors.test_frontrunner_gate_wiring import _make_shaped_result
+from tests.llm_request.conftest import CAPTURED, error_outcome, message_body, newest_id
 
 # ---------------------------------------------------------------------------
 # Module-under-test import guard — RED until advisors/frontrunner_builder.py exists.
@@ -551,3 +560,547 @@ def test_splice_preserves_the_core_content_past_the_boundary(fbld, incumbent_sym
         "the splice destroyed core content beyond the cascade boundary — "
         "only the detected cascade should be replaced"
     )
+
+
+# ---------------------------------------------------------------------------
+# Overlay requests over the Anthropic HTTP fake.
+#
+# The generator is driven with a real anthropic client whose transport is the
+# in-process fake, so every claim about the request (which model it names, what
+# parameters it carries, whether a fallback was asked for) is read off the
+# outgoing HTTP body, and the SDK's own reply parsing runs on the reply.
+#
+# Patch targets and forms production must keep:
+#   - advisors.frontrunner_builder._build_client() is the client seam (module
+#     attribute, called with no arguments once per generate_candidate_overlay call).
+#   - the model comes from llm_request.send / model_config (SUGGESTION knob);
+#     no model identifier literal and no FABLE_MODEL attribute remain in the module.
+#   - the tool definition sent is the module attribute _EMIT_OVERLAY_TOOL, unchanged.
+#   - the module logger is "advisors.frontrunner_builder"; the generation-failure
+#     record in _run_build_for_symphony is emitted at WARNING or above.
+#
+# Fixtures: model pages and replies are the captured and schema-derived records under
+# tests/fixtures/anthropic. The two overlay variants below are runtime-derived from
+# them (provenance in _overlay_variant), because the captured tool replies for a
+# refusal or a fallback were recorded for the swap tool, not the overlay tool.
+# ---------------------------------------------------------------------------
+
+_ENV_SUGGESTION_MODEL = "ADVISOR_SUGGESTION_MODEL"
+_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+_LEGACY_SAMPLING_PARAMETERS = ("temperature", "top_p", "top_k", "thinking")
+# Thinking counts against max_tokens on these models, so the budget must hold a thinking
+# reply at high effort; anthropic 0.85.0 refuses a non-streaming request above 21,333
+# output tokens when no timeout is passed, and this site passes none.
+_MIN_OVERLAY_OUTPUT_TOKENS = 16000
+_MAX_UNSTREAMED_OUTPUT_TOKENS = 21333
+_QUEUED_LISTING_FAILURES = 8
+_OVERLAY_JOB_SYMPHONY_ID = "overlay-job-symphony"
+_CAPTURED_OVERLAY_REPLY = "thinking_tool_emit_frontrunner_overlay.json"
+_VERSIONED_MODEL_ID = re.compile(r"claude-(?:opus|sonnet|haiku|fable|mythos)-\d")
+
+
+def _schema_validator():
+    spec = importlib.util.spec_from_file_location(
+        "anthropic_fixture_schema_check_overlay", FIXTURES_DIR / "schema_check.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _captured_overlay_block() -> dict:
+    return next(
+        block
+        for block in message_body(_CAPTURED_OVERLAY_REPLY)["content"]
+        if block["type"] == "tool_use"
+    )
+
+
+_CAPTURED_OVERLAY = _captured_overlay_block()["input"]["overlay"]
+
+
+def _overlay_variant(envelope: str, overlay: dict | None = None) -> dict:
+    """A reply envelope whose tool_use block is the overlay tool's.
+
+    Derived from two real records: the envelope (stop_reason, stop_details, fallback and
+    thinking blocks, usage, top-level model, tool_use id) is the named message fixture,
+    and the one edit is that its tool_use block takes the name and input of the captured
+    overlay reply (or of ``overlay`` when given, for the no-VIX case). The refusal and
+    fallback fixtures were recorded for the swap tool, which this site never offers.
+    The result must pass the public-reference validator, so the derivation cannot
+    produce a shape the real API would not.
+    """
+    body = copy.deepcopy(message_body(envelope))
+    captured = _captured_overlay_block()
+    for block in body["content"]:
+        if block["type"] == "tool_use":
+            block["name"] = captured["name"]
+            block["input"] = {"overlay": copy.deepcopy(overlay or _CAPTURED_OVERLAY)}
+    assert _schema_validator().check_message_file(body, envelope) == []
+    return body
+
+
+@pytest.fixture
+def overlay_fake() -> AnthropicHttpFake:
+    """The in-process Anthropic API serving the captured Models page."""
+    return AnthropicHttpFake.with_captured_page()
+
+
+def _generate_overlay(fbld, fake, monkeypatch, *bodies, **kwargs):
+    for body in bodies:
+        fake.queue_message(body)
+    monkeypatch.setattr(fbld, "_build_client", lambda: fake.client)
+    return fbld.generate_candidate_overlay({"watched_tickers": ["SPY"]}, **kwargs)
+
+
+def _models_named(fake) -> list[str]:
+    return [request.body["model"] for request in fake.message_requests]
+
+
+def _generation_warnings(caplog) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING and record.name == "advisors.frontrunner_builder"
+    ]
+
+
+def _walk(node):
+    yield node
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk(item)
+
+
+def _non_fable_served_id() -> str:
+    """A model the captured listing serves that is neither the newest nor any fable-line one."""
+    return next(r["id"] for r in CAPTURED["data"] if r.get("line") != "fable")
+
+
+def _unresolved_fake(kind: str) -> AnthropicHttpFake:
+    if kind == "no-fable-model":
+        return AnthropicHttpFake(pages=[load_fixture("models/no_fable.json")])
+    fake = AnthropicHttpFake()
+    for _ in range(_QUEUED_LISTING_FAILURES):
+        fake.queue_listing_outcome(
+            error_outcome("503_unavailable.json")
+            if kind == "listing-503"
+            else httpx.ConnectError("no route to host")
+        )
+    return fake
+
+
+_UNRESOLVED_KINDS = ["listing-503", "listing-connect-error", "no-fable-model"]
+_LISTING_FAILURE_TEXTS = ("Service temporarily unavailable", "no route to host")
+
+
+class TestOverlayModelResolution:
+    def test_overlay_request_names_the_newest_active_fable_line_model(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        result = _generate_overlay(
+            fbld, overlay_fake, monkeypatch, message_body(_CAPTURED_OVERLAY_REPLY)
+        )
+
+        assert result.error is None and result.candidate is not None
+        assert _models_named(overlay_fake) == [newest_id("fable")], (
+            "the overlay request must name the newest active fable-line model of the "
+            "Models API listing, not a model fixed in source"
+        )
+        assert overlay_fake.misuse == []
+
+    def test_the_fixed_model_constant_is_gone(self, fbld):
+        assert not hasattr(fbld, "FABLE_MODEL")
+
+    def test_module_source_names_no_versioned_model_id(self, fbld):
+        source = pathlib.Path(fbld.__file__).read_text(encoding="utf-8")
+
+        assert _VERSIONED_MODEL_ID.findall(source) == []
+
+    def test_override_names_exactly_the_served_id_and_needs_no_listing(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        override = _non_fable_served_id()
+        monkeypatch.setenv(_ENV_SUGGESTION_MODEL, override)
+
+        result = _generate_overlay(
+            fbld, overlay_fake, monkeypatch, message_body(_CAPTURED_OVERLAY_REPLY)
+        )
+
+        assert result.error is None and result.candidate is not None
+        assert _models_named(overlay_fake) == [override]
+        assert overlay_fake.listing_requests == []
+
+    @pytest.mark.parametrize(
+        ("rejection", "code"),
+        [
+            pytest.param("404_not_found.json", "override_model_not_found", id="not-found"),
+            pytest.param(
+                "400_invalid_request.json", "override_request_rejected", id="request-rejected"
+            ),
+        ],
+    )
+    def test_rejected_override_degrades_naming_the_variable_without_substituting_a_model(
+        self, fbld, overlay_fake, monkeypatch, rejection, code
+    ):
+        override = _non_fable_served_id()
+        monkeypatch.setenv(_ENV_SUGGESTION_MODEL, override)
+        bodies = [error_outcome(rejection)] * fbld.MAX_GENERATION_ATTEMPTS
+
+        result = _generate_overlay(fbld, overlay_fake, monkeypatch, *bodies)
+
+        assert result.candidate is None
+        assert code in result.error and _ENV_SUGGESTION_MODEL in result.error
+        assert set(_models_named(overlay_fake)) == {override}, (
+            "a rejected override must never be replaced by the newest listed model"
+        )
+
+    @pytest.mark.parametrize("kind", _UNRESOLVED_KINDS)
+    def test_unresolved_family_sends_no_request_and_names_model_unavailable_only(
+        self, fbld, monkeypatch, unresolved_models, kind
+    ):
+        fake = _unresolved_fake(kind)
+
+        result = _generate_overlay(fbld, fake, monkeypatch)
+
+        assert fake.message_requests == [], "an unresolved family must send no Messages request"
+        assert result.candidate is None
+        assert "model_unavailable" in result.error
+        assert "claude-" not in result.error
+        assert not any(text in result.error for text in _LISTING_FAILURE_TEXTS)
+
+    def test_a_rejected_request_to_a_resolved_model_degrades_with_the_exception_type_only(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        rejection = error_outcome("400_invalid_request.json")
+
+        result = _generate_overlay(fbld, overlay_fake, monkeypatch, rejection)
+
+        assert result.candidate is None
+        assert result.error == "BadRequestError"
+        assert _models_named(overlay_fake) == [newest_id("fable")]
+
+
+class TestOverlayRequestShape:
+    def test_every_attempt_asks_for_a_fallback_model(self, fbld, overlay_fake, monkeypatch):
+        _generate_overlay(
+            fbld,
+            overlay_fake,
+            monkeypatch,
+            message_body("text_only_with_tools.json"),
+            message_body(_CAPTURED_OVERLAY_REPLY),
+        )
+
+        assert len(overlay_fake.message_requests) == 2
+        for request in overlay_fake.message_requests:
+            assert request.body["fallbacks"] == "default"
+            assert _FALLBACK_BETA in request.headers.get("anthropic-beta", "")
+
+    def test_every_attempt_sets_effort_and_omits_legacy_sampling_parameters(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        _generate_overlay(
+            fbld,
+            overlay_fake,
+            monkeypatch,
+            message_body("text_only_with_tools.json"),
+            message_body(_CAPTURED_OVERLAY_REPLY),
+        )
+
+        assert len(overlay_fake.message_requests) == 2
+        for request in overlay_fake.message_requests:
+            body = request.body
+            assert body["output_config"]["effort"] == "high"
+            for name in _LEGACY_SAMPLING_PARAMETERS:
+                assert name not in body, f"{name} must not be sent to a thinking model"
+            assert [m["role"] for m in body["messages"]] == ["user"], (
+                "no assistant prefill: the last message must be the user's"
+            )
+
+    def test_output_budget_holds_a_thinking_reply_and_the_sdk_accepts_it(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        result = _generate_overlay(
+            fbld, overlay_fake, monkeypatch, message_body(_CAPTURED_OVERLAY_REPLY)
+        )
+
+        assert result.error is None, "the SDK refused or the call failed before a reply"
+        budget = overlay_fake.message_requests[0].body["max_tokens"]
+        assert _MIN_OVERLAY_OUTPUT_TOKENS <= budget <= _MAX_UNSTREAMED_OUTPUT_TOKENS
+
+    def test_tool_definition_is_sent_non_strict_with_open_condition_and_rhs(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        _generate_overlay(fbld, overlay_fake, monkeypatch, message_body(_CAPTURED_OVERLAY_REPLY))
+
+        sent = overlay_fake.message_requests[0].body["tools"]
+        assert sent == [fbld._EMIT_OVERLAY_TOOL], "the overlay tool must be sent unchanged"
+        for node in _walk(sent):
+            if isinstance(node, dict):
+                assert "strict" not in node
+                assert node.get("additionalProperties") is not False
+        condition = sent[0]["input_schema"]["properties"]["overlay"]["properties"]["condition"]
+        assert condition["properties"]["rhs"] == {"type": "object"}
+
+    def test_tool_input_is_still_validated_for_a_vix_ticker(self, fbld, overlay_fake, monkeypatch):
+        no_vix = _overlay_variant(_CAPTURED_OVERLAY_REPLY, _dsl_no_vix_overlay())
+
+        result = _generate_overlay(
+            fbld, overlay_fake, monkeypatch, *[no_vix] * fbld.MAX_GENERATION_ATTEMPTS
+        )
+
+        assert result.candidate is None and result.compiled_tree is None
+        assert "VIX" in result.error
+        assert len(overlay_fake.message_requests) == fbld.MAX_GENERATION_ATTEMPTS
+        for request in overlay_fake.message_requests:
+            assert request.body["tool_choice"] == {"type": "auto"}
+
+
+class TestOverlayReplyHandling:
+    def test_text_only_replies_stop_after_three_requests_with_the_no_tool_call_reason(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        text_only = message_body("text_only_with_tools.json")
+
+        result = _generate_overlay(
+            fbld, overlay_fake, monkeypatch, *[text_only] * fbld.MAX_GENERATION_ATTEMPTS
+        )
+
+        assert len(overlay_fake.message_requests) == 3
+        assert result.candidate is None
+        assert "no_tool_call" in result.error and "NoToolUseBlock" not in result.error
+
+    def test_a_tool_call_on_the_second_reply_is_used(self, fbld, overlay_fake, monkeypatch):
+        result = _generate_overlay(
+            fbld,
+            overlay_fake,
+            monkeypatch,
+            message_body("text_only_with_tools.json"),
+            message_body(_CAPTURED_OVERLAY_REPLY),
+        )
+
+        assert len(overlay_fake.message_requests) == 2
+        assert result.error is None
+        assert result.candidate == _CAPTURED_OVERLAY
+
+    def test_truncation_and_missing_tool_calls_share_the_attempt_bound(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        result = _generate_overlay(
+            fbld,
+            overlay_fake,
+            monkeypatch,
+            message_body("max_tokens.json"),
+            message_body("text_only_with_tools.json"),
+            message_body(_CAPTURED_OVERLAY_REPLY),
+        )
+
+        assert len(overlay_fake.message_requests) == 3
+        assert result.error is None
+        assert result.candidate == _CAPTURED_OVERLAY
+
+    @pytest.mark.parametrize("truncated", ["max_tokens.json", "max_tokens_in_thinking.json"])
+    def test_truncated_replies_retry_up_to_the_bound_then_name_max_tokens(
+        self, fbld, overlay_fake, monkeypatch, truncated
+    ):
+        result = _generate_overlay(
+            fbld,
+            overlay_fake,
+            monkeypatch,
+            *[message_body(truncated)] * fbld.MAX_GENERATION_ATTEMPTS,
+        )
+
+        assert len(overlay_fake.message_requests) == fbld.MAX_GENERATION_ATTEMPTS
+        assert result.candidate is None and "max_tokens" in result.error
+        for request in overlay_fake.message_requests:
+            assert request.body["fallbacks"] == "default", "each retry asks for a fallback too"
+            assert request.body["output_config"]["effort"] == "high"
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            pytest.param(lambda: message_body("refusal_reasoning_extraction.json"), id="category"),
+            pytest.param(lambda: message_body("refusal_null_category.json"), id="null-category"),
+            pytest.param(lambda: message_body("refusal_after_partial_text.json"), id="after-text"),
+            pytest.param(
+                lambda: _overlay_variant("refusal_after_partial_tool.json"), id="after-tool"
+            ),
+        ],
+    )
+    def test_a_refusal_stops_the_loop_keeps_no_partial_output_and_names_the_category(
+        self, fbld, overlay_fake, monkeypatch, reply
+    ):
+        refusal = reply()
+
+        result = _generate_overlay(fbld, overlay_fake, monkeypatch, refusal)
+
+        assert len(overlay_fake.message_requests) == 1, (
+            "a refusal is not retried on the same model and spends no further attempts"
+        )
+        assert overlay_fake.misuse == []
+        assert result.candidate is None and result.compiled_tree is None
+        assert "refusal" in result.error
+        category = refusal["stop_details"]["category"]
+        if category is None:
+            assert "None" not in result.error and "null" not in result.error
+        else:
+            assert category in result.error
+
+    def test_a_reply_served_by_a_fallback_model_supplies_the_overlay(
+        self, fbld, overlay_fake, monkeypatch
+    ):
+        served = _overlay_variant("fallback_served_tool.json")
+
+        result = _generate_overlay(fbld, overlay_fake, monkeypatch, served)
+
+        assert result.error is None
+        assert result.candidate == _CAPTURED_OVERLAY
+        assert len(overlay_fake.message_requests) == 1
+        assert overlay_fake.message_requests[0].body["fallbacks"] == "default"
+
+
+@pytest.fixture
+def overlay_job(incumbent_symphony):
+    """The leaves of one run_frontrunner_build pass, patched where they originate.
+
+    Roster, Composer score fetch, Atlas reads, the two backtests and the proposal write
+    are patched at their origin modules so the real detector, generator, splice, gate
+    and acceptance run. The incumbent backtest comes first and the candidate's second,
+    with shapes whose gate and Calmar outcome is established by the gate-wiring suite.
+    Yields the proposal-insert mock.
+    """
+    incumbent_result = _make_shaped_result(
+        [0.10, -0.05, 0.08, -0.10, 0.12, -0.03, 0.05, -0.08, 0.10, -0.02], n_days=100
+    )
+    candidate_result = _make_shaped_result(
+        [0.60, 0.60, 0.60, 0.60, -0.05, 0.60, 0.60, 0.60, 0.60, -0.05], n_days=100
+    )
+    calls = {"n": 0}
+
+    def _backtest(*_args, **_kwargs):
+        calls["n"] += 1
+        return incumbent_result if calls["n"] == 1 else candidate_result
+
+    with (
+        patch("symphony_logic.fetch_symphony_score", return_value=incumbent_symphony),
+        patch(
+            "advisors.community_strats.load_community_strategies",
+            return_value={
+                "available": False,
+                "candidates": [],
+                "stats": {},
+                "source": "captplanet",
+            },
+        ),
+        patch(
+            "advisors.frontrunner_signals.load_frontrunner_signals",
+            return_value={
+                "available": False,
+                "reason": "TestGuardNoLiveAtlas",
+                "signals": [],
+                "stats": {},
+                "source": "captplanet",
+            },
+        ),
+        patch("advisors.composer_backtest_client.run_backtest", side_effect=_backtest),
+        patch("database.insert_frontrunner_proposal") as insert,
+    ):
+        yield insert
+
+
+def _run_job(fbld, fake, monkeypatch, *bodies):
+    for body in bodies:
+        fake.queue_message(body)
+    monkeypatch.setattr(fbld, "_build_client", lambda: fake.client)
+    fbld.run_frontrunner_build([_OVERLAY_JOB_SYMPHONY_ID])
+
+
+class TestFrontrunnerRunOverlayJob:
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            pytest.param(lambda: message_body(_CAPTURED_OVERLAY_REPLY), id="primary-model-reply"),
+            pytest.param(
+                lambda: _overlay_variant("fallback_served_tool.json"), id="fallback-model-reply"
+            ),
+        ],
+    )
+    def test_run_queues_the_overlay_taken_from_the_reply_on_the_resolved_model(
+        self, fbld, overlay_fake, overlay_job, monkeypatch, reply
+    ):
+        _run_job(fbld, overlay_fake, monkeypatch, reply())
+
+        assert overlay_job.call_count == 1, "the overlay from the reply must reach the queue"
+        metrics = overlay_job.call_args.kwargs["metrics_json"]
+        assert metrics["overlay_tree"] == _CAPTURED_OVERLAY
+        request = overlay_fake.message_requests[0]
+        assert [r.body["model"] for r in overlay_fake.message_requests] == [newest_id("fable")]
+        assert request.body["fallbacks"] == "default"
+        assert request.body["tool_choice"] == {"type": "auto"}
+        assert request.body["output_config"]["effort"] == "high"
+
+    def test_override_model_is_named_by_every_overlay_request_of_a_run(
+        self, fbld, overlay_fake, overlay_job, monkeypatch
+    ):
+        override = _non_fable_served_id()
+        monkeypatch.setenv(_ENV_SUGGESTION_MODEL, override)
+
+        _run_job(
+            fbld,
+            overlay_fake,
+            monkeypatch,
+            message_body("text_only_with_tools.json"),
+            message_body(_CAPTURED_OVERLAY_REPLY),
+        )
+
+        assert _models_named(overlay_fake) == [override, override]
+        assert overlay_job.call_count == 1
+
+    @pytest.mark.parametrize("kind", _UNRESOLVED_KINDS)
+    def test_unresolved_family_queues_nothing_and_logs_model_unavailable_at_warning(
+        self, fbld, overlay_job, monkeypatch, unresolved_models, caplog, kind
+    ):
+        fake = _unresolved_fake(kind)
+
+        with caplog.at_level(logging.WARNING, logger="advisors.frontrunner_builder"):
+            _run_job(fbld, fake, monkeypatch)
+
+        assert fake.message_requests == []
+        overlay_job.assert_not_called()
+        warnings = _generation_warnings(caplog)
+        assert any("model_unavailable" in text for text in warnings), warnings
+        shown = " ".join(warnings)
+        assert "claude-" not in shown
+        assert not any(text in shown for text in _LISTING_FAILURE_TEXTS)
+
+    def test_replies_without_a_tool_call_queue_nothing_and_log_no_tool_call_at_warning(
+        self, fbld, overlay_fake, overlay_job, monkeypatch, caplog
+    ):
+        text_only = message_body("text_only_with_tools.json")
+
+        with caplog.at_level(logging.WARNING, logger="advisors.frontrunner_builder"):
+            _run_job(fbld, overlay_fake, monkeypatch, *[text_only] * fbld.MAX_GENERATION_ATTEMPTS)
+
+        assert len(overlay_fake.message_requests) == 3
+        overlay_job.assert_not_called()
+        warnings = _generation_warnings(caplog)
+        assert any("no_tool_call" in text for text in warnings), warnings
+        assert not any("NoToolUseBlock" in text for text in warnings)
+
+    def test_a_refusal_queues_nothing_and_logs_the_reason_at_warning(
+        self, fbld, overlay_fake, overlay_job, monkeypatch, caplog
+    ):
+        refusal = _overlay_variant("refusal_after_partial_tool.json")
+
+        with caplog.at_level(logging.WARNING, logger="advisors.frontrunner_builder"):
+            _run_job(fbld, overlay_fake, monkeypatch, refusal)
+
+        assert len(overlay_fake.message_requests) == 1
+        overlay_job.assert_not_called()
+        warnings = _generation_warnings(caplog)
+        assert any(
+            "refusal" in text and refusal["stop_details"]["category"] in text for text in warnings
+        ), warnings
