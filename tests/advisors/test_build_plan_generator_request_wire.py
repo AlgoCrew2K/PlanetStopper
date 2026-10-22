@@ -381,6 +381,51 @@ class TestModelUnavailable:
         assert result.reason == "model_unavailable"
         assert result.model == ""
 
+    def test_a_failed_listing_costs_one_listing_sequence_and_no_retry(
+        self, monkeypatch, unresolved_models
+    ):
+        """An outage of the Models API is not a reason to list again on every attempt: the
+        run makes one failed listing sequence, not one per attempt bound."""
+        fake = fake_with_failing_listing()
+        result = generate(monkeypatch, fake)
+
+        assert fake.listing_sequences == 1
+        assert fake.message_requests == []
+        assert result.plans == []
+        assert result.reason == "model_unavailable"
+
+    def test_a_resolved_model_the_api_answers_404_for_is_not_retried_when_the_relisting_agrees(
+        self, monkeypatch, fake
+    ):
+        """The listing still names the model that just answered 404, so another attempt would
+        name the same model again: one request, one relisting, no model on the result."""
+        retired = captured_newest_suggestion_id()
+        fake.queue_message(error_outcome("404_not_found.json"))
+        fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+        result = generate(monkeypatch, fake)
+
+        assert len(fake.message_requests) == 1
+        assert fake.message_requests[0].body["model"] == retired
+        assert fake.listing_sequences == 1
+        assert result.plans == []
+        assert result.reason == "model_unavailable"
+        assert result.model == "", "a model that answered 404 is never reported as the generator"
+
+    def test_an_override_the_api_rejects_reports_the_variable_without_retry(
+        self, monkeypatch, fake
+    ):
+        override = newest_active_record("opus", CAPTURED_MODELS)["id"]
+        monkeypatch.setenv(SUGGESTION_ENV_VAR, override)
+        fake.queue_message(error_outcome("400_invalid_request.json"))
+        fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+        result = generate(monkeypatch, fake)
+
+        assert len(fake.message_requests) == 1
+        assert fake.message_requests[0].body["model"] == override
+        assert fake.listing_requests == []
+        assert result.plans == []
+        assert result.reason == f"override_request_rejected: {SUGGESTION_ENV_VAR}"
+
     def test_override_the_api_does_not_know_reports_the_variable_without_retry(
         self, monkeypatch, fake
     ):

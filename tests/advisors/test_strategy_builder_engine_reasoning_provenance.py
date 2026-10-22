@@ -73,6 +73,7 @@ from tests._sb_generation_harness import (
     CAPTURED_MODELS,
     atlas_candidate,
     conforming_diversify_plans,
+    error_outcome,
     fake_with_captured_page,
     fake_with_failing_listing,
     fallback_reply_with_plans,
@@ -577,6 +578,29 @@ def test_unresolved_family_makes_no_request_and_reports_model_unavailable(
     assert [c.template_id for c in run.candidates] == ["atlas-suggested"]
 
 
+def test_unresolved_family_costs_the_run_one_failed_listing_sequence(
+    monkeypatch, unresolved_models
+):
+    fake = fake_with_failing_listing()
+    _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert fake.listing_sequences == 1, "a failed listing is not repeated for each attempt"
+    assert fake.message_requests == []
+
+
+def test_a_resolved_model_answering_404_with_an_unchanged_relisting_is_one_request(monkeypatch):
+    fake = fake_with_captured_page()
+    fake.queue_message(error_outcome("404_not_found.json"))
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    run = _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert len(fake.message_requests) == 1, "a 404 whose relisting agrees is not retried"
+    assert fake.listing_sequences == 1
+    assert run.error is None
+    assert run.generation_reason == "model_unavailable"
+    assert [c.template_id for c in run.candidates] == ["atlas-suggested"]
+
+
 def test_no_composer_key_path_reports_the_resolved_model_and_no_generation_reason(monkeypatch):
     monkeypatch.setattr(sbe, "_has_composer_key", lambda: False)
     run = sbe.propose_strategies(
@@ -602,6 +626,9 @@ def test_a_patched_list_returning_generator_still_drives_provenance_from_the_res
     assert gen_mock.called
     assert run.generation_reason is None
     assert run.provenance["generation_model"] == _captured_newest_suggestion_id()
+    # A plain list must not send the run to its outer exception handler.
+    assert run.error is None
+    assert [c.candidate_id for c in run.candidates] == ["cand-1"]
 
 
 def test_generator_returning_no_plans_is_logged_at_warning_with_the_reason(monkeypatch, caplog):

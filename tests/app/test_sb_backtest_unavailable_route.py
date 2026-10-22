@@ -37,6 +37,7 @@ from tests._sb_generation_harness import (
     SUGGESTION_ENV_VAR,
     atlas_candidate,
     conforming_diversify_plans,
+    error_outcome,
     fake_with_captured_page,
     fake_with_failing_listing,
     fake_with_newer_fable_listing,
@@ -242,6 +243,47 @@ def test_unresolved_model_run_still_evaluates_atlas_and_names_the_reason_not_a_f
     assert isinstance(notice, str) and "model_unavailable" in notice
     assert not any(word in notice.lower() for word in _MODEL_FAMILY_WORDS), notice
     assert body["provenance"]["generation_model"] == ""
+
+
+def test_unresolved_model_run_costs_one_failed_listing_sequence(
+    client, monkeypatch, unresolved_models
+):
+    fake = fake_with_failing_listing()
+    _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert fake.listing_sequences == 1, "a failed listing is not repeated for each attempt"
+    assert fake.message_requests == []
+
+
+def test_a_resolved_model_answering_404_with_an_unchanged_relisting_is_one_request(
+    client, monkeypatch
+):
+    fake = fake_with_captured_page()
+    fake.queue_message(error_outcome("404_not_found.json"))
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert len(fake.message_requests) == 1, "a 404 whose relisting agrees is not retried"
+    assert fake.listing_sequences == 1
+    assert body["built_new_count"] == 0
+    assert body["atlas_count"] == 1, "the Atlas candidate is still evaluated"
+    notice = body["mode_notice"]
+    assert isinstance(notice, str) and "model_unavailable" in notice
+    assert not any(word in notice.lower() for word in _MODEL_FAMILY_WORDS), notice
+
+
+def test_an_override_the_api_rejects_names_the_variable_after_one_request(client, monkeypatch):
+    override = newest_active_record("opus", CAPTURED_MODELS)["id"]
+    monkeypatch.setenv(SUGGESTION_ENV_VAR, override)
+    fake = fake_with_captured_page()
+    fake.queue_message(error_outcome("400_invalid_request.json"))
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert len(fake.message_requests) == 1
+    assert fake.message_requests[0].body["model"] == override
+    assert body["built_new_count"] == 0
+    assert f"override_request_rejected: {SUGGESTION_ENV_VAR}" in body["mode_notice"]
 
 
 def test_degraded_run_notice_names_the_resolved_display_name_and_the_reason_never_opus(
