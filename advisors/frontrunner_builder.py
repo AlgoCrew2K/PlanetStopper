@@ -4,7 +4,7 @@ Composer upload path (feature-plans/frontrunner-builder.md).
 
 Pipeline (per symphony): detect (``frontrunner_detector``) -> gather Atlas
 patterns (``atlas_cache`` / ``community_strats``, 7-day cache) -> generate a
-candidate overlay via **Fable** (``claude-fable-5``) -> compile
+candidate overlay via the newest Fable-line model (``model_config``) -> compile
 (``plan_tree_compiler``) -> splice into the incumbent symphony -> independently
 re-backtest incumbent AND candidate (``composer_backtest_client``) -> gate
 (``backtest_gate_engine.evaluate_candidate_batch`` — mandatory, never bypassed)
@@ -71,6 +71,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+import llm_request
+import model_config
 from advisors import plan_tree_compiler, symphony_schema
 
 logger = logging.getLogger(__name__)
@@ -79,15 +81,12 @@ logger = logging.getLogger(__name__)
 # Named constants — no magic numbers.
 # ---------------------------------------------------------------------------
 
-# Model used for candidate generation — operator directive (feature plan
-# Decisions table: "Generation via Fable").
-FABLE_MODEL: str = "claude-fable-5"
-
 # Maximum output tokens for the candidate-overlay SDK call. A single overlay
 # (even a multi-tier scale-in cascade) is a small DSL fragment compared to
 # build_plan_generator's full-symphony plans, so this is deliberately smaller
-# than MAX_OUTPUT_TOKENS there.
-MAX_OUTPUT_TOKENS: int = 8192
+# than MAX_OUTPUT_TOKENS there. Thinking tokens count against this budget, and the
+# SDK refuses more than 21333 for a non-streaming request without a timeout.
+MAX_OUTPUT_TOKENS: int = 16000
 
 # Bounded retry limit for SDK calls that return stop_reason="max_tokens" or a
 # rejected/degenerate candidate (AC-11: "reject + bounded retry").
@@ -944,35 +943,29 @@ def generate_candidate_overlay(
 
         last_reason = "no attempts made"
         for attempt in range(n_attempts):
-            response = client.messages.create(
-                model=FABLE_MODEL,
+            reply = llm_request.send(
+                client,
+                model_config.Knob.SUGGESTION,
+                effort="high",
                 max_tokens=MAX_OUTPUT_TOKENS,
-                tools=[_EMIT_OVERLAY_TOOL],
-                tool_choice={"type": "tool", "name": "emit_frontrunner_overlay"},
                 messages=[{"role": "user", "content": content_blocks}],
+                tools=[_EMIT_OVERLAY_TOOL],
             )
 
-            if getattr(response, "stop_reason", None) == "max_tokens":
-                last_reason = "max_tokens: response truncated"
+            if reply.reason is not None:
+                last_reason = reply.reason_text()
                 logger.warning(
-                    "generate_candidate_overlay: truncated on attempt %d/%d",
+                    "generate_candidate_overlay: %s on attempt %d/%d",
+                    reply.reason,
                     attempt + 1,
                     n_attempts,
                 )
-                continue
-
-            tool_block = None
-            for block in response.content or []:
-                if getattr(block, "type", None) == "tool_use":
-                    tool_block = block
+                if reply.reason == llm_request.REASON_REFUSAL:
                     break
-            if tool_block is None:
-                last_reason = "NoToolUseBlock"
                 continue
 
-            overlay = (
-                tool_block.input.get("overlay") if isinstance(tool_block.input, dict) else None
-            )
+            tool_input = reply.tool_input()
+            overlay = tool_input.get("overlay") if isinstance(tool_input, dict) else None
             if not isinstance(overlay, dict):
                 last_reason = "InvalidToolUsePayload"
                 continue
@@ -1979,7 +1972,7 @@ def _run_build_for_symphony(symphony_id: str) -> None:
         }
         result = generate_candidate_overlay(signal_context)
         if result.candidate is None:
-            logger.info(
+            logger.warning(
                 "_run_build_for_symphony: symphony_id=%s candidate generation failed (%s)",
                 symphony_id,
                 result.error,
