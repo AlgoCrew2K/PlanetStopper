@@ -2043,15 +2043,13 @@ def _project_today_change_floor(vw_tc: dict) -> dict:
     return {"if_held": vw_tc.get("if_held"), "dry_run": vw_tc.get("dry_run")}
 
 
-def _is_symphony_in_account(value, account_filter):
+def _is_symphony_in_account(value: object, account_filter: str | None) -> bool:
     """True for a symphony state entry (a dict with a name) in the filtered account.
 
     An empty filter matches every symphony entry; non-symphony dicts never match.
     """
-    return (
-        isinstance(value, dict)
-        and "name" in value
-        and (not account_filter or value.get("account") == account_filter)
+    return _is_symphony_state_entry(value) and (
+        not account_filter or value.get("account") == account_filter
     )
 
 
@@ -3157,9 +3155,9 @@ def get_state():
 
         # Optional ?account=<id> narrows the per-symphony outputs: cards (html),
         # state, bot_state and symphonies. Dict-valued non-symphony metadata keys
-        # (last_market_close_snapshot, post_mortem_run) are dropped from a filtered
-        # state/bot_state, as the shared predicate treats them as non-members;
-        # string metadata (date, last_successful_cycle_at) stays. portfolio_strip
+        # (last_market_close_snapshot) are dropped from a filtered state/bot_state,
+        # as the shared predicate treats them as non-members; string metadata
+        # (date, last_successful_cycle_at, post_mortem_run) stays. portfolio_strip
         # and meta always come from the whole state, so state_data is never narrowed.
         _account_filter = request.args.get("account")
 
