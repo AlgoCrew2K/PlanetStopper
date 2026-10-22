@@ -1,0 +1,257 @@
+{
+  "_provenance": "see PROVENANCE.md in this directory",
+  "accounts": {
+    "first": "5b0e9c2d-7a41-4f68-9d3e-1c8a64f2b7d0",
+    "second": "e2f4a1c7-93b8-4d05-a6c1-0b7d58e93a42",
+    "without_symphonies": "c91d7e30-4a5f-4b2c-8e16-d3f0a97b5c28",
+    "needs_url_encoding": "acct+x/y z&q=1"
+  },
+  "ids": {
+    "first_standby": "iaSOOUsmnCJHiZvbrWfs",
+    "first_active": "lW4ZzWuqR8tEO2DhXbil",
+    "second_standby": "nOyb55RMGVCKPiYXv7TI",
+    "second_active": "qF5ZU7ALjrlhxrGEwsyJ"
+  },
+  "bot_state": {
+    "iaSOOUsmnCJHiZvbrWfs": {
+      "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+      "account": "5b0e9c2d-7a41-4f68-9d3e-1c8a64f2b7d0",
+      "current_value": 1098.42,
+      "current_return": 0.13999999999999999,
+      "triggered": false,
+      "high_water_mark": 0.73,
+      "shadow_hwm": 0.73,
+      "symphony_vol": 1.5927051809242332,
+      "mc_prob": 27.62,
+      "vwap_ticks": 0,
+      "vwap_bleed_ticks": 0,
+      "above_tp_count": 0,
+      "below_stop_count": 0,
+      "position_epoch": "ba775024600c41a5a50ab0fa9c214142",
+      "current_holdings": [
+        {
+          "ticker": "SH",
+          "allocation": 0.390700631
+        },
+        {
+          "ticker": "EDC",
+          "allocation": 0.272940612
+        },
+        {
+          "ticker": "SCHD",
+          "allocation": 0.000868271
+        },
+        {
+          "ticker": "URTY",
+          "allocation": 0.005909363
+        },
+        {
+          "ticker": "UVIX",
+          "allocation": 0.096965443
+        },
+        {
+          "ticker": "VIXY",
+          "allocation": 0.098396678
+        },
+        {
+          "ticker": "YANG",
+          "allocation": 0.133218248
+        }
+      ]
+    },
+    "lW4ZzWuqR8tEO2DhXbil": {
+      "name": "Planet of the Paragons: EYEG of the LQD",
+      "account": "5b0e9c2d-7a41-4f68-9d3e-1c8a64f2b7d0",
+      "current_value": 949.26,
+      "current_return": 0.7799999999999999,
+      "triggered": true,
+      "triggered_reason": "Take-Profit",
+      "triggered_at_return": 0.7799999999999999,
+      "triggered_at_stop": 0.7799999999999999,
+      "triggered_at_hwm": 0.9199999999999999,
+      "triggered_at_time": "09:43",
+      "high_water_mark": -999.0,
+      "shadow_hwm": 1.01,
+      "symphony_vol": 2.2158058617694003,
+      "mc_prob": 48.16,
+      "vwap_ticks": 0,
+      "vwap_bleed_ticks": 0,
+      "above_tp_count": 2,
+      "below_stop_count": 0,
+      "position_epoch": "cc4a0fd2abea47dbaf9513dd1da2a19c",
+      "current_holdings": [
+        {
+          "ticker": "SH",
+          "allocation": 0.492962883
+        },
+        {
+          "ticker": "EDC",
+          "allocation": 0.337674287
+        },
+        {
+          "ticker": "YANG",
+          "allocation": 0.168355525
+        }
+      ]
+    },
+    "nOyb55RMGVCKPiYXv7TI": {
+      "name": "Corporate Chaos 5 ways ",
+      "account": "e2f4a1c7-93b8-4d05-a6c1-0b7d58e93a42",
+      "current_value": 896.64,
+      "current_return": -0.84,
+      "triggered": false,
+      "high_water_mark": -0.32,
+      "shadow_hwm": -0.32,
+      "symphony_vol": 0.988070337165776,
+      "mc_prob": 82.12,
+      "vwap_ticks": 0,
+      "vwap_bleed_ticks": 0,
+      "above_tp_count": 0,
+      "below_stop_count": 0,
+      "position_epoch": "ef20d7b499e444bab3ab5a1a09c1fbb8",
+      "current_holdings": [
+        {
+          "ticker": "EEV",
+          "allocation": 0.282026008
+        },
+        {
+          "ticker": "QLD",
+          "allocation": 0.208216713
+        },
+        {
+          "ticker": "UST",
+          "allocation": 0.100935781
+        },
+        {
+          "ticker": "XLY",
+          "allocation": 0.002306122
+        },
+        {
+          "ticker": "BTAL",
+          "allocation": 0.195948651
+        },
+        {
+          "ticker": "UVIX",
+          "allocation": 0.098105115
+        },
+        {
+          "ticker": "VIXY",
+          "allocation": 0.09954382
+        }
+      ]
+    },
+    "qF5ZU7ALjrlhxrGEwsyJ": {
+      "name": "Planet of the Golden Age (Buy Copy)",
+      "account": "e2f4a1c7-93b8-4d05-a6c1-0b7d58e93a42",
+      "current_value": 1514.46,
+      "current_return": 2.2859177663251935,
+      "triggered": true,
+      "triggered_reason": "VWAP Breakdown",
+      "triggered_at_return": 2.26,
+      "triggered_at_stop": 2.35,
+      "triggered_at_hwm": 2.35,
+      "triggered_at_time": "10:11",
+      "high_water_mark": -999.0,
+      "shadow_hwm": 2.44,
+      "symphony_vol": 4.140740239966466,
+      "mc_prob": 45.540000000000006,
+      "vwap_ticks": 3,
+      "vwap_bleed_ticks": 0,
+      "above_tp_count": 0,
+      "below_stop_count": 0,
+      "position_epoch": "06062dd0b57d42ba888a40c90614bdf7",
+      "current_holdings": [
+        {
+          "ticker": "DFEN",
+          "allocation": 0.007324649
+        },
+        {
+          "ticker": "STPZ",
+          "allocation": 0.012130554
+        },
+        {
+          "ticker": "SOXL",
+          "allocation": 0.008354467
+        },
+        {
+          "ticker": "SOXX",
+          "allocation": 0.011490519
+        },
+        {
+          "ticker": "QQQ",
+          "allocation": 0.044029256
+        },
+        {
+          "ticker": "GDX",
+          "allocation": 0.005421122
+        },
+        {
+          "ticker": "HYG",
+          "allocation": 0.007864975
+        },
+        {
+          "ticker": "AIQ",
+          "allocation": 0.011239423
+        },
+        {
+          "ticker": "NUGT",
+          "allocation": 0.007613244
+        },
+        {
+          "ticker": "LQD",
+          "allocation": 0.005064298
+        },
+        {
+          "ticker": "MDY",
+          "allocation": 0.011078038
+        },
+        {
+          "ticker": "XLB",
+          "allocation": 0.00314164
+        },
+        {
+          "ticker": "TECL",
+          "allocation": 0.011598844
+        },
+        {
+          "ticker": "TQQQ",
+          "allocation": 0.030305164
+        },
+        {
+          "ticker": "EDC",
+          "allocation": 0.501109224
+        },
+        {
+          "ticker": "YANG",
+          "allocation": 0.248254056
+        },
+        {
+          "ticker": "FAS",
+          "allocation": 0.002532733
+        },
+        {
+          "ticker": "GLD",
+          "allocation": 0.007345192
+        },
+        {
+          "ticker": "XLK",
+          "allocation": 0.022215234
+        },
+        {
+          "ticker": "SCHD",
+          "allocation": 0.00235949
+        },
+        {
+          "ticker": "XLY",
+          "allocation": 0.010830827
+        },
+        {
+          "ticker": "USD",
+          "allocation": 0.003280734
+        }
+      ]
+    },
+    "date": "2026-10-22",
+    "last_successful_cycle_at": "2026-10-22T10:31:00.123456-04:00"
+  }
+}
