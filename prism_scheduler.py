@@ -260,7 +260,7 @@ def _run_prism(run_id: str = "unknown") -> bool:
         "-p",
         "--dangerously-skip-permissions",
         "--model",
-        "claude-opus-4-8",
+        "opus",
         "--max-budget-usd",
         str(MAX_BUDGET_USD),
         "--output-format",
