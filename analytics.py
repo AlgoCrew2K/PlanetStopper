@@ -2257,6 +2257,11 @@ def compute_windowed_portfolio_strip(
     }
 
 
+def js_to_fixed(value: float, places: int) -> str:
+    """Import stub: rounds as the browser's Number.prototype.toFixed (not yet implemented)."""
+    return ""
+
+
 def format_dollar_saved(
     value: float, *, positive_word: str = "saved", negative_word: str = "lost"
 ) -> str:
