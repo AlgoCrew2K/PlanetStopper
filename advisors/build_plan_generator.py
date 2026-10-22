@@ -64,6 +64,7 @@ import math
 import os
 from dataclasses import dataclass, field
 
+import llm_request
 import model_config
 
 # Re-export so the AC-12 bound tests can resolve it from this module.
@@ -110,11 +111,17 @@ _LOW_VOL_SORTS: frozenset[str] = frozenset(
 # ceil(5015 * 1.25) = 6269; floored at the RED test minimum of 16000.
 # 16384 = 16000 floor + small buffer, safely above both the calibrated worst-case
 # (5015 tokens) and the RED >= 16000 assertion.
-MAX_OUTPUT_TOKENS: int = 16384
+# The SDK raises ValueError for a non-streaming request above 21333 tokens when no
+# timeout is passed, and this site passes none; 21000 leaves room for thinking and
+# stays under that guard.
+MAX_OUTPUT_TOKENS: int = 21000
 
 # Bounded retry limit for SDK calls that return stop_reason="max_tokens".  After this
 # many consecutive truncations the call degrades per D-1 (no infinite retry loop).
 MAX_GENERATION_ATTEMPTS: int = 3
+_RETRYABLE_REPLY_REASONS = frozenset(
+    {llm_request.REASON_MAX_TOKENS, llm_request.REASON_NO_TOOL_CALL}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -142,10 +149,13 @@ class GeneratorResult:
     reason : str | None
         On failure: type(exc).__name__ only (D-1 contract, no key/path/message leak).
         None on success.
+    model : str
+        Model of the last reply a request returned ("" when none returned a reply).
     """
 
     plans: list[dict] = field(default_factory=list)
     reason: str | None = None
+    model: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -1106,46 +1116,38 @@ def generate_build_plans(
             )
             content_blocks.append({"type": "text", "text": full_prompt[len(base_prompt) :]})
 
-        # Bounded retry on truncation (stop_reason="max_tokens").  The old bare literal
-        # max_tokens=4096 was too small for 12 full-grammar plans; MAX_OUTPUT_TOKENS fixes
-        # that, but we also retry in case the model still exceeds the ceiling.  Any other
-        # stop_reason (e.g. "tool_use") is NOT a truncation and does not retry.
-        response = None
+        # Attempts are bounded by MAX_GENERATION_ATTEMPTS, shared by truncation and
+        # missing-tool-call replies; any other failure reason ends the loop at once.
+        reply = None
+        reply_model = ""
         for _attempt in range(MAX_GENERATION_ATTEMPTS):
-            response = client.messages.create(
-                model=model_config.get_advisor_suggestion_model(),
+            reply = llm_request.send(
+                client,
+                model_config.Knob.SUGGESTION,
+                effort="high",
                 max_tokens=MAX_OUTPUT_TOKENS,
-                tools=[_EMIT_BUILD_PLANS_TOOL],
-                tool_choice={"type": "tool", "name": "emit_build_plans"},
                 messages=[{"role": "user", "content": content_blocks}],
+                tools=[_EMIT_BUILD_PLANS_TOOL],
             )
-            if getattr(response, "stop_reason", None) != "max_tokens":
-                # Non-truncated response — proceed to parse below.
+            if reply.model:
+                reply_model = reply.model
+            if reply.reason is None:
                 break
+            if reply.reason not in _RETRYABLE_REPLY_REASONS:
+                return GeneratorResult(plans=[], reason=reply.reason_text(), model=reply_model)
             logger.warning(
-                "generate_build_plans: stop_reason=max_tokens on attempt %d/%d",
+                "generate_build_plans: %s on attempt %d/%d",
+                reply.reason,
                 _attempt + 1,
                 MAX_GENERATION_ATTEMPTS,
             )
-        else:
-            # All MAX_GENERATION_ATTEMPTS returned stop_reason="max_tokens".
-            return GeneratorResult(
-                plans=[], reason="max_tokens: response truncated after all attempts"
-            )
+        if reply.reason is not None:
+            return GeneratorResult(plans=[], reason=reply.reason_text(), model=reply_model)
 
-        # Find the tool_use block in the response.
-        tool_block = None
-        for block in response.content or []:
-            if getattr(block, "type", None) == "tool_use":
-                tool_block = block
-                break
-
-        if tool_block is None:
-            return GeneratorResult(plans=[], reason="NoToolUseBlock")
-
-        raw_plans = tool_block.input.get("plans") if isinstance(tool_block.input, dict) else None
+        tool_input = reply.tool_input()
+        raw_plans = tool_input.get("plans") if isinstance(tool_input, dict) else None
         if not isinstance(raw_plans, list):
-            return GeneratorResult(plans=[], reason="InvalidToolUsePayload")
+            return GeneratorResult(plans=[], reason="InvalidToolUsePayload", model=reply_model)
 
         # Validate, prune, tag, dedup, signature-filter, and accumulate up to n_plans.
         # Order is fixed (AC-8 enforcement test pins it): prune -> dedup -> signature filter.
@@ -1182,9 +1184,10 @@ def generate_build_plans(
             return GeneratorResult(
                 plans=[],
                 reason=f"no plans matched the {obj_name} signature after prune and dedup",
+                model=reply_model,
             )
 
-        return GeneratorResult(plans=admitted, reason=None)
+        return GeneratorResult(plans=admitted, reason=None, model=reply_model)
 
     except Exception as exc:
         # D-1: reason contains ONLY the exception class name — no key/path/message.

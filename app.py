@@ -8087,12 +8087,17 @@ def ai_advisor_strategy_builder_run():
     # everything you see" (silent-degradation risk, audit F5).
     built_new_count = sum(1 for c in run.candidates if c.template_id == "built-new")
     atlas_count = sum(1 for c in run.candidates if c.template_id == "atlas-suggested")
-    mode_notice = (
-        f"Opus generation produced 0 plans (degraded) — this run surfaces "
-        f"{atlas_count} Atlas community candidate(s) only."
-        if built_new_count == 0
-        else None
-    )
+    mode_notice = None
+    if built_new_count == 0:
+        import model_config as _model_config  # noqa: PLC0415
+
+        _gen_reason = getattr(run, "generation_reason", None)
+        _reason_part = f" ({_gen_reason})" if isinstance(_gen_reason, str) and _gen_reason else ""
+        _badge = _model_config.peek(_model_config.Knob.SUGGESTION).badge_text
+        mode_notice = (
+            f"Built-new generation ({_badge}) produced 0 plans{_reason_part} (degraded): "
+            f"this run surfaces {atlas_count} Atlas community candidate(s) only."
+        )
 
     # AC-4/AC-5 (DEGRADE-FIX, advisor-outage-degrade.md): honest run-level
     # signal when candidates were compiled but NOT tradeability-checked

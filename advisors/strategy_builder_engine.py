@@ -163,6 +163,17 @@ class ProposalRun:
     # nulled out on an error path — only evidence_injected's own per-source
     # values (absent/present/stale) carry the honesty signal.
     provenance: dict | None = None
+    # Why the build-plan generator produced no plans (a reason code such as
+    # "no_tool_call" or "model_unavailable"); None when it produced plans, was
+    # never reached, or was replaced by a caller-supplied stand-in.
+    generation_reason: str | None = None
+
+
+class _GeneratedTrees(list):
+    """Candidate list that also carries the generator's reason and serving model."""
+
+    generation_reason: str | None = None
+    generation_model: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -412,14 +423,18 @@ def _generate_candidate_trees(
 
         if not result.plans:
             # D-1 honest degradation: no plans from generator (SDK error, signature-floor, etc.)
-            logger.debug(
-                "_generate_candidate_trees: generator returned no plans (reason=%r)",
+            logger.warning(
+                "_generate_candidate_trees: generator returned no plans (reason=%s)",
                 result.reason,
             )
-            return []
+            empty = _GeneratedTrees()
+            empty.generation_reason = result.reason
+            empty.generation_model = result.model
+            return empty
 
         # C3 — compile each plan; drop uncompilable ones, keep the run going.
-        candidates: list[CandidateInfo] = []
+        candidates = _GeneratedTrees()
+        candidates.generation_model = result.model
         for plan in result.plans:
             # AC-12: thread the real backtest seam so compile_plan's tradeability-
             # repair loop (dead when backtest_fn defaults to None) is live on this
@@ -459,9 +474,7 @@ def _generate_candidate_trees(
 
     except Exception as exc:
         # D-1: degrade cleanly — never propagate an exception from the generator path.
-        logger.debug(
-            "_generate_candidate_trees: unexpected error (%s)", type(exc).__name__, exc_info=True
-        )
+        logger.warning("_generate_candidate_trees: unexpected error (%s)", type(exc).__name__)
         return []
 
 
@@ -975,12 +988,13 @@ def propose_strategies(
         invocation_source if invocation_source is not None else "unattributed-direct-call"
     )
     provenance: dict = {
-        "generation_model": model_config.get_advisor_suggestion_model(),
+        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
         "mode": "build-new",
         "evidence_injected": reasoning_manifest or ai_advisor._EMPTY_MANIFEST,
         "run_id": run_id,
     }
 
+    generation_reason: str | None = None
     try:
         if not _has_composer_key():
             return ProposalRun(
@@ -997,6 +1011,11 @@ def propose_strategies(
         candidate_infos = _generate_candidate_trees(
             objective, universe, reasoning_context=reasoning_context
         )
+        _reason = getattr(candidate_infos, "generation_reason", None)
+        generation_reason = _reason if isinstance(_reason, str) else None
+        reply_model = getattr(candidate_infos, "generation_model", None)
+        if isinstance(reply_model, str) and reply_model:
+            provenance["generation_model"] = reply_model
 
         # Step 1b: Inject caller-provided community candidates (keyword-only, AC-2/AC-3/AC-6).
         # Cap at MAX_COMMUNITY_CANDIDATES_PER_RUN even if the caller passes more — the adapter
@@ -1023,6 +1042,7 @@ def propose_strategies(
                 observations_written=0,
                 run_id=run_id,
                 provenance=provenance,
+                generation_reason=generation_reason,
             )
 
         # Step 2: Backtest each candidate (sequential, 1 req/s via client pacing)
@@ -1243,6 +1263,7 @@ def propose_strategies(
             backtest_unavailable_count=backtest_unavailable_count,
             run_id=run_id,
             provenance=provenance,
+            generation_reason=generation_reason,
         )
 
     except Exception as exc:
