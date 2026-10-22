@@ -1107,6 +1107,12 @@ def _retirement_internal_error_summary(error_type: str) -> dict:
     reader (the panel template, GET /api/retirement-recommendations) can rely
     on the keys being present; unknown counts are None, never a fabricated 0.
     D-1: `error_type` is a bare type(exc).__name__ -- never str(exc).
+
+    "source" is the literal "composer" because _retirement_recommender_tick_
+    worker (this helper's only caller) always builds with source="composer":
+    a failed run's summary names the source that run was attempting, not
+    something this helper detected. If the worker ever builds with another
+    source, this literal must follow it.
     """
     return {
         "run_id": uuid.uuid4().hex,
