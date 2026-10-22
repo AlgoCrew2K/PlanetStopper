@@ -203,6 +203,7 @@ def invalidate(knob: Knob, model_id: str, client: object) -> ModelChoice:
     """Drop the family's resolution if it is still `model_id` and re-list once."""
     global _registry, _last_success
     family = _KNOB_FAMILY[knob]
+    seq_before = _attempt_seq
     with _listing_lock:  # a listing in flight may be about to replace the entry
         pins = _run_pin.get()
         pinned = pins.get(family) if pins is not None else None
@@ -213,6 +214,11 @@ def invalidate(knob: Knob, model_id: str, client: object) -> ModelChoice:
         if pinned is not None and registered is not None and registered.model_id != model_id:
             pins[family] = registered  # the process-wide entry is newer than the run's pin
             return registered
+        if _attempt_seq != seq_before:
+            # a listing finished while this 404 waited: share its outcome
+            choice = _registry.get(family, _UNAVAILABLE)
+            _pin(family, choice)
+            return choice
         _registry = {f: c for f, c in _registry.items() if f != family}
         _last_success = None  # a failed listing must be retried by the next call
         if pins is not None:
