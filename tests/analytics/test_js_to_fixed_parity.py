@@ -14,6 +14,7 @@ integers and large magnitudes).
 
 from __future__ import annotations
 
+import pathlib
 import re
 import subprocess
 
@@ -77,22 +78,73 @@ def test_returns_a_string_with_exactly_the_requested_places():
     assert analytics.js_to_fixed(7, 3) == node_to_fixed([7], 3)[0]
 
 
-def test_the_browser_rounding_rule_has_one_python_implementation():
-    """One Python implementation exists: no second function mirroring the browser's
-    rounding in production code (a copy drifts), and the app renders through it.
-    Unrelated Decimal rounding elsewhere (an order-price tick quantizer) is not a mirror."""
+# The one production file allowed to round with ROUND_HALF_UP besides analytics.py: it
+# quantizes a Managed Sleeves order price to the exchange tick, a trade path and not text
+# shown on a page. Excluded by exact path; a new display module that rounds on its own
+# must still fail this scan.
+_ORDER_PRICE_ROUNDING = "sleeves/alpaca_orders.py"
+_MIRROR_DEF = re.compile(
+    r"^\s*def\s+_?(js_to_fixed|to_fixed|tofixed|js_tofixed)\s*\(", re.MULTILINE
+)
+
+
+def _display_rounding_violations(root: pathlib.Path, paths: list[str]) -> list[str]:
+    """Production files other than analytics.py that round shared display text on their
+    own: a ROUND_HALF_UP use (bar the named order-price file) or a second function that
+    mirrors the browser's toFixed."""
+    found = []
+    for rel in paths:
+        if rel == "analytics.py" or rel == _ORDER_PRICE_ROUNDING:
+            continue
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        if "ROUND_HALF_UP" in text or _MIRROR_DEF.search(text):
+            found.append(rel)
+    return found
+
+
+def _production_py_files() -> list[str]:
     tracked = subprocess.run(
         ["git", "ls-files", "*.py"], capture_output=True, text=True, timeout=60, check=True
     ).stdout.split()
-    production = [p for p in tracked if not p.startswith(("tests/", ".claude/"))]
-    mirror = re.compile(r"^\s*def\s+_?(js_to_fixed|to_fixed|tofixed|js_tofixed)\s*\(", re.MULTILINE)
-    definers = []
-    for path in production:
-        with open(path, encoding="utf-8", errors="replace") as handle:
-            if mirror.search(handle.read()):
-                definers.append(path)
-    assert definers == ["analytics.py"], (
-        f"the browser-rounding function must be defined in analytics.py only; found {definers}"
+    return [p for p in tracked if not p.startswith(("tests/", ".claude/"))]
+
+
+def test_page_text_rounding_goes_through_the_one_function():
+    """Rounding of text shown on a page goes through analytics.js_to_fixed: no other
+    production file rounds with ROUND_HALF_UP or defines a mirror of toFixed, and the
+    app renders shared text through the function."""
+    repo = pathlib.Path(".").resolve()
+    assert _display_rounding_violations(repo, _production_py_files()) == []
+    assert "js_to_fixed" in (repo / "app.py").read_text(encoding="utf-8")
+    assert "ROUND_HALF_UP" in (repo / "analytics.py").read_text(encoding="utf-8"), (
+        "analytics.js_to_fixed must carry the browser rule"
     )
-    with open("app.py", encoding="utf-8") as handle:
-        assert "js_to_fixed" in handle.read(), "app.py must render shared text through js_to_fixed"
+
+
+def test_the_scan_fails_on_a_second_display_rounding_and_exempts_only_the_named_file(tmp_path):
+    """Non-vacuity: a planted ROUND_HALF_UP in app.py (or in a sibling of the exempt file,
+    or a mirror function) is reported; the exempt file alone is not."""
+    planted = {
+        "analytics.py": "ROUND_HALF_UP",
+        "app.py": "from decimal import ROUND_HALF_UP",
+        "sleeves/alpaca_orders.py": "decimal.ROUND_HALF_UP",
+        "sleeves/other_orders.py": "decimal.ROUND_HALF_UP",
+        "views.py": "def _js_to_fixed(v, n):" + chr(10) + "    return ''",
+        "clean.py": "x = 1",
+    }
+    for rel, body in planted.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(body, encoding="utf-8")
+    paths = [
+        "analytics.py",
+        "app.py",
+        "sleeves/alpaca_orders.py",
+        "sleeves/other_orders.py",
+        "views.py",
+        "clean.py",
+    ]
+    assert _display_rounding_violations(tmp_path, paths) == [
+        "app.py",
+        "sleeves/other_orders.py",
+        "views.py",
+    ]

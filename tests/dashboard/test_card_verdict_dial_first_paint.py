@@ -523,3 +523,34 @@ def _expected_verdict_for(ga: float) -> str:
     mag = js_to_fixed([abs(ga)], 1)[0]
     lead = "Good call · saved +" if ga > 0 else "Early exit · gave up "
     return f"{lead}{mag}%α at exit"
+
+
+def test_card_that_exits_after_first_paint_shows_its_verdict_and_qualifier_on_the_next_poll(
+    monkeypatch, tmp_path
+):
+    """A card painted untriggered (verdict hidden, dash, qualifier hidden) that exits
+    before the next poll gets its verdict text and its 'at exit' qualifier from the poll."""
+    _network_refused(monkeypatch)
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(tmp_path / "absent.env"))
+    sid = _invented_id(1)
+    database.save_state({sid: _untriggered_state(1, 27.5)})
+    client = _client()
+    html = client.get("/").data.decode("utf-8")
+
+    database.save_state({sid: _triggered_state(1)})
+    _seed_exit_row(sid, at_return=1.25)
+    _market(monkeypatch, "open")
+    body = client.get("/api/state").get_json()
+    run = run_page(
+        html,
+        tmp_path,
+        routes={
+            "/api/csrf-token": {"body": {"csrf_token": "csrf-fixture-token"}},
+            "/api/state": {"body": body},
+        },
+    )
+    before, after = run["initial"]["cards"][sid], run["loaded"]["cards"][sid]
+    assert before["verdict"]["hidden"] is True
+    assert after["verdict"]["hidden"] is False
+    assert after["verdict"]["text"] == _expected_verdict_for(0.25)
+    assert after["atExit"]["hidden"] is False
