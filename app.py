@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import queue
+import re
 import secrets
 import signal
 import sqlite3
@@ -1662,6 +1663,117 @@ def _atlas_cache_health() -> dict:
 
 
 # --- 2. Web Dashboard Routes ---
+def _inject_guard_alpha(entries: dict) -> None:
+    """Stamp guard_alpha onto triggered symphony entries (keyed by id) for card verdicts.
+
+    Shared by GET / (first paint) and get_state (poll) so both carry one number.
+    setdefault keeps a value already on the entry; any failure leaves verdicts at the dash.
+    """
+    try:
+        triggered_ids = [
+            k for k, v in entries.items() if isinstance(v, dict) and v.get("triggered")
+        ]
+        if not triggered_ids:
+            return
+        for sid, ga in database.get_guard_alpha_by_symphony(triggered_ids).items():
+            if sid in entries and isinstance(entries[sid], dict):
+                cr = entries[sid].get("current_return") or 0.0
+                entries[sid].setdefault("guard_alpha", round(float(ga) - float(cr), 6))
+    except Exception:
+        pass
+
+
+def _active_fleet_alert() -> dict | None:
+    """The undismissed fleet alert row, or None (also for a non-dict or an unreadable table)."""
+    try:
+        row = database.read_fleet_alert()
+    except Exception:
+        return None
+    if isinstance(row, dict) and row.get("dismissed_at_et") is None:
+        return row
+    return None
+
+
+_DIAL_DASH = "—"
+_DIAL_EMPTY_OFFSET = "94.25"  # circumference of the r=15 dial arc, 2*pi*15, in SVG user units
+_DIAL_SENTINEL_ABS = 900  # engine uses +-999 as "not set"; the client treats abs >= 900 as unset
+_DIAL_WARN_BELOW_PCT = 15  # arc turns warn colour below this reading (percent)
+_DIAL_DIM_ABOVE_PCT = 80  # arc turns dim above this reading (percent)
+
+
+def _first_paint_verdict(sym: dict) -> dict:
+    """Verdict text for a triggered card, worded as static/index.js writes it on a poll."""
+    ga = sym.get("guard_alpha")
+    if isinstance(ga, bool) or not isinstance(ga, (int, float)) or not math.isfinite(ga):
+        return {"_verdict_text": _DIAL_DASH, "_verdict_has_value": False}
+    magnitude = analytics.js_to_fixed(abs(ga), 1)
+    text = f"Good call · saved +{magnitude}%α" if ga > 0 else f"Early exit · gave up {magnitude}%α"
+    return {"_verdict_text": text, "_verdict_has_value": True}
+
+
+def _first_paint_dial(sym: dict) -> dict:
+    """Dial arc offset, label and colour token, computed as static/index.js renderMcDial does."""
+    m = sym.get("mc_prob")
+    unknown = (
+        sym.get("triggered")
+        or isinstance(m, bool)
+        or not isinstance(m, (int, float))
+        or not math.isfinite(m)
+        or abs(m) >= _DIAL_SENTINEL_ABS
+    )
+    if unknown:
+        return {
+            "_dial_offset": _DIAL_EMPTY_OFFSET,
+            "_dial_text": _DIAL_DASH,
+            "_dial_token": "--studio-ink-faint",
+        }
+    pct = max(0, min(100, m)) / 100
+    if m < _DIAL_WARN_BELOW_PCT:
+        token = "--studio-warn"
+    elif m > _DIAL_DIM_ABOVE_PCT:
+        token = "--studio-ink-dim"
+    else:
+        token = "--studio-accent"
+    return {
+        "_dial_offset": analytics.js_to_fixed(float(_DIAL_EMPTY_OFFSET) * (1 - pct), 2),
+        "_dial_text": analytics.js_to_fixed(pct * 100, 0) + "%",
+        "_dial_token": token,
+    }
+
+
+def _js_count(value) -> str:
+    """A count as the client's string concatenation prints it ('?' when absent)."""
+    if value is None:
+        return "?"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _fleet_alert_sentence(alert: dict) -> str:
+    """Banner sentence for a fleet alert, worded as templates/index.html updateBanners does."""
+    reason = re.sub(
+        r"\b\w",
+        lambda m: m.group().upper(),
+        str(alert.get("triggered_reason") or "exit").replace("_", " "),
+        flags=re.ASCII,
+    )
+    tripped, active = alert.get("tripped_count"), alert.get("active_count")
+    pct = ""
+    if (
+        tripped
+        and active
+        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (tripped, active))
+    ):
+        pct = f" ({analytics.js_to_fixed(tripped / active * 100, 0)}% of the fleet)"
+    at = alert.get("tripped_at_et")
+    trip_time = f". Tripped {str(at)[11:16]} ET." if at else "."
+    return (
+        f"Concentrated risk — {_js_count(tripped)} of {_js_count(active)} "
+        f"symphonies exited on {reason} within minutes{pct}{trip_time}"
+    )
+
+
 @app.route("/")
 def dashboard():
     api_state = get_api_state_dict()
@@ -1766,6 +1878,16 @@ def dashboard():
                 coerce_none=False,
             )
 
+    # First paint carries the verdict and dial text the client would write on its
+    # first poll, so the card never shows a placeholder before then.
+    _inject_guard_alpha(bot_state)
+    _inject_guard_alpha({s["id"]: s for s in symphonies if isinstance(s, dict) and s.get("id")})
+    for _s in symphonies:
+        if isinstance(_s, dict):
+            _s.update(_first_paint_verdict(_s))
+            _s.update(_first_paint_dial(_s))
+    _fleet_alert = _active_fleet_alert()
+
     active_syms = [
         s
         for s in symphonies
@@ -1824,6 +1946,8 @@ def dashboard():
         accounts_map=accounts_map,
         cvar_diagnostic=cvar_diagnostic,
         session_close_display=session_close_display,
+        fleet_alert=_fleet_alert,
+        fleet_alert_text=_fleet_alert_sentence(_fleet_alert) if _fleet_alert else "",
         sleeves=_build_sleeves_panel_context(),
         atlas_cache_health=_atlas_cache_health(),
     )
@@ -2635,12 +2759,7 @@ def get_state():
                 sd = dict(snapshot.get("shadow_divergence") or {})
                 if "portfolio" in sd and "portfolio_today" not in sd:
                     sd["portfolio_today"] = sd.pop("portfolio")
-                _alert_row = database.read_fleet_alert()
-                _alert = (
-                    _alert_row
-                    if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None)
-                    else None
-                )
+                _alert = _active_fleet_alert()
                 _state: dict = {}
                 for _acc_entries in (snapshot.get("accounts_map") or {}).values():
                     for _sym in _acc_entries or []:
@@ -3102,12 +3221,7 @@ def get_state():
                 shadow_divergence = {"by_symphony": {}, "portfolio_today": None}
             for sym_id, entry in shadow_divergence["by_symphony"].items():
                 entry["name"] = sym_id
-            _alert_row = database.read_fleet_alert()
-            _alert = (
-                _alert_row
-                if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None)
-                else None
-            )
+            _alert = _active_fleet_alert()
             waiting_resp = {
                 "status": "waiting",
                 "message": "Bot state initializing.",
@@ -3397,28 +3511,10 @@ def get_state():
         for sym_id, entry in shadow_divergence["by_symphony"].items():
             entry["name"] = (state_data.get(sym_id) or {}).get("name") or sym_id
 
-        _alert_row = database.read_fleet_alert()
-        _alert = (
-            _alert_row
-            if (_alert_row is not None and _alert_row.get("dismissed_at_et") is None)
-            else None
-        )
+        _alert = _active_fleet_alert()
 
         # Inject guard_alpha into triggered symphony entries for dashboard card verdicts.
-        try:
-            _triggered_ids = [
-                k for k, v in state_data.items() if isinstance(v, dict) and v.get("triggered")
-            ]
-            if _triggered_ids:
-                _ga_map = database.get_guard_alpha_by_symphony(_triggered_ids)
-                for _sid, _ga in _ga_map.items():
-                    if _sid in state_data and isinstance(state_data[_sid], dict):
-                        _cr = state_data[_sid].get("current_return") or 0.0
-                        state_data[_sid].setdefault(
-                            "guard_alpha", round(float(_ga) - float(_cr), 6)
-                        )
-        except Exception:
-            pass
+        _inject_guard_alpha(state_data)
 
         # Build per-symphony list for card live-refresh (cards-live).
         # Reuses _tc/_cr/_mdd already attached above — no re-computation.
@@ -4918,7 +5014,8 @@ def fleet_alert_dismiss():
     def _dismiss_async():
         try:
             row = database.read_fleet_alert()
-            if row is not None:
+            # The first dismissal time is kept: a repeat click never re-stamps it.
+            if row is not None and row.get("dismissed_at_et") is None:
                 row["dismissed_at_et"] = datetime.now(_ET).isoformat()
                 database.write_fleet_alert(row)
         except Exception:

@@ -367,6 +367,25 @@
     // Card verdict (guard_alpha from bot_state)
     // ---------------------------------------------------------------------------
 
+    // Verdict wording. The server renders the same text at first paint
+    // (analytics.js_to_fixed mirrors toFixed), so a poll never changes it.
+    function verdictText(ga) {
+        return ga > 0
+            ? 'Good call · saved +' + ga.toFixed(1) + '%α'
+            : 'Early exit · gave up ' + Math.abs(ga).toFixed(1) + '%α';
+    }
+
+    // Writes only the text span and un-hides the "at exit" qualifier. An absent
+    // guard_alpha writes nothing: the closed-market body carries none, and
+    // overwriting the painted verdict with a dash would flash it away.
+    function writeVerdict(verdict, ga) {
+        if (verdict == null || typeof ga !== 'number' || !isFinite(ga)) return;
+        var textEl = verdict.querySelector('[data-field="verdict-text"]');
+        if (textEl) textEl.textContent = verdictText(ga);
+        var qualifier = verdict.querySelector('[data-testid="guard-alpha-at-exit"]');
+        if (qualifier) qualifier.removeAttribute('hidden');
+    }
+
     function updateVerdicts(botState) {
         var cards = document.querySelectorAll('[data-testid="triggered-verdict"]');
         cards.forEach(function (el) {
@@ -377,16 +396,7 @@
             if (!symId) return;
             var sym = (botState || {})[symId];
             if (!sym) return;
-            if (sym.guard_alpha == null) {
-                el.textContent = '—';
-                return;
-            }
-            var ga = sym.guard_alpha;
-            if (ga > 0) {
-                el.textContent = 'Good call · saved +' + ga.toFixed(1) + '%α';
-            } else {
-                el.textContent = 'Early exit · gave up ' + Math.abs(ga).toFixed(1) + '%α';
-            }
+            writeVerdict(el, sym.guard_alpha);
         });
     }
 
@@ -423,6 +433,37 @@
     }
 
     window.cashNow = cashNow;
+
+    // ---------------------------------------------------------------------------
+    // Fleet-alert dismissal. The banner hides only after the server accepts the
+    // dismissal; a refusal keeps it shown and says so. The dismissed alert's
+    // tripped_at_et is remembered so a stale poll cannot bring it back.
+    // ---------------------------------------------------------------------------
+
+    function dismissFleetAlert(btn) {
+        var banner = document.getElementById('fleet-correlation-banner');
+        var notice = document.getElementById('fleet-dismiss-notice');
+        var alertAtClick = window._lastFleetAlert;
+        if (btn) btn.disabled = true;
+        function refused() {
+            if (notice) notice.removeAttribute('hidden');
+            if (btn) btn.disabled = false;
+        }
+        fetch('/api/fleet-alert/dismiss', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': _csrfToken || '' }
+        })
+        .then(function (r) {
+            if (!r.ok) { refused(); return; }
+            window._dismissedFleetTrippedAt =
+                (alertAtClick && alertAtClick.tripped_at_et) || null;
+            if (notice) notice.setAttribute('hidden', '');
+            if (banner) banner.setAttribute('hidden', '');
+            if (btn) btn.disabled = false;
+        })
+        .catch(refused);
+    }
+    window.dismissFleetAlert = dismissFleetAlert;
 
     // ---------------------------------------------------------------------------
     // Detail panel
@@ -1225,12 +1266,7 @@
                 if (verdict != null) {
                     if (sym.triggered) {
                         verdict.style.display = '';
-                        if (sym.guard_alpha != null) {
-                            var ga = sym.guard_alpha;
-                            verdict.textContent = ga > 0
-                                ? 'Good call · saved +' + ga.toFixed(1) + '%α'
-                                : 'Early exit · gave up ' + Math.abs(ga).toFixed(1) + '%α';
-                        }
+                        writeVerdict(verdict, sym.guard_alpha);
                     } else {
                         verdict.style.display = 'none';
                     }
@@ -1390,6 +1426,7 @@
             function () { renderGuardAlpha(data); },
             function () { updateComparisonRows(data); },
             function () { updateVerdicts(botState); },
+            function () { if (typeof window.updateBanners === 'function') window.updateBanners(data); },
             function () { updateMiniStats(meta); },
             function () { updateStatusStrip(meta); },
             function () { loadCharts(botState); },

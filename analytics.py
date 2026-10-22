@@ -45,6 +45,7 @@ import os
 import re
 import sqlite3
 from datetime import UTC, date
+from decimal import ROUND_HALF_UP, Decimal
 
 import database
 
@@ -2258,8 +2259,15 @@ def compute_windowed_portfolio_strip(
 
 
 def js_to_fixed(value: float, places: int) -> str:
-    """Import stub: rounds as the browser's Number.prototype.toFixed (not yet implemented)."""
-    return ""
+    """Round exactly as the browser's Number.prototype.toFixed (finite, below 1e21).
+
+    Ties go away from zero over the exact binary value, so server-rendered text that
+    the client rewrites on the next poll never flickers between two roundings.
+    """
+    quantum = Decimal(1).scaleb(-places)
+    text = str(Decimal(value).quantize(quantum, rounding=ROUND_HALF_UP))
+    # The browser prints (-0).toFixed(2) as "0.00", but keeps the sign of -0.04 at one place.
+    return text[1:] if value == 0 and text.startswith("-") else text
 
 
 def format_dollar_saved(
