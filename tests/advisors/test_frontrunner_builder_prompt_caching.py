@@ -386,7 +386,9 @@ def _wire_body(frb, monkeypatch, signal_context) -> dict:
 
     frb.generate_candidate_overlay(signal_context, n_attempts=1)
 
-    assert len(fake.message_requests) == 1, "the overlay call must send exactly one Messages request"
+    assert len(fake.message_requests) == 1, (
+        "the overlay call must send exactly one Messages request"
+    )
     return fake.message_requests[0].body
 
 

@@ -883,6 +883,7 @@ class TestOverlayReplyHandling:
         )
 
         assert len(overlay_fake.message_requests) == 2
+        assert _models_named(overlay_fake) == [newest_id("fable")] * 2
         assert result.error is None
         assert result.candidate == _CAPTURED_OVERLAY
 
@@ -899,6 +900,8 @@ class TestOverlayReplyHandling:
         )
 
         assert len(overlay_fake.message_requests) == 3
+        assert _models_named(overlay_fake) == [newest_id("fable")] * 3
+        assert {r.body["tool_choice"]["type"] for r in overlay_fake.message_requests} == {"auto"}
         assert result.error is None
         assert result.candidate == _CAPTURED_OVERLAY
 
