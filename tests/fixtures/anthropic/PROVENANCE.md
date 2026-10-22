@@ -19,12 +19,10 @@ Strict tools (`emit_swap_candidates`, `emit_logic_edits`) were sent with `strict
 | `errors/400_invalid_request.json` | temperature sent to the newest opus-line model -> HTTP 400 |
 | `messages/thinking_text.json` | opus-line, plain text / stop_reason=end_turn blocks=thinking,text |
 | `messages/thinking_tool_emit_swap_candidates.json` | fable-line, tool_choice auto, strict=True / stop_reason=tool_use blocks=tool_use |
-| `messages/thinking_tool_emit_logic_edits.json` | fable-line, tool_choice auto, strict=True / stop_reason=end_turn blocks=thinking,text |
 | `messages/thinking_tool_emit_build_plans.json` | fable-line, tool_choice auto, strict=False / stop_reason=tool_use blocks=tool_use |
 | `messages/thinking_tool_emit_frontrunner_overlay.json` | fable-line, tool_choice auto, strict=False / stop_reason=tool_use blocks=tool_use |
 | `messages/thinking_structured.json` | fable-line structured output, ConfigSuggestionsResponse schema / stop_reason=end_turn blocks=thinking,text |
 | `messages/text_only_with_tools.json` | tools offered, text-only reply requested / stop_reason=end_turn blocks=text |
-| `messages/max_tokens.json` | opus-line, max_tokens 300 on a long answer / stop_reason=max_tokens blocks=thinking |
 | `messages/text_instead_of_tool_emit_logic_edits.json` | renamed from the first pass: strict logic tool, auto choice, prompt lacked candidate parameters; model replied in text asking for them (a real no_tool_call) |
 | `messages/thinking_tool_emit_logic_edits.json` | fable-line, strict logic tool, auto choice, prompt with candidate parameters / stop_reason=tool_use blocks=tool_use |
 | `messages/max_tokens_in_thinking.json` | renamed from the first pass: max_tokens 300 exhausted inside the thinking block (no text block) |
