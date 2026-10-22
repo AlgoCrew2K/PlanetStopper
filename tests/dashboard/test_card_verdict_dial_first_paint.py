@@ -244,6 +244,12 @@ def _written(dial: dict) -> dict:
     return {"offset": dial["offset"], "text": dial["text"]}
 
 
+def _assert_qualifier_hidden(card: dict, where: str) -> None:
+    """With no value to qualify, the 'at exit' span exists and is hidden."""
+    assert card["atExit"] is not None, f"{where}: the 'at exit' qualifier element is missing"
+    assert card["atExit"]["hidden"] is True, f"{where}: 'at exit' shown beside no value"
+
+
 def _expected_dial(mc) -> dict:
     return js_eval(
         "(function(){ const m = p; const pct = Math.max(0, Math.min(100, m)) / 100;"
@@ -373,7 +379,7 @@ def test_triggered_card_without_an_exit_row_shows_the_empty_glyph_without_the_qu
         card = snap["cards"][sid]
         assert card["verdict"]["hidden"] is False, label
         assert card["verdict"]["text"] == _DASH, (label, card["verdict"])
-        assert card["atExit"]["hidden"] is True, f"{label}: 'at exit' shown beside no value"
+        _assert_qualifier_hidden(card, label)
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +505,7 @@ def test_guard_alpha_read_failure_degrades_the_verdict_and_never_the_page(
     run = run_page(resp.data.decode("utf-8"), tmp_path, routes={}, steps=[])
     card = run["initial"]["cards"][sid]
     assert card["verdict"]["text"] == _DASH
-    assert card["atExit"]["hidden"] is True
+    _assert_qualifier_hidden(card, "first paint")
 
 
 def test_first_paint_reads_the_real_exit_row_without_any_state_poll(monkeypatch, tmp_path):

@@ -97,13 +97,15 @@ def js_to_fixed(values: list[float], places: int) -> list[str]:
     rule the server text must equal)."""
     node = require_node()
     program = (
-        "const v = JSON.parse(process.argv[1]);"
+        "const v = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
         "console.log(JSON.stringify(v.map(x => x.toFixed(" + str(int(places)) + "))));"
     )
     done = subprocess.run(
-        [node, "-e", program, json.dumps(values)],
+        [node, "-e", program],
+        input=json.dumps(values),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert done.returncode == 0, done.stderr
@@ -114,13 +116,15 @@ def js_eval(expression: str, payload) -> object:
     """Evaluate a JavaScript expression over ``payload`` (bound to ``p``) in node."""
     node = require_node()
     program = (
-        "const p = JSON.parse(process.argv[1]);"
-        "console.log(JSON.stringify((function(){ return " + expression + "; })()));"
+        "const p = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+        "process.stdout.write(JSON.stringify((function(){ return " + expression + "; })()));"
     )
     done = subprocess.run(
-        [node, "-e", program, json.dumps(payload)],
+        [node, "-e", program],
+        input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert done.returncode == 0, done.stderr
@@ -576,6 +580,7 @@ def run_page(
         [node, str(harness_path), str(cfg_path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=180,
     )
     assert done.returncode == 0, f"page harness failed:\n{done.stderr[-3000:]}"
