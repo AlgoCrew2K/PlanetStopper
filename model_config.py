@@ -10,12 +10,13 @@ without pulling in ai_advisor.py's full surface (requests/pydantic/database/
 symphony_logic) or fighting the CC-2 lazy-import convention those modules
 already follow for ai_advisor.
 
-Two independently-overridable knobs by design:
-  ADVISOR_SUGGESTION_MODEL — this module. Config-suggestion / build-plan
-    generation call sites (ai_advisor.request_suggestions,
+Two independently-overridable knobs by design, both resolved here:
+  ADVISOR_SUGGESTION_MODEL: config-suggestion / build-plan generation call
+    sites (ai_advisor.request_suggestions,
     advisors.build_plan_generator.generate_build_plans).
-  ADVISOR_SYNTHESIS_MODEL — ai_advisor.resolve_advisor_model(). Nightly
-    Market Prism council synthesis. Untouched by this module.
+  ADVISOR_SYNTHESIS_MODEL: nightly Market Prism council synthesis.
+Each knob is an operator override when set; otherwise the Models API resolver
+picks the newest active model of the knob's family from a cached listing.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import logging
 import os
 import threading
 import time  # module attribute on purpose: tests replace model_config.time
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 _ADVISOR_SUGGESTION_MODEL_ENV_VAR = "ADVISOR_SUGGESTION_MODEL"
@@ -58,6 +60,8 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class Knob(enum.Enum):
+    """The two operator-overridable model settings; each value is its env var name."""
+
     SUGGESTION = "ADVISOR_SUGGESTION_MODEL"
     SYNTHESIS = "ADVISOR_SYNTHESIS_MODEL"
 
@@ -67,6 +71,8 @@ _KNOB_FAMILY = {Knob.SUGGESTION: "fable", Knob.SYNTHESIS: "opus"}
 
 @dataclasses.dataclass(frozen=True)
 class ModelChoice:
+    """A resolved or overridden model, or the unavailable placeholder."""
+
     model_id: str = ""
     display_name: str = ""
     source: str = "unavailable"
@@ -74,6 +80,7 @@ class ModelChoice:
 
     @property
     def badge_text(self) -> str:
+        """Text for a UI badge: the override id, the display name, or unavailable."""
         if self.source == "override":
             return self.model_id
         if self.source == "resolved":
@@ -100,14 +107,15 @@ def _override(knob: Knob) -> ModelChoice | None:
     return ModelChoice(model_id=value, display_name=value, source="override", env_var=knob.value)
 
 
-def _created_at(item) -> datetime:
+def _created_at(item: object) -> datetime:
     value = getattr(item, "created_at", None)
     if not isinstance(value, datetime):
         return _EPOCH
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-def _select(records: list, family: str, line_mode: bool) -> ModelChoice:
+def _select(records: list[object], family: str, line_mode: bool) -> ModelChoice:
+    """Newest active family record: by `line` if listed, else by `claude-<family>-` prefix."""
     best = None
     for item in records:
         extra = getattr(item, "model_extra", None) or {}
@@ -125,25 +133,33 @@ def _select(records: list, family: str, line_mode: bool) -> ModelChoice:
     return ModelChoice(model_id=best.id, display_name=best.display_name, source="resolved")
 
 
-def _list_all(client) -> dict[str, ModelChoice]:
-    records = list(client.models.list(limit=_LIST_PAGE_LIMIT, timeout=_MODELS_LIST_TIMEOUT_SECONDS))
+def _list_all(client: object) -> dict[str, ModelChoice]:
+    # One request per page: no SDK retries, so a Retry-After is never waited out under the lock.
+    listing_client = client.with_options(max_retries=0, timeout=_MODELS_LIST_TIMEOUT_SECONDS)
+    records = list(listing_client.models.list(limit=_LIST_PAGE_LIMIT))
     line_mode = any("line" in (getattr(r, "model_extra", None) or {}) for r in records)
     found = {f: _select(records, f, line_mode) for f in _KNOB_FAMILY.values()}
     return {f: c for f, c in found.items() if c.source == "resolved"}
 
 
-def _list_once(client, seq_before: int) -> None:
-    """One listing attempt shared by every caller that was waiting on it."""
+def _list_locked(client: object) -> None:
+    """Run one listing attempt; the caller holds _listing_lock."""
     global _registry, _last_success, _attempt_seq
+    try:
+        _registry = _list_all(client)
+        _last_success = time.monotonic()
+    except Exception as exc:
+        logger.warning("model listing failed: %s", type(exc).__name__)
+        logger.debug("model listing failed", exc_info=True)
+    _attempt_seq += 1
+
+
+def _list_once(client: object, seq_before: int) -> None:
+    """One listing attempt shared by every caller that was waiting on it."""
     with _listing_lock:
         if _attempt_seq != seq_before:
             return
-        try:
-            _registry = _list_all(client)
-            _last_success = time.monotonic()
-        except Exception as exc:
-            logger.warning("model listing failed: %s", type(exc).__name__)
-        _attempt_seq += 1
+        _list_locked(client)
 
 
 def _is_fresh() -> bool:
@@ -161,7 +177,7 @@ def _pin(family: str, choice: ModelChoice) -> None:
         pins.pop(family, None)
 
 
-def resolve(knob: Knob, client) -> ModelChoice:
+def resolve(knob: Knob, client: object) -> ModelChoice:
     """Resolve the knob's model; never raises."""
     override = _override(knob)
     if override is not None:
@@ -183,27 +199,32 @@ def peek(knob: Knob) -> ModelChoice:
     return _override(knob) or _registry.get(_KNOB_FAMILY[knob], _UNAVAILABLE)
 
 
-def invalidate(knob: Knob, model_id: str, client) -> ModelChoice:
-    """Drop the family's resolution and re-list once (shared by concurrent callers)."""
-    global _last_success
+def invalidate(knob: Knob, model_id: str, client: object) -> ModelChoice:
+    """Drop the family's resolution if it is still `model_id` and re-list once."""
+    global _registry, _last_success
     family = _KNOB_FAMILY[knob]
-    pins = _run_pin.get()
-    current = pins[family] if pins is not None and family in pins else _registry.get(family)
-    if current is not None and current.model_id != model_id:
-        return current  # a late 404 for an already replaced model
-    seq_before = _attempt_seq
-    _registry.pop(family, None)
-    _last_success = None  # a failed listing must be retried by the next call
-    if pins is not None:
-        pins.pop(family, None)
-    _list_once(client, seq_before)
-    choice = _registry.get(family, _UNAVAILABLE)
-    _pin(family, choice)
-    return choice
+    with _listing_lock:  # a listing in flight may be about to replace the entry
+        pins = _run_pin.get()
+        pinned = pins.get(family) if pins is not None else None
+        registered = _registry.get(family)
+        current = pinned or registered
+        if current is not None and current.model_id != model_id:
+            return current  # a late 404 for an already replaced model
+        if pinned is not None and registered is not None and registered.model_id != model_id:
+            pins[family] = registered  # the process-wide entry is newer than the run's pin
+            return registered
+        _registry = {f: c for f, c in _registry.items() if f != family}
+        _last_success = None  # a failed listing must be retried by the next call
+        if pins is not None:
+            pins.pop(family, None)
+        _list_locked(client)
+        choice = _registry.get(family, _UNAVAILABLE)
+        _pin(family, choice)
+        return choice
 
 
 @contextlib.contextmanager
-def pinned_run():
+def pinned_run() -> Iterator[None]:
     """Keep each family's first resolution for the duration of one run."""
     if _run_pin.get() is not None:
         yield
