@@ -160,6 +160,7 @@ class TestRefusals:
         assert reply.reason == "refusal"
         assert reply.text() == ""
         assert reply.tool_input() is None
+        assert len(fake.message_requests) == 1
 
     @pytest.mark.parametrize("name", REFUSALS)
     def test_the_reason_text_carries_the_category_unless_it_is_null(self, fake, name):
@@ -190,6 +191,7 @@ class TestTruncations:
         assert reply.reason_text() == "max_tokens"
         assert reply.text() == ""
         assert reply.tool_input() is None
+        assert len(fake.message_requests) == 1
 
 
 class TestMissingToolCall:
@@ -221,6 +223,7 @@ class TestReplyModelFallback:
         message = types.SimpleNamespace(
             content=[types.SimpleNamespace(type="text", text="an answer")],
             stop_reason="end_turn",
+            stop_details=None,
             model=model_attribute,
         )
         client = types.SimpleNamespace(
