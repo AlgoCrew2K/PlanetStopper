@@ -1022,8 +1022,10 @@ def _warmup_slots_among(jobs: list) -> list:
     ]
 
 
-def _warmup_slots(monkeypatch) -> list:
-    return _warmup_slots_among(_scheduled_jobs(monkeypatch))
+def _the_warmup_slot(monkeypatch):
+    slots = _warmup_slots_among(_scheduled_jobs(monkeypatch))
+    assert len(slots) == 1, f"run_scheduler registers {len(slots)} warm-up slots, expected one"
+    return slots[0]
 
 
 def _minutes(job) -> int:
@@ -1064,7 +1066,7 @@ def test_the_scheduled_slot_only_spawns_the_daemon_thread_warmup_and_returns(
 
     fake = AnthropicHttpFake.with_captured_page()
     monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
-    (slot,) = _warmup_slots(monkeypatch)
+    slot = _the_warmup_slot(monkeypatch)
     spy = _ThreadSpy(monkeypatch)
     fake.hold_listings()
 
@@ -1093,7 +1095,7 @@ def test_a_model_released_after_boot_reaches_the_badges_through_the_daily_slot_a
     fake = AnthropicHttpFake.with_captured_page()
     _seed_registry_from(fake)
     monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
-    (slot,) = _warmup_slots(monkeypatch)
+    slot = _the_warmup_slot(monkeypatch)
     spy = _ThreadSpy(monkeypatch)
     _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
     fake.set_pages([page])
@@ -1118,7 +1120,7 @@ def test_the_daily_slot_recovers_badges_left_unavailable_by_a_failed_boot_listin
     fake = AnthropicHttpFake.with_captured_page()
     fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
     monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
-    (slot,) = _warmup_slots(monkeypatch)
+    slot = _the_warmup_slot(monkeypatch)
     spy = _ThreadSpy(monkeypatch)
     app_module._start_model_warmup()
     spy.join_all()
