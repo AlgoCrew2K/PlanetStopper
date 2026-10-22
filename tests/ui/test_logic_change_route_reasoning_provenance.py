@@ -409,6 +409,48 @@ def test_text_only_reply_run_reports_the_reply_model_in_provenance(
     )
 
 
+def test_retired_model_with_no_replacement_response_names_no_serving_model(
+    flask_client, route_world
+):
+    import model_config
+
+    warmed = model_config.peek(model_config.Knob.SUGGESTION).model_id
+    assert warmed, "self-guard: the registry must be warm so the retired-model path is reachable"
+    fake, spy = route_world()
+    fake.queue_message(support.load_fixture("errors/404_not_found.json"))
+
+    data = support.evaluate_via_route(flask_client)
+
+    assert [r.body["model"] for r in fake.message_requests] == [warmed], (
+        "the resolved model answered 404 and the relisting offered no different model: one request"
+    )
+    assert "model_unavailable" in data["message"], f"message must name the reason: {data!r}"
+    assert data["survivors"] == 0
+    assert spy.call_count == 0
+    assert set(data["provenance"]) == {"generation_model", "mode", "evidence_injected", "run_id"}
+    assert data["provenance"]["generation_model"] == "", (
+        f"the response must not name a model that did not serve the run: {data['provenance']!r}"
+    )
+
+
+def test_generator_stand_in_that_fills_no_reply_keeps_the_resolved_model_in_the_response(
+    flask_client, route_world, monkeypatch
+):
+    import advisors.logic_change_engine as lce
+    import model_config
+
+    warmed = model_config.peek(model_config.Knob.SUGGESTION).model_id
+    assert warmed, "self-guard: the registry must be warm"
+    fake, _spy = route_world()
+    monkeypatch.setattr(lce, "generate_reasoned_logic_candidates", lambda *a, **k: [])
+
+    data = support.evaluate_via_route(flask_client)
+
+    assert data["message"] == lce.NO_SURVIVORS_MESSAGE
+    assert data["provenance"]["generation_model"] == warmed
+    assert fake.message_requests == []
+
+
 # ===========================================================================
 # Defensive guard: a non-dict-ish engine result never crashes/leaks a Mock repr.
 # ===========================================================================

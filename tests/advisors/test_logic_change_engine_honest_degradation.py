@@ -441,6 +441,67 @@ def test_a_generated_edit_that_the_gate_does_not_pass_keeps_the_gate_message(ent
 
 
 # ---------------------------------------------------------------------------
+# a retired model that nothing replaces: the run names no model that served it
+# ---------------------------------------------------------------------------
+
+
+def _warm_suggestion_model_id() -> str:
+    """The id the registry holds before the run (seeded from the captured page by the autouse fixture)."""
+    import model_config
+
+    peeked = model_config.peek(model_config.Knob.SUGGESTION).model_id
+    assert peeked, "self-guard: the registry must be warm so the retired-model path is reachable"
+    return peeked
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_retired_model_with_no_replacement_reports_no_serving_model(entry, monkeypatch):
+    warmed = _warm_suggestion_model_id()
+    fake = support.new_fake()
+    fake.queue_message(support.load_fixture("errors/404_not_found.json"))
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert [r.body["model"] for r in fake.message_requests] == [warmed], (
+        "the resolved model answered 404 and the relisting offered no different model: one request"
+    )
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (model_unavailable)"
+    assert result.provenance["generation_model"] == "", (
+        "no model served this run, so the id that was requested must not be reported as the "
+        f"generating model: {result.provenance!r}"
+    )
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_generator_stand_in_that_fills_no_reply_keeps_the_gate_message_and_the_resolved_model(
+    entry, monkeypatch
+):
+    import advisors.logic_change_engine as lce
+
+    warmed = _warm_suggestion_model_id()
+    fake = support.new_fake()
+    support.install_engine_world(monkeypatch, fake)
+    monkeypatch.setattr(lce, "generate_reasoned_logic_candidates", lambda *a, **k: [])
+    objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
+
+    if entry == "operator":
+        result = lce.propose_operator_logic_change(
+            "sym-1",
+            support.load_tree(),
+            objective=objective,
+            change_description=support.ROUTE_CHANGE_DESCRIPTION,
+        )
+    else:
+        result = lce.suggest_logic_changes("sym-1", support.load_tree(), objective)
+
+    assert result.message == lce.NO_SURVIVORS_MESSAGE
+    assert result.provenance["generation_model"] == warmed, (
+        "no request was attempted, so the resolved model stays; only a returned reply replaces it"
+    )
+    assert fake.message_requests == []
+
+
+# ---------------------------------------------------------------------------
 # security: failure detail never reaches the response
 # ---------------------------------------------------------------------------
 
