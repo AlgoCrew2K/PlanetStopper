@@ -127,33 +127,18 @@ def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statis
     overfitting risk — building from scratch', with no model/community/
     statistically-gated attribution.
 
-    ATTRIBUTION-COHERENCE NOTE (AC-16 conflict with AC-1's literal plan text):
-    AC-1's plan text quotes "Opus-generated" as the target SB label, but AC-16
-    (operator directive, added mid-cycle) routes SB's build-plan generation
-    (build_plan_generator.py) through model_config.get_advisor_suggestion_model()
-    — default claude-fable-5, not Opus. AC-16's own text is explicit: "a Fable
-    suggestion surface must never display 'Opus'". Since SB generation IS a
-    suggestion-producing call site per AC-16's scope, a hardcoded "Opus" label
-    would be WRONG the moment AC-16 lands (and is arguably wrong today, given
-    AC-16 already exists in the committed plan when this test was written).
-    Resolving in favor of the more specific, later directive: this test proves
-    the label is ACCESSOR-DRIVEN (reflects whatever model_config resolves,
-    monkeypatched to a marker value) rather than hardcoding either "Opus" or
-    "Fable" as a literal string — flagged to team-lead as a real plan-text
-    inconsistency, not silently resolved without a paper trail."""
-    import model_config
-
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
-    )
+    Attribution coherence: Strategy Builder generation is a suggestion-producing
+    call, so its label follows the suggestion knob (the Fable family), never a
+    hardcoded "Opus" or "Fable" literal. Setting the knob's override to a marker
+    value proves the label is read from the model authority at render time."""
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-sb-model")
     html = _get_html(client, monkeypatch)
     tab = _extract_by_testid(html, "strategy-builder-tab", closing_tag="</button>")
     assert "test-marker-sb-model" in tab, (
-        f"AC-1 GAP: strategy-builder-tab does not reflect the accessor-resolved "
-        f"generation model (patched model_config.get_advisor_suggestion_model "
-        f"to a marker value and it did not appear) — the label must be "
-        f"accessor-driven, never a hardcoded 'Opus'/'Fable' literal (AC-16 "
-        f"attribution-coherence requirement). Element: {tab}"
+        f"AC-1 GAP: strategy-builder-tab does not reflect the configured "
+        f"generation model (set ADVISOR_SUGGESTION_MODEL to a marker value and it "
+        f"did not appear) — the label must be read from the model authority, "
+        f"never a hardcoded 'Opus'/'Fable' literal. Element: {tab}"
     )
     tab_lower = tab.lower()
     assert "community" in tab_lower, (
@@ -202,20 +187,17 @@ def test_ac2_market_prism_block_carries_model_attribution(client, monkeypatch):
 def test_ac2_market_prism_attribution_reflects_resolved_model_accessor_not_hardcoded(
     client, monkeypatch
 ):
-    """Accessor-monkeypatch proof (mirrors the AC-16 technique): patching
-    ai_advisor.resolve_advisor_model() must change the rendered attribution —
-    proves the badge reads a live accessor value, not a hardcoded literal
-    string baked into the template."""
-    import ai_advisor
-
-    monkeypatch.setattr(ai_advisor, "resolve_advisor_model", lambda: "test-marker-prism-model")
+    """Override proof: setting ADVISOR_SYNTHESIS_MODEL must change the rendered
+    attribution, which proves the badge reads the model authority at render time
+    and not a literal baked into the template."""
+    monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "test-marker-prism-model")
     html = _get_html(client, monkeypatch)
     block = _extract_by_testid(
         html, "market-prism-block", closing_tag='data-testid="advisor-controls"'
     )
     assert "test-marker-prism-model" in block, (
-        "AC-2 GAP: patching resolve_advisor_model() did not change the "
-        "rendered Market Prism attribution — the badge is not accessor-driven."
+        "AC-2 GAP: setting ADVISOR_SYNTHESIS_MODEL did not change the "
+        "rendered Market Prism attribution — the badge is not read at render time."
     )
 
 
@@ -241,12 +223,8 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
     with single-strongest-candidate winner-take-all framing (not plural
     'candidates ... are surfaced').
 
-    Same AC-16 attribution-coherence resolution as the SB tab test above:
-    doc-reconciliation's drafted copy says "via Claude Opus", but AC-16 routes
-    SB generation through model_config.get_advisor_suggestion_model()
-    (default claude-fable-5) — asserting a hardcoded "Opus" substring here
-    would itself become a false claim the moment AC-16 lands. Accessor-driven
-    check instead.
+    The model name is read from the suggestion knob at render time (override
+    marker below), never a hardcoded model-name literal.
 
     CI credential-less fix: the run-controls-note this test targets lives
     inside the /ai-advisor route's `{% if no_api_key %}...{% else %}...{%
@@ -262,12 +240,9 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
     matching the pattern already used for the same seam elsewhere this
     cycle (e.g. test_r1_power_caveat.py)."""
     import advisors.asset_swap_engine as ase
-    import model_config
 
     monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
-    )
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-sb-model")
     html = _get_html(client, monkeypatch)
     run_controls_marker = 'class="run-controls-note"'
     start = html.find(run_controls_marker)
@@ -276,9 +251,9 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
     assert end != -1
     note = html[start:end]
     assert "test-marker-sb-model" in note, (
-        f"AC-3 GAP: run-controls-note does not reflect the accessor-resolved "
-        f"generation model — must be accessor-driven, never a hardcoded model "
-        f"name literal (AC-16 attribution-coherence requirement). Element text: {note}"
+        f"AC-3 GAP: run-controls-note does not reflect the configured "
+        f"generation model — it must be read at render time, never a hardcoded "
+        f"model name literal. Element text: {note}"
     )
     note_lower = note.lower()
     assert "community" in note_lower or "atlas" in note_lower, (
@@ -288,3 +263,468 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
         f"AC-3 GAP: run-controls-note does not correct the plural 'candidates are "
         f"surfaced' framing to the actual single-winner-per-run semantics. Element text: {note_lower}"
     )
+
+
+# ===========================================================================
+# Model badges read the resolved model of each family (Models API display_name)
+#
+# Badge families: the suggestion family (Fable line) names the Asset Swaps,
+# Logic Changes and Strategy Builder tabs and the Strategy Builder run note;
+# the synthesis family (Opus line) names the Chat tab and the Market Prism
+# badge. Expected names come from the captured Models API page and its
+# re-listing pages, never from a literal.
+# ===========================================================================
+
+import ast  # noqa: E402
+import copy  # noqa: E402
+import html as html_lib  # noqa: E402
+import logging  # noqa: E402
+import pathlib  # noqa: E402
+import re  # noqa: E402
+import threading  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import httpx  # noqa: E402
+
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture  # noqa: E402
+
+_UNAVAILABLE = "model unavailable"
+_CAPTURED_PAGE = load_fixture("models/page_captured.json")
+_SUGGESTION_BADGES = ("asset_swaps", "logic_changes", "strategy_builder", "run_note")
+_SYNTHESIS_BADGES = ("chat", "prism")
+_SECONDS_PER_DAY = 24 * 60 * 60
+_THREAD_JOIN_SECONDS = 15.0
+_LINE_OF_FAMILY = {"suggestion": "fable", "synthesis": "opus"}
+
+
+def _newest_active_record(page: dict, line: str) -> dict:
+    """The newest active record of a model line, chosen independently of the code under test."""
+    candidates = [
+        r
+        for r in page["data"]
+        if r.get("line") == line and r.get("lifecycle", "active") == "active"
+    ]
+    assert candidates, f"fixture page holds no active {line}-line record"
+    return max(candidates, key=lambda r: r["created_at"])
+
+
+def _expected_names(page: dict) -> dict[str, str]:
+    return {
+        family: _newest_active_record(page, line)["display_name"]
+        for family, line in _LINE_OF_FAMILY.items()
+    }
+
+
+def _page_without_line(line: str) -> dict:
+    page = copy.deepcopy(_CAPTURED_PAGE)
+    page["data"] = [r for r in page["data"] if r.get("line") != line]
+    page["first_id"] = page["data"][0]["id"]
+    page["last_id"] = page["data"][-1]["id"]
+    return page
+
+
+def _resolve_both_through(fake: AnthropicHttpFake) -> None:
+    """Resolve both families the way a generation call does, through the real resolver."""
+    import model_config
+
+    for knob in (model_config.Knob.SUGGESTION, model_config.Knob.SYNTHESIS):
+        model_config.resolve(knob, fake.client)
+
+
+def _seed_registry_from(fake: AnthropicHttpFake) -> None:
+    import model_config
+
+    model_config._reset_registry()
+    _resolve_both_through(fake)
+
+
+def _advance_model_clock(monkeypatch, seconds: float) -> None:
+    """Move the registry's clock forward without touching the process-wide clock."""
+    import time
+
+    import model_config
+
+    real_monotonic = time.monotonic
+    monkeypatch.setattr(
+        model_config, "time", SimpleNamespace(monotonic=lambda: real_monotonic() + seconds)
+    )
+
+
+def _element_after(html: str, marker: str, closing_tag: str) -> str:
+    start = html.find(marker)
+    assert start != -1, f"{marker} not found in rendered HTML"
+    end = html.find(closing_tag, start)
+    assert end != -1, f"{marker} has no {closing_tag} in rendered HTML"
+    return html[start:end]
+
+
+def _badges(html: str) -> dict[str, str]:
+    """The rendered (still HTML-escaped) text of every model badge on the page."""
+    badges: dict[str, str] = {}
+    for key, testid in (
+        ("asset_swaps", "tab-asset-swaps"),
+        ("logic_changes", "tab-logic-changes"),
+        ("chat", "tab-chat"),
+        ("strategy_builder", "strategy-builder-tab"),
+    ):
+        tab = _extract_by_testid(html, testid, closing_tag="</button>")
+        match = re.search(r'<span class="cap-tab-attribution">(.*?)</span>', tab, re.S)
+        assert match, f"{testid} carries no cap-tab-attribution badge"
+        badges[key] = match.group(1)
+    badges["prism"] = _element_after(html, 'data-testid="prism-model-badge"', "</span>")
+    badges["run_note"] = _element_after(html, 'class="run-controls-note"', "</p>")
+    return badges
+
+
+def _get_badges(client, monkeypatch) -> dict[str, str]:
+    import advisors.asset_swap_engine as ase
+
+    # The run note sits in the branch rendered only when a Composer key exists.
+    monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
+    return _badges(_get_html(client, monkeypatch))
+
+
+def _names(text: str, name: str) -> bool:
+    """Whether ``name`` appears as a whole model name: ``Claude Opus 5`` is not found in ``Claude Opus 5.5``."""
+    return re.search(r"(?<![\w.])" + re.escape(name) + r"(?!\w|\.\d)", text) is not None
+
+
+def _assert_family_badges(badges, keys, expected_text, other_text, family):
+    for key in keys:
+        text = html_lib.unescape(badges[key])
+        assert _names(text, expected_text), (
+            f"{key} badge should name the {family} family's model {expected_text!r}; got {text!r}"
+        )
+        assert not _names(text, other_text), (
+            f"{key} badge names the other family's model {other_text!r}: {text!r}"
+        )
+
+
+def _assert_family_unavailable(badges, keys, family):
+    for key in keys:
+        text = badges[key]
+        assert _UNAVAILABLE in text, f"{key} badge of the unresolved {family} family reads {text!r}"
+        assert "Claude" not in text, (
+            f"{key} badge shows a model name for an unresolved family: {text!r}"
+        )
+
+
+def _assert_both_families(badges, names):
+    _assert_family_badges(
+        badges, _SUGGESTION_BADGES, names["suggestion"], names["synthesis"], "suggestion"
+    )
+    _assert_family_badges(
+        badges, _SYNTHESIS_BADGES, names["synthesis"], names["suggestion"], "synthesis"
+    )
+
+
+def _assert_both_unavailable(badges):
+    _assert_family_unavailable(badges, _SUGGESTION_BADGES, "suggestion")
+    _assert_family_unavailable(badges, _SYNTHESIS_BADGES, "synthesis")
+
+
+def test_each_badge_shows_the_display_name_of_its_familys_newest_resolved_model(
+    client, monkeypatch
+):
+    _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
+
+
+@pytest.mark.parametrize(
+    "relisted_fixture",
+    ["models/relisted_newer_opus.json", "models/relisted_newer_fable.json"],
+)
+def test_badges_follow_a_relisted_newer_model_with_no_code_change(
+    client, monkeypatch, relisted_fixture
+):
+    relisted_page = load_fixture(relisted_fixture)
+    before, after = _expected_names(_CAPTURED_PAGE), _expected_names(relisted_page)
+    assert before != after, "fixture guard: the re-listing must change one family's newest model"
+    fake = AnthropicHttpFake.with_captured_page()
+    _seed_registry_from(fake)
+
+    first = _get_badges(client, monkeypatch)
+    fake.set_pages([relisted_page])
+    _advance_model_clock(monkeypatch, 25 * 3600)
+    _resolve_both_through(fake)
+    second = _get_badges(client, monkeypatch)
+
+    _assert_both_families(first, before)
+    _assert_both_families(second, after)
+
+
+def test_the_app_holds_no_model_id_to_display_name_map():
+    import app as app_module
+
+    source = pathlib.Path(app_module.__file__).read_text(encoding="utf-8")
+
+    for name in ("_MODEL_DISPLAY_NAMES", "_humanize_model_name"):
+        assert not hasattr(app_module, name), f"app still defines {name}"
+        assert name not in source, f"app.py still mentions {name}"
+
+
+def test_badges_of_both_families_read_model_unavailable_when_nothing_is_resolved(
+    client, monkeypatch, unresolved_models
+):
+    _assert_both_unavailable(_get_badges(client, monkeypatch))
+
+
+@pytest.mark.parametrize(
+    ("missing_family", "unavailable_keys", "resolved_keys"),
+    [
+        ("suggestion", _SUGGESTION_BADGES, _SYNTHESIS_BADGES),
+        ("synthesis", _SYNTHESIS_BADGES, _SUGGESTION_BADGES),
+    ],
+)
+def test_only_the_unresolved_familys_badges_read_model_unavailable(
+    client, monkeypatch, missing_family, unavailable_keys, resolved_keys
+):
+    resolved_family = "synthesis" if missing_family == "suggestion" else "suggestion"
+    names = _expected_names(_CAPTURED_PAGE)
+    _seed_registry_from(
+        AnthropicHttpFake(pages=[_page_without_line(_LINE_OF_FAMILY[missing_family])])
+    )
+
+    badges = _get_badges(client, monkeypatch)
+
+    _assert_family_unavailable(badges, unavailable_keys, missing_family)
+    _assert_family_badges(
+        badges, resolved_keys, names[resolved_family], names[missing_family], resolved_family
+    )
+
+
+def test_page_render_never_lists_models_never_builds_a_client_and_never_waits(
+    client, monkeypatch, unresolved_models
+):
+    import ai_advisor
+    import model_config
+
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.hold_listings()  # a render that waits on the listing blocks until the gate times out
+    built, resolutions = [], []
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: built.append(1) or fake.client)
+
+    def _forbidden(name):
+        def call(*args, **kwargs):
+            resolutions.append(name)
+            raise RuntimeError("the page render must read the cached resolution only")
+
+        return call
+
+    for name in ("resolve", "invalidate"):
+        monkeypatch.setattr(model_config, name, _forbidden(name))
+
+    try:
+        badges = _get_badges(client, monkeypatch)
+    finally:
+        fake.release_listings()
+
+    assert fake.listing_requests == [], "the render sent a Models API listing request"
+    assert built == [], "the render built an Anthropic client"
+    assert resolutions == [], f"the render called the resolver: {resolutions}"
+    _assert_both_unavailable(badges)
+
+
+def test_a_stale_resolution_still_shows_its_last_resolved_name_and_triggers_no_listing(
+    client, monkeypatch
+):
+    fake = AnthropicHttpFake.with_captured_page()
+    _seed_registry_from(fake)
+    listings_before = len(fake.listing_requests)
+    _advance_model_clock(monkeypatch, 30 * _SECONDS_PER_DAY)
+    fake.hold_listings()
+
+    try:
+        badges = _get_badges(client, monkeypatch)
+    finally:
+        fake.release_listings()
+
+    assert len(fake.listing_requests) == listings_before, "the render re-listed a stale resolution"
+    _assert_both_families(badges, _expected_names(_CAPTURED_PAGE))
+
+
+@pytest.mark.parametrize(
+    ("env_var", "overridden_family", "override_keys", "resolved_keys"),
+    [
+        ("ADVISOR_SUGGESTION_MODEL", "suggestion", _SUGGESTION_BADGES, _SYNTHESIS_BADGES),
+        ("ADVISOR_SYNTHESIS_MODEL", "synthesis", _SYNTHESIS_BADGES, _SUGGESTION_BADGES),
+    ],
+)
+def test_an_override_absent_from_the_listing_shows_its_raw_value_on_its_own_badges_only(
+    client, monkeypatch, env_var, overridden_family, override_keys, resolved_keys
+):
+    override = "operator-chosen-model-id"
+    assert override not in {r["id"] for r in _CAPTURED_PAGE["data"]}
+    monkeypatch.setenv(env_var, override)
+    names = _expected_names(_CAPTURED_PAGE)
+    resolved_family = "synthesis" if overridden_family == "suggestion" else "suggestion"
+
+    badges = _get_badges(client, monkeypatch)
+
+    _assert_family_badges(
+        badges, override_keys, override, names[overridden_family], overridden_family
+    )
+    _assert_family_badges(badges, resolved_keys, names[resolved_family], override, resolved_family)
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t "])
+def test_a_blank_override_counts_as_absent_and_the_resolved_names_show(client, monkeypatch, blank):
+    for env_var in ("ADVISOR_SUGGESTION_MODEL", "ADVISOR_SYNTHESIS_MODEL"):
+        monkeypatch.setenv(env_var, blank)
+
+    _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
+
+
+def test_a_display_name_with_html_special_characters_renders_as_escaped_text(client, monkeypatch):
+    """Only ``display_name`` of the two newest captured records is edited, in memory, to hold
+    ``<``, ``&`` and ``"``; every other field is the captured record."""
+    page = copy.deepcopy(_CAPTURED_PAGE)
+    hostile = {
+        "suggestion": 'Fable <b>bold</b> & "quoted"',
+        "synthesis": 'Opus <i>slanted</i> & "quoted"',
+    }
+    for family, name in hostile.items():
+        _newest_active_record(page, _LINE_OF_FAMILY[family])["display_name"] = name
+    _seed_registry_from(AnthropicHttpFake(pages=[page]))
+    import advisors.asset_swap_engine as ase
+
+    monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
+    html = _get_html(client, monkeypatch)
+    badges = _badges(html)
+
+    for markup in ("<b>bold</b>", "<i>slanted</i>"):
+        assert markup not in html, f"display_name markup {markup!r} reached the page unescaped"
+    for key in _SUGGESTION_BADGES:
+        assert hostile["suggestion"] in html_lib.unescape(badges[key]), key
+    for key in _SYNTHESIS_BADGES:
+        assert hostile["synthesis"] in html_lib.unescape(badges[key]), key
+
+
+# ===========================================================================
+# Startup warm-up: both badges resolve after a restart with no operator action.
+# ===========================================================================
+
+
+class _ThreadSpy:
+    """Record every thread created while it is installed; threads still run for real."""
+
+    def __init__(self, monkeypatch):
+        self.created: list[threading.Thread] = []
+        created, real_thread = self.created, threading.Thread
+
+        class _Recording(real_thread):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                created.append(self)
+
+        monkeypatch.setattr(threading, "Thread", _Recording)
+
+    def join_all(self) -> None:
+        for thread in self.created:
+            thread.join(_THREAD_JOIN_SECONDS)
+            assert not thread.is_alive(), f"thread {thread.name!r} did not finish"
+
+
+def test_startup_warmup_resolves_both_families_in_the_background_so_the_page_shows_names(
+    client, monkeypatch, unresolved_models
+):
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+    spy = _ThreadSpy(monkeypatch)
+    fake.hold_listings()
+
+    app_module._start_model_warmup()  # must return while the listing is still in flight
+
+    assert fake.listing_started.wait(_THREAD_JOIN_SECONDS), (
+        "the warm-up never requested the listing"
+    )
+    assert spy.created, "the warm-up must run on its own thread"
+    assert all(t.daemon for t in spy.created), "the warm-up thread must not block process exit"
+    assert any(t.is_alive() for t in spy.created), (
+        "the call returned only after the listing finished"
+    )
+    _assert_both_unavailable(_get_badges(client, monkeypatch))
+
+    fake.release_listings()
+    spy.join_all()
+    listings_after_warmup = len(fake.listing_requests)
+    badges = _get_badges(client, monkeypatch)
+
+    _assert_both_families(badges, _expected_names(_CAPTURED_PAGE))
+    assert fake.listing_sequences == 1, "one listing resolves both families"
+    assert len(fake.listing_requests) == listings_after_warmup, "the page render listed again"
+    assert all(r.path == "/v1/models" for r in fake.requests), "the warm-up sent a Messages request"
+    assert fake.misuse == []
+
+
+_WARMUP_SECRET = "secret-marker-3f9c1d"
+
+
+def _raise_from_client_factory():
+    raise RuntimeError(f"ANTHROPIC_API_KEY {_WARMUP_SECRET} is not usable")
+
+
+@pytest.mark.parametrize("failure", ["client_construction", "listing_503", "connection_error"])
+def test_warmup_worker_swallows_every_failure_logs_no_message_and_leaves_badges_unavailable(
+    client, monkeypatch, unresolved_models, caplog, failure
+):
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    if failure == "client_construction":
+        monkeypatch.setattr(ai_advisor, "_build_client", _raise_from_client_factory)
+    else:
+        monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+        fake.queue_listing_outcome(
+            load_fixture("errors/503_unavailable.json")
+            if failure == "listing_503"
+            else httpx.ConnectError(f"cannot reach {_WARMUP_SECRET}")
+        )
+    caplog.set_level(logging.WARNING)
+
+    app_module._model_warmup_worker()  # a daemon thread's body: any raise would be lost
+
+    assert _WARMUP_SECRET not in caplog.text, "an exception message reached a WARNING+ log record"
+    _assert_both_unavailable(_get_badges(client, monkeypatch))
+
+
+def test_daemon_entrypoint_starts_the_warmup_after_the_scheduler_thread_and_before_serving():
+    import app as app_module
+
+    tree = ast.parse(pathlib.Path(app_module.__file__).read_text(encoding="utf-8"))
+    entry = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "__name__"
+    )
+    scheduler_line = warmup_line = serve_line = None
+    for node in ast.walk(entry):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr == "Thread":
+            targets = [
+                k.value.id
+                for k in node.keywords
+                if k.arg == "target" and isinstance(k.value, ast.Name)
+            ]
+            if "run_scheduler" in targets:
+                scheduler_line = node.lineno
+        elif isinstance(func, ast.Name) and func.id == "_start_model_warmup":
+            warmup_line = node.lineno
+        elif (
+            isinstance(func, ast.Attribute)
+            and func.attr == "run"
+            and getattr(func.value, "id", "") == "app"
+        ):
+            serve_line = node.lineno
+
+    assert warmup_line is not None, "the daemon entrypoint never calls _start_model_warmup()"
+    assert scheduler_line is not None and serve_line is not None, "entrypoint shape changed"
+    assert scheduler_line < warmup_line < serve_line, (scheduler_line, warmup_line, serve_line)

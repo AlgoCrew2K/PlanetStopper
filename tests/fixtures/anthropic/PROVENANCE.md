@@ -65,3 +65,7 @@ derived records because nothing reads them. Each file passes `schema_check.valid
 Deviation from the approach's fixture table: `edge_cases.json` holds one page per case (under `cases`) instead of one page
 with four records, because every case reuses the same two real fable-line ids in different roles and ids are unique
 within a page.
+
+In-test edit (page badge escaping, `tests/ai_advisor/test_r1_attribution_honesty.py`): the captured page is deep-copied in
+memory and only `display_name` of the newest active fable-line and opus-line records is replaced with a string holding
+`<`, `&` and `"`; no file under this directory holds the edited record.

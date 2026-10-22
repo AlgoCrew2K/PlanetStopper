@@ -940,6 +940,14 @@ def _run_lens_pipeline() -> None:
     t.start()
 
 
+def _model_warmup_worker() -> None:
+    raise NotImplementedError("Not implemented")
+
+
+def _start_model_warmup() -> None:
+    raise NotImplementedError("Not implemented")
+
+
 def _incubation_tick_worker() -> None:
     """Background worker that runs the Strategy Incubation Gate's daily tick.
 
