@@ -171,6 +171,99 @@ def check_error_file(obj, where="file") -> list[str]:
     return problems
 
 
+_STOP_REASONS = {"end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal"}
+_MESSAGE_ID = re.compile(r"^msg_[A-Za-z0-9]{10,}$")
+_TOOL_USE_ID = re.compile(r"^toolu_[A-Za-z0-9]{10,}$")
+
+
+def _check_content_block(block, where) -> list[str]:
+    """Block shapes from the Messages reference and the server-side fallback reference."""
+    if not isinstance(block, dict) or not isinstance(block.get("type"), str):
+        return [f"{where}: a content block is an object with a string type"]
+    kind = block["type"]
+    problems: list[str] = []
+    if kind == "text" and not isinstance(block.get("text"), str):
+        problems.append(f"{where}: a text block carries a string text")
+    elif kind == "thinking":
+        for key in ("thinking", "signature"):
+            if not isinstance(block.get(key), str):
+                problems.append(f"{where}: a thinking block carries a string {key}")
+    elif kind == "tool_use":
+        if not (isinstance(block.get("id"), str) and _TOOL_USE_ID.match(block["id"])):
+            problems.append(f"{where}: a tool_use id looks like toolu_<alphanumerics>")
+        if not isinstance(block.get("name"), str) or not block.get("name"):
+            problems.append(f"{where}: a tool_use block carries a name")
+        if not isinstance(block.get("input"), dict):
+            problems.append(f"{where}: a tool_use input is an object")
+    elif kind == "fallback":
+        for side in ("from", "to"):
+            ref = block.get(side)
+            if not (isinstance(ref, dict) and isinstance(ref.get("model"), str) and ref["model"]):
+                problems.append(f"{where}: a fallback block names {side}.model")
+    return problems
+
+
+def check_message_file(obj, where="file") -> list[str]:
+    """One full Messages response body (captured, or derived from the references)."""
+    if not isinstance(obj, dict):
+        return [f"{where}: not an object"]
+    problems: list[str] = []
+    if not (isinstance(obj.get("id"), str) and _MESSAGE_ID.match(obj["id"])):
+        problems.append(f"{where}: id must look like msg_<alphanumerics>")
+    if obj.get("type") != "message":
+        problems.append(f"{where}: type must be 'message'")
+    if obj.get("role") != "assistant":
+        problems.append(f"{where}: role must be 'assistant'")
+    if not isinstance(obj.get("model"), str) or not obj.get("model"):
+        problems.append(f"{where}: model must be a non-empty string")
+    content = obj.get("content")
+    if not isinstance(content, list):
+        return problems + [f"{where}: content must be an array"]
+    for i, block in enumerate(content):
+        problems.extend(_check_content_block(block, f"{where}.content[{i}]"))
+    kinds = [b.get("type") for b in content if isinstance(b, dict)]
+    if "fallback" in kinds and any(k != "fallback" for k in kinds[: kinds.index("fallback")]):
+        problems.append(f"{where}: a fallback block precedes the fallback model's own blocks")
+    stop_reason = obj.get("stop_reason")
+    if stop_reason not in _STOP_REASONS:
+        problems.append(f"{where}: stop_reason must be one of {sorted(_STOP_REASONS)}")
+    if stop_reason == "tool_use" and "tool_use" not in kinds:
+        problems.append(f"{where}: stop_reason tool_use needs a tool_use block")
+    details = obj.get("stop_details")
+    if stop_reason == "refusal":
+        if not isinstance(details, dict) or details.get("type") != "refusal":
+            problems.append(f"{where}: a refusal carries stop_details of type 'refusal'")
+        else:
+            for key in ("category", "explanation"):
+                if key not in details or not (
+                    details[key] is None or isinstance(details[key], str)
+                ):
+                    problems.append(f"{where}: stop_details.{key} must be a string or null")
+    elif details is not None:
+        problems.append(f"{where}: stop_details is null unless stop_reason is 'refusal'")
+    usage = obj.get("usage")
+    if not isinstance(usage, dict) or not all(
+        isinstance(usage.get(k), int) for k in ("input_tokens", "output_tokens")
+    ):
+        problems.append(f"{where}: usage carries integer input_tokens and output_tokens")
+    elif "fallback" in kinds:
+        types = [it.get("type") for it in usage.get("iterations", []) if isinstance(it, dict)]
+        if "fallback_message" not in types:
+            problems.append(f"{where}: a fallback reply has a fallback_message usage iteration")
+    return problems
+
+
+def validate_messages_directory(root: pathlib.Path | None = None) -> dict[str, list[str]]:
+    """Validate every messages fixture; map relative path to problems."""
+    root = root or pathlib.Path(__file__).parent
+    return {
+        f"messages/{path.name}": check_message_file(
+            json.loads(path.read_text(encoding="utf-8")), path.name
+        )
+        for path in sorted((root / "messages").glob("*.json"))
+    }
+
+
 def validate_directory(root: pathlib.Path | None = None) -> dict[str, list[str]]:
     """Validate every models and errors fixture; map relative path to problems."""
     root = root or pathlib.Path(__file__).parent
@@ -187,7 +280,11 @@ def validate_directory(root: pathlib.Path | None = None) -> dict[str, list[str]]
 
 
 if __name__ == "__main__":
-    failed = {name: probs for name, probs in validate_directory().items() if probs}
+    failed = {
+        name: probs
+        for name, probs in {**validate_directory(), **validate_messages_directory()}.items()
+        if probs
+    }
     for name, probs in failed.items():
         print(name, *probs, sep="\n  ")
     raise SystemExit(1 if failed else 0)

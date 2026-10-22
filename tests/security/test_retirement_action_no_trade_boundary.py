@@ -68,15 +68,20 @@ from __future__ import annotations
 import ast
 import copy
 import pathlib
+import sys
 
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-# The two new advisory modules under the extended safety boundary (AC-8).
+# The advisory modules under the extended safety boundary (AC-8): the two
+# retirement modules, plus the model-resolution and request-helper modules,
+# which talk to the Anthropic API and so sit next to the explainer's LLM seam.
 _NEW_MODULE_REL_PATHS = (
     "advisors/retirement_explainer.py",
     "advisors/retirement_checklist.py",
+    "model_config.py",
+    "llm_request.py",
 )
 
 # Pinned in .claude/tdd-handoff.md -- the two new Flask route handler
@@ -362,6 +367,68 @@ class TestNoTradeSymbolsAcrossBothNewModules:
         assert path.exists(), (
             f"{module_rel_path} does not exist -- the no-trade boundary is unverifiable"
         )
+
+
+# ===========================================================================
+# Group A non-vacuity: each check fails on a planted violation in a scratch copy
+# ===========================================================================
+
+_GROUP_A_PLANTS = {
+    "composer draft save": (
+        "composer_draft_client.save_symphony(tree)\n",
+        "test_module_never_calls_invest_in_symphony_or_composer_draft_client",
+    ),
+    "invest call": (
+        "invest_in_symphony(symphony_id, amount)\n",
+        "test_module_never_calls_invest_in_symphony_or_composer_draft_client",
+    ),
+    "sell endpoint": (
+        'ORDER_URL = BASE_URL + "/sell"\n',
+        "test_module_never_constructs_a_trade_url_fragment_in_executable_code",
+    ),
+    "live execution read": (
+        'LIVE = os.environ.get("LIVE_EXECUTION")\n',
+        "test_module_never_reads_or_sets_live_execution",
+    ),
+    "engine import": (
+        "import alpha_bot_execution\n",
+        "test_module_never_imports_alpha_bot_execution",
+    ),
+}
+
+
+class TestGroupAScanFailsOnAPlantedViolation:
+    @staticmethod
+    def _scratch_copy(tmp_path, monkeypatch, module_rel_path, plant):
+        source = (REPO_ROOT / module_rel_path).read_text(encoding="utf-8")
+        target = tmp_path / module_rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source + "\n" + plant, encoding="utf-8")
+        monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+
+    @pytest.mark.parametrize("module_rel_path", _NEW_MODULE_REL_PATHS)
+    @pytest.mark.parametrize("label", list(_GROUP_A_PLANTS))
+    def test_the_matching_check_fails_on_the_plant(
+        self, tmp_path, monkeypatch, module_rel_path, label
+    ):
+        plant, check_name = _GROUP_A_PLANTS[label]
+        self._scratch_copy(tmp_path, monkeypatch, module_rel_path, plant)
+        check = getattr(TestNoTradeSymbolsAcrossBothNewModules(), check_name)
+
+        with pytest.raises(AssertionError):
+            check(module_rel_path)
+
+    @pytest.mark.parametrize("module_rel_path", _NEW_MODULE_REL_PATHS)
+    @pytest.mark.parametrize("check_name", sorted({c for _, c in _GROUP_A_PLANTS.values()}))
+    def test_the_same_check_passes_on_an_unplanted_scratch_copy(
+        self, tmp_path, monkeypatch, module_rel_path, check_name
+    ):
+        self._scratch_copy(tmp_path, monkeypatch, module_rel_path, "")
+
+        getattr(TestNoTradeSymbolsAcrossBothNewModules(), check_name)(module_rel_path)
+
+    def test_the_model_modules_are_in_the_scanned_set(self):
+        assert {"model_config.py", "llm_request.py"} <= set(_NEW_MODULE_REL_PATHS)
 
 
 # ===========================================================================

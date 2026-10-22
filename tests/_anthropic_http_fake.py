@@ -13,10 +13,15 @@ consumed in order; with no outcome queued the fake serves ``pages``. A gate
 holds every listing request until released, so a test can start several
 threads while one listing is in flight.
 
-The Messages endpoint is added by the request-helper cycle; until then a call
-to ``/v1/messages`` is answered 501 and listed in ``misuse``, because the SDK
-turns an exception raised inside a transport handler into a connection error
-and would hide it, and no test may be answered with an invented reply.
+``POST /v1/messages`` is scripted the same way: a queued outcome is a message
+body (HTTP 200), an error fixture, or a transport exception instance, consumed
+in order. ``set_message_responder(fn)`` instead answers each request from a
+function of the ``RecordedRequest`` (return an outcome, or ``None`` to fall
+back to the queue), which lets a test answer by the model a request names. A
+message request with no outcome available is answered 501 and listed in
+``misuse``, because the SDK turns an exception raised inside a transport
+handler into a connection error and would hide it, and no test may be answered
+with an invented reply. A gate holds every message request until released.
 """
 
 from __future__ import annotations
@@ -64,6 +69,9 @@ class AnthropicHttpFake:
         self.requests: list[RecordedRequest] = []
         self.misuse: list[str] = []
         self.listing_started = threading.Event()
+        self._message_outcomes: deque = deque()
+        self._message_responder = None
+        self._message_gate: threading.Event | None = None
 
     @classmethod
     def with_captured_page(cls) -> AnthropicHttpFake:
@@ -89,10 +97,32 @@ class AnthropicHttpFake:
         if self._gate is not None:
             self._gate.set()
 
+    def queue_message(self, outcome) -> None:
+        """Queue what the next Messages request gets: body, error fixture or exception instance."""
+        with self._lock:
+            self._message_outcomes.append(outcome)
+
+    def set_message_responder(self, responder) -> None:
+        """Answer each Messages request with ``responder(recorded)``; ``None`` defers to the queue."""
+        self._message_responder = responder
+
+    def hold_messages(self) -> threading.Event:
+        """Block every Messages request until ``release_messages``."""
+        self._message_gate = threading.Event()
+        return self._message_gate
+
+    def release_messages(self) -> None:
+        if self._message_gate is not None:
+            self._message_gate.set()
+
     # -- observation ---------------------------------------------------
     @property
     def listing_requests(self) -> list[RecordedRequest]:
         return [r for r in self.requests if r.path == "/v1/models"]
+
+    @property
+    def message_requests(self) -> list[RecordedRequest]:
+        return [r for r in self.requests if r.path == "/v1/messages"]
 
     @property
     def listing_sequences(self) -> int:
@@ -133,9 +163,32 @@ class AnthropicHttpFake:
         recorded = self._record(request)
         if recorded.path == "/v1/models" and request.method == "GET":
             return self._handle_listing(recorded)
+        if recorded.path == "/v1/messages" and request.method == "POST":
+            return self._handle_message(recorded)
         return self._misuse(
-            f"the fake serves only GET /v1/models; got {request.method} {recorded.path}"
+            f"the fake serves only GET /v1/models and POST /v1/messages; "
+            f"got {request.method} {recorded.path}"
         )
+
+    def _handle_message(self, recorded: RecordedRequest) -> httpx.Response:
+        if self._message_gate is not None and not self._message_gate.wait(_GATE_WAIT_SECONDS):
+            return self._misuse("message gate was never released")
+        outcome = None
+        if self._message_responder is not None:
+            outcome = self._message_responder(recorded)
+        if outcome is None:
+            with self._lock:
+                outcome = self._message_outcomes.popleft() if self._message_outcomes else None
+        if outcome is None:
+            return self._misuse("a message request arrived with no scripted outcome")
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if "status" in outcome:
+            body = outcome["body"]
+            return httpx.Response(
+                outcome["status"], json=body, headers={"request-id": body.get("request_id", "")}
+            )
+        return httpx.Response(200, json=outcome)
 
     def _misuse(self, message: str) -> httpx.Response:
         with self._lock:

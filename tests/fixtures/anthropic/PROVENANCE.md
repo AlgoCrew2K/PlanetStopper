@@ -65,3 +65,33 @@ derived records because nothing reads them. Each file passes `schema_check.valid
 Deviation from the approach's fixture table: `edge_cases.json` holds one page per case (under `cases`) instead of one page
 with four records, because every case reuses the same two real fable-line ids in different roles and ids are unique
 within a page.
+
+## Schema-derived message fixtures (authored 2026-10-22 by the request-helper test author)
+
+Refusals and fallback-served replies cannot be triggered on demand, so these six files are derived, not captured.
+Each is built from the captured replies (same real model ids, `usage` shape, thinking block with its signature, text
+block and tool_use block, copied verbatim) and wrapped in the shapes the Claude API reference gives for them, as
+relayed to the author by the PM from the Claude API reference (current docs; the stop-reasons and server-side
+fallback pages named in the model-unpin plan, Known fact 4):
+
+- Refusal: HTTP 200, `stop_reason: "refusal"`, `stop_details` an object with `type` `"refusal"`, `category` (an open set,
+  or null) and `explanation` (string or null); `stop_details` is null for every other `stop_reason`.
+- Fallback: a content block `{"type": "fallback", "from": {"model": <declining model>}, "to": {"model": <serving model>}}`
+  placed before the serving model's own blocks; the top-level `model` names the serving model; `usage.iterations`
+  gains an entry of type `fallback_message` for the serving model's iteration.
+
+`schema_check.check_message_file` encodes those rules and `schema_check.validate_messages_directory()` runs it over
+every file under `messages/` (the captured replies pass it too). `tests/llm_request/test_message_fixture_schemas.py`
+proves the validator rejects planted violations.
+
+| File | Case (one record per case the request helper distinguishes) |
+|---|---|
+| `messages/refusal_reasoning_extraction.json` | fable-line refusal, empty content, `category` `reasoning_extraction` (the category server-side fallback does not retry) |
+| `messages/refusal_null_category.json` | fable-line refusal, empty content, `category` null |
+| `messages/refusal_after_partial_text.json` | opus-line refusal after a thinking block and the first words of a text block |
+| `messages/refusal_after_partial_tool.json` | fable-line refusal after a `tool_use` block for `emit_swap_candidates` whose input is a complete candidate list |
+| `messages/fallback_served_text.json` | fallback block, thinking, then text; top-level `model` is the fable-line id, so an opus-line request is answered by a different model |
+| `messages/fallback_served_tool.json` | fallback block, thinking, then `tool_use`; top-level `model` is the opus-line id, so a fable-line request is answered by a different model |
+
+The `explanation` of every derived refusal is null because nothing under test reads it. Derived reply ids are
+`msg_`/`toolu_` strings of the real format and length class, not captured ids.
