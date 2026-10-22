@@ -55,6 +55,7 @@ derived records because nothing reads them. Each file passes `schema_check.valid
 | `models/paged.json` | two pages, `has_more` true on page one; the newest fable-line record only on page two |
 | `models/relisted_newer_fable.json` | the same real ids with `claude-fable-5` dated after `claude-fable-5-1`: a re-listing whose newest fable-line model differs |
 | `models/relisted_newer_opus.json` | likewise for the opus line (`claude-opus-5` dated after `claude-opus-5-5`) |
+| `models/relisted_new_family_members.json` | a re-listing that adds one new record to each line, with an id and a `display_name` that appear nowhere in `page_captured.json` (`claude-fable-6-20261105` / `Claude Fable 6 (Preview)`, `claude-opus-6-20261105` / `Claude Opus 6 (Preview)`), beside the two captured newest records they supersede; the display names cannot be derived from the ids, so a badge that maps or rebuilds names from today's ids cannot show them |
 | `models/edge_cases.json` | one page per case under `cases`, with `expect` naming the record id each scenario requires: `deprecated_newest`, `retired_newest` (newest fable-line record not active), `null_line_fable_id` (newest record has fable in its id and a null `line`), `other_line_fable_id` (fable in its id, `line` opus), `epoch_created_at` (epoch release date, listed first), `equal_created_at` (two fable-line records, equal dates) |
 | `models/no_line.json` | no record carries `line`; `legacy-claude-fable-5-1` is a derived label (the real id behind a prefix), the only id in any derived file that is not a captured model id, because the case needs an id containing `fable` without the `claude-fable-` prefix |
 | `models/no_lifecycle.json` | `line` present on every record, no `lifecycle`, `deprecated_at` or `retires_at` key |
@@ -65,6 +66,8 @@ derived records because nothing reads them. Each file passes `schema_check.valid
 Deviation from the approach's fixture table: `edge_cases.json` holds one page per case (under `cases`) instead of one page
 with four records, because every case reuses the same two real fable-line ids in different roles and ids are unique
 within a page.
+
+The two unseen ids in `models/relisted_new_family_members.json` are derived labels, like the one in `models/no_line.json`: they follow the real id pattern (`claude-<line>-<major>-<date>`) but name no captured model, because the case needs a release the captured page has never listed. They are the only foreign ids besides `legacy-claude-fable-5-1`; `tests/model_config/test_fixture_schemas.py` pins that set.
 
 In-test edit (page badge escaping, `tests/ai_advisor/test_r1_attribution_honesty.py`): the captured page is deep-copied in
 memory and only `display_name` of the newest active fable-line and opus-line records is replaced with a string holding

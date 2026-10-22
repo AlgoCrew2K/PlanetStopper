@@ -64,7 +64,7 @@ def test_one_error_fixture_exists_for_each_status_the_listing_can_fail_with():
     assert {400, 401, 403, 404, 429, 500, 503, 529} <= statuses
 
 
-def test_schema_derived_model_records_reuse_the_captured_ids_except_one_labelled_non_prefixed_id():
+def _foreign_ids_by_fixture() -> dict[str, set[str]]:
     captured_ids = {r["id"] for r in CAPTURED_PAGE["data"]}
     foreign: dict[str, set[str]] = {}
     for name in _fixture_names("models"):
@@ -74,10 +74,49 @@ def test_schema_derived_model_records_reuse_the_captured_ids_except_one_labelled
         ids = set(re.findall(r'"id": "([^"]+)"', text))
         if ids - captured_ids:
             foreign[name] = ids - captured_ids
+    return foreign
 
-    assert set(foreign) == {"no_line.json"}
+
+def test_schema_derived_model_records_reuse_the_captured_ids_except_the_labelled_derived_ones():
+    foreign = _foreign_ids_by_fixture()
+
+    assert set(foreign) == {"no_line.json", "relisted_new_family_members.json"}
     (invented,) = foreign["no_line.json"]
+    captured_ids = {r["id"] for r in CAPTURED_PAGE["data"]}
     assert any(invented.endswith(real) and invented != real for real in captured_ids)
+
+
+def test_the_new_family_members_page_adds_one_unseen_record_to_each_line_with_underivable_names():
+    page = load_fixture("models/relisted_new_family_members.json")
+    captured_text = (FIXTURES_DIR / "models" / "page_captured.json").read_text(encoding="utf-8")
+    captured_newest = {
+        line: max(
+            (r for r in CAPTURED_PAGE["data"] if r["line"] == line), key=lambda r: r["created_at"]
+        )
+        for line in ("fable", "opus")
+    }
+    unseen_ids = _foreign_ids_by_fixture()["relisted_new_family_members.json"]
+    unseen = [r for r in page["data"] if r["id"] in unseen_ids]
+
+    assert sorted(r["line"] for r in unseen) == ["fable", "opus"]
+    for record in unseen:
+        assert record["id"] not in captured_text
+        assert record["display_name"] not in captured_text
+        assert record["created_at"] > captured_newest[record["line"]]["created_at"]
+        assert record["id"].startswith(f"claude-{record['line']}-")
+        # A badge that rebuilt the name from the id would show this, not the record's display_name.
+        assert record["display_name"] != record["id"].replace("-", " ").title()
+    for line, record in captured_newest.items():
+        assert record in page["data"], f"the superseded captured {line} record must stay listed"
+    assert schema_check.check_models_file(page, "relisted_new_family_members.json") == []
+
+
+def test_every_models_fixture_is_documented_in_the_provenance_file():
+    provenance = (FIXTURES_DIR / "PROVENANCE.md").read_text(encoding="utf-8")
+
+    undocumented = [n for n in _fixture_names("models") if f"models/{n}" not in provenance]
+
+    assert undocumented == []
 
 
 def _model_mutations():

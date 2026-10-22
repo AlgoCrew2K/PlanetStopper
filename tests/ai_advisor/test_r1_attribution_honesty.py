@@ -278,6 +278,7 @@ def test_ac3_sb_run_controls_note_mentions_generation_model_and_community_and_si
 import ast  # noqa: E402
 import copy  # noqa: E402
 import html as html_lib  # noqa: E402
+import json  # noqa: E402
 import logging  # noqa: E402
 import pathlib  # noqa: E402
 import re  # noqa: E402
@@ -287,6 +288,7 @@ from types import SimpleNamespace  # noqa: E402
 import httpx  # noqa: E402
 
 from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture  # noqa: E402
+from tests.model_config.test_fixture_schemas import schema_check  # noqa: E402
 
 _UNAVAILABLE = "model unavailable"
 _CAPTURED_PAGE = load_fixture("models/page_captured.json")
@@ -452,6 +454,49 @@ def test_badges_follow_a_relisted_newer_model_with_no_code_change(
     _assert_both_families(second, after)
 
 
+_NEW_MEMBERS_FIXTURE = "models/relisted_new_family_members.json"
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+
+def test_badges_follow_a_relisting_that_adds_models_the_captured_page_never_listed(
+    client, monkeypatch
+):
+    """The new records' ids and display names occur nowhere in the captured page, so a badge
+    that maps today's ids to names, rebuilds a name from an id, or caches the first listing
+    cannot show them: only reading the re-listed record's own ``display_name`` can."""
+    page = load_fixture(_NEW_MEMBERS_FIXTURE)
+    assert schema_check.check_models_file(page, _NEW_MEMBERS_FIXTURE) == []
+    captured_text = json.dumps(_CAPTURED_PAGE)
+    before, after = _expected_names(_CAPTURED_PAGE), _expected_names(page)
+    for family in ("suggestion", "synthesis"):
+        newest = _newest_active_record(page, _LINE_OF_FAMILY[family])
+        assert newest["id"] not in captured_text, "fixture guard: the new id must be unseen"
+        assert after[family] not in captured_text, "fixture guard: the new name must be unseen"
+        assert after[family] != before[family]
+    fake = AnthropicHttpFake.with_captured_page()
+    _seed_registry_from(fake)
+
+    first = _get_badges(client, monkeypatch)
+    fake.set_pages([page])
+    _advance_model_clock(monkeypatch, 25 * 3600)
+    _resolve_both_through(fake)
+    listings_after_relisting = len(fake.listing_requests)
+    second = _get_badges(client, monkeypatch)
+
+    _assert_both_families(first, before)
+    _assert_both_families(second, after)
+    assert len(fake.listing_requests) == listings_after_relisting, "the render listed models"
+
+
+@pytest.mark.parametrize("relative_path", ["app.py", "templates/ai_advisor.html"])
+def test_the_page_sources_hold_no_quoted_model_id_literal(relative_path):
+    source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
+
+    literals = re.findall(r"""["']claude-(?:fable|opus|sonnet|haiku)-\d[^"']*["']""", source)
+
+    assert literals == [], f"{relative_path} holds a model id literal: {literals}"
+
+
 def test_the_app_holds_no_model_id_to_display_name_map():
     import app as app_module
 
@@ -609,12 +654,14 @@ class _ThreadSpy:
 
     def __init__(self, monkeypatch):
         self.created: list[threading.Thread] = []
-        created, real_thread = self.created, threading.Thread
+        self.targets: list = []
+        created, targets, real_thread = self.created, self.targets, threading.Thread
 
         class _Recording(real_thread):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
                 created.append(self)
+                targets.append(kwargs.get("target"))
 
         monkeypatch.setattr(threading, "Thread", _Recording)
 
@@ -691,11 +738,14 @@ def test_warmup_worker_swallows_every_failure_logs_no_message_and_leaves_badges_
     _assert_both_unavailable(_get_badges(client, monkeypatch))
 
 
-def test_daemon_entrypoint_starts_the_warmup_after_the_scheduler_thread_and_before_serving():
+def _parse_app() -> ast.Module:
     import app as app_module
 
-    tree = ast.parse(pathlib.Path(app_module.__file__).read_text(encoding="utf-8"))
-    entry = next(
+    return ast.parse(pathlib.Path(app_module.__file__).read_text(encoding="utf-8"))
+
+
+def _daemon_entrypoint(tree: ast.Module) -> ast.If:
+    return next(
         node
         for node in tree.body
         if isinstance(node, ast.If)
@@ -703,6 +753,10 @@ def test_daemon_entrypoint_starts_the_warmup_after_the_scheduler_thread_and_befo
         and isinstance(node.test.left, ast.Name)
         and node.test.left.id == "__name__"
     )
+
+
+def test_daemon_entrypoint_starts_the_warmup_after_the_scheduler_thread_and_before_serving():
+    entry = _daemon_entrypoint(_parse_app())
     scheduler_line = warmup_line = serve_line = None
     for node in ast.walk(entry):
         if not isinstance(node, ast.Call):
@@ -728,3 +782,349 @@ def test_daemon_entrypoint_starts_the_warmup_after_the_scheduler_thread_and_befo
     assert warmup_line is not None, "the daemon entrypoint never calls _start_model_warmup()"
     assert scheduler_line is not None and serve_line is not None, "entrypoint shape changed"
     assert scheduler_line < warmup_line < serve_line, (scheduler_line, warmup_line, serve_line)
+
+
+# ===========================================================================
+# Warm-up worker: knob overrides, failed listings, diagnostics, wording.
+# ===========================================================================
+
+_OVERRIDE_VALUE = "operator-chosen-model-id"
+_KNOB_ENV = {
+    "suggestion": ("ADVISOR_SUGGESTION_MODEL", _SUGGESTION_BADGES),
+    "synthesis": ("ADVISOR_SYNTHESIS_MODEL", _SYNTHESIS_BADGES),
+}
+
+
+@pytest.mark.parametrize(
+    ("overridden", "listings_expected"),
+    [(("suggestion",), 1), (("synthesis",), 1), (("suggestion", "synthesis"), 0)],
+    ids=["suggestion-overridden", "synthesis-overridden", "both-overridden"],
+)
+def test_warmup_resolves_the_family_that_is_not_overridden_and_lists_only_when_one_is_left(
+    client, monkeypatch, unresolved_models, overridden, listings_expected
+):
+    """An override answers its own knob without a listing, so whichever family is left must
+    still be resolved by the worker itself: with the suggestion knob overridden the synthesis
+    resolve is the only call that lists models."""
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+    for family in overridden:
+        monkeypatch.setenv(_KNOB_ENV[family][0], _OVERRIDE_VALUE)
+    names = _expected_names(_CAPTURED_PAGE)
+
+    app_module._model_warmup_worker()
+    badges = _get_badges(client, monkeypatch)
+
+    assert fake.listing_sequences == listings_expected
+    assert fake.misuse == []
+    for family, (_, keys) in _KNOB_ENV.items():
+        if family in overridden:
+            _assert_family_badges(badges, keys, _OVERRIDE_VALUE, names[family], family)
+        else:
+            _assert_family_badges(badges, keys, names[family], _OVERRIDE_VALUE, family)
+
+
+def test_warmup_names_the_family_the_listing_holds_when_the_other_family_is_absent(
+    client, monkeypatch, unresolved_models
+):
+    import ai_advisor
+    import app as app_module
+
+    page = _page_without_line("fable")
+    fake = AnthropicHttpFake(pages=[page])
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+
+    app_module._model_warmup_worker()
+    badges = _get_badges(client, monkeypatch)
+
+    _assert_family_unavailable(badges, _SUGGESTION_BADGES, "suggestion")
+    _assert_family_badges(
+        badges,
+        _SYNTHESIS_BADGES,
+        _newest_active_record(page, "opus")["display_name"],
+        _newest_active_record(_CAPTURED_PAGE, "fable")["display_name"],
+        "synthesis",
+    )
+    assert fake.listing_sequences == 1
+
+
+def test_warmup_sends_one_listing_request_when_the_listing_fails(monkeypatch, unresolved_models):
+    """A failed listing leaves the registry unfresh, so a second resolve would send a second request."""
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+
+    app_module._model_warmup_worker()
+
+    assert fake.listing_sequences == 1, "the worker retried a failed listing"
+
+
+def test_a_failed_warmup_leaves_a_debug_record_with_the_traceback_beside_a_type_only_warning(
+    monkeypatch, unresolved_models, caplog
+):
+    import ai_advisor
+    import app as app_module
+
+    monkeypatch.setattr(ai_advisor, "_build_client", _raise_from_client_factory)
+    caplog.set_level(logging.DEBUG, logger="alphabot")
+
+    app_module._model_warmup_worker()
+
+    records = [r for r in caplog.records if r.name == "alphabot"]
+    warnings = [r for r in records if r.levelno >= logging.WARNING]
+    with_traceback = [r for r in records if r.levelno == logging.DEBUG and r.exc_info]
+    assert len(warnings) == 1, [r.getMessage() for r in warnings]
+    assert "RuntimeError" in warnings[0].getMessage()
+    assert _WARMUP_SECRET not in warnings[0].getMessage()
+    assert warnings[0].exc_info is None, "the WARNING record must not carry the exception text"
+    assert any(
+        r.exc_info[0] is RuntimeError and _WARMUP_SECRET in str(r.exc_info[1])
+        for r in with_traceback
+    ), "no DEBUG record carries the exception for diagnosis"
+
+
+_PLAN_ID = re.compile(r"\b(?:CC|AC|DE|FD|CR|QA|E)-\d+\b|\bS-\d+\.\d+\b")
+_WARMUP_HELPERS = ("_start_model_warmup", "_model_warmup_worker")
+
+
+@pytest.mark.parametrize("helper", _WARMUP_HELPERS)
+def test_warmup_helpers_cite_no_plan_id_and_claim_no_lazy_import_the_module_does_not_have(helper):
+    import app as app_module
+
+    source = pathlib.Path(app_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == helper)
+    text = ast.get_source_segment(source, fn)
+    module_level_imports = {
+        (alias.asname or alias.name).split(".")[0]
+        for node in tree.body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    imported_here = {"ai_advisor", "model_config", "threading"} & module_level_imports
+
+    assert not _PLAN_ID.findall(text), f"{helper} cites a plan identifier: {_PLAN_ID.findall(text)}"
+    if re.search(r"\blazy\b|\blazily\b", text, re.IGNORECASE):
+        assert not imported_here, (
+            f"{helper} says it imports lazily but app.py imports {sorted(imported_here)} "
+            "at module level"
+        )
+
+
+# ===========================================================================
+# One call site, no double listing, and the daily re-run through the scheduler.
+# ===========================================================================
+
+
+def test_the_warmup_starter_has_exactly_one_call_site_inside_the_daemon_entrypoint():
+    tree = _parse_app()
+    entry_nodes = {id(n) for n in ast.walk(_daemon_entrypoint(tree))}
+
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and (
+            (isinstance(n.func, ast.Name) and n.func.id == "_start_model_warmup")
+            or (isinstance(n.func, ast.Attribute) and n.func.attr == "_start_model_warmup")
+        )
+    ]
+
+    assert len(calls) == 1, f"_start_model_warmup is called at lines {[c.lineno for c in calls]}"
+    assert id(calls[0]) in entry_nodes, "the only call is outside the __main__ block"
+
+
+def test_the_warmup_worker_is_referenced_only_as_the_thread_target_inside_the_starter():
+    tree = _parse_app()
+    starter = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_start_model_warmup"
+    )
+    targets = {
+        id(kw.value)
+        for call in ast.walk(starter)
+        if isinstance(call, ast.Call)
+        for kw in call.keywords
+        if kw.arg == "target"
+    }
+
+    references = [
+        n
+        for n in ast.walk(tree)
+        if (isinstance(n, ast.Name) and n.id == "_model_warmup_worker")
+        or (isinstance(n, ast.Attribute) and n.attr == "_model_warmup_worker")
+    ]
+
+    assert len(references) == 1, f"worker referenced at lines {[r.lineno for r in references]}"
+    assert id(references[0]) in targets, (
+        "the worker is referenced outside the starter Thread target"
+    )
+
+
+def test_two_overlapping_warmup_starts_send_one_listing_and_both_families_show_names(
+    client, monkeypatch, unresolved_models
+):
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+    spy = _ThreadSpy(monkeypatch)
+    fake.hold_listings()
+
+    app_module._start_model_warmup()
+    assert fake.listing_started.wait(_THREAD_JOIN_SECONDS), "the first warm-up never listed"
+    app_module._start_model_warmup()
+    fake.release_listings()
+    spy.join_all()
+
+    assert len(spy.created) == 2
+    assert fake.listing_sequences == 1, "a second start listed again"
+    assert fake.max_concurrent_listings == 1
+    _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
+
+
+class _StopScheduler(Exception):
+    """Raised by the stand-in scheduler to leave the endless loop of run_scheduler."""
+
+
+def _scheduled_jobs(monkeypatch) -> list:
+    """The jobs run_scheduler registers, read from a real scheduler that never runs any."""
+    import schedule
+
+    import app as app_module
+
+    class _RegisterOnly(schedule.Scheduler):
+        def run_pending(self):
+            raise _StopScheduler
+
+    scheduler = _RegisterOnly()
+    monkeypatch.setattr(
+        app_module,
+        "schedule",
+        SimpleNamespace(every=scheduler.every, run_pending=scheduler.run_pending),
+    )
+    with pytest.raises(_StopScheduler):
+        app_module.run_scheduler()
+    return scheduler.jobs
+
+
+def _warmup_slots_among(jobs: list) -> list:
+    import app as app_module
+
+    return [
+        job for job in jobs if getattr(job.job_func, "func", None) is app_module._start_model_warmup
+    ]
+
+
+def _warmup_slots(monkeypatch) -> list:
+    return _warmup_slots_among(_scheduled_jobs(monkeypatch))
+
+
+def _minutes(job) -> int:
+    return job.at_time.hour * 60 + job.at_time.minute
+
+
+_PRE_MARKET_START_MINUTES = 8 * 60  # 04:00 US Eastern is 08:00 UTC, the earliest in summer time
+_AFTER_RETIREMENT_TICK_MINUTES = 4 * 60  # the last existing off-hours slot is 03:45
+_MIN_SLOT_GAP_MINUTES = 15
+
+
+def test_the_scheduler_registers_the_warmup_once_a_day_off_hours_clear_of_every_other_slot(
+    monkeypatch,
+):
+    jobs = _scheduled_jobs(monkeypatch)
+    slots = _warmup_slots_among(jobs)
+
+    assert len(slots) == 1, "run_scheduler must register _start_model_warmup exactly once"
+    (slot,) = slots
+    assert (slot.unit, slot.interval) == ("days", 1), "the warm-up must run once a day"
+    assert slot.at_time is not None, "the daily warm-up needs a fixed time of day"
+    assert _AFTER_RETIREMENT_TICK_MINUTES <= _minutes(slot) < _PRE_MARKET_START_MINUTES, (
+        f"slot {slot.at_time} is outside the off-hours window (the daemon clock is UTC)"
+    )
+    for other in jobs:
+        if other is not slot and other.unit == "days" and other.at_time is not None:
+            gap = abs(_minutes(other) - _minutes(slot))
+            assert gap >= _MIN_SLOT_GAP_MINUTES, (
+                f"warm-up slot {slot.at_time} is {gap} min from the slot at {other.at_time}"
+            )
+
+
+def test_the_scheduled_slot_only_spawns_the_daemon_thread_warmup_and_returns(
+    monkeypatch, unresolved_models
+):
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+    (slot,) = _warmup_slots(monkeypatch)
+    spy = _ThreadSpy(monkeypatch)
+    fake.hold_listings()
+
+    slot.run()  # the scheduler thread must come back while the listing is still in flight
+
+    assert fake.listing_started.wait(_THREAD_JOIN_SECONDS), "the slot never requested the listing"
+    assert len(spy.created) == 1, "the slot must spawn exactly one thread"
+    assert spy.created[0].daemon, "the warm-up thread must not block process exit"
+    assert spy.targets == [app_module._model_warmup_worker]
+    assert spy.created[0].is_alive(), "the slot returned only after the listing finished"
+    fake.release_listings()
+    spy.join_all()
+    assert fake.listing_sequences == 1
+    assert all(r.path == "/v1/models" for r in fake.requests), "the slot sent a Messages request"
+
+
+def test_a_model_released_after_boot_reaches_the_badges_through_the_daily_slot_alone(
+    client, monkeypatch
+):
+    """No advisor action and no restart: the registry resolved at boot goes stale, new models
+    are listed, the daily slot runs, and the next page render shows their display names
+    without the render itself listing anything."""
+    import ai_advisor
+
+    page = load_fixture(_NEW_MEMBERS_FIXTURE)
+    fake = AnthropicHttpFake.with_captured_page()
+    _seed_registry_from(fake)
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+    (slot,) = _warmup_slots(monkeypatch)
+    spy = _ThreadSpy(monkeypatch)
+    _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
+    fake.set_pages([page])
+    _advance_model_clock(monkeypatch, 25 * 3600)
+
+    slot.run()
+    spy.join_all()
+    listings_after_slot = len(fake.listing_requests)
+    badges = _get_badges(client, monkeypatch)
+
+    _assert_both_families(badges, _expected_names(page))
+    assert len(fake.listing_requests) == listings_after_slot, "the render listed models"
+    assert fake.listing_sequences == 2, "one listing at boot and one by the slot"
+
+
+def test_the_daily_slot_recovers_badges_left_unavailable_by_a_failed_boot_listing(
+    client, monkeypatch, unresolved_models
+):
+    import ai_advisor
+    import app as app_module
+
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+    monkeypatch.setattr(ai_advisor, "_build_client", lambda: fake.client)
+    (slot,) = _warmup_slots(monkeypatch)
+    spy = _ThreadSpy(monkeypatch)
+    app_module._start_model_warmup()
+    spy.join_all()
+    _assert_both_unavailable(_get_badges(client, monkeypatch))
+
+    slot.run()
+    spy.join_all()
+
+    _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
