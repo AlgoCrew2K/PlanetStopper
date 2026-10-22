@@ -53,7 +53,7 @@ MODEL_UNAVAILABLE_TEXT = "model unavailable"
 # The Models API listing is refreshed when the last successful one is older than this.
 _RELIST_INTERVAL_SECONDS = 24 * 60 * 60  # seconds
 _LIST_PAGE_LIMIT = 1000  # records per page (API maximum)
-_LIST_TIMEOUT_SECONDS = 30.0  # seconds; bounds the wait while the listing lock is held
+_MODELS_LIST_TIMEOUT_SECONDS = 10.0  # seconds; bounds the wait while the listing lock is held
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -126,7 +126,7 @@ def _select(records: list, family: str, line_mode: bool) -> ModelChoice:
 
 
 def _list_all(client) -> dict[str, ModelChoice]:
-    records = list(client.models.list(limit=_LIST_PAGE_LIMIT, timeout=_LIST_TIMEOUT_SECONDS))
+    records = list(client.models.list(limit=_LIST_PAGE_LIMIT, timeout=_MODELS_LIST_TIMEOUT_SECONDS))
     line_mode = any("line" in (getattr(r, "model_extra", None) or {}) for r in records)
     found = {f: _select(records, f, line_mode) for f in _KNOB_FAMILY.values()}
     return {f: c for f, c in found.items() if c.source == "resolved"}
@@ -187,10 +187,13 @@ def invalidate(knob: Knob, model_id: str, client) -> ModelChoice:
     """Drop the family's resolution and re-list once (shared by concurrent callers)."""
     global _last_success
     family = _KNOB_FAMILY[knob]
+    pins = _run_pin.get()
+    current = pins[family] if pins is not None and family in pins else _registry.get(family)
+    if current is not None and current.model_id != model_id:
+        return current  # a late 404 for an already replaced model
     seq_before = _attempt_seq
     _registry.pop(family, None)
     _last_success = None  # a failed listing must be retried by the next call
-    pins = _run_pin.get()
     if pins is not None:
         pins.pop(family, None)
     _list_once(client, seq_before)
