@@ -181,21 +181,137 @@ def _has_wildcard_import(source: str) -> bool:
     )
 
 
-_HTTP_WRITE_METHODS = frozenset({"post", "put", "patch", "delete", "request"})
+# The names a request goes through when it changes something at the other end: the verbs, the
+# generic request (also the name of the library's api function), and the send of a prepared
+# request on a session. A review module reads Composer and never writes to it, so the scan reports
+# the name wherever it appears: called, handed over as a thread target or in a partial, stored in
+# a table, looked up by a string, or imported (under its own name or another).
+_HTTP_WRITE_NAMES = frozenset({"post", "put", "patch", "delete", "request", "send"})
 _BACKTEST_URL_SOURCE = "f'{COMPOSER_BASE_URL}/backtest'"
+# The one write a review module may make: the backtest client's POST of the address it built.
+_EXPECTED_HTTP_WRITES = {_BACKTEST_CLIENT: [("post", "url")]}
 
 
-def _http_write_calls(source: str) -> list[tuple[str, str]]:
-    """``(method, first argument as source)`` of every call to a method named like an HTTP write
-    (post, put, patch, delete, or the generic request), on any object: ``requests.post(url)``,
-    ``session.put(url)``, ``requests.request("POST", url)``."""
-    return [
-        (node.func.attr, ast.unparse(node.args[0]) if node.args else "")
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in _HTTP_WRITE_METHODS
-    ]
+def _http_write_references(source: str) -> list[tuple[str, str]]:
+    """``(name, first argument as source)`` of every place the source names an HTTP write: a call
+    of an attribute or a bare name (``requests.post(url)``, ``Session().send(prepared)``, a
+    ``post`` imported by name), whose first argument is returned; and, with an empty argument, an
+    attribute or a bare name that is not called (handed to a thread or a partial, stored in a
+    table), a ``getattr`` with the name as a string, and an import of the name (``"import"``)."""
+    found: list[tuple[str, str]] = []
+    called: set[int] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call):
+            func = node.func
+            first = ast.unparse(node.args[0]) if node.args else ""
+            if isinstance(func, ast.Attribute) and func.attr in _HTTP_WRITE_NAMES:
+                found.append((func.attr, first))
+                called.add(id(func))
+            elif isinstance(func, ast.Name) and func.id in _HTTP_WRITE_NAMES:
+                found.append((func.id, first))
+                called.add(id(func))
+            elif (
+                isinstance(func, ast.Name)
+                and func.id == "getattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in _HTTP_WRITE_NAMES
+            ):
+                found.append((node.args[1].value, ""))
+        elif id(node) in called:
+            continue
+        elif isinstance(node, ast.Attribute) and node.attr in _HTTP_WRITE_NAMES:
+            found.append((node.attr, ""))
+        elif (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in _HTTP_WRITE_NAMES
+        ):
+            found.append((node.id, ""))
+        elif isinstance(node, ast.ImportFrom):
+            found.extend((a.name, "import") for a in node.names if a.name in _HTTP_WRITE_NAMES)
+    return found
+
+
+def _http_write_problems(rel_path: str, source: str) -> list[tuple[str, str]]:
+    """The HTTP write references of a module's source that differ from the ones it may make
+    (none, except the backtest client's one POST): empty when they are the same."""
+    found = sorted(_http_write_references(source))
+    return (
+        [] if found == sorted(_EXPECTED_HTTP_WRITES.get(rel_path, [])) else found or [("none", "")]
+    )
+
+
+_CREATE_ADDRESS = 'f"{COMPOSER_BASE_URL}/symphonies"'
+
+
+def _planted_function(*lines: str) -> str:
+    body = "\n".join(f"    {line}" for line in lines)
+    return f"def _planted_write(tree, url, prepared):\n{body}\n"
+
+
+# Each way a module could make a request that changes something at Composer, planted as a function
+# appended to the real source of a module: the raw create the symphony-save helper makes (a POST
+# to the symphonies address), the other verbs, the generic request, a session built or held, the
+# send of a prepared request, a bare name imported from a client library, a reference that is
+# never called, and a name looked up by a string.
+_PLANTED_WRITES = {
+    "raw create post": _planted_function(
+        "import requests", f"return requests.post({_CREATE_ADDRESS}, json=tree)"
+    ),
+    "raw create post through another module name": _planted_function(
+        "import requests as http", f"return http.post({_CREATE_ADDRESS}, json=tree)"
+    ),
+    "put": _planted_function("import requests", f"return requests.put({_CREATE_ADDRESS})"),
+    "patch": _planted_function("import requests", f"return requests.patch({_CREATE_ADDRESS})"),
+    "delete": _planted_function("import requests", f"return requests.delete({_CREATE_ADDRESS})"),
+    "generic request": _planted_function(
+        "import requests", f'return requests.request("POST", {_CREATE_ADDRESS}, json=tree)'
+    ),
+    "library api function": _planted_function(
+        "import requests", f'return requests.api.request("POST", {_CREATE_ADDRESS})'
+    ),
+    "another library": _planted_function("import httpx", f"return httpx.post({_CREATE_ADDRESS})"),
+    "session post": _planted_function(
+        "import requests",
+        "session = requests.Session()",
+        f"return session.post({_CREATE_ADDRESS}, json=tree)",
+    ),
+    "session built on the spot": _planted_function(
+        "import requests", f"return requests.Session().post({_CREATE_ADDRESS}, json=tree)"
+    ),
+    "send on a session": _planted_function(
+        "import requests", "session = requests.Session()", "return session.send(prepared)"
+    ),
+    "send on a session built on the spot": _planted_function(
+        "import requests", "return requests.Session().send(prepared)"
+    ),
+    "bare post imported by name": _planted_function(
+        "from requests import post", f"return post({_CREATE_ADDRESS}, json=tree)"
+    ),
+    "bare post imported under another name": _planted_function(
+        "from requests import post as go", f"return go({_CREATE_ADDRESS}, json=tree)"
+    ),
+    "import of the name alone": _planted_function("from requests import post", "return None"),
+    "name looked up by a string": _planted_function(
+        "import requests", f'return getattr(requests, "post")({_CREATE_ADDRESS}, json=tree)'
+    ),
+    "reference handed to a thread": _planted_function(
+        "import requests",
+        "import threading",
+        f"threading.Thread(target=requests.post, args=({_CREATE_ADDRESS},)).start()",
+    ),
+    "reference in a partial": _planted_function(
+        "import functools, requests", f"return functools.partial(requests.post, {_CREATE_ADDRESS})"
+    ),
+    "reference stored in a table": _planted_function(
+        "import requests", 'return {"create": requests.post}'
+    ),
+    "urllib request": _planted_function(
+        "import urllib.request",
+        f'return urllib.request.urlopen(urllib.request.Request({_CREATE_ADDRESS}, method="POST"))',
+    ),
+}
 
 
 def _assigned_values(source: str, name: str) -> list[str]:
@@ -237,16 +353,32 @@ def _binding_sites(source: str, name: str) -> list[ast.AST]:
     return [node for node in ast.walk(ast.parse(source)) if _binds(node, name)]
 
 
+def _base_url_binding_problems(source: str) -> list:
+    """The base address is bound once, by the import of the engine's constant under its own name:
+    any other binding (an assignment of any form, a parameter, a second import) could point the
+    one POST at another address without touching the name ``url``."""
+    sites = _binding_sites(source, "COMPOSER_BASE_URL")
+    only_the_import = (
+        len(sites) == 1
+        and isinstance(sites[0], ast.alias)
+        and sites[0].name == "COMPOSER_BASE_URL"
+        and sites[0].asname is None
+    )
+    return [] if only_the_import else [("bindings of the base address", len(sites))]
+
+
 def _backtest_client_problems(source: str) -> list:
     """What differs from the shape the backtest client must keep: one POST of the address it
-    built, and that address the backtest endpoint only, bound once, by a plain assignment."""
+    built, that address the backtest endpoint only, built from a base address and bound once, each
+    by its one binding."""
     problems = []
-    if _http_write_calls(source) != [("post", "url")]:
-        problems.append(("writes", _http_write_calls(source)))
+    if sorted(_http_write_references(source)) != [("post", "url")]:
+        problems.append(("writes", _http_write_references(source)))
     if _assigned_values(source, "url") != [_BACKTEST_URL_SOURCE]:
         problems.append(("addresses", _assigned_values(source, "url")))
     if len(_binding_sites(source, "url")) != 1:
         problems.append(("bindings of the address", len(_binding_sites(source, "url"))))
+    problems.extend(_base_url_binding_problems(source))
     return problems
 
 
@@ -347,7 +479,7 @@ class TestTheBacktestClientMakesOnlyTheBacktestPost:
 
     def test_its_only_write_call_is_one_post_to_the_address_it_built(self):
         source = _source_of(_BACKTEST_CLIENT)
-        assert _http_write_calls(source) == [("post", "url")]
+        assert _http_write_references(source) == [("post", "url")]
 
     def test_the_address_it_builds_is_the_base_url_and_the_backtest_path_and_nothing_else(self):
         source = _source_of(_BACKTEST_CLIENT)
@@ -360,7 +492,48 @@ class TestTheBacktestClientMakesOnlyTheBacktestPost:
         assert len(_binding_sites(_source_of(_BACKTEST_CLIENT), "url")) == 1
 
     def test_the_portfolio_client_makes_no_write_call_at_all(self):
-        assert _http_write_calls(_source_of(_CLIENT)) == []
+        assert _http_write_references(_source_of(_CLIENT)) == []
+
+    def test_the_base_address_is_bound_once_by_the_import_of_the_engines_constant(self):
+        """``url`` is built from ``COMPOSER_BASE_URL``, so a second binding of that name (an
+        assignment of any form, a parameter, a second import) would move the one POST as surely
+        as a rebinding of ``url`` does."""
+        assert _base_url_binding_problems(_source_of(_BACKTEST_CLIENT)) == []
+
+    def test_the_whole_backtest_client_matches_the_shape_it_must_keep(self):
+        assert _backtest_client_problems(_source_of(_BACKTEST_CLIENT)) == []
+
+
+@pytest.mark.parametrize("module_rel_path", _MODULE_REL_PATHS)
+class TestNoModuleMakesAnHttpWriteBeyondTheBacktestPost:
+    """The write check runs over every module of the scan, not over the two Composer clients
+    alone: a raw POST to the symphony-create address planted in the runner or the review compute
+    makes the same request ``composer_draft_client.save_symphony`` makes, by a path no name scan
+    sees. The backtest client's one POST to the backtest address is the only write any module
+    may make."""
+
+    def test_the_module_makes_exactly_the_writes_it_may(self, module_rel_path):
+        assert _http_write_problems(module_rel_path, _source_of(module_rel_path)) == []
+
+    @pytest.mark.parametrize("form", list(_PLANTED_WRITES))
+    def test_a_planted_write_is_reported(self, module_rel_path, form):
+        planted = _source_of(module_rel_path) + "\n\n" + _PLANTED_WRITES[form]
+        assert _http_write_problems(module_rel_path, planted) != [], (
+            f"a write planted in {module_rel_path} ({form}) passes the module scan"
+        )
+
+    def test_a_mention_in_prose_or_a_read_is_not_reported(self, module_rel_path):
+        prose = (
+            _source_of(module_rel_path)
+            + "\n\n"
+            + "def _planted_read(url):\n"
+            + '    """Never requests.post(url), session.send(x)."""\n'
+            + "    # requests.put(url)\n"
+            + "    posted = requests.get(url)\n"
+            + "    request_count = requests.Session().get(url)\n"
+            + "    return posted, request_count\n"
+        )
+        assert _http_write_problems(module_rel_path, prose) == []
 
 
 class TestRoutesAreNotSettingsWrites:
@@ -576,6 +749,7 @@ class TestOtherPlantedPrimitivesAreReported:
 
 _BACKTEST_CLIENT_SHAPE = (
     "import requests\n"
+    "from alpha_bot_execution import COMPOSER_BASE_URL\n"
     "def run_backtest(tree):\n"
     '    url = f"{COMPOSER_BASE_URL}/backtest"\n'
     "    return requests.post(url, json=tree)\n"
@@ -627,21 +801,23 @@ class TestAPlantedSecondRequestInTheBacktestClientIsReported:
         planted = _BACKTEST_CLIENT_SHAPE + f"def planted():\n    {assignment}\n"
         assert _backtest_client_problems(planted) != []
 
+    @pytest.mark.parametrize("name", ["url", "COMPOSER_BASE_URL"])
     @pytest.mark.parametrize(
         "rebinding",
         [
-            'url += "/../symphonies"',
-            'url: str = f"{COMPOSER_BASE_URL}/symphonies"',
-            '(url := f"{COMPOSER_BASE_URL}/symphonies")',
-            'url, planted_other = (f"{COMPOSER_BASE_URL}/symphonies", 1)',
-            'url = planted_other = f"{COMPOSER_BASE_URL}/symphonies"',
-            'for url in (f"{COMPOSER_BASE_URL}/symphonies",):\n    pass',
-            "with planted_open() as url:\n    pass",
-            "import planted_module as url",
-            "try:\n    pass\nexcept Exception as url:\n    pass",
-            '[url for url in (f"{COMPOSER_BASE_URL}/symphonies",)]',
-            "global url",
-            'url = f"{COMPOSER_BASE_URL}/symphonies"',
+            'NAME += "/../symphonies"',
+            'NAME: str = f"{COMPOSER_BASE_URL}/symphonies"',
+            '(NAME := f"{COMPOSER_BASE_URL}/symphonies")',
+            'NAME, planted_other = (f"{COMPOSER_BASE_URL}/symphonies", 1)',
+            'NAME = planted_other = f"{COMPOSER_BASE_URL}/symphonies"',
+            'for NAME in (f"{COMPOSER_BASE_URL}/symphonies",):\n    pass',
+            "with planted_open() as NAME:\n    pass",
+            "import planted_module as NAME",
+            "try:\n    pass\nexcept Exception as NAME:\n    pass",
+            '[NAME for NAME in (f"{COMPOSER_BASE_URL}/symphonies",)]',
+            "global NAME",
+            'NAME = f"{COMPOSER_BASE_URL}/symphonies"',
+            "from planted_module import NAME",
         ],
         ids=[
             "augmented assignment",
@@ -656,11 +832,14 @@ class TestAPlantedSecondRequestInTheBacktestClientIsReported:
             "comprehension variable",
             "global declaration",
             "second plain assignment",
+            "second import",
         ],
     )
     @pytest.mark.parametrize("where", ["between the address and the post", "in another function"])
-    def test_a_rebinding_of_the_address_in_any_form_is_reported(self, rebinding, where):
-        body = textwrap.indent(rebinding, "    ")
+    def test_a_rebinding_of_the_address_or_its_base_in_any_form_is_reported(
+        self, name, rebinding, where
+    ):
+        body = textwrap.indent(rebinding.replace("NAME", name), "    ")
         if where == "between the address and the post":
             planted = _BACKTEST_CLIENT_SHAPE.replace(
                 "    return requests.post", body + "\n    return requests.post"
@@ -670,18 +849,40 @@ class TestAPlantedSecondRequestInTheBacktestClientIsReported:
         assert planted != _BACKTEST_CLIENT_SHAPE
         assert _backtest_client_problems(planted) != []
 
+    @pytest.mark.parametrize("name", ["url", "COMPOSER_BASE_URL"])
     @pytest.mark.parametrize(
-        "planted",
-        [
-            _BACKTEST_CLIENT_SHAPE.replace("run_backtest(tree)", "run_backtest(tree, url=None)"),
-            _BACKTEST_CLIENT_SHAPE + "def planted(url):\n    return url\n",
-            _BACKTEST_CLIENT_SHAPE + "planted = lambda url: url\n",
-            _BACKTEST_CLIENT_SHAPE + "def url():\n    return None\n",
-        ],
-        ids=["parameter with a default", "parameter of another function", "lambda", "def"],
+        "form",
+        ["parameter with a default", "parameter of another function", "lambda", "def"],
     )
-    def test_a_parameter_def_or_lambda_named_like_the_address_is_reported(self, planted):
+    def test_a_parameter_def_or_lambda_named_like_the_address_or_its_base_is_reported(
+        self, name, form
+    ):
+        planted = {
+            "parameter with a default": _BACKTEST_CLIENT_SHAPE.replace(
+                "run_backtest(tree)", f"run_backtest(tree, {name}=None)"
+            ),
+            "parameter of another function": (
+                _BACKTEST_CLIENT_SHAPE + f"def planted({name}):\n    return {name}\n"
+            ),
+            "lambda": _BACKTEST_CLIENT_SHAPE + f"planted = lambda {name}: {name}\n",
+            "def": _BACKTEST_CLIENT_SHAPE + f"def {name}():\n    return None\n",
+        }[form]
+        assert planted != _BACKTEST_CLIENT_SHAPE
         assert _backtest_client_problems(planted) != []
+
+    def test_a_second_import_of_the_base_address_under_its_own_name_is_reported(self):
+        planted = "from planted_module import COMPOSER_BASE_URL\n" + _BACKTEST_CLIENT_SHAPE
+        assert _backtest_client_problems(planted) != []
+
+    def test_an_import_of_the_base_address_under_another_name_is_reported(self):
+        planted = _BACKTEST_CLIENT_SHAPE.replace(
+            "from alpha_bot_execution import COMPOSER_BASE_URL",
+            "from alpha_bot_execution import COMPOSER_BASE_URL as BASE",
+        ).replace("{COMPOSER_BASE_URL}", "{BASE}")
+        assert _backtest_client_problems(planted) != []
+
+    def test_the_unplanted_shape_binds_the_base_address_once(self):
+        assert len(_binding_sites(_BACKTEST_CLIENT_SHAPE, "COMPOSER_BASE_URL")) == 1
 
     def test_the_unplanted_shape_binds_the_address_once(self):
         assert len(_binding_sites(_BACKTEST_CLIENT_SHAPE, "url")) == 1

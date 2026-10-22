@@ -35,15 +35,19 @@ Contract pinned here (the implementer reads this file and the handoff, not the p
   or the exception type name, never ``str(exc)``, and logs the exception type name only.
 * The stored run record carries ``degraded``: ``True`` when the run met a Composer rate limit or
   any series, definition, backtest or holdings read of it failed (a refusal, a missing record, a
-  server error, a body that cannot be read), ``False`` otherwise. A series answered with an empty
-  list is an answer, not a failed read. The 03:45 tick does not count a degraded run as the day's
+  rate limit at any kind of read, a server error, a transport error, a body that cannot be read, a
+  backtest step that raised), ``False`` otherwise. A series answered with an empty list is an
+  answer, not a failed read. ``DEGRADING_READS`` lists every kind and failure class. The 03:45 tick does not count a degraded run as the day's
   review, so the next tick of the same as-of day reviews again; a run with no flag counts as it
   did before.
 * The job writes one start line, after it has its run id and before its first request, and one
-  completion line, after its last request, each naming the trigger, the US Eastern time and the
-  run id; the completion line also says how the run ended: ``completed``, ``did not complete``,
-  or ``failed`` followed by the exception type name. The lines go to the daemon's log file through
-  the daemon's file handler, which keeps the format it has (no formatter is set on it).
+  completion line, after its last request, each naming the trigger, the US Eastern time as
+  ``YYYY-MM-DD HH:MM ET`` (the text the panel's Eastern formatter builds, from one shared builder
+  in app.py) and the run id; the completion line also says how the run ended: ``completed``,
+  ``did not complete``, or ``failed`` followed by the exception type name, and a completed run's
+  line carries ``recommendations=<n>``, the number of recommendation rows the run wrote. The
+  lines go to the daemon's log file through the daemon's file handler, which keeps the format it
+  has (no formatter is set on it).
 * An explanation is dated with the US Eastern calendar day the run started (ISO ``YYYY-MM-DD``),
   which is not the as-of day when the run starts before the close; a reused explanation keeps the
   day it was first written; a missing explanation has no day.
@@ -51,9 +55,11 @@ Contract pinned here (the implementer reads this file and the handoff, not the p
 
 from __future__ import annotations
 
+import ast
 import copy
 import logging
 import math
+import pathlib
 import re
 from datetime import date, datetime
 from unittest.mock import patch
@@ -1082,8 +1088,8 @@ class TestTheJobWritesAStartLineAndACompletionLine:
     @staticmethod
     def _assert_names_trigger_and_eastern_time(message: str, trigger: str) -> None:
         assert trigger in message, f"the trigger is missing: {message!r}"
-        assert "2026-10-20" in message and "03:45" in message, (
-            f"the US Eastern date and time are missing: {message!r}"
+        assert "2026-10-20 03:45 ET" in message, (
+            f"the US Eastern date and time, with its zone label, are missing: {message!r}"
         )
         assert "07:45" not in message, f"the time is UTC, not US Eastern: {message!r}"
 
@@ -1175,6 +1181,85 @@ class TestTheJobWritesAStartLineAndACompletionLine:
         assert LEAK not in log.text(), "the log names the exception type only"
         assert "did not complete" not in ending and "completed" not in ending
 
+    @pytest.mark.parametrize("trigger", ["nightly", "on_demand"])
+    @pytest.mark.parametrize(
+        "instant",
+        [jb.NOW_ET, datetime(2026, 12, 15, 3, 45, tzinfo=jb.ET)],
+        ids=["daylight time", "standard time"],
+    )
+    def test_both_lines_carry_the_time_the_panel_prints_with_its_zone_label(
+        self, world, client, monkeypatch, trigger, instant
+    ):
+        """The zone label is "ET" in both halves of the year, and it is the text the panel's
+        Eastern formatter builds for the same instant, not a second spelling of it."""
+        jb.freeze_app_clock(monkeypatch, instant)
+        jb.patch_runner(monkeypatch, [], isolate=False)
+        expected = instant.strftime("%Y-%m-%d %H:%M") + " ET"
+        assert app_module._tenure_eastern(instant.isoformat()) == expected, (
+            "premise: the panel's formatter prints the instant in that form"
+        )
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            if trigger == "nightly":
+                run_tick()
+            else:
+                assert run_on_demand(client, monkeypatch).status_code == 202
+
+        run_id = jb.run_rows()[0]["raw_response"]["run_id"]
+        start, end = self._the_two_lines(log, run_id)
+        for position in (start, end):
+            message = log.records[position].getMessage()
+            assert trigger in message
+            assert expected in message, f"expected {expected!r} in {message!r}"
+
+    def test_the_eastern_time_text_is_built_in_one_place_of_the_application(self):
+        """The start line, the completion line and the panel's formatter share one builder:
+        the form of the stamp is a literal once in app.py, and neither line's function formats
+        a time itself."""
+        tree = ast.parse(pathlib.Path(app_module.__file__).read_text(encoding="utf-8"))
+        stamp_literals = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and node.value == "%Y-%m-%d %H:%M"
+        ]
+        assert len(stamp_literals) == 1, (
+            f"the minute-precision stamp form is written {len(stamp_literals)} times in app.py"
+        )
+        functions = {
+            node.name: node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and node.name in {"_tenure_review_job", "_log_tenure_review_end"}
+        }
+        assert set(functions) == {"_tenure_review_job", "_log_tenure_review_end"}
+        for name, node in functions.items():
+            formats = [
+                call
+                for call in ast.walk(node)
+                if isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == "strftime"
+            ]
+            assert formats == [], f"{name} formats a time itself ({len(formats)} call(s))"
+
+    @pytest.mark.parametrize("twin, written", [(False, 0), (True, 1)], ids=["none", "one"])
+    def test_the_completion_line_of_a_completed_run_carries_the_number_of_recommendations_it_wrote(
+        self, world, monkeypatch, twin, written
+    ):
+        jb.install_clean_world(monkeypatch, twin=twin)
+
+        with jb.capturing_daemon_log(monkeypatch) as log:
+            run_tick()
+
+        (row,) = jb.run_rows()
+        run_id = row["raw_response"]["run_id"]
+        stored = [r for r in jb.rec_rows() if r["raw_response"].get("review_run_id") == run_id]
+        assert len(stored) == written, "premise: the number of recommendation rows the run wrote"
+        start, end = self._the_two_lines(log, run_id)
+        ending = log.records[end].getMessage()
+        assert re.search(rf"recommendations={written}(?!\d)", ending), ending
+        assert "recommendations=" not in log.records[start].getMessage()
+
 
 # ---------------------------------------------------------------------------
 # A degraded run is not the night's review
@@ -1199,24 +1284,120 @@ def _second_account_holdings_fail(router, env):
     )
 
 
-# Each way a read of a run can fail, with the kind of request it fails. The setup takes the
-# router and the environment file.
+# Every way a read of a run can fail, by the kind of request it fails: one table the degraded
+# tests walk. A failure class of the portfolio client (refused, not found, rate limited,
+# unavailable, rejected, unreadable) is served once as each status or body that produces it, for
+# each of the three GET reads the run may fail without ending (a series, a definition, the holdings
+# of an account); the backtest POST is served each status, transport error and body its client
+# turns into an error result; and the steps that raise instead of returning a failure class are
+# listed apart. A series answered with an empty list is an answer and is not in this table.
+_GET_FAILURES = {
+    "refused 401": lambda: h.error_reply(401),
+    "refused 403": lambda: h.error_reply(403),
+    "not found 404": lambda: h.error_reply(404),
+    "rate limited 429": lambda: h.error_reply(429),
+    "unavailable 500": lambda: h.error_reply(500),
+    "unavailable 503": lambda: h.error_reply(503),
+    "unavailable transport error": lambda: h.raising(requests.ConnectionError("down")),
+    "unavailable timeout": lambda: h.raising(requests.Timeout("slow")),
+    "rejected 400": lambda: h.error_reply(400),
+    "rejected redirect": lambda: h.redirect_reply(302),
+    "unreadable non-JSON 200": h.non_json_200,
+}
+# A 200 answer whose body has the wrong shape, for each read (the client calls it unreadable).
+_UNREADABLE_BODIES = {
+    "series": lambda: h.Reply(body={"epoch_ms": [1, 2], "deposit_adjusted_series": [1]}),
+    "definition": lambda: h.Reply(body=[]),
+    "holdings": lambda: h.Reply(body={"by_symphony": []}),
+}
+_BACKTEST_FAILURES = {
+    "bad request 400": lambda: h.error_reply(400),
+    "refused 401": lambda: h.error_reply(401),
+    "refused 403": lambda: h.error_reply(403),
+    "not found 404": lambda: h.error_reply(404),
+    "too large 413": lambda: h.error_reply(413),
+    "rate limited 429": lambda: h.error_reply(429),
+    "unavailable 500": lambda: h.error_reply(500),
+    "unavailable 502": lambda: h.error_reply(502),
+    "unavailable 503": lambda: h.error_reply(503),
+    "transport error": lambda: h.raising(requests.ConnectionError("down")),
+    "timeout": lambda: h.raising(requests.Timeout("slow")),
+    "unreadable non-JSON 200": h.non_json_200,
+}
+# Each read kind: the router's name for the request, and how a failing reply is installed.
+_INSTALL_FAILING = {
+    "series": ("series", lambda r, reply: r.set_series(h.MID_ID, reply)),
+    "definition": ("score", _fail_definition),
+    "holdings": ("holdings", lambda r, reply: r.set_all_holdings(reply)),
+    "backtest": ("backtest", lambda r, reply: r.set_backtest(reply)),
+}
+
+
+def _serving(read: str, make_reply):
+    """A setup (router, environment file, monkeypatch) that serves the failing reply for one
+    kind of read."""
+    _, install = _INSTALL_FAILING[read]
+
+    def setup(router, env, monkeypatch):
+        install(router, make_reply())
+
+    return setup
+
+
+def _definition_read_raises(router, env, monkeypatch):
+    """The step raises before any backtest is asked for: the definition reader itself raises
+    for the one symphony the run backtests, every other read answered."""
+    real = cpc.read_symphony_definition
+
+    def raising_reader(symphony_id, *args, **kwargs):
+        if symphony_id == h.BACKTEST_ID:
+            raise RuntimeError("the definition reader broke")
+        return real(symphony_id, *args, **kwargs)
+
+    monkeypatch.setattr(cpc, "read_symphony_definition", raising_reader)
+
+
 DEGRADING_READS = {
-    "series rate limited": ("series", lambda r, env: r.set_series(h.MID_ID, h.error_reply(429))),
-    "series server error": ("series", lambda r, env: r.set_series(h.MID_ID, h.error_reply(500))),
-    "series not found": ("series", lambda r, env: r.set_series(h.MID_ID, h.error_reply(404))),
-    "series unreadable": ("series", lambda r, env: r.set_series(h.MID_ID, h.non_json_200())),
-    "definition server error": ("score", lambda r, env: _fail_definition(r, h.error_reply(500))),
-    "definition not found": ("score", lambda r, env: _fail_definition(r, h.error_reply(404))),
-    "definition unreadable": ("score", lambda r, env: _fail_definition(r, h.non_json_200())),
-    "backtest too large": ("backtest", lambda r, env: r.set_backtest(h.error_reply(413))),
-    "backtest rate limited": ("backtest", lambda r, env: r.set_backtest(h.error_reply(429))),
-    "backtest server error": ("backtest", lambda r, env: r.set_backtest(h.error_reply(500))),
-    "backtest unreadable": ("backtest", lambda r, env: r.set_backtest(h.non_json_200())),
-    "holdings server error": ("holdings", lambda r, env: r.set_all_holdings(h.error_reply(500))),
-    "holdings rate limited": ("holdings", lambda r, env: r.set_all_holdings(h.error_reply(429))),
-    "holdings unreadable": ("holdings", lambda r, env: r.set_all_holdings(h.non_json_200())),
-    "holdings of a second account": ("holdings", _second_account_holdings_fail),
+    **{
+        f"{read} {label}": (_INSTALL_FAILING[read][0], _serving(read, make))
+        for read in ("series", "definition", "holdings")
+        for label, make in _GET_FAILURES.items()
+    },
+    **{
+        f"{read} unreadable wrong shape": (_INSTALL_FAILING[read][0], _serving(read, make))
+        for read, make in _UNREADABLE_BODIES.items()
+    },
+    "definition empty object": (
+        "score",
+        lambda r, env, mp: _fail_definition(r, h.Reply(body={})),
+    ),
+    **{
+        f"backtest {label}": ("backtest", _serving("backtest", make))
+        for label, make in _BACKTEST_FAILURES.items()
+    },
+    "backtest step raised by the transport": (
+        "backtest",
+        lambda r, env, mp: r.set_backtest(h.raising(RuntimeError("the transport broke"))),
+    ),
+    "backtest step raised by an unexpected 200 body": (
+        "backtest",
+        lambda r, env, mp: r.set_backtest(h.Reply(body=[])),
+    ),
+    "definition step raised before any backtest": ("series", _definition_read_raises),
+    "holdings later span": (
+        "holdings",
+        lambda r, env, mp: setattr(
+            r,
+            "holdings_handler",
+            lambda request, index: (
+                h.error_reply(500) if index > 0 else h.Reply(body=h.holdings_recent_body())
+            ),
+        ),
+    ),
+    "holdings of a second account": (
+        "holdings",
+        lambda r, env, mp: _second_account_holdings_fail(r, env),
+    ),
 }
 
 
@@ -1227,7 +1408,7 @@ class TestADegradedRunIsRecordedAndTheNightIsReviewedAgain:
     ):
         kind, make_failing = DEGRADING_READS[name]
         router = jb.install_clean_world(monkeypatch)
-        make_failing(router, world)
+        make_failing(router, world, monkeypatch)
 
         run_tick()
 

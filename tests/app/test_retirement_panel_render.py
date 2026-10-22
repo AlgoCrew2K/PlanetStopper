@@ -294,6 +294,8 @@ class TestEmptyState:
 
 _PANEL_ITEMS = ("performance", "composite", "redundancy", "backtest", "marginal", "long_vix")
 _MINUS = chr(0x2212)  # the typographic minus sign, accepted in place of a hyphen
+_NO_FLAG = object()  # a stored run that carries no degraded field at all
+_FLAG_MARKER = "DEGRADED-FLAG-MARKER-7f3a"
 
 
 def _page(client):
@@ -391,6 +393,109 @@ class TestHeaderAndEmptyStates:
         note = panel.find("tenure-review-threshold-note")
         assert note is not None
         assert "configured threshold invalid; 126 in use" in note.text()
+
+    DEGRADED_NOTICE = (
+        "Some Composer reads did not complete in this run; the affected items say why."
+    )
+
+    @staticmethod
+    def _store_run_with_flag(flag, run_id=pb.RUN_ID_FIRST, **kwargs):
+        """Store a completed run whose ``degraded`` field is ``flag``; ``flag`` as the absent
+        sentinel stores a run with no such field (a run from before the flag existed)."""
+        pb.seed_bot_state()
+        record = pb.full_record(run_id, **kwargs)
+        if flag is not _NO_FLAG:
+            record["degraded"] = flag
+        pb.store_run(record)
+        return record
+
+    def test_a_degraded_run_says_so_once_in_the_run_header_with_the_fixed_text(
+        self, client, isolated_db
+    ):
+        self._store_run_with_flag(True)
+        panel = _panel(client)
+        notices = panel.find_all("tenure-review-degraded-notice")
+        assert len(notices) == 1, "exactly one notice, not one per affected item"
+        assert notices[0].text().strip() == self.DEGRADED_NOTICE
+        assert panel.text().count(self.DEGRADED_NOTICE) == 1
+        header = panel.find("tenure-review-as-of").parent
+        assert notices[0].parent is header, "the notice sits in the run header with the as-of day"
+        assert len(panel.find_all("tenure-review-entry")) > 0, "the entries are still listed"
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            False,
+            _NO_FLAG,
+            None,
+            "true",
+            1,
+            0,
+            [],
+            {},
+            f"<b>{_FLAG_MARKER}</b>",
+        ],
+        ids=[
+            "false",
+            "no flag stored",
+            "null",
+            "the text true",
+            "one",
+            "zero",
+            "list",
+            "mapping",
+            "markup",
+        ],
+    )
+    def test_a_run_whose_flag_is_not_the_boolean_true_shows_no_notice_and_prints_no_stored_value(
+        self, client, isolated_db, flag
+    ):
+        self._store_run_with_flag(flag)
+        body = _page(client)
+        panel = pb.panel_of(body)
+        assert panel.find("tenure-review-as-of") is not None, "premise: the run header is rendered"
+        assert panel.find("tenure-review-degraded-notice") is None
+        assert self.DEGRADED_NOTICE not in body
+        assert _FLAG_MARKER not in body, "a stored value is never printed, escaped or not"
+
+    @pytest.mark.parametrize(
+        "older, newer, shown",
+        [(True, False, False), (False, True, True), (True, _NO_FLAG, False)],
+        ids=["older degraded", "newer degraded", "newer has no flag"],
+    )
+    def test_only_the_newest_run_decides_whether_the_notice_is_shown(
+        self, client, isolated_db, older, newer, shown
+    ):
+        self._store_run_with_flag(older, pb.RUN_ID_FIRST, completed_at="2026-12-31T03:50:00+00:00")
+        self._store_run_with_flag(
+            newer, pb.RUN_ID_SECOND, trigger="on_demand", completed_at="2026-12-31T21:10:00+00:00"
+        )
+        panel = _panel(client)
+        assert (panel.find("tenure-review-degraded-notice") is not None) is shown
+
+    def test_the_notice_is_styled_with_design_tokens_only(self, client, isolated_db):
+        self._store_run_with_flag(True)
+        notice = _panel(client).find("tenure-review-degraded-notice")
+        assert notice is not None
+        assert "style" not in notice.attrs, "no inline style"
+        classes = notice.classes()
+        assert classes, "the notice carries a class that has a rule"
+        css = TestDesignSystem._css_of_exact_classes(TestDesignSystem._css_rules(), classes)
+        assert "var(--studio-" in css, "the notice's rule uses the design tokens"
+        assert not re.search(r"#[0-9a-fA-F]{3,8}\b", css), "raw hex in the notice's rule"
+        assert not re.search(r"\b(rgb|rgba|hsl|hsla)\(", css), "raw color in the notice's rule"
+
+    @pytest.mark.parametrize("flag", [True, False, _NO_FLAG], ids=["degraded", "clean", "no flag"])
+    def test_the_api_serves_the_stored_flag_as_it_is(self, client, isolated_db, flag):
+        self._store_run_with_flag(flag)
+        response = client.get("/api/retirement-recommendations")
+        assert response.status_code == 200
+        run = pb.strict_json(response)["review_run"]
+        assert run is not None, "premise: the stored run is served"
+        if flag is _NO_FLAG:
+            assert "degraded" not in run, "no flag is made up for a run that never had one"
+        else:
+            assert run["degraded"] is flag
 
 
 class TestOneEntryPerLiveSymphony:
