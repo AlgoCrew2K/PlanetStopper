@@ -999,6 +999,13 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     "candidate_id"/"sibling_id" (already matched by construction to find
     this prior row -- not citable evidence).
 
+    Cycle 2e (retirement-visibility AC-4): "run_id" is excluded too. The 03:45
+    tick (and a manual "Run now") stamps a FRESH run_id on every rec each run;
+    it is bookkeeping that scopes a card to its run, never evidence the
+    explainer cites. Left in the snapshot it would differ every night and
+    defeat explanation reuse (re-introducing the nightly LLM spend the reuse
+    gate exists to prevent) for a pair whose evidence is unchanged.
+
     PR#140 /code-review finding 1 (Cycle 2c, AC-4): the whole-dict design
     replaces a curated field-list comparison -- advisors.retirement_
     explainer._build_explain_messages json.dumps()s the WHOLE rec and
@@ -1013,7 +1020,7 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     with zero special-casing. Future-proof against schema growth: a NEW
     raw_response field automatically joins the comparison.
     """
-    excluded = {"explanation", "candidate_id", "sibling_id"}
+    excluded = {"explanation", "candidate_id", "sibling_id", "run_id"}
     snapshot = {k: v for k, v in rec.items() if k not in excluded}
     return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
 
@@ -1077,25 +1084,117 @@ def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> s
         return None
 
 
+# Cycle 2e (retirement-visibility AC-4): the advisor_observations role under
+# which every retirement run (the 03:45 tick AND a manual "Run now") persists
+# exactly ONE summary row, so the dashboard can show that a run happened and
+# what it saw even when it recommended nothing. Deliberately NOT in
+# _ADVISOR_ROLES (same convention as RETIREMENT_RECOMMENDATION): it must never
+# surface in the Overview observations loop.
+_RETIREMENT_RUN_SUMMARY_ROLE = "RETIREMENT_RUN_SUMMARY"
+
+# Cycle 2e (AC-7): single-flight guard shared by the scheduled 03:45 tick and
+# the POST /ai-advisor/retirement/run route. Always acquired NON-blocking --
+# a request thread or the scheduler thread never waits on it -- and released
+# by the thread that runs the worker, in a finally.
+_RETIREMENT_RUN_LOCK = threading.Lock()
+
+
+def _retirement_internal_error_summary(error_type: str) -> dict:
+    """Minimal-but-complete run summary for a run that failed before (or
+    instead of) producing one of its own.
+
+    Same key envelope as advisors.retirement_recommender's summary so every
+    reader (the panel template, GET /api/retirement-recommendations) can rely
+    on the keys being present; unknown counts are None, never a fabricated 0.
+    D-1: `error_type` is a bare type(exc).__name__ -- never str(exc).
+    """
+    return {
+        "run_id": uuid.uuid4().hex,
+        "run_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": "composer",
+        "basis_label": None,
+        "status": "internal_error",
+        "error_type": error_type,
+        "roster_size": None,
+        "symphonies_with_series": None,
+        "symphonies_without_series": [],
+        "series_days_min": None,
+        "series_days_max": None,
+        "lookback_days": None,
+        "pairs_evaluated": None,
+        "pairs_screened": None,
+        "blocked_uncertainty": None,
+        "blocked_stress_too_thin": None,
+        "blocked_stress_below_threshold": None,
+        "blocked_no_candidate": None,
+        "recommendations": 0,
+        "screen_threshold": None,
+        "stress_gate_min_aligned_days": None,
+    }
+
+
+def _persist_retirement_run_summary(summary: dict, persisted_count: int) -> None:
+    """Persist ONE RETIREMENT_RUN_SUMMARY advisor_observations row (Cycle 2e,
+    AC-4). Never raises (D-1: only type(exc).__name__ is logged).
+
+    `recommendations` is overwritten with `persisted_count` -- the number of
+    recommendation rows persist_recommendations actually wrote -- so the
+    summary can never claim cards that do not exist. Every other key is the
+    producer's, verbatim. Callers invoke this ONLY AFTER the recommendation
+    rows are persisted: the Run-now JS polls the summary's run_id and reloads
+    the page the moment it changes, so a summary written first could reload
+    the page onto a run whose cards are not there yet.
+    """
+    try:
+        row = dict(summary)
+        row["recommendations"] = persisted_count
+        database.insert_advisor_observation(
+            advisor_role=_RETIREMENT_RUN_SUMMARY_ROLE,
+            subject_type="fleet",
+            subject_id="retirement",
+            verdict=row.get("status"),
+            raw_response=row,
+        )
+    except Exception as exc:
+        _daemon_log.error("Retirement run summary persist failed: %s", type(exc).__name__)
+
+
 def _retirement_recommender_tick_worker() -> None:
     """Background worker that runs the Retirement Recommender's daily tick.
 
     Imported lazily to keep advisors.retirement_recommender off the execution
-    path (CC-2). Calls the real producer chain -- build_recommendations() then
-    persist_recommendations(<its own return value>) -- so the read-only
+    path (CC-2). Calls the real producer chain --
+    build_recommendations_with_summary(source="composer") then
+    persist_recommendations(<its own recs>) -- so the read-only
     GET /api/retirement-recommendations route and the AI Advisor panel have
     something to render (PM ruling, review-response cycle 2: without this
     tick nothing in production ever calls the producer, so both read-only
     surfaces render an honest-empty state forever).
 
+    Cycle 2e (retirement-visibility AC-3/AC-4): the producer now returns
+    (recs, summary) and reads each symphony's realized daily series from
+    Composer; this worker (1) stamps summary["run_id"] onto every rec BEFORE
+    the enrichment/explain pass (so the persisted dict is exactly what the
+    explainer saw, and so the panel can scope its cards to the latest run),
+    (2) persists the recs -- persist_recommendations is called exactly once
+    per successful build, even for an empty list -- and (3) ONLY THEN persists exactly one
+    RETIREMENT_RUN_SUMMARY row whose `recommendations` is the count actually
+    persisted. A run is therefore always visible, even when it recommends
+    nothing or fails: a producer exception, a recommendation-persist failure
+    or any unexpected pipeline exception still yields one summary row with
+    status "internal_error" + the exception's TYPE NAME (D-1, never
+    str(exc)); a failure to write the summary itself is swallowed. The same
+    worker serves the scheduled 03:45 tick and the manual Run-now route.
+
     Cycle 2b (AC-2): each recommendation is run through advisors.
     retirement_explainer.explain_recommendation and the result is stamped
     onto rec["explanation"] -- this keeps the LLM entirely out of
-    advisors/retirement_recommender.py (byte-unchanged this cycle, pinned by
-    a golden hash test) and out of the render/approve/checklist paths
-    (operator ruling, Gate-2b). A per-rec explainer failure degrades that
-    one recommendation's explanation to None and never blocks persistence
-    of the rest of the batch.
+    advisors/retirement_recommender.py (kept LLM-free by an AST import scan
+    in tests/app/test_retirement_producer_explainer_wiring.py, which replaced
+    the Cycle-2b golden-hash pin in Cycle 2e AC-9) and out of the
+    render/approve/checklist paths (operator ruling, Gate-2b). A per-rec
+    explainer failure degrades that one recommendation's explanation to None
+    and never blocks persistence of the rest of the batch.
 
     Cycle 2c (AC-2): before its own explain-or-reuse decision, each rec is
     enriched in place with candidate_name/sibling_name resolved from live
@@ -1133,13 +1232,36 @@ def _retirement_recommender_tick_worker() -> None:
     D-1 error contract: only type(exc).__name__ appears in log records at
     WARNING+ -- a producer failure must never crash the scheduler thread.
     """
+    summary: dict | None = None
+    persisted_count = 0
+    # Type name of an unexpected failure AFTER a successful build (set by the
+    # two except clauses below). A failed build is already represented by its
+    # own internal_error summary, so it never sets this.
+    failure_type: str | None = None
+    build_failed = False
     try:
         from advisors.retirement_recommender import (  # lazy — not module-level (CC-2)
-            build_recommendations,
+            build_recommendations_with_summary,
             persist_recommendations,
         )
 
-        recs = build_recommendations()
+        try:
+            recs, summary = build_recommendations_with_summary(source="composer")
+            if not isinstance(recs, list) or not isinstance(summary, dict):
+                raise TypeError("unexpected build_recommendations_with_summary result shape")
+        except Exception as exc:
+            _daemon_log.error("Retirement recommender build failed: %s", type(exc).__name__)
+            build_failed = True
+            recs, summary = [], _retirement_internal_error_summary(type(exc).__name__)
+
+        # Cycle 2e (AC-4): stamp the run's id onto every rec BEFORE the
+        # enrichment/rounding/reuse/explain pass below, so the dict that gets
+        # persisted is exactly the dict the explainer saw.
+        if not summary.get("run_id"):
+            summary["run_id"] = uuid.uuid4().hex
+        for rec in recs:
+            rec["run_id"] = summary["run_id"]
+
         if recs:
             from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
 
@@ -1216,22 +1338,80 @@ def _retirement_recommender_tick_worker() -> None:
                         type(exc).__name__,
                     )
                     rec["explanation"] = None
-        persist_recommendations(recs)
-        _daemon_log.info("Retirement recommender tick complete: %d recommendation(s).", len(recs))
+        if not build_failed:
+            try:
+                _persisted = persist_recommendations(recs)
+                # persist_recommendations is the authority on how many rows
+                # were actually written; anything but a plain int counts as 0.
+                if isinstance(_persisted, int) and not isinstance(_persisted, bool):
+                    persisted_count = _persisted
+                _daemon_log.info(
+                    "Retirement recommender tick complete: %d recommendation(s).", len(recs)
+                )
+            except Exception as exc:
+                _daemon_log.error(
+                    "Retirement recommendation persist failed: %s", type(exc).__name__
+                )
+                failure_type = type(exc).__name__
     except Exception as exc:
         _daemon_log.error("Retirement recommender tick worker failed: %s", type(exc).__name__)
+        failure_type = type(exc).__name__
+
+    # Cycle 2e (AC-4): exactly ONE summary row per run, written only AFTER the
+    # recommendation rows. A run that failed after a successful build must not
+    # read "ok" -- its recs were lost -- so the summary is downgraded to an
+    # honest internal_error carrying the exception TYPE NAME only (D-1).
+    if summary is None:
+        summary = _retirement_internal_error_summary(failure_type or "UnknownError")
+    elif failure_type is not None and summary.get("status") != "internal_error":
+        summary["status"] = "internal_error"
+        summary["error_type"] = failure_type
+    _persist_retirement_run_summary(summary, persisted_count)
+
+
+def _retirement_scheduled_tick_body() -> None:
+    """Thread body of the scheduled 03:45 retirement tick (Cycle 2e AC-7).
+
+    The single-flight decision lives HERE, inside the daemon thread, never in
+    _run_retirement_recommender_tick: the scheduler thread must never decide
+    synchronously (it always just spawns). If a run is already in flight (an
+    operator's Run-now click) the scheduled tick logs an INFO line and skips
+    -- the in-flight run is the same worker and persists the same summary --
+    otherwise it runs the worker and releases the lock in a finally.
+    """
+    if not _RETIREMENT_RUN_LOCK.acquire(blocking=False):
+        _daemon_log.info("Retirement recommender tick skipped: a run is already in flight.")
+        return
+    try:
+        _retirement_recommender_tick_worker()
+    finally:
+        _RETIREMENT_RUN_LOCK.release()
+
+
+def _retirement_run_now_body() -> None:
+    """Thread body of a manual Run-now (Cycle 2e AC-7). The request thread
+    already acquired _RETIREMENT_RUN_LOCK (non-blocking) before spawning this
+    thread, so this only runs the shared worker and releases the lock in a
+    finally -- on a worker failure as well as on success."""
+    try:
+        _retirement_recommender_tick_worker()
+    finally:
+        _RETIREMENT_RUN_LOCK.release()
 
 
 def _run_retirement_recommender_tick() -> None:
     """Non-blocking daily off-hours wrapper for the retirement recommender tick.
 
     Spawns a daemon thread so the scheduler thread returns immediately — the
-    tick never blocks the 1-minute execution path (arch constraint 1).
+    tick never blocks the 1-minute execution path (arch constraint 1). It
+    ALWAYS builds and starts that thread; the single-flight check against a
+    concurrent manual Run-now happens inside the thread
+    (_retirement_scheduled_tick_body).
     """
     import threading
 
     t = threading.Thread(
-        target=_retirement_recommender_tick_worker,
+        target=_retirement_scheduled_tick_body,
         daemon=True,
         name="retirement-recommender-tick",
     )
@@ -4229,10 +4409,106 @@ def _refresh_retirement_display_names(
         )
 
 
-def _fetch_retirement_recommendations(
-    limit: int | None = None, bot_state_getter: Callable[[], dict] | None = None
+def _fetch_retirement_last_run() -> dict | None:
+    """Return the latest RETIREMENT_RUN_SUMMARY row's raw_response dict, or
+    None when no run has been recorded yet (Cycle 2e, AC-5).
+
+    Read-only (database.get_advisor_observations_for_role opens a read-only
+    connection). Deliberately RAISES on a DB-read failure instead of swallowing
+    it -- the same contract as _fetch_retirement_recommendations: each caller
+    degrades on its own terms (the API route to last_run null, the panel to its
+    "Not run yet" block, the recommendation filter to the legacy
+    calendar-date path), so a read failure is never mistaken for "never run"
+    inside this helper. A newest row whose raw_response is not a dict (a
+    hand-written/corrupt row) is also None -- there is no usable summary.
+    """
+    rows = database.get_advisor_observations_for_role(_RETIREMENT_RUN_SUMMARY_ROLE, limit=1)
+    if not rows:
+        return None
+    raw = rows[0].get("raw_response")
+    return raw if isinstance(raw, dict) else None
+
+
+def _retirement_resolve_excluded_symphonies(
+    last_run: dict | None, bot_state_getter: Callable[[], dict]
 ) -> list[dict]:
-    """Return the LATEST NIGHT's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
+    """Return [{"symphony_id", "name", "reason"}, ...] for the "excluded from
+    this run" list of the panel's last-run block (Cycle 2e, AC-6).
+
+    `last_run["symphonies_without_series"]` carries Composer hashes; the panel
+    shows the operator's display name with the hash as the honest fallback for
+    a symphony no longer in bot_state, resolved through the same shared
+    advisors.frontrunner_builder.resolve_incumbent_display_name helper the
+    recommendation cards use. `reason` is passed through verbatim (the template
+    autoescapes it). bot_state is read through `bot_state_getter` only when
+    there is something to resolve, so a run that excluded nothing costs no
+    load_state(). Malformed entries are skipped; never raises (any failure
+    degrades to []).
+    """
+    try:
+        entries = last_run.get("symphonies_without_series") if isinstance(last_run, dict) else None
+        if not isinstance(entries, list) or not entries:
+            return []
+        try:
+            from advisors.frontrunner_builder import (  # noqa: PLC0415 -- CC-2 lazy
+                resolve_incumbent_display_name as _resolve_name,
+            )
+        except Exception:
+            _resolve_name = None
+        bot_state = bot_state_getter()
+        excluded: list[dict] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            symphony_id = entry.get("symphony_id")
+            if not isinstance(symphony_id, str) or not symphony_id:
+                continue
+            name = symphony_id
+            if _resolve_name is not None:
+                resolved = _resolve_name(bot_state, symphony_id)
+                if isinstance(resolved, str) and resolved:
+                    name = resolved
+            reason = entry.get("reason")
+            excluded.append(
+                {
+                    "symphony_id": symphony_id,
+                    "name": name,
+                    "reason": reason if isinstance(reason, str) else "",
+                }
+            )
+        return excluded
+    except Exception:
+        return []
+
+
+# Sentinel for _fetch_retirement_recommendations's `last_run` keyword: "the
+# caller did not supply one -- look it up yourself". An explicit None is a
+# real value ("no usable summary") and must take the legacy path WITHOUT a
+# second lookup, so it cannot double as the default.
+_RETIREMENT_LAST_RUN_UNSET = object()
+
+
+def _fetch_retirement_recommendations(
+    limit: int | None = None,
+    bot_state_getter: Callable[[], dict] | None = None,
+    *,
+    last_run: dict | None = _RETIREMENT_LAST_RUN_UNSET,
+) -> list[dict]:
+    """Return the LATEST RUN's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
+
+    Cycle 2e (retirement-visibility AC-5): when the latest RETIREMENT_RUN_SUMMARY
+    row carries a truthy run_id, ONLY the recommendation rows stamped with that
+    same run_id are returned -- so a later run that finds nothing (a 14:00
+    "Run now", or a failed run) correctly empties the panel instead of leaving
+    an earlier run's cards on it (a 0-rec latest run returns []). With no
+    summary at all, a summary lacking a run_id (a legacy/hand-written row), or
+    a failed summary read, the pre-Cycle-2e latest-calendar-date behavior
+    described below is kept unchanged. `last_run` lets a caller that already
+    read the summary (the panel prefetch and the API route, which also render
+    it) pass that SAME snapshot in so the cards and the "last run" block can
+    never disagree about which run is current and no second lookup is issued;
+    omitted, the summary is read here. An explicit None means "no usable
+    summary" (legacy path, no re-read).
 
     Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
     Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
@@ -4282,18 +4558,30 @@ def _fetch_retirement_recommendations(
     """
     if limit is None:
         limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
+    if last_run is _RETIREMENT_LAST_RUN_UNSET:
+        try:
+            last_run = _fetch_retirement_last_run()
+        except Exception:
+            last_run = None  # a failed summary read degrades to the legacy path
     rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
-    dated_rows = [row for row in rows if row.get("created_at")]
-    if not dated_rows:
-        return []
-    latest_date = max(row["created_at"][:10] for row in dated_rows)
+    run_id = last_run.get("run_id") if isinstance(last_run, dict) else None
     out: list[dict] = []
-    for row in dated_rows:
-        if row["created_at"][:10] != latest_date:
-            continue
-        raw = row.get("raw_response")
-        if isinstance(raw, dict):
-            out.append(raw)
+    if run_id:
+        for row in rows:
+            raw = row.get("raw_response")
+            if isinstance(raw, dict) and raw.get("run_id") == run_id:
+                out.append(raw)
+    else:
+        dated_rows = [row for row in rows if row.get("created_at")]
+        if not dated_rows:
+            return []
+        latest_date = max(row["created_at"][:10] for row in dated_rows)
+        for row in dated_rows:
+            if row["created_at"][:10] != latest_date:
+                continue
+            raw = row.get("raw_response")
+            if isinstance(raw, dict):
+                out.append(raw)
     _join_retirement_approval_status(out)
     _refresh_retirement_display_names(out, bot_state_getter=bot_state_getter)
     return out
@@ -4311,7 +4599,17 @@ def api_retirement_recommendations():
     LIVE_EXECUTION interaction. GET never writes.
 
     Response shape: {"recommendations": [<raw_response dict, flattened to top
-    level>, ...]}. Each item carries the authoritative raw_response schema
+    level>, ...], "last_run": <dict | null>} -- exactly those two keys.
+    "last_run" (Cycle 2e, AC-5) is the latest RETIREMENT_RUN_SUMMARY row's
+    raw_response (run_id/run_at/source/status/per-gate blocked counts/
+    excluded symphonies/... -- see advisors.retirement_recommender's summary),
+    null when no run has been recorded or its read fails (the rest of the
+    response is still served, status stays 200). "recommendations" is scoped to
+    that same run when it carries a run_id (see
+    _fetch_retirement_recommendations). The Run-now JS polls this route until
+    last_run.run_id changes.
+
+    Each recommendation item carries the authoritative raw_response schema
     verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
     n_obs, candidate_composite, sibling_composite, candidate_metrics,
     sibling_metrics, uncertainty_gate_passed, structural_redundancy_gate_passed,
@@ -4341,10 +4639,22 @@ def api_retirement_recommendations():
             return None
         if isinstance(value, dict):
             return {k: _json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_json_safe(v) for v in value]
         return value
 
+    # Read the summary ONCE and hand that same snapshot to the recommendation
+    # fetch, so "last_run" and the run-scoped "recommendations" can never
+    # disagree about which run is current (a run could finish between two
+    # separate reads).
     try:
-        raw_rows = _fetch_retirement_recommendations()
+        last_run = _fetch_retirement_last_run()
+    except Exception:
+        _daemon_log.debug("api_retirement_recommendations: last_run read failed", exc_info=True)
+        last_run = None
+
+    try:
+        raw_rows = _fetch_retirement_recommendations(last_run=last_run)
     except Exception:
         _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
         raw_rows = []
@@ -4358,7 +4668,7 @@ def api_retirement_recommendations():
             _daemon_log.debug("api_retirement_recommendations: row degraded", exc_info=True)
             continue
 
-    return jsonify({"recommendations": out})
+    return jsonify({"recommendations": out, "last_run": _json_safe(last_run)})
 
 
 @app.route("/api/exit-turnover")
@@ -6624,6 +6934,17 @@ def ai_advisor_tab():
             _ai_advisor_bot_state_loaded = True
         return _ai_advisor_bot_state
 
+    # Cycle 2e (retirement-visibility AC-5/AC-6): the "last run" block. Read
+    # ONCE here and handed to _fetch_retirement_recommendations below so the
+    # block and the run-scoped cards always describe the same run. A read
+    # failure degrades to None -> the template's honest "Not run yet" block
+    # (never a 500); the cards then fall back to the legacy date filter.
+    retirement_last_run: dict | None = None
+    try:
+        retirement_last_run = _fetch_retirement_last_run()
+    except Exception:
+        retirement_last_run = None
+
     retirement_recommendations: list[dict] = []
     try:
         # Cycle 2d (AC-4, PR#140 2nd /code-review finding 5): pass the
@@ -6632,10 +6953,18 @@ def ai_advisor_tab():
         # the SAME memoized load the checklist/frontrunner blocks below
         # use, instead of independently calling database.load_state() again.
         retirement_recommendations = _fetch_retirement_recommendations(
-            bot_state_getter=_ensure_ai_advisor_bot_state
+            bot_state_getter=_ensure_ai_advisor_bot_state,
+            last_run=retirement_last_run,
         )
     except Exception:
         pass  # Empty-state rendered by template on [].
+
+    # Excluded-symphony display names for the "last run" block: resolved at
+    # request time against current bot_state through the SAME memoized closure
+    # (zero extra load_state() when the run excluded nothing).
+    retirement_last_run_excluded = _retirement_resolve_excluded_symphonies(
+        retirement_last_run, _ensure_ai_advisor_bot_state
+    )
 
     # ------------------------------------------------------------------ #
     # Retirement approval status + display names: both now resolved       #
@@ -6784,6 +7113,8 @@ def ai_advisor_tab():
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
         retirement_recommendations=retirement_recommendations,
+        retirement_last_run=retirement_last_run,
+        retirement_last_run_excluded=retirement_last_run_excluded,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,
@@ -7980,6 +8311,50 @@ def ai_advisor_retirement_reject():
     shared contract.
     """
     return _dispatch_retirement_decision("rejected")
+
+
+@app.route("/ai-advisor/retirement/run", methods=["POST"])
+def ai_advisor_retirement_run():
+    """Operator-initiated "Run now" for the Retirement Recommender (Cycle 2e,
+    AC-7): run the SAME worker as the 03:45 tick on demand.
+
+    Never runs the worker inline. The worker reads every live symphony's daily
+    series from Composer (rate-limited to 1 req/s) and may call the explainer
+    LLM, so it is genuinely multi-minute and must never block a Flask request
+    thread (dashboard Prime Directive: never blocks/slows the minute-by-minute
+    execution loop). The route hands off to a daemon thread and answers 202
+    immediately; the page learns the outcome by polling GET
+    /api/retirement-recommendations until last_run.run_id changes.
+
+    Single-flight: _RETIREMENT_RUN_LOCK is shared with the scheduled tick and
+    acquired NON-blocking in the request thread -- a run already in flight
+    answers 409 {"status": "already_running"} and starts nothing; otherwise the
+    daemon thread runs the worker and releases the lock in a finally (also
+    released here when the thread fails to start).
+
+    No request body is read. CSRF + auth come from the global
+    _csrf_before_request / _auth_before_request hooks. NOT in
+    _SETTINGS_WRITE_ALLOWLIST. Advisory-only: reaches no Composer
+    create/trade primitive and never touches the live-execution flag -- the
+    worker persists advisory rows and the run summary, nothing else. D-1: an
+    error response carries type(exc).__name__ only.
+    """
+    if not _RETIREMENT_RUN_LOCK.acquire(blocking=False):
+        return jsonify({"status": "already_running"}), 409
+
+    try:
+        threading.Thread(
+            target=_retirement_run_now_body,
+            daemon=True,
+            name="retirement-run-now",
+        ).start()
+    except Exception as exc:
+        # The thread never started, so nothing else will release the lock.
+        _RETIREMENT_RUN_LOCK.release()
+        _daemon_log.error("ai_advisor_retirement_run: dispatch failed: %s", type(exc).__name__)
+        return jsonify({"status": "error", "error": type(exc).__name__}), 500
+
+    return jsonify({"status": "started"}), 202
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:
