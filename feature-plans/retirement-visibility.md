@@ -90,6 +90,17 @@ The if-held counterfactual (`current_return`) stays excluded.
   when no summary exists or the latest summary has no `run_id`, it keeps today's latest-calendar-
   date filter (legacy rows). `GET /api/retirement-recommendations` gains an additive `last_run` key
   (`null` when none); `recommendations` is unchanged in shape.
+- [ ] **AC-5b (a failed run never hides earlier cards — added mid-cycle, PM ruling 2026-10-22 on
+  ret5-review's finding 1).** Under AC-5 as first built, a `series_unavailable`/`internal_error`
+  night (e.g. a Composer outage at 03:45) scoped the cards to a run with zero rows, so every earlier
+  card vanished — including approved cards and their wind-down checklists, which would read to the
+  operator as lost approvals. Fix: cards are scoped to the latest summary with `status == "ok"` and a
+  `run_id` (the latest SUCCESSFUL run); the last-run block still renders the latest summary of ANY
+  status. When the latest summary is not `ok` but an earlier `ok` one exists, the panel shows a
+  `data-testid="retirement-cards-from-earlier-run"` note naming that run's `run_at` (UTC). When no
+  `ok` summary with a `run_id` exists, the legacy latest-calendar-date filter applies (unchanged).
+  `GET /api/retirement-recommendations` keeps `last_run` = latest summary of any status and gains
+  an additive `cards_run` key = the summary the cards were scoped to (`null` on the legacy path).
 - [ ] **AC-6 (panel shows every run).** The Overview-tab Retirement Recommendations panel renders a
   `data-testid="retirement-last-run"` block ABOVE the cards: run time; source/basis; symphonies
   analysed vs roster; series depth range; pairs screened at the threshold; blocked counts per gate,
