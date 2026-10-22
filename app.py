@@ -4423,9 +4423,10 @@ def _fetch_retirement_last_run() -> dict | None:
     connection). Deliberately RAISES on a DB-read failure instead of swallowing
     it -- the same contract as _fetch_retirement_recommendations: each caller
     degrades on its own terms (the API route to last_run null, the panel to its
-    "Not run yet" block, the recommendation filter to the legacy
-    calendar-date path), so a read failure is never mistaken for "never run"
-    inside this helper. A newest row whose raw_response is not a dict (a
+    "Not run yet" block), so a read failure is never mistaken for "never run"
+    inside this helper. This is the latest run of ANY status (what the
+    "last run" block shows); the run the cards are scoped to is resolved
+    separately by _fetch_retirement_cards_run. A newest row whose raw_response is not a dict (a
     hand-written/corrupt row) is also None -- there is no usable summary.
     """
     rows = database.get_advisor_observations_for_role(_RETIREMENT_RUN_SUMMARY_ROLE, limit=1)
@@ -4487,34 +4488,77 @@ def _retirement_resolve_excluded_symphonies(
         return []
 
 
-# Sentinel for _fetch_retirement_recommendations's `last_run` keyword: "the
-# caller did not supply one -- look it up yourself". An explicit None is a
-# real value ("no usable summary") and must take the legacy path WITHOUT a
-# second lookup, so it cannot double as the default.
+# Sentinel for the `last_run` parameter of _fetch_retirement_cards_run and the
+# `cards_run` keyword of _fetch_retirement_recommendations: "the caller did not
+# supply one -- look it up yourself". An explicit None is a real value ("no
+# usable summary") and must take the legacy path WITHOUT a second lookup, so it
+# cannot double as the default.
 _RETIREMENT_LAST_RUN_UNSET = object()
+
+# How many of the newest RETIREMENT_RUN_SUMMARY rows _fetch_retirement_cards_run
+# scans for the latest successful run. One row per night (plus any Run-now
+# clicks), so this reaches back over a year of consecutive failed nights; a
+# longer outage than that degrades to the legacy calendar-date filter.
+_RETIREMENT_CARDS_RUN_SCAN_LIMIT = 365
+
+
+def _fetch_retirement_cards_run(last_run: dict | None = _RETIREMENT_LAST_RUN_UNSET) -> dict | None:
+    """Return the summary dict of the run the recommendation CARDS are scoped
+    to: the NEWEST RETIREMENT_RUN_SUMMARY whose status is "ok" AND which has a
+    truthy run_id -- or None when there is none (never run, only failed
+    summaries, hand-written summaries without a run_id): the caller then uses
+    the legacy latest-calendar-date filter (Cycle 2e, AC-5b).
+
+    This is deliberately NOT "the latest summary of any status": a failed night
+    (series_unavailable / internal_error / insufficient_symphonies) persisted no
+    recommendation rows, so scoping the cards to it would hide the last good
+    run's cards -- including operator-APPROVED ones and their wind-down
+    checklists -- behind a Composer outage. An ok run that found nothing IS
+    authoritative (it is a successful look at the fleet), so it hides earlier
+    runs' cards, also across later failed nights. An ok summary without a
+    run_id is skipped (it cannot scope anything).
+
+    `last_run` is the caller's already-read latest summary: when that is itself
+    ok with a run_id it is, by definition, the newest such row and is returned
+    without a second read (the common ok-then-ok case). Otherwise the newest
+    _RETIREMENT_CARDS_RUN_SCAN_LIMIT summaries are scanned. Read-only. Raises on
+    a DB-read failure -- each caller degrades to the legacy path / null.
+    """
+    if isinstance(last_run, dict) and last_run.get("status") == "ok" and last_run.get("run_id"):
+        return last_run
+    rows = database.get_advisor_observations_for_role(
+        _RETIREMENT_RUN_SUMMARY_ROLE, limit=_RETIREMENT_CARDS_RUN_SCAN_LIMIT
+    )
+    for row in rows:
+        raw = row.get("raw_response")
+        if isinstance(raw, dict) and raw.get("status") == "ok" and raw.get("run_id"):
+            return raw
+    return None
 
 
 def _fetch_retirement_recommendations(
     limit: int | None = None,
     bot_state_getter: Callable[[], dict] | None = None,
     *,
-    last_run: dict | None = _RETIREMENT_LAST_RUN_UNSET,
+    cards_run: dict | None = _RETIREMENT_LAST_RUN_UNSET,
 ) -> list[dict]:
-    """Return the LATEST RUN's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
+    """Return the LATEST SUCCESSFUL RUN's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
 
-    Cycle 2e (retirement-visibility AC-5): when the latest RETIREMENT_RUN_SUMMARY
-    row carries a truthy run_id, ONLY the recommendation rows stamped with that
-    same run_id are returned -- so a later run that finds nothing (a 14:00
-    "Run now", or a failed run) correctly empties the panel instead of leaving
-    an earlier run's cards on it (a 0-rec latest run returns []). With no
-    summary at all, a summary lacking a run_id (a legacy/hand-written row), or
-    a failed summary read, the pre-Cycle-2e latest-calendar-date behavior
-    described below is kept unchanged. `last_run` lets a caller that already
-    read the summary (the panel prefetch and the API route, which also render
-    it) pass that SAME snapshot in so the cards and the "last run" block can
-    never disagree about which run is current and no second lookup is issued;
-    omitted, the summary is read here. An explicit None means "no usable
-    summary" (legacy path, no re-read).
+    Cycle 2e (retirement-visibility AC-5, revised by AC-5b): when
+    _fetch_retirement_cards_run finds a latest successful (status "ok", truthy
+    run_id) run, ONLY the recommendation rows stamped with that run's run_id
+    are returned -- so a later successful run that finds nothing (a 14:00 "Run
+    now" with no pairs) correctly empties the panel instead of leaving an
+    earlier run's cards on it, while a later FAILED run (series unavailable,
+    internal error, too few symphonies) never hides the last good run's cards
+    (approved ones included). With no successful run recorded, a failed summary
+    read, or only run-id-less summaries, the pre-Cycle-2e latest-calendar-date
+    behavior described below is kept unchanged. `cards_run` lets a caller that
+    already resolved that summary (the panel prefetch and the API route, which
+    also render it) pass that SAME snapshot in so the cards and the page can
+    never disagree about which run they come from and no second lookup is
+    issued; omitted, it is resolved here. An explicit None means "no usable
+    successful run" (legacy path, no re-read).
 
     Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
     Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
@@ -4564,13 +4608,13 @@ def _fetch_retirement_recommendations(
     """
     if limit is None:
         limit = _ADVISOR_OBSERVATIONS_PAGE_LIMIT
-    if last_run is _RETIREMENT_LAST_RUN_UNSET:
+    if cards_run is _RETIREMENT_LAST_RUN_UNSET:
         try:
-            last_run = _fetch_retirement_last_run()
+            cards_run = _fetch_retirement_cards_run()
         except Exception:
-            last_run = None  # a failed summary read degrades to the legacy path
+            cards_run = None  # a failed summary read degrades to the legacy path
     rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
-    run_id = last_run.get("run_id") if isinstance(last_run, dict) else None
+    run_id = cards_run.get("run_id") if isinstance(cards_run, dict) else None
     out: list[dict] = []
     if run_id:
         for row in rows:
@@ -4605,15 +4649,19 @@ def api_retirement_recommendations():
     LIVE_EXECUTION interaction. GET never writes.
 
     Response shape: {"recommendations": [<raw_response dict, flattened to top
-    level>, ...], "last_run": <dict | null>} -- exactly those two keys.
-    "last_run" (Cycle 2e, AC-5) is the latest RETIREMENT_RUN_SUMMARY row's
-    raw_response (run_id/run_at/source/status/per-gate blocked counts/
-    excluded symphonies/... -- see advisors.retirement_recommender's summary),
-    null when no run has been recorded or its read fails (the rest of the
-    response is still served, status stays 200). "recommendations" is scoped to
-    that same run when it carries a run_id (see
-    _fetch_retirement_recommendations). The Run-now JS polls this route until
-    last_run.run_id changes.
+    level>, ...], "last_run": <dict | null>, "cards_run": <dict | null>} --
+    exactly those three keys. "last_run" (Cycle 2e, AC-5) is the latest
+    RETIREMENT_RUN_SUMMARY row's raw_response of ANY status (run_id/run_at/
+    source/status/per-gate blocked counts/excluded symphonies/... -- see
+    advisors.retirement_recommender's summary), null when no run has been
+    recorded or its read fails (the rest of the response is still served,
+    status stays 200). "cards_run" (AC-5b) is the summary the
+    "recommendations" were scoped to -- the newest run with status "ok" and a
+    run_id (== last_run when the latest run is ok; an earlier run's summary
+    after a failed night) -- and null on the legacy calendar-date path (no such
+    run) or when its read fails. A failed night therefore never empties the
+    recommendations; an ok run that found nothing does. The Run-now JS polls
+    this route until last_run.run_id changes.
 
     Each recommendation item carries the authoritative raw_response schema
     verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
@@ -4649,18 +4697,26 @@ def api_retirement_recommendations():
             return [_json_safe(v) for v in value]
         return value
 
-    # Read the summary ONCE and hand that same snapshot to the recommendation
-    # fetch, so "last_run" and the run-scoped "recommendations" can never
-    # disagree about which run is current (a run could finish between two
-    # separate reads).
+    # Read the latest summary ONCE and resolve the cards' run from that same
+    # snapshot, so "last_run", "cards_run" and the run-scoped "recommendations"
+    # can never disagree about which run is current (a run could finish between
+    # two separate reads).
     try:
         last_run = _fetch_retirement_last_run()
     except Exception:
         _daemon_log.debug("api_retirement_recommendations: last_run read failed", exc_info=True)
         last_run = None
 
+    # The run the cards are scoped to (AC-5b): the latest SUCCESSFUL run, which
+    # is last_run itself when that is ok, else an earlier run's summary.
     try:
-        raw_rows = _fetch_retirement_recommendations(last_run=last_run)
+        cards_run = _fetch_retirement_cards_run(last_run)
+    except Exception:
+        _daemon_log.debug("api_retirement_recommendations: cards_run read failed", exc_info=True)
+        cards_run = None
+
+    try:
+        raw_rows = _fetch_retirement_recommendations(cards_run=cards_run)
     except Exception:
         _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
         raw_rows = []
@@ -4674,7 +4730,13 @@ def api_retirement_recommendations():
             _daemon_log.debug("api_retirement_recommendations: row degraded", exc_info=True)
             continue
 
-    return jsonify({"recommendations": out, "last_run": _json_safe(last_run)})
+    return jsonify(
+        {
+            "recommendations": out,
+            "last_run": _json_safe(last_run),
+            "cards_run": _json_safe(cards_run),
+        }
+    )
 
 
 @app.route("/api/exit-turnover")
@@ -6941,15 +7003,24 @@ def ai_advisor_tab():
         return _ai_advisor_bot_state
 
     # Cycle 2e (retirement-visibility AC-5/AC-6): the "last run" block. Read
-    # ONCE here and handed to _fetch_retirement_recommendations below so the
-    # block and the run-scoped cards always describe the same run. A read
+    # ONCE here (the latest run of ANY status) and the cards' run (AC-5b: the
+    # latest SUCCESSFUL run, which is the same dict when the latest run is ok)
+    # is resolved from that snapshot, then handed to
+    # _fetch_retirement_recommendations below, so the block, the earlier-run
+    # note and the run-scoped cards always describe consistent runs. A read
     # failure degrades to None -> the template's honest "Not run yet" block
-    # (never a 500); the cards then fall back to the legacy date filter.
+    # (never a 500); a failed cards-run lookup falls back to the legacy date
+    # filter.
     retirement_last_run: dict | None = None
     try:
         retirement_last_run = _fetch_retirement_last_run()
     except Exception:
         retirement_last_run = None
+    retirement_cards_run: dict | None = None
+    try:
+        retirement_cards_run = _fetch_retirement_cards_run(retirement_last_run)
+    except Exception:
+        retirement_cards_run = None
 
     retirement_recommendations: list[dict] = []
     try:
@@ -6960,7 +7031,7 @@ def ai_advisor_tab():
         # use, instead of independently calling database.load_state() again.
         retirement_recommendations = _fetch_retirement_recommendations(
             bot_state_getter=_ensure_ai_advisor_bot_state,
-            last_run=retirement_last_run,
+            cards_run=retirement_cards_run,
         )
     except Exception:
         pass  # Empty-state rendered by template on [].
@@ -7120,6 +7191,7 @@ def ai_advisor_tab():
         market_prism_verification=market_prism_verification,
         retirement_recommendations=retirement_recommendations,
         retirement_last_run=retirement_last_run,
+        retirement_cards_run=retirement_cards_run,
         retirement_last_run_excluded=retirement_last_run_excluded,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
