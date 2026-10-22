@@ -571,6 +571,8 @@ def test_a_huge_finite_stored_exit_return_renders_the_dash_and_never_fails_the_p
     sid = _invented_id(1)
     database.save_state({sid: _triggered_state(1)})
     _seed_exit_row(sid, at_return=magnitude)
+    # A crash must read as the 500 a visitor would get, not as an exception in the test.
+    monkeypatch.setitem(app_module.app.config, "PROPAGATE_EXCEPTIONS", False)
     resp = _client().get("/")
     assert resp.status_code == 200, "a corrupt exit row must not fail the whole page"
     run = run_page(resp.data.decode("utf-8"), tmp_path, routes={}, steps=[])
