@@ -25,9 +25,28 @@ Composer call.
 
 from __future__ import annotations
 
+import re
 from unittest.mock import patch
 
 import pytest
+
+import model_config
+from tests._sb_generation_harness import (
+    CAPTURED_MODELS,
+    RELISTED_NEWER_FABLE,
+    SUGGESTION_ENV_VAR,
+    atlas_candidate,
+    conforming_diversify_plans,
+    fake_with_captured_page,
+    fake_with_failing_listing,
+    fake_with_newer_fable_listing,
+    fallback_reply_with_plans,
+    install_chain_seams,
+    newest_active_record,
+    post_strategy_builder_run,
+    text_only_reply,
+    tool_reply_with_plans,
+)
 
 
 @pytest.fixture()
@@ -147,3 +166,138 @@ def test_self_guard_mocked_proposalrun_reaches_the_route_json(client):
     resp, mock_propose = _post(client, backtest_unavailable=True, backtest_unavailable_count=1)
     assert mock_propose.called, "self-guard failed: propose_strategies was never called"
     assert resp.status_code == 200
+
+
+# ===========================================================================
+# Model naming, attribution and the degraded-run notice, through the real route
+# (real propose_strategies and generator; HTTP fake behind the generator's client
+# seam; Alpaca, Composer and Atlas replaced at their boundaries).
+# ===========================================================================
+
+_MODEL_FAMILY_WORDS = ("opus", "fable", "sonnet", "haiku", "mythos")
+
+
+def _suggestion_display_name() -> str:
+    return newest_active_record("fable", CAPTURED_MODELS)["display_name"]
+
+
+def _run_route(client, monkeypatch, fake, *, atlas=None) -> dict:
+    with install_chain_seams(monkeypatch, fake, atlas=atlas):
+        resp = post_strategy_builder_run(client)
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body.get("error") is None, f"the run must not take the error branch: {body}"
+    return body
+
+
+def test_route_run_names_the_later_fable_line_model_in_the_build_plan_request(client, monkeypatch):
+    fake = fake_with_newer_fable_listing()
+    model_config._reset_registry()
+    reply = tool_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    body = _run_route(client, monkeypatch, fake)
+
+    expected = newest_active_record("fable", RELISTED_NEWER_FABLE)["id"]
+    assert expected != newest_active_record("fable", CAPTURED_MODELS)["id"]
+    assert len(fake.message_requests) == 1
+    assert fake.message_requests[0].body["model"] == expected
+    assert body["provenance"]["generation_model"] == reply["model"]
+    assert body["mode_notice"] is None, "built-new plans were produced, so nothing is degraded"
+
+
+def test_route_run_with_an_override_names_exactly_that_model(client, monkeypatch):
+    override = newest_active_record("opus", CAPTURED_MODELS)["id"]
+    monkeypatch.setenv(SUGGESTION_ENV_VAR, override)
+    fake = fake_with_captured_page()
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    _run_route(client, monkeypatch, fake)
+
+    assert fake.message_requests[0].body["model"] == override
+    assert fake.listing_requests == []
+
+
+def test_route_run_reports_the_fallback_model_that_supplied_the_plans(client, monkeypatch):
+    fake = fake_with_captured_page()
+    reply = fallback_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    body = _run_route(client, monkeypatch, fake)
+
+    assert reply["model"] != fake.message_requests[0].body["model"]
+    assert body["built_new_count"] >= 1, "plans must come from the fallback reply's tool block"
+    assert body["provenance"]["generation_model"] == reply["model"]
+    assert body["mode_notice"] is None
+
+
+def test_unresolved_model_run_still_evaluates_atlas_and_names_the_reason_not_a_family(
+    client, monkeypatch, unresolved_models
+):
+    fake = fake_with_failing_listing()
+    body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert fake.message_requests == [], "no model call is made while the family is unresolved"
+    assert body["built_new_count"] == 0
+    assert body["atlas_count"] == 1, "the Atlas candidate is still evaluated"
+    notice = body["mode_notice"]
+    assert isinstance(notice, str) and "model_unavailable" in notice
+    assert not any(word in notice.lower() for word in _MODEL_FAMILY_WORDS), notice
+    assert body["provenance"]["generation_model"] == ""
+
+
+def test_degraded_run_notice_names_the_resolved_display_name_and_the_reason_never_opus(
+    client, monkeypatch
+):
+    fake = fake_with_captured_page()
+    for _ in range(3):
+        fake.queue_message(text_only_reply())
+    body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert len(fake.message_requests) == 3
+    notice = body["mode_notice"]
+    assert _suggestion_display_name() in notice
+    assert "no_tool_call" in notice
+    assert "opus" not in notice.lower(), "a suggestion-family call is never labelled Opus"
+    assert str(body["atlas_count"]) in notice, "the notice states how many Atlas candidates remain"
+    assert "degraded" in notice
+
+
+def test_degraded_run_notice_names_an_override_exactly_as_set(client, monkeypatch):
+    marker = "operator-chosen-model-tag"
+    monkeypatch.setenv(SUGGESTION_ENV_VAR, marker)
+    fake = fake_with_captured_page()
+    for _ in range(3):
+        fake.queue_message(text_only_reply())
+    body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert marker in body["mode_notice"]
+    assert _suggestion_display_name() not in body["mode_notice"]
+
+
+def test_route_notice_renders_the_refusal_category_from_the_run(client):
+    resp, _ = _post(client, generation_reason="refusal: reasoning_extraction")
+
+    notice = resp.get_json()["mode_notice"]
+    assert "refusal: reasoning_extraction" in notice
+    assert _suggestion_display_name() in notice
+
+
+def test_route_notice_omits_the_reason_parenthetical_when_the_run_has_none(client):
+    resp, _ = _post(client, generation_reason=None)
+
+    notice = resp.get_json()["mode_notice"]
+    assert isinstance(notice, str) and _suggestion_display_name() in notice
+    assert "None" not in notice
+    assert not re.search(r"\(\s*\)", notice), f"no empty parentheses: {notice!r}"
+
+
+def test_route_has_no_notice_when_built_new_candidates_exist(client):
+    import advisors.strategy_builder_engine as sbe
+
+    built_new = sbe.CandidateInfo(
+        candidate_id="plan-1",
+        tree={"id": "tree"},
+        template_id="built-new",
+        params={},
+    )
+    resp, _ = _post(client, candidates=[built_new], generation_reason=None)
+
+    assert resp.get_json()["mode_notice"] is None

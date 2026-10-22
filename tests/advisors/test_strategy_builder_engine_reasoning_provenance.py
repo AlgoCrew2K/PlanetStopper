@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import logging
 import pathlib
 import uuid
 from dataclasses import fields as dataclass_fields
@@ -68,6 +69,20 @@ import model_config
 from advisors import strategy_builder_engine as sbe
 from advisors import symphony_schema
 from advisors.backtest_gate_engine import evaluate_candidate_batch
+from tests._sb_generation_harness import (
+    CAPTURED_MODELS,
+    atlas_candidate,
+    conforming_diversify_plans,
+    fake_with_captured_page,
+    fake_with_failing_listing,
+    fallback_reply_with_plans,
+    install_chain_seams,
+    max_tokens_reply,
+    newest_active_record,
+    refusal_reply,
+    text_only_reply,
+    tool_reply_with_plans,
+)
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -161,9 +176,9 @@ def test_provenance_shape_and_accessor_driven_model(monkeypatch):
     evidence_injected: <the passed manifest>}. Model is READ from the accessor
     at call time — proven by monkeypatching it to a marker, mirroring the
     test_r1_attribution_honesty.py technique."""
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
-    )
+    # An override is returned verbatim by the model resolver, so a marker proves the value is
+    # read at call time from the resolver and never from a literal.
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-sb-model")
     manifest = {
         "tree": "present",
         "stats": "absent",
@@ -417,9 +432,9 @@ def test_no_composer_key_still_populates_real_provenance_never_none(monkeypatch)
     evidence. Only evidence_injected's per-source absent/present/stale values
     carry the honesty signal; the envelope around them never disappears."""
     monkeypatch.setattr(sbe, "_has_composer_key", lambda: False)
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-sb-model"
-    )
+    # An override is returned verbatim by the model resolver, so a marker proves the value is
+    # read at call time from the resolver and never from a literal.
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-sb-model")
     manifest = {"tree": "absent", "stats": "absent"}
 
     run = sbe.propose_strategies(
@@ -454,3 +469,187 @@ def test_no_composer_key_still_populates_real_provenance_never_none(monkeypatch)
         f"AC-4/AC-6 GAP: provenance['run_id'] must equal ProposalRun.run_id even on the "
         f"error path. provenance={run.provenance!r}, run.run_id={run.run_id!r}"
     )
+
+
+# ===========================================================================
+# Model attribution and the generation outcome, through the real generator
+# (HTTP fake behind the generator's client seam; Alpaca, Composer and Atlas
+# replaced at their boundaries by tests/_sb_generation_harness.py).
+# ===========================================================================
+
+
+def _run_real_generation(monkeypatch, fake, *, atlas=None, **kwargs):
+    stack = install_chain_seams(monkeypatch, fake, atlas=atlas)
+    with stack:
+        return sbe.propose_strategies(
+            objective=sbe.Objective.diversify,
+            universe=[],
+            screen_config=sbe.ScreenConfig(),
+            live_returns=[],
+            symphony_id="",
+            community_candidates=list(atlas or []),
+            **kwargs,
+        )
+
+
+def _captured_newest_suggestion_id() -> str:
+    return newest_active_record("fable", CAPTURED_MODELS)["id"]
+
+
+def test_proposal_run_carries_a_generation_reason_defaulting_to_none():
+    fields = {f.name: f for f in dataclass_fields(sbe.ProposalRun)}
+    assert "generation_reason" in fields, "ProposalRun must gain a generation_reason field"
+    assert fields["generation_reason"].default is None
+
+
+def test_successful_generation_names_the_reply_model_and_has_no_reason(monkeypatch):
+    fake = fake_with_captured_page()
+    reply = tool_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    run = _run_real_generation(monkeypatch, fake)
+
+    assert run.error is None
+    assert run.generation_reason is None
+    assert any(c.template_id == "built-new" for c in run.candidates)
+    assert run.provenance["generation_model"] == reply["model"]
+
+
+def test_provenance_names_the_reply_model_when_nothing_was_resolved_at_run_start(monkeypatch):
+    """Nothing is resolved when the run starts (peek is empty); the request resolves the
+    family itself, so the model that answered is the only honest value to report."""
+    model_config._reset_registry()
+    assert model_config.peek(model_config.Knob.SUGGESTION).model_id == ""
+    fake = fake_with_captured_page()
+    reply = tool_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    run = _run_real_generation(monkeypatch, fake)
+
+    assert run.provenance["generation_model"] == reply["model"]
+    assert run.provenance["generation_model"] != ""
+
+
+def test_fallback_served_reply_supplies_plans_and_provenance_names_the_serving_model(monkeypatch):
+    fake = fake_with_captured_page()
+    reply = fallback_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    run = _run_real_generation(monkeypatch, fake)
+
+    requested = fake.message_requests[0].body["model"]
+    assert reply["model"] != requested
+    assert any(c.template_id == "built-new" for c in run.candidates), (
+        "plans must come from the tool block of the fallback reply"
+    )
+    assert run.provenance["generation_model"] == reply["model"]
+    assert run.generation_reason is None
+
+
+@pytest.mark.parametrize(
+    ("replies", "expected_reason"),
+    [
+        pytest.param([text_only_reply] * 3, "no_tool_call", id="no-tool-call-after-3-attempts"),
+        pytest.param([max_tokens_reply] * 3, "max_tokens", id="truncated-after-3-attempts"),
+        pytest.param([refusal_reply], "refusal: reasoning_extraction", id="refusal-with-category"),
+    ],
+)
+def test_degraded_generation_records_the_reason_and_keeps_atlas_candidates(
+    monkeypatch, replies, expected_reason
+):
+    fake = fake_with_captured_page()
+    for make_reply in replies:
+        fake.queue_message(make_reply())
+    run = _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert run.error is None, "a degraded generation is not a run error"
+    assert run.generation_reason == expected_reason
+    assert [c.template_id for c in run.candidates] == ["atlas-suggested"]
+    assert len(fake.message_requests) == len(replies)
+
+
+def test_unresolved_family_makes_no_request_and_reports_model_unavailable(
+    monkeypatch, unresolved_models
+):
+    fake = fake_with_failing_listing()
+    run = _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert fake.message_requests == []
+    assert run.generation_reason == "model_unavailable"
+    assert run.provenance["generation_model"] == ""
+    assert [c.template_id for c in run.candidates] == ["atlas-suggested"]
+
+
+def test_no_composer_key_path_reports_the_resolved_model_and_no_generation_reason(monkeypatch):
+    monkeypatch.setattr(sbe, "_has_composer_key", lambda: False)
+    run = sbe.propose_strategies(
+        objective=sbe.Objective.diversify,
+        universe=["SPY"],
+        screen_config=sbe.ScreenConfig(),
+        live_returns=[],
+        symphony_id="",
+    )
+
+    assert run.error
+    assert run.generation_reason is None
+    assert run.provenance["generation_model"] == _captured_newest_suggestion_id()
+
+
+def test_a_patched_list_returning_generator_still_drives_provenance_from_the_resolver(
+    monkeypatch,
+):
+    """Existing callers and tests replace ``_generate_candidate_trees`` with a callable that
+    returns a plain list. That must keep working: no reason, and the model from the resolver."""
+    run, gen_mock, _insert_mock = _run_propose_strategies(monkeypatch)
+
+    assert gen_mock.called
+    assert run.generation_reason is None
+    assert run.provenance["generation_model"] == _captured_newest_suggestion_id()
+
+
+def test_generator_returning_no_plans_is_logged_at_warning_with_the_reason(monkeypatch, caplog):
+    fake = fake_with_captured_page()
+    for _ in range(3):
+        fake.queue_message(text_only_reply())
+    with caplog.at_level(logging.WARNING, logger="advisors.strategy_builder_engine"):
+        _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    records = [
+        r
+        for r in caplog.records
+        if r.name == "advisors.strategy_builder_engine" and r.levelno >= logging.WARNING
+    ]
+    assert any("no_tool_call" in r.getMessage() for r in records), (
+        "a generation that produced no plans must reach the journal at WARNING or above"
+    )
+
+
+def test_unexpected_generation_failure_is_logged_at_warning_with_the_type_name_only(
+    monkeypatch, caplog
+):
+    import advisors.universe_provider as universe
+
+    def boom(*_a, **_k):
+        raise RuntimeError("secret-universe-source-detail")
+
+    monkeypatch.setattr(universe, "get_tradeable_set", boom)
+    with caplog.at_level(logging.WARNING, logger="advisors.strategy_builder_engine"):
+        result = sbe._generate_candidate_trees(sbe.Objective.diversify, [])
+
+    assert result == []
+    records = [
+        r
+        for r in caplog.records
+        if r.name == "advisors.strategy_builder_engine" and r.levelno >= logging.WARNING
+    ]
+    assert any("RuntimeError" in r.getMessage() for r in records)
+    assert "secret-universe-source-detail" not in caplog.text, (
+        "only the exception type name may be logged, never its message or a traceback"
+    )
+
+
+def test_generate_candidate_trees_keeps_returning_a_list(monkeypatch):
+    fake = fake_with_captured_page()
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    with install_chain_seams(monkeypatch, fake):
+        result = sbe._generate_candidate_trees(sbe.Objective.diversify, [])
+
+    assert isinstance(result, list)
+    assert result and all(isinstance(c, sbe.CandidateInfo) for c in result)
