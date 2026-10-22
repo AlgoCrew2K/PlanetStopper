@@ -32,6 +32,7 @@ approved the derived records the approach lists; recorded here as the sign-off.
 | `/api/state` without a hero series | S-3.1, S-3.3 | `meta.portfolio.hist_dates`, `hist_bot`, `hist_held` set to `[]`, removed, or `null`; and `meta.portfolio` removed |
 | `/api/chart/<untriggered id>` and its `/api/state` entry with a chosen reading | S-5.6 dial arc | the last data point's `mc_prob` and the `symphonies` entry's `mc_prob` set to 0, 14.99, 15, 50, 80, 80.5 and 100 |
 | an empty hero-chart body | S-3.1 family | the body `get_hero_chart` returns on its own exception path (keys `hist_dates`, `hist_bot`, `hist_held` empty, `insufficient_history` true, `available_days` 0), as written in `app.py` |
+| the untriggered `bot_state` entry marked armed | every dial test (S-5.6) | `armed` set to `true` on `iaSOOUsmnCJHiZvbrWfs`: the droplet capture omits the arming flags and only an active card renders an MC dial; part of the `mc_prob` variants the PM signed off, and named in the handoff for confirmation |
 | a failed sparkline response | S-1.5, S-3.2 family | status 500 with the route's own error envelope `{"status": "error", "message": "An internal error occurred"}`; a refused request; an unreadable body |
 
 The `current_return` variants of the card verdict (cycle C2) are not used here.

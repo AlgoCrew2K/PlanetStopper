@@ -70,7 +70,7 @@ def firefox():
     with sync_playwright() as playwright:
         try:
             browser = playwright.firefox.launch(headless=True)
-        except Exception as exc:  # noqa: BLE001 - name what is missing, never skip
+        except Exception as exc:  # noqa: BLE001  (name what is missing; never skip)
             pytest.fail(f"Playwright's Firefox could not be launched: {exc}")
         try:
             yield browser
@@ -119,7 +119,7 @@ def test_hero_and_sparklines_are_drawn_while_the_state_request_is_held(page, lau
 def test_a_second_quick_navigation_draws_everything(page, launcher_url):
     try:
         page.goto(launcher_url + "/", wait_until="commit")
-    except Exception:  # noqa: BLE001 - the first navigation is superseded on purpose
+    except Exception:  # noqa: BLE001  (the first navigation is superseded on purpose)
         pass
     page.goto(launcher_url + "/", wait_until="domcontentloaded")
     page.wait_for_selector(READY_SELECTOR, timeout=READY_TIMEOUT_MS)

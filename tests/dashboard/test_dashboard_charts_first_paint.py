@@ -178,7 +178,7 @@ class TestFirstPaintDoesNotWaitForTheStatePoll:
         assert r["stateRequests"] == 1
         assert r["attrs"]["refreshCount"] is None, "no refresh has settled yet"
         assert r["attrs"]["ready"] == "1", "readiness does not depend on the state poll"
-        assert r["heroEmpty"]["hidden"] is True
+        assert r["heroEmpty"]["exists"] and r["heroEmpty"]["hidden"] is True
         assert r["heroRequests"] == 0, "the hero needs no request: its series is in the page"
 
     def test_exit_markers_draw_on_first_paint_from_the_embedded_fields(self):
@@ -197,6 +197,8 @@ class TestFirstPaintDoesNotWaitForTheStatePoll:
         return out;
         """ % (hx.TRIGGERED_TP_ID, hx.TRIGGERED_VWAP_ID, hx.UNTRIGGERED_ID)
         out = hx.run_scenario(world, scenario)["result"]
+        for sym_id in (hx.TRIGGERED_TP_ID, hx.TRIGGERED_VWAP_ID, hx.UNTRIGGERED_ID):
+            assert out[sym_id] is not None, f"card {sym_id} holds no chart at first paint"
         assert out[hx.TRIGGERED_TP_ID]["labels"] == ["TP"], "Take-Profit exit marker at first paint"
         assert out[hx.TRIGGERED_VWAP_ID]["labels"] == ["VWAP"], "VWAP exit marker at first paint"
         assert out[hx.UNTRIGGERED_ID]["labels"] == [], (
@@ -221,7 +223,8 @@ class TestFirstPaintDoesNotWaitForTheStatePoll:
         r = result["result"]
         hero = r["summary"]["cum-chart"]
         assert hero["constructs"] == 0 and not hero["live"], "nothing to draw: no chart"
-        assert r["heroEmpty"]["exists"] and r["heroEmpty"]["hidden"] is False
+        assert r["heroEmpty"]["exists"], "no #hero-chart-empty element on the page"
+        assert r["heroEmpty"]["hidden"] is False
         assert r["heroEmpty"]["text"] == EMPTY_HERO_TEXT
         assert r["attrs"]["ready"] == "1", "readiness holds with the empty text shown"
         for sym_id in _ids_with_intraday(world):
@@ -229,6 +232,7 @@ class TestFirstPaintDoesNotWaitForTheStatePoll:
 
     def test_history_present_keeps_the_empty_text_hidden(self):
         _, result = _drawn("default", pending=True)
+        assert result["result"]["heroEmpty"]["exists"], "no #hero-chart-empty element on the page"
         assert result["result"]["heroEmpty"]["hidden"] is True
 
     def test_one_symphony_without_intraday_data_reads_no_intraday_data_yet(self):
@@ -280,7 +284,10 @@ class TestFirstPaintDoesNotWaitForTheStatePoll:
         assert hero["datasets"][0]["data"] == world["hero"]["30d"]["hist_bot"]
         assert result["consoleErrors"] == [], result["consoleErrors"]
         assert result["unhandled"] == [], result["unhandled"]
-        assert result["result"]["heroEmpty"]["hidden"] is True
+        assert (
+            result["result"]["heroEmpty"]["exists"]
+            and result["result"]["heroEmpty"]["hidden"] is True
+        )
 
     def test_poll_and_cycle_event_each_request_state_once(self):
         world = hx.get_world("default")
@@ -351,9 +358,10 @@ class TestEntryAnimationAndReadiness:
         const whileAnimating = H.attrs().ready;
         const seen = [];
         live.forEach(function (c) { H.animating.delete(c); H.fireAfterRender(c); seen.push(H.attrs().ready); });
-        return { whileAnimating: whileAnimating, seen: seen };
+        return { whileAnimating: whileAnimating, seen: seen, count: live.length };
         """
         r = hx.run_scenario(world, scenario)["result"]
+        assert r["count"] > 0, "no chart was constructed at first paint"
         assert r["whileAnimating"] is None, "afterRender during a running animation must not count"
         assert r["seen"][:-1] == [None] * (len(r["seen"]) - 1)
         assert r["seen"][-1] == "1"

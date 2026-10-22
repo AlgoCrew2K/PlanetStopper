@@ -276,11 +276,9 @@ def _seed_shadow_row(database, sym_id, record, day, hhmm, current, shadow, post_
 
 def _tape_points(sym_index: int, record: dict, count: int) -> list[dict]:
     """Chart-history points in the shape the engine appends each cycle."""
-    triggered_at = _trigger_minute(record)
     points = []
     for minute in range(count):
         value = _tape_return(sym_index, minute)
-        post = triggered_at is not None and minute > triggered_at
         points.append(
             {
                 "time": _hhmm(minute),
@@ -293,7 +291,7 @@ def _tape_points(sym_index: int, record: dict, count: int) -> list[dict]:
                 "base_atr_pct": 0.0,
                 "dynamic_multiplier": 1.0,
                 "breakeven": None,
-                "vwap": value - 0.1 if not post else value - 0.1,
+                "vwap": value - 0.1,
             }
         )
     return points
@@ -369,6 +367,9 @@ def _build_world(name: str) -> dict:
 
     records = json.loads(_BOT_STATE_CAPTURE.read_text(encoding="utf-8"))
     bot_state = {sym_id: dict(records[sym_id]) for sym_id in SYMPHONY_IDS}
+    # Named-field edit of a real record: the capture omits the engine's arming flags,
+    # and only an active (armed or triggered) card carries an MC dial in the page.
+    bot_state[UNTRIGGERED_ID]["armed"] = True
     if spec.get("hostile_reason"):
         # Named-field edit of a real record: the stored exit reason.
         bot_state[TRIGGERED_VWAP_ID]["triggered_reason"] = HOSTILE_REASON

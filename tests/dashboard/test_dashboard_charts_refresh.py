@@ -135,9 +135,12 @@ class TestRefreshKeepsDrawnCharts:
         const before = H.summary();
         H.route(/^\/api\/chart\//, %s);
         await H.tick(); await H.completeAnimations();
-        return { before: before, after: H.summary() };
+        return { before: before, after: H.summary(), attrs: H.attrs() };
         """ % json.dumps(spec)
         r = _run(scenario)
+        assert r["attrs"]["refreshCount"] == "2", (
+            f"{label}: the refresh must still settle and count"
+        )
         for sym_id in IDS:
             key = _spark(sym_id)
             before, after = r["before"][key], r["after"][key]
@@ -183,9 +186,10 @@ class TestRefreshKeepsDrawnCharts:
         const before = H.summary();
         H.route('/api/state', { reject: true });
         await H.tick(); await H.completeAnimations();
-        return { before: before, after: H.summary() };
+        return { before: before, after: H.summary(), attrs: H.attrs() };
         """
         r = _run(scenario)
+        assert r["attrs"]["refreshCount"] == "2", "the failed refresh still settles and counts"
         for key in ["cum-chart"] + [_spark(i) for i in IDS]:
             assert r["after"][key]["live"], key
             assert r["after"][key]["chartId"] == r["before"][key]["chartId"], key
@@ -515,10 +519,6 @@ def _assert_line_colours(summary: dict, tokens: dict, what: str, accent: str | N
 
 
 class TestThemeAndAccentRecolourTheCharts:
-    def test_tokens_differ_between_themes_so_a_recolour_is_observable(self):
-        assert _LIGHT[DEFAULT_ACCENT] != _DARK[DEFAULT_ACCENT]
-        assert _LIGHT[DIM] != _DARK[DIM]
-
     def test_switching_to_dark_recolours_the_hero_and_every_sparkline(self):
         scenario = r"""
         await H.boot({});
@@ -527,6 +527,8 @@ class TestThemeAndAccentRecolourTheCharts:
         return { before: before, after: H.summary() };
         """
         r = _run(scenario)
+        assert _LIGHT[DEFAULT_ACCENT] != _DARK[DEFAULT_ACCENT], "fixture sanity: the themes differ"
+        assert _LIGHT[DIM] != _DARK[DIM], "fixture sanity: the themes differ"
         _assert_line_colours(r["before"], _LIGHT, "light at load")
         _assert_line_colours(r["after"], _DARK, "after the switch to dark")
 
@@ -552,6 +554,7 @@ class TestThemeAndAccentRecolourTheCharts:
         return { before: before, after: H.summary() };
         """
         r = _run(scenario)
+        _assert_line_colours(r["after"], _DARK, "the redraw happened")
         for key in ["cum-chart"] + [_spark(i) for i in IDS]:
             b, a = r["before"][key], r["after"][key]
             assert a["chartId"] == b["chartId"], f"{key}: a recolour rebuilt the chart"
@@ -685,3 +688,53 @@ class TestDialArcFollowsTheTheme:
         assert r["dark"]["stroke"] == expected, (
             f"mc_prob {mc_prob}: still the same token reference after the switch"
         )
+
+    @pytest.mark.parametrize("sentinel", [999.0, -999.0])
+    def test_a_no_reading_sentinel_renders_the_same_dash_a_first_paint_shows(self, sentinel):
+        """The engine's +/-999 means "no reading". A refresh must show the dash
+        with an empty arc (what the server renders at first paint), never 100%
+        or 0%. The sentinel arrives through both refresh writers, the poll's
+        symphonies list and the card's /api/chart points."""
+        world = hx.get_world("default")
+        charts = copy.deepcopy(world["charts"])
+        for point in charts[hx.UNTRIGGERED_ID]["data"]:
+            point["mc_prob"] = sentinel  # named field of each real point
+        state = copy.deepcopy(world["state"])
+        for sym in state["symphonies"]:
+            if sym["id"] == hx.UNTRIGGERED_ID:
+                sym["mc_prob"] = sentinel  # the same named field of the real poll entry
+        scenario = (
+            r"""
+        await H.boot({ charts: H.bodies.editedCharts, state: H.bodies.editedState });
+        await H.tick(); await H.completeAnimations();
+        return { dial: H.dial('%s') };
+        """
+            % hx.UNTRIGGERED_ID
+        )
+        dial = _run(scenario, extra_bodies={"editedCharts": charts, "editedState": state})["dial"]
+        assert dial["text"] == "\u2014", (
+            f"sentinel {sentinel} rendered {dial['text']!r}, not the dash"
+        )
+        assert dial["offset"] == "94.25", "the arc must be empty (full dash offset) for no reading"
+        assert dial["stroke"] == _dial_token(None, True), "the dash state uses the faint ink token"
+
+    def test_a_real_zero_reading_still_renders_zero_percent(self):
+        world = hx.get_world("default")
+        charts = copy.deepcopy(world["charts"])
+        for point in charts[hx.UNTRIGGERED_ID]["data"]:
+            point["mc_prob"] = 0.0
+        state = copy.deepcopy(world["state"])
+        for sym in state["symphonies"]:
+            if sym["id"] == hx.UNTRIGGERED_ID:
+                sym["mc_prob"] = 0.0
+        scenario = (
+            r"""
+        await H.boot({ charts: H.bodies.editedCharts, state: H.bodies.editedState });
+        await H.tick(); await H.completeAnimations();
+        return { dial: H.dial('%s') };
+        """
+            % hx.UNTRIGGERED_ID
+        )
+        dial = _run(scenario, extra_bodies={"editedCharts": charts, "editedState": state})["dial"]
+        assert dial["text"] == "0%", "a real reading of 0 is a value, not the dash"
+        assert dial["stroke"] == _dial_token(0.0, False)
