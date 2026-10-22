@@ -1,0 +1,75 @@
+{
+  "model": "claude-fable-5-1",
+  "id": "msg_011CgHtP5BycVtUaVJMgmLiu",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01Gpi4pxKKjb8wU5wFFzYeNA",
+      "name": "emit_build_plans",
+      "input": {
+        "plans": [
+          {
+            "plan_id": "diversify-equal-spy-tlt",
+            "objective": "diversify",
+            "name": "Equal-Weight SPY/TLT",
+            "rebalance": "monthly",
+            "root": {
+              "kind": "weight",
+              "scheme": "equal",
+              "children": [
+                {
+                  "kind": "asset",
+                  "ticker": "SPY"
+                },
+                {
+                  "kind": "asset",
+                  "ticker": "TLT"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "caller": {
+        "type": "direct"
+      }
+    }
+  ],
+  "container": null,
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 1584,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 0,
+      "ephemeral_1h_input_tokens": 0
+    },
+    "iterations": [
+      {
+        "input_tokens": 1584,
+        "output_tokens": 174,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "type": "message",
+        "model": null
+      }
+    ],
+    "output_tokens": 174,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "service_tier": "standard",
+    "inference_geo": "global",
+    "speed": "standard"
+  },
+  "diagnostics": null
+}
