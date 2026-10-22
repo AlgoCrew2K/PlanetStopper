@@ -34,10 +34,15 @@ static-analysis tests already covered in test_asset_swap_routes.py.
 from __future__ import annotations
 
 import ast
+import json
 import pathlib
 from unittest.mock import patch
 
 import pytest
+
+from tests import _asset_swap_llm_support as sup
+from tests._anthropic_http_fake import FAKE_API_KEY, AnthropicHttpFake, load_fixture
+from tests.llm_request.conftest import CAPTURED, newest_id
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -382,19 +387,16 @@ def test_evaluate_route_provenance_present_on_engine_exception_path(flask_client
 
 
 # ===========================================================================
-# generation_model reflects the live accessor.
+# generation_model reflects the model-resolution state, never a literal.
 # ===========================================================================
 
 
-def test_evaluate_route_provenance_generation_model_reflects_accessor_env_override(flask_client):
-    import model_config
+def test_evaluate_route_provenance_generation_model_reflects_env_override(
+    flask_client, monkeypatch
+):
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-route-model")
 
-    with (
-        patch.object(
-            model_config, "get_advisor_suggestion_model", return_value="test-marker-route-model"
-        ),
-        patch("advisors.asset_swap_engine._has_composer_key", return_value=False),
-    ):
+    with patch("advisors.asset_swap_engine._has_composer_key", return_value=False):
         resp = flask_client.post(
             "/ai-advisor/asset-swaps/evaluate",
             json={"symphony_id": "sym-test", "from_ticker": "QQQ", "to_ticker": "AGG"},
@@ -402,8 +404,8 @@ def test_evaluate_route_provenance_generation_model_reflects_accessor_env_overri
 
     data = resp.get_json()
     assert data["provenance"]["generation_model"] == "test-marker-route-model", (
-        f"AC-8 GAP: provenance.generation_model must reflect the LIVE accessor value, "
-        f"not a hardcoded literal. Got {data['provenance']!r}"
+        f"AC-8 GAP: provenance.generation_model must carry the override verbatim. "
+        f"Got {data['provenance']!r}"
     )
 
 
@@ -517,3 +519,389 @@ def test_evaluate_route_still_never_touches_settings_write_surface():
             f"AC-10 GAP: ai_advisor_asset_swaps_evaluate references {forbidden!r} — the "
             "reasoning port must stay off the settings-write surface (advisory-only)."
         )
+
+
+# ===========================================================================
+# Model resolution through the real route, SDK and HTTP transport.
+#
+# Every test below hands the engine a real anthropic client over the in-process
+# HTTP fake (tests/_anthropic_http_fake.py) and asserts on the outgoing request
+# and on the route's JSON. Replies are captured or schema-derived fixtures under
+# tests/fixtures/anthropic; model IDs are read from them, never typed.
+# ===========================================================================
+
+_ENV = "ADVISOR_SUGGESTION_MODEL"
+# Not a served model id: used where a test needs an operator override the API will not serve.
+_UNSERVED_OVERRIDE = "operator-chosen-model"
+
+
+def _no_swap(reason_text: str) -> str:
+    return f"no swap was generated this run ({reason_text})"
+
+
+def _older_fable_id() -> str:
+    """A served fable-line id that is not the newest one, so an override is distinguishable."""
+    fables = sorted(
+        (
+            r
+            for r in CAPTURED["data"]
+            if r.get("line") == "fable" and r.get("lifecycle", "active") == "active"
+        ),
+        key=lambda r: r["created_at"],
+    )
+    return fables[-2]["id"]
+
+
+@pytest.fixture
+def fake() -> AnthropicHttpFake:
+    return AnthropicHttpFake.with_captured_page()
+
+
+def _evaluate(flask_client, fake, body=None, **kwargs):
+    return sup.post_evaluate(flask_client, fake, body or sup.objective_body(), **kwargs)
+
+
+class TestObjectiveModeNamesTheResolvedModel:
+    def test_the_request_names_the_newest_listed_model_of_the_family(
+        self, flask_client, fake, unresolved_models
+    ):
+        page = load_fixture("models/relisted_newer_fable.json")
+        fake.set_pages([page])
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        expected = newest_id("fable", records=page["data"])
+        assert expected != newest_id("fable"), (
+            "self-guard: the relisted page must change the answer"
+        )
+        assert run.status == 200
+        assert sup.request_models(fake) == [expected]
+        assert not fake.misuse
+
+    def test_an_override_is_named_exactly_and_the_models_api_is_never_listed(
+        self, flask_client, fake, unresolved_models, monkeypatch
+    ):
+        override = _older_fable_id()
+        assert override != newest_id("fable"), (
+            "self-guard: the override must differ from resolution"
+        )
+        monkeypatch.setenv(_ENV, override)
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        assert sup.request_models(fake) == [override]
+        assert fake.listing_requests == [], "an override is never listed or validated"
+        assert sup.evaluated_pairs(run.data) == [sup.captured_pair()]
+
+    def test_the_request_carries_the_fallback_setting_and_auto_tool_choice(
+        self, flask_client, fake
+    ):
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        (request,) = fake.message_requests
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == "server-side-fallback-2026-07-01"
+        assert request.body["tool_choice"] == {"type": "auto"}
+        assert sup.evaluated_pairs(run.data) == [sup.captured_pair()], (
+            "the captured tool call must be parsed into the evaluated swap pair"
+        )
+
+    def test_a_run_the_primary_model_answered_names_that_model_in_provenance(
+        self, flask_client, fake
+    ):
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        (requested,) = sup.request_models(fake)
+        assert run.data["provenance"]["generation_model"] == sup.swap_tool_reply()["model"]
+        assert run.data["provenance"]["generation_model"] == requested
+
+    def test_a_reply_served_by_the_fallback_model_names_the_fallback_in_provenance(
+        self, flask_client, fake
+    ):
+        served = load_fixture("messages/fallback_served_tool.json")
+        fake.queue_message(served)
+
+        run = _evaluate(flask_client, fake)
+
+        (requested,) = sup.request_models(fake)
+        assert served["model"] != requested, (
+            "self-guard: the fixture must be a fallback-served reply"
+        )
+        assert run.data["provenance"]["generation_model"] == served["model"]
+        assert sup.evaluated_pairs(run.data) == [sup.captured_pair()], (
+            "candidates come from the fallback reply's tool call"
+        )
+
+
+class TestObjectiveModeWithNoUsableModel:
+    def test_a_failed_listing_degrades_with_the_reason_and_sends_nothing(
+        self, flask_client, fake, unresolved_models
+    ):
+        fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        run = _evaluate(flask_client, fake)
+
+        assert run.status == 200
+        assert run.data["survivors"] == 0
+        assert run.data["message"] == _no_swap("model_unavailable")
+        assert run.data["provenance"]["generation_model"] == ""
+        assert set(run.data["provenance"]) == {
+            "generation_model",
+            "mode",
+            "evidence_injected",
+            "run_id",
+        }
+        assert fake.message_requests == []
+        assert sup.evaluated_pairs(run.data) == []
+        run.inserts.assert_not_called()
+
+    def test_the_next_click_lists_again_and_generates_once_the_api_recovers(
+        self, flask_client, fake, unresolved_models
+    ):
+        fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+        first = _evaluate(flask_client, fake)
+        assert first.data["message"] == _no_swap("model_unavailable")
+
+        fake.queue_message(sup.swap_tool_reply())
+        second = _evaluate(flask_client, fake)
+
+        assert sup.request_models(fake) == [newest_id("fable")]
+        assert "model_unavailable" not in second.data["message"]
+        assert sup.evaluated_pairs(second.data) == [sup.captured_pair()]
+        assert second.data["provenance"]["generation_model"] == sup.swap_tool_reply()["model"], (
+            "provenance must name the model the reply came from, not the empty value "
+            "the run started with"
+        )
+
+    def test_an_early_error_path_before_generation_names_no_model(
+        self, flask_client, fake, unresolved_models
+    ):
+        run = _evaluate(flask_client, fake, composer_key=False)
+
+        assert run.data["provenance"]["generation_model"] == ""
+        assert fake.message_requests == []
+        assert fake.listing_requests == [], "rendering a provenance must never wait on the network"
+
+
+class TestExplicitPairMakesNoModelCall:
+    def test_an_unresolvable_family_does_not_affect_an_explicit_pair(
+        self, flask_client, fake, unresolved_models
+    ):
+        fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        run = _evaluate(flask_client, fake, sup.explicit_pair_body())
+
+        assert fake.message_requests == []
+        assert "model_unavailable" not in run.data["message"]
+        assert sup.evaluated_pairs(run.data) == [sup.captured_pair()]
+        assert run.data["provenance"]["generation_model"] == ""
+
+    def test_the_provenance_holds_the_resolved_model_id(self, flask_client, fake):
+        run = _evaluate(flask_client, fake, sup.explicit_pair_body())
+
+        assert fake.message_requests == []
+        assert run.data["provenance"]["generation_model"] == newest_id("fable")
+
+    def test_an_override_value_is_carried_verbatim(self, flask_client, fake, monkeypatch):
+        monkeypatch.setenv(_ENV, _UNSERVED_OVERRIDE)
+
+        run = _evaluate(flask_client, fake, sup.explicit_pair_body())
+
+        assert fake.message_requests == []
+        assert run.data["provenance"]["generation_model"] == _UNSERVED_OVERRIDE
+
+    def test_an_objective_run_that_ends_before_generation_carries_the_override_verbatim(
+        self, flask_client, fake, monkeypatch
+    ):
+        monkeypatch.setenv(_ENV, _UNSERVED_OVERRIDE)
+
+        run = _evaluate(flask_client, fake, composer_key=False)
+
+        assert fake.message_requests == []
+        assert run.data["provenance"]["generation_model"] == _UNSERVED_OVERRIDE
+
+
+_OVERRIDE_FAILURES = [
+    pytest.param("errors/404_not_found.json", "override_model_not_found", id="override-not-found"),
+    pytest.param(
+        "errors/400_invalid_request.json", "override_request_rejected", id="override-rejected"
+    ),
+]
+
+
+class TestAnUnservedOverrideFailsLoudly:
+    @pytest.mark.parametrize(("error_fixture", "code"), _OVERRIDE_FAILURES)
+    def test_the_message_names_the_variable_and_the_code_with_no_retry(
+        self, flask_client, fake, unresolved_models, monkeypatch, error_fixture, code
+    ):
+        monkeypatch.setenv(_ENV, _UNSERVED_OVERRIDE)
+        fake.queue_message(load_fixture(error_fixture))
+
+        run = _evaluate(flask_client, fake)
+
+        assert run.status == 200
+        assert run.data["survivors"] == 0
+        assert run.data["message"] == _no_swap(f"{code}: {_ENV}")
+        assert len(fake.message_requests) == 1, "an override the API refuses is never retried"
+        assert sup.request_models(fake) == [_UNSERVED_OVERRIDE], (
+            "the run must not substitute the newest model for the operator's override"
+        )
+        assert fake.listing_requests == []
+        assert run.data["provenance"]["generation_model"] == _UNSERVED_OVERRIDE
+        run.inserts.assert_not_called()
+
+
+# (queued reply fixtures, text the message names, requests that must have been sent)
+_GENERATION_FAILURES = [
+    pytest.param(
+        ["messages/refusal_reasoning_extraction.json"],
+        "refusal: reasoning_extraction",
+        1,
+        id="refusal-with-category",
+    ),
+    pytest.param(
+        ["messages/refusal_null_category.json"], "refusal", 1, id="refusal-without-category"
+    ),
+    pytest.param(
+        ["messages/refusal_after_partial_tool.json"],
+        "refusal: reasoning_extraction",
+        1,
+        id="refusal-after-a-complete-tool-call",
+    ),
+    pytest.param(
+        ["messages/refusal_after_partial_text.json"],
+        "refusal: reasoning_extraction",
+        1,
+        id="refusal-after-partial-text",
+    ),
+    pytest.param(["messages/max_tokens.json"], "max_tokens", 1, id="truncated"),
+    pytest.param(
+        ["messages/text_only_with_tools.json"] * 3, "no_tool_call", 3, id="no-tool-call-three-times"
+    ),
+]
+
+
+class TestAGenerationThatProducedNothingSaysSo:
+    @pytest.mark.parametrize(("replies", "reason_text", "requests"), _GENERATION_FAILURES)
+    def test_the_route_reports_why_no_swap_was_generated_and_evaluates_nothing(
+        self, flask_client, fake, replies, reason_text, requests
+    ):
+        for name in replies:
+            fake.queue_message(load_fixture(name))
+        # A reply after the bound would produce a candidate: proves the bound, not the queue.
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        assert run.status == 200
+        assert run.data["survivors"] == 0
+        assert run.data["message"] == _no_swap(reason_text)
+        assert len(fake.message_requests) == requests
+        assert sup.evaluated_pairs(run.data) == [], (
+            "a refused or truncated reply's content must be dropped, never evaluated"
+        )
+        run.inserts.assert_not_called()
+        assert run.data["provenance"]["generation_model"] == load_fixture(replies[-1])["model"]
+        assert not fake.misuse
+
+    def test_provenance_names_the_last_reply_not_the_first(self, flask_client, fake):
+        replies = [
+            "messages/text_only_with_tools.json",
+            "messages/text_only_with_tools.json",
+            "messages/thinking_text.json",
+        ]
+        for name in replies:
+            fake.queue_message(load_fixture(name))
+        assert load_fixture(replies[0])["model"] != load_fixture(replies[-1])["model"], (
+            "self-guard: the first and last replies must come from different models"
+        )
+
+        run = _evaluate(flask_client, fake)
+
+        assert run.data["message"] == _no_swap("no_tool_call")
+        assert run.data["provenance"]["generation_model"] == load_fixture(replies[-1])["model"]
+
+    @pytest.mark.parametrize("text_only_replies", [1, 2])
+    def test_a_tool_call_on_a_later_attempt_is_used(self, flask_client, fake, text_only_replies):
+        for _ in range(text_only_replies):
+            fake.queue_message(load_fixture("messages/text_only_with_tools.json"))
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        assert len(fake.message_requests) == text_only_replies + 1
+        assert sup.evaluated_pairs(run.data) == [sup.captured_pair()]
+        assert "no swap was generated" not in run.data["message"]
+
+    @pytest.mark.parametrize(
+        "error_fixture", ["errors/500_api_error.json", "errors/400_invalid_request.json"]
+    )
+    def test_an_api_error_on_the_resolved_model_degrades_without_a_retry(
+        self, flask_client, fake, error_fixture
+    ):
+        fake.queue_message(load_fixture(error_fixture))
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        assert run.status == 200
+        assert run.data["survivors"] == 0
+        assert len(fake.message_requests) == 1
+        assert sup.evaluated_pairs(run.data) == []
+        run.inserts.assert_not_called()
+
+
+class TestNothingTheApiSaidReachesTheOperator:
+    @pytest.mark.parametrize(
+        ("error_fixture", "with_override"),
+        [
+            pytest.param("errors/404_not_found.json", True, id="override-not-found"),
+            pytest.param("errors/400_invalid_request.json", True, id="override-rejected"),
+            pytest.param("errors/500_api_error.json", False, id="server-error"),
+            pytest.param("errors/400_invalid_request.json", False, id="resolved-rejected"),
+        ],
+    )
+    def test_the_response_carries_no_api_error_text_request_id_or_key(
+        self, flask_client, fake, monkeypatch, error_fixture, with_override
+    ):
+        if with_override:
+            monkeypatch.setenv(_ENV, _UNSERVED_OVERRIDE)
+        outcome = load_fixture(error_fixture)
+        fake.queue_message(outcome)
+
+        run = _evaluate(flask_client, fake)
+
+        dumped = json.dumps(run.data)
+        assert outcome["body"]["error"]["message"] not in dumped
+        assert outcome["body"]["request_id"] not in dumped
+        assert FAKE_API_KEY not in dumped
+
+    @pytest.mark.parametrize(
+        ("refusal_fixture", "block_type"),
+        [
+            pytest.param("messages/refusal_after_partial_text.json", "text", id="partial-text"),
+            pytest.param("messages/refusal_after_partial_tool.json", "tool_use", id="tool-input"),
+        ],
+    )
+    def test_a_refusal_never_leaks_the_content_it_dropped(
+        self, flask_client, fake, refusal_fixture, block_type
+    ):
+        refused = load_fixture(refusal_fixture)
+        dropped = next(b for b in refused["content"] if b["type"] == block_type)
+        leaked = dropped["text"] if block_type == "text" else json.dumps(dropped["input"])
+        assert leaked.strip(), "self-guard: the fixture must carry content to leak"
+        fake.queue_message(refused)
+
+        run = _evaluate(flask_client, fake)
+
+        assert run.data["survivors"] == 0
+        dumped = json.dumps(run.data)
+        assert leaked not in dumped
+        if block_type == "tool_use":
+            assert dropped["input"]["candidates"][0]["rationale"] not in dumped

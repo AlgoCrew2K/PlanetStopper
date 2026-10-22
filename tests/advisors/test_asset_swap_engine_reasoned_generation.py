@@ -38,10 +38,15 @@ mocked throughout (network-bound Alpaca call, must never fire in this file).
 
 from __future__ import annotations
 
+import copy
 import json
 import pathlib
 
 import pytest
+
+from tests import _asset_swap_llm_support as sup
+from tests._anthropic_http_fake import load_fixture
+from tests.llm_request.conftest import newest_id
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
@@ -335,3 +340,254 @@ def test_llm_client_construction_or_call_failure_returns_empty_list_no_raise(
     monkeypatch.setattr(ase, "_build_client", lambda: _RaisingMockClient())
     result2 = ase.generate_reasoned_swap_candidates("sym-1", fixture_tree, objective)
     assert result2 == [], f"D-1 GAP: SDK call failure should degrade to [], got {result2!r}"
+
+
+# ===========================================================================
+# Model resolution: the request the generator sends and how it reads the reply.
+#
+# The private generator ``_generate_reasoned_swap_candidates`` returns
+# ``(candidates, reply)`` where ``reply`` is the last ``llm_request.Reply`` (None
+# when no request was ever made or the generator hit an unexpected exception);
+# ``generate_reasoned_swap_candidates`` stays the list-returning wrapper over it.
+# Both entry points of the engine call the private one, so existing tests that
+# stand in for the generator patch ``_generate_reasoned_swap_candidates`` and
+# return ``(candidates, None)``.
+# ===========================================================================
+
+_ENV = "ADVISOR_SUGGESTION_MODEL"
+
+
+def _generate(ase, tree=None, **kwargs):
+    objective = ase.SwapObjective(
+        objective_type="reduce_drawdown", target_pair=None, measured_value=0.0
+    )
+    return ase._generate_reasoned_swap_candidates(
+        "sym-1", sup.held_tree() if tree is None else tree, objective, **kwargs
+    )
+
+
+def _without_closure(tool: dict) -> dict:
+    """A tool with the strict flag and every ``additionalProperties`` removed."""
+    tool = copy.deepcopy(tool)
+    tool.pop("strict", None)
+    for node in sup.tool_nodes(tool):
+        node.pop("additionalProperties", None)
+    return tool
+
+
+class TestGeneratorRequest:
+    def test_one_request_with_the_effort_budget_timeout_and_no_rejected_parameter(
+        self, ase, swap_fake
+    ):
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        _generate(ase)
+
+        (request,) = swap_fake.message_requests
+        body = request.body
+        assert body["model"] == newest_id("fable")
+        assert body["output_config"] == {"effort": "high"}
+        assert body["max_tokens"] == 16000
+        assert request.timeout["read"] == 120.0
+        for rejected in ("temperature", "top_p", "top_k", "thinking"):
+            assert rejected not in body
+        assert [m["role"] for m in body["messages"]] == ["user"], "no trailing assistant message"
+        assert "emit_swap_candidates" in body["messages"][0]["content"], (
+            "the prompt must tell the model to call the tool by name, since the call is not forced"
+        )
+
+    def test_the_tool_goes_out_strict_with_every_object_node_closed_and_nothing_else_changed(
+        self, ase, swap_fake
+    ):
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        _generate(ase)
+
+        (sent,) = swap_fake.message_requests[0].body["tools"]
+        assert sent["name"] == sup.SWAP_TOOL_NAME
+        assert sent["strict"] is True
+        nodes = sup.tool_nodes(sent)
+        assert len(nodes) >= 2, "the tool holds an input object and an item object"
+        assert all(node["additionalProperties"] is False for node in nodes)
+        assert _without_closure(sent) == _without_closure(ase._EMIT_SWAP_CANDIDATES_TOOL), (
+            "names, types, required lists and descriptions must be exactly the engine's own"
+        )
+
+    def test_the_call_is_not_forced_and_asks_for_the_fallback_model(self, ase, swap_fake):
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        _generate(ase)
+
+        (request,) = swap_fake.message_requests
+        assert request.body["tool_choice"] == {"type": "auto"}
+        assert request.body["fallbacks"] == "default"
+        assert request.headers["anthropic-beta"] == "server-side-fallback-2026-07-01"
+
+    def test_an_override_is_the_model_named_and_nothing_is_listed(
+        self, ase, swap_fake, unresolved_models, monkeypatch
+    ):
+        monkeypatch.setenv(_ENV, "operator-chosen-model")
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        _generate(ase)
+
+        assert sup.request_models(swap_fake) == ["operator-chosen-model"]
+        assert swap_fake.listing_requests == []
+
+
+class TestGeneratorReadsTheToolCall:
+    def test_a_thinking_then_tool_reply_is_parsed_into_the_swap_pair(self, ase, swap_fake):
+        reply_body = sup.swap_tool_reply()
+        swap_fake.queue_message(reply_body)
+        incumbent, candidate = sup.captured_pair()
+        rationale = next(b for b in reply_body["content"] if b["type"] == "tool_use")["input"][
+            "candidates"
+        ][0]["rationale"]
+
+        candidates, reply = _generate(ase)
+
+        assert [(c.incumbent_asset, c.candidate_asset, c.rationale) for c in candidates] == [
+            (incumbent, candidate, rationale)
+        ]
+        assert reply.reason is None
+        assert reply.model == reply_body["model"]
+
+    def test_a_reply_that_names_an_asset_the_symphony_does_not_hold_is_dropped(
+        self, ase, swap_fake
+    ):
+        incumbent, _ = sup.captured_pair()
+        tree = sup.plain_tree()
+        assert incumbent not in ase.extract_tickers(tree), "self-guard: the tree must not hold it"
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        candidates, reply = _generate(ase, tree)
+
+        assert candidates == []
+        assert reply.reason is None, (
+            "an untrusted tool input is dropped, it is not a generation failure"
+        )
+        assert len(swap_fake.message_requests) == 1
+
+    def test_the_public_generator_returns_exactly_the_private_candidates(self, ase, swap_fake):
+        swap_fake.queue_message(sup.swap_tool_reply())
+        swap_fake.queue_message(sup.swap_tool_reply())
+        objective = ase.SwapObjective(
+            objective_type="reduce_drawdown", target_pair=None, measured_value=0.0
+        )
+
+        private_candidates, _ = ase._generate_reasoned_swap_candidates(
+            "sym-1", sup.held_tree(), objective
+        )
+        public_candidates = ase.generate_reasoned_swap_candidates(
+            "sym-1", sup.held_tree(), objective
+        )
+
+        assert isinstance(public_candidates, list)
+        assert public_candidates == private_candidates
+        assert public_candidates
+
+
+_GENERATION_STOPS = [
+    pytest.param(
+        ["messages/refusal_reasoning_extraction.json"],
+        "refusal",
+        "refusal: reasoning_extraction",
+        1,
+        id="refusal",
+    ),
+    pytest.param(["messages/max_tokens.json"], "max_tokens", "max_tokens", 1, id="max-tokens"),
+    pytest.param(
+        ["messages/text_only_with_tools.json"] * 3,
+        "no_tool_call",
+        "no_tool_call",
+        3,
+        id="no-tool-call",
+    ),
+]
+
+
+class TestGeneratorAttemptsAndStops:
+    @pytest.mark.parametrize(("replies", "reason", "reason_text", "requests"), _GENERATION_STOPS)
+    def test_stops_with_the_reason_and_the_exact_number_of_requests(
+        self, ase, swap_fake, replies, reason, reason_text, requests
+    ):
+        for name in replies:
+            swap_fake.queue_message(load_fixture(name))
+        swap_fake.queue_message(sup.swap_tool_reply())  # must stay unused
+
+        candidates, reply = _generate(ase)
+
+        assert candidates == []
+        assert reply.reason == reason
+        assert reply.reason_text() == reason_text
+        assert len(swap_fake.message_requests) == requests
+        assert reply.model == load_fixture(replies[-1])["model"]
+
+    def test_a_refusal_after_a_complete_tool_call_still_yields_no_candidate(self, ase, swap_fake):
+        swap_fake.queue_message(load_fixture("messages/refusal_after_partial_tool.json"))
+
+        candidates, reply = _generate(ase)
+
+        assert candidates == []
+        assert reply.reason == "refusal"
+
+    def test_a_missing_family_sends_nothing_and_says_model_unavailable(
+        self, ase, swap_fake, unresolved_models
+    ):
+        swap_fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        candidates, reply = _generate(ase)
+
+        assert candidates == []
+        assert reply.reason == "model_unavailable"
+        assert swap_fake.message_requests == []
+
+    @pytest.mark.parametrize(
+        ("error_fixture", "reason"),
+        [
+            pytest.param("errors/404_not_found.json", "override_model_not_found", id="not-found"),
+            pytest.param(
+                "errors/400_invalid_request.json", "override_request_rejected", id="rejected"
+            ),
+        ],
+    )
+    def test_an_unserved_override_is_reported_with_its_variable_and_never_retried(
+        self, ase, swap_fake, unresolved_models, monkeypatch, error_fixture, reason
+    ):
+        monkeypatch.setenv(_ENV, "operator-chosen-model")
+        swap_fake.queue_message(load_fixture(error_fixture))
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        candidates, reply = _generate(ase)
+
+        assert candidates == []
+        assert reply.reason == reason
+        assert reply.reason_text() == f"{reason}: {_ENV}"
+        assert len(swap_fake.message_requests) == 1
+
+    @pytest.mark.parametrize(
+        "error_fixture", ["errors/500_api_error.json", "errors/400_invalid_request.json"]
+    )
+    def test_an_api_error_degrades_to_nothing_without_a_retry_and_never_raises(
+        self, ase, swap_fake, error_fixture
+    ):
+        swap_fake.queue_message(load_fixture(error_fixture))
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        candidates, reply = _generate(ase)
+
+        assert candidates == []
+        assert reply is None
+        assert len(swap_fake.message_requests) == 1
+
+    def test_no_client_degrades_to_nothing_with_no_reply(self, ase, monkeypatch):
+        def _no_key():
+            raise RuntimeError("ANTHROPIC_API_KEY is not set")
+
+        monkeypatch.setattr(ase, "_build_client", _no_key)
+        monkeypatch.setattr(ase, "get_tradeable_set", lambda **kwargs: sup.tradeable_universe())
+
+        candidates, reply = _generate(ase)
+
+        assert candidates == []
+        assert reply is None

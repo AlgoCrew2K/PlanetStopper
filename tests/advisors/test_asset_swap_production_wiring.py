@@ -241,7 +241,9 @@ def test_ac4_production_high_pbo_batch_is_pbo_vetoed_end_to_end(ase):
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "generate_reasoned_swap_candidates", return_value=reasoned_pairs),
+        patch.object(
+            ase, "_generate_reasoned_swap_candidates", return_value=(reasoned_pairs, None)
+        ),
         patch.object(ase, "run_backtest", side_effect=_spy_aware_backtest(series_by_ticker, spy)),
         patch.object(ase, "database") as mock_db,
     ):
@@ -283,7 +285,9 @@ def test_ac5_production_below_spy_batch_rejected_below_spy_alpha_end_to_end(ase)
 
     with (
         patch.object(ase, "_has_composer_key", return_value=True),
-        patch.object(ase, "generate_reasoned_swap_candidates", return_value=reasoned_pairs),
+        patch.object(
+            ase, "_generate_reasoned_swap_candidates", return_value=(reasoned_pairs, None)
+        ),
         patch.object(ase, "run_backtest", side_effect=_spy_aware_backtest(series_by_ticker, spy)),
         patch.object(ase, "database") as mock_db,
     ):

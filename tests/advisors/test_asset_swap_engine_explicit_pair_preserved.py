@@ -70,8 +70,8 @@ def test_explicit_pair_never_calls_reasoned_generator(ase, fixture_tree, monkeyp
     monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
     monkeypatch.setattr(ase, "run_backtest", lambda *a, **k: _fake_backtest_result())
     monkeypatch.setattr(ase.database, "insert_advisor_observation", MagicMock(return_value=1))
-    gen_spy = MagicMock(return_value=[])
-    monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", gen_spy)
+    gen_spy = MagicMock(return_value=([], None))
+    monkeypatch.setattr(ase, "_generate_reasoned_swap_candidates", gen_spy)
 
     ase.propose_operator_swap(
         symphony_id="sym-1",

@@ -573,8 +573,8 @@ class TestAdvisorSuggestedMode:
             patch("requests.post", return_value=mock_resp),
             patch("database.insert_advisor_observation", return_value=1),
             patch(
-                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
-                return_value=reasoned_pairs,
+                "advisors.asset_swap_engine._generate_reasoned_swap_candidates",
+                return_value=(reasoned_pairs, None),
             ),
         ):
             result = engine.suggest_swaps(
@@ -620,8 +620,8 @@ class TestAdvisorSuggestedMode:
                 patch("requests.post", return_value=mock_resp),
                 patch("database.insert_advisor_observation", return_value=1),
                 patch(
-                    "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
-                    return_value=reasoned_pairs,
+                    "advisors.asset_swap_engine._generate_reasoned_swap_candidates",
+                    return_value=(reasoned_pairs, None),
                 ),
             ):
                 result = engine.suggest_swaps(
@@ -1184,8 +1184,8 @@ class TestBacktestFailureIsolation:
             patch("requests.post", side_effect=_side_effect),
             patch("database.insert_advisor_observation", return_value=1),
             patch(
-                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
-                return_value=reasoned_pairs,
+                "advisors.asset_swap_engine._generate_reasoned_swap_candidates",
+                return_value=(reasoned_pairs, None),
             ),
         ):
             try:
@@ -1233,8 +1233,8 @@ class TestBacktestFailureIsolation:
             patch("requests.post", return_value=error_resp),
             patch("database.insert_advisor_observation", return_value=1),
             patch(
-                "advisors.asset_swap_engine.generate_reasoned_swap_candidates",
-                return_value=reasoned_pairs,
+                "advisors.asset_swap_engine._generate_reasoned_swap_candidates",
+                return_value=(reasoned_pairs, None),
             ),
         ):
             try:
