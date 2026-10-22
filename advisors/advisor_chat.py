@@ -44,10 +44,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 
 import ai_advisor
+import llm_request
+import model_config
 
 # ---------------------------------------------------------------------------
 # AC-3 — Artifact scoping constants
@@ -208,10 +209,10 @@ logger = logging.getLogger(__name__)
 
 # Token budget for chat responses — longer than config suggestions because we
 # are explaining multi-paragraph reasoning, not producing a structured list.
-_CHAT_MAX_TOKENS = 1024
+_CHAT_MAX_TOKENS = 8000  # output tokens; holds a reply that thinks first
 
 # Client-side timeout matching the config advisor (ai_advisor._REQUEST_TIMEOUT_SECONDS).
-_CHAT_REQUEST_TIMEOUT_SECONDS = 30.0
+_CHAT_REQUEST_TIMEOUT_SECONDS = 120.0  # seconds
 
 # ---------------------------------------------------------------------------
 # Response type
@@ -376,21 +377,19 @@ def explain_artifact(
         logger.warning("advisor_chat: client construction failed: %s", exc)
         return ChatResponse(answer=None, error=CHAT_UNAVAILABLE_MSG)
 
-    # Layer 2 — call the LLM.
-    # We use client.messages.create (plain text response) rather than
-    # client.messages.parse (structured output) because chat answers are
-    # free-form explanations, not typed schemas.
+    # Layer 2 — call the LLM through the shared request helper (free-form text reply).
     try:
-        sdk_response = client.messages.create(
-            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
+        reply = llm_request.send(
+            client,
+            model_config.Knob.SYNTHESIS,
+            effort="high",
             max_tokens=_CHAT_MAX_TOKENS,
             system=_EXPLAIN_ONLY_SYSTEM_PROMPT,
             messages=_build_chat_messages(question, artifact),
             timeout=_CHAT_REQUEST_TIMEOUT_SECONDS,
         )
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
-        reason = f"{type(exc).__name__}: {exc}"
-        logger.warning("advisor_chat: messages.create failed: %s", reason)
+        logger.warning("advisor_chat: request failed: %s", type(exc).__name__)
         return ChatResponse(
             answer=None,
             error=CHAT_ERROR_MSG_TEMPLATE.format(
@@ -398,23 +397,13 @@ def explain_artifact(
             ),
         )
 
-    # Layer 3 — extract the text response.
-    # anthropic SDK: sdk_response.content is a list of content blocks;
-    # each text block has a .text attribute.  We join all text blocks.
-    try:
-        text_blocks = [
-            block.text
-            for block in (getattr(sdk_response, "content", None) or [])
-            if hasattr(block, "text") and block.text
-        ]
-        answer = "\n".join(text_blocks).strip()
-    except Exception as exc:  # noqa: BLE001 - graceful degradation contract
-        reason = f"{type(exc).__name__}: {exc}"
-        logger.warning("advisor_chat: response extraction failed: %s", reason)
+    if reply.reason is not None:
+        logger.warning("advisor_chat: request ended: %s", reply.reason)
         return ChatResponse(
-            answer=None,
-            error=CHAT_ERROR_MSG_TEMPLATE.format(reason="could not extract response text"),
+            answer=None, error=CHAT_ERROR_MSG_TEMPLATE.format(reason=reply.reason_text())
         )
+
+    answer = reply.text().strip()
 
     if not answer:
         logger.warning("advisor_chat: SDK returned an empty text response")

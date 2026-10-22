@@ -57,9 +57,10 @@ _OPTUNA_SEARCH_SPACE_KEYS = frozenset(
 # Model + SDK configuration.
 # ---------------------------------------------------------------------------
 
-_MAX_TOKENS = 2048
-# Explicit client-side timeout — never rely on the SDK/urllib3 default.
-_REQUEST_TIMEOUT_SECONDS = 30.0
+# Output budget in tokens: holds a reply that thinks before it emits the suggestions.
+_MAX_TOKENS = 16000
+# Explicit client-side timeout in seconds, sized for a reply that thinks.
+_REQUEST_TIMEOUT_SECONDS = 120.0
 
 # Freshness window for the nightly MARKET_LENS_CACHE bundle.
 # 36 h covers a missed council night while still allowing the next run to refresh.
@@ -1897,80 +1898,42 @@ def request_suggestions(
         logger.warning("ai_advisor: client construction failed: %s", exc, exc_info=True)
         return None, msg
 
-    # Call Claude's structured-output endpoint. anthropic 0.85.0 exposes
-    # client.messages.parse(..., output_format=<PydanticModel>) which returns
-    # an SDK response whose .content list carries one or more ParsedTextBlocks;
-    # each ParsedTextBlock has a .parsed_output field holding the validated
-    # Pydantic instance. We walk content and take the first non-None
-    # .parsed_output (see the extraction loop below).
+    # parse() validates every text block inside the SDK and raises on a refusal's or a
+    # truncation's partial JSON before the stop reason can be read, so the reply is
+    # validated here after llm_request has classified it.
+    import anthropic
+
+    import llm_request
+
     try:
-        sdk_response = client.messages.parse(
-            model=model_config.get_advisor_suggestion_model(),
+        reply = llm_request.send(
+            client,
+            model_config.Knob.SUGGESTION,
+            effort="high",
             max_tokens=_MAX_TOKENS,
-            output_format=ConfigSuggestionsResponse,
             messages=_build_messages(context),
+            output_schema=anthropic.transform_schema(ConfigSuggestionsResponse),
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )
     except Exception as exc:  # noqa: BLE001 - the whole contract: never raise
-        # D-1 security contract: do NOT embed str(exc) in the browser-facing
-        # message — exception text may contain API keys or internal paths.
-        # Full detail is logged server-side via exc_info=True; the UI sees only
-        # the error class name, mirroring the client-construction failure path.
-        msg = (
+        # D-1: the browser sees only the class name; exception text can carry secrets.
+        logger.warning("ai_advisor: suggestion request failed: %s", type(exc).__name__)
+        return None, (
             f"Claude advisor request failed ({type(exc).__name__}). Try again, or decide manually."
         )
-        logger.warning(
-            "ai_advisor: messages.parse failed: %s: %s",
-            type(exc).__name__,
-            exc,
-            exc_info=True,
-        )
-        return None, msg
 
-    # Extract + validate the parsed structured output. On anthropic 0.85.0 the
-    # validated Pydantic instance lives on each ParsedTextBlock inside
-    # response.content, not on a top-level .parsed attribute (which does not
-    # exist on ParsedMessage). Walk the content blocks and take the first
-    # non-None parsed_output. A malformed response (all parsed_output=None, or
-    # empty content) degrades gracefully — never raise.
-    parsed = None
-    for block in getattr(sdk_response, "content", None) or []:
-        candidate = getattr(block, "parsed_output", None)
-        if candidate is not None:
-            parsed = candidate
-            break
-    if parsed is None:
-        msg = (
-            "Claude returned an unparseable response (no structured output). "
-            "No suggestions this call."
-        )
-        logger.warning("ai_advisor: SDK response had no .parsed payload")
-        return None, msg
+    if reply.reason is not None:
+        logger.warning("ai_advisor: suggestion request ended: %s", reply.reason)
+        return None, f"Claude advisor unavailable: {reply.reason_text()}. No suggestions this call."
 
-    if isinstance(parsed, ConfigSuggestionsResponse):
-        return parsed, None
-
-    # The SDK handed back something — coerce it through the schema so a
-    # dict-shaped payload still validates, and a wrong-shape payload (e.g. a
-    # bare string) fails validation gracefully rather than raising upstream.
     try:
-        if isinstance(parsed, BaseModel):
-            response = ConfigSuggestionsResponse.model_validate(parsed.model_dump())
-        elif isinstance(parsed, dict):
-            response = ConfigSuggestionsResponse.model_validate(parsed)
-        else:
-            raise TypeError(
-                f"parsed output is {type(parsed).__name__}, not a ConfigSuggestionsResponse"
-            )
+        return ConfigSuggestionsResponse.model_validate_json(reply.text()), None
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
-        msg = (
-            f"Claude returned a response that did not match the expected "
+        logger.warning("ai_advisor: response failed schema validation: %s", type(exc).__name__)
+        return None, (
+            "Claude returned a response that did not match the expected "
             f"schema ({type(exc).__name__}). No suggestions this call."
         )
-        logger.warning("ai_advisor: response failed schema validation: %s", exc)
-        return None, msg
-
-    return response, None
 
 
 # ---------------------------------------------------------------------------
