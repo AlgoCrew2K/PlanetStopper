@@ -9,10 +9,11 @@ the unit ``analytics.compute_quantstats_metrics`` and
 Source contract
 ---------------
 The response carries parallel arrays ``epoch_ms`` (epoch MILLISECONDS) and
-``deposit_adjusted_series`` (a positive value-scale series with capital flows
-removed), alongside a raw ``series`` that jumps on deposits/withdrawals. Only
-``deposit_adjusted_series`` is ever used -- the raw ``series`` would turn a cash
-deposit into a fake multi-hundred-percent "return".
+``deposit_adjusted_series`` (documented as a positive value-scale series with
+capital flows removed -- see the [Unverified] caveat below), alongside a raw
+``series`` that jumps on deposits/withdrawals. Only ``deposit_adjusted_series``
+is ever used -- the raw ``series`` would turn a cash deposit into a fake
+multi-hundred-percent "return".
 
 [Unverified] ``deposit_adjusted_series`` semantics are inferred from the Composer
 docs, not from a live capture (docs/audit/COMPOSER-HISTORICAL-SERIES-2026-09-03.md).

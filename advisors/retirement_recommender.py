@@ -5,7 +5,9 @@ Flags a live symphony as a *retirement candidate* when it is BOTH redundant
 correlated pair. Three stages, each conservative and fail-closed:
 
 1. **Screen** (AC-1/AC-2): pairwise Pearson correlation over each symphony's
-   CONTINUOUS actual-traded (bot) daily return series -- a thin wrapper over
+   continuous daily return series -- by default (``source="shadow"``) the
+   actual-traded (bot) series, or (``source="composer"``) Composer's realized
+   deposit-adjusted series, one basis per run -- a thin wrapper over
    ``advisors.correlation_diagnostic.compute_pairwise_correlations``.
 2. **Composite rank** (AC-3/AC-4): a CAGR-dominant, fleet-normalized
    performance score identifies which member of a flagged pair is the
@@ -760,8 +762,9 @@ def build_recommendations_with_summary(
     symphony (None = all available).
 
     Returns ``(recommendations, summary)``. Each recommendation is a flat dict
-    shaped exactly like the raw_response schema documented in
-    persist_recommendations. The summary carries every documented key on every
+    whose keys are the raw_response evidence schema assembled in
+    ``_run_pipeline`` (persisted verbatim by persist_recommendations). The
+    summary carries every key ``_new_run_summary`` defines, on every
     status; its per-gate counts are per PAIR, so
     ``pairs_screened == sum(blocked_*) + pairs that produced a recommendation``
     (per-candidate dedup can then collapse several produced pairs into fewer
