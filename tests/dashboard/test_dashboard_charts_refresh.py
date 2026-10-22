@@ -14,10 +14,13 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import inspect
 import json
+import re
 
 import pytest
 
+import analytics
 from tests.dashboard import _index_js_harness as hx
 
 IDS = hx.SYMPHONY_IDS
@@ -66,7 +69,7 @@ def _state_variant(state: dict, mode: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# AC-3: a refresh never empties, rebuilds or re-animates a drawn chart
+# A refresh never empties, rebuilds or re-animates a drawn chart
 # ---------------------------------------------------------------------------
 
 
@@ -289,7 +292,7 @@ class TestRefreshKeepsDrawnCharts:
 
 
 # ---------------------------------------------------------------------------
-# AC-4: after a refresh the hero shows the selected calendar window
+# After a refresh the hero shows the selected calendar window
 # ---------------------------------------------------------------------------
 
 
@@ -498,7 +501,112 @@ class TestRefreshShowsTheSelectedCalendarWindow:
 
 
 # ---------------------------------------------------------------------------
-# AC-5: a theme or accent change recolours the charts
+# The limited-history caption describes the series a fallback drew
+# ---------------------------------------------------------------------------
+
+
+def _poll_series_cap() -> int:
+    """Trading days the poll's hero series holds at most (the producer's own default)."""
+    default = (
+        inspect.signature(analytics.get_portfolio_bot_and_held_daily_returns)
+        .parameters["days"]
+        .default
+    )
+    assert isinstance(default, int), "the poll series is capped by a day count"
+    return default
+
+
+def _caption_expected(token: str, poll_dates: list[str], today: dt.date) -> bool:
+    """Whether the poll's series falls short of the window: it starts after the window's
+    calendar cutoff, or (a window with no cutoff) it holds as many days as the poll can."""
+    cutoff = hx.window_cutoff_iso(token, today)
+    if cutoff is None:
+        return len(poll_dates) >= _poll_series_cap()
+    return poll_dates[0] > cutoff
+
+
+class TestFallbackCaptionDescribesTheDrawnSeries:
+    def test_a_fallback_that_covers_the_window_drops_the_caption_the_previous_response_left(self):
+        world = hx.get_world("default")
+        limited_one_year = {**world["hero"]["1y"], "insufficient_history": True}
+        scenario = r"""
+        await H.boot({});
+        H.route('/api/hero-chart/1y', { body: H.bodies.limitedOneYear });
+        await H.click('[data-testid="window-1y"]'); await H.completeAnimations();
+        const captionAfterResponse = H.el('#hero-chart-na');
+        H.route(/^\/api\/hero-chart\//, { reject: true });
+        await H.click('[data-testid="window-30d"]'); await H.completeAnimations();
+        return { before: captionAfterResponse, after: H.el('#hero-chart-na'), hero: H.summary()['cum-chart'] };
+        """
+        now = hx.utc_now_iso()
+        r = _run(scenario, extra_bodies={"limitedOneYear": limited_one_year}, now_iso=now)
+        today = dt.date.fromisoformat(now[:10])
+        dates, bot, _ = hx.poll_hist(world["state"])
+        assert r["before"]["style"]["display"] == "block", (
+            "fixture sanity: the previous response left the caption on"
+        )
+        assert not _caption_expected("30d", dates, today), (
+            "fixture sanity: the poll series covers the 30d window"
+        )
+        cutoff = hx.window_cutoff_iso("30d", today)
+        exp_dates, _ = hx.rebase_to_window(dates, bot, cutoff)
+        assert r["hero"]["labels"] == exp_dates, "the fallback series was drawn"
+        assert r["after"]["style"]["display"] == "none", (
+            "a fallback that covers its window must not keep another window's caption"
+        )
+
+    @pytest.mark.parametrize("token", ["1y", "all"])
+    def test_a_fallback_that_falls_short_of_the_window_shows_the_caption(self, token):
+        world = hx.get_world("default")
+        scenario = (
+            r"""
+        await H.boot({});
+        await H.click('[data-testid="window-30d"]'); await H.completeAnimations();
+        const before = H.el('#hero-chart-na');
+        H.route(/^\/api\/hero-chart\//, { reject: true });
+        await H.click('[data-testid="window-%s"]'); await H.completeAnimations();
+        return { before: before, after: H.el('#hero-chart-na'), hero: H.summary()['cum-chart'] };
+        """
+            % token
+        )
+        now = hx.utc_now_iso()
+        r = _run(scenario, now_iso=now)
+        today = dt.date.fromisoformat(now[:10])
+        dates, bot, _ = hx.poll_hist(world["state"])
+        assert r["before"]["style"]["display"] == "none", (
+            "fixture sanity: the previous response left no caption"
+        )
+        assert _caption_expected(token, dates, today), (
+            "fixture sanity: history is longer than the poll series, so the fallback is short"
+        )
+        exp_dates, _ = hx.rebase_to_window(dates, bot, hx.window_cutoff_iso(token, today))
+        assert r["hero"]["labels"] == exp_dates, "the fallback series was drawn"
+        assert r["after"]["style"]["display"] == "block", (
+            f"{token}: the fallback drew fewer days than the window and says so"
+        )
+
+    def test_all_time_fallback_over_a_history_the_poll_holds_whole_shows_no_caption(self):
+        world = hx.get_world("mixed")
+        scenario = r"""
+        await H.boot({});
+        H.route(/^\/api\/hero-chart\//, { reject: true });
+        await H.click('[data-testid="window-all"]'); await H.completeAnimations();
+        return { after: H.el('#hero-chart-na'), hero: H.summary()['cum-chart'] };
+        """
+        now = hx.utc_now_iso()
+        r = _run(scenario, "mixed", now_iso=now)
+        dates, bot, _ = hx.poll_hist(world["state"])
+        assert not _caption_expected("all", dates, dt.date.fromisoformat(now[:10])), (
+            "fixture sanity: the poll series is shorter than the most it can hold"
+        )
+        assert r["hero"]["labels"] == dates, "the whole poll series was drawn"
+        assert r["after"]["style"]["display"] == "none", (
+            "a complete history needs no limited-history caption"
+        )
+
+
+# ---------------------------------------------------------------------------
+# A theme or accent change recolours the charts
 # ---------------------------------------------------------------------------
 
 _TOKENS = hx.load_tokens()
@@ -635,6 +743,87 @@ class TestThemeAndAccentRecolourTheCharts:
         assert _DARK[token] in r["darkFill"], "the exit badge fill follows the theme too"
 
 
+def _line_colours(summary: dict) -> dict[str, list[str]]:
+    """Every drawn chart's line colours, by dataset position (never by label text)."""
+    return {
+        key: [d["borderColor"] for d in chart["datasets"]]
+        for key, chart in summary.items()
+        if chart["live"]
+    }
+
+
+class TestEveryChartLineKeepsTheTokenItWasBuiltWith:
+    """In this harness every colour token reads as ``<token name>@<label>``, so a
+    chart line's colour names the token it was built from. After a tweak, each line
+    must carry the token a build under the new values would give it: whichever
+    code recolours a chart reads the same token the build read."""
+
+    OPEN_DETAIL = (
+        "H.sandbox.openDetailPanel('%s'); await H.settle(); await H.completeAnimations();"
+        % hx.TRIGGERED_TP_ID
+    )
+
+    def test_after_a_tweak_every_line_matches_a_fresh_build_under_the_new_tokens(self):
+        recoloured = _run(
+            r"""
+        H.renameLabels = true;
+        H.useTokenEpoch('A');
+        await H.boot({});
+        %s
+        const built = H.summary();
+        H.useTokenEpoch('B');
+        await H.tweak(); await H.completeAnimations();
+        return { built: built, after: H.summary() };
+        """
+            % self.OPEN_DETAIL
+        )
+        fresh = _run(
+            r"""
+        H.useTokenEpoch('B');
+        await H.boot({});
+        %s
+        return { built: H.summary() };
+        """
+            % self.OPEN_DETAIL
+        )
+        built_old = _line_colours(recoloured["built"])
+        after = _line_colours(recoloured["after"])
+        built_new = _line_colours(fresh["built"])
+        wanted = {"cum-chart", "intraday-canvas", *(_spark(i) for i in IDS)}
+        assert wanted <= set(built_new), "fixture sanity: every chart kind is drawn"
+        assert set(after) == set(built_new)
+        for key in sorted(built_new):
+            assert all(c.endswith("@A") for c in built_old[key]), (
+                f"fixture sanity: {key} reads its colours through the tokens"
+            )
+            assert after[key] == built_new[key], (
+                f"{key}: a tweak painted lines with different tokens than a build uses "
+                f"(after {after[key]}, build {built_new[key]})"
+            )
+
+    def test_the_detail_chart_is_recoloured_whatever_its_datasets_are_called(self):
+        r = _run(
+            r"""
+        H.renameLabels = true;
+        H.useTokenEpoch('A');
+        await H.boot({});
+        %s
+        const before = H.summary()['intraday-canvas'];
+        H.useTokenEpoch('B');
+        await H.tweak();
+        return { before: before, after: H.summary()['intraday-canvas'] };
+        """
+            % self.OPEN_DETAIL
+        )
+        labels = [d["label"] for d in r["after"]["datasets"]]
+        assert labels and all(label.endswith("(renamed)") for label in labels), (
+            "fixture sanity: the stub renamed the detail datasets"
+        )
+        assert all(d["borderColor"].endswith("@A") for d in r["before"]["datasets"])
+        stale = [d["label"] for d in r["after"]["datasets"] if not d["borderColor"].endswith("@B")]
+        assert not stale, f"detail datasets that kept their old colour after a tweak: {stale}"
+
+
 _DIAL_TOKEN_REF = "var(--studio-%s)"
 
 
@@ -738,3 +927,47 @@ class TestDialArcFollowsTheTheme:
         dial = _run(scenario, extra_bodies={"editedCharts": charts, "editedState": state})["dial"]
         assert dial["text"] == "0%", "a real reading of 0 is a value, not the dash"
         assert dial["stroke"] == _dial_token(0.0, False)
+
+
+# ---------------------------------------------------------------------------
+# The chart script carries no dead registry and builds the hero request once
+# ---------------------------------------------------------------------------
+
+
+def _index_js_source() -> str:
+    return hx.INDEX_JS.read_text(encoding="utf-8")
+
+
+class TestChartScriptHasNoDeadOrRepeatedCode:
+    def test_no_collection_declared_in_the_script_is_only_ever_written_to(self):
+        src = _index_js_source()
+        declaration = re.compile(
+            r"^[ \t]*(?:var|let|const)[ \t]+(\w+)[ \t]*=[ \t]*(?:\{\}|\[\])[ \t]*;", re.M
+        )
+        write_only = []
+        for match in declaration.finditer(src):
+            name = match.group(1)
+            word = re.compile(r"\b%s\b" % re.escape(name))
+            store = re.compile(
+                r"^\s*(?:%(n)s\[[^\]\n]+\]\s*=[^=]|delete\s+%(n)s\[|%(n)s\.push\()"
+                % {"n": re.escape(name)}
+            )
+            reads = [
+                line
+                for line in src.splitlines()
+                if word.search(line)
+                and not (declaration.match(line) and declaration.match(line).group(1) == name)
+                and not store.match(line)
+            ]
+            if not reads:
+                write_only.append(name)
+        assert not write_only, (
+            f"collections that are filled and never read, holding every chart ever built: {write_only}"
+        )
+
+    def test_the_hero_window_request_is_built_at_one_site(self):
+        sites = re.findall(r"""['"]/api/hero-chart/['"]""", _index_js_source())
+        assert len(sites) == 1, (
+            f"the hero-window URL is built in {len(sites)} places: the picker click and a "
+            "refresh must call one function so they cannot drift apart"
+        )

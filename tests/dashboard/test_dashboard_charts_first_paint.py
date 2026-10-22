@@ -15,6 +15,7 @@ judged on a live render (tests/ui/test_dashboard_charts_browser.py).
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -456,3 +457,67 @@ class TestRefreshCount:
         assert r["built"]["constructed"][0]["animation"]["kind"] != "false"
         assert r["during"] == "1", "the refresh waits for the new chart's entry animation"
         assert r["after"] == "2"
+
+
+# ---------------------------------------------------------------------------
+# A failed hero series is logged by exception type, never by exception text
+# ---------------------------------------------------------------------------
+
+
+class TestHeroSeriesFailureLogging:
+    DETAIL = "series-reader-detail-7c41e9"
+
+    @pytest.fixture
+    def failing_series(self, monkeypatch):
+        import analytics
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError(self.DETAIL)
+
+        monkeypatch.setattr(analytics, "get_portfolio_bot_and_held_daily_returns", _raise)
+
+    @staticmethod
+    def _rendered(record: logging.LogRecord) -> str:
+        return logging.Formatter("%(levelname)s %(name)s %(message)s").format(record)
+
+    @pytest.mark.parametrize("entry", ["helper", "route", "page data"])
+    def test_the_error_line_names_the_exception_type_and_carries_no_exception_text(
+        self, entry, failing_series, caplog
+    ):
+        import app as app_module
+
+        caplog.set_level(logging.DEBUG)
+        if entry == "helper":
+            body = app_module._hero_chart_body("30d")
+        elif entry == "route":
+            response = app_module.app.test_client().get("/api/hero-chart/30d")
+            assert response.status_code == 200
+            body = response.get_json()
+        else:
+            body = app_module._dashboard_initial_data({}, {})["hero"]
+        assert body["hist_dates"] == [] and body["insufficient_history"] is True, (
+            "the failure still degrades to the empty series"
+        )
+        loud = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any(r.levelno >= logging.ERROR for r in loud), "the failure is still reported"
+        for record in loud:
+            text = self._rendered(record)
+            assert self.DETAIL not in text, (
+                f"exception text reached a {record.levelname} record: {text!r}"
+            )
+            assert record.exc_info is None and not record.exc_text, (
+                "an exc_info traceback on a WARNING+ record carries the exception text"
+            )
+        assert any("RuntimeError" in self._rendered(r) for r in loud), (
+            "the ERROR line carries the exception type name"
+        )
+
+    def test_the_full_detail_is_kept_in_a_debug_record(self, failing_series, caplog):
+        import app as app_module
+
+        caplog.set_level(logging.DEBUG)
+        app_module._hero_chart_body("30d")
+        debug = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any(self.DETAIL in self._rendered(r) for r in debug), (
+            "the exception detail must still be recoverable from a DEBUG record"
+        )

@@ -34,5 +34,6 @@ approved the derived records the approach lists; recorded here as the sign-off.
 | an empty hero-chart body | S-3.1 family | the body `get_hero_chart` returns on its own exception path (keys `hist_dates`, `hist_bot`, `hist_held` empty, `insufficient_history` true, `available_days` 0), as written in `app.py` |
 | the untriggered `bot_state` entry marked armed | every dial test (S-5.6) | `armed` set to `true` on `iaSOOUsmnCJHiZvbrWfs`: the droplet capture omits the arming flags and only an active card renders an MC dial; part of the `mc_prob` variants the PM signed off, and named in the handoff for confirmation |
 | a failed sparkline response | S-1.5, S-3.2 family | status 500 with the route's own error envelope `{"status": "error", "message": "An internal error occurred"}`; a refused request; an unreadable body |
+| a one-year hero body that says history is limited | caption left on by an earlier response, then a fallback | the `/api/hero-chart/1y` body of world `default` with only `insufficient_history` set to `true` (the producer sets it when fewer days than the window's minimum exist) |
 
 The `current_return` variants of the card verdict (cycle C2) are not used here.

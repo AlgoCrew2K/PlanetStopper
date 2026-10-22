@@ -23,6 +23,10 @@ keeps the data it was given. It never claims a chart is visibly drawn: that is
 judged on a live render. It reproduces one real Chart.js rule: constructing on
 a canvas that still holds a live chart throws.
 
+``H.renameLabels = true`` (set before boot) makes the stub append a suffix to every
+dataset label at construction, so a test can show that nothing depends on label text.
+``H.useTokenEpoch(label)`` makes every colour token read as ``<name>@<label>``.
+
 ``animation.onComplete`` and plugin ``afterRender`` hooks fire only when a
 scenario says so (``H.completeAnimations``, ``H.fireAfterRender``);
 ``Chart.animator.running(chart)`` answers from ``H.animating``, which holds
@@ -42,7 +46,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import types
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -58,21 +61,36 @@ import app as _app_module  # noqa: E402
 import database as _database_module  # noqa: E402
 
 
+def _defined_in_module(function, module, name: str) -> bool:
+    """True when ``function`` was compiled from ``module``'s own source under ``name``."""
+    code = getattr(function, "__code__", None)
+    if code is None or getattr(function, "__qualname__", None) != name:
+        return False
+    return Path(code.co_filename).resolve() == Path(module.__file__).resolve()
+
+
 def _real_function(module, name: str):
     """The module's own function ``name``, whatever per-test stubs are installed now.
 
     tests/dashboard, tests/ui and tests/app conftests each replace some of these
     functions per test, and this module is imported lazily by tests in all three, so
-    the attribute read at import may already be a stub. A stub (anything that is not
-    a plain function) is replaced by the function compiled from the module's source,
-    run against the live module namespace.
+    the attribute read at import may already be a stub. The current attribute is the
+    real one only when it was compiled from this module's own file under this name:
+    a plain function or lambda written by a conftest has another file and is replaced
+    by the function compiled from the module's source, run against the live module
+    namespace. A decorated target would run its decorators again on the rebuild, so
+    it is refused.
     """
     current = getattr(module, name)
-    if isinstance(current, types.FunctionType):
+    if _defined_in_module(current, module, name):
         return current
     tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name == name:
+            if node.decorator_list:
+                raise RuntimeError(
+                    f"{module.__name__}.{name} is decorated; the rebuild would re-run its decorators"
+                )
             isolated = ast.Module(body=[node], type_ignores=[])
             namespace = module.__dict__
             before = namespace.get(name)
@@ -883,6 +901,9 @@ class Chart {
     if (canvas.__chart && !canvas.__chart.destroyed) {
       throw new Error('Canvas is already in use. Chart with ID ' + canvas.__chart.id + ' must be destroyed before the canvas can be reused.');
     }
+    if (H.renameLabels) {
+      ((config.data && config.data.datasets) || []).forEach(function (d) { d.label = String(d.label) + ' (renamed)'; });
+    }
     this.canvas = canvas; this.config = config; this.data = config.data; this.options = config.options || {};
     this.config.options = this.options;
     this.id = H.charts.length; this.destroyed = false; this._meta = {};
@@ -1073,6 +1094,15 @@ H.setAccent = async function (value) {
   await H.settle();
 };
 H.tokenValue = function (name) { return H.tokens[name]; };
+// Every token reads as its own name plus a label, so a colour read from a chart says
+// which token produced it, and two tokens never share a value.
+H.useTokenEpoch = function (label) {
+  H.tokens = new Proxy({}, { get: function (t, name) { return typeof name === 'string' ? name + '@' + label : undefined; } });
+};
+H.tweak = async function () {
+  winEmitter.dispatchEvent(new CustomEventStub('tweakchange', { detail: { key: 'theme', value: 'epoch' } }));
+  await H.settle();
+};
 
 // ------------------------------------------------------------------ sandbox
 class EventSourceStub {
