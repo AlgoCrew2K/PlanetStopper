@@ -15,9 +15,10 @@ Hardening additions (Phase 4 gap closure — RED before GREEN):
   HC-1  Spend cap: --max-budget-usd <MAX_BUDGET_USD> in the claude command (named constant)
   HC-2  Spend logging: --output-format json in cmd; prism_audit_log row with phase='spend_log'
         persisted after a successful run (shape/presence, not value)
-  HC-3  Model pin: cmd contains 'claude-opus-4-8' (pinned), NOT bare 'opus' (alias)
+  HC-3  Generic model tag: cmd passes '--model opus' and no dated model ID
 """
 
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -39,6 +40,25 @@ def _today_row(offset_days: int = 0) -> dict:
         "advisor_role": "MARKET_PRISM",
         "raw_response": {"run_id": ts.strftime("%Y-%m-%dT%H:%M:%S+00:00")},
     }
+
+
+# The council CLI takes the generic tag; a dated model ID in the command would
+# freeze the council on one model version.
+GENERIC_COUNCIL_MODEL_TAG = "opus"
+_DATED_MODEL_ID_PATTERN = re.compile(r"claude-(?:opus|sonnet|haiku|fable|mythos)-\d")
+
+
+def _model_arg(args_used: list) -> str | None:
+    """Return the argument that follows '--model', or None when absent or last."""
+    if "--model" not in args_used:
+        return None
+    idx = args_used.index("--model")
+    return args_used[idx + 1] if idx + 1 < len(args_used) else None
+
+
+def _dated_model_args(args_used: list) -> list:
+    """Return every command argument that contains a dated model ID."""
+    return [a for a in args_used if _DATED_MODEL_ID_PATTERN.search(str(a))]
 
 
 def _import_scheduler():
@@ -145,7 +165,7 @@ EXPECTED_CLAUDE_ARGS = [
     "-p",
     "--dangerously-skip-permissions",
     "--model",
-    "claude-opus-4-8",
+    "opus",
     "--output-format",
     "json",
     "--max-budget-usd",
@@ -325,7 +345,7 @@ class TestVanillaPrimaryShape:
 
         Required flags (order-independent):
           claude -p --dangerously-skip-permissions
-          --model claude-opus-4-8
+          --model opus
           --output-format json
           --max-budget-usd <value>
 
@@ -350,7 +370,7 @@ class TestVanillaPrimaryShape:
             "-p",
             "--dangerously-skip-permissions",
             "--model",
-            "claude-opus-4-8",
+            "opus",
             "--output-format",
             "json",
             "--max-budget-usd",
@@ -1125,21 +1145,18 @@ class TestSpendLogging:
 
 
 # ---------------------------------------------------------------------------
-# HC-3 — Model pin: 'claude-opus-4-8' (pinned), not bare 'opus' (alias)
+# HC-3 — Generic model tag: '--model opus', no dated model ID in the command
 # ---------------------------------------------------------------------------
 
 
 class TestModelPin:
-    def test_claude_command_uses_pinned_model_not_alias(self):
-        """The claude command must use the pinned model ID 'claude-opus-4-8',
-        not the bare alias 'opus'.
+    def test_claude_command_uses_generic_tag_and_no_dated_model_id(self):
+        """The argument after '--model' is exactly 'opus' and no argument carries a dated
+        model ID.
 
-        Aliases are unstable — 'opus' can silently advance to a new model version,
-        changing cost and behaviour without any code change.  Pinning to
-        'claude-opus-4-8' makes the model choice explicit and reviewable.
-
-        RED intent: _run_prism() uses '--model opus' → 'opus' in args but
-        'claude-opus-4-8' not in args → assertion fails.
+        The council follows the CLI's own resolution of the generic tag, so it moves to
+        the newest opus-line model without a code change.  A dated ID in the command
+        would freeze it on one version.
         """
         mod = _import_scheduler()
         mock_result = MagicMock()
@@ -1155,23 +1172,81 @@ class TestModelPin:
         args_used = mock_run.call_args[0][0]
         cmd_str = " ".join(str(a) for a in args_used)
 
-        # Pinned model ID must be present.
-        assert "claude-opus-4-8" in args_used, (
-            "Pinned model 'claude-opus-4-8' is missing from the claude command. "
-            "Use the pinned model ID, not the bare alias 'opus'. "
-            f"Command was: {cmd_str}"
+        assert _model_arg(args_used) == GENERIC_COUNCIL_MODEL_TAG, (
+            f"The argument after --model must be exactly 'opus'. Command was: {cmd_str}"
+        )
+        assert _dated_model_args(args_used) == [], (
+            f"No command argument may carry a dated model ID. Command was: {cmd_str}"
         )
 
-        # Bare alias must NOT appear as the --model value.
-        # Find the value after '--model' and verify it is not just 'opus'.
-        if "--model" in args_used:
-            model_idx = args_used.index("--model")
-            if model_idx + 1 < len(args_used):
-                model_val = args_used[model_idx + 1]
-                assert model_val != "opus", (
-                    f"--model is set to bare alias 'opus' — use pinned ID 'claude-opus-4-8'. "
-                    f"Command was: {cmd_str}"
-                )
+    def test_synthesis_model_override_does_not_reach_council_command(self, monkeypatch):
+        """ADVISOR_SYNTHESIS_MODEL drives API-side sites only; the CLI command still says 'opus'."""
+        monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "claude-sonnet-4-6")
+        mod = _import_scheduler()
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=mock_result) as mock_run,
+            pytest.raises(SystemExit),
+        ):
+            mod.main()
+
+        args_used = mock_run.call_args[0][0]
+        assert _model_arg(args_used) == GENERIC_COUNCIL_MODEL_TAG, (
+            f"The override must not reach the council command. Command was: {args_used[:8]}"
+        )
+        assert not any("claude-sonnet-4-6" in str(a) for a in args_used), (
+            "The ADVISOR_SYNTHESIS_MODEL value leaked into the council command."
+        )
+
+    def test_nonzero_exit_retries_every_attempt_with_generic_tag(self):
+        """When the CLI rejects the tag (non-zero exit) each of the MAX_ATTEMPTS attempts
+        still passes 'opus', no attempt falls back to a dated ID, and the scheduler exits 1."""
+        mod = _import_scheduler()
+        fail_result = MagicMock()
+        fail_result.returncode = 1
+        fail_result.stdout = ""
+        fail_result.stderr = "unknown model"
+
+        with (
+            patch.object(mod, "_get_summary", return_value=None),
+            patch("subprocess.run", return_value=fail_result) as mock_run,
+            patch("time.sleep"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            mod.main()
+
+        assert mock_run.call_count == mod.MAX_ATTEMPTS
+        assert exc_info.value.code == 1
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            assert _model_arg(cmd) == GENERIC_COUNCIL_MODEL_TAG, (
+                f"Every retry must pass the generic tag. Command was: {cmd[:8]}"
+            )
+            assert _dated_model_args(cmd) == []
+
+    def test_council_agent_files_read_generic_model_tag(self):
+        """Each council agent file declares 'model: opus' in its front matter."""
+        import os
+
+        worktree = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        agents_dir = os.path.join(worktree, ".claude", "agents")
+        names = [
+            "prism-synthesizer.md",
+            "prism-technicals-analyst.md",
+            "prism-sentiment-analyst.md",
+            "prism-derivatives-analyst.md",
+            "prism-macro-analyst.md",
+            "prism-fundamentals-analyst.md",
+        ]
+        for name in names:
+            with open(os.path.join(agents_dir, name), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            assert lines[4].strip() == "model: opus", (
+                f"{name} line 5 must read 'model: opus', got {lines[4]!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
