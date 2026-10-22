@@ -521,3 +521,38 @@ class TestHeroSeriesFailureLogging:
         assert any(self.DETAIL in self._rendered(r) for r in debug), (
             "the exception detail must still be recoverable from a DEBUG record"
         )
+
+
+# ---------------------------------------------------------------------------
+# The harness never takes a conftest stub for the module's own producer
+# ---------------------------------------------------------------------------
+
+
+class TestHarnessProducerLookup:
+    @pytest.mark.parametrize("kind", ["def", "lambda"])
+    def test_a_plain_function_stub_is_replaced_by_the_modules_own_function(self, kind, monkeypatch):
+        import app as app_module
+
+        def stub_def(*args, **kwargs):
+            return "stub"
+
+        stub = stub_def if kind == "def" else (lambda *args, **kwargs: "stub")
+        monkeypatch.setattr(app_module, "get_api_state_dict", stub)
+        real = hx._real_function(app_module, "get_api_state_dict")
+        assert real is not stub, "a stub written as a plain function was taken for the producer"
+        assert real.__code__.co_filename == app_module.__file__
+
+    def test_a_decorated_target_is_refused_because_the_rebuild_would_rerun_the_decorator(
+        self, tmp_path, monkeypatch
+    ):
+        import types
+
+        source = tmp_path / "decorated_target.py"
+        source.write_text(
+            "def wrap(f):\n    return f\n\n\n@wrap\ndef target():\n    return 1\n", encoding="utf-8"
+        )
+        module = types.ModuleType("decorated_target")
+        module.__file__ = str(source)
+        module.target = lambda: "stub"
+        with pytest.raises(RuntimeError, match="decorat"):
+            hx._real_function(module, "target")
