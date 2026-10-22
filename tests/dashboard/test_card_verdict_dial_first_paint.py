@@ -554,3 +554,48 @@ def test_card_that_exits_after_first_paint_shows_its_verdict_and_qualifier_on_th
     assert after["verdict"]["hidden"] is False
     assert after["verdict"]["text"] == _expected_verdict_for(0.25)
     assert after["atExit"]["hidden"] is False
+
+
+# Finite magnitudes far outside the range the browser prints in positional form (below
+# 1e21): a corrupt stored exit return, not a realistic reading.  The page must still
+# render, with the dash, never a 500 from the rounding helper.
+_HUGE_FINITE = [1e30, -1e30, 1e300, 1.7976931348623157e308]
+
+
+@pytest.mark.parametrize("magnitude", _HUGE_FINITE, ids=lambda m: f"ga{m:g}")
+def test_a_huge_finite_stored_exit_return_renders_the_dash_and_never_fails_the_page(
+    monkeypatch, tmp_path, magnitude
+):
+    _network_refused(monkeypatch)
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(tmp_path / "absent.env"))
+    sid = _invented_id(1)
+    database.save_state({sid: _triggered_state(1)})
+    _seed_exit_row(sid, at_return=magnitude)
+    resp = _client().get("/")
+    assert resp.status_code == 200, "a corrupt exit row must not fail the whole page"
+    run = run_page(resp.data.decode("utf-8"), tmp_path, routes={}, steps=[])
+    card = run["initial"]["cards"][sid]
+    assert card["verdict"]["hidden"] is False
+    assert card["verdict"]["text"] == _DASH
+    _assert_qualifier_hidden(card, "first paint")
+
+
+def test_one_page_request_reads_the_exit_rows_once(monkeypatch, tmp_path):
+    """The verdict needs one guard-alpha read per request; a second read of the same
+    ids repeats a database query on every page load."""
+    sid = _single_triggered_page(monkeypatch, tmp_path)
+    reads = []
+    real = database.get_guard_alpha_by_symphony
+
+    def counted(*args, **kwargs):
+        reads.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(database, "get_guard_alpha_by_symphony", counted)
+    resp = _client().get("/")
+    assert resp.status_code == 200
+    run = run_page(resp.data.decode("utf-8"), tmp_path, routes={}, steps=[])
+    assert run["initial"]["cards"][sid]["verdict"]["text"] == _expected_verdict_for(0.25), (
+        "premise: the verdict is still painted from the exit row"
+    )
+    assert len(reads) == 1, f"GET / read the exit rows {len(reads)} times: {reads}"

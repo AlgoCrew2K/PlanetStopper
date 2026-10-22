@@ -24,8 +24,9 @@ validated at runtime by ``database.write_fleet_alert``.
 from __future__ import annotations
 
 import json
+import logging
 import pathlib
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -300,6 +301,166 @@ def test_market_state_banner_stays_hidden_on_first_paint_and_after_a_poll(app_en
     assert run["initial"]["market"]["hidden"] is True
     assert run["loaded"]["market"]["hidden"] is True
     assert run["loaded"]["market"]["text"] == run["initial"]["market"]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Failed polls leave the banner as it was
+# ---------------------------------------------------------------------------
+
+_FAILED_POLLS = ["server_error_500", "session_expired_401", "misconfigured_503", "keyless_200"]
+_FAILURE_STATUS = {
+    "server_error_500": 500,
+    "session_expired_401": 401,
+    "misconfigured_503": 503,
+    "keyless_200": 200,
+}
+
+
+def _failed_state_answer(env, kind: str) -> dict:
+    """What ``/api/state`` really answers when the poll fails, in the harness' route
+    form (``{"status", "body"}``).  Each body is the real app's own answer: the route's
+    error handler (500), the auth gate with the session gone (401) or the credential
+    unset (503), and a 200 success body with the alert key removed (a body that is not
+    a state answer at all)."""
+    mp = env["monkeypatch"]
+    client = env["client"]
+    if kind == "server_error_500":
+        with patch.object(app_module, "get_api_state_dict", side_effect=RuntimeError("boom")):
+            resp = client.get("/api/state")
+    elif kind in ("session_expired_401", "misconfigured_503"):
+        mp.setattr(app_module, "_auth_check_enabled", True)
+        mp.setenv("SECRET_KEY", "fixture-secret-key-value" if kind == "session_expired_401" else "")
+        mp.delenv("FLASK_SECRET_KEY", raising=False)
+        mp.setenv("DASHBOARD_PASSWORD", "fixture-password-value")
+        try:
+            resp = client.get("/api/state")
+        finally:
+            mp.setattr(app_module, "_auth_check_enabled", False)
+    else:
+        body = _state_body(env)
+        assert "fleet_correlation_alert" in body, "premise: a state answer carries the key"
+        del body["fleet_correlation_alert"]
+        return {"status": 200, "body": body}
+    assert resp.status_code == _FAILURE_STATUS[kind], (kind, resp.status_code)
+    return {"status": resp.status_code, "body": resp.get_json()}
+
+
+@pytest.mark.parametrize("kind", _FAILED_POLLS)
+def test_a_failed_poll_at_page_load_leaves_the_painted_banner_shown(app_env, kind):
+    _raise_alert(_alert())
+    html = _first_paint(app_env)
+    answer = _failed_state_answer(app_env, kind)
+    run = _run(app_env, html, routes={**_CSRF_ROUTE, "/api/state": answer})
+    painted, after = run["initial"]["fleet"], run["loaded"]["fleet"]
+    assert painted["hidden"] is False, "premise: the alert is painted at first paint"
+    assert after["hidden"] is False, f"a {kind} poll hid an active alert banner"
+    assert after["text"] == painted["text"] == _expected_sentence(_alert())
+
+
+@pytest.mark.parametrize("kind", _FAILED_POLLS)
+def test_a_failed_poll_after_a_good_poll_keeps_what_that_poll_drew(app_env, kind):
+    """The banner stays as the last good answer left it, which differs from the first
+    paint: a worse client that restores the painted text, or hides, differs from this."""
+    _raise_alert(_ALERT_SHAPES["one_of_eight"])
+    html = _first_paint(app_env)
+    _raise_alert(_ALERT_SHAPES["five_of_eight"])
+    good = _state_body(app_env)
+    failed = _failed_state_answer(app_env, kind)
+    run = _run(
+        app_env,
+        html,
+        routes={**_CSRF_ROUTE, "/api/state": {"body": good}},
+        steps=[{"op": "poll", "label": "failed", "route": {"/api/state": failed}}],
+    )
+    drawn, after = run["loaded"]["fleet"], run["steps"][0]["obs"]["fleet"]
+    assert drawn["hidden"] is False
+    assert drawn["text"] == _expected_sentence(_ALERT_SHAPES["five_of_eight"])
+    assert after["hidden"] is False, f"a {kind} poll hid an active alert banner"
+    assert after["text"] == drawn["text"]
+
+
+@pytest.mark.parametrize("kind", ["server_error_500", "session_expired_401"])
+def test_a_failed_poll_keeps_the_alert_the_more_info_modal_reads(app_env, kind):
+    _raise_alert(_alert())
+    html = _first_paint(app_env)
+    failed = _failed_state_answer(app_env, kind)
+    run = _run(
+        app_env,
+        html,
+        routes={**_CSRF_ROUTE},
+        steps=[
+            {"op": "poll", "label": "failed", "route": {"/api/state": failed}},
+            {"op": "open_modal"},
+        ],
+    )
+    modal = run["steps"][1]["obs"]["modal"]
+    assert "Shared exit reason" in modal["specifics"]
+    assert "No alert data available" not in modal["specifics"]
+
+
+def test_good_polls_after_a_failed_poll_still_update_and_hide_the_banner(app_env):
+    """A failed poll must not pin the banner: the next good answer with a different
+    alert redraws it, and the one after it with no alert hides it."""
+    _raise_alert(_ALERT_SHAPES["one_of_eight"])
+    html = _first_paint(app_env)
+    _raise_alert(_ALERT_SHAPES["three_of_eight"])
+    different = _state_body(app_env)
+    database.clear_fleet_alert()
+    gone = _state_body(app_env)
+    assert gone["fleet_correlation_alert"] is None
+    failed = _failed_state_answer(app_env, "server_error_500")
+    run = _run(
+        app_env,
+        html,
+        routes={**_CSRF_ROUTE, "/api/state": failed},
+        steps=[
+            {"op": "poll", "label": "failed again", "route": {"/api/state": failed}},
+            {
+                "op": "poll",
+                "label": "different alert",
+                "route": {"/api/state": {"body": different}},
+            },
+            {"op": "poll", "label": "alert gone", "route": {"/api/state": {"body": gone}}},
+        ],
+    )
+    steps = {step["label"]: step["obs"]["fleet"] for step in run["steps"]}
+    assert steps["failed again"]["hidden"] is False
+    assert steps["different alert"]["hidden"] is False
+    assert steps["different alert"]["text"] == _expected_sentence(_ALERT_SHAPES["three_of_eight"])
+    assert steps["alert gone"]["hidden"] is True
+
+
+def test_a_failing_state_route_logs_the_exception_type_at_error_and_the_detail_at_debug(
+    app_env, caplog
+):
+    """Warnings and errors carry no exception text (it can hold paths, queries or
+    values); the full detail is kept at debug level."""
+    detail = "fixture-private-detail-4b7e91"
+    with caplog.at_level(logging.DEBUG, logger="alphabot"):
+        with patch.object(app_module, "get_api_state_dict", side_effect=RuntimeError(detail)):
+            resp = app_env["client"].get("/api/state")
+    assert resp.status_code == 500
+    assert resp.get_json() == {"status": "error", "message": "An internal error occurred"}
+
+    loud = [r for r in caplog.records if r.name == "alphabot" and r.levelno >= logging.WARNING]
+    errors = [r for r in loud if r.levelno == logging.ERROR]
+    assert any("RuntimeError" in r.getMessage() for r in errors), (
+        "the ERROR line names the exception type"
+    )
+    leaks = [
+        (r.levelname, r.getMessage())
+        for r in loud
+        if detail in r.getMessage() or r.exc_info or r.exc_text
+    ]
+    assert not leaks, f"WARNING+ records carry exception text or a traceback: {leaks}"
+    debug_detail = [
+        r
+        for r in caplog.records
+        if r.name == "alphabot"
+        and r.levelno == logging.DEBUG
+        and (detail in r.getMessage() or (r.exc_info is not None and detail in str(r.exc_info[1])))
+    ]
+    assert debug_detail, "the full detail is no longer logged anywhere"
 
 
 # ---------------------------------------------------------------------------

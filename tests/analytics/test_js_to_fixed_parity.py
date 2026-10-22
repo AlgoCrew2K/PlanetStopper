@@ -78,6 +78,26 @@ def test_returns_a_string_with_exactly_the_requested_places():
     assert analytics.js_to_fixed(7, 3) == node_to_fixed([7], 3)[0]
 
 
+# Finite magnitudes at and above the browser's exponent-form threshold (1e21), up to the
+# largest double, and the matching negatives.  Decimal's default 28-digit context raised
+# InvalidOperation for these (1e27 at one place), turning a corrupt stored number into a
+# failed page.
+_OUT_OF_RANGE = [1e21, 1.5e21, 1e22, 1e26, 1e27, 1e30, -1e30, 1.2345678901234567e25, 1e300]
+_OUT_OF_RANGE += [1.7976931348623157e308, -1.7976931348623157e308]
+
+
+@pytest.mark.parametrize("places", _PLACES)
+def test_a_finite_value_of_any_magnitude_never_raises_and_prints_as_the_browser_does(places):
+    expected = node_to_fixed(_OUT_OF_RANGE, places)
+    got = []
+    for value in _OUT_OF_RANGE:
+        try:
+            got.append(analytics.js_to_fixed(value, places))
+        except Exception as exc:  # the contract is "never raises", whatever the type
+            got.append(f"raised {type(exc).__name__}")
+    assert got == expected, f"(ours vs browser) at {places} places, per value in order"
+
+
 # The one production file allowed to round with ROUND_HALF_UP besides analytics.py: it
 # quantizes a Managed Sleeves order price to the exchange tick, a trade path and not text
 # shown on a page. Excluded by exact path; a new display module that rounds on its own
