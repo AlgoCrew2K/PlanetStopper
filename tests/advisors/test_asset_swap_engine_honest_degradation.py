@@ -24,6 +24,7 @@ import pytest
 
 from tests import _asset_swap_llm_support as sup
 from tests._anthropic_http_fake import load_fixture
+from tests.llm_request.conftest import newest_id
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
@@ -318,13 +319,52 @@ class TestEntryPointsReportWhyNothingWasGenerated:
     def test_a_family_that_could_not_be_resolved_says_model_unavailable(
         self, ase, swap_fake, unresolved_models, monkeypatch, entry
     ):
-        swap_fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+        sup.fail_every_listing(swap_fake)
 
         result, inserts = _run_entry(ase, entry, monkeypatch)
 
         assert result.message == "no swap was generated this run (model_unavailable)"
         assert result.provenance["generation_model"] == ""
         assert swap_fake.message_requests == []
+        assert swap_fake.listing_sequences == 1, "a missing family is listed once, never retried"
+        inserts.assert_not_called()
+
+    def test_a_refused_model_with_an_unchanged_relisting_is_not_named_in_provenance(
+        self, ase, swap_fake, monkeypatch, entry
+    ):
+        requested = newest_id("fable")
+        swap_fake.queue_message(load_fixture("errors/404_not_found.json"))
+        # A second send would turn this reply into an evaluated pair: proves the bound.
+        swap_fake.queue_message(sup.swap_tool_reply())
+
+        result, inserts = _run_entry(ase, entry, monkeypatch)
+
+        assert sup.request_models(swap_fake) == [requested], (
+            "one request, on the warm registry's model"
+        )
+        assert swap_fake.listing_sequences == 1, "only the relisting after the 404"
+        assert result.message == "no swap was generated this run (model_unavailable)"
+        assert result.provenance["generation_model"] == "", (
+            "the retired model answered nothing, so no run names it as the model that served"
+        )
+        assert result.survivors == []
+        assert result.proposals == []
+        inserts.assert_not_called()
+        assert not swap_fake.misuse
+
+    def test_a_plain_list_stand_in_keeps_the_standard_message_and_the_resolved_model(
+        self, ase, swap_fake, monkeypatch, entry
+    ):
+        # No reply is collected: nothing says why the list is empty, and no model replied.
+        stand_in = MagicMock(return_value=[])
+        monkeypatch.setattr(ase, "generate_reasoned_swap_candidates", stand_in)
+
+        result, inserts = _run_entry(ase, entry, monkeypatch)
+
+        stand_in.assert_called_once()
+        assert result.message == ase.NO_SURVIVORS_MESSAGE
+        assert result.provenance["generation_model"] == newest_id("fable")
+        assert swap_fake.requests == [], "the stand-in replaced every model call"
         inserts.assert_not_called()
 
     def test_a_reply_whose_pairs_are_all_dropped_keeps_the_standard_message(

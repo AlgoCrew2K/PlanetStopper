@@ -84,6 +84,19 @@ def fake_backtest_result():
     return BacktestResult(stats={"sharpe": 0.5}, data_warnings=[], daily_returns=returns)
 
 
+def fail_every_listing(fake) -> None:
+    """Make every listing a run could start fail, so a retry shows up as extra listings.
+
+    One failure per attempt the generator is allowed: a run that retried a missing
+    family would otherwise see a healthy page on its second try and send a request,
+    which a zero-request assertion alone would catch only by accident.
+    """
+    import llm_request
+
+    for _ in range(llm_request.NO_TOOL_CALL_ATTEMPTS + 1):
+        fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+
 def request_models(fake) -> list[str]:
     return [r.body["model"] for r in fake.message_requests]
 

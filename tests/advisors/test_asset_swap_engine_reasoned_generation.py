@@ -498,10 +498,26 @@ class TestGeneratorAttemptsAndStops:
         assert _generate(ase) == []
 
     def test_a_missing_family_sends_nothing(self, ase, swap_fake, unresolved_models):
-        swap_fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+        sup.fail_every_listing(swap_fake)
 
         assert _generate(ase) == []
         assert swap_fake.message_requests == []
+        assert swap_fake.listing_sequences == 1, "a missing family is listed once, never retried"
+
+    def test_a_refused_model_with_an_unchanged_relisting_collects_a_reply_that_names_no_model(
+        self, ase, swap_fake
+    ):
+        swap_fake.queue_message(load_fixture("errors/404_not_found.json"))
+        swap_fake.queue_message(sup.swap_tool_reply())  # a second send would use it
+        sink: list = []
+
+        assert _generate(ase, reply_sink=sink) == []
+
+        assert len(swap_fake.message_requests) == 1
+        assert swap_fake.listing_sequences == 1
+        (reply,) = sink
+        assert reply.reason == "model_unavailable"
+        assert reply.model == "", "a refused model never served the reply it is credited with"
 
     @pytest.mark.parametrize(
         "error_fixture", ["errors/404_not_found.json", "errors/400_invalid_request.json"]

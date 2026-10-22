@@ -638,13 +638,16 @@ class TestObjectiveModeWithNoUsableModel:
     def test_a_failed_listing_degrades_with_the_reason_and_sends_nothing(
         self, flask_client, fake, unresolved_models
     ):
-        fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+        sup.fail_every_listing(fake)
 
         run = _evaluate(flask_client, fake)
 
         assert run.status == 200
         assert run.data["survivors"] == 0
         assert run.data["message"] == _no_swap("model_unavailable")
+        assert fake.listing_sequences == 1, (
+            "a missing family is listed once per click, never retried"
+        )
         assert run.data["provenance"]["generation_model"] == ""
         assert set(run.data["provenance"]) == {
             "generation_model",
@@ -682,6 +685,47 @@ class TestObjectiveModeWithNoUsableModel:
         assert run.data["provenance"]["generation_model"] == ""
         assert fake.message_requests == []
         assert fake.listing_requests == [], "rendering a provenance must never wait on the network"
+
+
+class TestARunNamesOnlyAModelThatServedAReply:
+    """A model the API answered 404 for never serves a reply, so no run may name it as the one
+    that did: the warm registry held the model, the Messages call was refused, and the relisting
+    named the same model again."""
+
+    def test_a_refused_model_with_an_unchanged_relisting_is_not_named_in_provenance(
+        self, flask_client, fake
+    ):
+        requested = newest_id("fable")
+        fake.queue_message(load_fixture("errors/404_not_found.json"))
+        # A second send would turn this reply into an evaluated pair: proves the bound.
+        fake.queue_message(sup.swap_tool_reply())
+
+        run = _evaluate(flask_client, fake)
+
+        assert sup.request_models(fake) == [requested], "one request, on the warm registry's model"
+        assert fake.listing_sequences == 1, "only the relisting after the 404"
+        assert run.status == 200
+        assert run.data["survivors"] == 0
+        assert run.data["message"] == _no_swap("model_unavailable")
+        assert run.data["provenance"]["generation_model"] == "", (
+            "the retired model answered nothing, so no run names it as the model that served"
+        )
+        assert sup.evaluated_pairs(run.data) == []
+        run.inserts.assert_not_called()
+        assert not fake.misuse
+
+    def test_the_next_click_after_a_refused_model_names_the_model_that_then_replies(
+        self, flask_client, fake
+    ):
+        fake.queue_message(load_fixture("errors/404_not_found.json"))
+        first = _evaluate(flask_client, fake)
+        assert first.data["provenance"]["generation_model"] == ""
+
+        fake.queue_message(sup.swap_tool_reply())
+        second = _evaluate(flask_client, fake)
+
+        assert second.data["provenance"]["generation_model"] == sup.swap_tool_reply()["model"]
+        assert sup.evaluated_pairs(second.data) == [sup.captured_pair()]
 
 
 class TestExplicitPairMakesNoModelCall:
