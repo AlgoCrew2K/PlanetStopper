@@ -199,6 +199,7 @@ def test_route_run_names_the_later_fable_line_model_in_the_build_plan_request(cl
 
     expected = newest_active_record("fable", RELISTED_NEWER_FABLE)["id"]
     assert expected != newest_active_record("fable", CAPTURED_MODELS)["id"]
+    assert fake.listing_sequences == 1, "the later model is found by listing, not by a constant"
     assert len(fake.message_requests) == 1
     assert fake.message_requests[0].body["model"] == expected
     assert body["provenance"]["generation_model"] == reply["model"]
@@ -207,7 +208,7 @@ def test_route_run_names_the_later_fable_line_model_in_the_build_plan_request(cl
 
 def test_route_run_with_an_override_names_exactly_that_model(client, monkeypatch):
     override = newest_active_record("opus", CAPTURED_MODELS)["id"]
-    monkeypatch.setenv(SUGGESTION_ENV_VAR, override)
+    monkeypatch.setenv(SUGGESTION_ENV_VAR, f"  {override}  ")
     fake = fake_with_captured_page()
     fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
     _run_route(client, monkeypatch, fake)
@@ -298,6 +299,6 @@ def test_route_has_no_notice_when_built_new_candidates_exist(client):
         template_id="built-new",
         params={},
     )
-    resp, _ = _post(client, candidates=[built_new], generation_reason=None)
+    resp, _ = _post(client, candidates=[built_new])
 
     assert resp.get_json()["mode_notice"] is None

@@ -109,6 +109,7 @@ class TestModelNamedOnTheWire:
         fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
         generate(monkeypatch, fake)
 
+        assert fake.listing_sequences == 1, "the later model is found by listing, not by a constant"
         expected = newest_active_record("fable", RELISTED_NEWER_FABLE)["id"]
         assert expected != captured_newest_suggestion_id(), "the fixtures must differ"
         assert fake.message_requests[0].body["model"] == expected
