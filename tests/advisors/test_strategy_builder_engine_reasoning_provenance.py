@@ -601,6 +601,42 @@ def test_a_resolved_model_answering_404_with_an_unchanged_relisting_is_one_reque
     assert [c.template_id for c in run.candidates] == ["atlas-suggested"]
 
 
+def test_a_run_whose_resolved_model_answered_404_names_no_model_in_its_provenance(monkeypatch):
+    """No reply arrived, so no model served the run: provenance must not keep the model the
+    API said does not exist (the start-of-run resolution). A good reply is queued behind the
+    404 so a retrying loop would succeed and be seen."""
+    fake = fake_with_captured_page()
+    fake.queue_message(error_outcome("404_not_found.json"))
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    run = _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert len(fake.message_requests) == 1
+    assert fake.listing_sequences == 1
+    rejected_model = fake.message_requests[0].body["model"]
+    assert rejected_model, "the 404'd request must have named a model"
+    assert run.generation_reason == "model_unavailable"
+    assert run.provenance["generation_model"] == "", (
+        f"provenance names {run.provenance['generation_model']!r}; only a model that served a "
+        f"reply may be named, and the 404'd {rejected_model!r} did not"
+    )
+    assert run.error is None
+    assert [c.template_id for c in run.candidates] == ["atlas-suggested"]
+
+
+def test_a_degraded_run_whose_replies_arrived_still_names_the_model_that_answered(monkeypatch):
+    """Guard against clearing the model on every generation failure: three text-only replies
+    arrived, so the model that sent them is named even though no plans came back."""
+    fake = fake_with_captured_page()
+    replies = [text_only_reply() for _ in range(3)]
+    for reply in replies:
+        fake.queue_message(reply)
+    run = _run_real_generation(monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert run.generation_reason == "no_tool_call"
+    assert replies[-1]["model"], "the captured reply shape names its model"
+    assert run.provenance["generation_model"] == replies[-1]["model"]
+
+
 def test_no_composer_key_path_reports_the_resolved_model_and_no_generation_reason(monkeypatch):
     monkeypatch.setattr(sbe, "_has_composer_key", lambda: False)
     run = sbe.propose_strategies(

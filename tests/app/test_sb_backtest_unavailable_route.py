@@ -271,6 +271,33 @@ def test_a_resolved_model_answering_404_with_an_unchanged_relisting_is_one_reque
     assert isinstance(notice, str) and "model_unavailable" in notice
 
 
+def _display_name_of(model_id: str) -> str:
+    return next(r["display_name"] for r in CAPTURED_MODELS["data"] if r["id"] == model_id)
+
+
+def test_a_run_whose_resolved_model_answered_404_names_no_model_in_the_response(
+    client, monkeypatch
+):
+    fake = fake_with_captured_page()
+    fake.queue_message(error_outcome("404_not_found.json"))
+    fake.queue_message(tool_reply_with_plans(conforming_diversify_plans()))
+    body = _run_route(client, monkeypatch, fake, atlas=[atlas_candidate()])
+
+    assert len(fake.message_requests) == 1
+    assert fake.listing_sequences == 1
+    rejected_model = fake.message_requests[0].body["model"]
+    assert body["built_new_count"] == 0
+    assert body["atlas_count"] == 1
+    assert body["provenance"]["generation_model"] == "", (
+        f"no reply arrived, so the run names no model; got {body['provenance']['generation_model']!r}"
+    )
+    notice = body["mode_notice"]
+    assert isinstance(notice, str) and "model_unavailable" in notice
+    lowered = notice.lower()
+    assert rejected_model.lower() not in lowered, notice
+    assert _display_name_of(rejected_model).lower() not in lowered, notice
+
+
 def test_an_override_the_api_rejects_names_the_variable_after_one_request(client, monkeypatch):
     override = newest_active_record("opus", CAPTURED_MODELS)["id"]
     monkeypatch.setenv(SUGGESTION_ENV_VAR, override)
