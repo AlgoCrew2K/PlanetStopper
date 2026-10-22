@@ -293,6 +293,7 @@ class TestFamilySelection:
 
         model_config.resolve(Knob.SUGGESTION, fake.client)
 
+        assert fake.listing_requests, "no listing request was made"
         request = fake.listing_requests[0]
         assert 1 <= int(request.query["limit"]) <= 1000, "the Models API accepts 1 to 1000 per page"
         assert 0 < request.timeout["read"] <= 30, (
