@@ -627,6 +627,59 @@ def invalidate_behind_a_due_relisting(fake, clock, knob, model_id):
     return answers[0]
 
 
+def invalidate_inside_a_run_behind_another_callers_relisting(fake, model_id):
+    """A run holds ``model_id`` pinned; its 404 waits behind a relisting another caller started.
+
+    The relisting is started by a thread outside the run and held in flight until the run's
+    ``invalidate`` has read the attempt sequence. Returns the answers
+    ``(lister, waiter, next_in_run)``.
+    """
+    ready, go = threading.Event(), threading.Event()
+    answers, failures = {}, []
+
+    def lister():
+        try:
+            answers["lister"] = model_config.invalidate(
+                Knob.SUGGESTION, model_id, fake.make_client()
+            )
+        except BaseException as exc:  # surfaced below, never swallowed
+            failures.append(exc)
+
+    def run_with_a_pinned_model():
+        try:
+            with model_config.pinned_run():
+                pinned = model_config.resolve(Knob.SUGGESTION, fake.make_client())
+                assert pinned.model_id == model_id, "fixture precondition: the run pins the model"
+                ready.set()
+                assert go.wait(5), "the relisting never started"
+                answers["waiter"] = model_config.invalidate(
+                    Knob.SUGGESTION, model_id, fake.make_client()
+                )
+                answers["next_in_run"] = model_config.resolve(Knob.SUGGESTION, fake.make_client())
+        except BaseException as exc:  # surfaced below, never swallowed
+            failures.append(exc)
+            ready.set()
+
+    run_thread = threading.Thread(target=run_with_a_pinned_model, daemon=True)
+    lister_thread = threading.Thread(target=lister, daemon=True)
+    gate = fake.hold_listings()
+    try:
+        run_thread.start()
+        assert ready.wait(5), "the run never pinned its model"
+        lister_thread.start()
+        assert fake.listing_started.wait(5), "the relisting never started"
+        go.set()
+        time.sleep(SETTLE_SECONDS)  # the run's 404 arrives while the relisting holds the lock
+    finally:
+        gate.set()
+        go.set()
+    lister_thread.join(10)
+    run_thread.join(10)
+    assert not (lister_thread.is_alive() or run_thread.is_alive()), "a thread never returned"
+    assert not failures, failures
+    return answers["lister"], answers["waiter"], answers["next_in_run"]
+
+
 class TestConcurrentResolution:
     def test_ten_concurrent_first_calls_share_one_listing_sequence(self):
         fake = captured_fake()
@@ -959,6 +1012,67 @@ class TestInvalidate:
         later = model_config.resolve(Knob.SUGGESTION, fake.client)
         assert later.model_id == stale.model_id
         assert fake.listing_sequences == 3, "a shared failed attempt is not remembered as success"
+
+    @pytest.mark.parametrize("relisting", ["names-the-same-model", "names-a-newer-model"])
+    def test_a_successful_relisting_shared_by_concurrent_404s_serves_the_rest_of_the_day(
+        self, relisting
+    ):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        expected_id = stale.model_id
+        if relisting == "names-a-newer-model":
+            newer_page = load_fixture("models/relisted_newer_fable.json")
+            fake.set_pages([newer_page])
+            expected_id = newest_id(newer_page["data"], "fable")
+            assert expected_id != stale.model_id, "fixture precondition"
+
+        call_concurrently(
+            fake,
+            lambda i: model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.make_client()),
+            5,
+        )
+        assert fake.listing_sequences == 2, "fixture precondition: the 404s shared one relisting"
+        later = model_config.resolve(Knob.SUGGESTION, fake.client)
+
+        assert fake.listing_sequences == 2, (
+            "only the caller that made the attempt starts the day over; a caller that shared "
+            "its listing leaves the clock alone, so a plain resolve inside the day lists nothing"
+        )
+        assert later.model_id == expected_id
+
+    def test_a_run_pin_waiting_behind_a_failed_relisting_never_returns_to_the_dropped_model(self):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        for _ in range(2):  # the Models API stays down for the run's next call too
+            fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        listed, waiter, next_in_run = invalidate_inside_a_run_behind_another_callers_relisting(
+            fake, stale.model_id
+        )
+
+        assert listed.source == "unavailable"
+        assert waiter.source == "unavailable" and waiter.model_id == ""
+        assert next_in_run.model_id != stale.model_id, (
+            "the shared answer replaces the run's pin: the run never goes back to a model the "
+            "Messages API answered 404"
+        )
+        assert next_in_run.source == "unavailable"
+
+    def test_a_run_pin_waiting_behind_a_relisting_that_names_a_newer_model_takes_it(self):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        newer_page = load_fixture("models/relisted_newer_fable.json")
+        newer_id = newest_id(newer_page["data"], "fable")
+        assert newer_id != stale.model_id, "fixture precondition"
+        fake.set_pages([newer_page])
+
+        listed, waiter, next_in_run = invalidate_inside_a_run_behind_another_callers_relisting(
+            fake, stale.model_id
+        )
+
+        assert listed.model_id == waiter.model_id == newer_id
+        assert next_in_run.model_id == newer_id, "the run picks up the model the listing named"
+        assert fake.listing_sequences == 2, "the run shared the relisting, it did not make its own"
 
     def test_concurrent_404s_for_both_families_share_one_relisting(self):
         fake = captured_fake()
