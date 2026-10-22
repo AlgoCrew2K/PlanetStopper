@@ -231,6 +231,13 @@ _DOF_LEDGER_SPEC_BUNDLE_SENTINEL: str = "frontrunner_builder"
 _TREE_SPLICE_PANEL_PARAMS_SENTINEL: dict = {"tree_splice_candidate": 1.0}
 
 
+# Reply reasons a fresh request can plausibly fix (an answer without a tool call,
+# or one cut off by the token limit); every other reason ends the attempt loop.
+_RETRYABLE_REPLY_REASONS = frozenset(
+    {llm_request.REASON_NO_TOOL_CALL, llm_request.REASON_MAX_TOKENS}
+)
+
+
 # ---------------------------------------------------------------------------
 # Public result type
 # ---------------------------------------------------------------------------
@@ -960,7 +967,8 @@ def generate_candidate_overlay(
                     attempt + 1,
                     n_attempts,
                 )
-                if reply.reason == llm_request.REASON_REFUSAL:
+                # A missing, rejected or refused model will not change on a retry.
+                if reply.reason not in _RETRYABLE_REPLY_REASONS:
                     break
                 continue
 
