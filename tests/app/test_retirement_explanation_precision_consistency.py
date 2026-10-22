@@ -49,6 +49,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.app._retirement_run_summary_stub import with_summary
+
 _CANDIDATE_HASH = "cand-precision-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
 _SIBLING_HASH = "sib-precision-bbb"
@@ -184,7 +186,11 @@ def _run_worker_with_mocked_prior_rows(prior_rows, new_rec, *, explain_return="f
         return len(recs)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(recommender_module, "build_recommendations", lambda **kw: [new_rec])
+        mp.setattr(
+            recommender_module,
+            "build_recommendations_with_summary",
+            with_summary(lambda **kw: [new_rec]),
+        )
         mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
         mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
         mp.setattr(db_module, "get_advisor_observations_for_role", lambda *a, **kw: prior_rows)
@@ -357,7 +363,11 @@ class TestSteadyStateFullPrecisionRecomputation:
             return [_sample_raw_response(correlation=next(night_values))]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: _fixed_recs())
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: _fixed_recs()),
+            )
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()  # night 1
@@ -388,7 +398,11 @@ class TestSteadyStateFullPrecisionRecomputation:
             return [_sample_raw_response(correlation=next(night_values))]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(recommender_module, "build_recommendations", lambda **kw: _fixed_recs())
+            mp.setattr(
+                recommender_module,
+                "build_recommendations_with_summary",
+                with_summary(lambda **kw: _fixed_recs()),
+            )
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             app_module._retirement_recommender_tick_worker()  # night 1

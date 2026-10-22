@@ -44,6 +44,20 @@ literal contents for the bare words -- that would make AC-6's own checklist
 prose fail this file's tests despite containing zero executable trade code,
 contradicting the plan's explicit AC-8 ruling.
 
+Cycle 2e addendum (feature-plans/retirement-visibility.md AC-8,
+DE-RETIRE-VISIBILITY-001): Group E gains the new Run-now route handler
+(`ai_advisor_retirement_run`), the new last-run read helper
+(`_fetch_retirement_last_run`) and the scheduler wrapper
+(`_run_retirement_recommender_tick`) as entry points (the tick WORKER was
+already covered). Group G (new) source-scans the NEW read-only Composer
+client `advisors/composer_series_client.py`: no trade/deploy/draft
+primitive, GET-only, and its only `alpha_bot_execution` import is the
+precedent-allowed `COMPOSER_BASE_URL` / `get_composer_headers` pair (same
+as advisors/composer_backtest_client.py). The Group G scan is a pure
+function over source text so it is ALSO exercised against synthetic
+mutated sources (non-vacuity) -- and was mutation-checked against a
+scratch copy of the real module by the RED author.
+
 Expected state: RED until advisors/retirement_explainer.py and
 advisors/retirement_checklist.py exist, and until app.py gains the two new
 retirement approve/reject routes with the pinned handler names below.
@@ -73,6 +87,7 @@ _APPROVE_ROUTE_FN_NAME = "ai_advisor_retirement_approve"
 _REJECT_ROUTE_FN_NAME = "ai_advisor_retirement_reject"
 _APPROVE_ROUTE_PATH = "/ai-advisor/retirement/approve"
 _REJECT_ROUTE_PATH = "/ai-advisor/retirement/reject"
+_RUN_ROUTE_PATH = "/ai-advisor/retirement/run"  # Cycle 2e AC-7
 
 # Verbatim duplicate of test_retirement_recommender_no_trade_boundary.py's
 # own token set -- see this file's module docstring for why duplication
@@ -521,6 +536,16 @@ class TestNewRoutesNotInSettingsWriteAllowlist:
             pytest.skip("_SETTINGS_WRITE_ALLOWLIST not found on app module")
         assert _REJECT_ROUTE_PATH not in allowlist
 
+    def test_retirement_run_route_not_in_allowlist(self):
+        """Cycle 2e AC-7: the Run-now route is advisory (re-runs the nightly
+        read-only analysis); it must never become a settings-write path."""
+        import app as app_module
+
+        allowlist = getattr(app_module, "_SETTINGS_WRITE_ALLOWLIST", None)
+        if allowlist is None:
+            pytest.fail("_SETTINGS_WRITE_ALLOWLIST not found on app module")
+        assert _RUN_ROUTE_PATH not in allowlist
+
     def test_allowlist_contains_no_retirement_or_live_execution_tokens(self):
         """Broader sweep (mirrors the frontrunner route test's own
         allowlist-forbidden-token set): neither route path fragment nor
@@ -599,11 +624,23 @@ _RETIREMENT_APPROVAL_JOIN_FN_NAME = "_join_retirement_approval_status"
 # just today's instance).
 _RETIREMENT_FETCH_FN_NAME = "_fetch_retirement_recommendations"
 
+# Cycle 2e (DE-RETIRE-VISIBILITY-001, AC-8) additions: the Run-now route
+# handler (starts the same worker on a daemon thread), the last-run read
+# helper (feeds the API + panel), and the scheduler-facing tick wrapper (now
+# holds the single-flight skip logic).
+_RETIREMENT_RUN_ROUTE_FN_NAME = "ai_advisor_retirement_run"
+_RETIREMENT_LAST_RUN_FETCH_FN_NAME = "_fetch_retirement_last_run"
+_RETIREMENT_TICK_WRAPPER_FN_NAME = "_run_retirement_recommender_tick"
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
     _RETIREMENT_APPROVAL_JOIN_FN_NAME,
     _RETIREMENT_FETCH_FN_NAME,
+    # Cycle 2e:
+    _RETIREMENT_RUN_ROUTE_FN_NAME,
+    _RETIREMENT_LAST_RUN_FETCH_FN_NAME,
+    _RETIREMENT_TICK_WRAPPER_FN_NAME,
 ]
 
 # Team-lead named this explicitly alongside composer_draft_client -- checked
@@ -805,3 +842,234 @@ class TestAiAdvisorTabRetirementBlockNeverReachesExecSeam:
             "block must be a pure read-only name-resolution/checklist-assembly path, "
             "not a live-mode-conditional one."
         )
+
+    def test_block_contains_the_cycle_2e_last_run_prefetch(self):
+        """Cycle 2e non-vacuity: the new last-run prefetch must live INSIDE
+        this scanned window (between the two marker comments), otherwise the
+        exec-seam scan above would not cover it."""
+        block = _ai_advisor_tab_retirement_block_source()
+        assert _RETIREMENT_LAST_RUN_FETCH_FN_NAME in block, (
+            f"ai_advisor_tab()'s retirement block must call {_RETIREMENT_LAST_RUN_FETCH_FN_NAME}() "
+            "(the Cycle 2e last-run block's data source) between the two Group F marker comments."
+        )
+
+
+# ===========================================================================
+# Group G (Cycle 2e, AC-8): advisors/composer_series_client.py -- the NEW
+# read-only Composer client. A pure scan over source text so it can be (and
+# is) exercised against synthetic mutated sources, proving each rule can fail.
+# ===========================================================================
+
+_SERIES_CLIENT_REL_PATH = "advisors/composer_series_client.py"
+
+# Plan AC-8's explicit token list, plus this file's established URL-fragment
+# set and the draft/exec symbols -- all forbidden in EXECUTABLE code.
+_SERIES_CLIENT_FORBIDDEN_FRAGMENTS = (
+    "/deploy/",
+    "/trading/",
+    "go-to-cash",
+    "execute_sell_to_cash",
+    "LIVE_EXECUTION",
+    "composer_draft_client",
+    "save_symphony",
+    "invest_in_symphony",
+    "/invest",
+    "/sell",
+    "/liquidate",
+)
+
+# Precedent: advisors/composer_backtest_client.py imports exactly this pair
+# from alpha_bot_execution and nothing else.
+_SERIES_CLIENT_ALLOWED_EXEC_IMPORTS = frozenset({"COMPOSER_BASE_URL", "get_composer_headers"})
+
+# Attributes the client may touch on the `requests` module: the GET verb and
+# exception types for its retry classification. Anything else (post, put,
+# Session, request, ...) is a violation.
+_SERIES_CLIENT_ALLOWED_REQUESTS_ATTRS = frozenset(
+    {
+        "get",
+        "exceptions",
+        "RequestException",
+        "Timeout",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "ConnectionError",
+        "HTTPError",
+    }
+)
+
+# Mutating HTTP verbs on ANY receiver (session.post, client.put, ...).
+_MUTATING_VERB_ATTRS = frozenset({"post", "put", "patch", "delete", "request", "send"})
+
+# Other HTTP stacks the client has no business importing.
+_OTHER_HTTP_MODULES = ("httpx", "urllib", "urllib3", "aiohttp", "http", "socket", "websocket")
+
+
+def _executable_text(source: str) -> str:
+    """Docstrings and full-line comments blanked (same rationale as this
+    file's _read_executable_source, but over a source STRING)."""
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", None)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+                const = body[0].value
+                if isinstance(const.value, str):
+                    for lineno in range(const.lineno, (const.end_lineno or const.lineno) + 1):
+                        if 1 <= lineno <= len(lines):
+                            lines[lineno - 1] = ""
+    return "\n".join("" if ln.lstrip().startswith("#") else ln for ln in lines)
+
+
+def _series_client_violations(source: str) -> list[str]:
+    """Every no-trade-boundary violation in `source` (empty list = clean)."""
+    found: list[str] = []
+    executable = _executable_text(source)
+    for fragment in _SERIES_CLIENT_FORBIDDEN_FRAGMENTS:
+        if fragment in executable:
+            found.append(f"forbidden fragment {fragment!r}")
+
+    if "import *" in source:
+        found.append("wildcard import")
+
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root == "alpha_bot_execution":
+                    found.append("whole-module import of alpha_bot_execution")
+                if root in _OTHER_HTTP_MODULES:
+                    found.append(f"imports non-requests HTTP stack {alias.name!r}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            root = module.split(".")[0]
+            if root == "alpha_bot_execution":
+                extra = {a.name for a in node.names} - _SERIES_CLIENT_ALLOWED_EXEC_IMPORTS
+                if extra:
+                    found.append(f"imports {sorted(extra)} from alpha_bot_execution")
+            if root in _OTHER_HTTP_MODULES:
+                found.append(f"imports from non-requests HTTP stack {module!r}")
+        elif isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name) and node.value.id == "requests":
+                if node.attr not in _SERIES_CLIENT_ALLOWED_REQUESTS_ATTRS:
+                    found.append(f"uses requests.{node.attr}")
+            if node.attr in _MUTATING_VERB_ATTRS:
+                found.append(f"references a mutating HTTP verb .{node.attr}")
+    return found
+
+
+def _calls_requests_get(source: str) -> bool:
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "requests"
+        ):
+            return True
+    return False
+
+
+_CLEAN_CLIENT_SOURCE = '''"""Docstring may say: never touches /trading/ or save_symphony."""
+import time
+import requests
+from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers
+
+
+def fetch(account_id, symphony_id):
+    # comments may mention go-to-cash too
+    url = f"{COMPOSER_BASE_URL}/portfolio/accounts/{account_id}/symphonies/{symphony_id}"
+    try:
+        return requests.get(url, headers=get_composer_headers(), timeout=5)
+    except requests.exceptions.Timeout:
+        time.sleep(1)
+'''
+
+
+class TestSeriesClientScanIsNonVacuous:
+    """Each rule of the Group G scan must demonstrably fire on a mutated
+    source -- otherwise a green scan of the real module would prove nothing."""
+
+    def test_the_clean_reference_source_has_no_violations(self):
+        assert _series_client_violations(_CLEAN_CLIENT_SOURCE) == []
+        assert _calls_requests_get(_CLEAN_CLIENT_SOURCE)
+
+    @pytest.mark.parametrize("fragment", _SERIES_CLIENT_FORBIDDEN_FRAGMENTS)
+    def test_each_forbidden_fragment_in_executable_code_is_detected(self, fragment):
+        mutated = _CLEAN_CLIENT_SOURCE + f"\n\ndef sneaky():\n    return {fragment!r}\n"
+        assert any(fragment in v for v in _series_client_violations(mutated)), fragment
+
+    def test_a_post_call_is_detected(self):
+        mutated = (
+            _CLEAN_CLIENT_SOURCE + "\n\ndef sneaky(u):\n    return requests.post(u, json={})\n"
+        )
+        assert _series_client_violations(mutated)
+
+    def test_a_mutating_verb_on_any_receiver_is_detected(self):
+        mutated = _CLEAN_CLIENT_SOURCE + "\n\ndef sneaky(s, u):\n    return s.put(u)\n"
+        assert _series_client_violations(mutated)
+
+    def test_a_requests_session_is_detected(self):
+        mutated = _CLEAN_CLIENT_SOURCE + "\n\ndef sneaky():\n    return requests.Session()\n"
+        assert _series_client_violations(mutated)
+
+    def test_another_http_stack_is_detected(self):
+        assert _series_client_violations("import httpx\n" + _CLEAN_CLIENT_SOURCE)
+        assert _series_client_violations(
+            "from urllib.request import urlopen\n" + _CLEAN_CLIENT_SOURCE
+        )
+
+    def test_a_whole_module_alpha_bot_execution_import_is_detected(self):
+        assert _series_client_violations("import alpha_bot_execution\n" + _CLEAN_CLIENT_SOURCE)
+
+    def test_importing_an_execution_function_from_alpha_bot_execution_is_detected(self):
+        mutated = _CLEAN_CLIENT_SOURCE + "\nfrom alpha_bot_execution import execute_sell_to_cash\n"
+        assert _series_client_violations(mutated)
+
+    def test_a_wildcard_import_is_detected(self):
+        assert _series_client_violations(_CLEAN_CLIENT_SOURCE + "\nfrom os import *\n")
+
+    def test_prose_in_docstrings_and_comments_is_not_a_violation(self):
+        # _CLEAN_CLIENT_SOURCE already carries /trading/, save_symphony and go-to-cash in
+        # its docstring and a comment; the clean-source test above proves they are ignored.
+        assert _series_client_violations(_CLEAN_CLIENT_SOURCE) == []
+
+
+class TestComposerSeriesClientNoTradeBoundary:
+    def _source(self) -> str:
+        return _read_source(_SERIES_CLIENT_REL_PATH)
+
+    def test_module_exists(self):
+        assert (REPO_ROOT / _SERIES_CLIENT_REL_PATH).exists(), (
+            f"{_SERIES_CLIENT_REL_PATH} does not exist -- its no-trade boundary is unverifiable"
+        )
+
+    def test_module_has_no_trade_deploy_or_draft_primitive_and_is_get_only(self):
+        violations = _series_client_violations(self._source())
+        assert violations == [], (
+            f"{_SERIES_CLIENT_REL_PATH} violates the no-trade boundary: {violations}"
+        )
+
+    def test_module_actually_issues_a_requests_get(self):
+        """Non-vacuity for the GET-only rule: the module must really call
+        requests.get (so 'only GET' is a statement about real traffic)."""
+        assert _calls_requests_get(self._source())
+
+    def test_module_exposes_no_trade_shaped_public_symbols(self):
+        import importlib
+
+        mod = importlib.import_module("advisors.composer_series_client")
+        offending = [
+            n
+            for n in dir(mod)
+            if not n.startswith("_")
+            and any(word in n.lower().split("_") for word in _FORBIDDEN_ACTION_WORDS)
+        ]
+        assert offending == [], f"trade-shaped public symbols: {offending}"
+
+    def test_module_never_imports_the_llm_seam(self):
+        source = self._source()
+        assert "ai_advisor" not in source
+        assert "anthropic" not in source.lower()

@@ -334,7 +334,9 @@ class TestEmptyRecsSkipsDecisionsRead:
         resp = client.get("/api/retirement-recommendations")
 
         assert resp.status_code == 200
-        assert resp.get_json() == {"recommendations": []}
+        # Cycle 2e (AC-5): the response gains an additive last_run key (null when no run
+        # summary exists); recommendations stays [] for an all-malformed batch.
+        assert resp.get_json() == {"recommendations": [], "last_run": None}
         assert calls["n"] == 0, (
             f"Expected zero database.get_retirement_decisions() calls when every row "
             f"in the batch is malformed (out stays empty past the early-return "
