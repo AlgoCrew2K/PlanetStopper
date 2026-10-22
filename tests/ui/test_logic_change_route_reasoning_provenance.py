@@ -34,6 +34,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.advisors import logic_change_http_support as support
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
@@ -230,28 +232,179 @@ def test_evaluate_route_provenance_present_on_engine_exception_path(flask_client
 
 
 # ===========================================================================
-# generation_model reflects the live accessor (env-override proof).
+# The route default provenance names the model the resolver holds for the
+# suggestion family: the override value verbatim, else the resolved id, else
+# the empty string. No model call runs on these paths (no Composer key).
 # ===========================================================================
 
 
-def test_evaluate_route_provenance_generation_model_reflects_accessor_env_override(flask_client):
-    import model_config
+def _no_key_provenance(flask_client, monkeypatch) -> dict:
+    monkeypatch.setattr("advisors.logic_change_engine._has_composer_key", lambda: False)
+    resp = flask_client.post(
+        "/ai-advisor/logic-changes/evaluate",
+        json={"symphony_id": "sym-test", "change_description": "change window from 20 to 16"},
+    )
+    assert resp.status_code == 200
+    return resp.get_json()["provenance"]
 
-    with (
-        patch.object(
-            model_config, "get_advisor_suggestion_model", return_value="test-marker-route-model"
-        ),
-        patch("advisors.logic_change_engine._has_composer_key", return_value=False),
-    ):
-        resp = flask_client.post(
-            "/ai-advisor/logic-changes/evaluate",
-            json={"symphony_id": "sym-test", "change_description": "change window from 20 to 16"},
-        )
 
-    data = resp.get_json()
-    assert data["provenance"]["generation_model"] == "test-marker-route-model", (
-        f"AC-5 GAP: provenance.generation_model must reflect the LIVE accessor value, "
-        f"not a hardcoded literal. Got {data['provenance']!r}"
+def test_default_provenance_generation_model_is_the_override_value_verbatim(
+    flask_client, monkeypatch
+):
+    # An id of the OTHER family: the override decides across families and is never validated.
+    override = support.newest_model_id(support.models_page(), "opus")
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", override)
+
+    provenance = _no_key_provenance(flask_client, monkeypatch)
+
+    assert provenance["generation_model"] == override, (
+        f"the override value must be reported verbatim, got {provenance!r}"
+    )
+
+
+def test_default_provenance_generation_model_is_the_resolved_family_id_without_override(
+    flask_client, monkeypatch
+):
+    provenance = _no_key_provenance(flask_client, monkeypatch)
+
+    assert provenance["generation_model"] == support.newest_model_id(
+        support.models_page(), "fable"
+    ), f"the resolved suggestion-family id must be reported, got {provenance!r}"
+
+
+def test_default_provenance_generation_model_is_empty_when_family_unresolved(
+    flask_client, monkeypatch, unresolved_models
+):
+    provenance = _no_key_provenance(flask_client, monkeypatch)
+
+    assert provenance["generation_model"] == "", (
+        f"an unresolved family reports the empty string, never a stale or invented id: {provenance!r}"
+    )
+
+
+# ===========================================================================
+# The real route and the real engine against the Anthropic HTTP fake: the
+# request names the model the resolver chose, and the reply decides what the
+# run reports.
+# ===========================================================================
+
+
+@pytest.fixture
+def route_world(monkeypatch):
+    """Factory: build a fake over a models page and wire the route and engine collaborators to it."""
+
+    def _build(page: str = support.CAPTURED_MODELS_PAGE):
+        fake = support.new_fake(page)
+        spy = support.install_route_world(monkeypatch, fake)
+        return fake, spy
+
+    return _build
+
+
+@pytest.mark.parametrize("page", [support.CAPTURED_MODELS_PAGE, support.RELISTED_MODELS_PAGE])
+def test_generation_request_names_the_newest_fable_line_model(
+    flask_client, route_world, unresolved_models, page
+):
+    fake, _spy = route_world(page)
+    fake.queue_message(support.reply_with_tool_edit(support.real_edit()))
+
+    support.evaluate_via_route(flask_client)
+
+    assert len(fake.message_requests) == 1
+    assert fake.message_requests[0].body["model"] == support.newest_model_id(
+        support.models_page(page), "fable"
+    ), "the request must name the newest active fable-line model of the last listing"
+    assert fake.misuse == []
+
+
+def test_override_is_named_verbatim_in_the_generation_request(
+    flask_client, route_world, monkeypatch
+):
+    override = support.newest_model_id(support.models_page(), "opus")
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", override)
+    fake, _spy = route_world()
+    fake.queue_message(support.reply_with_tool_edit(support.real_edit()))
+
+    support.evaluate_via_route(flask_client)
+
+    assert [r.body["model"] for r in fake.message_requests] == [override]
+    assert fake.misuse == []
+
+
+def test_unresolved_family_sends_no_messages_request_and_persists_nothing(
+    flask_client, route_world, unresolved_models
+):
+    fake, spy = route_world()
+    support.queue_failing_listings(fake)
+
+    support.evaluate_via_route(flask_client)
+
+    assert fake.message_requests == [], "an unresolved family must not reach the Messages API"
+    assert spy.call_count == 0, "no advisor observation may be written when nothing was generated"
+    assert fake.misuse == []
+
+
+def test_unresolved_family_response_degrades_with_the_reason_code_and_an_empty_model(
+    flask_client, route_world, unresolved_models
+):
+    fake, _spy = route_world()
+    support.queue_failing_listings(fake)
+
+    data = support.evaluate_via_route(flask_client)
+
+    assert data["survivors"] == 0
+    assert "model_unavailable" in data["message"], f"message must name the reason: {data!r}"
+    assert data["provenance"]["generation_model"] == ""
+    assert set(data["provenance"]) == {"generation_model", "mode", "evidence_injected", "run_id"}
+    assert all(not p.get("tweak_param_key") for p in support.all_proposals(data))
+
+
+def test_unresolved_family_message_names_no_model_and_no_exception_text(
+    flask_client, route_world, unresolved_models
+):
+    fake, _spy = route_world()
+    support.queue_failing_listings(fake)
+    listing_error_text = support.load_fixture("errors/503_unavailable.json")["body"]["error"][
+        "message"
+    ]
+    known_ids = [r["id"] for r in support.models_page()["data"]]
+
+    data = support.evaluate_via_route(flask_client)
+
+    assert listing_error_text not in data["message"]
+    assert not any(model_id in data["message"] for model_id in known_ids)
+    assert "fable" not in data["message"].lower()
+
+
+def test_provenance_names_the_reply_model_not_the_requested_model(
+    flask_client, route_world, unresolved_models
+):
+    # The relisted page makes the request name a newer model than the captured reply's.
+    fake, _spy = route_world(support.RELISTED_MODELS_PAGE)
+    reply = support.reply_with_tool_edit(support.real_edit())
+    fake.queue_message(reply)
+
+    data = support.evaluate_via_route(flask_client)
+
+    requested = fake.message_requests[0].body["model"]
+    assert requested != reply["model"], "self-guard: the page must make request and reply differ"
+    assert data["provenance"]["generation_model"] == reply["model"], (
+        f"generation_model must be the reply model field, got {data['provenance']!r}"
+    )
+
+
+def test_text_only_reply_run_reports_the_reply_model_in_provenance(
+    flask_client, route_world, unresolved_models
+):
+    fake, _spy = route_world(support.RELISTED_MODELS_PAGE)
+    reply = support.load_fixture(support.TEXT_ONLY_REPLY)
+    for _ in range(3):
+        fake.queue_message(reply)
+
+    data = support.evaluate_via_route(flask_client)
+
+    assert data["provenance"]["generation_model"] == reply["model"], (
+        f"a run that ended on no_tool_call reports the last reply model: {data['provenance']!r}"
     )
 
 

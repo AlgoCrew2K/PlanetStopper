@@ -15,8 +15,9 @@ for the FINAL-ruling rationale this reuses verbatim):
                              backtest-failed early returns).
     provenance: dict | None = None
         A REAL 4-key dict on EVERY path, NEVER None, NEVER {}:
-        {"generation_model": <model_config.get_advisor_suggestion_model() at
-         call time>, "mode": "logic-change", "evidence_injected": <the passed
+        {"generation_model": <the model the resolver holds for the suggestion
+         family at call time, replaced by the last reply's model once a reply
+         arrived; "" when unresolved>, "mode": "logic-change", "evidence_injected": <the passed
          reasoning_manifest, or ai_advisor._EMPTY_MANIFEST when omitted>,
          "run_id": <same value as LogicChangeRunResult.run_id>}.
         run_id/generation_model/mode are cheap, non-fabricated facts about the
@@ -42,6 +43,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import model_config
+from tests.advisors import logic_change_http_support as support
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
@@ -143,14 +145,12 @@ def _run_operator(
 
 
 # ===========================================================================
-# AC-5: provenance shape, accessor-driven model, mode="logic-change".
+# Provenance shape, resolver-driven model, mode="logic-change".
 # ===========================================================================
 
 
-def test_provenance_shape_and_accessor_driven_model(lce, fixture_tree, monkeypatch):
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-lc-model"
-    )
+def test_provenance_shape_and_override_driven_model(lce, fixture_tree, monkeypatch):
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-lc-model")
     manifest = {
         "tree": "present",
         "stats": "absent",
@@ -162,7 +162,7 @@ def test_provenance_shape_and_accessor_driven_model(lce, fixture_tree, monkeypat
 
     assert result.provenance is not None, "AC-5 GAP: provenance is None on a successful run."
     assert result.provenance.get("generation_model") == "test-marker-lc-model", (
-        f"AC-5 GAP: provenance['generation_model'] must reflect the LIVE accessor value. "
+        f"GAP: provenance['generation_model'] must reflect the override value verbatim. "
         f"Got {result.provenance!r}"
     )
     assert result.provenance.get("mode") == "logic-change", (
@@ -274,9 +274,7 @@ def test_run_id_persisted_traceable_to_advisor_observation__operator_path(
 def test_no_composer_key_still_populates_real_provenance_never_none__suggest(
     lce, fixture_tree, monkeypatch
 ):
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-lc-model"
-    )
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-lc-model")
     manifest = {"tree": "absent", "stats": "absent"}
     result, _insert = _run_suggest(
         lce, fixture_tree, monkeypatch, reasoning_manifest=manifest, has_key=False
@@ -375,3 +373,50 @@ def test_logic_change_run_result_dataclass_gains_only_run_id_and_provenance(lce)
         f"AC-5/AC-7 GAP: LogicChangeRunResult field set is {sorted(actual)}, expected exactly "
         f"{sorted(expected)} (pre-R2-2 8 fields + run_id + provenance, nothing else)."
     )
+
+
+# ===========================================================================
+# generation_model: the resolved family id before any reply, the reply's own
+# model once one arrived, the empty string when nothing is resolved.
+# ===========================================================================
+
+
+def test_provenance_generation_model_is_the_resolved_family_id_when_no_model_call_runs(
+    lce, fixture_tree, monkeypatch
+):
+    result, _insert = _run_suggest(lce, fixture_tree, monkeypatch, has_key=False)
+
+    assert result.provenance["generation_model"] == support.newest_model_id(
+        support.models_page(), "fable"
+    ), f"got {result.provenance!r}"
+    assert (
+        result.provenance["generation_model"]
+        == model_config.peek(model_config.Knob.SUGGESTION).model_id
+    )
+
+
+def test_provenance_generation_model_is_empty_when_the_family_is_unresolved(
+    lce, fixture_tree, monkeypatch, unresolved_models
+):
+    result, _insert = _run_suggest(lce, fixture_tree, monkeypatch, has_key=False)
+
+    assert result.provenance["generation_model"] == "", (
+        f"an unresolved family reports the empty string, got {result.provenance!r}"
+    )
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_provenance_generation_model_is_the_reply_model_not_the_requested_one(
+    entry, monkeypatch, unresolved_models
+):
+    # The relisted page makes the request name a newer model than the captured reply's.
+    fake = support.new_fake(support.RELISTED_MODELS_PAGE)
+    reply = support.reply_with_tool_edit(support.real_edit())
+    fake.queue_message(reply)
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert fake.message_requests[0].body["model"] != reply["model"], (
+        "self-guard: the page must make request and reply differ"
+    )
+    assert result.provenance["generation_model"] == reply["model"], f"got {result.provenance!r}"

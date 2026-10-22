@@ -33,6 +33,8 @@ import pathlib
 
 import pytest
 
+from tests.advisors import logic_change_http_support as support
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
     _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
@@ -332,3 +334,190 @@ def test_llm_client_construction_or_call_failure_returns_empty_list_no_raise(
     monkeypatch.setattr(lce, "_build_client", lambda: _RaisingMockClient())
     result2 = lce.generate_reasoned_logic_candidates("sym-1", fixture_tree, objective)
     assert result2 == [], f"D-1 GAP: SDK call failure should degrade to [], got {result2!r}"
+
+
+# ===========================================================================
+# The real route and the real engine against the Anthropic HTTP fake: what the
+# generation request looks like on the wire, and how a thinking-then-tool reply
+# and a fallback-served reply are read.
+# ===========================================================================
+
+
+@pytest.fixture(scope="module")
+def flask_client():
+    import app as _app
+
+    _app.app.config["TESTING"] = True
+    with _app.app.test_client() as client:
+        yield client
+
+
+@pytest.fixture
+def generation(flask_client, monkeypatch):
+    """Run the route once against a fake that answers with the queued replies.
+
+    Returns ``(response_json, fake, observation_write_spy)``.
+    """
+
+    def _run(*replies, page: str = support.CAPTURED_MODELS_PAGE):
+        fake = support.new_fake(page)
+        spy = support.install_route_world(monkeypatch, fake)
+        for reply in replies:
+            fake.queue_message(reply)
+        data = support.evaluate_via_route(flask_client)
+        return data, fake, spy
+
+    return _run
+
+
+def _value_at(tree: dict, edit: dict):
+    node = tree
+    for step in edit["node_path"]:
+        node = node[step]
+    return node[edit["param_key"]]
+
+
+def test_generation_request_carries_tool_choice_auto(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    assert fake.message_requests[0].body["tool_choice"] == {"type": "auto"}, (
+        "the tool must be offered, never forced: a forced tool call is rejected by models that think"
+    )
+
+
+def test_generation_request_sends_the_baseline_tool_made_strict(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    assert fake.message_requests[0].body["tools"] == [support.expected_strict_tool()], (
+        "the tool must equal the base definition plus strict and closed objects, nothing else changed"
+    )
+
+
+def test_generation_request_keeps_the_node_path_item_type_list(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    schema = fake.message_requests[0].body["tools"][0]["input_schema"]
+    node_path = schema["properties"]["edits"]["items"]["properties"]["node_path"]
+    assert node_path["items"] == {"type": ["string", "integer"]}, (
+        "a node path mixes dict keys and list indices; the item type list must reach the API as is"
+    )
+
+
+def test_generation_request_carries_the_server_side_fallback_setting(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    request = fake.message_requests[0]
+    assert request.body["fallbacks"] == "default"
+    assert "server-side-fallback-2026-07-01" in request.headers["anthropic-beta"]
+
+
+def test_generation_request_sets_effort_and_sends_no_sampling_or_thinking_parameters(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    body = fake.message_requests[0].body
+    assert body["output_config"]["effort"] == "high"
+    sent_forbidden = [k for k in ("temperature", "top_p", "top_k", "thinking") if k in body]
+    assert sent_forbidden == [], (
+        f"models that always think reject these parameters: {sent_forbidden}"
+    )
+    assert body["messages"][-1]["role"] == "user", (
+        "a trailing assistant message (prefill) is rejected"
+    )
+
+
+def test_generation_request_budget_and_timeout_fit_a_thinking_reply(generation):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    request = fake.message_requests[0]
+    assert request.body["max_tokens"] >= 16000, (
+        "thinking counts against max_tokens; the old 2048 budget cannot hold a reply at high effort"
+    )
+    assert request.timeout["read"] >= 120, (
+        "a thinking reply at high effort does not finish inside the old 30 second timeout"
+    )
+
+
+def test_generation_prompt_lists_candidate_parameters_and_names_the_tool(
+    generation, lce, fixture_tree
+):
+    _data, fake, _spy = generation(support.reply_with_tool_edit(support.real_edit()))
+
+    content = fake.message_requests[0].body["messages"][0]["content"]
+    assert isinstance(content, str)
+    assert support.TOOL_NAME in content, "the prompt must tell the model to call the tool by name"
+    first = lce.extract_numeric_params(fixture_tree)[0]
+    assert f"param_key={first['param_key']!r}" in content
+    assert f"node_path={first['node_path']!r}" in content, (
+        "a prompt without the candidate parameters makes the model answer in text instead of "
+        "calling the tool"
+    )
+
+
+def test_thinking_then_tool_reply_input_is_parsed(generation, fixture_tree):
+    edit = support.real_edit()
+
+    data, _fake, spy = generation(support.reply_with_tool_edit(edit))
+
+    proposals = support.all_proposals(data)
+    assert len(proposals) == 1
+    proposal = proposals[0]
+    assert proposal["tweak_param_key"] == edit["param_key"]
+    assert proposal["tweak_node_path"] == edit["node_path"]
+    assert proposal["tweak_new_value"] == edit["new_value"]
+    assert proposal["tweak_old_value"] == _value_at(fixture_tree, edit), (
+        "the old value comes from the real tree, never from the reply"
+    )
+    assert spy.call_count == 1, "the evaluated proposal is persisted once"
+
+
+def test_primary_reply_is_used_and_provenance_names_the_primary_model(generation):
+    reply = support.reply_with_tool_edit(support.real_edit())
+
+    data, fake, _spy = generation(reply)
+
+    assert fake.message_requests[0].body["model"] == reply["model"], (
+        "self-guard: the seeded family model and the captured reply model must be the same id"
+    )
+    assert data["provenance"]["generation_model"] == reply["model"]
+
+
+def test_fallback_served_reply_supplies_the_candidates_and_provenance_names_the_fallback_model(
+    generation,
+):
+    edit = support.real_edit()
+    reply = support.fallback_served_reply(edit)
+
+    data, fake, _spy = generation(reply)
+
+    requested = fake.message_requests[0].body["model"]
+    assert reply["model"] != requested, "self-guard: a fallback reply names a different model"
+    assert [p["tweak_param_key"] for p in support.all_proposals(data)] == [edit["param_key"]]
+    assert data["provenance"]["generation_model"] == reply["model"], (
+        f"the run was served by the fallback model and must say so: {data['provenance']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# security: tool input is untrusted
+# ---------------------------------------------------------------------------
+
+
+def test_security_edit_naming_a_path_absent_from_the_tree_is_dropped(generation):
+    edit = {**support.real_edit(), "node_path": ["children", 99, "children", 99]}
+
+    data, _fake, spy = generation(support.reply_with_tool_edit(edit))
+
+    assert support.all_proposals(data) == []
+    assert data["survivors"] == 0
+    assert spy.call_count == 0, "a fabricated edit must never reach persistence"
+
+
+def test_security_old_value_claimed_by_the_reply_is_ignored(generation, fixture_tree):
+    edit = support.real_edit()
+    claimed = {**edit, "old_value": 987654.321}
+
+    data, _fake, _spy = generation(support.reply_with_tool_edit(claimed))
+
+    (proposal,) = support.all_proposals(data)
+    assert proposal["tweak_old_value"] == _value_at(fixture_tree, edit)
+    assert proposal["tweak_old_value"] != claimed["old_value"]
