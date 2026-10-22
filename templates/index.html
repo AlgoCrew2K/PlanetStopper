@@ -807,6 +807,7 @@
 
         <!-- Left column: headline + chart + legend -->
         <div data-testid="hero-left">
+          <span id="hero-scope-caption" class="legend-as-of" hidden>All accounts</span>
           <div class="hero-top">
             <div>
               <div class="guard-alpha-label">Guard alpha &middot; <span id="guard-alpha-window-label">30d</span></div>
@@ -877,6 +878,7 @@
 
         <!-- Right column: VsRows + mini-stats -->
         <div data-testid="hero-right">
+          <span id="strip-scope-caption" class="legend-as-of" hidden>All accounts</span>
           <!-- Bot-vs-Held comparison rows -->
           {% set cr_bot = (meta.portfolio.cr if meta is defined and meta.portfolio is defined else 0) or 0 %}
           {% set cr_held = (meta.portfolio.cr_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}

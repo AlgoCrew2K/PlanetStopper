@@ -3143,14 +3143,11 @@ def get_state():
                 _waiting_body["portfolio_strip"] = _injected_portfolio_strip
             return jsonify(_waiting_body)
 
-        # FP-T3-03 backend: optional ?account=<uuid> filter on bot_state.
+        # FP-T3-03 backend: optional ?account=<uuid> filter on bot_state. The filter
+        # narrows only the per-symphony outputs (cards, state, bot_state, symphonies);
+        # the hero strip and mini-stats stay whole-portfolio, so state_data itself
+        # is never narrowed.
         _account_filter = request.args.get("account")
-        if _account_filter:
-            state_data = {
-                k: v
-                for k, v in state_data.items()
-                if not isinstance(v, dict) or v.get("account") == _account_filter
-            }
 
         env_vars = dotenv_values(".env")
         live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
@@ -3170,7 +3167,9 @@ def get_state():
         symphony_keys = [
             k
             for k in state_data.keys()
-            if isinstance(state_data[k], dict) and "name" in state_data[k]
+            if isinstance(state_data[k], dict)
+            and "name" in state_data[k]
+            and (not _account_filter or state_data[k].get("account") == _account_filter)
         ]
         accounts_map = {}
         for k in symphony_keys:
@@ -3482,13 +3481,18 @@ def get_state():
                 }
             )
 
+        _narrowed_state = {
+            k: v
+            for k, v in state_data.items()
+            if not _account_filter or not isinstance(v, dict) or v.get("account") == _account_filter
+        }
         return jsonify(
             {
                 "status": "active",
                 "market_state": market_state,
                 "frozen_at": None,
-                "state": state_data,
-                "bot_state": state_data,
+                "state": _narrowed_state,
+                "bot_state": _narrowed_state,
                 "live_mode": live_mode,
                 "execution_start_time": env_vars.get("EXECUTION_START_TIME", "09:30"),
                 "next_run_seconds": next_run_seconds,
