@@ -169,10 +169,13 @@ def test_ac16_build_plan_generator_defaults_to_fable_not_opus(monkeypatch):
     assert fake_client.messages.create.called, (
         "generate_build_plans must call client.messages.create"
     )
+    import model_config
+
     resolved_model = fake_client.messages.create.call_args.kwargs.get("model")
-    assert resolved_model == "claude-fable-5", (
+    expected = model_config.peek(model_config.Knob.SUGGESTION).model_id
+    assert resolved_model == expected and resolved_model.startswith("claude-fable"), (
         f"AC-16 GAP: build_plan_generator's default suggestion model is "
-        f"{resolved_model!r}, expected 'claude-fable-5'."
+        f"{resolved_model!r}, expected the registry-resolved fable-line model {expected!r}."
     )
 
 
