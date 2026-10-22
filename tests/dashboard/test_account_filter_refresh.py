@@ -747,3 +747,39 @@ class TestNewestRequestWins:
             "a failure of a request that a newer one has replaced must not raise the cue"
         )
         assert result["label"] != "Connection Lost"
+
+
+class TestDeferredRequestSettlesOnce:
+    def test_a_deferred_state_request_refuses_a_second_release_or_failure(
+        self, fx, monkeypatch, tmp_path
+    ):
+        routes = _routes(fx, monkeypatch)
+        html = harness.render_dashboard_html(fx["bot_state"])
+        out = harness.run_page(
+            tmp_path,
+            "async function (H) {"
+            + LOAD_PAGE
+            + """
+              const attempt = function (fn) {
+                try { fn(); return null; } catch (e) { return String(e.message); }
+              };
+              H.deferState(true);
+              H.poll();
+              H.poll();
+              H.release(0);
+              H.fail(1);
+              await H.flush();
+              return {
+                secondRelease: attempt(function () { H.release(0); }),
+                failAfterRelease: attempt(function () { H.fail(0); }),
+                releaseAfterFail: attempt(function () { H.release(1); })
+              };
+            }""",
+            html=html,
+            routes=routes,
+        )
+        result = out["result"]
+        for step in ("secondRelease", "failAfterRelease", "releaseAfterFail"):
+            assert result[step] is not None and "already settled" in result[step], (
+                f"{step}: a request that already settled must refuse to settle again"
+            )

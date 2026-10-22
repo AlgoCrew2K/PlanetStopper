@@ -530,14 +530,22 @@ globalThis.fetch = function (url, opts) {
   const route = Object.prototype.hasOwnProperty.call(cfg.routes, key) ? cfg.routes[key] : {};
   if (path === '/api/state' && deferring) {
     return new Promise(function (resolve, reject) {
-      deferred.push({
+      const entry = {
         url: u,
         settled: false,
         release: function (override) {
+          settle();
           resolve(respond(override !== undefined ? override : route, 200));
         },
-        fail: function () { reject(new TypeError('network failure')); }
-      });
+        fail: function () { settle(); reject(new TypeError('network failure')); }
+      };
+      // A request settles once; a second release or fail is a scenario bug that
+      // a bare Promise would swallow, so it throws here instead.
+      function settle() {
+        if (entry.settled) throw new Error('deferred state request already settled: ' + u);
+        entry.settled = true;
+      }
+      deferred.push(entry);
     });
   }
   if (route && route.__reject__) return Promise.reject(new TypeError('network failure'));
