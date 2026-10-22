@@ -299,8 +299,8 @@ class TestFamilySelection:
         assert fake.listing_requests, "no listing request was made"
         request = fake.listing_requests[0]
         assert 1 <= int(request.query["limit"]) <= 1000, "the Models API accepts 1 to 1000 per page"
-        assert 0 < request.timeout["read"] <= 30, (
-            "the listing holds the single-flight lock, so its wait is bounded"
+        assert 0 < request.timeout["read"] <= 10, (
+            "the listing holds the single-flight lock that request threads wait on, so it is capped at 10 s"
         )
 
     @pytest.mark.parametrize("knob", KNOBS)
@@ -796,6 +796,24 @@ class TestInvalidate:
         assert fake.listing_sequences == 2
         assert replacement.model_id == stale.model_id, (
             "the caller compares ids to decide whether to resend"
+        )
+
+    def test_a_late_404_for_an_already_replaced_model_keeps_the_current_resolution(self):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        newer_page = load_fixture("models/relisted_newer_fable.json")
+        fake.set_pages([newer_page])
+        replacement = model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.client)
+        assert replacement.model_id != stale.model_id and fake.listing_sequences == 2
+
+        late = model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.client)
+
+        assert late.model_id == replacement.model_id, (
+            "a 404 for the old model says nothing about the new one"
+        )
+        assert model_config.peek(Knob.SUGGESTION).model_id == replacement.model_id
+        assert fake.listing_sequences == 2, (
+            "no new listing for a model that is no longer the resolution"
         )
 
     def test_a_failed_listing_after_a_404_is_unavailable_and_never_the_dropped_model(self):
