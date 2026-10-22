@@ -1149,7 +1149,7 @@ class TestSpendLogging:
 # ---------------------------------------------------------------------------
 
 
-class TestModelPin:
+class TestCouncilGenericModelTag:
     def test_claude_command_uses_generic_tag_and_no_dated_model_id(self):
         """The argument after '--model' is exactly 'opus' and no argument carries a dated
         model ID.
@@ -1180,8 +1180,10 @@ class TestModelPin:
         )
 
     def test_synthesis_model_override_does_not_reach_council_command(self, monkeypatch):
-        """ADVISOR_SYNTHESIS_MODEL drives API-side sites only; the CLI command still says 'opus'."""
+        """The API-side overrides (ADVISOR_SYNTHESIS_MODEL and ADVISOR_SUGGESTION_MODEL) drive
+        API-side sites only; the CLI command still says 'opus'."""
         monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "claude-sonnet-4-6")
+        monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "claude-haiku-4-5")
         mod = _import_scheduler()
         mock_result = MagicMock()
         mock_result.returncode = 0
@@ -1197,18 +1199,23 @@ class TestModelPin:
         assert _model_arg(args_used) == GENERIC_COUNCIL_MODEL_TAG, (
             f"The override must not reach the council command. Command was: {args_used[:8]}"
         )
-        assert not any("claude-sonnet-4-6" in str(a) for a in args_used), (
-            "The ADVISOR_SYNTHESIS_MODEL value leaked into the council command."
-        )
+        for leaked in ("claude-sonnet-4-6", "claude-haiku-4-5"):
+            assert not any(leaked in str(a) for a in args_used), (
+                f"The API-side override value {leaked} leaked into the council command."
+            )
 
-    def test_nonzero_exit_retries_every_attempt_with_generic_tag(self):
+    def test_nonzero_exit_retries_every_attempt_with_generic_tag(self, capsys, monkeypatch):
         """When the CLI rejects the tag (non-zero exit) each of the MAX_ATTEMPTS attempts
-        still passes 'opus', no attempt falls back to a dated ID, and the scheduler exits 1."""
+        still passes 'opus', no attempt falls back to a dated ID, the scheduler exits 1, and
+        each failure prints the redacted diagnostic block to stderr without the credential."""
+        credential = "plain-credential-Zq81Lm4Xv9"
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", credential)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         mod = _import_scheduler()
         fail_result = MagicMock()
         fail_result.returncode = 1
         fail_result.stdout = ""
-        fail_result.stderr = "unknown model"
+        fail_result.stderr = f"unknown model; auth header was {credential}"
 
         with (
             patch.object(mod, "_get_summary", return_value=None),
@@ -1226,6 +1233,17 @@ class TestModelPin:
                 f"Every retry must pass the generic tag. Command was: {cmd[:8]}"
             )
             assert _dated_model_args(cmd) == []
+
+        captured = capsys.readouterr()
+        diagnostic_marker = "Council subprocess failed: returncode=1"
+        assert captured.err.count(diagnostic_marker) == mod.MAX_ATTEMPTS, (
+            "Every failed attempt must print the diagnostic block to stderr."
+        )
+        assert "diagnostic suppressed" not in captured.err
+        assert "unknown model" in captured.err, "The stderr tail must reach the diagnostic."
+        assert credential not in captured.err + captured.out, (
+            "The credential value must be redacted from the diagnostic output."
+        )
 
     def test_council_agent_files_read_generic_model_tag(self):
         """Each council agent file declares 'model: opus' in its front matter."""
