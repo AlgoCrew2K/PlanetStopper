@@ -5,9 +5,10 @@ as the browser loads them; the DOM they act on is built from the HTML that ``GET
 (parsed by the standard library, never hand-written); the ``/api/state`` bodies handed to ``fetch``
 come from the real ``/api/state`` route.
 
-What is stubbed: the network (``fetch`` answers from a route table), timers (recorded, never fired
-by themselves), ``EventSource`` (records listeners) and a small DOM (selectors, classes, attributes,
-``hidden``). Chart.js is deliberately absent: a draw is judged on a live render, never here.
+What is stubbed: the network (``fetch`` answers from a route table, at once or, after
+``H.deferState(true)``, only when the scenario releases or rejects each request, in any order), timers
+(recorded, never fired by themselves), ``EventSource`` (records listeners) and a small DOM (selectors,
+classes, attributes, ``hidden``). Chart.js is deliberately absent: a draw is judged on a live render, never here.
 
 Nothing here reads or writes the developer ``.env`` and nothing touches the network.
 """
@@ -18,9 +19,11 @@ import copy
 import json
 import shutil
 import subprocess
+from collections.abc import Iterator
 from contextlib import contextmanager
 from html.parser import HTMLParser
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,7 +106,7 @@ def analytics_mock() -> MagicMock:
 
 
 @contextmanager
-def state_api(monkeypatch, bot_state: dict, market_state: str = "open"):
+def state_api(monkeypatch, bot_state: dict, market_state: str = "open") -> Iterator[Any]:
     """A Flask test client for /api/state over ``bot_state``. Only database and analytics are mocked.
 
     Every patch is undone on exit, so a page rendered afterwards sees the real application.
@@ -297,6 +300,8 @@ const intervals = [];
 const docListeners = {};
 const eventSources = [];
 const allElements = [];
+const deferred = [];
+let deferring = false;
 
 function kebab(s) { return s.replace(/[A-Z]/g, function (c) { return '-' + c.toLowerCase(); }); }
 
@@ -523,6 +528,18 @@ globalThis.fetch = function (url, opts) {
     key = path;
   }
   const route = Object.prototype.hasOwnProperty.call(cfg.routes, key) ? cfg.routes[key] : {};
+  if (path === '/api/state' && deferring) {
+    return new Promise(function (resolve, reject) {
+      deferred.push({
+        url: u,
+        settled: false,
+        release: function (override) {
+          resolve(respond(override !== undefined ? override : route, 200));
+        },
+        fail: function () { reject(new TypeError('network failure')); }
+      });
+    });
+  }
   if (route && route.__reject__) return Promise.reject(new TypeError('network failure'));
   const status = (route && route.__status__) || 200;
   const body = route && route.__body__ !== undefined ? route.__body__ : route;
@@ -559,6 +576,16 @@ const H = {
     return document.querySelectorAll('.sym-card[data-sym-id]')
       .filter(function (c) { return !H.isHidden(c); })
       .map(function (c) { return c.getAttribute('data-sym-id'); });
+  },
+  deferState: function (on) { deferring = !!on; },
+  deferredUrls: function () { return deferred.map(function (d) { return d.url; }); },
+  release: function (index, body) {
+    if (!deferred[index]) throw new Error('no deferred state request #' + index);
+    deferred[index].release(body);
+  },
+  fail: function (index) {
+    if (!deferred[index]) throw new Error('no deferred state request #' + index);
+    deferred[index].fail();
   },
   mark: function () { return requests.length; },
   stateRequests: function (from) {

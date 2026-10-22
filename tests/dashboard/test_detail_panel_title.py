@@ -125,9 +125,19 @@ class TestTitleIsTheDisplayName:
         assert result["htmlWrites"] == [], "the title is written as text, never as HTML"
 
 
-def _number(entry: dict, key: str):
+# The engine writes a magnitude of 900 or more (plus or minus 999) as a "not set" marker, and the
+# panel shows "--" for it instead of a percentage.
+NO_VALUE_MAGNITUDE = 900
+
+
+def _number(entry: dict, key: str) -> float | int | None:
+    """The entry's numeric field, or None where the panel must show no value (absent, non-numeric, marker)."""
     value = entry.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or abs(value) >= 900:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or abs(value) >= NO_VALUE_MAGNITUDE
+    ):
         return None
     return value
 

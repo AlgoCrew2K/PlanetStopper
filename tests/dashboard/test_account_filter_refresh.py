@@ -9,6 +9,10 @@ Contract under test:
     "All accounts" while an account is picked, never mixing filtered symphonies with whole-account totals.
   * After market hours the server's frozen branch ignores ``account``; the client narrows the cards.
   * An account with no symphonies shows no cards and zero counts, with no new copy.
+  * Whatever order overlapping ``/api/state`` responses land in, the page shows the response to the
+    most recently issued request: a slow response for an earlier pick, a poll issued before a pick,
+    a response issued before the pick was cleared, and a poll overlapping a cycle-complete refresh
+    never overwrite a newer one, and a stale failure never raises the "Connection Lost" cue.
 
 Real call path: the real ``static/chrome.js`` and ``static/index.js`` run whole under node over the page
 ``GET /`` really renders, with ``/api/state`` bodies produced by the real route
@@ -504,3 +508,228 @@ class TestHeroAndStripCoverEveryAccount:
             )
             assert result["picked"][caption_id]["text"] == "All accounts"
             assert result["cleared"][caption_id]["hidden"] is True
+
+
+SNAPSHOT_JS = """
+  const snap = function () {
+    return {
+      visible: H.visibleCardIds(),
+      counts: [H.byTestid('active-section-count').textContent,
+               H.byTestid('standby-section-count').textContent],
+      captionsHidden: ['hero-scope-caption', 'strip-scope-caption'].map(function (id) {
+        return H.isHidden(H.byId(id));
+      })
+    };
+  };
+"""
+
+
+class TestNewestRequestWins:
+    """The page always shows the response to the most recently issued ``/api/state`` request."""
+
+    def _expected(self, fx: dict, account: str) -> dict:
+        ids = harness.ids_for_account(fx["bot_state"], account)
+        return {"visible": sorted(ids), "counts": list(_counts(fx, ids))}
+
+    @pytest.mark.parametrize(("earlier", "later"), [("first", "second"), ("second", "first")])
+    def test_slow_response_for_an_earlier_pick_does_not_replace_the_later_pick(
+        self, fx, monkeypatch, tmp_path, earlier, later
+    ):
+        html = harness.render_dashboard_html(fx["bot_state"])
+        out = harness.run_page(
+            tmp_path,
+            "async function (H) {"
+            + LOAD_PAGE
+            + SNAPSHOT_JS
+            + """
+              H.deferState(true);
+              H.window.switchAccount(H.params.earlier);
+              H.window.switchAccount(H.params.later);
+              H.release(1);
+              await H.flush();
+              const afterNewer = snap();
+              H.release(0);
+              await H.flush();
+              return { urls: H.deferredUrls(), afterNewer: afterNewer, afterOlder: snap(),
+                       picked: H.window.activeAccount };
+            }""",
+            html=html,
+            routes=_routes(fx, monkeypatch),
+            params={"earlier": fx["accounts"][earlier], "later": fx["accounts"][later]},
+        )
+        result = out["result"]
+        expected = self._expected(fx, fx["accounts"][later])
+        assert [_query(u) for u in result["urls"]] == [
+            {"account": [fx["accounts"][earlier]]},
+            {"account": [fx["accounts"][later]]},
+        ], "each pick issues its own filtered request"
+        assert sorted(result["afterNewer"]["visible"]) == expected["visible"]
+        assert result["afterNewer"]["counts"] == expected["counts"]
+        assert sorted(result["afterOlder"]["visible"]) == expected["visible"], (
+            "the earlier pick's response landing last must not hide the later pick's cards"
+        )
+        assert result["afterOlder"]["counts"] == expected["counts"], (
+            "the earlier pick's response landing last must not change the counts"
+        )
+        assert result["afterOlder"]["captionsHidden"] == [False, False]
+
+    def test_poll_issued_before_a_pick_does_not_restore_other_accounts_cards(
+        self, fx, monkeypatch, tmp_path
+    ):
+        account = fx["accounts"]["first"]
+        html = harness.render_dashboard_html(fx["bot_state"])
+        out = harness.run_page(
+            tmp_path,
+            "async function (H) {"
+            + LOAD_PAGE
+            + SNAPSHOT_JS
+            + """
+              H.deferState(true);
+              H.poll();
+              H.window.switchAccount(H.params.account);
+              H.release(1);
+              await H.flush();
+              const afterPick = snap();
+              H.release(0);
+              await H.flush();
+              return { urls: H.deferredUrls(), afterPick: afterPick, afterPoll: snap() };
+            }""",
+            html=html,
+            routes=_routes(fx, monkeypatch),
+            params={"account": account},
+        )
+        result = out["result"]
+        expected = self._expected(fx, account)
+        assert result["urls"][0] == "/api/state", "the poll was issued before the pick"
+        assert _query(result["urls"][1]) == {"account": [account]}
+        assert sorted(result["afterPick"]["visible"]) == expected["visible"]
+        assert sorted(result["afterPoll"]["visible"]) == expected["visible"], (
+            "a poll issued before the pick must not bring back every account's cards"
+        )
+        assert result["afterPoll"]["counts"] == expected["counts"]
+        assert result["afterPoll"]["captionsHidden"] == [False, False]
+
+    def test_request_issued_before_the_pick_was_cleared_does_not_narrow_the_page_again(
+        self, fx, monkeypatch, tmp_path
+    ):
+        account = fx["accounts"]["second"]
+        everything = sorted(harness.symphony_entries(fx["bot_state"]))
+        html = harness.render_dashboard_html(fx["bot_state"])
+        out = harness.run_page(
+            tmp_path,
+            "async function (H) {"
+            + LOAD_PAGE
+            + SNAPSHOT_JS
+            + """
+              H.deferState(true);
+              H.window.switchAccount(H.params.account);
+              H.window.switchAccount(null);
+              H.release(1);
+              await H.flush();
+              const afterClear = snap();
+              H.release(0);
+              await H.flush();
+              return { urls: H.deferredUrls(), afterClear: afterClear, afterFiltered: snap(),
+                       picked: H.window.activeAccount };
+            }""",
+            html=html,
+            routes=_routes(fx, monkeypatch),
+            params={"account": account},
+        )
+        result = out["result"]
+        assert [_query(u) for u in result["urls"][:1]] == [{"account": [account]}]
+        assert result["urls"][1] == "/api/state", "clearing the pick issues an unfiltered request"
+        assert result["picked"] is None
+        assert sorted(result["afterClear"]["visible"]) == everything
+        assert result["afterClear"]["captionsHidden"] == [True, True]
+        assert sorted(result["afterFiltered"]["visible"]) == everything, (
+            "the filtered response landing after the pick was cleared must not hide cards"
+        )
+        assert result["afterFiltered"]["counts"] == result["afterClear"]["counts"], (
+            "the filtered response landing after the pick was cleared must not change the counts"
+        )
+        assert result["afterFiltered"]["captionsHidden"] == [True, True]
+
+    def test_poll_overlapping_a_cycle_event_never_overwrites_the_newer_snapshot(
+        self, fx, monkeypatch, tmp_path
+    ):
+        routes = _routes(fx, monkeypatch)
+        html = harness.render_dashboard_html(fx["bot_state"])
+        out = harness.run_page(
+            tmp_path,
+            "async function (H) {"
+            + LOAD_PAGE
+            + """
+              const body = function (armed) {
+                const b = JSON.parse(JSON.stringify(H.params.base));
+                b.meta.armed = armed;
+                return b;
+              };
+              const armed = function () { return H.byId('hero-armed').textContent; };
+              H.deferState(true);
+              // The poll is issued first and the cycle event second; the event's response lands first.
+              H.poll();
+              H.cycleComplete();
+              H.release(1, body(5));
+              await H.flush();
+              const newerLanded = armed();
+              H.release(0, body(2));
+              await H.flush();
+              const afterOlder = armed();
+              // Control: responses landing in the order they were issued show the last one issued.
+              H.poll();
+              H.cycleComplete();
+              H.release(2, body(3));
+              await H.flush();
+              H.release(3, body(8));
+              await H.flush();
+              return { urls: H.deferredUrls(), newerLanded: newerLanded, afterOlder: afterOlder,
+                       inOrder: armed() };
+            }""",
+            html=html,
+            routes=routes,
+            params={"base": routes["/api/state"]},
+        )
+        result = out["result"]
+        assert result["urls"] == ["/api/state"] * 4, "two poll requests and two cycle refreshes"
+        assert str(result["newerLanded"]) == "5"
+        assert str(result["afterOlder"]) == "5", (
+            "the older snapshot landing last must not replace the newer one (armed went 5 then 2)"
+        )
+        assert str(result["inOrder"]) == "8", "responses landing in issue order show the newest"
+
+    def test_stale_failure_after_a_newer_success_does_not_show_connection_lost(
+        self, fx, monkeypatch, tmp_path
+    ):
+        routes = _routes(fx, monkeypatch)
+        html = harness.render_dashboard_html(fx["bot_state"])
+        out = harness.run_page(
+            tmp_path,
+            "async function (H) {"
+            + LOAD_PAGE
+            + """
+              const body = JSON.parse(JSON.stringify(H.params.base));
+              body.meta.armed = 6;
+              H.deferState(true);
+              H.poll();
+              H.cycleComplete();
+              H.release(1, body);
+              await H.flush();
+              H.fail(0);
+              await H.flush();
+              return {
+                lost: H.textWrites.filter(function (w) { return w.text === 'Connection Lost'; }).length,
+                label: H.byId('engine-status-label').textContent,
+                armed: H.byId('hero-armed').textContent
+              };
+            }""",
+            html=html,
+            routes=routes,
+            params={"base": routes["/api/state"]},
+        )
+        result = out["result"]
+        assert str(result["armed"]) == "6", "the newer response is on screen"
+        assert result["lost"] == 0, (
+            "a failure of a request that a newer one has replaced must not raise the cue"
+        )
+        assert result["label"] != "Connection Lost"
