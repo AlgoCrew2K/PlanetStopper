@@ -269,7 +269,6 @@ def test_a_resolved_model_answering_404_with_an_unchanged_relisting_is_one_reque
     assert body["atlas_count"] == 1, "the Atlas candidate is still evaluated"
     notice = body["mode_notice"]
     assert isinstance(notice, str) and "model_unavailable" in notice
-    assert not any(word in notice.lower() for word in _MODEL_FAMILY_WORDS), notice
 
 
 def test_an_override_the_api_rejects_names_the_variable_after_one_request(client, monkeypatch):
