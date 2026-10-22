@@ -34,7 +34,6 @@ contract, matching the sibling advisors modules).
 
 from __future__ import annotations
 
-import itertools
 import logging
 import math
 import time
@@ -148,6 +147,11 @@ _COMPOSER_BASIS_LABEL: str = "realized daily returns (Composer, deposit-adjusted
 # issued back-to-back, so each fetch after the first waits this long first.
 COMPOSER_FETCH_MIN_INTERVAL_SECONDS: float = 1.0
 
+# Upper bound for the STRESS_GATE_MIN_ALIGNED_DAYS derivation below -- a sanity
+# ceiling (about 3,900 trading years of daily data), never a tuned value.
+_STRESS_GATE_SEARCH_LIMIT: int = 1_000_000
+
+
 # Cycle 2e AC-3: the smallest aligned-day count at which the stress sub-window can
 # be estimable at all -- the smallest n with ceil(STRESS_WINDOW_FRACTION * n) >=
 # STRESS_MIN_OBS (the exact test _compute_stressed_correlation applies). DERIVED
@@ -155,9 +159,23 @@ COMPOSER_FETCH_MIN_INTERVAL_SECONDS: float = 1.0
 # either constant can never leave this disclosed minimum stale. Surfaced in the
 # run summary so an operator seeing "blocked: stress window too thin" knows the
 # aligned-history length at which that gate can first pass.
-STRESS_GATE_MIN_ALIGNED_DAYS: int = next(
-    n for n in itertools.count(1) if math.ceil(STRESS_WINDOW_FRACTION * n) >= STRESS_MIN_OBS
-)
+def _derive_stress_gate_min_aligned_days() -> int:
+    """Smallest n with ceil(STRESS_WINDOW_FRACTION * n) >= STRESS_MIN_OBS.
+
+    The search is bounded: a nonsensical stress constant (e.g. a zero fraction,
+    for which no n ever qualifies) must fail LOUDLY at import instead of hanging
+    application start-up in an unbounded loop.
+    """
+    for n in range(1, _STRESS_GATE_SEARCH_LIMIT + 1):
+        if math.ceil(STRESS_WINDOW_FRACTION * n) >= STRESS_MIN_OBS:
+            return n
+    raise ValueError(
+        "STRESS_WINDOW_FRACTION/STRESS_MIN_OBS admit no aligned-day count within "
+        f"{_STRESS_GATE_SEARCH_LIMIT} days"
+    )
+
+
+STRESS_GATE_MIN_ALIGNED_DAYS: int = _derive_stress_gate_min_aligned_days()
 
 # Cycle 2e AC-3: run-summary status values.
 STATUS_OK: str = "ok"
