@@ -47,6 +47,7 @@ CAPTURED = load_fixture("models/page_captured.json")
 EDGE_CASES = load_fixture("models/edge_cases.json")["cases"]
 THREAD_KINDS = ("request", "scheduler", "frontrunner")
 SETTLE_SECONDS = 0.3
+UNWAITED_SECONDS = 5  # a throttled listing returns well before the 30 s Retry-After used below
 
 
 def newest_id(records, line):
@@ -589,6 +590,43 @@ class TestRelisting:
         )
 
 
+def invalidate_behind_a_due_relisting(fake, clock, knob, model_id):
+    """A due ``resolve`` holds the listing; a 404 for ``model_id`` arrives meanwhile.
+
+    Returns the answer of the ``invalidate`` that waited for the listing.
+    """
+    clock.advance(DAY + 1)
+    gate = fake.hold_listings()
+    answers, failures = [], []
+
+    def resolve_due():
+        try:
+            model_config.resolve(knob, fake.make_client())
+        except BaseException as exc:  # surfaced below, never swallowed
+            failures.append(exc)
+
+    def invalidate_stale():
+        try:
+            answers.append(model_config.invalidate(knob, model_id, fake.make_client()))
+        except BaseException as exc:  # surfaced below, never swallowed
+            failures.append(exc)
+
+    lister = threading.Thread(target=resolve_due, daemon=True)
+    invalidator = threading.Thread(target=invalidate_stale, daemon=True)
+    try:
+        lister.start()
+        assert fake.listing_started.wait(5), "the relisting never started"
+        invalidator.start()
+        time.sleep(SETTLE_SECONDS)  # the 404 arrives while the relisting holds the lock
+    finally:
+        gate.set()
+    lister.join(10)
+    invalidator.join(10)
+    assert not (lister.is_alive() or invalidator.is_alive()), "a thread never returned"
+    assert not failures, failures
+    return answers[0]
+
+
 class TestConcurrentResolution:
     def test_ten_concurrent_first_calls_share_one_listing_sequence(self):
         fake = captured_fake()
@@ -868,6 +906,107 @@ class TestInvalidate:
         assert sequences_while_held == 2 and fake.listing_sequences == 2
         assert {r.model_id for r in results} == {newest_id(newer_page["data"], "fable")}
 
+    @pytest.mark.parametrize("knob", KNOBS)
+    def test_concurrent_404s_share_one_relisting_that_names_the_same_model(self, knob):
+        fake = captured_fake()
+        stale = first_resolution(fake, knob)
+
+        results, sequences_while_held = call_concurrently(
+            fake, lambda i: model_config.invalidate(knob, stale.model_id, fake.make_client()), 5
+        )
+
+        assert sequences_while_held == 2 and fake.listing_sequences == 2, (
+            "every waiting 404 shares the relisting that finished while it waited, "
+            "whether or not that relisting named a different model"
+        )
+        assert fake.max_concurrent_listings == 1
+        assert len(results) == 5 and len(set(results)) == 1, "every caller gets the same answer"
+        assert results[0].model_id == stale.model_id and results[0] == model_config.peek(knob)
+
+    def test_concurrent_404s_share_one_relisting_that_fails(self):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        for _ in range(5):  # the Models API stays down for as long as anyone asks
+            fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        results, sequences_while_held = call_concurrently(
+            fake,
+            lambda i: model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.make_client()),
+            5,
+        )
+
+        assert sequences_while_held == 2 and fake.listing_sequences == 2, (
+            "during an outage the waiting 404s must not each hold the listing lock for an "
+            "attempt of their own"
+        )
+        assert len(results) == 5 and len(set(results)) == 1, "every caller gets the same answer"
+        assert results[0].source == "unavailable" and results[0].model_id == ""
+        assert model_config.peek(Knob.SUGGESTION).source == "unavailable"
+
+    def test_a_failed_relisting_shared_by_concurrent_404s_does_not_stop_the_next_call_listing(self):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        results, _ = call_concurrently(
+            fake,
+            lambda i: model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.make_client()),
+            5,
+        )
+
+        assert fake.listing_sequences == 2
+        assert {r.source for r in results} == {"unavailable"}
+        later = model_config.resolve(Knob.SUGGESTION, fake.client)
+        assert later.model_id == stale.model_id
+        assert fake.listing_sequences == 3, "a shared failed attempt is not remembered as success"
+
+    def test_concurrent_404s_for_both_families_share_one_relisting(self):
+        fake = captured_fake()
+        knobs = (Knob.SUGGESTION, Knob.SYNTHESIS)
+        stale = {knob: first_resolution(fake, knob) for knob in knobs}
+        assert fake.listing_sequences == 1, "fixture precondition: one listing serves both families"
+
+        def invalidate_own_family(i):
+            knob = knobs[i % 2]
+            return knob, model_config.invalidate(knob, stale[knob].model_id, fake.make_client())
+
+        results, sequences_while_held = call_concurrently(fake, invalidate_own_family, 6)
+
+        assert sequences_while_held == 2 and fake.listing_sequences == 2, (
+            "one listing refreshes both families, so a 404 for either shares it"
+        )
+        for knob in knobs:
+            answers = {choice for owner, choice in results if owner is knob}
+            assert answers == {model_config.peek(knob)}
+            assert model_config.peek(knob).model_id == stale[knob].model_id
+
+    @pytest.mark.parametrize("relisting", ["names-the-same-model", "fails"])
+    def test_a_404_behind_a_due_relisting_that_ends_without_a_newer_model_shares_it(
+        self, clock, relisting
+    ):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        if relisting == "fails":
+            fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+        answer = invalidate_behind_a_due_relisting(fake, clock, Knob.SUGGESTION, stale.model_id)
+
+        assert fake.listing_sequences == 2, (
+            "the relisting that finished while the 404 waited is the one the 404 shares"
+        )
+        assert answer == model_config.peek(Knob.SUGGESTION)
+
+    @pytest.mark.parametrize("knob", KNOBS)
+    def test_each_404_that_arrives_after_a_listing_finished_lists_again(self, knob):
+        fake = captured_fake()
+        stale = first_resolution(fake, knob)
+
+        first = model_config.invalidate(knob, stale.model_id, fake.client)
+        second = model_config.invalidate(knob, stale.model_id, fake.client)
+
+        assert fake.listing_sequences == 3, "only concurrent 404s share a listing, not later ones"
+        assert first.model_id == second.model_id == stale.model_id
+
     def test_inside_a_run_the_replacement_takes_the_pinned_entrys_place(self):
         fake = captured_fake()
         newer_page = load_fixture("models/relisted_newer_fable.json")
@@ -1048,6 +1187,17 @@ class TestProductionShapedClient:
         return sleeps
 
     @pytest.fixture
+    def resolver_sleeps(self, monkeypatch):
+        """Record, and skip, every wait the resolver itself makes through ``model_config.time``."""
+        sleeps = []
+        monkeypatch.setattr(
+            model_config,
+            "time",
+            types.SimpleNamespace(monotonic=time.monotonic, sleep=sleeps.append),
+        )
+        return sleeps
+
+    @pytest.fixture
     def production_client(self):
         fake = AnthropicHttpFake()
         client = fake.make_client(max_retries=anthropic.DEFAULT_MAX_RETRIES)
@@ -1063,32 +1213,37 @@ class TestProductionShapedClient:
 
     @pytest.mark.parametrize("make_outcome", FAILURE_FACTORIES)
     def test_a_failed_listing_is_one_http_attempt_and_waits_for_no_sdk_backoff(
-        self, make_outcome, production_client, sdk_sleeps
+        self, make_outcome, production_client, sdk_sleeps, resolver_sleeps
     ):
         fake, client = production_client
         for _ in range(anthropic.DEFAULT_MAX_RETRIES + 1):
             fake.queue_listing_outcome(make_outcome())
 
-        choice = model_config.resolve(Knob.SUGGESTION, client)
+        choice = returns_within(UNWAITED_SECONDS, model_config.resolve, Knob.SUGGESTION, client)
 
         assert choice.source == "unavailable"
         assert len(fake.listing_requests) == 1, (
             "the lock is held for one attempt; the retry policy is the next call, not the SDK"
         )
         assert sdk_sleeps == [], "no wait for the SDK backoff while the listing lock is held"
+        assert resolver_sleeps == [], "the resolver adds no wait of its own while it holds the lock"
 
-    def test_a_retry_after_header_is_not_waited_out(self, production_client, sdk_sleeps):
+    def test_a_retry_after_header_is_not_waited_out(
+        self, production_client, sdk_sleeps, resolver_sleeps
+    ):
         fake, client = production_client
         # Captured 429 body; the header is the documented standard one, added by hand.
         throttled = {**load_fixture("errors/429_rate_limit.json"), "headers": {"retry-after": "30"}}
         for _ in range(anthropic.DEFAULT_MAX_RETRIES + 1):
             fake.queue_listing_outcome(dict(throttled))
 
-        choice = model_config.resolve(Knob.SUGGESTION, client)
+        # The deadline catches any wait, the recorders name the two places a wait could come from.
+        choice = returns_within(UNWAITED_SECONDS, model_config.resolve, Knob.SUGGESTION, client)
 
         assert choice.source == "unavailable"
         assert len(fake.listing_requests) == 1
         assert sdk_sleeps == [], "a Retry-After of up to 60 s must not hold the listing lock"
+        assert resolver_sleeps == [], "the resolver must not sleep out the Retry-After itself"
 
     def test_a_successful_listing_through_the_default_client_reads_each_page_once(self, sdk_sleeps):
         pages = load_fixture("models/paged.json")["pages"]
