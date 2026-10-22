@@ -28,7 +28,7 @@ import subprocess
 import pytest
 
 from tests import _asset_swap_llm_support as sup
-from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests._anthropic_http_fake import load_fixture
 
 _PANEL_JS = pathlib.Path(__file__).resolve().parents[2] / "static" / "ai_advisor_asset_swaps.js"
 _ENV = "ADVISOR_SUGGESTION_MODEL"
@@ -122,11 +122,6 @@ def _title(page: str) -> str:
 
 def _model_line(page: str) -> str:
     return _between(page, 'data-testid="as-live-generation-provenance">')
-
-
-@pytest.fixture
-def fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
 
 
 def _queue(fake, *names):

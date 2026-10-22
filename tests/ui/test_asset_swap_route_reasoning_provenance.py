@@ -41,7 +41,7 @@ from unittest.mock import patch
 import pytest
 
 from tests import _asset_swap_llm_support as sup
-from tests._anthropic_http_fake import FAKE_API_KEY, AnthropicHttpFake, load_fixture
+from tests._anthropic_http_fake import FAKE_API_KEY, load_fixture
 from tests.llm_request.conftest import CAPTURED, newest_id
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -550,11 +550,6 @@ def _older_fable_id() -> str:
         key=lambda r: r["created_at"],
     )
     return fables[-2]["id"]
-
-
-@pytest.fixture
-def fake() -> AnthropicHttpFake:
-    return AnthropicHttpFake.with_captured_page()
 
 
 def _evaluate(flask_client, fake, body=None, **kwargs):
