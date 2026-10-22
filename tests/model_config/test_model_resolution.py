@@ -24,8 +24,10 @@ import time
 import types
 from unittest.mock import MagicMock
 
+import anthropic
 import httpx
 import pytest
+from anthropic import _base_client as sdk_base_client
 
 import model_config
 from model_config import Knob
@@ -187,19 +189,40 @@ def returns_within(seconds, fn, *args):
     return box[0]
 
 
+def page_listed(order):
+    """The captured page with its records in the API's order or reversed (oldest listed first)."""
+    data = list(CAPTURED["data"])
+    if order == "reversed":
+        data.reverse()
+    return {**CAPTURED, "data": data, "first_id": data[0]["id"], "last_id": data[-1]["id"]}
+
+
+LISTING_ORDERS = [
+    pytest.param("as captured", id="as-captured"),
+    pytest.param("reversed", id="oldest-listed-first"),
+]
+
+
 class TestFamilySelection:
+    @pytest.mark.parametrize("order", LISTING_ORDERS)
     @pytest.mark.parametrize("knob", KNOBS)
-    def test_each_knob_resolves_the_newest_active_model_of_its_own_line(self, knob):
-        records = CAPTURED["data"]
+    def test_each_knob_resolves_the_newest_active_model_of_its_own_line(self, knob, order):
+        page = page_listed(order)
+        records = page["data"]
         other = Knob.SYNTHESIS if knob is Knob.SUGGESTION else Knob.SUGGESTION
         expected = newest_id(records, LINE[knob])
+        if order == "reversed":
+            first_of_line = next(r["id"] for r in records if r.get("line") == LINE[knob])
+            assert first_of_line != expected, (
+                "fixture precondition: the first listed record of the line is not its newest"
+            )
         assert expected != records[0]["id"], (
             "fixture precondition: the newest record overall belongs to a third line"
         )
         assert expected != newest_id(records, LINE[other]), (
             "fixture precondition: the two lines differ"
         )
-        fake = captured_fake()
+        fake = AnthropicHttpFake(pages=[page])
 
         choice = model_config.resolve(knob, fake.client)
 
@@ -361,6 +384,7 @@ class TestFamilySelection:
 
     def test_a_client_whose_listing_is_empty_gives_an_unavailable_choice_without_raising(self):
         client = MagicMock()
+        client.with_options.return_value = client  # the resolver may derive a per-call client
 
         choice = model_config.resolve(Knob.SUGGESTION, client)
 
@@ -422,6 +446,7 @@ class TestNeverResolved:
 
     def test_an_unexpected_client_exception_is_unavailable_and_logged_by_type_only(self, caplog):
         client = MagicMock()
+        client.with_options.return_value = client  # the resolver may derive a per-call client
         client.models.list.side_effect = RuntimeError("boom-detail-77ce")
         caplog.set_level(logging.DEBUG)
         caplog.clear()
@@ -857,6 +882,83 @@ class TestInvalidate:
         assert later.model_id == replacement.model_id
         assert fake.listing_sequences == 2
 
+    def test_a_404_for_a_run_pinned_model_never_drops_the_newer_registry_model(self, clock):
+        fake = captured_fake()
+        newer_page = load_fixture("models/relisted_newer_fable.json")
+        newer_id = newest_id(newer_page["data"], "fable")
+
+        with model_config.pinned_run():
+            pinned = first_resolution(fake, Knob.SUGGESTION)
+            fake.set_pages([newer_page])
+            clock.advance(DAY + 1)
+            # A context outside the run (another thread starts with an empty context) relists.
+            outside = contextvars.Context().run(
+                model_config.resolve, Knob.SUGGESTION, fake.make_client()
+            )
+            assert outside.model_id == newer_id != pinned.model_id, "fixture precondition"
+            assert fake.listing_sequences == 2
+            fake.queue_listing_outcome(load_fixture("errors/503_unavailable.json"))
+
+            answer = model_config.invalidate(Knob.SUGGESTION, pinned.model_id, fake.client)
+
+            assert answer.model_id == newer_id, "the pin takes the registry model, not a listing"
+            assert fake.listing_sequences == 2, "the 404 was for a model the registry had dropped"
+            inside = model_config.resolve(Knob.SUGGESTION, fake.client)
+            assert inside.model_id == newer_id, "the run now uses the registry model"
+
+        after = model_config.peek(Knob.SUGGESTION)
+        assert after.source == "resolved" and after.model_id == newer_id
+        assert model_config.resolve(Knob.SUGGESTION, fake.client).model_id == newer_id
+        assert fake.listing_sequences == 2, (
+            "the registry entry stays fresh: a 404 for a pinned model does not expire it"
+        )
+
+    def test_a_404_waits_for_a_listing_in_flight_before_deciding_whether_to_drop_the_model(
+        self, clock
+    ):
+        fake = captured_fake()
+        stale = first_resolution(fake, Knob.SUGGESTION)
+        newer_page = load_fixture("models/relisted_newer_fable.json")
+        fake.set_pages([newer_page])
+        clock.advance(DAY + 1)
+        gate = fake.hold_listings()
+        answers, failures = [], []
+
+        def resolve_due():
+            model_config.resolve(Knob.SUGGESTION, fake.make_client())
+
+        def invalidate_stale():
+            try:
+                answers.append(
+                    model_config.invalidate(Knob.SUGGESTION, stale.model_id, fake.make_client())
+                )
+            except BaseException as exc:  # surfaced below, never swallowed
+                failures.append(exc)
+
+        lister = threading.Thread(target=resolve_due, daemon=True)
+        invalidator = threading.Thread(target=invalidate_stale, daemon=True)
+        try:
+            lister.start()
+            assert fake.listing_started.wait(5), "the relisting never started"
+            invalidator.start()
+            time.sleep(SETTLE_SECONDS)  # the 404 arrives while the relisting holds the lock
+            while_listing = model_config.peek(Knob.SUGGESTION)
+        finally:
+            gate.set()
+        lister.join(10)
+        invalidator.join(10)
+
+        assert not (lister.is_alive() or invalidator.is_alive()), "a thread never returned"
+        assert not failures, failures
+        assert while_listing.model_id == stale.model_id, (
+            "a 404 must not drop the entry before it holds the listing lock: the listing in "
+            "flight may be about to replace it"
+        )
+        newer_id = newest_id(newer_page["data"], "fable")
+        assert answers[0].model_id == newer_id
+        assert model_config.peek(Knob.SUGGESTION).model_id == newer_id
+        assert fake.listing_sequences == 2, "the 404 shared the listing already in flight"
+
 
 class TestPeek:
     def test_peek_of_an_unresolved_family_is_unavailable_and_makes_no_request(self):
@@ -921,6 +1023,126 @@ class TestPeek:
             "operator-chosen-model-x",
         )
         assert fake.requests == []
+
+
+FAILURE_FACTORIES = [pytest.param(p.values[0], id=p.id) for p in LISTING_FAILURES]
+
+
+class TestProductionShapedClient:
+    """The listing runs with the SDK default retry setting, as the application client does."""
+
+    @pytest.fixture
+    def sdk_sleeps(self, monkeypatch):
+        """Record, and skip, every wait the SDK makes between its own retries."""
+        sleeps = []
+
+        class RecordingTime:
+            def __getattr__(self, name):
+                return getattr(time, name)
+
+            @staticmethod
+            def sleep(seconds):
+                sleeps.append(seconds)
+
+        monkeypatch.setattr(sdk_base_client, "time", RecordingTime())
+        return sleeps
+
+    @pytest.fixture
+    def production_client(self):
+        fake = AnthropicHttpFake()
+        client = fake.make_client(max_retries=anthropic.DEFAULT_MAX_RETRIES)
+        assert client.max_retries == anthropic.DEFAULT_MAX_RETRIES > 0, "fixture precondition"
+        return fake, client
+
+    def test_the_application_client_keeps_the_sdk_default_retry_setting(self, monkeypatch):
+        import ai_advisor
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", FAKE_API_KEY)
+
+        assert ai_advisor._build_client().max_retries == anthropic.DEFAULT_MAX_RETRIES
+
+    @pytest.mark.parametrize("make_outcome", FAILURE_FACTORIES)
+    def test_a_failed_listing_is_one_http_attempt_and_waits_for_no_sdk_backoff(
+        self, make_outcome, production_client, sdk_sleeps
+    ):
+        fake, client = production_client
+        for _ in range(anthropic.DEFAULT_MAX_RETRIES + 1):
+            fake.queue_listing_outcome(make_outcome())
+
+        choice = model_config.resolve(Knob.SUGGESTION, client)
+
+        assert choice.source == "unavailable"
+        assert len(fake.listing_requests) == 1, (
+            "the lock is held for one attempt; the retry policy is the next call, not the SDK"
+        )
+        assert sdk_sleeps == [], "no wait for the SDK backoff while the listing lock is held"
+
+    def test_a_retry_after_header_is_not_waited_out(self, production_client, sdk_sleeps):
+        fake, client = production_client
+        # Captured 429 body; the header is the documented standard one, added by hand.
+        throttled = {**load_fixture("errors/429_rate_limit.json"), "headers": {"retry-after": "30"}}
+        for _ in range(anthropic.DEFAULT_MAX_RETRIES + 1):
+            fake.queue_listing_outcome(dict(throttled))
+
+        choice = model_config.resolve(Knob.SUGGESTION, client)
+
+        assert choice.source == "unavailable"
+        assert len(fake.listing_requests) == 1
+        assert sdk_sleeps == [], "a Retry-After of up to 60 s must not hold the listing lock"
+
+    def test_a_successful_listing_through_the_default_client_reads_each_page_once(self, sdk_sleeps):
+        pages = load_fixture("models/paged.json")["pages"]
+        everything = [r for page in pages for r in page["data"]]
+        fake = AnthropicHttpFake(pages=pages)
+        client = fake.make_client(max_retries=anthropic.DEFAULT_MAX_RETRIES)
+
+        choice = model_config.resolve(Knob.SUGGESTION, client)
+
+        assert choice.model_id == newest_id(everything, "fable")
+        assert len(fake.listing_requests) == len(pages)
+        assert fake.misuse == [] and sdk_sleeps == []
+
+
+class TestListingFailureDiagnostics:
+    @pytest.mark.parametrize("make_outcome", FAILURE_FACTORIES)
+    def test_a_failed_listing_leaves_a_debug_record_with_the_exception_detail(
+        self, make_outcome, caplog
+    ):
+        expected_type = failure_type_name(make_outcome)
+        fake = AnthropicHttpFake()
+        fake.queue_listing_outcome(make_outcome())
+        caplog.set_level(logging.DEBUG)
+        caplog.clear()
+
+        model_config.resolve(Knob.SUGGESTION, fake.client)
+
+        debug = [r for r in caplog.records if r.levelno == logging.DEBUG and r.exc_info]
+        assert debug, "full detail belongs in a DEBUG record carrying exc_info"
+        assert debug[0].exc_info[0].__name__ == expected_type
+        assert len(warnings_logged(caplog)) == 1, "the WARNING stays one type-only record"
+
+    def test_an_unexpected_client_exception_leaves_a_debug_record_with_its_traceback(self, caplog):
+        client = MagicMock()
+        client.with_options.return_value = client  # the resolver may derive a per-call client
+        client.models.list.side_effect = RuntimeError("boom-detail-77ce")
+        caplog.set_level(logging.DEBUG)
+        caplog.clear()
+
+        model_config.resolve(Knob.SUGGESTION, client)
+
+        debug = [r for r in caplog.records if r.levelno == logging.DEBUG and r.exc_info]
+        assert debug and debug[0].exc_info[0] is RuntimeError
+
+
+class TestModuleDocumentation:
+    def test_the_module_docstring_describes_the_resolver_and_both_knobs(self):
+        doc = model_config.__doc__ or ""
+
+        assert "untouched" not in doc.lower(), (
+            "ADVISOR_SYNTHESIS_MODEL is now read by this module (Knob.SYNTHESIS)"
+        )
+        assert "ADVISOR_SYNTHESIS_MODEL" in doc
+        assert "Models API" in doc, "the module resolves model IDs from the Models API"
 
 
 class TestSecurity:

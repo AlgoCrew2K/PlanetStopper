@@ -8,10 +8,11 @@ parameters were sent) are asserted on the outgoing HTTP request and the SDK's
 own parsing runs on the reply.
 
 Models listings are scripted per request: a queued outcome is an error fixture
-(``{"status", "body"}``), a transport exception instance, or a page envelope,
-consumed in order; with no outcome queued the fake serves ``pages``. A gate
-holds every listing request until released, so a test can start several
-threads while one listing is in flight.
+(``{"status", "body"}``, optionally ``"headers"`` such as ``retry-after``), a
+transport exception instance, or a page envelope, consumed in order; with no
+outcome queued the fake serves ``pages``. A gate holds every listing request
+until released, so a test can start several threads while one listing is in
+flight.
 
 The Messages endpoint is added by the request-helper cycle; until then a call
 to ``/v1/messages`` is answered 501 and listed in ``misuse``, because the SDK
@@ -100,12 +101,17 @@ class AnthropicHttpFake:
         return sum(1 for r in self.listing_requests if "after_id" not in r.query)
 
     # -- client --------------------------------------------------------
-    def make_client(self) -> anthropic.Anthropic:
+    def make_client(self, max_retries: int = 0) -> anthropic.Anthropic:
+        """A real SDK client over this fake; ``max_retries`` defaults to none so request counts are exact.
+
+        A test of retry behaviour passes ``anthropic.DEFAULT_MAX_RETRIES``, the setting the
+        application's own client is built with.
+        """
         return anthropic.Anthropic(
             api_key=FAKE_API_KEY,
             base_url=FAKE_BASE_URL,
             http_client=httpx.Client(transport=httpx.MockTransport(self._handle)),
-            max_retries=0,
+            max_retries=max_retries,
         )
 
     @property
@@ -158,9 +164,8 @@ class AnthropicHttpFake:
                 raise outcome
             if isinstance(outcome, dict) and "status" in outcome:
                 body = outcome["body"]
-                return httpx.Response(
-                    outcome["status"], json=body, headers={"request-id": body.get("request_id", "")}
-                )
+                headers = {"request-id": body.get("request_id", ""), **outcome.get("headers", {})}
+                return httpx.Response(outcome["status"], json=body, headers=headers)
             if isinstance(outcome, dict):
                 return httpx.Response(200, json=outcome)
             try:
