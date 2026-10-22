@@ -1,0 +1,14 @@
+[
+ {
+  "id": 4025,
+  "created_at": "2026-10-22 18:50:25",
+  "advisor_role": "RETIREMENT_RUN_SUMMARY",
+  "subject_type": "fleet",
+  "subject_id": "retirement",
+  "verdict": "ok",
+  "raw_response": "{\"run_id\": \"430a8e3eede248128fcc62afc423c576\", \"run_at\": \"2026-10-22T18:50:08Z\", \"source\": \"composer\", \"basis_label\": \"realized daily returns (Composer, deposit-adjusted)\", \"status\": \"ok\", \"error_type\": null, \"roster_size\": 12, \"symphonies_with_series\": 11, \"symphonies_without_series\": [{\"symphony_id\": \"INfCn3eKsu6i4oTTqdUp\", \"reason\": \"series_too_short\"}], \"series_days_min\": 29, \"series_days_max\": 250, \"lookback_days\": 250, \"pairs_evaluated\": 55, \"pairs_screened\": 10, \"blocked_uncertainty\": 6, \"blocked_stress_too_thin\": 4, \"blocked_stress_below_threshold\": 0, \"blocked_no_candidate\": 0, \"recommendations\": 0, \"screen_threshold\": 0.65, \"stress_gate_min_aligned_days\": 181}",
+  "is_advisory_only": 1,
+  "spec_bundle_id": null,
+  "symphony_id": null
+ }
+]
