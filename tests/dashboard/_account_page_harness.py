@@ -104,11 +104,14 @@ def analytics_mock() -> MagicMock:
 
 @contextmanager
 def state_api(monkeypatch, bot_state: dict, market_state: str = "open"):
-    """A Flask test client for /api/state over ``bot_state``. Only database and analytics are mocked."""
+    """A Flask test client for /api/state over ``bot_state``. Only database and analytics are mocked.
+
+    Every patch is undone on exit, so a page rendered afterwards sees the real application.
+    """
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with patch.object(app_module, "database") as db:
+    with monkeypatch.context() as mp, patch.object(app_module, "database") as db:
         db.load_state.side_effect = lambda: copy.deepcopy(bot_state)
         db.normalize_name.side_effect = lambda n: n.strip().lower()
         db.get_shadow_divergence.return_value = {"by_symphony": {}, "portfolio_today": None}
@@ -117,12 +120,12 @@ def state_api(monkeypatch, bot_state: dict, market_state: str = "open"):
         db.get_triggers.return_value = []
         db.get_guard_alpha_by_symphony.return_value = {}
         db.read_port_state.return_value = None
-        monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
-        monkeypatch.setattr(app_module, "analytics", analytics_mock())
-        monkeypatch.setattr(app_module, "get_market_state", lambda *_a, **_k: market_state)
+        mp.setattr(app_module, "render_template", lambda *_a, **_k: "")
+        mp.setattr(app_module, "analytics", analytics_mock())
+        mp.setattr(app_module, "get_market_state", lambda *_a, **_k: market_state)
         # A cold account-totals cache, so the strip's account value is the sum over the symphonies given.
-        monkeypatch.setattr(app_module, "_account_totals_cache", app_module._StaleFlagDict())
-        monkeypatch.setattr(app_module, "_account_totals_last_good", {})
+        mp.setattr(app_module, "_account_totals_cache", app_module._StaleFlagDict())
+        mp.setattr(app_module, "_account_totals_last_good", {})
         with app_module.app.test_client() as client:
             yield client
 
