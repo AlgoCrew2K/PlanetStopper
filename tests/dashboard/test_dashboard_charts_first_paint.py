@@ -14,8 +14,13 @@ judged on a live render (tests/ui/test_dashboard_charts_browser.py).
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -556,3 +561,100 @@ class TestHarnessProducerLookup:
         module.target = lambda: "stub"
         with pytest.raises(RuntimeError, match="decorat"):
             hx._real_function(module, "target")
+
+
+# ---------------------------------------------------------------------------
+# The poll's day cap reaches the page whatever shape the producer's signature has
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Run in a fresh interpreter because the cap is read when ``app`` is imported: the
+# producer is replaced (or removed) first, then the page data is built and encoded
+# the way the template encodes it.
+_CAP_PROBE = """
+import json, sys
+import analytics
+namespace = {}
+exec(sys.argv[1], namespace)
+if "producer" in namespace:
+    analytics.get_portfolio_bot_and_held_daily_returns = namespace["producer"]
+else:
+    del analytics.get_portfolio_bot_and_held_daily_returns
+import app
+data = app._dashboard_initial_data({}, {})
+json.dumps(data)
+print("PROBE:" + json.dumps(data["hero_poll_cap"]))
+"""
+
+
+class TestPollDayCapSurvivesAProducerSignatureChange:
+    @staticmethod
+    def _page_cap(producer_source: str, tmp_path) -> object:
+        env = dict(os.environ)
+        env["DB_PATH"] = str(tmp_path / "probe_state.db")
+        env["ATLAS_CACHE_DB_PATH"] = str(tmp_path / "probe_atlas.db")
+        env["PYTHONPATH"] = str(REPO_ROOT)
+        result = subprocess.run(
+            [sys.executable, "-c", _CAP_PROBE, producer_source],
+            cwd=str(REPO_ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            "importing the app and building the page data must not fail when the producer's "
+            f"signature changes shape; stderr tail: {result.stderr[-600:]}"
+        )
+        lines = [ln for ln in result.stdout.splitlines() if ln.startswith("PROBE:")]
+        assert lines, f"the probe printed no cap line; stdout tail: {result.stdout[-300:]}"
+        return json.loads(lines[-1][len("PROBE:") :])
+
+    @pytest.mark.parametrize(
+        "producer_source",
+        [
+            "def producer(db_file=None, conn=None): return None",
+            "def producer(db_file, days, conn): return None",
+            "def producer(db_file=None, days='125', conn=None): return None",
+            "def producer(db_file=None, days=0, conn=None): return None",
+            "def producer(db_file=None, days=None, conn=None): return None",
+            "not_a_producer = None",
+        ],
+        ids=[
+            "days parameter removed",
+            "days has no default",
+            "default is text",
+            "default is zero",
+            "default is None",
+            "producer removed",
+        ],
+    )
+    def test_a_producer_without_a_usable_day_default_gives_no_cap_and_no_failure(
+        self, producer_source, tmp_path
+    ):
+        assert self._page_cap(producer_source, tmp_path) is None, (
+            "with no positive integer default the page carries a null cap, so the client "
+            "never judges a series against a number nobody supplied"
+        )
+
+    def test_a_positive_integer_default_is_the_cap_the_page_carries(self, tmp_path):
+        assert (
+            self._page_cap("def producer(db_file=None, days=7, conn=None): return None", tmp_path)
+            == 7
+        ), "the cap follows the producer's own default, never a number restated in the app"
+
+    def test_the_poll_dates_and_the_poll_values_are_capped_by_the_same_default(self):
+        import analytics
+
+        defaults = {
+            name: inspect.signature(getattr(analytics, name)).parameters["days"].default
+            for name in (
+                "get_portfolio_daily_returns_from_shadow",
+                "get_portfolio_bot_and_held_daily_returns",
+            )
+        }
+        assert len(set(defaults.values())) == 1, (
+            "the poll's dates come from one producer and its values from the other; the page "
+            f"reads one cap, so the two defaults must stay equal: {defaults}"
+        )
