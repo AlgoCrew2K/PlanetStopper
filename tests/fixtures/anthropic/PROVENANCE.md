@@ -41,3 +41,27 @@ Notes for test authors:
 - Captured with these exact prompts (see `.claude/review` capture scripts in the PM session for the full text):
   swap: replace TLT with IEF for diversify; logic: lengthen an RSI window from 10 to 14 given two candidate parameters;
   build plans: one equal-weight SPY/TLT plan; overlay: RSI(SPY,10) > 79 rotates into VIXY; structured: empty suggestions list.
+
+## Schema-derived model-list and error fixtures (authored 2026-10-22 by the model-resolution test author)
+
+Not captured: each is derived from the captured `models/page_captured.json` records (same keys, same real ids and
+dates) and checked by `schema_check.py`, a validator written from the public Models API list reference and the Errors
+reference (not from the code under test, not from the SDK types). `capabilities` and the token limits are omitted from
+derived records because nothing reads them. Each file passes `schema_check.validate_directory()`; the test file
+`tests/model_config/test_fixture_schemas.py` runs it and proves the validator rejects planted violations.
+
+| File | Case (one record per case the resolver distinguishes) |
+|---|---|
+| `models/paged.json` | two pages, `has_more` true on page one; the newest fable-line record only on page two |
+| `models/relisted_newer_fable.json` | the same real ids with `claude-fable-5` dated after `claude-fable-5-1`: a re-listing whose newest fable-line model differs |
+| `models/relisted_newer_opus.json` | likewise for the opus line (`claude-opus-5` dated after `claude-opus-5-5`) |
+| `models/edge_cases.json` | one page per case under `cases`, with `expect` naming the record id each scenario requires: `deprecated_newest`, `retired_newest` (newest fable-line record not active), `null_line_fable_id` (newest record has fable in its id and a null `line`), `other_line_fable_id` (fable in its id, `line` opus), `epoch_created_at` (epoch release date, listed first), `equal_created_at` (two fable-line records, equal dates) |
+| `models/no_line.json` | no record carries `line`; `legacy-claude-fable-5-1` is a derived label (the real id behind a prefix), the only id in any derived file that is not a captured model id, because the case needs an id containing `fable` without the `claude-fable-` prefix |
+| `models/no_lifecycle.json` | `line` present on every record, no `lifecycle`, `deprecated_at` or `retires_at` key |
+| `models/no_fable.json` | opus-line records only |
+| `errors/401_authentication.json`, `403_permission.json`, `429_rate_limit.json`, `500_api_error.json`, `529_overloaded.json` | one body per status, wrapped as `{"status", "body"}` like the captured error files; `request_id` values are in the real `req_` format; message text follows the Errors reference |
+| `errors/503_unavailable.json` | 503 is not a documented Messages API status; a gateway answering it carries the generic server-side `api_error` type |
+
+Deviation from the approach's fixture table: `edge_cases.json` holds one page per case (under `cases`) instead of one page
+with four records, because every case reuses the same two real fable-line ids in different roles and ids are unique
+within a page.

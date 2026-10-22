@@ -1,0 +1,268 @@
+{
+  "cases": {
+    "deprecated_newest": {
+      "description": "newest fable-line record is deprecated; the older one is active",
+      "page": {
+        "data": [
+          {
+            "type": "model",
+            "id": "claude-fable-5-1",
+            "display_name": "Claude Fable 5.1",
+            "created_at": "2026-08-28T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "deprecated",
+            "deprecated_at": "2026-10-01T00:00:00Z",
+            "retires_at": "2027-01-15T00:00:00Z"
+          },
+          {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "created_at": "2026-09-21T16:24:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-fable-5",
+            "display_name": "Claude Fable 5",
+            "created_at": "2026-06-07T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          }
+        ],
+        "has_more": false,
+        "first_id": "claude-fable-5-1",
+        "last_id": "claude-fable-5"
+      },
+      "expect": {
+        "suggestion": "claude-fable-5",
+        "synthesis": "claude-opus-5-5"
+      }
+    },
+    "retired_newest": {
+      "description": "newest fable-line record is retired; the older one is active",
+      "page": {
+        "data": [
+          {
+            "type": "model",
+            "id": "claude-fable-5-1",
+            "display_name": "Claude Fable 5.1",
+            "created_at": "2026-08-28T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "retired",
+            "deprecated_at": "2026-10-01T00:00:00Z",
+            "retires_at": "2026-10-15T00:00:00Z"
+          },
+          {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "created_at": "2026-09-21T16:24:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-fable-5",
+            "display_name": "Claude Fable 5",
+            "created_at": "2026-06-07T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          }
+        ],
+        "has_more": false,
+        "first_id": "claude-fable-5-1",
+        "last_id": "claude-fable-5"
+      },
+      "expect": {
+        "suggestion": "claude-fable-5",
+        "synthesis": "claude-opus-5-5"
+      }
+    },
+    "null_line_fable_id": {
+      "description": "newest record has fable in its id but a null line; the older fable-line record is chosen",
+      "page": {
+        "data": [
+          {
+            "type": "model",
+            "id": "claude-fable-5-1",
+            "display_name": "Claude Fable 5.1",
+            "created_at": "2026-08-28T00:00:00Z",
+            "line": null,
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "created_at": "2026-09-21T16:24:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-fable-5",
+            "display_name": "Claude Fable 5",
+            "created_at": "2026-06-07T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          }
+        ],
+        "has_more": false,
+        "first_id": "claude-fable-5-1",
+        "last_id": "claude-fable-5"
+      },
+      "expect": {
+        "suggestion": "claude-fable-5",
+        "synthesis": "claude-opus-5-5"
+      }
+    },
+    "other_line_fable_id": {
+      "description": "newest record has fable in its id but belongs to the opus line",
+      "page": {
+        "data": [
+          {
+            "type": "model",
+            "id": "claude-fable-5-1",
+            "display_name": "Claude Fable 5.1",
+            "created_at": "2026-08-28T00:00:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "created_at": "2026-09-21T16:24:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-fable-5",
+            "display_name": "Claude Fable 5",
+            "created_at": "2026-06-07T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          }
+        ],
+        "has_more": false,
+        "first_id": "claude-fable-5-1",
+        "last_id": "claude-fable-5"
+      },
+      "expect": {
+        "suggestion": "claude-fable-5",
+        "synthesis": "claude-opus-5-5"
+      }
+    },
+    "epoch_created_at": {
+      "description": "record with the epoch release date is listed first; the dated record is chosen",
+      "page": {
+        "data": [
+          {
+            "type": "model",
+            "id": "claude-fable-5-1",
+            "display_name": "Claude Fable 5.1",
+            "created_at": "1970-01-01T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "created_at": "2026-09-21T16:24:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-fable-5",
+            "display_name": "Claude Fable 5",
+            "created_at": "2026-06-07T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          }
+        ],
+        "has_more": false,
+        "first_id": "claude-fable-5-1",
+        "last_id": "claude-fable-5"
+      },
+      "expect": {
+        "suggestion": "claude-fable-5",
+        "synthesis": "claude-opus-5-5"
+      }
+    },
+    "equal_created_at": {
+      "description": "two fable-line records share one created_at; the one listed first is chosen",
+      "page": {
+        "data": [
+          {
+            "type": "model",
+            "id": "claude-fable-5",
+            "display_name": "Claude Fable 5",
+            "created_at": "2026-08-28T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-opus-5-5",
+            "display_name": "Claude Opus 5.5",
+            "created_at": "2026-09-21T16:24:00Z",
+            "line": "opus",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          },
+          {
+            "type": "model",
+            "id": "claude-fable-5-1",
+            "display_name": "Claude Fable 5.1",
+            "created_at": "2026-08-28T00:00:00Z",
+            "line": "fable",
+            "lifecycle": "active",
+            "deprecated_at": null,
+            "retires_at": null
+          }
+        ],
+        "has_more": false,
+        "first_id": "claude-fable-5",
+        "last_id": "claude-fable-5-1"
+      },
+      "expect": {
+        "suggestion": "claude-fable-5",
+        "synthesis": "claude-opus-5-5"
+      }
+    }
+  }
+}

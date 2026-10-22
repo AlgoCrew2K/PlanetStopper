@@ -1,0 +1,11 @@
+{
+  "status": 500,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "api_error",
+      "message": "An unexpected error has occurred internal to Anthropic's systems."
+    },
+    "request_id": "req_011Cgd19jjDe6gKoG6Gv"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": 503,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "api_error",
+      "message": "Service temporarily unavailable."
+    },
+    "request_id": "req_011Cgg1lBNWA9fBDTWXc"
+  }
+}

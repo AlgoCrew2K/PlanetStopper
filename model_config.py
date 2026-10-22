@@ -20,7 +20,11 @@ Two independently-overridable knobs by design:
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
+import enum
 import os
+import time  # noqa: F401  (clock seam: tests patch model_config.time)
 
 _ADVISOR_SUGGESTION_MODEL_ENV_VAR = "ADVISOR_SUGGESTION_MODEL"
 _ADVISOR_SUGGESTION_MODEL_DEFAULT = "claude-fable-5"
@@ -36,3 +40,43 @@ def get_advisor_suggestion_model() -> str:
     other.
     """
     return os.environ.get(_ADVISOR_SUGGESTION_MODEL_ENV_VAR, _ADVISOR_SUGGESTION_MODEL_DEFAULT)
+
+
+# --- import-signature stubs for the model-resolution cycle; the implementer replaces every body ---
+MODEL_UNAVAILABLE_TEXT = "model unavailable"
+
+
+class Knob(enum.Enum):
+    SUGGESTION = "ADVISOR_SUGGESTION_MODEL"
+    SYNTHESIS = "ADVISOR_SYNTHESIS_MODEL"
+
+
+@dataclasses.dataclass(frozen=True)
+class ModelChoice:
+    model_id: str = ""
+    display_name: str = ""
+    source: str = "unavailable"
+    env_var: str = ""
+    badge_text = ""  # stub: becomes a property
+
+
+def resolve(knob, client):
+    return ModelChoice()
+
+
+def peek(knob):
+    return ModelChoice()
+
+
+def invalidate(knob, model_id, client):
+    return ModelChoice()
+
+
+@contextlib.contextmanager
+def pinned_run():
+    raise NotImplementedError("Not implemented")
+    yield
+
+
+def _reset_registry():
+    return None

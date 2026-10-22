@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "type": "model",
+      "id": "claude-opus-5-5",
+      "display_name": "Claude Opus 5.5",
+      "created_at": "2026-09-21T16:24:00Z",
+      "line": "opus",
+      "lifecycle": "active",
+      "deprecated_at": null,
+      "retires_at": null
+    },
+    {
+      "type": "model",
+      "id": "claude-opus-5",
+      "display_name": "Claude Opus 5",
+      "created_at": "2026-07-24T00:00:00Z",
+      "line": "opus",
+      "lifecycle": "active",
+      "deprecated_at": null,
+      "retires_at": null
+    }
+  ],
+  "has_more": false,
+  "first_id": "claude-opus-5-5",
+  "last_id": "claude-opus-5",
+  "expect": {
+    "suggestion": null,
+    "synthesis": "claude-opus-5-5"
+  }
+}

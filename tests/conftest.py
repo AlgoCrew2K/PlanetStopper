@@ -83,6 +83,28 @@ def _assert_safe_worker_count(numprocesses) -> None:
         )
 
 
+# Loopback discard port: nothing listens, so a connection attempt is refused at once.
+_UNROUTABLE_ANTHROPIC_URL = "http://127.0.0.1:9"
+
+
+def _live_anthropic_selected(markexpr: str) -> bool:
+    """True when the -m expression selects a test that carries only the ``live`` marker.
+
+    The default run deselects live tests, and then no test may reach the real
+    Anthropic API; an opt-in live run keeps its own endpoint. An empty
+    expression selects everything, live tests included. An expression pytest
+    cannot evaluate is treated as not selecting live, so the guard fails closed.
+    """
+    if not markexpr:
+        return True
+    try:
+        from _pytest.mark.expression import Expression
+
+        return bool(Expression.compile(markexpr).evaluate(lambda name, **_kwargs: name == "live"))
+    except Exception:
+        return False
+
+
 def pytest_configure(config):
     """Set DB_PATH before any test module is imported (pre-collection hook).
 
@@ -138,6 +160,13 @@ def pytest_configure(config):
     # that deliberately wants more parallelism in a controlled environment).
     os.environ.setdefault("ALPHABOT_MAX_JOBS", "1")
     os.environ.setdefault("OPTUNA_N_JOBS", "1")
+
+    # Live-Anthropic guard, mirroring the session Mongo guard below: unless the
+    # run opted into live tests, point the SDK's default endpoint at an address
+    # nothing serves, so a test that forgets the HTTP fake fails loudly instead
+    # of listing models or sending a metered request to the real API.
+    if not _live_anthropic_selected(getattr(config.option, "markexpr", "")):
+        os.environ["ANTHROPIC_BASE_URL"] = _UNROUTABLE_ANTHROPIC_URL
 
     # AC-6: Reject unsafe xdist worker counts EARLY — before install_from_env().
     _assert_safe_worker_count(getattr(config.option, "numprocesses", None))
@@ -298,6 +327,46 @@ def _disable_auth_for_tests(monkeypatch):
     # Reset the in-memory throttle dict between tests so failed-attempt counts
     # from one test do not bleed into the next.
     _app_module._AUTH_FAILED_ATTEMPTS.clear()
+
+
+@pytest.fixture(scope="session")
+def _registry_seed_client():
+    """One client over the captured Models API page, shared by every test's registry seed."""
+    from tests._anthropic_http_fake import AnthropicHttpFake
+
+    return AnthropicHttpFake.with_captured_page().client
+
+
+@pytest.fixture(autouse=True)
+def _seed_model_registry(monkeypatch, _registry_seed_client):
+    """Give every test a resolved model for both knobs, through the real resolver.
+
+    Existing tests build their LLM clients as MagicMocks, whose model listing is
+    empty, so without this seed a call site would find both families unresolved
+    and send nothing. The seed resolves against the captured page, never a
+    literal ID. Override variables are deleted so the seed is the family
+    resolution; a test that wants an override sets it itself. A test that needs
+    the unresolved state requests ``unresolved_models``.
+    """
+    import model_config
+
+    for env_var in ("ADVISOR_SUGGESTION_MODEL", "ADVISOR_SYNTHESIS_MODEL"):
+        monkeypatch.delenv(env_var, raising=False)
+    model_config._reset_registry()
+    for knob in (model_config.Knob.SUGGESTION, model_config.Knob.SYNTHESIS):
+        model_config.resolve(knob, _registry_seed_client)
+    yield
+    model_config._reset_registry()
+
+
+@pytest.fixture
+def unresolved_models(_seed_model_registry):
+    """Opt out of the registry seed: no family is resolved when the test body starts."""
+    import model_config
+
+    model_config._reset_registry()
+    yield
+    model_config._reset_registry()
 
 
 @pytest.fixture(autouse=True)
