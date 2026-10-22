@@ -207,7 +207,7 @@ def test_ac16_build_plan_generator_honors_suggestion_model_env_override(monkeypa
 
 
 def test_ac16_both_suggestion_call_sites_share_the_same_accessor_default(monkeypatch):
-    """Both call sites must resolve to the IDENTICAL override behavior — a fix that wires one
+    """Both call sites must resolve to the IDENTICAL override behavior: a fix that wires one
     site to a genuine shared knob and the other to an independent hardcoded string would pass
     every test above individually but silently diverge the moment the operator overrides the
     env var on only one path in production. This test proves both paths respond to the SAME env

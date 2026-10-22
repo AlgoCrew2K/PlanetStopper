@@ -1,7 +1,7 @@
 """
 advisor-cleanup cycle — RED tests for AC1-AC5.
 
-AC1 — D-1 security leak in request_suggestions request failure path.
+AC1: D-1 security leak in request_suggestions request failure path.
 AC2 — assemble_advisor_context must HONOR a non-_SENTINEL autotune_run param.
 AC3 — Source-comment count pins: 6 Optuna keys, 7-item allowlist, TRIGGER excluded.
 AC4 — 4 orphaned advisor templates must not exist; SPA /ai-advisor still renders.
@@ -58,7 +58,7 @@ def flask_client():
 
 
 # ---------------------------------------------------------------------------
-# AC1 — D-1 security leak: request failure path must NOT echo str(exc).
+# AC1: D-1 security leak: request failure path must NOT echo str(exc).
 #
 # Bug: ai_advisor.py:622-631 embeds the full `{exc}` in the returned
 # error_message when the Messages request raises. That message is directly

@@ -691,7 +691,7 @@ class TestSuiteOrderingRegression:
 
     def test_subsequent_test_unaffected_by_prior_env_mutation_ai_advisor(self, monkeypatch):
         """When ADVISOR_SUGGESTION_MODEL is NOT set in this test, the resolved
-        fable-line model must be used — even if a prior test in the same
+        fable-line model must be used, even if a prior test in the same
         session set it.
 
         This is the companion to the prior test. Together they form the ordering regression.

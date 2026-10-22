@@ -838,7 +838,7 @@ def _failed_request_outcomes():
     ids=lambda v: v if isinstance(v, str) else "",
 )
 def test_request_suggestions_degrades_gracefully_on_sdk_error(symphony_context, exc_label, outcome):
-    """Every failure mode of the request degrades to (None, error_message) —
+    """Every failure mode of the request degrades to (None, error_message):
     request_suggestions must NEVER raise. The feature is on-demand operator-
     assist; a failure is 'no suggestion this click', zero engine impact."""
     import ai_advisor
@@ -851,7 +851,7 @@ def test_request_suggestions_degrades_gracefully_on_sdk_error(symphony_context, 
         except Exception as exc:  # noqa: BLE001 - the whole point is to catch
             pytest.fail(
                 f"request_suggestions raised {type(exc).__name__} on a "
-                f"{exc_label} failure — it MUST degrade gracefully to "
+                f"{exc_label} failure, it MUST degrade gracefully to "
                 f"(None, error_message), never raise."
             )
 
@@ -889,7 +889,7 @@ def test_request_suggestions_handles_client_construction_failure(symphony_contex
 
 
 def test_request_suggestions_malformed_response_missing_required_field(symphony_context):
-    """A reply whose suggestion is missing a required field — request_suggestions
+    """A reply whose suggestion is missing a required field: request_suggestions
     must NOT raise; it must return (None, error_message)."""
     import ai_advisor
 
@@ -917,7 +917,7 @@ def test_request_suggestions_malformed_response_missing_required_field(symphony_
 
 def test_request_suggestions_malformed_response_wrong_shape(symphony_context):
     """A reply that is not JSON in the suggestions schema at all (prose where the
-    structured answer was expected, or a reply with no text block) — graceful (None, error)."""
+    structured answer was expected, or a reply with no text block), graceful (None, error)."""
     import ai_advisor
 
     for reply in (
@@ -935,7 +935,7 @@ def test_request_suggestions_malformed_response_wrong_shape(symphony_context):
             except Exception as exc:  # noqa: BLE001
                 pytest.fail(
                     f"request_suggestions raised {type(exc).__name__} on a "
-                    f"wrong-shape response — it must degrade gracefully."
+                    f"wrong-shape response, it must degrade gracefully."
                 )
 
         assert response is None
