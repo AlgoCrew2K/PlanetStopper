@@ -48,8 +48,8 @@ from tests._suggest_and_chat_routes import (
     use_client,
 )
 
-# Per-site request settings the approach fixes for the suggestions site (effort ruled in Q-4, the
-# output budget and the per-attempt timeout in Items Raised 2 and 3): a model that always thinks
+# Per-site request settings for the suggestions site (high effort, plus an output budget and a
+# per-attempt timeout sized for a model that always thinks): a model that always thinks
 # spends part of ``max_tokens`` on thinking, so the old 2048 budget and 30 s timeout cannot hold a
 # reply at this effort.
 SUGGESTION_EFFORT = "high"

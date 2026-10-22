@@ -1493,9 +1493,9 @@ class TestB2RateLimiterBoundedGrowth:
 # come from the fixtures. Chat is the Opus-line site (``ADVISOR_SYNTHESIS_MODEL``).
 # ===========================================================================
 
-# Per-site request settings the approach fixes for chat (effort: Q-4; output budget and the
-# per-attempt timeout: Items Raised 2 and 3). The old 1024 budget and 30 s timeout cannot hold a
-# reply from a model that always thinks.
+# Per-site request settings for chat: high effort, with an output budget and a per-attempt
+# timeout sized for a model that always thinks. The old 1024 budget and 30 s timeout cannot hold
+# such a reply.
 CHAT_EFFORT = "high"
 CHAT_MAX_TOKENS = 8000
 CHAT_TIMEOUT_SECONDS = 120.0
