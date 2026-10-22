@@ -329,19 +329,44 @@ def test_refusal_after_partial_tool_input_discards_the_partial_edit(degraded):
     assert "refusal" in data["message"]
 
 
-def test_override_that_the_api_does_not_know_is_reported_by_variable_name_without_retry(
-    degraded, monkeypatch
+@pytest.mark.parametrize(
+    ("rejection", "code"),
+    [
+        pytest.param("errors/404_not_found.json", "override_model_not_found", id="not-found"),
+        pytest.param(
+            "errors/400_invalid_request.json", "override_request_rejected", id="request-rejected"
+        ),
+    ],
+)
+def test_override_the_api_rejects_is_reported_by_variable_name_without_retry(
+    degraded, monkeypatch, rejection, code
 ):
     override = support.newest_model_id(support.models_page(), "opus")
     monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", override)
+    rejected = support.load_fixture(rejection)
 
-    data, fake, spy = degraded(support.load_fixture("errors/404_not_found.json"))
+    data, fake, spy = degraded(rejected, rejected, rejected)
 
     assert len(fake.message_requests) == 1, "an override is never swapped for the newest model"
+    assert [r.body["model"] for r in fake.message_requests] == [override]
     assert "ADVISOR_SUGGESTION_MODEL" in data["message"]
-    assert "override_model_not_found" in data["message"]
+    assert code in data["message"]
     assert spy.call_count == 0
     assert fake.listing_requests == [], "an override is never listed or validated"
+
+
+def test_unresolved_family_costs_one_listing_sequence_per_route_run(monkeypatch, unresolved_models):
+    fake = support.new_fake()
+    support.install_route_world(monkeypatch, fake)
+    support.queue_failing_listings(fake)
+
+    data = support.evaluate_via_route()
+
+    assert "model_unavailable" in data["message"], "self-guard: the run must have degraded"
+    assert fake.listing_sequences == 1, (
+        "a failed listing is paid once per run, not once per attempt"
+    )
+    assert fake.message_requests == []
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +386,22 @@ def test_unresolved_family_empty_run_message_has_the_reason_format(
     assert result.message == f"{_EMPTY_RUN_PREFIX} (model_unavailable)"
     assert fake.message_requests == []
     assert result.provenance["generation_model"] == ""
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_unresolved_family_costs_one_listing_sequence_per_entry_run(
+    entry, monkeypatch, unresolved_models
+):
+    fake = support.new_fake()
+    support.queue_failing_listings(fake)
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (model_unavailable)", "self-guard"
+    assert fake.listing_sequences == 1, (
+        "a failed listing is paid once per run, not once per attempt"
+    )
+    assert fake.message_requests == []
 
 
 @pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
