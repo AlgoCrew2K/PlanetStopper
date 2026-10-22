@@ -1089,11 +1089,15 @@ def _generation_model_at_mint() -> str:
 
 
 def _adopt_reply(provenance: dict, replies: list):
-    """Record the serving model of the last reply in ``provenance``; return that reply."""
+    """Record the serving model of the last reply in ``provenance``; return that reply.
+
+    A reply with no model (the model was unavailable) clears the minted peek model, since
+    no model served the run. With no reply at all the minted model stays.
+    """
     reply = replies[-1] if replies else None
-    model = getattr(reply, "model", "")
-    if isinstance(model, str) and model:
-        provenance["generation_model"] = model
+    if reply is not None:
+        model = getattr(reply, "model", "")
+        provenance["generation_model"] = model if isinstance(model, str) else ""
     return reply
 
 
