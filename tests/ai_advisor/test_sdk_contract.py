@@ -216,10 +216,14 @@ class TestReplyRead:
         assert response is None
         assert isinstance(error, str) and error.strip()
         assert len(fake.message_requests) == 1
-        exception_text = (
-            outcome["body"]["error"]["message"] if isinstance(outcome, dict) else str(outcome)
+        # What the SDK puts in an exception's text: the status line and the request ID. (The
+        # API's own message can be a word the exception's class name also contains.)
+        exception_texts = (
+            ["Error code", outcome["body"]["request_id"]]
+            if isinstance(outcome, dict)
+            else [str(outcome)]
         )
-        assert_names_no_model_or_exception_text(error, exception_text)
+        assert_names_no_model_or_exception_text(error, *exception_texts)
 
     def test_a_400_for_the_resolved_model_degrades_with_the_exception_type_only(self, fake):
         outcome = error_outcome("400_invalid_request.json")

@@ -43,6 +43,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._suggest_and_chat_routes import message_body, use_client
 from tests.advisors._prompt_cache_test_helpers import find_cache_control_blocks
 
 # ===========================================================================
@@ -163,27 +165,17 @@ _MINIMAL_ARTIFACT = {
 
 
 def test_advisor_chat_request_has_no_cache_control_breakpoint(monkeypatch):
-    import ai_advisor
     from advisors import advisor_chat
 
-    calls: list[dict] = []
-    client = MagicMock()
-
-    def _create(**kwargs):
-        calls.append(kwargs)
-        block = MagicMock()
-        block.text = "An explanation."
-        response = MagicMock()
-        response.content = [block]
-        return response
-
-    client.messages.create.side_effect = _create
-    monkeypatch.setattr(ai_advisor, "_build_client", lambda: client)
+    # The request is read off the wire: a real client on the in-process HTTP fake.
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_message(message_body("thinking_text.json"))
+    use_client(monkeypatch, fake)
 
     result = advisor_chat.explain_artifact("Why did this pass?", _MINIMAL_ARTIFACT)
 
-    assert calls, "explain_artifact never called client.messages.create()."
-    system = calls[-1].get("system", "")
+    assert fake.message_requests, "explain_artifact never sent a Messages request."
+    system = fake.message_requests[-1].body.get("system", "")
     assert isinstance(system, str), (
         "advisor_chat.py's system prompt is documented-excluded from this cycle's caching "
         "fix (~537 tok vs the 4096-tok Opus 4.8 floor, the highest of any current model) -- "
@@ -204,36 +196,14 @@ def test_advisor_chat_request_has_no_cache_control_breakpoint(monkeypatch):
 def test_ai_advisor_request_suggestions_has_no_cache_control_breakpoint(monkeypatch):
     import ai_advisor
 
-    calls: list[dict] = []
-    client = MagicMock()
-
-    def _parse(**kwargs):
-        calls.append(kwargs)
-        from anthropic.types.parsed_message import ParsedMessage, ParsedTextBlock
-        from anthropic.types.usage import Usage
-
-        parsed = ai_advisor.ConfigSuggestionsResponse(suggestions=[])
-        block = ParsedTextBlock.model_construct(
-            type="text", text='{"suggestions": []}', parsed_output=parsed, citations=None
-        )
-        return ParsedMessage.model_construct(
-            id="msg_fake",
-            type="message",
-            role="assistant",
-            model="claude-fable-5",
-            content=[block],
-            stop_reason="end_turn",
-            stop_sequence=None,
-            usage=Usage(input_tokens=1, output_tokens=1),
-        )
-
-    client.messages.parse.side_effect = _parse
-    monkeypatch.setattr(ai_advisor, "_build_client", lambda: client)
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_message(message_body("thinking_structured.json"))
+    use_client(monkeypatch, fake)
 
     ai_advisor.request_suggestions({"symphony_name": "Test"})
 
-    assert calls, "request_suggestions never called client.messages.parse()."
-    content = calls[-1].get("messages", [{}])[0].get("content", "")
+    assert fake.message_requests, "request_suggestions never sent a Messages request."
+    content = fake.message_requests[-1].body.get("messages", [{}])[0].get("content", "")
     assert isinstance(content, str), (
         "ai_advisor.py's request_suggestions prompt is documented-excluded from this "
         f"cycle's caching fix (~79 tok static instructions vs 2048 floor) -- content must "

@@ -1,7 +1,7 @@
 """
 advisor-cleanup cycle — RED tests for AC1-AC5.
 
-AC1 — D-1 security leak in request_suggestions messages.parse failure path.
+AC1 — D-1 security leak in request_suggestions request failure path.
 AC2 — assemble_advisor_context must HONOR a non-_SENTINEL autotune_run param.
 AC3 — Source-comment count pins: 6 Optuna keys, 7-item allowlist, TRIGGER excluded.
 AC4 — 4 orphaned advisor templates must not exist; SPA /ai-advisor still renders.
@@ -58,10 +58,10 @@ def flask_client():
 
 
 # ---------------------------------------------------------------------------
-# AC1 — D-1 security leak: messages.parse failure path must NOT echo str(exc).
+# AC1 — D-1 security leak: request failure path must NOT echo str(exc).
 #
 # Bug: ai_advisor.py:622-631 embeds the full `{exc}` in the returned
-# error_message when messages.parse raises. That message is directly
+# error_message when the Messages request raises. That message is directly
 # forwarded to the browser by app.py:3319 (`return jsonify({"error": error_msg})`).
 # A "could not connect to proxy host=secret.internal.host" exception or an
 # API key embedded in an SDK error message would therefore reach the browser
@@ -75,8 +75,8 @@ _SECRET_SENTINEL = "sk-ant-secret-api-key-SENTINEL-VALUE"
 
 
 @pytest.fixture
-def parse_raises_with_secret():
-    """Patch _build_client to return a client whose messages.parse raises with
+def request_raises_with_secret():
+    """Patch _build_client to return a client whose Messages request raises with
     a sentinel secret-like string. Used to verify D-1: the secret must NOT
     appear in the returned error_message string.
 
@@ -84,15 +84,15 @@ def parse_raises_with_secret():
     established pattern in this test suite (see test_ai_advisor.py:724).
     """
     mock_client = MagicMock()
-    mock_client.messages.parse.side_effect = RuntimeError(
+    mock_client.messages.create.side_effect = RuntimeError(
         f"Connection failed: key={_SECRET_SENTINEL} proxy=secret.internal.host"
     )
     with patch.object(ai_advisor, "_build_client", return_value=mock_client):
         yield mock_client
 
 
-def test_d1_parse_failure_error_message_omits_exception_text(parse_raises_with_secret):
-    """The error_message returned by request_suggestions when messages.parse
+def test_d1_request_failure_error_message_omits_exception_text(request_raises_with_secret):
+    """The error_message returned by request_suggestions when the Messages request
     raises must NOT contain any part of str(exc) — specifically the secret
     sentinel embedded in the exception message must not appear.
 
@@ -107,16 +107,16 @@ def test_d1_parse_failure_error_message_omits_exception_text(parse_raises_with_s
     assert _SECRET_SENTINEL not in error_msg, (
         f"D-1 violation: the secret sentinel string appears in the error_message "
         f"returned to the browser. error_message={error_msg!r}. "
-        "The messages.parse failure path must use type(exc).__name__ only, "
+        "The request failure path must use type(exc).__name__ only, "
         "never str(exc) or f-string embedding {exc}."
     )
 
 
-def test_d1_parse_failure_error_message_contains_class_name(parse_raises_with_secret):
+def test_d1_request_failure_error_message_contains_class_name(request_raises_with_secret):
     """The error_message must contain the exception CLASS name so the operator
     can identify the failure type without receiving any secret content.
 
-    Companion to test_d1_parse_failure_error_message_omits_exception_text:
+    Companion to test_d1_request_failure_error_message_omits_exception_text:
     omitting secrets is necessary; surfacing the class name is sufficient for
     operator triage and must be present.
     """
@@ -131,7 +131,7 @@ def test_d1_parse_failure_error_message_contains_class_name(parse_raises_with_se
     )
 
 
-def test_d1_route_level_parse_failure_does_not_leak_secret(flask_client):
+def test_d1_route_level_request_failure_does_not_leak_secret(flask_client):
     """Route-level RED: POST /ai-advisor/suggest must not echo the secret
     sentinel when the ai_advisor parse path raises.
 
@@ -143,7 +143,7 @@ def test_d1_route_level_parse_failure_does_not_leak_secret(flask_client):
     """
 
     exploding_client = MagicMock()
-    exploding_client.messages.parse.side_effect = ValueError(
+    exploding_client.messages.create.side_effect = ValueError(
         f"API auth failed: token={_SECRET_SENTINEL}"
     )
 
@@ -168,7 +168,7 @@ def test_d1_route_level_parse_failure_does_not_leak_secret(flask_client):
     error_text = str(data.get("error", ""))
     assert _SECRET_SENTINEL not in error_text, (
         f"D-1 violation at route level: secret sentinel leaked in JSON response. "
-        f"response JSON={data!r}. The messages.parse failure path must be "
+        f"response JSON={data!r}. The request failure path must be "
         "sanitized before the error_msg reaches jsonify."
     )
 
