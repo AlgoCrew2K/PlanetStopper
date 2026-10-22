@@ -106,8 +106,9 @@ def test_the_new_family_members_page_adds_one_unseen_record_to_each_line_with_un
         assert record["id"].startswith(f"claude-{record['line']}-")
         # A badge that rebuilt the name from the id would show this, not the record's display_name.
         assert record["display_name"] != record["id"].replace("-", " ").title()
+    listed_ids = {r["id"] for r in page["data"]}
     for line, record in captured_newest.items():
-        assert record in page["data"], f"the superseded captured {line} record must stay listed"
+        assert record["id"] in listed_ids, f"the superseded captured {line} record must stay listed"
     assert schema_check.check_models_file(page, "relisted_new_family_members.json") == []
 
 
