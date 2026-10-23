@@ -328,6 +328,10 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def read_cycle_markers() -> tuple[str | None, str | None]:
+    return (None, None)
+
+
 def _sanitize_state_for_json(value):
     """Recursively coerce a bot_state tree to JSON-safe native Python.
 

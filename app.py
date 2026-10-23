@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
@@ -723,7 +724,42 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
 
 
 # --- 1. Bot Execution Logic ---
-def _notify_cycle_complete() -> None:
+# Import-signature stubs for the cycle record and its publisher; the implementation replaces them.
+_SSE_HEARTBEAT_S = 15
+
+
+@dataclass(frozen=True)
+class CycleRecord:
+    cycle_id: str
+    started_at: str
+    completed_at: str
+    outcome: str
+    changed: bool
+    exit_code: int | None
+    running_cycle_id: str | None
+    running_since: str | None
+
+    def event_payload(self) -> dict:
+        return {}
+
+
+def _now_et() -> datetime:
+    return datetime.fromtimestamp(0, _ET)
+
+
+def _mint_cycle_id(started_at: datetime) -> str:
+    return ""
+
+
+def _classify_outcome(started_at: datetime, exit_code: int | None) -> str:
+    return ""
+
+
+def _publish_cycle(record: CycleRecord) -> None:
+    return None
+
+
+def _notify_cycle_complete(record=None) -> None:
     """Fan out a cycle-complete notification to all connected SSE clients.
 
     Called from trigger_alpha_bot() in a finally block — must never raise.

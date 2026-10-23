@@ -119,7 +119,7 @@ class TestSseGeneratorCloseIsClean:
 
 
 class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
-    def test_notify_cycle_complete_does_not_clear_cache_without_protection(self):
+    def test_notify_cycle_complete_does_not_clear_cache_without_protection(self, make_cycle_record):
         """_notify_cycle_complete() must prevent partial-state (one key present, the
         other missing) from ever reaching /api/state after a concurrent refresh write.
 
@@ -178,7 +178,7 @@ class TestNotifyCycleCompleteDoesNotRaceWithCacheRefresh:
         def _run_notify():
             # Suppress _refresh_account_totals live API call inside _notify
             with patch("requests.get", return_value=MagicMock(status_code=200, json=lambda: {})):
-                app_module._notify_cycle_complete()
+                app_module._notify_cycle_complete(make_cycle_record())
 
         # Run both concurrently several times to expose the race
         N_TRIALS = 20

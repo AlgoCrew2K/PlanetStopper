@@ -104,6 +104,18 @@ def session_close(d: date) -> dt_time:
     return close_ts.to_pydatetime().timetz().replace(tzinfo=None).replace(second=0, microsecond=0)
 
 
+REBALANCE_BLACKOUT_MINUTES = 0
+POST_MORTEM_GRACE_MINUTES = 0
+
+
+def rebalance_blackout_start(d: date) -> dt_time:
+    return dt_time(0, 0)
+
+
+def post_mortem_cutoff(d: date) -> dt_time:
+    return dt_time(0, 0)
+
+
 def get_market_state(current_et) -> str:
     """Return the current US equity market state based on ET clock time and calendar.
 
