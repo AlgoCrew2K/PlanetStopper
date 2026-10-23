@@ -169,6 +169,10 @@ class ProposalRun:
     generation_reason: str | None = None
 
 
+# Reason the LLM request layer reports when the resolved model no longer exists.
+_MODEL_UNAVAILABLE_REASON = "model_unavailable"
+
+
 class _GeneratedTrees(list):
     """Candidate list that also carries the generator's reason and serving model."""
 
@@ -1016,6 +1020,10 @@ def propose_strategies(
         reply_model = getattr(candidate_infos, "generation_model", None)
         if isinstance(reply_model, str) and reply_model:
             provenance["generation_model"] = reply_model
+        elif generation_reason == _MODEL_UNAVAILABLE_REASON:
+            # The resolved model answered 404: no reply came from it, so the run
+            # must not name it (a plain-list stand-in carries no reason and keeps the peek).
+            provenance["generation_model"] = ""
 
         # Step 1b: Inject caller-provided community candidates (keyword-only, AC-2/AC-3/AC-6).
         # Cap at MAX_COMMUNITY_CANDIDATES_PER_RUN even if the caller passes more — the adapter

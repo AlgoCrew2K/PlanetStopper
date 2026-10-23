@@ -8093,7 +8093,12 @@ def ai_advisor_strategy_builder_run():
 
         _gen_reason = getattr(run, "generation_reason", None)
         _reason_part = f" ({_gen_reason})" if isinstance(_gen_reason, str) and _gen_reason else ""
-        _badge = _model_config.peek(_model_config.Knob.SUGGESTION).badge_text
+        _run_prov = getattr(run, "provenance", None)
+        if isinstance(_run_prov, dict) and _run_prov.get("generation_model") == "":
+            # No model served a reply (resolved model answered 404): name none.
+            _badge = "model unavailable"
+        else:
+            _badge = _model_config.peek(_model_config.Knob.SUGGESTION).badge_text
         mode_notice = (
             f"Built-new generation ({_badge}) produced 0 plans{_reason_part} (degraded): "
             f"this run surfaces {atlas_count} Atlas community candidate(s) only."
