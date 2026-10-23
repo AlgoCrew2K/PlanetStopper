@@ -57,6 +57,7 @@ representation.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -792,3 +793,202 @@ class TestPositionEpochStampStability:
             f"never-re-stamp implementation would splice the re-entered "
             f"position onto the triggered one."
         )
+
+
+# ---------------------------------------------------------------------------
+# Freshness: a daemon-side read must see rows another process wrote.
+#
+# The engine runs in a separate process and writes shadow_history rows through
+# its own connection, so the daemon cache is never told. The records are
+# captured production rows of one symphony and one position epoch (provenance:
+# tests/fixtures/refresh_timing/02-c4/PROVENANCE.md). The reader's first three
+# trading days are read, then the fourth is written from a second connection.
+# ---------------------------------------------------------------------------
+
+_TRAJECTORY_ROWS_PATH = (
+    Path(__file__).parent.parent
+    / "fixtures"
+    / "refresh_timing"
+    / "02-c4"
+    / "shadow_trajectory_rows.json"
+)
+
+
+def _captured_trajectory_rows() -> list[dict]:
+    with open(_TRAJECTORY_ROWS_PATH, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+_ROW_COLUMNS_WITH_EPOCH = (
+    "ts_utc",
+    "ts_et",
+    "trading_day",
+    "symphony_id",
+    "account_id",
+    "cycle_id",
+    "current_return",
+    "shadow_return",
+    "is_post_trigger",
+    "position_epoch",
+)
+_ROW_COLUMNS_LEGACY = _ROW_COLUMNS_WITH_EPOCH[:-1]
+
+
+def _insert_captured_rows(db_file: str, rows: list[dict], columns: tuple[str, ...]) -> None:
+    """Write captured rows through a connection of its own, as the engine process does
+    (it never goes through database.record_shadow_observation in the daemon)."""
+    conn = sqlite3.connect(db_file)
+    placeholders = ", ".join("?" for _ in columns)
+    for row in rows:
+        conn.execute(
+            f"INSERT INTO shadow_history ({', '.join(columns)}) VALUES ({placeholders})",
+            tuple(row[c] for c in columns),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _new_shadow_db(tmp_path: Path, schema: str) -> str:
+    db_file = str(tmp_path / "shadow_freshness.db")
+    conn = sqlite3.connect(db_file)
+    conn.execute(schema)
+    conn.commit()
+    conn.close()
+    return db_file
+
+
+def _shadow_returns(rows: list[dict]) -> list[float]:
+    return [r["shadow_return"] for r in rows]
+
+
+def _cache_entries_for(symphony_id: str) -> dict:
+    return {k: v for k, v in _db._shadow_cr_cache.items() if k[0] == symphony_id}
+
+
+_SHADOW_DB_SHAPES = [
+    pytest.param(_SHADOW_SCHEMA_WITH_EPOCH, _ROW_COLUMNS_WITH_EPOCH, id="epoch-column-present"),
+    pytest.param(_SHADOW_SCHEMA_LEGACY_NO_EPOCH, _ROW_COLUMNS_LEGACY, id="legacy-no-epoch-column"),
+]
+
+
+class TestTrajectoryReadSeesRowsWrittenByAnotherConnection:
+    @pytest.mark.parametrize(("schema", "columns"), _SHADOW_DB_SHAPES)
+    def test_read_after_a_new_trading_day_row_is_written_includes_it(
+        self, tmp_path, schema, columns
+    ):
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, schema)
+        _insert_captured_rows(db_file, rows[:3], columns)
+
+        first = _get_shadow_cumulative_trajectory(sym, db_file)
+        assert first == pytest.approx(_shadow_returns(rows[:3]), rel=1e-9), (
+            "the first read must return the three days written so far"
+        )
+
+        _insert_captured_rows(db_file, rows[3:], columns)
+        second = _get_shadow_cumulative_trajectory(sym, db_file)
+
+        assert second == pytest.approx(_shadow_returns(rows), rel=1e-9), (
+            f"a row written by another connection after the first read must appear in the "
+            f"next read; got {second}, expected the four days {_shadow_returns(rows)}"
+        )
+
+    def test_cache_holds_only_the_current_trajectory_for_the_symphony(self, tmp_path):
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+        _insert_captured_rows(db_file, rows[:2], _ROW_COLUMNS_WITH_EPOCH)
+        _get_shadow_cumulative_trajectory(sym, db_file)
+        _insert_captured_rows(db_file, rows[2:3], _ROW_COLUMNS_WITH_EPOCH)
+        _get_shadow_cumulative_trajectory(sym, db_file)
+        _insert_captured_rows(db_file, rows[3:], _ROW_COLUMNS_WITH_EPOCH)
+
+        latest = _get_shadow_cumulative_trajectory(sym, db_file)
+
+        assert latest == pytest.approx(_shadow_returns(rows), rel=1e-9)
+        assert [list(v) for v in _cache_entries_for(sym).values()] == [list(latest)], (
+            "after a symphony's trajectory changes the cache must hold exactly one entry "
+            "for it, the current trajectory, so the cache stays bounded"
+        )
+
+
+class TestTrajectoryReadInTheWritingProcess:
+    def test_record_shadow_observation_then_read_includes_the_new_row(self, tmp_path, monkeypatch):
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+        monkeypatch.setattr(_db, "DB_FILE", db_file)
+        _insert_captured_rows(db_file, rows[:3], _ROW_COLUMNS_WITH_EPOCH)
+        assert _get_shadow_cumulative_trajectory(sym, db_file) == pytest.approx(
+            _shadow_returns(rows[:3]), rel=1e-9
+        )
+
+        new = rows[3]
+        _db.record_shadow_observation(
+            symphony_id=new["symphony_id"],
+            account_id=new["account_id"],
+            cycle_id=new["cycle_id"],
+            ts_utc=new["ts_utc"],
+            ts_et=new["ts_et"],
+            trading_day=new["trading_day"],
+            current_return=new["current_return"],
+            shadow_return=new["shadow_return"],
+            is_post_trigger=new["is_post_trigger"],
+            trigger_id=None,
+            position_epoch=new["position_epoch"],
+        )
+
+        assert _get_shadow_cumulative_trajectory(sym, db_file) == pytest.approx(
+            _shadow_returns(rows), rel=1e-9
+        )
+
+
+class TestTrajectoryReadWithoutAWrite:
+    @pytest.mark.parametrize("row_count", [0, 1])
+    def test_a_symphony_with_fewer_than_two_days_returns_nothing(self, tmp_path, row_count):
+        rows = _captured_trajectory_rows()
+        db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+        _insert_captured_rows(db_file, rows[:row_count], _ROW_COLUMNS_WITH_EPOCH)
+
+        assert _get_shadow_cumulative_trajectory(rows[0]["symphony_id"], db_file) is None
+
+    def test_two_reads_with_no_write_between_them_return_the_same_trajectory(self, tmp_path):
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+        _insert_captured_rows(db_file, rows, _ROW_COLUMNS_WITH_EPOCH)
+
+        first = _get_shadow_cumulative_trajectory(sym, db_file)
+        second = _get_shadow_cumulative_trajectory(sym, db_file)
+
+        assert first == pytest.approx(_shadow_returns(rows), rel=1e-9)
+        assert second == first
+
+    def test_a_cached_trajectory_is_served_after_the_utc_date_changes(self, tmp_path, monkeypatch):
+        """The cache is invalidated by new rows, not by the host calendar date: with no
+        write between two reads a date change must not discard the cached trajectory. A
+        sentinel stored in place of the cached value shows which one was served."""
+        import datetime as datetime_module
+
+        class _FrozenUtc(datetime_module.datetime):
+            instant = datetime_module.datetime(2026, 10, 22, 12, 0, tzinfo=datetime_module.UTC)
+
+            @classmethod
+            def now(cls, tz=None):
+                return cls.instant.astimezone(tz) if tz else cls.instant.replace(tzinfo=None)
+
+        real_datetime = datetime_module.datetime
+        monkeypatch.setattr(datetime_module, "datetime", _FrozenUtc)
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+        _insert_captured_rows(db_file, rows, _ROW_COLUMNS_WITH_EPOCH)
+
+        assert _get_shadow_cumulative_trajectory(sym, db_file) is not None
+        (cached_key,) = _cache_entries_for(sym)
+        sentinel = [123.0, 456.0]
+        _db._shadow_cr_cache[cached_key] = sentinel
+        _FrozenUtc.instant = real_datetime(2026, 10, 23, 12, 0, tzinfo=datetime_module.UTC)
+
+        assert _get_shadow_cumulative_trajectory(sym, db_file) == sentinel

@@ -1,0 +1,64 @@
+{
+  "trigger_evening_of_d": {
+    "id": 1,
+    "ts_utc": "2026-10-22T19:30:00Z",
+    "ts_et": "2026-10-22T15:30:00",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "triggered_reason": "Take-Profit",
+    "at_return": 1.8499999999999999,
+    "cycle_id": "2026-06-22T09:42:01.483098-04:00"
+  },
+  "trigger_prior_et_evening": {
+    "id": 1,
+    "ts_utc": "2026-10-22T03:30:00Z",
+    "ts_et": "2026-10-21T23:30:00",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "triggered_reason": "Take-Profit",
+    "at_return": 1.8499999999999999,
+    "cycle_id": "2026-06-22T09:42:01.483098-04:00"
+  },
+  "trigger_before_et_midnight_after_dst_end": {
+    "id": 1,
+    "ts_utc": "2026-11-02T04:30:00Z",
+    "ts_et": "2026-11-01T23:30:00",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "triggered_reason": "Take-Profit",
+    "at_return": 1.8499999999999999,
+    "cycle_id": "2026-06-22T09:42:01.483098-04:00"
+  },
+  "trigger_after_et_midnight_after_dst_end": {
+    "id": 1,
+    "ts_utc": "2026-11-02T05:10:00Z",
+    "ts_et": "2026-11-02T00:10:00",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "triggered_reason": "Take-Profit",
+    "at_return": 1.8499999999999999,
+    "cycle_id": "2026-06-22T09:42:01.483098-04:00"
+  },
+  "trigger_midday_shared_date": {
+    "id": 1,
+    "ts_utc": "2026-10-22T13:00:00Z",
+    "ts_et": "2026-10-22T09:00:00",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "triggered_reason": "Take-Profit",
+    "at_return": 1.8499999999999999,
+    "cycle_id": "2026-06-22T09:42:01.483098-04:00"
+  },
+  "shadow_row_on_d": {
+    "trading_day": "2026-10-22",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "cycle_id": "20260622_1604",
+    "ts_utc": "2026-10-22T13:30:03Z",
+    "ts_et": "2026-10-22T09:30:01",
+    "current_return": 0.51,
+    "shadow_return": 1.8499999999999999,
+    "is_post_trigger": 1,
+    "position_epoch": "87b25aafd4fe4f57aef6bb807ead4122"
+  }
+}

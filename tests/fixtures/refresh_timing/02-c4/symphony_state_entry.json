@@ -1,0 +1,53 @@
+{
+  "5XjzXjdGnjh99MIsdM97": {
+    "name": "Land of Feaver'd Allocations: Intelligent Novas",
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "current_value": 1040.42,
+    "current_return": 1.8710424232698448,
+    "triggered": true,
+    "triggered_reason": "Take-Profit",
+    "triggered_at_return": 1.63,
+    "triggered_at_stop": 1.63,
+    "triggered_at_hwm": 1.77,
+    "triggered_at_time": "10:07",
+    "high_water_mark": -999.0,
+    "shadow_hwm": 1.8772757374197617,
+    "symphony_vol": 1.813173559359962,
+    "mc_prob": 49.18,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 0,
+    "above_tp_count": 2,
+    "below_stop_count": 0,
+    "position_epoch": "43b0ddd09e8e46c39f998730a41a1e12",
+    "current_holdings": [
+      {
+        "ticker": "AGQ",
+        "allocation": 0.167814639
+      },
+      {
+        "ticker": "BIL",
+        "allocation": 0.157331864
+      },
+      {
+        "ticker": "EDC",
+        "allocation": 0.101222816
+      },
+      {
+        "ticker": "EDZ",
+        "allocation": 0.094733906
+      },
+      {
+        "ticker": "UGL",
+        "allocation": 0.161015463
+      },
+      {
+        "ticker": "GBTC",
+        "allocation": 0.159480225
+      },
+      {
+        "ticker": "NEAR",
+        "allocation": 0.157375599
+      }
+    ]
+  }
+}
