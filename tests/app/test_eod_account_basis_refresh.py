@@ -1548,8 +1548,10 @@ class TestLiveBranchAccountBasisGrace:
             def _boom():
                 raise RuntimeError("simulated fault after the cache writes")
 
-            monkeypatch.setattr(app_module._account_totals_cache, "refresh_written", _boom)
-            app_module._refresh_account_totals()
+            # Scoped so the fault is undone before the suite's cache-reset teardown runs.
+            with monkeypatch.context() as fault_scope:
+                fault_scope.setattr(app_module._account_totals_cache, "refresh_written", _boom)
+                app_module._refresh_account_totals()
         else:
             _refresh_fails(app_module, composer_total_stats, failure_mode)
 
