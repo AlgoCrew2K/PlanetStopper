@@ -38,6 +38,7 @@ A missing ``node`` binary fails the test; it never skips.
 from __future__ import annotations
 
 import ast
+import contextlib
 import datetime as _dt_mod
 import json
 import math
@@ -362,47 +363,57 @@ def _seed_tape(database, bot_state, empty_ids, count, today):
     database.save_chart_history(chart_history)
 
 
-def _capture(client, frozen_today) -> dict:
-    """What the real producers return for the seeded database right now."""
-    out: dict = {}
-    page = client.get("/")
-    assert page.status_code == 200, (
-        f"GET / -> {page.status_code}: {page.get_data(as_text=True)[:600]}"
-    )
-    out["html"] = page.get_data(as_text=True)
-
-    hero: dict = {}
+@contextlib.contextmanager
+def _clock_on(day):
+    """``datetime.datetime.now()`` reads as 15:00 on ``day`` (the host's own clock when None)."""
     original_datetime = _dt_mod.datetime
-    if frozen_today is not None:
+    if day is None:
+        yield
+        return
 
-        class _FrozenDateTime(original_datetime):
-            @classmethod
-            def now(cls, tz=None):
-                base = cls(frozen_today.year, frozen_today.month, frozen_today.day, 15, 0, 0)
-                return base.replace(tzinfo=tz) if tz is not None else base
+    class _FrozenDateTime(original_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = cls(day.year, day.month, day.day, 15, 0, 0)
+            return base.replace(tzinfo=tz) if tz is not None else base
 
-        _dt_mod.datetime = _FrozenDateTime  # analytics reads datetime.datetime at call time
+    _dt_mod.datetime = _FrozenDateTime  # analytics reads datetime.datetime at call time
     try:
+        yield
+    finally:
+        _dt_mod.datetime = original_datetime
+
+
+def _capture(client, frozen_today) -> dict:
+    """What the real producers return for the seeded database right now, as of
+    ``frozen_today`` when given (the page, the windows and the poll share that date)."""
+    out: dict = {}
+    with _clock_on(frozen_today):
+        page = client.get("/")
+        assert page.status_code == 200, (
+            f"GET / -> {page.status_code}: {page.get_data(as_text=True)[:600]}"
+        )
+        out["html"] = page.get_data(as_text=True)
+
+        hero: dict = {}
         for token in HERO_TOKENS:
             response = client.get(f"/api/hero-chart/{token}")
             assert response.status_code == 200, f"/api/hero-chart/{token} -> {response.status_code}"
             hero[token] = response.get_json()
-    finally:
-        _dt_mod.datetime = original_datetime
-    out["hero"] = hero
+        out["hero"] = hero
 
-    charts = {}
-    for sym_id in SYMPHONY_IDS:
-        response = client.get(f"/api/chart/{sym_id}")
-        assert response.status_code == 200, f"/api/chart/{sym_id} -> {response.status_code}"
-        charts[sym_id] = response.get_json()
-    out["charts"] = charts
+        charts = {}
+        for sym_id in SYMPHONY_IDS:
+            response = client.get(f"/api/chart/{sym_id}")
+            assert response.status_code == 200, f"/api/chart/{sym_id} -> {response.status_code}"
+            charts[sym_id] = response.get_json()
+        out["charts"] = charts
 
-    state = client.get("/api/state")
-    assert state.status_code == 200, (
-        f"/api/state -> {state.status_code}: {state.get_data(as_text=True)[:600]}"
-    )
-    out["state"] = state.get_json()
+        state = client.get("/api/state")
+        assert state.status_code == 200, (
+            f"/api/state -> {state.status_code}: {state.get_data(as_text=True)[:600]}"
+        )
+        out["state"] = state.get_json()
     return out
 
 
