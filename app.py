@@ -1832,8 +1832,22 @@ def dashboard():
 
 
 # The day cap the /api/state poll series carries; the page needs it to judge a fallback series.
-_HERO_POLL_DAY_CAP = (
-    inspect.signature(analytics.get_portfolio_bot_and_held_daily_returns).parameters["days"].default
+def _producer_day_cap(producer) -> int | None:
+    """The producer's own ``days`` default when it is a positive int, else None.
+
+    The cap only feeds a cosmetic caption, so a reshaped producer must not break import.
+    """
+    try:
+        default = inspect.signature(producer).parameters["days"].default
+    except (KeyError, TypeError, ValueError):
+        return None
+    if isinstance(default, int) and not isinstance(default, bool) and default > 0:
+        return default
+    return None
+
+
+_HERO_POLL_DAY_CAP = _producer_day_cap(
+    getattr(analytics, "get_portfolio_bot_and_held_daily_returns", None)
 )
 
 
