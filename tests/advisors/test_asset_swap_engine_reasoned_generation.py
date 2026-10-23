@@ -492,6 +492,28 @@ class TestGeneratorAttemptsAndStops:
         assert _generate(ase) == []
         assert len(swap_fake.message_requests) == requests
 
+    def test_three_text_only_replies_list_no_models_on_a_resolved_registry(self, ase, swap_fake):
+        for _ in range(3):
+            swap_fake.queue_message(load_fixture("messages/text_only_with_tools.json"))
+
+        assert _generate(ase) == []
+
+        assert len(swap_fake.message_requests) == 3, "self-guard: all three attempts were sent"
+        assert swap_fake.listing_requests == [], (
+            "a reply that served the resolved model never relists, however many attempts follow"
+        )
+
+    def test_three_text_only_replies_list_the_family_once_when_the_run_starts_unresolved(
+        self, ase, swap_fake, unresolved_models
+    ):
+        for _ in range(3):
+            swap_fake.queue_message(load_fixture("messages/text_only_with_tools.json"))
+
+        assert _generate(ase) == []
+
+        assert len(swap_fake.message_requests) == 3, "self-guard: all three attempts were sent"
+        assert swap_fake.listing_sequences == 1, "one listing sequence per run, never one per attempt"
+
     def test_a_refusal_after_a_complete_tool_call_still_yields_no_candidate(self, ase, swap_fake):
         swap_fake.queue_message(load_fixture("messages/refusal_after_partial_tool.json"))
 

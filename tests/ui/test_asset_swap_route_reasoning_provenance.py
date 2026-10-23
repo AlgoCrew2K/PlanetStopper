@@ -869,6 +869,32 @@ class TestAGenerationThatProducedNothingSaysSo:
         assert run.data["message"] == _no_swap("no_tool_call")
         assert run.data["provenance"]["generation_model"] == load_fixture(replies[-1])["model"]
 
+    def test_three_text_only_replies_list_no_models_on_a_resolved_registry(
+        self, flask_client, fake
+    ):
+        for _ in range(3):
+            fake.queue_message(load_fixture("messages/text_only_with_tools.json"))
+
+        run = _evaluate(flask_client, fake)
+
+        assert len(fake.message_requests) == 3, "self-guard: all three attempts were sent"
+        assert run.data["message"] == _no_swap("no_tool_call")
+        assert fake.listing_requests == [], (
+            "a reply that served the resolved model never relists, however many attempts follow"
+        )
+
+    def test_three_text_only_replies_list_the_family_once_when_the_run_starts_unresolved(
+        self, flask_client, fake, unresolved_models
+    ):
+        for _ in range(3):
+            fake.queue_message(load_fixture("messages/text_only_with_tools.json"))
+
+        run = _evaluate(flask_client, fake)
+
+        assert len(fake.message_requests) == 3, "self-guard: all three attempts were sent"
+        assert run.data["message"] == _no_swap("no_tool_call")
+        assert fake.listing_sequences == 1, "one listing sequence per run, never one per attempt"
+
     @pytest.mark.parametrize("text_only_replies", [1, 2])
     def test_a_tool_call_on_a_later_attempt_is_used(self, flask_client, fake, text_only_replies):
         for _ in range(text_only_replies):
