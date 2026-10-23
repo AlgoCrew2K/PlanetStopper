@@ -25,8 +25,8 @@ A database file is never committed, including the launcher's copy of production 
 
 | Folder | Plan and cycle | Records | State |
 |---|---|---|---|
-| `01-c1/` | server-state-truth, cycle 1 | R1 `nested_bot_state_row.json.gz` | pending capture (see below) |
-| `01-c2/` | server-state-truth, cycle 2 | R6 `shadow_rows_two_cycles.json`, R7 `exit_trigger_row.json` | pending capture (see below) |
+| `01-c1/` | server-state-truth, cycle 1 | R1 `nested_bot_state_row.json.gz` | captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; see `01-c1/PROVENANCE.md` |
+| `01-c2/` | server-state-truth, cycle 2 | R6 `shadow_rows_two_cycles.json`, R7 `exit_trigger_row.json` | captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; see `01-c2/PROVENANCE.md` (R6 is 2026-10-21, R7 is exit id 509 of 2026-10-22) |
 
 Later cycles add their folder and a row here.
 
@@ -38,47 +38,8 @@ Records of production state hold account identifiers and symphony names, the sam
 
 ## Pending captures
 
-### Server-state-truth (cases in `_cases_01.py`)
+None required by the plans as written. Optional, only if a scenario is added that needs it:
 
-Files to copy to the droplet's `/tmp/rt_capture/`: `capture.py` and `_cases_01.py` from this folder on branch `refresh-timing/fixtures`.
+- `01-c2`: the exit row R6's triggered symphony points at (`exit_triggers` id 498, 2026-10-21T15:02:07 ET, symphony `nOyb55RMGVCKPiYXv7TI`), by a new case flag on the `01-c2-exit-trigger` case. See `01-c2/PROVENANCE.md`, section "Shape of R7, and the day judgement".
 
-As root, once:
-
-```
-install -d -m 755 /tmp/rt_capture
-# copy capture.py and _cases_01.py into /tmp/rt_capture/
-chmod 644 /tmp/rt_capture/capture.py /tmp/rt_capture/_cases_01.py
-install -d -o planetstopper -m 755 /tmp/rt_capture/out
-```
-
-As the service user, in this order (the exit-trigger case reads the symphony the shadow-rows case chose, from the same `out/`):
-
-```
-runuser -u planetstopper -- /opt/planetstopper/.venv/bin/python -I /tmp/rt_capture/capture.py 01-c1-bot-state-row --db /opt/planetstopper/alphabot_state.db --out /tmp/rt_capture/out
-runuser -u planetstopper -- /opt/planetstopper/.venv/bin/python -I /tmp/rt_capture/capture.py 01-c2-shadow-rows --db /opt/planetstopper/alphabot_state.db --out /tmp/rt_capture/out
-runuser -u planetstopper -- /opt/planetstopper/.venv/bin/python -I /tmp/rt_capture/capture.py 01-c2-exit-trigger --db /opt/planetstopper/alphabot_state.db --out /tmp/rt_capture/out
-```
-
-Each command prints the record path and exits 0; a non-zero exit prints `error: ...` and writes nothing. Optional flags on the two `01-c2` cases: `--day YYYY-MM-DD`, `--triggered-id`, `--untriggered-id` (use them only if the default choice, recorded in the sidecar, is wrong for the cycle).
-
-Expected output, all under `/tmp/rt_capture/out/`:
-
-```
-01-c1/nested_bot_state_row.json.gz        01-c1/nested_bot_state_row.capture.json
-01-c2/shadow_rows_two_cycles.json         01-c2/shadow_rows_two_cycles.capture.json
-01-c2/exit_trigger_row.json               01-c2/exit_trigger_row.capture.json
-```
-
-Record the hashes, then copy `out/` into the main checkout's `.claude\review\refresh-timing-captures\<UTC stamp>\` and confirm the same hashes there:
-
-```
-cd /tmp/rt_capture/out && find . -type f | sort | xargs sha256sum
-```
-
-What each record is, for its future row:
-
-| Case | Source table | Row key | Capture moment |
-|---|---|---|---|
-| `01-c1-bot-state-row` | `bot_state` | `id = 1`, verbatim bytes, gzipped without a name or time so the bytes reproduce | in `01-c1/nested_bot_state_row.capture.json`, `captured_at_utc`; the stored state's own cycle stamp is inside the record |
-| `01-c2-shadow-rows` | `shadow_history` | the capture day (newest `trading_day`), the two newest `cycle_id` values by `MAX(ts_utc)`, one triggered and one untriggered symphony, plus each one's newest earlier row | `captured_at_utc` and `newest_shadow_history_ts_utc_at_capture` in `01-c2/shadow_rows_two_cycles.capture.json` |
-| `01-c2-exit-trigger` | `exit_triggers` | the triggered symphony's newest row (`ts_utc` then `id` descending) | `captured_at_utc` in `01-c2/exit_trigger_row.capture.json` |
+The droplet run commands of the committed captures are in each folder's `PROVENANCE.md`.

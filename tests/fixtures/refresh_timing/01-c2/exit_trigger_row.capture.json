@@ -1,0 +1,34 @@
+{
+  "captured_at_utc": "2026-10-23T00:55:47Z",
+  "case": "01-c2-exit-trigger",
+  "facts": {
+    "columns": [
+      "id",
+      "ts_utc",
+      "ts_et",
+      "symphony_id",
+      "account_id",
+      "triggered_reason",
+      "at_return",
+      "gate_state_json",
+      "cycle_id",
+      "math_mode",
+      "port_trigger_id",
+      "also_true_json"
+    ],
+    "exit_triggers_rows_for_symphony": 31,
+    "symphony_id": "nOyb55RMGVCKPiYXv7TI",
+    "symphony_source": "shadow-rows capture sidecar in --out"
+  },
+  "record": {
+    "bytes": 536,
+    "file": "exit_trigger_row.json",
+    "sha256": "79729713552c14990d4ac65ed96dcf18099fb7ffbb248962714a6a81efdb45a9"
+  },
+  "script": "tests/fixtures/refresh_timing/capture.py",
+  "source": {
+    "database": "alphabot_state.db",
+    "row_key": "symphony_id = nOyb55RMGVCKPiYXv7TI; newest by ts_utc DESC, id DESC (id 509)",
+    "table": "exit_triggers"
+  }
+}
