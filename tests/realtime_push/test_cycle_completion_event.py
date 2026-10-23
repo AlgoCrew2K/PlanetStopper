@@ -240,6 +240,14 @@ def _only(records: list):
     return records[0]
 
 
+def _event_item(q) -> tuple:
+    item = q.get_nowait()
+    assert isinstance(item, tuple) and len(item) == 2, (
+        f"queue item must be (event name, payload JSON text); got {item!r}"
+    )
+    return item
+
+
 def _as_instant(value) -> datetime:
     return value if isinstance(value, datetime) else datetime.fromisoformat(value)
 
@@ -319,6 +327,7 @@ class TestEngineRunPublishesRecord:
         app_module.trigger_alpha_bot()
         app_module.trigger_alpha_bot()
 
+        assert len(captured_records) == 2, "each call must publish one CycleRecord"
         first, second = captured_records
         assert first.cycle_id != second.cycle_id, "two runs in one second must not share an id"
         for record in (first, second):
@@ -725,7 +734,7 @@ class TestNotifyFanOut:
 
         app_module._notify_cycle_complete(make_cycle_record(outcome="skipped", changed=False))
 
-        name, data = q.get_nowait()
+        name, data = _event_item(q)
         assert name == "cycle-complete"
         assert json.loads(data)["outcome"] == "skipped"
 
@@ -776,7 +785,7 @@ class TestEventReachesClientsPromptly:
         elapsed = time.monotonic() - stub.returned_at_mono
 
         assert elapsed < 1.0, f"event took {elapsed:.2f}s after the engine exited; budget is 1 s"
-        name, data = q.get_nowait()
+        name, data = _event_item(q)
         payload = json.loads(data)
         assert name == "cycle-complete"
         assert set(payload) == _PAYLOAD_KEYS

@@ -8,6 +8,9 @@ refetches, exactly as before the payload existed.
 The real `handleCycleCompleteEvent` is extracted from static/index.js and run under node
 against recording stubs, so the assertions are about what the handler calls, not what its
 source contains. Payload strings come from a real CycleRecord.event_payload().
+
+Each test runs a whole family of events through one node process and reports every case that
+refetched (or skipped) wrongly, because every test pays for a rebuilt test database.
 """
 
 from __future__ import annotations
@@ -18,42 +21,68 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from tests.dashboard.test_account_basis_honesty_render import _extract_function_with_signature
 
 _INDEX_JS = Path(__file__).resolve().parents[2] / "static" / "index.js"
 _HANDLER = "handleCycleCompleteEvent"
+_NO_DATA = object()
 
 
 def _handler_source() -> str:
     return _extract_function_with_signature(_INDEX_JS.read_text(encoding="utf-8"), _HANDLER)
 
 
-def _calls_for(data, hero_window: str = "30d") -> list[list]:
-    """Run the real handler under node with `evt.data` = data and return what it called."""
+def _run_events(events: list[tuple[str, object, str]]) -> dict:
+    """Run the real handler under node once per (label, evt.data, hero window) and return,
+    by label, the calls it made. `_NO_DATA` sends an event with no `data` property at all."""
     assert shutil.which("node") is not None, "node is required to run the handler"
+    cases = [
+        {
+            "label": label,
+            "window": window,
+            "hasData": data is not _NO_DATA,
+            "data": None if data is _NO_DATA else data,
+        }
+        for label, data, window in events
+    ]
     harness = f"""
     var __calls = [];
-    var _heroWindow = {json.dumps(hero_window)};
+    var _heroWindow = '30d';
     function loadState() {{ __calls.push(['loadState']); }}
     function fetchGuardAlphaSummary(w) {{ __calls.push(['fetchGuardAlphaSummary', w]); }}
     {_handler_source()}
-    var __evt = {{}};
-    {"" if data is None else f"__evt.data = {json.dumps(data)};"}
-    {_HANDLER}(__evt);
-    console.log(JSON.stringify(__calls));
+    var __out = {{}};
+    {json.dumps(cases)}.forEach(function (c) {{
+        __calls = [];
+        _heroWindow = c.window;
+        var evt = {{}};
+        if (c.hasData) {{ evt.data = c.data; }}
+        try {{
+            {_HANDLER}(evt);
+            __out[c.label] = __calls;
+        }} catch (err) {{
+            __out[c.label] = 'THREW: ' + err;
+        }}
+    }});
+    console.log(JSON.stringify(__out));
     """
-    result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=15)
-    assert result.returncode == 0, f"the handler threw instead of refetching:\n{result.stderr}"
+    result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, f"the harness failed:\n{result.stderr}"
     return json.loads(result.stdout.strip())
 
 
-_REFETCH = [["loadState"], ["fetchGuardAlphaSummary", "30d"]]
+def _refetch(window: str = "30d") -> list[list]:
+    return [["loadState"], ["fetchGuardAlphaSummary", window]]
 
 
-def _sorted(calls: list[list]) -> list[list]:
-    return sorted(calls)
+def _wrong(results: dict, expected: dict) -> list[str]:
+    """Each label whose calls differ from `expected` (compared order-free)."""
+    wrong = []
+    for label, want in expected.items():
+        got = results[label]
+        if got != want and (not isinstance(got, list) or sorted(got) != sorted(want)):
+            wrong.append(f"{label}: want {want!r}, got {got!r}")
+    return wrong
 
 
 class TestHandlerIsWired:
@@ -68,72 +97,63 @@ class TestHandlerIsWired:
         assert _handler_source().startswith(f"function {_HANDLER}(")
 
 
-class TestChangedFalseIsSkipped:
-    def test_an_unchanged_closed_market_event_triggers_no_fetch(self, make_cycle_record):
-        """A closed-market minute: no /api/state and no /api/guard-alpha-summary request."""
-        payload = make_cycle_record(outcome="closed", changed=False).event_payload()
+class TestPayloadDecidesTheRefetch:
+    def test_an_unchanged_event_triggers_no_fetch_for_any_outcome(self, make_cycle_record):
+        """Closed-market and skipped minutes: no /api/state and no /api/guard-alpha-summary request."""
+        events = [
+            (
+                outcome,
+                json.dumps(make_cycle_record(outcome=outcome, changed=False).event_payload()),
+                "30d",
+            )
+            for outcome in ("closed", "skipped", "blackout", "failed")
+        ]
 
-        assert _calls_for(json.dumps(payload)) == []
+        results = _run_events(events)
 
-    def test_a_skipped_minute_event_triggers_no_fetch(self, make_cycle_record):
-        payload = make_cycle_record(outcome="skipped", changed=False).event_payload()
+        assert _wrong(results, {label: [] for label, _, _ in events}) == []
 
-        assert _calls_for(json.dumps(payload)) == []
-
-
-class TestChangedTrueRefetches:
-    @pytest.mark.parametrize("hero_window", ["30d", "1y"])
     def test_a_changed_event_fetches_state_once_and_the_summary_for_the_live_window(
-        self, hero_window, make_cycle_record
+        self, make_cycle_record
     ):
         """The summary request carries the picker's current window, read when the event fires."""
-        payload = make_cycle_record(outcome="cycle", changed=True).event_payload()
+        payload = json.dumps(make_cycle_record(outcome="cycle", changed=True).event_payload())
+        events = [("window-30d", payload, "30d"), ("window-1y", payload, "1y")]
 
-        calls = _calls_for(json.dumps(payload), hero_window=hero_window)
+        results = _run_events(events)
 
-        assert _sorted(calls) == _sorted([["loadState"], ["fetchGuardAlphaSummary", hero_window]])
+        assert _wrong(results, {"window-30d": _refetch("30d"), "window-1y": _refetch("1y")}) == []
 
+    def test_a_payload_that_does_not_say_changed_is_false_refetches(self, make_cycle_record):
+        """`changed` is read strictly: only a boolean false skips; every other value, a missing
+        key, an older daemon's empty object and text that is not JSON refetch."""
+        base = make_cycle_record(outcome="closed", changed=False).event_payload()
+        assert base.get("changed") is False, "premise: the record's payload names `changed`"
+        without_key = {k: v for k, v in base.items() if k != "changed"}
+        events: list[tuple[str, object, str]] = [
+            ("not-json", "not json", "30d"),
+            ("empty-object", "{}", "30d"),
+            ("missing-key", json.dumps(without_key), "30d"),
+            ("no-data-property", _NO_DATA, "30d"),
+        ]
+        for label, value in (
+            ("string-false", "false"),
+            ("zero", 0),
+            ("null", None),
+            ("empty-string", ""),
+            ("empty-list", []),
+            ("empty-object-value", {}),
+        ):
+            events.append((f"changed-{label}", json.dumps({**base, "changed": value}), "30d"))
+        for label, text in (
+            ("json-null", "null"),
+            ("json-array", "[]"),
+            ("json-number", "42"),
+            ("json-string", '"false"'),
+            ("json-true", "true"),
+        ):
+            events.append((label, text, "30d"))
 
-class TestUnreadablePayloadRefetches:
-    def test_text_that_is_not_json_refetches(self):
-        assert _sorted(_calls_for("not json")) == _sorted(_REFETCH)
+        results = _run_events(events)
 
-    def test_the_empty_object_an_older_daemon_sends_refetches(self):
-        assert _sorted(_calls_for("{}")) == _sorted(_REFETCH)
-
-    def test_a_payload_without_the_changed_key_refetches(self, make_cycle_record):
-        payload = make_cycle_record(outcome="cycle", changed=True).event_payload()
-        payload.pop("changed", None)
-
-        assert _sorted(_calls_for(json.dumps(payload))) == _sorted(_REFETCH)
-
-    @pytest.mark.parametrize(
-        "changed",
-        ["false", 0, None, "", [], {}],
-        ids=["string-false", "zero", "null", "empty-string", "empty-list", "empty-object"],
-    )
-    def test_only_a_boolean_false_skips(self, changed, make_cycle_record):
-        """`changed` is read strictly: a falsy value of another type is not a skip signal."""
-        payload = make_cycle_record(outcome="closed", changed=False).event_payload()
-        payload["changed"] = changed
-
-        assert _sorted(_calls_for(json.dumps(payload))) == _sorted(_REFETCH)
-
-    @pytest.mark.parametrize(
-        "data",
-        ["null", "[]", "42", '"false"', "true"],
-        ids=["json-null", "json-array", "json-number", "json-string", "json-true"],
-    )
-    def test_json_that_is_not_an_object_refetches_without_throwing(self, data):
-        assert _sorted(_calls_for(data)) == _sorted(_REFETCH)
-
-    def test_an_event_with_no_data_refetches_without_throwing(self):
-        assert _sorted(_calls_for(None)) == _sorted(_REFETCH)
-
-
-def test_payload_fixture_really_carries_changed_false(make_cycle_record):
-    """Guard for this module's own premise: the strings above come from a record whose
-    payload names `changed`, so the skip cases are not vacuous."""
-    payload = make_cycle_record(outcome="closed", changed=False).event_payload()
-
-    assert payload.get("changed") is False
+        assert _wrong(results, {label: _refetch() for label, _, _ in events}) == []

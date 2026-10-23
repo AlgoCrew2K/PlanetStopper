@@ -809,7 +809,7 @@ def _notify_cycle_complete(record=None) -> None:
             pass  # full or closed — skip, do not raise
 
 
-def trigger_alpha_bot(force=False):
+def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
     try:
         cmd = [sys.executable, "alpha_bot_execution.py"]
