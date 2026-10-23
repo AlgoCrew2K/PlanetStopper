@@ -21,6 +21,8 @@ Patch targets and forms production must keep:
 
 from __future__ import annotations
 
+import json
+
 import anthropic
 import httpx
 import pytest
@@ -78,6 +80,54 @@ def run_request_suggestions(anthropic_fake, reply=None):
     result = ai_advisor.request_suggestions(SUGGEST_CONTEXT)
     assert anthropic_fake.misuse == []
     return result
+
+
+# What the SDK's validation error carries beyond the exception's class name: its own wording and an
+# echo of the offending input (a truncated copy of a prose reply, the dict of a JSON one).
+_VALIDATION_ERROR_MARKERS = ("input_value", "input_type", "validation error", "[type=")
+
+# The field the page legitimately names ("No suggestions this call"); every other key or value of a
+# parsed reply is reply content.
+_SCHEMA_FIELD_NAMES = frozenset({"suggestions"})
+_FRAGMENT_WINDOW = 12
+
+
+def _json_strings(value):
+    """Every key and string value of a parsed JSON document."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield key
+            yield from _json_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _json_strings(item)
+    elif isinstance(value, str):
+        yield value
+
+
+def _reply_fragments(body: dict) -> set[str]:
+    """Pieces of a reply that must never reach the page, whole or cut short.
+
+    A whole-text check is passed by any truncated or re-serialised copy, so each text and thinking
+    block contributes every window of ``_FRAGMENT_WINDOW`` characters, and a text block that is JSON
+    also contributes each of its keys and string values.
+    """
+    fragments: set[str] = set()
+    for block in body["content"]:
+        text = block.get("text") if block["type"] == "text" else block.get("thinking")
+        if not isinstance(text, str):
+            continue
+        text = text.strip()
+        fragments.update(
+            text[i : i + _FRAGMENT_WINDOW] for i in range(max(len(text) - _FRAGMENT_WINDOW, 0) + 1)
+        )
+        if block["type"] == "text":
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                continue
+            fragments.update(s for s in _json_strings(parsed) if s and s not in _SCHEMA_FIELD_NAMES)
+    return {f for f in fragments if f.strip()}
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +247,10 @@ class TestReplyRead:
 
         assert response is None
         assert isinstance(error, str) and error.strip()
-        for block in body["content"]:
-            if block["type"] == "text":
-                assert block["text"] not in error
+        for fragment in _reply_fragments(body):
+            assert fragment not in error, f"{fragment!r} of the reply appears in {error!r}"
+        for marker in _VALIDATION_ERROR_MARKERS:
+            assert marker not in error, f"{marker!r} of the validation error appears in {error!r}"
 
     @pytest.mark.parametrize(
         "outcome",
@@ -296,6 +347,7 @@ class TestSuggestRouteReplies:
         assert response.status_code == 200 and "suggestions" not in data
         assert "refusal" in data["error"] and category in data["error"]
         assert_names_no_model_or_exception_text(data["error"])
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_refusal_without_a_category_names_no_category(self, anthropic_fake, flask_client):
         anthropic_fake.queue_message(message_body("refusal_null_category.json"))
@@ -306,6 +358,7 @@ class TestSuggestRouteReplies:
         error = response.get_json()["error"]
         assert "refusal" in error
         assert other not in error and "None" not in error and "null" not in error
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_refusal_after_partial_output_shows_none_of_it(self, anthropic_fake, flask_client):
         body = message_body("refusal_after_partial_text.json")
@@ -317,6 +370,7 @@ class TestSuggestRouteReplies:
         assert "suggestions" not in data and "refusal" in data["error"]
         partial = next(b["text"] for b in body["content"] if b["type"] == "text")
         assert partial not in response.get_data(as_text=True)
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_refusal_whose_text_is_a_complete_suggestion_list_still_returns_none(
         self, anthropic_fake, flask_client
@@ -334,6 +388,7 @@ class TestSuggestRouteReplies:
         data = post_suggest(flask_client).get_json()
 
         assert "suggestions" not in data and "refusal" in data["error"]
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_reply_cut_off_at_max_tokens_reports_max_tokens_and_no_suggestion(
         self, anthropic_fake, flask_client

@@ -30,13 +30,15 @@ All tests are RED until GREEN implements the fixes.
 from __future__ import annotations
 
 import json
+import re
 import time
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 import app as app_module
-from advisors.advisor_chat import CHAT_UNAVAILABLE_PREFIX
+from advisors.advisor_chat import CHAT_ERROR_MSG_TEMPLATE, CHAT_UNAVAILABLE_PREFIX
 from model_config import Knob
 from tests._anthropic_http_fake import load_fixture
 from tests._suggest_and_chat_routes import (
@@ -1768,6 +1770,7 @@ class TestChatSendReplies:
         assert data["error"].startswith(CHAT_UNAVAILABLE_PREFIX)
         assert other not in data["error"]
         assert "None" not in data["error"] and "null" not in data["error"]
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_refusal_with_a_category_names_both(self, client, csrf_token, anthropic_fake):
         body = message_body("refusal_reasoning_extraction.json")
@@ -1777,6 +1780,7 @@ class TestChatSendReplies:
 
         assert "refusal" in data["error"]
         assert body["stop_details"]["category"] in data["error"]
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_refusal_after_partial_text_shows_none_of_it(
         self, client, csrf_token, anthropic_fake
@@ -1789,6 +1793,7 @@ class TestChatSendReplies:
         data = response.get_json()
         assert "reply" not in data and "refusal" in data["error"]
         assert text_of(body) not in response.get_data(as_text=True)
+        assert len(anthropic_fake.message_requests) == 1
 
     def test_a_reply_cut_off_at_max_tokens_reports_max_tokens_and_returns_no_partial_text(
         self, client, csrf_token, anthropic_fake
@@ -1812,3 +1817,56 @@ class TestChatSendReplies:
         data = _send_chat(client, csrf_token).get_json()
 
         assert "reply" not in data and "max_tokens" in data["error"]
+
+
+class TestChatSendFailedRequest:
+    """A request that fails (not an override, not a reason code) shows the class name and nothing
+    of the exception: the SDK's status line, the API's message and the request ID can carry
+    secrets, so the operator sees ``type(exc).__name__`` only."""
+
+    @pytest.fixture(autouse=True)
+    def _site_client(self, monkeypatch, anthropic_fake):
+        use_client(monkeypatch, anthropic_fake)
+
+    @pytest.mark.parametrize(
+        "outcome",
+        [
+            pytest.param(error_outcome("400_invalid_request.json"), id="400"),
+            pytest.param(error_outcome("401_authentication.json"), id="401"),
+            pytest.param(error_outcome("403_permission.json"), id="403"),
+            pytest.param(error_outcome("429_rate_limit.json"), id="429"),
+            pytest.param(error_outcome("500_api_error.json"), id="500"),
+            pytest.param(error_outcome("529_overloaded.json"), id="529"),
+            pytest.param(httpx.ConnectError("example connection failure"), id="connect"),
+            pytest.param(httpx.ReadTimeout("example read timeout"), id="timeout"),
+        ],
+    )
+    def test_a_failed_request_shows_the_exception_class_name_and_none_of_its_text(
+        self, client, csrf_token, anthropic_fake, outcome
+    ):
+        anthropic_fake.queue_message(outcome)
+
+        response = _send_chat(client, csrf_token)
+
+        data = response.get_json()
+        assert response.status_code == 200 and "reply" not in data
+        assert len(anthropic_fake.message_requests) == 1
+        # The whole message is the fixed shape around the class name, so no other text rides in it.
+        named = re.fullmatch(
+            re.escape(CHAT_ERROR_MSG_TEMPLATE.format(reason="LLM request failed (")) + r"(\w+)\)",
+            data["error"],
+        )
+        assert named, f"unexpected chat failure message {data['error']!r}"
+        assert named.group(1).endswith("Error")
+        # What the SDK puts in an exception's text: the status line, the API's message and the
+        # request ID (the API's message can be a word the class name also contains, so the status
+        # line and the ID are the checks that cannot collide).
+        if isinstance(outcome, dict):
+            exception_texts = ["Error code", outcome["body"]["request_id"]]
+            exception_texts.append(outcome["body"]["error"]["message"])
+        else:
+            exception_texts = [str(outcome)]
+        assert_names_no_model_or_exception_text(data["error"], *exception_texts)
+        body_text = response.get_data(as_text=True)
+        for fragment in exception_texts:
+            assert fragment not in body_text
