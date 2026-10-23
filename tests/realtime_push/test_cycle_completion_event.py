@@ -749,15 +749,20 @@ class TestPublishCycle:
         assert notify.call_count == 1
         assert notify.call_args.args[0] is record
 
-    def test_publish_with_no_clients_does_not_raise(self, make_cycle_record, recorded_threads):
+    def test_an_engine_record_still_masks_and_refreshes_with_no_client_connected(
+        self, make_cycle_record, recorded_threads
+    ):
+        """The account totals are refreshed for the polls whether or not a stream is open."""
         with app_module._sse_clients_lock:
             held = list(app_module._sse_clients)
             app_module._sse_clients.clear()
         try:
-            app_module._publish_cycle(make_cycle_record())
+            app_module._publish_cycle(make_cycle_record(outcome="cycle", changed=True))
         finally:
             with app_module._sse_clients_lock:
                 app_module._sse_clients.extend(held)
+
+        assert recorded_threads == ["cycle-refresh"]
 
 
 class TestEventReachesClientsPromptly:
@@ -802,8 +807,12 @@ class TestReadCycleMarkers:
             captured_markers.day_before,
         )
 
-    def test_absent_markers_read_as_none(self):
-        assert database.read_cycle_markers() == (None, None)
+    def test_a_missing_cycle_stamp_does_not_hide_the_snapshot_day(
+        self, captured_markers, seed_bot_state
+    ):
+        seed_bot_state(None, captured_markers.day_after)
+
+        assert database.read_cycle_markers() == (None, captured_markers.day_after)
 
     def test_a_missing_snapshot_does_not_hide_the_cycle_stamp(
         self, captured_markers, seed_bot_state
@@ -825,7 +834,12 @@ class TestReadCycleMarkers:
 
         assert database.read_cycle_markers()[0] == captured_markers.cycle_at_before
 
-    def test_any_database_error_reads_as_none_pair(self, monkeypatch):
+    def test_a_database_error_after_a_good_read_reads_as_none_pair(
+        self, captured_markers, seed_bot_state, monkeypatch
+    ):
+        seed_bot_state(captured_markers.cycle_at_before, captured_markers.day_before)
+        assert database.read_cycle_markers()[0] == captured_markers.cycle_at_before
+
         def _broken():
             raise sqlite3.OperationalError("database is locked")
 
