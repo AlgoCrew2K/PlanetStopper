@@ -367,6 +367,10 @@ def _reset_account_totals_cache():
         last_good = getattr(_app_module, "_account_totals_last_good", None)
         if last_good is not None:
             last_good.clear()
+        # The monotonic success stamp survives across tests exactly like the
+        # last-good snapshot: a real refresh in one test would otherwise put a
+        # later test that seeds last-good by hand inside the account-basis grace.
+        _app_module._account_totals_last_success_mono = None
 
     _drain_and_reset()
     yield

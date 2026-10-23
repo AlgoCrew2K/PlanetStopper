@@ -23,9 +23,14 @@ Expected values in assertions DERIVED from inputs — never hardcoded producer o
 from __future__ import annotations
 
 import json
+import os
 import pathlib
+import re
+import threading
+from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, call, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -1288,3 +1293,417 @@ class TestLivePathStaleCachePolicy:
             f"Live and frozen Tier 2 marker conventions must match: live={live_basis!r}, "
             f"frozen={frozen_basis!r}."
         )
+
+
+# ===========================================================================
+# Live-branch account-basis grace: the stale flag follows the age of the last
+# successful refresh, never merely "the cache is masked while a refresh runs".
+#
+# Seams: app._monotonic (the clock for ages; replaced by the monotonic_clock
+# fixture), the requests.get boundary (the composer_total_stats fixture serves
+# the captured Composer body), and app._account_totals_cache.mark_stale() for
+# the mask the engine cycle applies.  Expected strip values are recomputed from
+# the captured body (percent scale: Composer fractions times 100, as the
+# refresh stores them).
+# ===========================================================================
+
+_ET = ZoneInfo("America/New_York")
+_ASOF_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ET$")
+
+
+def _frozen_datetime_class(instant: datetime) -> type[datetime]:
+    """datetime subclass whose .now(tz) resolves to `instant` (for app.datetime)."""
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    return _Frozen
+
+
+def _refresh_succeeds(app_module, composer) -> None:
+    composer.mode = "ok"
+    app_module._refresh_account_totals()
+
+
+def _refresh_fails(app_module, composer, mode: str) -> None:
+    composer.mode = mode
+    app_module._refresh_account_totals()
+
+
+class TestLiveBranchAccountBasisGrace:
+    """Live /api/state: account_basis_stale is raised by a real outage, not by
+    the routine post-cycle mask."""
+
+    @pytest.fixture()
+    def live_client(self):
+        import app as app_module
+
+        app_module.app.config["TESTING"] = True
+        with patch.object(app_module, "schedule"):
+            with app_module.app.test_client() as client:
+                yield client, app_module
+
+    def _poll_strip(self, client, app_module, monkeypatch, *, masked: bool = True) -> dict:
+        """One live /api/state poll; `masked` applies the engine cycle's mask first."""
+        if masked:
+            app_module._account_totals_cache.mark_stale()
+        fx = _load_parity_fixture()
+        body = TestLivePathStaleCachePolicy()._drive_live_branch(
+            client,
+            app_module,
+            monkeypatch,
+            bot_state=_minimal_bot_state(),
+            vw_tc=fx["vw_tc"],
+            vw_cr=fx["vw_cr"],
+        )
+        return body["portfolio_strip"]
+
+    def test_masked_read_inside_grace_serves_last_good_totals_without_stale_flag(
+        self, live_client, monkeypatch, composer_total_stats, monotonic_clock
+    ):
+        client, app_module = live_client
+        _refresh_succeeds(app_module, composer_total_stats)
+        monotonic_clock.advance(40.0)
+
+        strip = self._poll_strip(client, app_module, monkeypatch)
+
+        expected_tc_pct = composer_total_stats.payload["todays_percent_change"] * 100.0
+        assert "account_basis_stale" not in strip, (
+            "A masked read 40 s after a successful refresh is the routine post-cycle gap; "
+            f"account_basis_stale must be absent. Got {strip.get('account_basis_stale')!r}."
+        )
+        assert strip.get("basis") != "value_weighted", (
+            "Inside the grace the last good account totals still apply (Tier 1), "
+            "not the value-weighted floor."
+        )
+        assert strip["today_change"]["if_held"] == pytest.approx(expected_tc_pct, abs=1e-6), (
+            "Tier-1 figures must still come from the last good Composer totals "
+            f"(todays_percent_change x 100 = {expected_tc_pct})."
+        )
+
+    @pytest.mark.parametrize(
+        ("failure_mode", "failed_refresh_offsets_s", "poll_offset_s"),
+        [
+            pytest.param(
+                "status_503", (60.0, 120.0), 130.0, id="two_503_replies_130s_after_success"
+            ),
+            pytest.param("read_timeout", (60.0, 90.0), 95.0, id="read_timeout_95s_after_success"),
+            pytest.param(
+                "connection_error", (60.0, 100.0), 110.0, id="connection_error_110s_after_success"
+            ),
+        ],
+    )
+    def test_outage_raises_stale_flag_only_after_grace_and_names_the_last_success(
+        self,
+        live_client,
+        monkeypatch,
+        composer_total_stats,
+        monotonic_clock,
+        failure_mode,
+        failed_refresh_offsets_s,
+        poll_offset_s,
+    ):
+        client, app_module = live_client
+        success_instant = datetime(2026, 10, 21, 10, 15, 30, tzinfo=_ET)
+        with patch.object(app_module, "datetime", _frozen_datetime_class(success_instant)):
+            _refresh_succeeds(app_module, composer_total_stats)
+        expected_as_of = success_instant.strftime(app_module._ACCOUNT_BASIS_TS_FMT)
+        t0 = monotonic_clock.now
+
+        # First failed minute: the outage is real but young, so no chip yet.
+        first_offset = failed_refresh_offsets_s[0]
+        monotonic_clock.now = t0 + first_offset
+        _refresh_fails(app_module, composer_total_stats, failure_mode)
+        monotonic_clock.now = t0 + first_offset + 1.0
+        young = self._poll_strip(client, app_module, monkeypatch)
+        assert "account_basis_stale" not in young, (
+            f"One failed refresh ({failure_mode}) with the last success {first_offset + 1.0}s old "
+            "is inside the 90 s grace; the chip must not show."
+        )
+
+        # Later failures: the last success is now past the grace.
+        for offset in failed_refresh_offsets_s[1:]:
+            monotonic_clock.now = t0 + offset
+            _refresh_fails(app_module, composer_total_stats, failure_mode)
+        monotonic_clock.now = t0 + poll_offset_s
+        old = self._poll_strip(client, app_module, monkeypatch)
+
+        assert old.get("account_basis_stale") is True, (
+            f"A {failure_mode} outage with the last success {poll_offset_s}s old must still "
+            f"raise the stale flag. Got {old.get('account_basis_stale')!r}."
+        )
+        assert old.get("account_basis_as_of") == expected_as_of, (
+            "account_basis_as_of must name the last SUCCESSFUL refresh "
+            f"({expected_as_of!r}), not a failed attempt or the poll time."
+        )
+        assert _ASOF_RE.match(old["account_basis_as_of"])
+
+    def test_stale_flag_appears_exactly_when_last_success_reaches_the_grace_age(
+        self, live_client, monkeypatch, composer_total_stats, monotonic_clock
+    ):
+        client, app_module = live_client
+        _refresh_succeeds(app_module, composer_total_stats)
+        t0 = monotonic_clock.now
+
+        monotonic_clock.now = t0 + 89.9
+        just_inside = self._poll_strip(client, app_module, monkeypatch)
+        monotonic_clock.now = t0 + 90.0
+        at_boundary = self._poll_strip(client, app_module, monkeypatch)
+
+        assert "account_basis_stale" not in just_inside, (
+            "89.9 s after the last success is still inside the grace."
+        )
+        assert at_boundary.get("account_basis_stale") is True, (
+            "A last success exactly 90 s old is past the grace: the flag must be true."
+        )
+
+    @pytest.mark.parametrize(
+        ("age_s", "expected_past_grace"),
+        [
+            pytest.param(None, True, id="no_success_in_this_process"),
+            pytest.param(0.0, False, id="just_succeeded"),
+            pytest.param(89.9, False, id="just_inside_grace"),
+            pytest.param(90.0, True, id="exactly_at_grace"),
+            pytest.param(91.0, True, id="past_grace"),
+        ],
+    )
+    def test_past_grace_reads_the_age_of_the_last_success(
+        self, monkeypatch, monotonic_clock, age_s, expected_past_grace
+    ):
+        import app as app_module
+
+        helper = getattr(app_module, "_account_basis_past_grace", None)
+        if helper is None:
+            pytest.fail(
+                "app._account_basis_past_grace() is missing: it must be true when "
+                "_account_totals_last_success_mono is None or at least 90 s old, "
+                "measured with app._monotonic()."
+            )
+        stamp = None if age_s is None else monotonic_clock.now - age_s
+        monkeypatch.setattr(app_module, "_account_totals_last_success_mono", stamp)
+
+        assert helper() is expected_past_grace
+
+    def test_cold_process_reads_value_weighted_floor_and_counts_as_past_grace(
+        self, live_client, monkeypatch, monotonic_clock
+    ):
+        client, app_module = live_client
+        helper = getattr(app_module, "_account_basis_past_grace", None)
+        if helper is None:
+            pytest.fail(
+                "app._account_basis_past_grace() is missing: with no successful refresh in "
+                "this process it must read True (nothing recent to excuse a masked cache)."
+            )
+        assert helper() is True
+
+        strip = self._poll_strip(client, app_module, monkeypatch, masked=False)
+
+        assert strip.get("basis") == "value_weighted", (
+            "With no refresh ever succeeded and no last-good totals the strip reads the "
+            f"value-weighted floor (Tier 2). Got basis={strip.get('basis')!r}."
+        )
+        assert "account_basis_stale" not in strip
+
+    def test_successful_refresh_stamps_monotonic_time_and_serves_fresh_totals(
+        self, live_client, monkeypatch, composer_total_stats, monotonic_clock
+    ):
+        client, app_module = live_client
+        stamped_at = monotonic_clock.now
+        _refresh_succeeds(app_module, composer_total_stats)
+        monotonic_clock.advance(75.0)
+
+        strip = self._poll_strip(client, app_module, monkeypatch, masked=False)
+
+        expected_tc_pct = composer_total_stats.payload["todays_percent_change"] * 100.0
+        assert app_module._account_totals_last_success_mono == stamped_at, (
+            "A successful refresh must stamp _account_totals_last_success_mono with "
+            "app._monotonic() read at success time."
+        )
+        assert strip["today_change"]["if_held"] == pytest.approx(expected_tc_pct, abs=1e-6)
+        assert "account_basis_stale" not in strip
+        assert strip.get("basis") != "value_weighted"
+
+    @pytest.mark.parametrize(
+        "failure_mode",
+        [
+            pytest.param("status_503", id="non_200_reply"),
+            pytest.param("read_timeout", id="read_timeout"),
+            pytest.param("connection_error", id="connection_error"),
+            pytest.param("cache_write_fault", id="fault_inside_the_cache_write"),
+        ],
+    )
+    def test_failed_refresh_never_advances_the_success_stamp(
+        self, live_client, monkeypatch, composer_total_stats, monotonic_clock, failure_mode
+    ):
+        _client, app_module = live_client
+        success_stamp = monotonic_clock.now
+        _refresh_succeeds(app_module, composer_total_stats)
+        monotonic_clock.advance(60.0)
+
+        if failure_mode == "cache_write_fault":
+            composer_total_stats.mode = "ok"
+
+            def _boom():
+                raise RuntimeError("simulated fault after the cache writes")
+
+            monkeypatch.setattr(app_module._account_totals_cache, "refresh_written", _boom)
+            app_module._refresh_account_totals()
+        else:
+            _refresh_fails(app_module, composer_total_stats, failure_mode)
+
+        assert app_module._account_totals_last_success_mono == success_stamp, (
+            f"A failed refresh ({failure_mode}) must leave the success stamp at the last "
+            "real success; advancing it would hide a genuine outage."
+        )
+
+    def test_flush_resync_refresh_in_flight_keeps_grace_until_last_success_is_90s_old(
+        self, live_client, monkeypatch, tmp_path, composer_total_stats, monotonic_clock
+    ):
+        client, app_module = live_client
+        monkeypatch.setattr(real_analytics, "_POST_MORTEMS_DIR", str(tmp_path / "post_mortems"))
+        _refresh_succeeds(app_module, composer_total_stats)
+        t0 = monotonic_clock.now
+        monotonic_clock.now = t0 + 40.0
+        app_module._account_totals_cache.mark_stale()
+        composer_total_stats.mode = "hold"
+        resync: dict[str, int] = {}
+
+        def _post_flush_resync() -> None:
+            with app_module.app.test_client() as other_client:
+                resync["status"] = other_client.post("/api/settings/flush-resync").status_code
+
+        poster = threading.Thread(
+            target=_post_flush_resync, name="flush-resync-poster", daemon=True
+        )
+        poster.start()
+        try:
+            assert composer_total_stats.started.wait(timeout=5.0), (
+                "flush-resync must start its Composer refresh (the held request)."
+            )
+            inside = self._poll_strip(client, app_module, monkeypatch)
+            monotonic_clock.now = t0 + 130.0
+            past = self._poll_strip(client, app_module, monkeypatch)
+        finally:
+            composer_total_stats.release.set()
+            poster.join(timeout=20.0)
+
+        assert "account_basis_stale" not in inside, (
+            "While the flush-resync refresh is in flight and the last success is 40 s old, "
+            "the live strip must not raise the stale flag."
+        )
+        assert past.get("account_basis_stale") is True, (
+            "An in-flight refresh must not hide a last success that is 130 s old."
+        )
+        assert resync.get("status") == 200
+
+
+class TestServerRenderedAccountBasisGrace:
+    """GET / in market hours reads the same live strip through the real
+    get_api_state_dict; the template receives portfolio_strip from it."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_get_api_state_dict(self):
+        """Override tests/app/conftest.py's autouse stub of the same name: this class
+        needs the real get_api_state_dict so GET / reaches the real strip computation."""
+        yield
+
+    @pytest.fixture()
+    def seeded_live_client(self, monkeypatch, captured_symphony_entry):
+        import app as app_module
+        import database
+
+        monkeypatch.setattr(real_analytics, "DB_FILE", os.environ["DB_PATH"])
+        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
+        state = database.load_state() or {}
+        state["last_successful_cycle_at"] = datetime.now(_ET).isoformat()
+        state["iaSOOUsmnCJHiZvbrWfs"] = captured_symphony_entry
+        database.save_state(state)
+        app_module.app.config["TESTING"] = True
+        with app_module.app.test_client() as client:
+            yield client, app_module
+
+    def test_server_render_inside_grace_hands_the_template_no_stale_flag(
+        self, seeded_live_client, monkeypatch, composer_total_stats, monotonic_clock
+    ):
+        client, app_module = seeded_live_client
+        rendered: dict = {}
+        monkeypatch.setattr(
+            app_module,
+            "render_template",
+            lambda _tpl, **context: rendered.update(context) or "<html></html>",
+        )
+        _refresh_succeeds(app_module, composer_total_stats)
+        t0 = monotonic_clock.now
+        monotonic_clock.now = t0 + 40.0
+        app_module._account_totals_cache.mark_stale()
+        composer_total_stats.mode = "hold"
+        post_cycle_refresh = threading.Thread(
+            target=app_module._refresh_account_totals, name="cycle-refresh", daemon=True
+        )
+        post_cycle_refresh.start()
+        try:
+            assert composer_total_stats.started.wait(timeout=5.0)
+
+            inside_response = client.get("/")
+            inside_strip = dict(rendered.get("portfolio_strip") or {})
+            monotonic_clock.now = t0 + 130.0
+            past_response = client.get("/")
+            past_strip = dict(rendered.get("portfolio_strip") or {})
+        finally:
+            composer_total_stats.release.set()
+            post_cycle_refresh.join(timeout=10.0)
+
+        assert inside_response.status_code == 200
+        assert "today_change" in inside_strip, (
+            "Precondition: GET / must hand the template a real computed strip."
+        )
+        assert "account_basis_stale" not in inside_strip, (
+            "GET / during the post-cycle refresh, 40 s after a success, must render no stale chip."
+        )
+        assert past_response.status_code == 200
+        assert past_strip.get("account_basis_stale") is True, (
+            "GET / with the last success 130 s old must still carry the stale flag."
+        )
+
+
+class TestFrozenBranchStaleFlagIsOutsideTheLiveGrace:
+    """After the close the stale flag belongs to the frozen-branch rules, not to
+    the live 90 s grace: a masked cache with a recent success stays flagged."""
+
+    def test_frozen_branch_flags_masked_cache_even_when_last_success_is_40s_old(
+        self, monkeypatch, composer_total_stats, monotonic_clock, captured_symphony_entry
+    ):
+        import app as app_module
+        import database
+
+        monkeypatch.setattr(real_analytics, "DB_FILE", os.environ["DB_PATH"])
+        monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen")
+        trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
+        sym_id = "iaSOOUsmnCJHiZvbrWfs"
+        state = database.load_state() or {}
+        state["last_market_close_snapshot"] = {
+            "trading_day": trading_day,
+            "captured_at_et": "16:00:01 ET",
+            "shadow_divergence": {"by_symphony": {}, "portfolio_today": None},
+            "accounts_map": {
+                captured_symphony_entry["account"]: [{"id": sym_id, **captured_symphony_entry}]
+            },
+        }
+        database.save_state(state)
+        _refresh_succeeds(app_module, composer_total_stats)
+        monotonic_clock.advance(40.0)
+        app_module._account_totals_cache.mark_stale()
+        app_module.app.config["TESTING"] = True
+
+        with app_module.app.test_client() as client:
+            resp = client.get("/api/state")
+
+        assert resp.status_code == 200
+        strip = resp.get_json()["portfolio_strip"]
+        assert strip.get("account_basis_stale") is True, (
+            "The frozen branch's stale flag follows its own rules (masked cache falling "
+            "back to last-good); the live 90 s grace must not apply after the close."
+        )
+        assert isinstance(strip.get("account_basis_as_of"), str)
