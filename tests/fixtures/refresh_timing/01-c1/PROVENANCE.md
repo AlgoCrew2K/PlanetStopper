@@ -53,3 +53,11 @@ Written by cycle 1's RED (test-writer). Each is a stored `bot_state` row text, g
 R4 and R5 are derived from R2, not from R1 as the approach's record list words it: R1-based copies would add two more 275 KB records for no extra case, because every engine case already nests or flattens the same way whatever the input's depth (the nested input is exercised by R1 itself in S-1.1 and S-1.9).
 
 The engine runs these records with `date` set to the close day by the test (the engine's first tick of the day writes it; without it the new-day wipe would run at 16:02). That is test-time input shaping, not a stored record.
+
+## Golden
+
+| File | Case it covers | Source | Producer | Scenarios | sha256 | PM sign-off |
+|---|---|---|---|---|---|---|
+| `golden_ref_eod_snapshot.json` | what the reference engine's EOD step leaves behind on R1's inputs, apart from the account map's content | R1 with `date` set to the close day `2026-10-23` | the engine at base `3be84137` (blob identical to `37c8e983`'s), `main()` at 2026-10-23 16:02 ET, run through the harness of `tests/engine/test_close_snapshot_builder.py` | S-1.9 | `f13bb1b7b83e17d7aa8ed8585f977d632b8dc7089e76f12cd780c59c15796473` | pending |
+
+The file's `_provenance` object records the input, the extraction and the command. The ref's account map is excluded because it holds the nested chain (S-1.1 recomputes the map from the stored entries). Its `portfolio_strip` is mostly null or zero: the temporary database holds only the close day's shadow rows, so cumulative and max-drawdown have no history; the golden still proves the builder change moves no other field.
