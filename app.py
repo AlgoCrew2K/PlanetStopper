@@ -2367,7 +2367,11 @@ def _compute_portfolio_strip(
         # window are the windowed hero metric + its honest label.
         try:
             _default = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=_DEFAULT_HERO_WINDOW, conn=conn
+                symphonies_list,
+                bot_state,
+                window=_DEFAULT_HERO_WINDOW,
+                trading_day=trading_day,
+                conn=conn,
             )
             if isinstance(_default, dict):
                 _ga = _default.get("guard_alpha")
@@ -2508,6 +2512,17 @@ def sse_events():
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     return response
+
+
+def _et_trading_day_bounds(now_et: datetime) -> tuple[str, str]:
+    """Return (ET date, UTC instant of that ET midnight) for one request instant.
+
+    The trigger table stores UTC timestamps, so "today's" lower bound is ET midnight
+    converted to UTC (04:00Z or 05:00Z by DST), not the ET date with a UTC midnight.
+    """
+    et_midnight = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
+    utc_start = et_midnight.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return now_et.strftime("%Y-%m-%d"), utc_start
 
 
 @app.route("/api/state")
@@ -3095,7 +3110,7 @@ def get_state():
         # No live state — return waiting with market_state context and notice on fresh deploy.
         # AC-DM.3.4: closed + no snapshot + empty state → notice fields included in waiting.
         if not state_data:
-            today_str = datetime.now().strftime("%Y-%m-%d")
+            today_str, _ = _et_trading_day_bounds(datetime.now(_ET))
             try:
                 shadow_divergence = database.get_shadow_divergence(today_str)
             except Exception:
@@ -3261,7 +3276,7 @@ def get_state():
         # Build symphonies list for M1 analytics helpers from bot_state.
         # Fields derived: last_percent_change from current_return/100, value from current_value.
         # Composer CR/MDD fields use None default so missing data is distinguishable from 0.0.
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str, today_start = _et_trading_day_bounds(datetime.now(_ET))
         symphonies_list = []
         for k in symphony_keys:
             s = state_data[k]
@@ -3287,7 +3302,6 @@ def get_state():
             # added in the original cycle before the F4 design pivot).
 
         # Attach last_trigger (today's most-recent) to each symphony for the Status sub-line.
-        today_start = datetime.now().strftime("%Y-%m-%d") + "T00:00:00Z"
         try:
             today_triggers = database.get_triggers(since=today_start, limit=500)
             last_trigger_by_sym = {}

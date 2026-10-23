@@ -677,17 +677,14 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
     fresh-entry boundary and does not record intraday position rotation). This is
     a deliberate, documented limitation — deterministic, not a heuristic.
 
-    Result is cached per (symphony_id, today, db_file, resolved_epoch) in
+    Result is cached per (symphony_id, db_file, resolved_epoch, newest_ts_utc) in
     database._shadow_cr_cache; the resolved epoch is part of the key so a
     trajectory cached for an earlier epoch is never served for a later one.
     Invalidated on new row write (record_shadow_observation).
     """
     import sqlite3
-    from datetime import datetime as _dt
 
     import database as _db
-
-    today = _dt.now(UTC).strftime("%Y-%m-%d")
 
     try:
         conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
@@ -706,11 +703,17 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
             has_epoch_column = False
             current_epoch = None
 
+        # The newest row's timestamp makes a write from any connection change the
+        # key, so a stale trajectory is never served after a new row lands.
+        newest_row = conn.execute(
+            "SELECT MAX(ts_utc) FROM shadow_history WHERE symphony_id = ?",
+            (symphony_id,),
+        ).fetchone()
         cache_key = (
             symphony_id,
-            today,
             db_file,
             current_epoch if has_epoch_column else _LEGACY_NO_EPOCH_COLUMN,
+            newest_row[0] if newest_row is not None else None,
         )
         cached = _db._shadow_cr_cache.get(cache_key)
         if cached is not None:
@@ -752,6 +755,9 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
         return None
 
     result = [float(r[1]) for r in rows]
+    # One entry per symphony: drop older keys before storing the current one.
+    for stale_key in [k for k in _db._shadow_cr_cache if k[0] == symphony_id]:
+        del _db._shadow_cr_cache[stale_key]
     _db._shadow_cr_cache[cache_key] = result  # type: ignore[assignment]
     return result
 
@@ -2125,6 +2131,7 @@ def compute_windowed_portfolio_strip(
     bot_state: dict,
     *,
     window: object,
+    trading_day: str | None = None,
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict:
@@ -2177,7 +2184,9 @@ def compute_windowed_portfolio_strip(
     # which the live route supplies but a minimal caller may omit; degrade to a null
     # strip entry rather than failing the whole windowed strip.
     try:
-        tc = get_portfolio_today_change(symphonies, bot_state, db_path=_db_file, conn=conn)
+        tc = get_portfolio_today_change(
+            symphonies, bot_state, trading_day=trading_day, db_path=_db_file, conn=conn
+        )
     except (KeyError, TypeError, ValueError):
         tc = {"dry_run": None, "if_held": None}
 
