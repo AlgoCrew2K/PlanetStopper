@@ -495,8 +495,8 @@ def test_accepted_dismissal_posts_with_the_csrf_header_and_hides_the_banner(app_
     )
     step = run["steps"][0]
     posts = _dismiss_posts(step)
-    assert len(posts) >= 1, "Dismiss sent no POST"
-    assert all(_header(p, "X-CSRF-Token") == _TOKEN for p in posts), posts
+    assert len(posts) == 1, f"one Dismiss click must send exactly one POST, saw {len(posts)}"
+    assert _header(posts[0], "X-CSRF-Token") == _TOKEN, posts
     assert step["obs"]["fleet"]["hidden"] is True
     assert step["obs"]["fleet"]["noticeHidden"] is True
 
@@ -622,7 +622,8 @@ def test_dismiss_without_a_token_still_sends_the_header_and_the_refusal_is_shown
     )
     step = run["steps"][0]
     posts = _dismiss_posts(step)
-    assert posts and all(_header(p, "X-CSRF-Token") == "" for p in posts), posts
+    assert len(posts) == 1, f"one Dismiss click must send exactly one POST, saw {len(posts)}"
+    assert _header(posts[0], "X-CSRF-Token") == "", posts
     assert step["obs"]["fleet"]["hidden"] is False
     assert step["obs"]["fleet"]["noticeHidden"] is False
 
