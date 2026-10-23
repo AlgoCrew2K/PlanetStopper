@@ -601,6 +601,42 @@ _account_totals_timeout_count = 0
 # ET-format timestamp string used for account_basis_as_of / _account_totals_last_success_at
 # across _refresh_account_totals and both the live and frozen stale-cache fallback paths.
 _ACCOUNT_BASIS_TS_FMT = "%Y-%m-%d %H:%M:%S ET"
+# Monotonic-clock twin of _account_totals_last_success_at, used for the grace age
+# (immune to wall-clock steps). Set only after a refresh fully succeeded.
+_monotonic = time.monotonic
+_account_totals_last_success_mono: float | None = None
+# Seconds a successful account fetch keeps serving as current on the live branch
+# before the stale chip shows: covers one missed 60 s cycle plus jitter.
+_ACCOUNT_BASIS_STALE_AFTER_S = 90
+# One account refresh in flight at a time (non-blocking slot, freed in the thread's finally).
+_ACCOUNT_REFRESH_FLIGHT = threading.Lock()
+
+
+def _account_basis_past_grace() -> bool:
+    """True when no refresh has succeeded in this process or the last one is >= the grace old."""
+    stamp = _account_totals_last_success_mono
+    return stamp is None or _monotonic() - stamp >= _ACCOUNT_BASIS_STALE_AFTER_S
+
+
+def _start_account_refresh(reason: str) -> bool:
+    """Run _refresh_account_totals on a daemon thread unless one is already in flight."""
+    if not _ACCOUNT_REFRESH_FLIGHT.acquire(blocking=False):
+        _daemon_log.info("account refresh (%s) not started: a refresh is already in flight", reason)
+        return False
+
+    def _body() -> None:
+        try:
+            _refresh_account_totals()
+        finally:
+            _ACCOUNT_REFRESH_FLIGHT.release()
+
+    try:
+        threading.Thread(target=_body, name=f"account-refresh-{reason}", daemon=True).start()
+    except BaseException:
+        _ACCOUNT_REFRESH_FLIGHT.release()
+        raise
+    return True
+
 
 # SSE client registry — one Queue per connected /api/events client.
 # _notify_cycle_complete() fans out a sentinel to each queue under the lock.
@@ -821,6 +857,7 @@ def _refresh_account_totals() -> None:
     Auth pattern mirrors alpha_bot_execution.get_composer_headers().
     """
     global _account_totals_last_good, _account_totals_last_success_at, _account_totals_timeout_count
+    global _account_totals_last_success_mono
     try:
         env_vars = dotenv_values(ENV_FILE_PATH)
         key_id = env_vars.get("COMPOSER_KEY_ID") or os.environ.get("COMPOSER_KEY_ID", "")
@@ -876,6 +913,7 @@ def _refresh_account_totals() -> None:
                 _account_totals_last_good = dict(_account_totals_cache)
             # Advance the as-of timestamp only after all writes completed without error.
             _account_totals_last_success_at = datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT)
+            _account_totals_last_success_mono = _monotonic()
         else:
             _daemon_log.warning(
                 "_refresh_account_totals: Composer returned %s — cache unchanged",
@@ -2347,7 +2385,7 @@ def _compute_portfolio_strip(
         # Tier 1 stale stamps: using last-good account totals for either field. Falls
         # back to a fresh ET timestamp string when _account_totals_last_success_at was
         # never set by a real refresh (mirrors the frozen path's fallback).
-        if _live_basis_stale:
+        if _live_basis_stale and _account_basis_past_grace():
             _strip["account_basis_stale"] = True
             _strip["account_basis_as_of"] = _account_totals_last_success_at or datetime.now(
                 _ET
@@ -9011,6 +9049,9 @@ if __name__ == "__main__":
     from alpha_bot_execution import ensure_bot_state_seeded  # noqa: PLC0415
 
     ensure_bot_state_seeded()
+
+    # Fill the account totals off-thread so the first polls are not value-weighted.
+    _start_account_refresh("startup")
 
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
