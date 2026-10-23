@@ -464,7 +464,13 @@ def gated_client(monkeypatch):
     app_module._AUTH_FAILED_ATTEMPTS.clear()
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
-        login = c.post("/login", data={"password": _GATE_PASSWORD}, follow_redirects=False)
+        token = c.get("/api/csrf-token").get_json()["csrf_token"]
+        login = c.post(
+            "/login",
+            data={"password": _GATE_PASSWORD},
+            headers={"X-CSRF-Token": token},
+            follow_redirects=False,
+        )
         assert login.status_code == 302
         yield c
     app_module._AUTH_FAILED_ATTEMPTS.clear()

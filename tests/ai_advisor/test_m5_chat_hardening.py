@@ -1858,12 +1858,13 @@ class TestChatSendFailedRequest:
         )
         assert named, f"unexpected chat failure message {data['error']!r}"
         assert named.group(1).endswith("Error")
-        # What the SDK puts in an exception's text: the status line, the API's message and the
-        # request ID (the API's message can be a word the class name also contains, so the status
-        # line and the ID are the checks that cannot collide).
+        # What the SDK puts in an exception's text: the status line and the request ID, plus the
+        # API's message where it is not a word the class name also contains (a 529's "Overloaded"
+        # is part of "OverloadedError"; the 400's message is a sentence).
         if isinstance(outcome, dict):
             exception_texts = ["Error code", outcome["body"]["request_id"]]
-            exception_texts.append(outcome["body"]["error"]["message"])
+            if outcome["status"] == 400:
+                exception_texts.append(outcome["body"]["error"]["message"])
         else:
             exception_texts = [str(outcome)]
         assert_names_no_model_or_exception_text(data["error"], *exception_texts)
