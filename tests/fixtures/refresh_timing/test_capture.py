@@ -404,15 +404,16 @@ class TestGetRecorder:
         capture.record_get(stub_server, "/page", tmp_path, name="shot", overwrite=True)
 
     def test_a_non_loopback_host_is_refused_before_any_connection(self, capture, tmp_path):
+        out = tmp_path / "out"
         with pytest.raises(capture.CaptureError) as excinfo:
-            capture.record_get("http://production.example.invalid", "/api/state", tmp_path)
+            capture.record_get("http://production.example.invalid", "/api/state", out)
         assert "loopback" in str(excinfo.value)
-        assert list(tmp_path.iterdir()) == []
+        assert not out.exists()
 
-    @pytest.mark.parametrize("base_url", ["ftp://127.0.0.1", "127.0.0.1:5000", "http://"])
-    def test_a_base_url_that_is_not_http_with_a_host_is_refused(self, capture, tmp_path, base_url):
+    @pytest.mark.parametrize("bad_url", ["ftp://127.0.0.1", "127.0.0.1:5000", "http://"])
+    def test_a_base_url_that_is_not_http_with_a_host_is_refused(self, capture, tmp_path, bad_url):
         with pytest.raises(capture.CaptureError):
-            capture.record_get(base_url, "/x", tmp_path)
+            capture.record_get(bad_url, "/x", tmp_path)
 
     def test_a_path_without_a_leading_slash_is_refused(self, capture, stub_server, tmp_path):
         with pytest.raises(capture.CaptureError):
