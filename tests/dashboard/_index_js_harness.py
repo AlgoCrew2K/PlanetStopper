@@ -468,7 +468,14 @@ def _build_world(name: str) -> dict:
 
         _app_module.app.config["TESTING"] = True
         client = _app_module.app.test_client()
-        world = _capture(client, spec.get("frozen_today"))
+        # The rows are seeded by the host-local date (/api/chart reads local "today") but the
+        # calendar windows cut by the UTC date, and the two dates differ for part of every
+        # day on a host away from UTC. Every capture is therefore taken as if the UTC date
+        # were the seeded day, and ``seeded_now_iso`` pins the page's clock to that same day,
+        # so the series, the captures and the script share one date at every hour.
+        seeded_today = spec.get("frozen_today") or _dt_mod.date.fromisoformat(today)
+        world = _capture(client, seeded_today)
+        world["seeded_today"] = seeded_today.isoformat()
         world["spec_name"] = name
         world["ids"] = list(SYMPHONY_IDS)
         world["bot_state"] = bot_state
@@ -491,7 +498,7 @@ def _build_world(name: str) -> dict:
                     post,
                 )
             _seed_tape(database, bot_state, set(), _TAPE_MINUTES + 1, today)
-            world["next"] = _capture(client, None)
+            world["next"] = _capture(client, seeded_today)
             world["next"].pop("html")
     finally:
         patch.undo()
@@ -571,8 +578,14 @@ def run_scenario(
     return result
 
 
-def utc_now_iso() -> str:
-    return _dt_mod.datetime.now(_dt_mod.UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+def seeded_now_iso(world: dict) -> str:
+    """A UTC instant on the day the world's rows were seeded for, for ``now_iso``.
+
+    The calendar cutoffs take the UTC date and a world is seeded by the host-local date.
+    Pinning the page's clock to the seeded day (``_build_world`` captures as of that day too)
+    keeps both on one date at every hour, where the real UTC now is a day past the newest row
+    for part of each evening west of UTC."""
+    return f"{world['seeded_today']}T12:00:00.000Z"
 
 
 def window_cutoff_iso(token: str, today: _dt_mod.date | None = None) -> str | None:

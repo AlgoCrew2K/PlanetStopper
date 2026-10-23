@@ -220,6 +220,43 @@ class TestRefreshKeepsDrawnCharts:
         _hero_matches_body(r["after"], world["next"]["hero"][token])
         assert r["after"]["chartId"] == r["before"]["chartId"] and r["after"]["destroys"] == 0
 
+    @pytest.mark.parametrize(
+        "token,answered",
+        [("30d", True), ("all", True), ("30d", False), ("1y", False)],
+        ids=[
+            "30d route answer",
+            "all route answer",
+            "30d poll series fallback",
+            "1y poll series fallback",
+        ],
+    )
+    def test_a_poll_that_changes_the_hero_series_updates_the_hero_without_replaying_the_entry_animation(
+        self, token, answered
+    ):
+        world = hx.get_world("default")
+        scenario = r"""
+        await H.boot({});
+        if ('%(t)s' !== '30d') { await H.click('[data-testid="window-%(t)s"]'); await H.completeAnimations(); }
+        const before = H.summary()['cum-chart'];
+        if (%(answered)s) {
+          H.route(/^\/api\/hero-chart\/([a-z0-9]+)$/, function (url, o, m) { return { body: H.bodies.heroNext[m[1]] }; });
+        } else {
+          H.route(/^\/api\/hero-chart\//, { reject: true });
+        }
+        H.route('/api/state', { body: H.bodies.stateNext });
+        await H.tick(); await H.completeAnimations();
+        return { before: before, after: H.summary()['cum-chart'] };
+        """ % {"t": token, "answered": "true" if answered else "false"}
+        r = _run(scenario, now_iso=hx.seeded_now_iso(world))
+        before, after = r["before"], r["after"]
+        assert after["labels"] != before["labels"], "fixture sanity: the poll changed the hero data"
+        assert after["chartId"] == before["chartId"] and after["constructs"] == 1
+        assert len(after["updates"]) > len(before["updates"]), "the changed series was applied"
+        assert set(after["updates"]) == {"none"}, (
+            "a refresh that changes the hero data must update it in place with no animation: "
+            f"{after['updates']}"
+        )
+
     def test_an_empty_hero_chart_response_keeps_the_drawn_series(self):
         # the route's own exception-path body (app.py get_hero_chart fallback return)
         empty_body = {
@@ -396,7 +433,7 @@ class TestRefreshShowsTheSelectedCalendarWindow:
         """
             % token
         )
-        now = hx.utc_now_iso()
+        now = hx.seeded_now_iso(world)
         r = _run(scenario, now_iso=now)
         dates, bot, held = hx.poll_hist(world["next"]["state"])
         cutoff = hx.window_cutoff_iso(token, dt.date.fromisoformat(now[:10]))
@@ -417,6 +454,114 @@ class TestRefreshShowsTheSelectedCalendarWindow:
             hx.assert_series_close(
                 hero["datasets"][0]["data"], body["hist_bot"], 2e-3, "bot vs route"
             )
+
+    @pytest.mark.parametrize("failure", ["unreachable", "error status"])
+    @pytest.mark.parametrize("token", ["60d", "1y"])
+    def test_a_window_picked_before_the_first_poll_with_its_request_failing_shows_that_window_once_the_poll_lands(
+        self, token, failure
+    ):
+        world = hx.get_world("default")
+        label = {"60d": "60d", "1y": "1Y"}[token]
+        refusal = (
+            "{ reject: true }"
+            if failure == "unreachable"
+            else "{ status: 401, body: { error: 'unauthenticated' } }"
+        )
+        scenario = r"""
+        await H.boot({ statePending: true });
+        H.route(/^\/api\/hero-chart\//, %s);
+        await H.click('[data-testid="window-%s"]'); await H.completeAnimations();
+        const beforePoll = H.summary()['cum-chart'];
+        const pollsHeld = H.pending.filter(function (p) { return p.url === '/api/state' && !p.done; }).length;
+        await H.releasePending('/api/state', { body: H.bodies.state });
+        await H.completeAnimations();
+        return { beforePoll: beforePoll, pollsHeld: pollsHeld, hero: H.summary()['cum-chart'],
+                 label: H.el('#guard-alpha-window-label').text };
+        """ % (refusal, token)
+        now = hx.seeded_now_iso(world)
+        r = _run(scenario, now_iso=now)
+        dates, bot, held = hx.poll_hist(world["state"])
+        cutoff = hx.window_cutoff_iso(token, dt.date.fromisoformat(now[:10]))
+        exp_dates, exp_bot = hx.rebase_to_window(dates, bot, cutoff)
+        _, exp_held = hx.rebase_to_window(dates, held, cutoff)
+        assert r["pollsHeld"] >= 1, "the first poll had not landed when the window was picked"
+        assert r["beforePoll"]["labels"] != exp_dates, (
+            "fixture sanity: the series drawn before the poll is not already the picked window"
+        )
+        hero = r["hero"]
+        assert r["label"] == label
+        assert hero["live"]
+        assert hero["labels"] == exp_dates, (
+            f"{token} picked with no poll yet and the window request failing ({failure}): once the "
+            f"poll lands the hero must hold the poll's points dated on or after {cutoff}, not "
+            f"the {len(r['beforePoll']['labels'])} points it was drawn with"
+        )
+        hx.assert_series_close(hero["datasets"][0]["data"], exp_bot, 1e-6, "bot line")
+        hx.assert_series_close(hero["datasets"][1]["data"], exp_held, 1e-6, "held line")
+        assert hero["constructs"] == 1 and hero["destroys"] == 0, (
+            "the hero chart is updated in place"
+        )
+
+    def test_a_window_picked_before_the_first_poll_keeps_the_series_its_request_returned(self):
+        world = hx.get_world("default")
+        scenario = r"""
+        await H.boot({ statePending: true });
+        await H.click('[data-testid="window-1y"]'); await H.completeAnimations();
+        const afterClick = H.summary()['cum-chart'];
+        await H.releasePending('/api/state', { body: H.bodies.state });
+        await H.completeAnimations();
+        return { afterClick: afterClick, afterPoll: H.summary()['cum-chart'],
+                 label: H.el('#guard-alpha-window-label').text };
+        """
+        r = _run(scenario)
+        body = world["hero"]["1y"]
+        assert len(hx.poll_hist(world["state"])[0]) < len(body["hist_dates"]), (
+            "the world must hold more history than a poll carries, or this test proves nothing"
+        )
+        _hero_matches_body(r["afterClick"], body)
+        _hero_matches_body(r["afterPoll"], body)
+        assert r["label"] == "1Y"
+
+    @pytest.mark.parametrize(
+        "status,body_key",
+        [(401, None), (500, None), (503, "60d")],
+        ids=["unauthenticated", "server error", "error status carrying a series"],
+    )
+    def test_a_window_request_answered_with_an_error_status_falls_back_to_the_poll_series_window(
+        self, status, body_key
+    ):
+        world = hx.get_world("default")
+        # A non-2xx answer is never drawn, whatever its body holds: the 503 case carries a real
+        # series for a window other than the picked one.
+        error_body = {"error": "unauthenticated"} if body_key is None else world["hero"][body_key]
+        scenario = (
+            r"""
+        await H.boot({});
+        const before = H.summary()['cum-chart'];
+        H.route(/^\/api\/hero-chart\//, { status: %d, body: H.bodies.errorBody });
+        await H.click('[data-testid="window-1y"]'); await H.completeAnimations();
+        return { before: before, hero: H.summary()['cum-chart'], label: H.el('#guard-alpha-window-label').text };
+        """
+            % status
+        )
+        now = hx.seeded_now_iso(world)
+        r = _run(scenario, extra_bodies={"errorBody": error_body}, now_iso=now)
+        dates, bot, held = hx.poll_hist(world["state"])
+        cutoff = hx.window_cutoff_iso("1y", dt.date.fromisoformat(now[:10]))
+        exp_dates, exp_bot = hx.rebase_to_window(dates, bot, cutoff)
+        _, exp_held = hx.rebase_to_window(dates, held, cutoff)
+        assert r["before"]["labels"] != exp_dates, (
+            "fixture sanity: the series drawn before the click is not already the 1Y window"
+        )
+        hero = r["hero"]
+        assert r["label"] == "1Y"
+        assert hero["labels"] == exp_dates, (
+            f"a {status} answer must take the same fallback as an unreachable route: the "
+            f"poll's points dated on or after {cutoff}"
+        )
+        hx.assert_series_close(hero["datasets"][0]["data"], exp_bot, 1e-6, "bot line")
+        hx.assert_series_close(hero["datasets"][1]["data"], exp_held, 1e-6, "held line")
+        assert hero["constructs"] == 1 and hero["destroys"] == 0
 
     @pytest.mark.parametrize("order", [["1y", "30d"], ["30d", "1y"]])
     def test_the_last_click_wins_whatever_order_the_responses_arrive_in(self, order):
@@ -538,7 +683,7 @@ class TestFallbackCaptionDescribesTheDrawnSeries:
         await H.click('[data-testid="window-30d"]'); await H.completeAnimations();
         return { before: captionAfterResponse, after: H.el('#hero-chart-na'), hero: H.summary()['cum-chart'] };
         """
-        now = hx.utc_now_iso()
+        now = hx.seeded_now_iso(world)
         r = _run(scenario, extra_bodies={"limitedOneYear": limited_one_year}, now_iso=now)
         today = dt.date.fromisoformat(now[:10])
         dates, bot, _ = hx.poll_hist(world["state"])
@@ -569,7 +714,7 @@ class TestFallbackCaptionDescribesTheDrawnSeries:
         """
             % token
         )
-        now = hx.utc_now_iso()
+        now = hx.seeded_now_iso(world)
         r = _run(scenario, now_iso=now)
         today = dt.date.fromisoformat(now[:10])
         dates, bot, _ = hx.poll_hist(world["state"])
@@ -593,7 +738,7 @@ class TestFallbackCaptionDescribesTheDrawnSeries:
         await H.click('[data-testid="window-all"]'); await H.completeAnimations();
         return { after: H.el('#hero-chart-na'), hero: H.summary()['cum-chart'] };
         """
-        now = hx.utc_now_iso()
+        now = hx.seeded_now_iso(world)
         r = _run(scenario, "mixed", now_iso=now)
         dates, bot, _ = hx.poll_hist(world["state"])
         assert not _caption_expected("all", dates, dt.date.fromisoformat(now[:10])), (

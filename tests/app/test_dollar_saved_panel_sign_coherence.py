@@ -228,7 +228,7 @@ class TestHeroFallbackWindowsAreCalendarWindows:
         from tests.dashboard import _index_js_harness as hx
 
         world = hx.get_world("default")
-        now = hx.utc_now_iso()
+        now = hx.seeded_now_iso(world)
         cutoff = hx.window_cutoff_iso(token, dt.date.fromisoformat(now[:10]))
         dates, bot, _held = hx.poll_hist(world["state"])
         expected_dates, expected_bot = hx.rebase_to_window(dates, bot, cutoff)
