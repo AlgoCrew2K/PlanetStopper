@@ -377,6 +377,22 @@ def save_state(state_dict):
     conn.close()
 
 
+_SNAPSHOT_REPAIR_LOCK_WAIT_S = 0.0  # import stub; the implementer sets the real wait
+_SNAPSHOT_REPAIR_DB_TIMEOUT_S = 0.0  # import stub; the implementer sets the real timeout
+
+
+def _snapshot_repair_backup_path() -> str:  # import stub
+    raise NotImplementedError("Not implemented")
+
+
+def _flatten_close_snapshot(state: dict) -> tuple[dict, int]:  # import stub
+    raise NotImplementedError("Not implemented")
+
+
+def repair_close_snapshot_chain() -> str:  # import stub: trivially wrong outcome token
+    return "not_implemented"
+
+
 _WIPE_RESERVED_KEYS = {"date", "last_execution_mode", "last_market_close_snapshot"}
 
 

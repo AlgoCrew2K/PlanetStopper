@@ -41,4 +41,15 @@ Values above describe the record's shape. No test asserts them; a test derives i
 
 ## Derived records
 
-None in this folder from this batch. R2 to R5 and the EOD golden are written by cycle 1's RED, each with its own row.
+Written by cycle 1's RED (test-writer). Each is a stored `bot_state` row text, gzipped without a file name or time (`gzip.compress(text, compresslevel=9, mtime=0)`), written as `json.dumps(obj)` of the edited parse, which reproduces the captured bytes exactly when nothing is edited (R1 round-trips). The derivation is re-checked on every run by `tests/database/test_close_snapshot_repair.py::TestCapturedRecordIsUsable::test_derived_records_equal_their_recorded_derivation`, which recomputes each record from R1 and the repository's fleet-alert shape file. Held until the PM's sign-off as producer owner is recorded: each row below reads "sign-off: pending", and the coverage rows of the scenarios that use the record stay `held`.
+
+| File | Case it covers | Source record | Changed fields | Reason | Scenarios | sha256 of the file | PM sign-off |
+|---|---|---|---|---|---|---|---|
+| `flat_bot_state_row.json.gz` (R2) | a stored state whose close snapshot is flat (the repaired form) | R1 `nested_bot_state_row.json.gz` | removes `last_market_close_snapshot.accounts_map["Unknown"]` (a one-entry list holding the phantom previous snapshot; the only entry under that key); nothing else | the repaired row the repair must produce, byte for byte, and the input of every flat-in case | S-1.2 (expected row), S-1.7, S-1.11, S-1.14, S-1.15, S-1.16 | `705e8872cac5587ab74faf3a32b7fb304b3dcabdfc74add14db36206c8ab1720` | pending |
+| `no_snapshot_bot_state_row.json.gz` (R3) | a stored state with no close snapshot | R1 | removes the top-level key `last_market_close_snapshot`; nothing else | the repair must leave such a row untouched | S-1.6 | `0c438f7931a7187c6d3a4dae4e563a1eb3fe851450f619a514363abcfdf841ce` | pending |
+| `symphony_without_account_bot_state_row.json.gz` (R4) | a real symphony entry with no `account` field | R2 (R1 with the phantom removed, so the snapshot is flat) | removes the `account` key of the first symphony entry in key order, `iaSOOUsmnCJHiZvbrWfs`; nothing else | the builder keeps a symphony with no account, under `Unknown` | S-1.4 | `3cfa38e481b2b55a09244381980eb4c6b3882f5355c1ba28de4a74b81eacd4a6` | pending |
+| `dict_without_name_bot_state_row.json.gz` (R5) | a dict-valued top-level key with no `name` | R2 | appends the top-level key `fleet_correlation_alert` with the `example` object of `tests/fixtures/engine/fleet_correlation/alert_state_shape.json` | the builder must not list a non-symphony dict as a symphony | S-1.5 | `43b9f8cfa5abb6228dad5f93d384bd439a6f9797a1d46094c1b9dd9887c5bfff` | pending |
+
+R4 and R5 are derived from R2, not from R1 as the approach's record list words it: R1-based copies would add two more 275 KB records for no extra case, because every engine case already nests or flattens the same way whatever the input's depth (the nested input is exercised by R1 itself in S-1.1 and S-1.9).
+
+The engine runs these records with `date` set to the close day by the test (the engine's first tick of the day writes it; without it the new-day wipe would run at 16:02). That is test-time input shaping, not a stored record.
