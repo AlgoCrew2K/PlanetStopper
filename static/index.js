@@ -14,6 +14,7 @@
     var _heroWindow = '30d';
     var _pollSeries = null;   // the latest poll's dated hero series (fallback source)
     var _pollTail = null;     // what the last poll's series ended with (change detection)
+    var _heroDrawnWindow = '30d';  // window the hero holds; the server render is the 30d series
     var _heroRequestSeq = 0;  // only the latest hero-window request may draw
     var _sparkMarkers = {};   // symphony id -> exit-marker fields, read at draw time
     var _refreshCount = 0;
@@ -203,15 +204,20 @@
             hist_bot: rebase(_pollSeries.bot),
             hist_held: rebase(_pollSeries.held)
         });
+        _heroDrawnWindow = token;
     }
 
     // Draws the answer to a /api/hero-chart request; only the latest request may draw.
     function drawHeroWindow(token, request) {
         var seq = ++_heroRequestSeq;
         request
-            .then(function (r) { return r.json(); })
+            .then(function (r) {
+                if (!r.ok) throw new Error('hero-chart');  // a non-2xx body is never drawn
+                return r.json();
+            })
             .then(function (d) {
                 if (seq !== _heroRequestSeq) return;
+                _heroDrawnWindow = token;
                 var naEl = document.getElementById('hero-chart-na');
                 // Always plot whatever data is available; caption when history is shorter than the window.
                 if (naEl) naEl.style.display = d.insufficient_history ? 'block' : 'none';
@@ -247,6 +253,8 @@
         });
         _pollTail = tail;
         if (changed) requestHeroWindow(_heroWindow);
+        // A pick made before the first poll whose request failed: show it from the poll series.
+        else if (_heroDrawnWindow !== _heroWindow) applyHeroFallback(_heroWindow);
     }
 
     // ---------------------------------------------------------------------------
