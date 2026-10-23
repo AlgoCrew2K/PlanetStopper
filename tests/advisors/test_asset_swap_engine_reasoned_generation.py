@@ -512,7 +512,9 @@ class TestGeneratorAttemptsAndStops:
         assert _generate(ase) == []
 
         assert len(swap_fake.message_requests) == 3, "self-guard: all three attempts were sent"
-        assert swap_fake.listing_sequences == 1, "one listing sequence per run, never one per attempt"
+        assert swap_fake.listing_sequences == 1, (
+            "one listing sequence per run, never one per attempt"
+        )
 
     def test_a_refusal_after_a_complete_tool_call_still_yields_no_candidate(self, ase, swap_fake):
         swap_fake.queue_message(load_fixture("messages/refusal_after_partial_tool.json"))
