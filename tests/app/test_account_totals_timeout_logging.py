@@ -131,7 +131,8 @@ def test_read_timeout_log_line_identifies_itself_as_a_timeout(monkeypatch, caplo
 def test_connection_error_keeps_full_traceback(monkeypatch, caplog):
     """requests.exceptions.ConnectionError is a Composer-reachability failure
     but NOT a read-timeout — it must not be silently folded into the compact
-    timeout path (the plan's edge case: timeout-only match).
+    timeout path (the plan's edge case: timeout-only match). The traceback now sits on a
+    DEBUG detail record; the WARNING-or-higher line names the exception type only.
     """
     monkeypatch.setattr(
         app_module.requests,
@@ -152,7 +153,8 @@ def test_connection_error_keeps_full_traceback(monkeypatch, caplog):
 
 def test_unexpected_exception_keeps_full_traceback(monkeypatch, caplog):
     """An entirely unexpected exception type (not a requests exception at
-    all) must still hit the D-1 full-traceback branch, unchanged.
+    all) must still hit the D-1 full-traceback branch; the traceback now sits on a DEBUG
+    detail record, the WARNING-or-higher line names the exception type only.
     """
     monkeypatch.setattr(
         app_module.requests,

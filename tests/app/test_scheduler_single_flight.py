@@ -6,8 +6,8 @@
     ``trigger_alpha_bot(cycle_id=..., started_at=...)``.
   - When a run is already in flight it spawns nothing: it builds a ``CycleRecord`` with outcome
     "skipped" (``changed`` False, no exit code, ``running_cycle_id`` and ``running_since`` naming
-    the run in flight) and hands it to ``_publish_cycle``, which writes one WARNING on the
-    ``alphabot`` logger through ``_log_skipped_minute(record)`` and emits the event.
+    the run in flight) and hands it to ``_publish_cycle``, which writes the skipped form of the
+    cycle line on the timing logger through ``_log_skipped_minute(record)`` and emits the event.
   - ``trigger_alpha_bot``'s ``finally`` ends the run slot (``_end_engine_run(cycle_id)``) before it
     publishes, each in its own guard, so a publishing fault never leaves the slot taken.
   - Nothing kills an engine: a hung run is reported and each minute skipped until it exits.
@@ -87,7 +87,14 @@ class TestRunSlot:
 
 class TestSkippedMinute:
     def test_a_run_in_flight_skips_the_next_minute_logs_it_and_the_minute_after_spawns(
-        self, stub_engine, et_clock, published_cycles, join_engine_threads, caplog, monotonic_clock
+        self,
+        stub_engine,
+        et_clock,
+        published_cycles,
+        join_engine_threads,
+        caplog,
+        monotonic_clock,
+        timing_records,
     ):
         stub_engine.hold = True
         et_clock.now = et_clock.now.replace(minute=43, second=0)
@@ -97,6 +104,7 @@ class TestSkippedMinute:
         assert running is not None
 
         et_clock.now += timedelta(minutes=1)  # 10:44:00
+        monotonic_clock.advance(60.0)
         with caplog.at_level(logging.WARNING, logger="alphabot"):
             app_module.threaded_trigger()
 
@@ -115,11 +123,21 @@ class TestSkippedMinute:
             "outcome",
             "changed",
         }
-        lines = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-        (line,) = [m for m in lines if running.cycle_id in m]
-        assert skip.cycle_id in line, "the line names the skip's own id"
-        assert _iso(running.started_at) in line, "the line names the running cycle's start time"
-        assert "10:44" in line, "the line names the skipped minute"
+        (line,) = [
+            parsed
+            for parsed in timing_records.of("cycle")
+            if parsed.fields.get("running_cycle_id") == running.cycle_id
+        ]
+        assert line.fields["cycle_id"] == skip.cycle_id, "the line names the skip's own id"
+        assert line.fields["outcome"] == "skipped"
+        assert line.fields["running_since"] == _iso(running.started_at), (
+            "the line names the running cycle's start time"
+        )
+        assert line.fields["started_at"] == skip.started_at, "the line names the skipped minute"
+        assert line.fields["running_s"] == "60.0", "the line says how long the run has run"
+        assert [r for r in caplog.records if running.cycle_id in r.getMessage()] == [], (
+            "each skipped minute has exactly one line, the cycle line"
+        )
 
         stub_engine.release.set()
         assert join_engine_threads()

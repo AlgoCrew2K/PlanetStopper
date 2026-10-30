@@ -850,6 +850,61 @@ class TestD1ErrorDisclosure:
 
 
 # ===========================================================================
+# Timing lines: one per HTTP attempt, route template only
+# ===========================================================================
+
+
+class _TimedHttp:
+    """Wrap `_Http` so each call takes the next entry of `durations` on the timing clock."""
+
+    def __init__(self, http, clock, durations):
+        self._http, self._clock, self._durations = http, clock, list(durations)
+
+    def __call__(self, *args, **kwargs):
+        self._clock.advance(self._durations[len(self._http.calls)])
+        return self._http(*args, **kwargs)
+
+
+class TestComposerCallLatencyLines:
+    def _route_words(self, client_mod) -> tuple[str, ...]:
+        method, path = client_mod._ENDPOINT_LOG_NAME.split(" ", 1)  # noqa: SLF001
+        return (method, path)
+
+    def test_each_attempt_of_a_retried_fetch_logs_its_own_line(
+        self, client_mod, monkeypatch, timing_records, timing_clock
+    ):
+        http = _Http([_resp(503), requests.exceptions.ReadTimeout("t"), _good_resp()])
+        timed = _TimedHttp(http, timing_clock, [0.25, 30.0, 0.5])
+
+        res = _fetch(client_mod, timed, monkeypatch)
+
+        assert res.error is None
+        lines = timing_records.of("composer")
+        assert [line.words for line in lines] == [self._route_words(client_mod)] * 3
+        assert [line.fields for line in lines] == [
+            {"status": "503", "ms": "250"},
+            {"error": "ReadTimeout", "ms": "30000"},
+            {"status": "200", "ms": "500"},
+        ]
+
+    def test_the_route_is_the_template_and_no_id_key_or_token_reaches_a_line(
+        self, client_mod, monkeypatch, timing_records, timing_clock
+    ):
+        account, symphony = "880be47e-efe4-4b44-9d83-b6d86098fe0d", "iaSOOUsmnCJHiZvbrWfs"
+        http = _Http([_resp(401), requests.exceptions.ConnectionError(f"for {account}")])
+        timed = _TimedHttp(http, timing_clock, [0.125, 0.125])
+
+        _fetch(client_mod, timed, monkeypatch, account=account, symphony=symphony)
+
+        assert http.calls, "the fetch must reach Composer"
+        assert account in http.url and symphony in http.url, "the request URL carries both ids"
+        assert timing_records.of("composer"), "every attempt must be logged"
+        for text in timing_records.lines:
+            for secret in (account, symphony, _SECRET_KEY_ID, _SECRET_TOKEN, "Bearer"):
+                assert secret not in text, f"{secret!r} leaked into a timing line: {text!r}"
+
+
+# ===========================================================================
 # Property-based invariants (hypothesis)
 # ===========================================================================
 

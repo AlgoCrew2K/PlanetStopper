@@ -27,6 +27,7 @@ A database file is never committed, including the launcher's copy of production 
 |---|---|---|---|
 | `01-c1/` | server-state-truth, cycle 1 | R1 `nested_bot_state_row.json.gz` | captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; see `01-c1/PROVENANCE.md` |
 | `01-c2/` | server-state-truth, cycle 2 | R6 `shadow_rows_two_cycles.json`, R7 `exit_trigger_row.json` | captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; see `01-c2/PROVENANCE.md` (R6 is 2026-10-21, R7 is exit id 509 of 2026-10-22) |
+| `05-c2/` | observability-transport, cycle 2 | none copied; the 503 and timeout cases are derived at test time from `tests/fixtures/composer/v3-audit/total_stats.json` | derived, PM-5 sign-off recorded in the plan; see `05-c2/PROVENANCE.md` |
 
 Later cycles add their folder and a row here.
 
