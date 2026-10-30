@@ -34,6 +34,7 @@ import app as app_module
 import database
 from tests.ui._browser_server import running_server
 from tests.ui._settings_reference import overrides_label, reference_override_count
+from tests.ui.test_dashboard_charts_browser import firefox  # noqa: F401  (module-scoped fixture)
 
 pytestmark = pytest.mark.browser
 
@@ -130,23 +131,6 @@ def _json_get(server, path: str) -> dict:
 # ---------------------------------------------------------------------------
 # Browser plumbing
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def firefox():
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError as exc:
-        pytest.fail(f"Playwright is not installed on this host: {exc}")
-    with sync_playwright() as playwright:
-        try:
-            browser = playwright.firefox.launch(headless=True)
-        except Exception as exc:  # noqa: BLE001  (name what is missing; never skip)
-            pytest.fail(f"Playwright's Firefox could not be launched: {exc}")
-        try:
-            yield browser
-        finally:
-            browser.close()
 
 
 @pytest.fixture
