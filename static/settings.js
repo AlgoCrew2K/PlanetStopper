@@ -27,6 +27,44 @@
   let _pendingOverrides = {};  // { sym_id: { params: {}, locked_vars: [] } }
   let _selectedSym = null;
 
+  // ── Number reading and override counting ───────────────────────────────────
+  // parseFloat reads "1abc" as 1 and "0x10" as 0, and Number("") is 0, so neither
+  // may decide whether a typed value is a number. A decimal literal is the whole
+  // trimmed text: optional sign, digits with an optional point, optional exponent.
+  const DECIMAL_LITERAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+  /** The finite number a value reads as, or null when it is not a full decimal literal. */
+  function parseFiniteNumber(v) {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v !== 'string') return null;
+    const text = v.trim();
+    if (!DECIMAL_LITERAL.test(text)) return null;
+    const n = Number(text);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** Two values are equal when both read as the same number, else when they are the same text. */
+  function valuesEqual(stored, globalValue) {
+    if (stored == null || globalValue == null) return stored == globalValue;
+    const a = parseFiniteNumber(stored);
+    const b = parseFiniteNumber(globalValue);
+    if (a !== null && b !== null) return a === b;
+    return String(stored) === String(globalValue);
+  }
+
+  /** True when a stored value differs from its global, or the key has no global at all. */
+  function overridesGlobal(stored, globals, key) {
+    const has = Object.prototype.hasOwnProperty.call(globals, key) && globals[key] != null;
+    return !has || !valuesEqual(stored, globals[key]);
+  }
+
+  /** How many stored parameters differ from their global value. Never mutates its inputs. */
+  function countParamOverrides(params, globals) {
+    const stored = params || {};
+    const base = globals || {};
+    return Object.keys(stored).filter(key => overridesGlobal(stored[key], base, key)).length;
+  }
+
   /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
   let _csrfToken = null;
   document.addEventListener('DOMContentLoaded', function () {
@@ -71,8 +109,10 @@
       })
       .then(data => {
         _state = data;
-        renderAll(data);
+        // Pending edits are dropped before rendering: the detail pane reads them, so
+        // clearing afterwards would leave a discarded edit on screen.
         clearDirty();
+        renderAll(data);
       })
       .catch(() => {
         if (retryOnce !== false) {
@@ -359,22 +399,13 @@
     if (!_selectedSym) _selectedSym = symphonies[0].id;
 
     symphonies.forEach(sym => {
-      const ov = (data.symphony_overrides || {})[sym.id] || { params: {}, locked_vars: [] };
-      const overrideCount = Object.keys(ov.params || {}).length;
-      const lockedCount = (ov.locked_vars || []).length;
-
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sym-list-btn';
       btn.dataset.symId = sym.id;
       btn.innerHTML = `
         <div class="sym-list-name" title="${escHtml(sym.name)}">${escHtml(sym.name)}</div>
-        <div class="sym-list-meta">
-          ${overrideCount
-            ? `<span class="sym-has-override">&#9670; ${overrideCount} override${overrideCount > 1 ? 's' : ''}</span>`
-            : '<span class="sym-uses-globals">uses globals</span>'}
-          ${lockedCount ? `<span class="sym-locked-count">&middot; ${lockedCount} locked</span>` : ''}
-        </div>
+        <div class="sym-list-meta">${symListMetaHtml(getPendingOverride(sym.id, data), data.globals || {})}</div>
       `;
       btn.addEventListener('click', () => {
         _selectedSym = sym.id;
@@ -388,6 +419,43 @@
     renderSymphonyDetail(data, _selectedSym);
   }
 
+  /**
+   * Inner HTML of a list entry's meta line. A symphony that stores no parameter
+   * "uses globals"; otherwise the line counts the stored values that differ from the
+   * global and says how many equal it and stay pinned (they will not follow a later
+   * global change). The lock count shows either way.
+   */
+  function symListMetaHtml(ov, globals) {
+    const params = ov.params || {};
+    const storedCount = Object.keys(params).length;
+    const overrideCount = countParamOverrides(params, globals);
+    const pinnedCount = storedCount - overrideCount;
+    const lockedCount = (ov.locked_vars || []).length;
+
+    let parts = '';
+    if (!storedCount) {
+      parts += '<span class="sym-uses-globals">uses globals</span>';
+    } else {
+      parts += overrideCount
+        ? `<span class="sym-has-override">&#9670; ${overrideCount} override${overrideCount > 1 ? 's' : ''}</span>`
+        : '<span class="sym-no-override">0 overrides</span>';
+      if (pinnedCount) {
+        parts += `<span class="sym-pinned-count" title="These stored values equal the global value today. They are stored for this symphony and will not follow a later global change.">${pinnedCount} pinned at the global value</span>`;
+      }
+    }
+    if (lockedCount) parts += `<span class="sym-locked-count">&middot; ${lockedCount} locked</span>`;
+    return parts;
+  }
+
+  /** Re-draw one list entry's meta line from the pending state. The detail pane is left alone. */
+  function refreshSymListEntry(symId) {
+    if (!_state) return;
+    const entries = document.getElementById('sym-list').querySelectorAll('.sym-list-btn');
+    const btn = Array.from(entries).find(b => b.dataset.symId === symId);
+    const metaEl = btn ? btn.querySelector('.sym-list-meta') : null;
+    if (metaEl) metaEl.innerHTML = symListMetaHtml(getPendingOverride(symId, _state), _state.globals || {});
+  }
+
   function renderSymphonyDetail(data, symId) {
     const detail = document.getElementById('sym-detail');
     const sym = (data.symphonies_list || []).find(s => s.id === symId);
@@ -397,15 +465,16 @@
     const meta = data.param_meta || {};
     const globals = data.globals || {};
 
+    // The symphony key goes in one title attribute only, and no element id is built from it:
+    // a key can hold parentheses, quotes, spaces or a hash sign, none of which a selector survives.
     detail.innerHTML = `
       <div class="sym-detail-header">
         <div>
-          <div class="sym-detail-name">${escHtml(sym.name)}</div>
-          <div class="sym-detail-id">${escHtml(sym.id)} &middot; normalized: ${escHtml(sym.id.replace('sym_', ''))}</div>
+          <div class="sym-detail-name" title="${escHtml(sym.id)}">${escHtml(sym.name)}</div>
         </div>
-        <button type="button" class="btn-reset-globals" id="btn-reset-${escHtml(symId)}">Reset to globals</button>
+        <button type="button" class="btn-reset-globals">Reset to globals</button>
       </div>
-      <div class="override-grid" id="override-grid-${escHtml(symId)}"></div>
+      <div class="override-grid"></div>
     `;
 
     const grid = detail.querySelector('.override-grid');
@@ -414,7 +483,8 @@
       const gVal = globals[key] != null ? globals[key] : '';
       const ovVal = ov.params[key];
       const locked = (ov.locked_vars || []).includes(key);
-      const hasOverride = ovVal != null;
+      // Marked as overridden only when the stored value differs from the global.
+      const hasOverride = ovVal != null && overridesGlobal(ovVal, globals, key);
 
       const row = document.createElement('div');
       row.className = 'override-row' + (hasOverride ? ' override-row-active' : '');
@@ -430,7 +500,7 @@
         </div>
         <div class="override-input-row">
           <span class="override-label override-label-override${hasOverride ? ' override-label-active' : ''}">override</span>
-          <input type="text" class="override-input" value="${hasOverride ? escHtml(String(ovVal)) : ''}" placeholder="—" autocomplete="off">
+          <input type="text" class="override-input" value="${ovVal != null ? escHtml(String(ovVal)) : ''}" placeholder="—" autocomplete="off">
         </div>
       `;
       grid.appendChild(row);
@@ -441,21 +511,23 @@
         this.classList.toggle('lock-btn-on', !isLocked);
         this.innerHTML = !isLocked ? '&#9670; locked' : 'lock';
         toggleLock(symId, key, !isLocked, data);
+        refreshSymListEntry(symId);
         markDirty();
       });
 
       row.querySelector('.override-input').addEventListener('input', function () {
         updateOverrideParam(symId, key, this.value, data);
-        const hasVal = this.value !== '';
-        row.classList.toggle('override-row-active', hasVal);
+        const differs = this.value !== '' && overridesGlobal(this.value, globals, key);
+        row.classList.toggle('override-row-active', differs);
         const lbl = row.querySelector('.override-label-override');
-        lbl.classList.toggle('override-label-active', hasVal);
+        lbl.classList.toggle('override-label-active', differs);
+        refreshSymListEntry(symId);
         markDirty();
       });
     });
 
-    detail.querySelector('#btn-reset-' + escHtml(symId)).addEventListener('click', () => {
-      resetSymToGlobals(symId, data);
+    detail.querySelector('.btn-reset-globals').addEventListener('click', () => {
+      resetSymToGlobals(symId);
     });
   }
 
@@ -482,20 +554,14 @@
     if (!locked && idx !== -1) lv.splice(idx, 1);
   }
 
-  function resetSymToGlobals(symId, data) {
+  // Reset replaces only this symphony's pending entry. The loaded state is never mutated,
+  // so Discard (a reload) restores the stored overrides and locks, and no request is sent
+  // until Save.
+  function resetSymToGlobals(symId) {
     _pendingOverrides[symId] = { params: {}, locked_vars: [] };
-    renderSymphonyDetail(data, symId);
+    renderSymphonyDetail(_state, symId);
+    refreshSymListEntry(symId);
     markDirty();
-    // Refresh list meta
-    renderSymphonies(Object.assign({}, _state, {
-      symphony_overrides: buildMergedOverrides(),
-    }));
-  }
-
-  function buildMergedOverrides() {
-    const merged = Object.assign({}, (_state || {}).symphony_overrides || {});
-    Object.assign(merged, _pendingOverrides);
-    return merged;
   }
 
   // ── Render all sections ────────────────────────────────────────────────────
@@ -506,26 +572,11 @@
     renderSymphonies(data);
   }
 
-  // ── Live toggle ────────────────────────────────────────────────────────────
-  function initLiveToggle() {
-    const toggle = document.getElementById('live-toggle');
-    toggle.addEventListener('click', () => {
-      const wasOn = toggle.dataset.on === '1';
-      const nowOn = !wasOn;
-      toggle.dataset.on = nowOn ? '1' : '0';
-      toggle.setAttribute('aria-checked', String(nowOn));
-
-      const pill = document.getElementById('live-pill');
-      pill.textContent = nowOn ? 'LIVE' : 'DRY RUN';
-      pill.dataset.live = String(nowOn);
-
-      document.getElementById('live-banner').hidden = !nowOn;
-      document.getElementById('live-card').dataset.live = String(nowOn);
-
-      _pendingGlobals['LIVE_EXECUTION'] = nowOn ? 'True' : 'False';
-      markDirty();
-    });
-
+  // ── Master controls ────────────────────────────────────────────────────────
+  // The Live execution switch is read-only (disabled in settings.html, mode drawn by
+  // renderMaster): live trading is armed in the server's .env, and POST /api/settings
+  // rejects LIVE_EXECUTION, so this page never binds a click to it.
+  function initMasterControls() {
     document.getElementById('execution-start-time').addEventListener('input', function () {
       _pendingGlobals['EXECUTION_START_TIME'] = this.value;
       markDirty();
@@ -533,27 +584,43 @@
   }
 
   // ── Save ───────────────────────────────────────────────────────────────────
-  function save() {
-    const symphoniesPayload = {};
-    const allSymIds = new Set([
-      ...Object.keys((_state || {}).symphony_overrides || {}),
-      ...Object.keys(_pendingOverrides),
-    ]);
-    allSymIds.forEach(id => {
+  // The pending per-symphony entries as the request body wants them (numeric params).
+  // A value that is not a number is a refusal naming the field, never a coerced string.
+  function buildSymphoniesPayload() {
+    const symphonies = {};
+    const ids = Object.keys(_pendingOverrides);
+    for (let i = 0; i < ids.length; i += 1) {
+      const id = ids[i];
       const pending = _pendingOverrides[id];
-      if (pending) {
-        const numParams = {};
-        Object.entries(pending.params || {}).forEach(([k, v]) => {
-          const n = parseFloat(v);
-          numParams[k] = isNaN(n) ? v : n;
-        });
-        symphoniesPayload[id] = { params: numParams, locked_vars: pending.locked_vars || [] };
+      const listed = ((_state || {}).symphonies_list || []).find(s => s.id === id);
+      const params = {};
+      const entries = Object.entries(pending.params || {});
+      for (let j = 0; j < entries.length; j += 1) {
+        const key = entries[j][0];
+        const n = parseFiniteNumber(entries[j][1]);
+        if (n === null) {
+          return {
+            refusal: 'Save failed: ' + key + ' for ' + (listed ? listed.name : id) +
+              ' is not a number (' + JSON.stringify(String(entries[j][1])) + '). Nothing was sent.',
+          };
+        }
+        params[key] = n;
       }
-    });
+      symphonies[id] = { params: params, locked_vars: pending.locked_vars || [] };
+    }
+    return { symphonies: symphonies };
+  }
+
+  function save() {
+    const built = buildSymphoniesPayload();
+    if (built.refusal) {
+      alert(built.refusal);
+      return;
+    }
 
     const payload = {
       globals: _pendingGlobals,
-      symphonies: symphoniesPayload,
+      symphonies: built.symphonies,
     };
 
     fetch('/api/settings', {
@@ -561,13 +628,23 @@
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
       body: JSON.stringify(payload),
     })
-      .then(r => r.json())
-      .then(resp => {
-        if (resp.status === 'success') {
+      // Read the body as text first: a refusal from the CSRF or auth hook is an HTML
+      // page, and parsing it as JSON would be reported as a network error.
+      .then(r => r.text().then(text => ({ status: r.status, ok: r.ok, text: text })))
+      .then(res => {
+        let resp = null;
+        try { resp = JSON.parse(res.text); } catch (e) { resp = null; }
+        if (res.ok && resp && resp.status === 'success') {
           load();
-        } else {
-          alert('Save failed: ' + (resp.message || 'unknown error'));
+          return;
         }
+        let reason = 'HTTP ' + res.status;
+        if (resp && resp.message) {
+          reason = resp.message;
+        } else if (res.status === 403) {
+          reason = 'the server refused the request (HTTP 403). Nothing was saved.';
+        }
+        alert('Save failed: ' + reason);
       })
       .catch(err => {
         console.error('save error', err);
@@ -603,7 +680,7 @@
       if (_dirty) discard();
     });
 
-    initLiveToggle();
+    initMasterControls();
     initCredentialToggles();
     initFlushControl();
     activateSection('master');

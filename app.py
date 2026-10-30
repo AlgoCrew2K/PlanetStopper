@@ -6461,7 +6461,7 @@ def save_settings():
 
 @app.route("/api/symphony-settings/<symphony_name>", methods=["GET"])
 def get_symphony_settings(symphony_name: str):
-    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations.  # noqa: E501  # un-wrappable long line
+    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations, display_name.  # noqa: E501  # un-wrappable long line
 
     Consumes the read-only DB path for parameters/locked_vars/live_mode and
     the env for the global master-switch flag.  Never writes; never reruns the engine.
@@ -6483,6 +6483,8 @@ def get_symphony_settings(symphony_name: str):
     # via bot_state before querying, falling back to symphony_name if no match found.
     bot_state = database.load_state()
     obs_symphony_id = symphony_name  # fallback: pass as-is (may yield 0 rows on hash)
+    # The live symphony's name; stays None when the id matches no bot_state entry.
+    display_name = None
     for sym_key, sym_data in bot_state.items():
         if not isinstance(sym_data, dict) or "name" not in sym_data:
             continue
@@ -6494,6 +6496,7 @@ def get_symphony_settings(symphony_name: str):
             or normalized_sym_name == symphony_name
         ):
             obs_symphony_id = normalized_sym_name
+            display_name = sym_data["name"]
             break
     advisor_observations = database.get_advisor_observations_for_symphony(obs_symphony_id)
 
@@ -6504,6 +6507,7 @@ def get_symphony_settings(symphony_name: str):
             "parameters": strategy.get("params", {}),
             "locked_vars": strategy.get("locked_vars", []),
             "advisor_observations": advisor_observations,
+            "display_name": display_name,
         }
     )
 

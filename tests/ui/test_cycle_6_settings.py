@@ -736,3 +736,270 @@ def test_settings_html_no_bare_hex_colours(client, mock_db_empty, monkeypatch):
         f"settings.html contains bare hex colour(s) outside var() tokens: {violations}. "
         "All colours must use --studio-* CSS custom properties."
     )
+
+
+# ---------------------------------------------------------------------------
+# Override counting, the read-only live card, and the numeric guard on Save.
+#
+# These run settings.js's own closure-local helpers under node (no re-typed copy) and the
+# real routes over the real database seeded from captured records. The conftest in this
+# directory stubs database.load_state for the advisor routes; the settings routes need the
+# real one, so this module overrides that stub.
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+from html.parser import HTMLParser  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from tests.ui._iife_node_harness import run_settings_helpers  # noqa: E402
+from tests.ui._settings_reference import (  # noqa: E402
+    reference_override_count,
+    values_equal,
+)
+
+_FIXTURES_DIR = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
+_CAPTURED_NAME = "(INVEST) LQD + EYEG 5 ways Full Market"
+
+
+@pytest.fixture(autouse=True)
+def _stub_database_load_state_for_advisor_routes():
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_get_api_state_dict():
+    yield
+
+
+@pytest.fixture
+def real_settings_db(tmp_path, monkeypatch):
+    """One captured symphony saved through the real writers, and a temporary .env."""
+    captured = json.loads(
+        (_FIXTURES_DIR / "prod_droplet" / "bot_state_positions.json").read_text(encoding="utf-8")
+    )
+    key, record = next((k, v) for k, v in captured.items() if v["name"] == _CAPTURED_NAME)
+    database.save_state({key: record})
+    snapshot = json.loads(
+        (_FIXTURES_DIR / "app" / "settings_env_snapshot.json").read_text(encoding="utf-8")
+    )
+    env_path = tmp_path / "counts.env"
+    env_path.write_text(
+        "".join(
+            f"{k}={v}\n" for k, v in {**snapshot["secrets"], **snapshot["non_secrets"]}.items()
+        ),
+        encoding="utf-8",
+    )
+    for name in ("LIVE_EXECUTION", "EXIT_AUTHORITY", "EXECUTION_START_TIME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_path))
+    return SimpleNamespace(name=_CAPTURED_NAME, key=database.normalize_name(_CAPTURED_NAME))
+
+
+def _settings_payload(client) -> dict:
+    resp = client.get("/api/settings")
+    assert resp.status_code == 200
+    return resp.get_json()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("0.5", 0.5),
+        (" 12 ", 12),
+        ("-3.25", -3.25),
+        ("0", 0),
+        ("10", 10),
+        (7, 7),
+    ],
+)
+def test_parse_finite_number_reads_a_full_decimal_literal(value, expected):
+    (result,) = run_settings_helpers([("parseFiniteNumber", [value])])
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "abc",
+        "1abc",
+        "5 ways",
+        "0x10",
+        "1,5",
+        "1 2",
+        "",
+        "   ",
+        "Infinity",
+        "-Infinity",
+        "NaN",
+        None,
+        True,
+    ],
+    ids=repr,
+)
+def test_parse_finite_number_refuses_anything_that_is_not_a_full_decimal_literal(value):
+    """parseFloat reads '1abc' as 1 and '0x10' as 0, and Number('') is 0; none may pass."""
+    (result,) = run_settings_helpers([("parseFiniteNumber", [value])])
+    assert result is None, f"{value!r} must not read as a number, got {result!r}"
+
+
+_VALUES_EQUAL_CASES = [
+    ("0.5", 0.5, True),
+    (0.50, "0.5", True),
+    ("0.5", "0.50", True),
+    (10, "10.0", True),
+    (" 0.5 ", "0.5", True),
+    (0, "0", True),
+    ("auto", "auto", True),
+    ("0.5", 0.6, False),
+    ("auto", "manual", False),
+    ("1abc", "1", False),
+    ("0x10", "0", False),
+    ("5 ways", "5", False),
+    (0, "", False),
+]
+
+
+@pytest.mark.parametrize(("stored", "global_value", "expected"), _VALUES_EQUAL_CASES, ids=repr)
+def test_values_equal_compares_numbers_as_numbers_and_everything_else_as_text(
+    stored, global_value, expected
+):
+    assert values_equal(stored, global_value) is expected, "the reference rule itself"
+    (result,) = run_settings_helpers([("valuesEqual", [stored, global_value])])
+    assert result is expected
+
+
+_COUNT_CASES = [
+    pytest.param({"A": "0.5"}, {"A": 0.5}, 0, id="string-stored-equals-number-global"),
+    pytest.param({"A": 0.50}, {"A": "0.5"}, 0, id="number-stored-equals-string-global"),
+    pytest.param({"A": 3}, {}, 1, id="stored-value-with-no-global-counts"),
+    pytest.param({"A": "auto"}, {"A": "auto"}, 0, id="non-numeric-equal-as-text"),
+    pytest.param({"A": "auto"}, {"A": "manual"}, 1, id="non-numeric-different-text"),
+    pytest.param(
+        {"A": 1, "B": 2, "C": "3"}, {"A": "1", "B": "9", "C": 3}, 1, id="mixed-one-differs"
+    ),
+    pytest.param({"A": 5, "B": 6}, {"A": "1", "B": "2"}, 2, id="all-differ"),
+    pytest.param({}, {"A": "1"}, 0, id="stores-nothing"),
+]
+
+
+@pytest.mark.parametrize(("params", "globals_", "expected"), _COUNT_CASES)
+def test_count_param_overrides_counts_only_values_that_differ_from_the_global(
+    params, globals_, expected
+):
+    assert reference_override_count(params, globals_) == expected, "the reference rule itself"
+    (count,) = run_settings_helpers([("countParamOverrides", [params, globals_])])
+    assert count == expected
+    assert isinstance(count, int) and not isinstance(count, bool)
+
+
+def test_count_matches_the_rule_for_a_symphony_with_two_changed_values(client, real_settings_db):
+    params = dict(database.DEFAULT_STRATEGY)
+    changed = ("TRIGGER_THRESHOLD_PCT", "MAX_PARABOLIC_SQUEEZE")
+    for key in changed:
+        params[key] = params[key] * 2
+    database.save_symphony_strategy(real_settings_db.name, params, ["TRIGGER_THRESHOLD_PCT"])
+    payload = _settings_payload(client)
+    stored = payload["symphony_overrides"][real_settings_db.key]["params"]
+    expected = reference_override_count(stored, payload["globals"])
+    assert expected == len(changed), "the record must hold exactly the changed values"
+
+    (count,) = run_settings_helpers([("countParamOverrides", [stored, payload["globals"]])])
+
+    assert count == expected
+
+
+def test_an_untouched_default_row_counts_zero_overrides_with_every_value_pinned(
+    client, real_settings_db
+):
+    payload = _settings_payload(client)  # the route writes the default row on first read
+    stored = payload["symphony_overrides"][real_settings_db.key]["params"]
+    assert len(stored) == len(database.DEFAULT_STRATEGY)
+
+    (count,) = run_settings_helpers([("countParamOverrides", [stored, payload["globals"]])])
+
+    assert count == 0
+    assert len(stored) - count == len(database.DEFAULT_STRATEGY), "all pinned"
+
+
+def test_a_symphony_storing_no_parameters_counts_zero(client, real_settings_db):
+    database.save_symphony_strategy(real_settings_db.name, {}, [])
+    payload = _settings_payload(client)
+    stored = payload["symphony_overrides"][real_settings_db.key]["params"]
+    assert stored == {}
+
+    (count,) = run_settings_helpers([("countParamOverrides", [stored, payload["globals"]])])
+
+    assert count == 0
+
+
+def test_reading_settings_leaves_the_stored_row_as_it_was(client, real_settings_db):
+    params = dict(database.DEFAULT_STRATEGY)
+    params["TAKE_PROFIT_MC_PCT"] = params["TAKE_PROFIT_MC_PCT"] * 3
+    database.save_symphony_strategy(real_settings_db.name, params, ["MAX_SQUEEZE_FLOOR"])
+    before = database.get_symphony_strategy(real_settings_db.name)
+
+    payload = _settings_payload(client)
+    run_settings_helpers(
+        [
+            (
+                "countParamOverrides",
+                [payload["symphony_overrides"][real_settings_db.key]["params"], payload["globals"]],
+            )
+        ]
+    )
+
+    assert database.get_symphony_strategy(real_settings_db.name) == before
+
+
+class _LiveCardHints(HTMLParser):
+    """Text of every .field-hint element inside the element with id live-card."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.hints: list[str] = []
+        self._depth = 0
+        self._hint_depths: list[int] = []
+
+    def handle_starttag(self, tag, attrs):
+        attr = dict(attrs)
+        if attr.get("id") == "live-card" and not self._depth:
+            self._depth = 1
+            return
+        if not self._depth:
+            return
+        self._depth += 1
+        if "field-hint" in (attr.get("class") or "").split():
+            self.hints.append("")
+            self._hint_depths.append(self._depth)
+
+    def handle_endtag(self, tag):
+        if not self._depth:
+            return
+        if self._hint_depths and self._hint_depths[-1] == self._depth:
+            self._hint_depths.pop()
+        self._depth -= 1
+
+    def handle_data(self, data):
+        if self._hint_depths:
+            self.hints[-1] += data
+
+
+def test_live_card_states_where_live_trading_is_armed(client, mock_db_empty, monkeypatch):
+    _mock_env(monkeypatch)
+    resp = client.get("/settings")
+    assert resp.status_code == 200
+    parser = _LiveCardHints()
+    parser.feed(resp.get_data(as_text=True))
+    assert parser.hints, "the live card must carry a .field-hint line"
+    statement = " ".join(" ".join(parser.hints).split()).lower()
+    assert "armed" in statement and ".env" in statement, statement
+    assert "not from the dashboard" in statement, statement
+
+
+def test_settings_script_never_stages_a_live_execution_write():
+    """The page must not be able to send LIVE_EXECUTION: the route rejects it and the
+    dashboard is not where live trading is armed."""
+    source = (_STATIC_DIR / "settings.js").read_text(encoding="utf-8")
+    assert not re.search(r"_pendingGlobals\[\s*['\"]LIVE_EXECUTION['\"]\s*\]", source), (
+        "settings.js stages a LIVE_EXECUTION write into the save payload"
+    )
