@@ -123,6 +123,10 @@ def _collect(
             "0",
             "-p",
             "no:cacheprovider",
+            # pytest-playwright imports Playwright when pytest starts; a host without
+            # Playwright has no such plugin, so the simulation drops it too.
+            "-p",
+            "no:playwright",
             *extra_args,
             *paths,
         ],
