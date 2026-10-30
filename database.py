@@ -2270,12 +2270,12 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
 
 def objective_kind_for_facets(facets_by_name: dict) -> str:
     """Import-signature stub; the implementer replaces the body."""
-    return ""
+    raise NotImplementedError("Not implemented")
 
 
 def get_autotune_run_objectives(run_ids: "list[int]") -> "dict[int, str | None]":
     """Import-signature stub; the implementer replaces the body."""
-    return {}
+    raise NotImplementedError("Not implemented")
 
 
 # --- 018: Researcher DOF Ledger ---

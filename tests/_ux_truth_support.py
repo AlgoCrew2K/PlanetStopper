@@ -222,3 +222,15 @@ def save_run(
         frozen_eval_sharpe=frozen_eval_sharpe,
         spec_bundle_id=spec_bundle_id,
     )
+
+
+# A display name that carries markup. Derived record: one captured entry with only ``name``
+# replaced (see tests/fixtures/ux_data_truth/PROVENANCE.md).
+MARKUP_NAME = "<b>bold</b> & Co"
+
+
+def state_with_markup_name(symphony_hash: str) -> dict:
+    """The captured bot_state with one symphony's display name replaced by ``MARKUP_NAME``."""
+    state = load_captured_bot_state()
+    state[symphony_hash] = {**state[symphony_hash], "name": MARKUP_NAME}
+    return state

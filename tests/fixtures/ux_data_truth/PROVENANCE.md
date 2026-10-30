@@ -27,6 +27,7 @@ reason (SC-10 rule 4). PM sign-off of every derived record below is requested in
 | route row, verdict key deleted | the real `GET /api/autotune-runs` row | `frozen_eval_verdict` deleted | the missing-field edge |
 | bot_state with metadata entries | `bot_state_positions.json` | `last_market_close_snapshot` and `post_mortem_run` added as dict entries with no `name` | the real engine writes these top-level non-symphony entries; name resolution must skip them |
 | bot_state without the incumbent | `bot_state_positions.json` | one entry removed | the "incumbent no longer held" edge |
+| bot_state with a markup display name | `bot_state_positions.json` | one entry's `name` replaced by `<b>bold</b> & Co`, nothing else varied | the markup-in-a-name edge for the three Advisor name sites this cycle renders. The approach (`approach/01-data-truth.md`, Per-Cycle Test Plan, Fixtures) records the PM's sign-off of the changed-name record for this case |
 
 ## Held
 

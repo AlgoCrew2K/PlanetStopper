@@ -42,6 +42,7 @@ import app as app_module
 import database
 from tests._ai_advisor_js_harness import render_autotune_list
 from tests._ux_truth_support import (
+    MARKUP_NAME,
     captured_symphonies,
     load_captured_bot_state,
     parse_html,
@@ -49,6 +50,7 @@ from tests._ux_truth_support import (
     pick_symphony,
     register_bundle,
     save_run,
+    state_with_markup_name,
 )
 
 _AI_ADVISOR_JS = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
@@ -347,6 +349,25 @@ class TestAutotuneRunsRouteObjectiveAndName:
         row = _row(_rows(client), run_id)
         assert "symphony_name" in row and row["symphony_name"] is None
 
+    def test_live_state_is_read_once_per_request_not_once_per_row(self, client, monkeypatch):
+        database.save_state(load_captured_bot_state())
+        held = captured_symphonies()[:4]
+        for i, (_hash, name) in enumerate(held):
+            save_run(database.normalize_name(name), None, f"2026-10-27T0{i}:00:00")
+        real_load_state = database.load_state
+        calls: list[int] = []
+
+        def counting_load_state():
+            calls.append(1)
+            return real_load_state()
+
+        monkeypatch.setattr(database, "load_state", counting_load_state)
+        rows = _rows(client)
+
+        assert len(rows) == len(held)
+        assert len(calls) == 1, "one state read serves every row"
+        assert sorted(r.get("symphony_name") or "" for r in rows) == sorted(n for _h, n in held)
+
     def test_a_metadata_entry_in_the_state_is_never_a_symphony_name(self, client):
         """bot_state also holds portfolio metadata; only entries shaped like a symphony count."""
         state = load_captured_bot_state()
@@ -409,16 +430,19 @@ class TestAutotuneRunCardRender:
         assert not re.search(r"Best objective score\s*N/A", text)
 
     def test_passed_verdict_renders_a_pill_in_the_positive_token(self, client):
-        run_id = save_run("pass-sym", None, frozen_eval_sharpe=0.9)
+        run_id = save_run("pass-sym", register_bundle(phase1_facets()), frozen_eval_sharpe=0.9)
         card = _card_for(_rows(client), run_id)
+        assert "Best CRRA-EU score" in card.text, "the pill sits on a card that names its score"
         pill = card.find(cls="frozen-eval-pill")
         assert pill is not None and pill.text == "passed"
         assert "--studio-pos" in pill.attrs.get("style", "")
         assert "not evaluated" not in card.text
 
     def test_failed_verdict_renders_a_pill_in_the_negative_token(self, client):
-        run_id = save_run("fail-sym", None, frozen_eval_sharpe=-0.4)
-        pill = _card_for(_rows(client), run_id).find(cls="frozen-eval-pill")
+        run_id = save_run("fail-sym", register_bundle(phase1_facets()), frozen_eval_sharpe=-0.4)
+        card = _card_for(_rows(client), run_id)
+        assert "Best CRRA-EU score" in card.text, "the pill sits on a card that names its score"
+        pill = card.find(cls="frozen-eval-pill")
         assert pill is not None and pill.text == "failed"
         assert "--studio-neg" in pill.attrs.get("style", "")
 
@@ -430,7 +454,7 @@ class TestAutotuneRunCardRender:
         assert "Frozen-eval not evaluated" in card.text
         assert card.find(cls="frozen-eval-pill") is None
         notice = next(n for n in card.iter() if n.text == "Frozen-eval not evaluated")
-        styled = [notice, *_ancestors_within(notice, card)]
+        styled = [*notice.iter(), *_ancestors_within(notice, card)]
         assert any("--studio-ink-dim" in n.attrs.get("style", "") for n in styled), (
             "the not-evaluated line is dim ink"
         )
@@ -507,3 +531,16 @@ class TestAutotuneRunCardRender:
         run_id = save_run("a symphony no longer held", None)
         label = _card_for(_rows(client), run_id).find(cls="autotune-run-name")
         assert label is not None and label.text == "a symphony no longer held"
+
+
+class TestAutotuneCardSecurity:
+    def test_a_display_name_carrying_markup_renders_as_literal_text(self, client):
+        symphony_hash, _name = captured_symphonies()[0]
+        database.save_state(state_with_markup_name(symphony_hash))
+        run_id = save_run(database.normalize_name(MARKUP_NAME), None)
+        rows = _rows(client)
+        assert _row(rows, run_id).get("symphony_name") == MARKUP_NAME, "self-guard: name resolved"
+        card = _card_for(rows, run_id)
+        label = card.find(cls="autotune-run-name")
+        assert label is not None and label.text == MARKUP_NAME
+        assert [n for n in card.iter() if n.tag == "b"] == [], "no markup element was created"

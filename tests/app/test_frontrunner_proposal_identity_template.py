@@ -113,9 +113,11 @@ import pytest
 
 import app as app_module
 from tests._ux_truth_support import (
+    MARKUP_NAME,
     captured_symphonies,
     load_captured_bot_state,
     parse_html,
+    state_with_markup_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -834,3 +836,16 @@ class TestCardTitleNamesTheIncumbent:
         incumbent_hash = "iaSOOUsmnCJHiZvbrWfs"
         title = _card_title(client, _seed_pending_proposal(incumbent_hash, hold_incumbent=False))
         assert title.text == incumbent_hash
+
+    def test_a_display_name_carrying_markup_renders_as_literal_text(self, client):
+        incumbent_hash = "iaSOOUsmnCJHiZvbrWfs"
+        app_module.database.save_state(state_with_markup_name(incumbent_hash))
+        proposal_id = app_module.database.insert_frontrunner_proposal(
+            symphony_id=incumbent_hash,
+            proposal_source="frontrunner_builder",
+            candidate_tree=json.loads(_REAL_INCUMBENT_TREE.read_text(encoding="utf-8")),
+            metrics_json=dict(_FR_METRICS_WITH_OVERLAY),
+        )
+        title = _card_title(client, proposal_id)
+        assert title.text == MARKUP_NAME
+        assert [n for n in title.iter() if n.tag == "b"] == [], "no markup element was created"

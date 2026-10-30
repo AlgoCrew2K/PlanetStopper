@@ -31,7 +31,14 @@ from unittest.mock import patch
 
 import pytest
 
-from tests._ux_truth_support import load_captured_bot_state, parse_html, pick_symphony
+from tests._ux_truth_support import (
+    MARKUP_NAME,
+    captured_symphonies,
+    load_captured_bot_state,
+    parse_html,
+    pick_symphony,
+    state_with_markup_name,
+)
 
 
 @pytest.fixture(scope="function")
@@ -291,3 +298,12 @@ class TestSymphonyCellShowsDisplayName:
     def test_cell_reads_the_stored_key_when_no_state_is_stored(self, live_client):
         cell = _symphony_cell(live_client, _observe("any stored key"))
         assert cell.text == "any stored key"
+
+    def test_a_display_name_carrying_markup_renders_as_literal_text(self, live_client):
+        import database
+
+        symphony_hash, _name = captured_symphonies()[0]
+        database.save_state(state_with_markup_name(symphony_hash))
+        cell = _symphony_cell(live_client, _observe(database.normalize_name(MARKUP_NAME)))
+        assert cell.text == MARKUP_NAME
+        assert [n for n in cell.iter() if n.tag == "b"] == [], "no markup element was created"
