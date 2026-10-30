@@ -74,12 +74,15 @@ class RecordingBuffer(io.BufferedIOBase):
 
 
 @pytest.fixture()
-def daemon_stdout(monkeypatch):
-    """sys.stdout replaced by the daemon's wrapper over a recording buffer."""
+def daemon_stdout():
+    """The daemon's wrapper over a recording buffer, not yet installed as sys.stdout.
+
+    Pytest's capture reinstalls its own sys.stdout when the test body starts, so a fixture that
+    patched it at setup would be bypassed; ``engine_spawns.trigger`` installs the wrapper inside
+    the test body instead.
+    """
     buffer = RecordingBuffer()
-    wrapper = timing_log.make_daemon_stdout(buffer)
-    monkeypatch.setattr(sys, "stdout", wrapper)
-    return buffer
+    return SimpleNamespace(buffer=buffer, wrapper=timing_log.make_daemon_stdout(buffer))
 
 
 @pytest.fixture()
@@ -89,21 +92,25 @@ def engine_spawns(monkeypatch, tmp_path, daemon_stdout):
     exit_codes: list[int] = []
 
     def fake_run(cmd, **kwargs):
-        spawns.append({"delivered": daemon_stdout.delivered_lines(), "kwargs": kwargs})
+        spawns.append({"delivered": daemon_stdout.buffer.delivered_lines(), "kwargs": kwargs})
         code = exit_codes.pop(0) if exit_codes else 0
         if code:
             raise subprocess.CalledProcessError(code, cmd)
         return subprocess.CompletedProcess(cmd, 0)
 
+    def trigger() -> None:
+        monkeypatch.setattr(sys, "stdout", daemon_stdout.wrapper)
+        app_module.trigger_alpha_bot()
+
     monkeypatch.setattr(app_module, "LOG_FILE", str(tmp_path / "engine.log"))
     monkeypatch.setattr(app_module.subprocess, "run", fake_run)
     monkeypatch.setattr(app_module, "_publish_cycle", lambda record: None)
-    return SimpleNamespace(calls=spawns, exit_codes=exit_codes)
+    return SimpleNamespace(calls=spawns, exit_codes=exit_codes, trigger=trigger)
 
 
 class TestPrintedLinesAreDelivered:
     def test_the_trigger_line_is_delivered_before_the_engine_is_spawned(self, engine_spawns):
-        app_module.trigger_alpha_bot()
+        engine_spawns.trigger()
 
         (spawn,) = engine_spawns.calls
         assert any(_TRIGGER_LINE.match(line) for line in spawn["delivered"]), (
@@ -115,8 +122,8 @@ class TestPrintedLinesAreDelivered:
         self, engine_spawns
     ):
         engine_spawns.exit_codes.append(1)
-        app_module.trigger_alpha_bot()
-        app_module.trigger_alpha_bot()
+        engine_spawns.trigger()
+        engine_spawns.trigger()
 
         _first, second = engine_spawns.calls
         kinds = [
@@ -135,7 +142,7 @@ class TestPrintedLinesAreDelivered:
     def test_the_engine_output_goes_to_one_log_file_handle_for_stdout_and_stderr(
         self, engine_spawns
     ):
-        app_module.trigger_alpha_bot()
+        engine_spawns.trigger()
 
         (spawn,) = engine_spawns.calls
         out, err = spawn["kwargs"]["stdout"], spawn["kwargs"]["stderr"]
