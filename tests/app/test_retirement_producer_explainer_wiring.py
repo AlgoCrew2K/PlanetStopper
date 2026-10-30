@@ -48,12 +48,13 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 # hash cannot distinguish a harmless source-seam edit from an LLM import, so
 # it is replaced by an AST scan of exactly what matters: the module imports
 # nothing LLM-related. Forbidden = the Anthropic SDK, the explainer module
-# this module's output feeds, the model-selection config, the chat advisor,
-# and ai_advisor (the sanctioned LLM client seam).
+# this module's output feeds, the model-selection config, the request helper,
+# the chat advisor, and ai_advisor (the sanctioned LLM client seam).
 _LLM_FORBIDDEN_MODULES = (
     "anthropic",
     "advisors.retirement_explainer",
     "model_config",
+    "llm_request",
     "advisor_chat",
     "advisors.advisor_chat",
     "ai_advisor",
@@ -216,6 +217,53 @@ class TestLlmImportScanIsNonVacuous:
     def test_prose_mentioning_anthropic_in_a_docstring_is_not_a_finding(self):
         src = '"""This module never touches the anthropic SDK."""\nimport math\n'
         assert _llm_related_imports(src) == []
+
+
+class TestLlmImportScanCoversTheModelModules:
+    """The model-resolution and request-helper modules join the ban: planting an
+    import of either into the recommender must fail the scan, shown on synthetic
+    sources and on a scratch copy of the real module."""
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import model_config\n",
+            "import llm_request\n",
+            "from model_config import resolve\n",
+            "from llm_request import send\n",
+            "from llm_request import Reply, strict_tool\n",
+            "def f():\n    import llm_request\n",
+            "from . import llm_request\n",
+            "from .llm_request import send\n",
+            "import importlib\n\ndef f():\n    return importlib.import_module('llm_request')\n",
+        ],
+        ids=[
+            "import_model_config",
+            "import_llm_request",
+            "from_model_config",
+            "from_llm_request_send",
+            "from_llm_request_names",
+            "lazy_in_function",
+            "relative_module",
+            "relative_from",
+            "dynamic_import",
+        ],
+    )
+    def test_a_synthetic_import_of_either_module_is_detected(self, source):
+        assert _llm_related_imports(source) != []
+
+    @pytest.mark.parametrize(
+        "plant",
+        ["import model_config\n", "import llm_request\n", "from llm_request import send\n"],
+        ids=["model_config", "llm_request", "from_llm_request"],
+    )
+    def test_a_plant_in_a_copy_of_the_real_recommender_is_detected_and_the_copy_is_clean_without_it(
+        self, plant
+    ):
+        real = (REPO_ROOT / "advisors" / "retirement_recommender.py").read_text(encoding="utf-8")
+
+        assert _llm_related_imports(real) == []
+        assert _llm_related_imports(plant + real) != []
 
 
 def test_retirement_recommender_module_never_imports_ai_advisor():
