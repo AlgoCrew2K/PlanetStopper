@@ -1083,32 +1083,6 @@ def _build_reasoned_swap_generation_prompt(
     return "\n\n".join(sections)
 
 
-def _generation_model_at_mint() -> str:
-    """Model id the suggestion knob names right now, without listing the Models API."""
-    return model_config.peek(model_config.Knob.SUGGESTION).model_id
-
-
-def _adopt_reply(provenance: dict, replies: list):
-    """Record the serving model of the last reply in ``provenance``; return that reply.
-
-    A reply with no model (the model was unavailable) clears the minted peek model, since
-    no model served the run. With no reply at all the minted model stays.
-    """
-    reply = replies[-1] if replies else None
-    if reply is not None:
-        model = getattr(reply, "model", "")
-        provenance["generation_model"] = model if isinstance(model, str) else ""
-    return reply
-
-
-def _empty_run_message(reply) -> str:
-    """Run message when nothing was generated: the reply's reason when it has one."""
-    reason = getattr(reply, "reason", None)
-    if reason:
-        return f"no swap was generated this run ({reply.reason_text()})"
-    return NO_SURVIVORS_MESSAGE
-
-
 def _resolve_swap_pairs(
     raw_candidates: list,
     held: frozenset,
@@ -1188,6 +1162,7 @@ def generate_reasoned_swap_candidates(
     Returns:
         A bounded list of ``SwapCandidate`` objects (at most ``max_candidates``).
     """
+    sent = False
     try:
         held = extract_tickers(raw_value)
         if not held:
@@ -1210,6 +1185,7 @@ def generate_reasoned_swap_candidates(
         client = _build_client()
         tool = llm_request.strict_tool(_EMIT_SWAP_CANDIDATES_TOOL)
         reply = None
+        sent = True
         for _attempt in range(llm_request.NO_TOOL_CALL_ATTEMPTS):
             reply = llm_request.send(
                 client,
@@ -1220,10 +1196,10 @@ def generate_reasoned_swap_candidates(
                 tools=[tool],
                 timeout=_REQUEST_TIMEOUT_SECONDS,
             )
+            if reply_sink is not None:
+                reply_sink.append(reply)
             if reply.reason != llm_request.REASON_NO_TOOL_CALL:
                 break
-        if reply_sink is not None:
-            reply_sink.append(reply)
         if reply.reason is not None:
             return []
 
@@ -1238,6 +1214,8 @@ def generate_reasoned_swap_candidates(
         logger.debug(
             "generate_reasoned_swap_candidates: error (%s)", type(exc).__name__, exc_info=True
         )
+        if sent and reply_sink is not None and not reply_sink:
+            reply_sink.append(llm_request.Reply())  # a request went out and no reply came back
         return []
 
 
@@ -1450,7 +1428,7 @@ def propose_operator_swap(
     # fabricated, never nulled. Mirrors logic_change_engine.propose_operator_logic_change.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": _generation_model_at_mint(),
+        "generation_model": llm_request.default_generation_model(),
         "mode": "asset-swap",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1505,12 +1483,12 @@ def propose_operator_swap(
         max_candidates=1,
         reply_sink=replies,
     )
-    last_reply = _adopt_reply(provenance, replies)
+    last_reply = llm_request.adopt_reply(provenance, replies)
 
     if not candidates:
         return SwapRunResult(
             gate_batch=_empty_gate_batch(),
-            message=_empty_run_message(last_reply),
+            message=llm_request.empty_run_message(last_reply, "swap", NO_SURVIVORS_MESSAGE),
             objective=objective,
             run_id=run_id,
             provenance=provenance,
@@ -1617,7 +1595,7 @@ def suggest_swaps(
     # nulled. Mirrors logic_change_engine.suggest_logic_changes.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": _generation_model_at_mint(),
+        "generation_model": llm_request.default_generation_model(),
         "mode": "asset-swap",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1650,12 +1628,12 @@ def suggest_swaps(
         max_candidates=MAX_SUGGESTED_CANDIDATES,
         reply_sink=replies,
     )
-    last_reply = _adopt_reply(provenance, replies)
+    last_reply = llm_request.adopt_reply(provenance, replies)
 
     if not candidates:
         return SwapRunResult(
             gate_batch=_empty_gate_batch(),
-            message=_empty_run_message(last_reply),
+            message=llm_request.empty_run_message(last_reply, "swap", NO_SURVIVORS_MESSAGE),
             objective=objective,
             run_id=run_id,
             provenance=provenance,

@@ -2,7 +2,7 @@
 
 AC-16 (operator directive 2026-07-13): every SUGGESTION-producing LLM call
 (as opposed to the nightly Market Prism SYNTHESIS call, which keeps its own
-independent accessor at ai_advisor.resolve_advisor_model()/ADVISOR_SYNTHESIS_MODEL)
+independent knob, ADVISOR_SYNTHESIS_MODEL)
 routes through a single named, env-overridable accessor here. Deliberately a
 separate top-level module (not folded into ai_advisor.py) so it stays a
 zero-dependency import any current or future advisors/* producer can take
@@ -25,28 +25,13 @@ import contextlib
 import contextvars
 import dataclasses
 import enum
+import functools
 import logging
 import os
 import threading
 import time  # module attribute on purpose: tests replace model_config.time
 from collections.abc import Iterator
 from datetime import UTC, datetime
-
-_ADVISOR_SUGGESTION_MODEL_ENV_VAR = "ADVISOR_SUGGESTION_MODEL"
-_ADVISOR_SUGGESTION_MODEL_DEFAULT = "claude-fable-5"
-
-
-def get_advisor_suggestion_model() -> str:
-    """Return the configured suggestion-producing model ID.
-
-    Reads ADVISOR_SUGGESTION_MODEL at call time so a daemon restart is not
-    required to pick up a change (mirrors ai_advisor.resolve_advisor_model()'s
-    pattern). Default: claude-fable-5 (operator directive 2026-07-13).
-    Independent of ADVISOR_SYNTHESIS_MODEL — setting one never affects the
-    other.
-    """
-    return os.environ.get(_ADVISOR_SUGGESTION_MODEL_ENV_VAR, _ADVISOR_SUGGESTION_MODEL_DEFAULT)
-
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +225,17 @@ def pinned_run() -> Iterator[None]:
         yield
     finally:
         _run_pin.reset(token)
+
+
+def pin_run(func):
+    """Decorator: run `func` inside `pinned_run()` so one run keeps one model per family."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with pinned_run():
+            return func(*args, **kwargs)
+
+    return wrapper
 
 
 def _reset_registry() -> None:

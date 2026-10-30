@@ -374,7 +374,8 @@ def explain_artifact(
     try:
         client = ai_advisor._build_client()
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
-        logger.warning("advisor_chat: client construction failed: %s", exc)
+        logger.warning("advisor_chat: client construction failed: %s", type(exc).__name__)
+        logger.debug("advisor_chat: client construction failed", exc_info=True)
         return ChatResponse(answer=None, error=CHAT_UNAVAILABLE_MSG)
 
     # Layer 2 — call the LLM through the shared request helper (free-form text reply).
@@ -390,6 +391,7 @@ def explain_artifact(
         )
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
         logger.warning("advisor_chat: request failed: %s", type(exc).__name__)
+        logger.debug("advisor_chat: request failed", exc_info=True)
         return ChatResponse(
             answer=None,
             error=CHAT_ERROR_MSG_TEMPLATE.format(

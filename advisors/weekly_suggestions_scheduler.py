@@ -51,6 +51,9 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
+import llm_request
+import model_config
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -103,11 +106,19 @@ def _live_symphony_hashes(bot_state: dict) -> list:
     return [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
 
 
+def _log_generation_reason(loop_name: str, symphony_hash: str, result) -> None:
+    """Warn with the reason code when generation ended without a model reply to use."""
+    reason = llm_request.reason_in_message(getattr(result, "message", None))
+    if reason:
+        logger.warning("%s: symphony %s generated nothing (%s)", loop_name, symphony_hash, reason)
+
+
 # ---------------------------------------------------------------------------
 # AC-C1 — weekly logic-change suggestion loop
 # ---------------------------------------------------------------------------
 
 
+@model_config.pin_run
 def run_weekly_logic_change_suggestions() -> None:
     """Enumerate live symphonies and call suggest_logic_changes once per symphony.
 
@@ -139,7 +150,8 @@ def run_weekly_logic_change_suggestions() -> None:
                     "objective; defaults to broad risk reduction)."
                 ),
             )
-            suggest_logic_changes(symphony_hash, score_tree, objective)
+            result = suggest_logic_changes(symphony_hash, score_tree, objective)
+            _log_generation_reason("run_weekly_logic_change_suggestions", symphony_hash, result)
         except Exception as exc:  # noqa: BLE001 - D-1: contain, log class name only
             logger.warning(
                 "run_weekly_logic_change_suggestions: symphony %s failed (%s)",
@@ -310,6 +322,7 @@ def _build_base_candidate_pool(bot_state: dict) -> list:
     return sorted(pool)[:_ASSET_SWAP_CANDIDATE_POOL_SIZE]
 
 
+@model_config.pin_run
 def run_weekly_asset_swap_suggestions() -> None:
     """Enumerate live symphonies and call suggest_swaps once per symphony.
 
@@ -382,7 +395,7 @@ def run_weekly_asset_swap_suggestions() -> None:
                 measured_value=0.0,
             )
 
-            suggest_swaps(
+            result = suggest_swaps(
                 symphony_hash,
                 score_tree,
                 objective,
@@ -390,6 +403,7 @@ def run_weekly_asset_swap_suggestions() -> None:
                 candidate_pool,
                 lens_scores=lens_scores,
             )
+            _log_generation_reason("run_weekly_asset_swap_suggestions", symphony_hash, result)
         except Exception as exc:  # noqa: BLE001 - D-1: contain, log class name only
             logger.warning(
                 "run_weekly_asset_swap_suggestions: symphony %s failed (%s)",
@@ -409,6 +423,7 @@ def run_weekly_asset_swap_suggestions() -> None:
 # ---------------------------------------------------------------------------
 
 
+@model_config.pin_run
 def run_weekly_suggestions() -> None:
     """Run all three weekly advisor engines in sequence.
 

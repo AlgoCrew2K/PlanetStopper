@@ -33,6 +33,7 @@ from werkzeug.security import check_password_hash
 import ai_advisor
 import analytics
 import database
+import llm_request
 import market_calendar
 import model_config
 from market_calendar import get_market_state
@@ -7493,7 +7494,7 @@ def ai_advisor_asset_swaps_evaluate():
     # symphony), falling back to this same default via a defensive
     # getattr+isinstance guard — never None.
     _default_provenance = {
-        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        "generation_model": llm_request.default_generation_model(),
         "mode": "asset-swap",
         "evidence_injected": dict(ai_advisor._EMPTY_MANIFEST),
         "run_id": str(uuid.uuid4()),
@@ -7851,7 +7852,7 @@ def ai_advisor_logic_changes_evaluate():
     # back to this same default via a defensive getattr+isinstance guard —
     # never None.
     _default_provenance = {
-        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        "generation_model": llm_request.default_generation_model(),
         "mode": "logic-change",
         "evidence_injected": dict(ai_advisor._EMPTY_MANIFEST),
         "run_id": str(uuid.uuid4()),
@@ -8331,7 +8332,7 @@ def ai_advisor_strategy_builder_run():
         _run_prov = getattr(run, "provenance", None)
         if isinstance(_run_prov, dict) and _run_prov.get("generation_model") == "":
             # No model served a reply (resolved model answered 404): name none.
-            _badge = "model unavailable"
+            _badge = _model_config.MODEL_UNAVAILABLE_TEXT
         else:
             _badge = _model_config.peek(_model_config.Knob.SUGGESTION).badge_text
         mode_notice = (
@@ -8852,6 +8853,7 @@ def ai_advisor_suggest():
         suggestions = []
         for s in suggestions_response.suggestions:
             s_dict = s.model_dump()
+            s_dict["model"] = suggestions_response.serving_model
             s_dict["four_gates_verdict"] = _compute_suggestion_gates(s, resolved_id)
             s_dict["impact"] = _enrich_suggestion_impact(s)
             suggestions.append(s_dict)
@@ -8883,6 +8885,19 @@ def ai_advisor_suggest():
         # server-side.  Surface only the error class name so the operator can identify
         # the failure type without leaking sensitive content to the browser.
         return jsonify({"error": type(_exc).__name__}), 200
+
+
+# A model id the panel posts back is recorded only when it is a plain id: the audit row
+# must not store a forged or oversized value.
+_PLAIN_MODEL_ID = re.compile(r"[A-Za-z0-9._:/+-]{1,128}")  # chars, 128 = max id length
+
+
+def _audit_model_id(suggestion_data) -> str:
+    """Model that served the suggestion being decided, else the registry resolution."""
+    posted = suggestion_data.get("model") if isinstance(suggestion_data, dict) else None
+    if isinstance(posted, str) and _PLAIN_MODEL_ID.fullmatch(posted):
+        return posted
+    return llm_request.default_generation_model()
 
 
 @app.route("/ai-advisor/accept", methods=["POST"])
@@ -8947,7 +8962,7 @@ def ai_advisor_accept():
         symphony_name=database.normalize_name(symphony_id),
         operator_identity="",
         prompt_inputs={},
-        model_id=model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        model_id=_audit_model_id(suggestion_data),
         generation_settings={},
         raw_response={},
         validation_results={},
@@ -8980,7 +8995,7 @@ def ai_advisor_reject():
         symphony_name=database.normalize_name(symphony_id),
         operator_identity="",
         prompt_inputs={},
-        model_id=model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        model_id=_audit_model_id(suggestion_data),
         generation_settings={},
         raw_response={},
         validation_results={},
