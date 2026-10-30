@@ -85,3 +85,20 @@ def _no_live_builder_seams(request, monkeypatch):
 
     monkeypatch.setattr(_gen, "_build_client", _no_live_client, raising=False)
     monkeypatch.setattr(_up, "get_tradeable_set", lambda *a, **k: frozenset(), raising=False)
+
+
+@pytest.fixture()
+def swap_fake(monkeypatch):
+    """The real anthropic SDK over the in-process HTTP fake, behind the asset swap client seam.
+
+    Serves the captured Models page; the tradeable universe holds the captured swap pair.
+    Tests queue Messages replies on the returned fake and read the requests it recorded.
+    """
+    import advisors.asset_swap_engine as ase
+    from tests import _asset_swap_llm_support as sup
+    from tests._anthropic_http_fake import AnthropicHttpFake
+
+    fake = AnthropicHttpFake.with_captured_page()
+    monkeypatch.setattr(ase, "_build_client", lambda: fake.client)
+    monkeypatch.setattr(ase, "get_tradeable_set", lambda **kwargs: sup.tradeable_universe())
+    return fake

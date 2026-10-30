@@ -7258,7 +7258,7 @@ def ai_advisor_asset_swaps_evaluate():
     # symphony), falling back to this same default via a defensive
     # getattr+isinstance guard — never None.
     _default_provenance = {
-        "generation_model": model_config.get_advisor_suggestion_model(),
+        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
         "mode": "asset-swap",
         "evidence_injected": dict(ai_advisor._EMPTY_MANIFEST),
         "run_id": str(uuid.uuid4()),

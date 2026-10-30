@@ -301,6 +301,12 @@
     // Render the results area
     // ---------------------------------------------------------------------------
 
+    // Reason codes the server puts in the run message when generation itself failed.
+    var GENERATION_REASON_CODES = [
+        'model_unavailable', 'no_tool_call', 'refusal', 'max_tokens',
+        'override_model_not_found', 'override_request_rejected'
+    ];
+
     function renderResults(data) {
         if (!resultsArea) return;
 
@@ -333,7 +339,7 @@
             });
             provenanceHtml =
                 '<div class="run-controls-note" data-testid="as-live-generation-provenance">' +
-                'Model: ' + escHtml(prov.generation_model || '') +
+                'Model: ' + (prov.generation_model ? escHtml(prov.generation_model) : 'model unavailable') +
                 (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
                 (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
                 '</div>';
@@ -372,9 +378,14 @@
                 '</div>';
         } else {
             // AC-2.5: zero survivors is a valid non-error outcome.
+            var generationFailed = GENERATION_REASON_CODES.some(function (code) {
+                return String(data.message || '').indexOf(code) !== -1;
+            });
             html +=
                 '<div class="no-survivors-state" data-testid="no-survivors-state">' +
-                '<div class="no-survivors-title">No swap cleared the gate this run</div>' +
+                '<div class="no-survivors-title">' +
+                (generationFailed ? 'No swap was generated this run' : 'No swap cleared the gate this run') +
+                '</div>' +
                 '<div class="no-survivors-body">' +
                 escHtml(data.message || 'The swap did not pass the acceptance gate.') +
                 '</div>' +

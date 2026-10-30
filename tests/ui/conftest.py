@@ -16,6 +16,10 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.llm_request.conftest import (
+    fake,  # noqa: F401  # fixture: HTTP fake, captured Models page
+)
+
 _API_STATE_STUB = {
     "bot_state": {},
     "is_locked": False,

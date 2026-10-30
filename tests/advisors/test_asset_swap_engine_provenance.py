@@ -13,8 +13,9 @@ Contract pinned (mirrors R2-2's test_logic_change_engine_provenance.py almost
                              returns).
     provenance: dict | None = None
         A REAL 4-key dict on EVERY path, NEVER None, NEVER {}:
-        {"generation_model": <model_config.get_advisor_suggestion_model() at
-         call time>, "mode": "asset-swap", "evidence_injected": <the passed
+        {"generation_model": <model_config.peek(Knob.SUGGESTION).model_id at
+         call time, replaced by the reply's own model once a request returned a
+         reply>, "mode": "asset-swap", "evidence_injected": <the passed
          reasoning_manifest, or ai_advisor._EMPTY_MANIFEST when omitted>,
          "run_id": <same value as SwapRunResult.run_id>}.
         run_id/generation_model/mode are cheap, non-fabricated facts about the
@@ -38,8 +39,6 @@ from dataclasses import fields as dataclass_fields
 from unittest.mock import MagicMock
 
 import pytest
-
-import model_config
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
@@ -139,14 +138,12 @@ def _run_operator(
 
 
 # ===========================================================================
-# AC-5: provenance shape, accessor-driven model, mode="asset-swap".
+# AC-5: provenance shape, override-driven model, mode="asset-swap".
 # ===========================================================================
 
 
-def test_provenance_shape_and_accessor_driven_model(ase, fixture_tree, monkeypatch):
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-as-model"
-    )
+def test_provenance_shape_and_override_driven_model(ase, fixture_tree, monkeypatch):
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-as-model")
     manifest = {
         "tree": "present",
         "stats": "absent",
@@ -158,7 +155,7 @@ def test_provenance_shape_and_accessor_driven_model(ase, fixture_tree, monkeypat
 
     assert result.provenance is not None, "AC-5 GAP: provenance is None on a successful run."
     assert result.provenance.get("generation_model") == "test-marker-as-model", (
-        f"AC-5 GAP: provenance['generation_model'] must reflect the LIVE accessor value. "
+        f"AC-5 GAP: provenance['generation_model'] must carry the override verbatim. "
         f"Got {result.provenance!r}"
     )
     assert result.provenance.get("mode") == "asset-swap", (
@@ -198,6 +195,31 @@ def test_provenance_evidence_injected_defaults_to_empty_manifest_when_reasoning_
         f"AC-5 GAP: with reasoning_manifest omitted, evidence_injected must equal "
         f"ai_advisor._EMPTY_MANIFEST exactly. Got {result.provenance.get('evidence_injected')!r}"
     )
+
+
+_RUNNERS = [pytest.param(_run_suggest, id="suggest"), pytest.param(_run_operator, id="operator")]
+
+
+@pytest.mark.parametrize("runner", _RUNNERS)
+def test_provenance_model_is_the_resolved_model_when_no_request_was_made(
+    ase, fixture_tree, monkeypatch, runner
+):
+    """The generator stand-in returns a plain list, so no reply travels back: the model of
+    the run is what the registry resolved, never a literal."""
+    from tests.llm_request.conftest import newest_id
+
+    result, _insert = runner(ase, fixture_tree, monkeypatch)
+
+    assert result.provenance["generation_model"] == newest_id("fable")
+
+
+@pytest.mark.parametrize("runner", _RUNNERS)
+def test_provenance_model_is_empty_when_no_family_is_resolved_and_no_request_was_made(
+    ase, fixture_tree, monkeypatch, unresolved_models, runner
+):
+    result, _insert = runner(ase, fixture_tree, monkeypatch)
+
+    assert result.provenance["generation_model"] == ""
 
 
 # ===========================================================================
@@ -270,9 +292,7 @@ def test_run_id_persisted_traceable_to_advisor_observation__operator_path(
 def test_no_composer_key_still_populates_real_provenance_never_none__suggest(
     ase, fixture_tree, monkeypatch
 ):
-    monkeypatch.setattr(
-        model_config, "get_advisor_suggestion_model", lambda: "test-marker-as-model"
-    )
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-as-model")
     manifest = {"tree": "absent", "stats": "absent"}
     result, _insert = _run_suggest(
         ase, fixture_tree, monkeypatch, reasoning_manifest=manifest, has_key=False
