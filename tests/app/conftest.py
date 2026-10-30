@@ -40,9 +40,15 @@ a failure mode, not just this one occurrence.
 
 from __future__ import annotations
 
+import copy
+import json
+import pathlib
+import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import requests
 
 _API_STATE_STUB = {
     "bot_state": {},
@@ -84,3 +90,144 @@ def _stub_community_strats_offline():
         return_value=_COMMUNITY_STRATS_OFFLINE_STUB,
     ) as mock_load:
         yield mock_load
+
+
+# ---------------------------------------------------------------------------
+# Account-totals refresh harness (shared by the account-basis grace and the
+# startup-refresh specs).  Mocks sit at the network boundary (requests.get),
+# never at a local name binding, so the real _refresh_account_totals runs.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_TOTAL_STATS_FIXTURE = _REPO_ROOT / "tests/fixtures/composer/v3-audit/total_stats.json"
+_CAPTURED_ENTRY_FIXTURE = (
+    _REPO_ROOT / "tests/fixtures/refresh_timing/02-c3/bot_state_entry_iaSOOUsmnCJHiZvbrWfs.json"
+)
+CAPTURED_SYMPHONY_ID = "iaSOOUsmnCJHiZvbrWfs"
+# Longest a held Composer call waits for the test to release it.  A request
+# that is wrongly serialized behind the held refresh therefore returns only
+# after this long, by which point the held thread has already finished.
+HOLD_TIMEOUT_S = 6.0
+_ACCOUNT_REFRESH_THREAD_PREFIX = "account-refresh-"
+
+
+@pytest.fixture(autouse=True)
+def _drain_account_refresh_threads():
+    """Join daemon threads named account-refresh-* before and after each test.
+
+    The non-blocking account refresh starts a daemon thread per call; a thread
+    left running would write the shared totals cache during the next test.
+    """
+
+    def _drain():
+        for t in threading.enumerate():
+            if t.name.startswith(_ACCOUNT_REFRESH_THREAD_PREFIX) and t.is_alive():
+                t.join(timeout=2.0)
+
+    _drain()
+    yield
+    _drain()
+
+
+class MonotonicClock:
+    """Replacement for app._monotonic: a clock tests advance explicitly."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture()
+def monotonic_clock(monkeypatch):
+    """Install a controllable app._monotonic (raising=False: the seam is new)."""
+    import app as app_module
+
+    clock = MonotonicClock()
+    monkeypatch.setattr(app_module, "_monotonic", clock, raising=False)
+    return clock
+
+
+class ComposerTotalStatsStub:
+    """requests.get stand-in for Composer's account total-stats route.
+
+    `mode` selects the reply: ok | hold | status_503 | read_timeout |
+    connection_error.  `hold` blocks on `release` (up to HOLD_TIMEOUT_S) and
+    then serves the captured 200 body.  The 200 body is the captured producer
+    record, deep-copied per call so a caller cannot mutate the fixture.
+    """
+
+    hold_timeout_s = HOLD_TIMEOUT_S
+
+    def __init__(self, payload: dict, account_id: str) -> None:
+        self.payload = payload
+        self.account_id = account_id
+        self.mode = "ok"
+        self.urls: list[str] = []
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self._lock = threading.Lock()
+
+    def _ok(self):
+        body = copy.deepcopy(self.payload)
+        return SimpleNamespace(status_code=200, json=lambda: body)
+
+    def __call__(self, url, headers=None, timeout=None, **_kwargs):
+        if not str(url).endswith("/total-stats"):
+            raise AssertionError(f"unexpected network call during the test: {url}")
+        with self._lock:
+            self.urls.append(url)
+        if self.mode == "hold":
+            self.started.set()
+            self.release.wait(timeout=HOLD_TIMEOUT_S)
+            return self._ok()
+        if self.mode == "status_503":
+            return SimpleNamespace(status_code=503)
+        if self.mode == "read_timeout":
+            raise requests.exceptions.ReadTimeout("simulated read timeout")
+        if self.mode == "connection_error":
+            raise requests.exceptions.ConnectionError("simulated connection error")
+        return self._ok()
+
+    @property
+    def call_count(self) -> int:
+        with self._lock:
+            return len(self.urls)
+
+
+@pytest.fixture()
+def captured_symphony_entry():
+    """One real per-symphony bot_state entry captured from the droplet (verbatim)."""
+    return copy.deepcopy(json.loads(_CAPTURED_ENTRY_FIXTURE.read_text(encoding="utf-8")))
+
+
+@pytest.fixture()
+def composer_total_stats(tmp_path, monkeypatch, captured_symphony_entry):
+    """Serve the captured total-stats body through requests.get, credentials isolated.
+
+    The developer .env is real, so ENV_FILE_PATH is redirected to an empty file
+    and every credential the refresh reads is set or deleted here.
+    """
+    import app as app_module
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
+    account_id = captured_symphony_entry["account"]
+    monkeypatch.setenv("COMPOSER_KEY_ID", "composer-key-id-for-tests")
+    monkeypatch.setenv("COMPOSER_SECRET", "composer-secret-for-tests")
+    monkeypatch.setenv("ACCOUNT_ROTH", account_id)
+    monkeypatch.delenv("ACCOUNT_INDIVIDUAL", raising=False)
+    monkeypatch.delenv("ACCOUNT_TRAD", raising=False)
+    stub = ComposerTotalStatsStub(
+        json.loads(_TOTAL_STATS_FIXTURE.read_text(encoding="utf-8")), account_id
+    )
+    monkeypatch.setattr(app_module.requests, "get", stub)
+    try:
+        yield stub
+    finally:
+        stub.release.set()

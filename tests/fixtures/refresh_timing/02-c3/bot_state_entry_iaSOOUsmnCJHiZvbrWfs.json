@@ -1,0 +1,46 @@
+{
+ "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+ "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+ "current_value": 1098.42,
+ "current_return": 0.13999999999999999,
+ "triggered": false,
+ "high_water_mark": 0.73,
+ "shadow_hwm": 0.73,
+ "symphony_vol": 1.5927051809242332,
+ "mc_prob": 27.62,
+ "vwap_ticks": 0,
+ "vwap_bleed_ticks": 0,
+ "above_tp_count": 0,
+ "below_stop_count": 0,
+ "position_epoch": "ba775024600c41a5a50ab0fa9c214142",
+ "current_holdings": [
+  {
+   "ticker": "SH",
+   "allocation": 0.390700631
+  },
+  {
+   "ticker": "EDC",
+   "allocation": 0.272940612
+  },
+  {
+   "ticker": "SCHD",
+   "allocation": 0.000868271
+  },
+  {
+   "ticker": "URTY",
+   "allocation": 0.005909363
+  },
+  {
+   "ticker": "UVIX",
+   "allocation": 0.096965443
+  },
+  {
+   "ticker": "VIXY",
+   "allocation": 0.098396678
+  },
+  {
+   "ticker": "YANG",
+   "allocation": 0.133218248
+  }
+ ]
+}
