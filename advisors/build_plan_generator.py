@@ -1088,6 +1088,7 @@ def generate_build_plans(
 
     Never raises (AC-11). On any failure: empty .plans + .reason.
     """
+    reply_model = ""
     try:
         membership = frozenset(membership_set) if membership_set else frozenset()
         obj_name = objective.value if isinstance(objective, Objective) else str(objective)
@@ -1119,7 +1120,6 @@ def generate_build_plans(
         # Attempts are bounded by MAX_GENERATION_ATTEMPTS, shared by truncation and
         # missing-tool-call replies; any other failure reason ends the loop at once.
         reply = None
-        reply_model = ""
         for _attempt in range(MAX_GENERATION_ATTEMPTS):
             reply = llm_request.send(
                 client,
@@ -1192,7 +1192,7 @@ def generate_build_plans(
     except Exception as exc:
         # D-1: reason contains ONLY the exception class name — no key/path/message.
         logger.debug("generate_build_plans: error", exc_info=True)
-        return GeneratorResult(plans=[], reason=type(exc).__name__)
+        return GeneratorResult(plans=[], reason=type(exc).__name__, model=reply_model)
 
 
 # ---------------------------------------------------------------------------

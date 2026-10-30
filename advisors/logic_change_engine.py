@@ -872,6 +872,7 @@ def generate_reasoned_logic_candidates(
         Empty when there are no tweakable numeric parameters, the LLM proposes
         nothing usable, or any failure occurs.
     """
+    sent = False
     try:
         candidate_params = extract_numeric_params(raw_value)
         if not candidate_params:
@@ -886,6 +887,7 @@ def generate_reasoned_logic_candidates(
 
         client = _build_client()
         reply = None
+        sent = True
         for _ in range(llm_request.NO_TOOL_CALL_ATTEMPTS):
             reply = llm_request.send(
                 client,
@@ -896,10 +898,10 @@ def generate_reasoned_logic_candidates(
                 tools=[llm_request.strict_tool(_EMIT_LOGIC_EDITS_TOOL)],
                 timeout=_REQUEST_TIMEOUT_SECONDS,
             )
+            if reply_sink is not None:
+                reply_sink.append(reply)
             if reply.reason != llm_request.REASON_NO_TOOL_CALL:
                 break
-        if reply_sink is not None:
-            reply_sink.append(reply)
         if reply.reason is not None:
             return []
 
@@ -950,27 +952,14 @@ def generate_reasoned_logic_candidates(
         logger.debug(
             "generate_reasoned_logic_candidates: error (%s)", type(exc).__name__, exc_info=True
         )
+        if sent and reply_sink is not None and not reply_sink:
+            reply_sink.append(llm_request.Reply())  # a request went out and no reply came back
         return []
 
 
 # ---------------------------------------------------------------------------
 # Baseline return extractor
 # ---------------------------------------------------------------------------
-
-
-def _reply_model_and_message(sink: list) -> tuple[str | None, str]:
-    """Serving model and empty-run message from the collected final reply.
-
-    A patched or failed generator leaves ``sink`` empty: model ``None`` (no reply
-    arrived, so the caller keeps its resolved model) and the gate message. A reply
-    with an empty model (``model_unavailable``) returns ``""``, which clears it.
-    """
-    reply = sink[-1] if sink else None
-    if reply is None:
-        return None, NO_SURVIVORS_MESSAGE
-    if reply.reason is None:
-        return reply.model, NO_SURVIVORS_MESSAGE
-    return reply.model, f"no logic change was generated this run ({reply.reason_text()})"
 
 
 def _backtest_returns_from_tree(raw_value: dict, symphony_id: str) -> list:
@@ -1065,7 +1054,7 @@ def propose_operator_logic_change(
     # fabricated, never nulled. Mirrors strategy_builder_engine.propose_strategies.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        "generation_model": llm_request.default_generation_model(),
         "mode": "logic-change",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1119,9 +1108,9 @@ def propose_operator_logic_change(
             reply_sink=reply_sink,
         )
         tweak = reasoned[0] if reasoned else None
-        reply_model, empty_message = _reply_model_and_message(reply_sink)
-        if reply_model is not None:
-            provenance["generation_model"] = reply_model
+        empty_message = llm_request.empty_run_message(
+            llm_request.adopt_reply(provenance, reply_sink), "logic change", NO_SURVIVORS_MESSAGE
+        )
 
     symphony_name = (
         (score_tree.get("name") or symphony_id) if isinstance(score_tree, dict) else symphony_id
@@ -1312,7 +1301,7 @@ def suggest_logic_changes(
     # nulled. Mirrors strategy_builder_engine.propose_strategies.
     run_id = run_id or str(uuid.uuid4())
     provenance: dict = {
-        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        "generation_model": llm_request.default_generation_model(),
         "mode": "logic-change",
         "evidence_injected": (
             reasoning_manifest if reasoning_manifest is not None else ai_advisor._EMPTY_MANIFEST
@@ -1342,9 +1331,9 @@ def suggest_logic_changes(
         max_candidates=MAX_SUGGESTED_CANDIDATES,
         reply_sink=reply_sink,
     )
-    reply_model, empty_message = _reply_model_and_message(reply_sink)
-    if reply_model is not None:
-        provenance["generation_model"] = reply_model
+    empty_message = llm_request.empty_run_message(
+        llm_request.adopt_reply(provenance, reply_sink), "logic change", NO_SURVIVORS_MESSAGE
+    )
 
     if not candidate_tweaks:
         return LogicChangeRunResult(
