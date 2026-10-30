@@ -43,6 +43,7 @@ function, same rationale.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import pathlib
 import threading
@@ -51,6 +52,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app as app_module
+import model_config
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture
+from tests.advisors.test_frontrunner_builder import (  # noqa: F401 - fixtures and shared helpers
+    _CAPTURED_OVERLAY_REPLY,
+    _LISTING_FAILURE_TEXTS,
+    _OVERLAY_JOB_SYMPHONY_ID,
+    _generation_warnings,
+    _unresolved_fake,
+    incumbent_symphony,
+    overlay_job,
+)
+from tests.llm_request.conftest import message_body, newest_id
 
 # Bounded wait for tests that let the REAL app._FRONTRUNNER_BUILD_EXECUTOR
 # run a submitted closure (not mocked) — mirrors
@@ -816,3 +829,88 @@ def test_frontrunner_builder_not_imported_at_module_scope():
         "advisors.frontrunner_builder must be imported INSIDE the route "
         "function (CC-2 lazy-import), not at app.py module scope"
     )
+
+
+# ===========================================================================
+# Group G: POST /ai-advisor/frontrunner-builder/run — the model a started run names
+#
+# The route's own closure and the real run_frontrunner_build execute on the calling
+# thread (the executor stand-in only runs the submitted work inline, so the test can
+# read the finished run); the Anthropic client seam is an in-process HTTP fake behind
+# advisors.frontrunner_builder._build_client, so the model is read off the request body.
+# Patch targets: app._FRONTRUNNER_BUILD_EXECUTOR (module attribute, submit(fn, **kwargs)),
+# advisors.frontrunner_builder._build_client. The remaining leaves are patched by the
+# overlay_job fixture at their origin modules.
+# ===========================================================================
+
+
+class _InlineExecutor:
+    """Runs submitted work on the calling thread and returns a finished Future."""
+
+    def submit(self, fn, *args, **kwargs):
+        future = concurrent.futures.Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except BaseException as exc:  # noqa: BLE001 - mirror a worker thread's capture
+            future.set_exception(exc)
+        return future
+
+
+def _start_run_inline(client, monkeypatch, fake):
+    monkeypatch.setattr(app_module, "_FRONTRUNNER_BUILD_EXECUTOR", _InlineExecutor())
+    monkeypatch.setattr("advisors.frontrunner_builder._build_client", lambda: fake.client)
+    return client.post(
+        "/ai-advisor/frontrunner-builder/run",
+        json={"symphony_ids": [_OVERLAY_JOB_SYMPHONY_ID]},
+        content_type="application/json",
+    )
+
+
+def test_every_overlay_request_of_a_route_started_run_names_the_newest_listed_fable_model(
+    client, monkeypatch, overlay_job
+):
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.queue_message(message_body("text_only_with_tools.json"))
+    fake.queue_message(message_body(_CAPTURED_OVERLAY_REPLY))
+
+    resp = _start_run_inline(client, monkeypatch, fake)
+
+    assert resp.status_code == 202
+    assert [r.body["model"] for r in fake.message_requests] == [newest_id("fable")] * 2, (
+        "each overlay request must name the newest active fable-line model of the listing"
+    )
+    assert overlay_job.call_count == 1
+
+
+def test_a_relisted_newer_fable_model_is_named_by_the_next_route_started_run(
+    client, monkeypatch, overlay_job
+):
+    relisted = load_fixture("models/relisted_newer_fable.json")
+    expected = newest_id("fable", relisted["data"])
+    assert expected != newest_id("fable"), "fixture setup: the relisting must change the newest"
+    model_config._reset_registry()
+    fake = AnthropicHttpFake(pages=[relisted])
+    fake.queue_message(message_body(_CAPTURED_OVERLAY_REPLY))
+
+    resp = _start_run_inline(client, monkeypatch, fake)
+
+    assert resp.status_code == 202
+    assert fake.listing_sequences == 1, "an unresolved family must be listed once, then cached"
+    assert [r.body["model"] for r in fake.message_requests] == [expected]
+
+
+@pytest.mark.parametrize("kind", ["listing-503", "no-fable-model"])
+def test_an_unresolved_family_still_gets_202_and_the_run_sends_no_request(
+    client, monkeypatch, overlay_job, unresolved_models, caplog, kind
+):
+    fake = _unresolved_fake(kind)
+
+    with caplog.at_level(logging.WARNING, logger="advisors.frontrunner_builder"):
+        resp = _start_run_inline(client, monkeypatch, fake)
+
+    assert resp.status_code == 202
+    assert fake.message_requests == []
+    overlay_job.assert_not_called()
+    warnings = _generation_warnings(caplog)
+    assert any("model_unavailable" in text for text in warnings), warnings
+    assert not any(text in " ".join(warnings) for text in _LISTING_FAILURE_TEXTS)
