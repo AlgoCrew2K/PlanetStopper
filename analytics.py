@@ -757,8 +757,9 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 
     result = [float(r[1]) for r in rows]
     # One entry per symphony: drop older keys before storing the current one.
-    for stale_key in [k for k in _db._shadow_cr_cache if k[0] == symphony_id]:
-        del _db._shadow_cr_cache[stale_key]
+    # Snapshot keys and pop with a default: a competing thread may mutate the dict.
+    for stale_key in [k for k in list(_db._shadow_cr_cache) if k[0] == symphony_id]:
+        _db._shadow_cr_cache.pop(stale_key, None)
     _db._shadow_cr_cache[cache_key] = result  # type: ignore[assignment]
     return result
 

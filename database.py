@@ -3045,9 +3045,9 @@ def record_shadow_observation(
     self-selects the current epoch. None on a legacy/unstamped row.
     """
     # Invalidate all cache entries for this symphony (keys now include db_file as 3rd element).
-    stale = [k for k in _shadow_cr_cache if k[0] == symphony_id]
-    for k in stale:
-        del _shadow_cr_cache[k]
+    # Snapshot keys and pop with a default: a competing thread may mutate the dict.
+    for k in [k for k in list(_shadow_cr_cache) if k[0] == symphony_id]:
+        _shadow_cr_cache.pop(k, None)
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.execute(

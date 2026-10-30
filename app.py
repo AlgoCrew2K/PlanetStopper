@@ -2927,7 +2927,9 @@ def _et_trading_day_bounds(now_et: datetime) -> tuple[str, str]:
 def get_state():
     try:
         _ro_conn = database.get_ro_connection()
-        market_state = get_market_state(datetime.now(_ET))
+        # One ET reading per request so every date lookup agrees across midnight.
+        _now_et = datetime.now(_ET)
+        market_state = get_market_state(_now_et)
 
         # AC-P2.12.2: additive fields — computed once, merged into every response branch.
         _api_state = get_api_state_dict()
@@ -3503,7 +3505,7 @@ def get_state():
         # No live state — return waiting with market_state context and notice on fresh deploy.
         # AC-DM.3.4: closed + no snapshot + empty state → notice fields included in waiting.
         if not state_data:
-            today_str, _ = _et_trading_day_bounds(datetime.now(_ET))
+            today_str, _ = _et_trading_day_bounds(_now_et)
             try:
                 shadow_divergence = database.get_shadow_divergence(today_str)
             except Exception:
@@ -3661,7 +3663,7 @@ def get_state():
         # Build symphonies list for M1 analytics helpers from bot_state.
         # Fields derived: last_percent_change from current_return/100, value from current_value.
         # Composer CR/MDD fields use None default so missing data is distinguishable from 0.0.
-        today_str, today_start = _et_trading_day_bounds(datetime.now(_ET))
+        today_str, today_start = _et_trading_day_bounds(_now_et)
         symphonies_list = []
         for k in symphony_keys:
             s = state_data[k]
@@ -3700,7 +3702,7 @@ def get_state():
             state_data[k]["last_trigger"] = last_trigger_by_sym.get(k)
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
-        _today_et = datetime.now(_ET).strftime("%Y-%m-%d")
+        _today_et = _now_et.strftime("%Y-%m-%d")
         # F-1: ONE shared read-only connection for the whole per-symphony
         # enrichment loop AND the _compute_portfolio_strip call right below it
         # (was: each of the 3 per-symphony analytics calls, PLUS every
