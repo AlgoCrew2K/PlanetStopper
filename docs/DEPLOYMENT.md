@@ -110,15 +110,40 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
 apt update && apt install caddy
 ```
 
-Create `/etc/caddy/Caddyfile`:
+Create `/etc/caddy/Caddyfile` (the tracked copy is `deploy/caddy/Caddyfile`):
 
 ```
 your-domain.example {
     reverse_proxy localhost:8090
+    # gzip first: Caddy picks the first configured encoding when a client weights them equally.
+    # No text/* wildcard: a compressed text/event-stream may be buffered and stall events.
+    encode gzip zstd {
+        match {
+            header Content-Type application/json*
+            header Content-Type text/html*
+            header Content-Type text/css*
+            header Content-Type text/javascript*
+            header Content-Type application/javascript*
+            header Content-Type image/svg+xml*
+            header Content-Type text/plain*
+        }
+    }
 }
 ```
 
 Replace `your-domain.example` with your actual domain. Caddy will automatically obtain and renew a Let's Encrypt certificate.
+
+To change a live Caddyfile: back it up, copy the tracked file in, validate, then reload (never restart):
+
+```bash
+cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak
+cp deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+cmp /etc/caddy/Caddyfile deploy/caddy/Caddyfile   # silent when identical
+```
+
+Rollback: `cp /etc/caddy/Caddyfile.bak /etc/caddy/Caddyfile && systemctl reload caddy`.
 
 ```bash
 systemctl enable --now caddy

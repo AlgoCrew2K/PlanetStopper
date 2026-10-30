@@ -5,7 +5,6 @@ import concurrent.futures
 import functools
 import hmac
 import inspect
-import io
 import json
 import logging
 import math
@@ -39,6 +38,7 @@ import analytics
 import database
 import market_calendar
 import model_config
+import timing_log
 from market_calendar import get_market_state
 
 _ET = ZoneInfo("America/New_York")
@@ -420,6 +420,8 @@ def health():
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
+# werkzeug's own request log stays off; the middleware writes the one access line per request.
+app.wsgi_app = timing_log.AccessLogMiddleware(app.wsgi_app)
 
 # Single-worker executor for dashboard background writes (fleet alert dismiss).
 # A persistent worker thread owns the I/O so Flask request handlers return
@@ -937,13 +939,35 @@ def _engine_run_state() -> "EngineRun | None":
     return _engine_run
 
 
+# Monotonic start of each in-flight engine run, read once by _publish_cycle for duration_s.
+_cycle_started_mono: dict[str, float] = {}
+
+
 def _log_skipped_minute(record: CycleRecord) -> None:
-    _daemon_log.warning(
-        "engine minute %s skipped (%s): run %s started %s is still in flight",
-        record.started_at[11:16],
-        record.cycle_id,
-        record.running_cycle_id,
-        record.running_since,
+    running = _engine_run_state()
+    running_s = _monotonic() - running.started_mono if running is not None else None
+    timing_log.emit(
+        "cycle",
+        cycle_id=record.cycle_id,
+        outcome="skipped",
+        started_at=record.started_at,
+        running_cycle_id=record.running_cycle_id,
+        running_since=record.running_since,
+        running_s=None if running_s is None else f"{running_s:.1f}",
+    )
+
+
+def _log_finished_cycle(record: CycleRecord) -> None:
+    started_mono = _cycle_started_mono.pop(record.cycle_id, None)
+    duration = None if started_mono is None else f"{_monotonic() - started_mono:.1f}"
+    timing_log.emit(
+        "cycle",
+        cycle_id=record.cycle_id,
+        outcome=record.outcome,
+        started_at=record.started_at,
+        ended_at=record.completed_at,
+        duration_s=duration,
+        exit_code=record.exit_code,
     )
 
 
@@ -953,6 +977,7 @@ def _publish_cycle(record: CycleRecord) -> None:
     if record.outcome == "skipped":
         _log_skipped_minute(record)
     else:
+        _log_finished_cycle(record)
         _RECENT_RUN_OUTCOMES.append(record.outcome)
     _notify_cycle_complete(record)
 
@@ -1014,6 +1039,7 @@ def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
     started_at = started_at if started_at is not None else _now_et()
     cycle_id = cycle_id if cycle_id is not None else _mint_cycle_id(started_at)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
+    _cycle_started_mono[cycle_id] = _monotonic()
     exit_code = None
     before = _read_markers()
     sig_before = _post_mortem_signature(started_at)
@@ -1190,6 +1216,17 @@ def _run_trigger_retention():
         )
 
 
+def _log_total_stats_call(started: float, **outcome) -> None:
+    """One timing line per total-stats call: the route template, never the account id."""
+    timing_log.emit(
+        "composer",
+        "GET",
+        "/portfolio/accounts/{account}/total-stats",
+        **outcome,
+        ms=round((timing_log.clock() - started) * 1000),
+    )
+
+
 def _refresh_account_totals() -> None:
     """Fetch Composer account-level total-stats and populate _account_totals_cache.
 
@@ -1221,7 +1258,13 @@ def _refresh_account_totals() -> None:
             "authorization": f"Bearer {secret}",
             "Content-Type": "application/json",
         }
-        resp = requests.get(url, headers=headers, timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S)
+        _call_started = timing_log.clock()
+        try:
+            resp = requests.get(url, headers=headers, timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S)
+        except Exception as _call_exc:
+            _log_total_stats_call(_call_started, error=type(_call_exc).__name__)
+            raise
+        _log_total_stats_call(_call_started, status=resp.status_code)
         if resp.status_code == 200:
             data = resp.json()
             # Acquire the shared cache lock before writing multiple keys so that
@@ -1286,9 +1329,9 @@ def _refresh_account_totals() -> None:
     except Exception as _exc:
         _daemon_log.error(
             "_refresh_account_totals failed — account totals cache unchanged: %s",
-            _exc,
-            exc_info=True,
+            type(_exc).__name__,
         )
+        _daemon_log.debug("_refresh_account_totals detail: %s", _exc, exc_info=True)
 
 
 def _lens_pipeline_worker() -> None:
@@ -7036,7 +7079,8 @@ def flush_resync():
         t.join(timeout=15.0)
         resync_ok = "portfolio_cr" in _account_totals_cache
     except Exception as exc:
-        _daemon_log.error("flush_resync: Composer resync failed: %s", exc)
+        _daemon_log.error("flush_resync: Composer resync failed: %s", type(exc).__name__)
+        _daemon_log.debug("flush_resync: Composer resync detail: %s", exc, exc_info=True)
         errors.append(f"resync: {exc}")
 
     _daemon_log.info(
@@ -9607,10 +9651,10 @@ def api_autotune_runs():
 
 
 if __name__ == "__main__":
-    # Reconfigure stdout to UTF-8 so emoji/non-Latin-1 chars don't crash on
-    # Windows (cp1252 default).  Guarded to __main__ so pytest's capture is
-    # not affected when this module is imported during test collection.
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    # UTF-8, line-buffered stdout (emoji/non-Latin-1 chars must not crash on Windows cp1252, and
+    # journald must see each line at once) plus the timing-line handler.  Guarded to __main__ so
+    # pytest's capture is not affected when this module is imported during test collection.
+    timing_log.configure_daemon_output()
 
     # Enforce daemon singleton BEFORE starting Flask or the scheduler thread.
     # If another Planet Stopper is alive this call prints an error and exits non-zero.

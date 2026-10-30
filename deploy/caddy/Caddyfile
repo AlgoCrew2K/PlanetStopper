@@ -1,0 +1,23 @@
+# Production site block for Planet Stopper (tracked copy of /etc/caddy/Caddyfile).
+# Apply:    cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak
+#           cp deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+#           caddy validate --config /etc/caddy/Caddyfile
+#           systemctl reload caddy
+# Verify:   cmp /etc/caddy/Caddyfile deploy/caddy/Caddyfile
+# Rollback: cp /etc/caddy/Caddyfile.bak /etc/caddy/Caddyfile && systemctl reload caddy
+104-248-7-101.sslip.io {
+    reverse_proxy localhost:8090
+    # gzip first: Caddy picks the first configured encoding when a client weights them equally.
+    # No text/* wildcard: a compressed text/event-stream may be buffered and stall events.
+    encode gzip zstd {
+        match {
+            header Content-Type application/json*
+            header Content-Type text/html*
+            header Content-Type text/css*
+            header Content-Type text/javascript*
+            header Content-Type application/javascript*
+            header Content-Type image/svg+xml*
+            header Content-Type text/plain*
+        }
+    }
+}

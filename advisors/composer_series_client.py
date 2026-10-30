@@ -63,6 +63,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+import timing_log
 from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers
 
 logger = logging.getLogger(__name__)
@@ -254,6 +255,12 @@ def _retry_after_delay(response: Any, default: float) -> float:
     return default
 
 
+def _log_attempt(started: float, **outcome: Any) -> None:
+    """One timing line per HTTP attempt: the route template, never the ids (emit never raises)."""
+    elapsed_ms = round((timing_log.clock() - started) * 1000)
+    timing_log.emit("composer", *_ENDPOINT_LOG_NAME.split(" ", 1), **outcome, ms=elapsed_ms)
+
+
 def _fetch_with_retry(account_id: str, symphony_id: str) -> SeriesResult:
     """The bounded retry loop. Sleeps only BETWEEN attempts."""
     url = f"{COMPOSER_BASE_URL}/portfolio/accounts/{account_id}/symphonies/{symphony_id}"
@@ -262,9 +269,11 @@ def _fetch_with_retry(account_id: str, symphony_id: str) -> SeriesResult:
     last_error = "no attempt made"
     for attempt in range(MAX_ATTEMPTS):
         delay = _default_backoff(attempt)
+        started = timing_log.clock()
         try:
             response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
         except Exception as exc:
+            _log_attempt(started, error=type(exc).__name__)
             # Any transport failure is retried, then reported by exception TYPE only.
             last_error = f"request failed: {type(exc).__name__}"
             logger.info(
@@ -276,6 +285,7 @@ def _fetch_with_retry(account_id: str, symphony_id: str) -> SeriesResult:
             )
         else:
             status = response.status_code
+            _log_attempt(started, status=status)
             logger.info(
                 "composer_series: %s HTTP %s (attempt %d/%d)",
                 _ENDPOINT_LOG_NAME,
