@@ -505,6 +505,36 @@
         return cssVar('--studio-warn');
     }
 
+    // The run row's `naive_sharpe` is the optimizer's best trial score under the
+    // run's own objective (not a Sharpe ratio), so the card names the objective
+    // the route reports in `row.objective` (read from the run's spec bundle).
+    // Only the two objectives the route can name appear here; null, absent or any
+    // other value takes the generic label, which names both possible objectives
+    // in its tooltip, so a stored value is never printed as if it were a name.
+    var AUTOTUNE_SCORE_TIP_SUFFIX =
+        ' It is the optimizer’s best trial score, before the selection haircut.';
+    var AUTOTUNE_SCORE_LABELS = {
+        crra_eu: {
+            label: 'Best CRRA-EU score',
+            tip: 'Scored by the CRRA expected-utility objective.' + AUTOTUNE_SCORE_TIP_SUFFIX,
+        },
+        sortino_loss_aversion: {
+            label: 'Best Sortino score',
+            tip: 'Scored by the Sortino-ratio objective.' + AUTOTUNE_SCORE_TIP_SUFFIX,
+        },
+    };
+    var AUTOTUNE_SCORE_GENERIC = {
+        label: 'Best objective score',
+        tip: 'The objective is CRRA-EU or Sortino, set by the run’s spec bundle, ' +
+            'which could not be read for this run.' + AUTOTUNE_SCORE_TIP_SUFFIX,
+    };
+
+    function autotuneScoreInfo(objective) {
+        return Object.prototype.hasOwnProperty.call(AUTOTUNE_SCORE_LABELS, objective)
+            ? AUTOTUNE_SCORE_LABELS[objective]
+            : AUTOTUNE_SCORE_GENERIC;
+    }
+
     function loadRecentRuns() {
         var list = document.getElementById('autotune-runs-list');
         if (!list) return;
@@ -526,8 +556,19 @@
                     var pillLabel = decisionLabel(decision);
                     var frozenVerdict = r.frozen_eval_verdict || '';
                     var frozenColor = frozenEvalColor(frozenVerdict);
+                    // The display name when the live state holds the symphony, else the
+                    // stored key; the key itself stays in the title.
                     var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
-                    // V-23: timestamp muted, Sortino / selection t-stat bold mono.
+                    var symKey = escHtml(r.symphony_id || '');
+                    var scoreInfo = autotuneScoreInfo(r.objective);
+                    // A run that never reached the frozen evaluation has no verdict:
+                    // say so in dim ink instead of rendering an empty pill.
+                    var frozenHtml = frozenVerdict
+                        ? '<div class="autotune-run-verdict">Frozen-eval ' +
+                          '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
+                          escHtml(frozenVerdict) + '</span></div>'
+                        : '<div class="autotune-run-verdict" style="color:' + cssVar('--studio-ink-dim') + ';">Frozen-eval not evaluated</div>';
+                    // V-23: timestamp muted, best-score / selection t-stat bold mono.
                     // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
                     var selTstat = r.selection_tstat;
                     // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
@@ -550,20 +591,19 @@
                     return (
                         '<div class="autotune-run-card" data-testid="autotune-run-row">' +
                         '<div class="autotune-run-top">' +
-                        '<span class="autotune-run-name" title="' + symLabel + '">' + symLabel + '</span>' +
+                        '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
                         '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
                         escHtml(pillLabel) + '</span>' +
                         '</div>' +
                         '<div class="autotune-run-meta">' +
                         '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(r.run_timestamp || '') + '</span>' +
-                        '<span>Sortino <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span>' +
+                        '<span><span class="autotune-run-score" title="' + escHtml(scoreInfo.tip) + '">' +
+                        escHtml(scoreInfo.label) + ' <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
                         ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
                         '</span>' +
                         '</div>' +
-                        // V-23: FROZEN-EVAL as colored pill.
-                        '<div class="autotune-run-verdict">Frozen-eval ' +
-                        '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
-                        escHtml(frozenVerdict) + '</span></div>' +
+                        // V-23: FROZEN-EVAL as colored pill (or the dim not-evaluated line).
+                        frozenHtml +
                         streakHtml +
                         '</div>'
                     );
@@ -781,6 +821,36 @@
         fdr_not_winner: 'This candidate cleared the FDR-calibrated significance bar but was not the single strongest candidate this run.',
     };
 
+    // The objective / source words a Strategy Builder card shows. The server
+    // renders the ONE mapping (app.py _SB_OBJECTIVE_LABELS / _SB_SOURCE_LABELS)
+    // into the panel's data-sb-labels attribute, so a live run's cards use the
+    // same words as the stored cards above. A missing attribute degrades to
+    // "not recorded" on every card rather than inventing labels here.
+    function sbCardLabels() {
+        var fallback = { objectives: {}, sources: {}, not_recorded: 'not recorded' };
+        var panel = document.getElementById('tab-panel-strategy-builder');
+        var raw = panel && panel.getAttribute('data-sb-labels');
+        if (!raw) { return fallback; }
+        try {
+            var parsed = JSON.parse(raw);
+            return {
+                objectives: parsed.objectives || {},
+                sources: parsed.sources || {},
+                not_recorded: parsed.not_recorded || fallback.not_recorded,
+            };
+        } catch (e) {
+            return fallback;
+        }
+    }
+
+    // A stored value's label, or null when the value is absent, not a string, or
+    // not a key of the mapping (never the raw value).
+    function sbLabelFor(mapping, stored) {
+        return typeof stored === 'string' && Object.prototype.hasOwnProperty.call(mapping, stored)
+            ? mapping[stored]
+            : null;
+    }
+
     async function sbRunAnalysis() {
         var btn = document.getElementById('sb-run-btn');
         var errDiv = document.getElementById('sb-run-error');
@@ -895,6 +965,7 @@
                         (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
                         '</div>';
                 }
+                var cardLabels = sbCardLabels();
                 function card(c, cls) {
                     var extra = '';
                     var modifierClass = '';
@@ -925,8 +996,21 @@
                                 '<strong>Gate withheld:</strong> ' + escHtml(reasonCopy) + '</div>';
                         }
                     }
+                    // AC-7: objective and source in words, and a title that leads with
+                    // the objective when it is known (the candidate id stays as the
+                    // secondary label); an unrecorded objective leaves the id alone.
+                    var objectiveLabel = sbLabelFor(cardLabels.objectives, c.params && c.params.objective);
+                    var sourceLabel = sbLabelFor(cardLabels.sources, c.template_id);
+                    var candidateId = escHtml(c.candidate_id || '');
+                    var titleHtml = objectiveLabel
+                        ? escHtml(objectiveLabel) + ' <span class="stat-nil">' + candidateId + '</span>'
+                        : candidateId;
+                    var stripHtml = '<div class="objective-strip" data-testid="objective-strip">' +
+                        'Objective: ' + escHtml(objectiveLabel || cardLabels.not_recorded) +
+                        ' &nbsp;&middot;&nbsp; ' +
+                        'Source: ' + escHtml(sourceLabel || cardLabels.not_recorded) + '</div>';
                     return '<div class="proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-candidate-id">' +
-                        escHtml(c.candidate_id || '') + '</span>' + extra + '</div>';
+                        titleHtml + '</span>' + stripHtml + extra + '</div>';
                 }
                 if (sv.length) {
                     html += '<div class="proposal-cards" data-testid="sb-live-survivor-cards">' +

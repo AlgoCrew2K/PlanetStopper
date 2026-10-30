@@ -1550,7 +1550,7 @@
             <!-- Left: suggestions -->
             <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
                 <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
-                    Select a symphony and click Run Advisor to get suggestions.
+                    Select a symphony and click Run Claude advisor to get suggestions.
                 </div>
             </div>
 
@@ -1807,7 +1807,6 @@
             <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
                 <span class="crisis-caveat-icon" aria-hidden="true">&#x26A0;</span>
                 <p class="crisis-caveat-text">
-                    <strong>Correlations destabilize toward 1.0 in market stress.</strong>
                     {{ crisis_caveat }}
                 </p>
             </div>
@@ -2090,10 +2089,16 @@
         <!-- Advisory-only. Non-dismissible risk banner stays.             -->
         <!-- CSRF on POST /run unchanged. D-1 preserved.                   -->
         <!-- ============================================================ -->
+        {# data-sb-labels: the one objective/source label mapping (app.py
+           _SB_OBJECTIVE_LABELS / _SB_SOURCE_LABELS), read by sbRunAnalysis() so a
+           live run's cards show the same words as the stored cards below.
+           tojson escapes quotes, angle brackets and ampersands, so the value is
+           safe inside the single-quoted attribute. #}
         <div id="tab-panel-strategy-builder"
              role="tabpanel"
              data-testid="tab-panel-strategy-builder"
              data-tab="strategy-builder"
+             data-sb-labels='{{ {"objectives": sb_objective_labels, "sources": sb_source_labels, "not_recorded": sb_label_not_recorded} | tojson }}'
              class="tab-panel">
 
             <!--
@@ -2108,7 +2113,7 @@
                  aria-live="polite">
                 <span class="sb-risk-banner-icon" aria-hidden="true">&#x26A0;</span>
                 <p class="sb-risk-banner-text">
-                    <strong>Logic-change proposals carry the highest overfitting risk.</strong>
+                    <strong>Strategy Builder proposals carry the highest overfitting risk.</strong>
                     A multiple-testing correction (FDR/Yekutieli) is applied across ALL
                     backtested candidates — raising the number of candidates raises the bar
                     each must clear. Survivors are <strong>sound-but-unprovable</strong>:
@@ -2202,6 +2207,28 @@
             <div id="sb-run-results"></div>
 
             {% endif %}{# no_api_key #}
+
+            {# Strategy Builder card identity: the objective and source in words
+               (labels stamped by ai_advisor_tab() from the one app.py mapping; an
+               absent or unrecognised stored value reads the shared "not recorded"
+               text), and a title that leads with the objective when it is known,
+               keeping the candidate id as a secondary label. #}
+            {% macro render_sb_card_title(obs, rr) %}
+            {%- set _cid = rr.get('candidate_id') or obs.subject_id -%}
+            {%- if obs._sb_objective_label -%}
+            {{ obs._sb_objective_label | e }} <span class="stat-nil">{{ _cid | e }}</span>
+            {%- else -%}
+            {{ _cid | e }}
+            {%- endif -%}
+            {% endmacro %}
+
+            {% macro render_sb_objective_strip(obs) %}
+            <div class="objective-strip" data-testid="objective-strip">
+                Objective: {{ (obs._sb_objective_label or sb_label_not_recorded) | e }}
+                &nbsp;&middot;&nbsp;
+                Source: {{ (obs._sb_source_label or sb_label_not_recorded) | e }}
+            </div>
+            {% endmacro %}
 
             {# Inline SVG sparkline macro for strategy-builder cards #}
             {% macro render_sb_sparkline(points) %}
@@ -2306,7 +2333,7 @@
                 {% set p_adj = rr.get('winner_p_adj') %}
                 <div class="proposal-card proposal-card--survivor">
                     <div class="card-header-row">
-                        <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
+                        <span class="card-candidate-id">{{ render_sb_card_title(obs, rr) }}</span>
                         <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
                     </div>
                     {# Forward incubation status chip — only rendered when app.py's
@@ -2319,16 +2346,7 @@
                           data-candidate-hash="{{ rr.get('candidate_hash', '') | e }}">{{ obs._incubation_badge_label | e }}</span>
                     {% endif %}
                     {{ render_sb_sparkline(obs.sparkline_points) }}
-                    <div class="objective-strip" data-testid="objective-strip">
-                        {% set obj = rr.get('objective', '') %}
-                        Objective:
-                        {% if obj == 'diversify' %}Diversify portfolio
-                        {% elif obj == 'cut_drawdown' %}Cut drawdown
-                        {% elif obj == 'lift_risk_adjusted' %}Lift risk-adjusted return
-                        {% else %}{{ obj | e }}{% endif %}
-                        &nbsp;&middot;&nbsp;
-                        Template: {{ rr.get('template_id', '—') | e }}
-                    </div>
+                    {{ render_sb_objective_strip(obs) }}
                     {% set live_baseline = rr.get('live_baseline') %}
                     <table class="stats-table" data-testid="stats-table">
                         <thead>
@@ -2445,14 +2463,10 @@
                 {% set rr = obs.raw_response %}
                 <div class="proposal-card proposal-card--backtest-failed" data-testid="backtest-failed-card">
                     <div class="card-header-row">
-                        <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
+                        <span class="card-candidate-id">{{ render_sb_card_title(obs, rr) }}</span>
                         <span class="gate-pill gate-pill--failed">BACKTEST FAILED</span>
                     </div>
-                    <div class="objective-strip" data-testid="objective-strip">
-                        Objective: {{ rr.get('objective', '—') | e }}
-                        &nbsp;&middot;&nbsp;
-                        Template: {{ rr.get('template_id', '—') | e }}
-                    </div>
+                    {{ render_sb_objective_strip(obs) }}
                     <p class="backtest-error">Composer API returned: {{ rr.get('backtest_error', 'unknown error') | e }}</p>
                 </div>
                 {% endfor %}
@@ -2471,15 +2485,11 @@
                         {% set n_cand = rr.get('n_candidates') or 1 %}
                         <div class="proposal-card proposal-card--rejected">
                             <div class="card-header-row">
-                                <span class="card-candidate-id">{{ rr.get('candidate_id') or obs.subject_id | e }}</span>
+                                <span class="card-candidate-id">{{ render_sb_card_title(obs, rr) }}</span>
                                 <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
                             </div>
                             {{ render_sb_sparkline(obs.sparkline_points) }}
-                            <div class="objective-strip" data-testid="objective-strip">
-                                Objective: {{ rr.get('objective', '—') | e }}
-                                &nbsp;&middot;&nbsp;
-                                Template: {{ rr.get('template_id', '—') | e }}
-                            </div>
+                            {{ render_sb_objective_strip(obs) }}
                             {% set live_baseline = rr.get('live_baseline') %}
                             <table class="stats-table" data-testid="stats-table">
                                 <thead><tr><th>Metric</th><th>Candidate</th>{% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}</tr></thead>
@@ -2631,7 +2641,10 @@
                      data-testid="frontrunner-proposal-card"
                      id="fr-card-{{ p.id }}">
                     <div class="card-header-row">
-                        <span class="card-candidate-id">{{ p.symphony_id }}</span>
+                        {# Title: the incumbent's display name (resolved in ai_advisor_tab());
+                           the Composer hash stays only in the title attribute. A hash no
+                           longer held in the live state reads as the hash. #}
+                        <span class="card-candidate-id" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }}</span>
                         <span class="advisory-only-badge" data-testid="proposal-source-badge">
                             {% if is_fr %}Frontrunner Builder{% else %}Strategy Builder (retrofit){% endif %}
                         </span>
@@ -2917,7 +2930,7 @@
             Divergence Explainer is disabled by default and its rows are
             informational-only, not currently monitoring anything active.
             Per-symphony recommendations come from
-            the <strong>Run Advisor</strong> (gear icon on each symphony card).
+            the <strong>Run Claude advisor</strong> button.
         </p>
         {% if observations %}
         <table class="obs-table">
@@ -2939,7 +2952,14 @@
                 {% set verdict_class = _VERDICT_CLASS.get(verdict, "verdict-unknown") %}
                 <tr data-obs-id="{{ obs.id }}">
                     <td>{{ obs.created_at | e }}</td>
+                    {# Display name from the live state (stamped in ai_advisor_tab());
+                       the stored key stays only in the title. No live match, or an
+                       empty key: the stored key, or the dash. #}
+                    {% if obs._symphony_name %}
+                    <td class="obs-symphony" data-testid="obs-symphony" title="{{ obs.symphony_id | e }}">{{ obs._symphony_name | e }}</td>
+                    {% else %}
                     <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
+                    {% endif %}
                     <td>{{ role_label | e }}</td>
                     <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
                     <td class="{{ verdict_class }}">{{ verdict | e }}</td>
