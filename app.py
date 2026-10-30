@@ -21,7 +21,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
 from zoneinfo import ZoneInfo
 
@@ -793,6 +793,35 @@ class CycleRecord:
 
 def _now_et() -> datetime:
     return datetime.now(_ET)
+
+
+# Scheduled engine pause windows: the session start runs its first cycle for a few minutes.
+_OPENING_PHASE_MINUTES = 5  # minutes after 09:30 ET during which the first cycle is expected
+
+
+def _engine_phase(now_et: datetime, market_state: str, last_cycle_at) -> str:
+    """Name the engine phase: closed, blackout, opening or running (pure, no clock read)."""
+    if market_state != "open":
+        return "closed"
+    day = now_et.date()
+    if (
+        market_calendar.rebalance_blackout_start(day)
+        <= now_et.time()
+        < market_calendar.session_close(day)
+    ):
+        return "blackout"
+    open_at = datetime.combine(day, dt_time(9, 30), tzinfo=_ET)
+    if open_at <= now_et < open_at + timedelta(minutes=_OPENING_PHASE_MINUTES):
+        try:
+            cycle_dt = datetime.fromisoformat(str(last_cycle_at).replace("Z", "+00:00"))
+            if cycle_dt.tzinfo is None:
+                cycle_dt = cycle_dt.replace(tzinfo=_ET)
+            first_cycle_done = cycle_dt >= open_at
+        except (TypeError, ValueError):
+            first_cycle_done = False
+        if not first_cycle_done:
+            return "opening"
+    return "running"
 
 
 _cycle_id_lock = threading.Lock()
@@ -2141,8 +2170,16 @@ def dashboard():
     _today_close = market_calendar.session_close(datetime.now(_ET).date())
     session_close_display = _today_close.strftime("%H:%M ET")
 
+    _phase_now = datetime.now(_ET)
+    engine_phase = _engine_phase(
+        _phase_now,
+        get_market_state(_phase_now),
+        bot_state.get("last_successful_cycle_at"),
+    )
+
     return render_template(
         "index.html",
+        engine_phase=engine_phase,
         vars_locked_count=vars_locked_count,
         active_route="dashboard",
         meta=meta,
@@ -3040,6 +3077,11 @@ def get_state():
                 )
 
         state_data = database.load_state()
+        _additive["engine_phase"] = _engine_phase(
+            _now_et,
+            market_state,
+            (state_data or {}).get("last_successful_cycle_at"),
+        )
 
         # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
         if market_state in ("closed_frozen", "pre_market"):
