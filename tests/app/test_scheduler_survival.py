@@ -223,7 +223,12 @@ class TestSlotsThatRaise:
 
         def _before(tick, jobs):
             join_engine_threads()
-            _set_due(jobs, {app_module.threaded_trigger: 2, app_module._start_account_refresh: 1})
+            _set_due(jobs, {})
+            for job in jobs:
+                if (
+                    job.unit == "minutes"
+                ):  # the engine spawn and the account refresh, whatever it is
+                    job.next_run = dt.datetime.now() - dt.timedelta(seconds=1)
 
         started = time.perf_counter()
         try:
