@@ -48,6 +48,8 @@ from __future__ import annotations
 import json
 from datetime import date, timedelta
 
+import pytest
+
 import analytics
 
 
@@ -299,3 +301,77 @@ def test_existing_keys_still_present_alongside_new_fields(tmp_path):
         assert key in stats, (
             f"pre-existing key {key!r} must remain present; got {sorted(stats.keys())}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Each exit carries its symphony's display name (captured production records)
+# ---------------------------------------------------------------------------
+
+
+def _captured_stamped(day: str) -> list[dict]:
+    from tests.ui.test_static_js_page_harness import pm_capture, stamped
+
+    return [stamped(t) for t in pm_capture(day)["triggers"]]
+
+
+def test_daily_exit_entries_carry_the_triggers_symphony_name_and_every_prior_key(tmp_path):
+    triggers = _captured_stamped("2026-06-22")
+    day = _d(3)
+    _write_post_mortem(tmp_path, day, triggers)
+
+    stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+
+    entries = stats["daily_exits"][day]
+    assert len(entries) == len(triggers)
+    for entry, trigger in zip(entries, triggers, strict=True):
+        # Every key the entry carried before, with the value it had before.
+        assert entry["symphony_id"] == trigger.get("symphony_id", "")
+        assert entry["reason"] == trigger["exit_reason"]
+        assert entry["detail"] == trigger["saved_pct_guard_alpha"]
+        assert entry["time_triggered"] == trigger["time_triggered"]
+        # The addition: the name the producer wrote.
+        assert entry["symphony_name"] == trigger["symphony_name"]
+
+
+def test_a_trigger_without_a_name_yields_no_name_rather_than_its_id_or_a_blank_string(tmp_path):
+    triggers = _captured_stamped("2026-06-22")
+    nameless = {k: v for k, v in triggers[0].items() if k != "symphony_name"}
+    day = _d(3)
+    _write_post_mortem(tmp_path, day, [nameless, triggers[1]])
+
+    entries = analytics.get_history_summary(days=30, base_dir=str(tmp_path))["daily_exits"][day]
+
+    assert entries[0]["symphony_name"] is None
+    assert entries[1]["symphony_name"] == triggers[1]["symphony_name"]
+
+
+def test_todays_exits_keep_their_shape_and_values(tmp_path):
+    triggers = _captured_stamped("2026-06-22")
+    today = date.today().isoformat()
+    _write_post_mortem(tmp_path, today, triggers)
+
+    stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+
+    assert len(stats["todays_exits"]) == len(triggers)
+    for entry, trigger in zip(stats["todays_exits"], triggers, strict=True):
+        assert set(entry) == {"ts", "symphony_id", "symphony_name", "reason", "detail"}
+        assert entry["ts"] == trigger["time_triggered"]
+        assert entry["symphony_name"] == trigger["symphony_name"]
+        assert entry["reason"] == trigger["exit_reason"]
+        assert entry["detail"] == trigger["saved_pct_guard_alpha"]
+
+
+def test_an_exit_with_an_unrecognised_stamp_is_excluded_everywhere_and_the_rest_carry_names(tmp_path):
+    triggers = _captured_stamped("2026-06-22")
+    excluded = {**triggers[0], "if_held_source": "unrecognised_source"}
+    day = _d(3)
+    _write_post_mortem(tmp_path, day, [excluded, *triggers[1:]])
+
+    stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))
+
+    kept = triggers[1:]
+    assert stats["trigger_count"] == len(kept)
+    assert stats["total_saved"] == pytest.approx(sum(t["saved_dollars"] for t in kept))
+    names = [e["symphony_name"] for e in stats["daily_exits"][day]]
+    assert names == [t["symphony_name"] for t in kept]
+    assert excluded["symphony_name"] not in names

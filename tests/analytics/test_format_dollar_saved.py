@@ -129,3 +129,65 @@ class TestFormatDollarSavedMagnitudeFormatting:
     def test_result_is_a_plain_string(self):
         result = analytics.format_dollar_saved(42.0)
         assert isinstance(result, str)
+
+
+class TestFormatDollarSavedRoundsLikeTheBrowser:
+    """The History page rounds with Number.prototype.toFixed (ties away from zero over the
+    exact binary value); the Discord and Sleeves text must agree on every tie, so the
+    magnitude follows the same rule instead of the f-string's half-to-even.
+
+    The expected digits come from node's own toFixed, the reference rule, not from this
+    module or from analytics.js_to_fixed.
+    """
+
+    # Exact-binary two-place ties, the near-zero pair, a thousands case and zero.
+    VALUES = [0.125, -0.125, 0.375, 0.625, -0.625, 0.875, 0.004, -0.004, 1234.5, 1234567.125, 0.0]
+
+    @staticmethod
+    def _node_magnitudes(values: list[float]) -> list[str]:
+        import json
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        assert node, "node is not installed; the rounding parity test needs it"
+        script = "const v = JSON.parse(process.argv[1]); console.log(JSON.stringify(v.map(x => Math.abs(x).toFixed(2))));"
+        out = subprocess.run(
+            [node, "-e", script, json.dumps(values)], capture_output=True, text=True, timeout=30
+        )
+        assert out.returncode == 0, out.stderr
+        return json.loads(out.stdout)
+
+    def test_the_magnitude_digits_equal_the_browsers_to_fixed_over_the_tie_family(self):
+        expected = self._node_magnitudes(self.VALUES)
+        for value, digits in zip(self.VALUES, expected, strict=True):
+            text = analytics.format_dollar_saved(value)
+            magnitude = text.removeprefix("$").rsplit(" ", 1)[0].replace(",", "")
+            assert magnitude == digits, (
+                f"{value!r} must round as toFixed(2) does ({digits}); got {text!r}"
+            )
+
+    def test_the_word_follows_the_sign_of_the_unrounded_value(self):
+        for value in self.VALUES:
+            word = analytics.format_dollar_saved(value).rsplit(" ", 1)[1]
+            assert word == ("saved" if value >= 0 else "lost"), f"{value!r} read {word!r}"
+
+    def test_a_negative_value_that_rounds_to_zero_still_reads_lost_with_no_minus(self):
+        text = analytics.format_dollar_saved(-0.004)
+        assert text == "$0.00 lost"
+
+    def test_custom_words_keep_the_same_rounding(self):
+        text = analytics.format_dollar_saved(0.125, positive_word="gain", negative_word="loss")
+        assert text == "$0.13 gain"
+
+    def test_the_magnitude_is_rounded_through_the_shared_to_fixed_helper(self, monkeypatch):
+        calls: list[tuple] = []
+        real = analytics.js_to_fixed
+
+        def spy(value, places):
+            calls.append((value, places))
+            return real(value, places)
+
+        monkeypatch.setattr(analytics, "js_to_fixed", spy)
+        analytics.format_dollar_saved(-12.5)
+        assert calls == [(12.5, 2)], "format_dollar_saved must call analytics.js_to_fixed(abs(value), 2)"
