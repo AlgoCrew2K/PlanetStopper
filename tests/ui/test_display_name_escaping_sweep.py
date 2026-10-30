@@ -26,6 +26,7 @@ for a surface this module does not list.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 from datetime import date, timedelta
@@ -33,6 +34,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import analytics
 import app as app_module
 import database
 from tests.ui._browser_server import running_server
@@ -59,6 +61,7 @@ _INERT_CHART_LIBRARY = (
     "function Chart(){this.data={datasets:[]};this.options={};}"
     "Chart.prototype.update=Chart.prototype.destroy=Chart.prototype.resize=function(){};"
     "Chart.defaults={font:{},plugins:{},color:''};Chart.register=function(){};"
+    "Chart.getChart=function(){return undefined;};"
     "window.Chart=Chart;"
 )
 
@@ -142,6 +145,9 @@ def markup_symphony(tmp_path, monkeypatch):
     env_path = tmp_path / "sweep.env"
     env_path.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
     monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_path))
+    # The shadow-history reader resolves its file from the module attribute, not the per-test
+    # environment variable the writer follows; point both at the per-test database.
+    monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
 
     key, record = _markup_record()
     name = record["name"]
