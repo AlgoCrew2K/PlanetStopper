@@ -289,6 +289,40 @@ class TestOneAccountRefreshInFlight:
         assert _wait_for_refresh_threads_to_finish()
         assert composer_total_stats.call_count == 1
 
+    @pytest.mark.parametrize("failure_mode", ["status_503", "read_timeout", "connection_error"])
+    def test_slot_frees_when_the_composer_call_fails(self, composer_total_stats, failure_mode):
+        composer_total_stats.mode = failure_mode
+        assert _start_account_refresh("startup") is True
+        assert _wait_for_refresh_threads_to_finish()
+        assert composer_total_stats.call_count == 1
+
+        composer_total_stats.mode = "ok"
+        assert _start_account_refresh("minute") is True, (
+            f"A refresh that failed ({failure_mode}) must not leave the in-flight slot taken."
+        )
+        assert _wait_for_refresh_threads_to_finish()
+        assert composer_total_stats.call_count == 2
+
+    def test_slot_frees_when_the_thread_cannot_be_started(self, composer_total_stats, monkeypatch):
+        class _ThreadThatCannotStart(threading.Thread):
+            def start(self):
+                raise RuntimeError("can't start new thread")
+
+        with monkeypatch.context() as patch_scope:
+            patch_scope.setattr(app_module.threading, "Thread", _ThreadThatCannotStart)
+            try:
+                refused = _start_account_refresh("minute")
+            except RuntimeError:
+                refused = False
+        assert refused is False, "A start that could not run must not report that it started."
+        assert composer_total_stats.call_count == 0
+
+        assert _start_account_refresh("minute") is True, (
+            "A thread that could not be started must not leave the in-flight slot taken."
+        )
+        assert _wait_for_refresh_threads_to_finish()
+        assert composer_total_stats.call_count == 1
+
 
 _MAIN_EVENT_ORDER = (
     "singleton",

@@ -60,5 +60,17 @@
     "shadow_return": 1.8499999999999999,
     "is_post_trigger": 1,
     "position_epoch": "87b25aafd4fe4f57aef6bb807ead4122"
+  },
+  "shadow_intraday_row_on_last_trajectory_day": {
+    "trading_day": "2026-06-29",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "cycle_id": "20260629_1100",
+    "ts_utc": "2026-06-29T15:00:03Z",
+    "ts_et": "2026-06-29T11:00:01",
+    "current_return": -4.6,
+    "shadow_return": -3.46,
+    "is_post_trigger": 1,
+    "position_epoch": "04ee2fad07ef40aca5b0566bc18e30be"
   }
 }

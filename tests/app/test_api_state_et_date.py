@@ -22,7 +22,7 @@ import copy
 import json
 import os
 import sqlite3
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -407,4 +407,108 @@ class TestDailySlotsStayOnTheHostClock:
         assert slot.at_time == expected_time
         assert slot.at_time_zone is None, (
             f"{function_name} must run at its host-clock time, not a named time zone"
+        )
+
+
+# ---------------------------------------------------------------------------
+# One clock reading per request
+#
+# A request that starts a moment before ET midnight and reads the clock again after
+# it would show two trading days at once: the market state from one date, the cards,
+# the divergence and the trigger bound from the next. The clock here is frozen at
+# the instant the request starts and then advances one second per reading while the
+# route runs, so every extra reading lands after midnight.
+# ---------------------------------------------------------------------------
+
+_JUST_BEFORE_ET_MIDNIGHT = datetime(2026, 10, 23, 3, 59, 59, 500000, tzinfo=UTC)
+_CLOCK_STEP = timedelta(seconds=1)
+
+
+def _clock_that_advances_while_the_route_runs(start: datetime, monkeypatch):
+    """Freeze app.datetime at `start`; once /api/state's view function is entered,
+    each reading is one step later than the one before."""
+    state = {"inside_route": False, "readings": 0}
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = start
+            if state["inside_route"]:
+                instant = start + _CLOCK_STEP * state["readings"]
+                state["readings"] += 1
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    monkeypatch.setattr(app_module, "datetime", _Clock)
+    view = app_module.app.view_functions["get_state"]
+
+    def _view_that_arms_the_clock(*args, **kwargs):
+        state["inside_route"] = True
+        try:
+            return view(*args, **kwargs)
+        finally:
+            state["inside_route"] = False
+
+    monkeypatch.setitem(app_module.app.view_functions, "get_state", _view_that_arms_the_clock)
+    return state
+
+
+class TestARequestStraddlingEtMidnightShowsOneDay:
+    def test_fixture_request_starts_before_midnight_and_a_second_reading_is_after_it(self):
+        first = _JUST_BEFORE_ET_MIDNIGHT
+        assert _et_date(first) != _et_date(first + _CLOCK_STEP)
+
+    @pytest.mark.parametrize("branch", ["live", "waiting"])
+    def test_every_date_the_route_uses_is_the_one_the_request_started_on(
+        self, client, monkeypatch, branch
+    ):
+        observed: dict[str, str] = {}
+        if branch == "live":
+            _seed_live_symphony()
+
+        real_market_state = app_module.get_market_state
+
+        def _market_state_spy(moment):
+            observed["market state"] = moment.astimezone(_ET).strftime("%Y-%m-%d")
+            return real_market_state(moment)
+
+        real_divergence = database_module.get_shadow_divergence
+
+        def _divergence_spy(day, *args, **kwargs):
+            observed["shadow divergence day"] = day
+            return real_divergence(day, *args, **kwargs)
+
+        real_triggers = database_module.get_triggers
+
+        def _triggers_spy(*args, **kwargs):
+            if "since" in kwargs:
+                bound = datetime.strptime(kwargs["since"], _TS_FORMAT).replace(tzinfo=UTC)
+                observed["trigger lower bound"] = _et_date(bound)
+            return real_triggers(*args, **kwargs)
+
+        card_days = _spy_on_today_change(monkeypatch)
+        monkeypatch.setattr(app_module, "get_market_state", _market_state_spy)
+        monkeypatch.setattr(database_module, "get_shadow_divergence", _divergence_spy)
+        monkeypatch.setattr(database_module, "get_triggers", _triggers_spy)
+        state = _clock_that_advances_while_the_route_runs(_JUST_BEFORE_ET_MIDNIGHT, monkeypatch)
+
+        resp = client.get("/api/state")
+
+        assert resp.status_code == 200
+        assert resp.get_json().get("status") == ("active" if branch == "live" else "waiting"), (
+            f"the {branch} branch must be the one exercised"
+        )
+        if branch == "live":
+            assert card_days, "the live branch must read today's change for each card"
+            observed["card trading day"] = card_days[0][0]
+        expected_kinds = {"market state", "shadow divergence day"}
+        if branch == "live":
+            expected_kinds |= {"trigger lower bound", "card trading day"}
+        assert expected_kinds <= set(observed), (
+            f"every date-bearing read of the {branch} branch must be observed; "
+            f"saw {sorted(observed)}"
+        )
+        assert state["readings"] >= 1
+        assert len(set(observed.values())) == 1, (
+            f"one request must use one ET date everywhere; the request started on "
+            f"{_et_date(_JUST_BEFORE_ET_MIDNIGHT)} and the route used {observed}"
         )
