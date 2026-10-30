@@ -63,13 +63,19 @@ def _composer_lines(timing_records):
     return timing_records.of("composer")
 
 
+def _the_line(timing_records):
+    lines = _composer_lines(timing_records)
+    assert len(lines) == 1, f"expected exactly one composer line, got {timing_records.lines!r}"
+    return lines[0]
+
+
 class TestAccountTotalsLatencyLine:
     def test_a_200_logs_the_route_template_status_and_duration(self, composer, timing_records):
         composer(0.625)
 
         app_module._refresh_account_totals()
 
-        (line,) = _composer_lines(timing_records)
+        line = _the_line(timing_records)
         assert line.words == ("GET", _TOTAL_STATS_ROUTE)
         assert line.fields == {"status": "200", "ms": "625"}
 
@@ -82,7 +88,7 @@ class TestAccountTotalsLatencyLine:
         with caplog.at_level(logging.DEBUG, logger="alphabot"):
             app_module._refresh_account_totals()
 
-        (line,) = _composer_lines(timing_records)
+        line = _the_line(timing_records)
         assert line.words == ("GET", _TOTAL_STATS_ROUTE)
         assert line.fields == {"error": "ReadTimeout", "ms": "30000"}
         alphabot = [r for r in caplog.records if r.name == "alphabot"]
@@ -97,7 +103,7 @@ class TestAccountTotalsLatencyLine:
 
         app_module._refresh_account_totals()
 
-        (line,) = _composer_lines(timing_records)
+        line = _the_line(timing_records)
         assert line.fields == {"status": "503", "ms": "250"}
 
     def test_a_connection_error_logs_its_type_and_duration(self, composer, timing_records):
@@ -106,7 +112,7 @@ class TestAccountTotalsLatencyLine:
 
         app_module._refresh_account_totals()
 
-        (line,) = _composer_lines(timing_records)
+        line = _the_line(timing_records)
         assert line.fields == {"error": "ConnectionError", "ms": "125"}
 
     def test_each_call_logs_exactly_one_line(self, composer, timing_records):

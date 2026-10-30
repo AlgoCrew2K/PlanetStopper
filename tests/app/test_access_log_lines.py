@@ -56,13 +56,6 @@ _STUB_STATE = {
 
 
 @pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-@pytest.fixture()
 def auth_enabled(monkeypatch):
     """The real auth gate, as tests/app/test_health_endpoint.py re-enables it."""
     monkeypatch.setenv("DASHBOARD_PASSWORD", _PASSWORD)
@@ -447,7 +440,7 @@ class TestMiddlewareContract:
 
         result = timing_log.AccessLogMiddleware(inner)(self._environ(), self._start_response)
         list(result)
-        result.close()
+        getattr(result, "close", lambda: None)()
 
         line = _one(timing_records.of("access"))
         assert line.fields["status"] == "500"

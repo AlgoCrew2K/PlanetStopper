@@ -123,11 +123,13 @@ class TestSkippedMinute:
             "outcome",
             "changed",
         }
-        (line,) = [
+        skip_lines = [
             parsed
             for parsed in timing_records.of("cycle")
             if parsed.fields.get("running_cycle_id") == running.cycle_id
         ]
+        assert len(skip_lines) == 1, f"one cycle line for the skip, got {timing_records.lines!r}"
+        line = skip_lines[0]
         assert line.fields["cycle_id"] == skip.cycle_id, "the line names the skip's own id"
         assert line.fields["outcome"] == "skipped"
         assert line.fields["running_since"] == _iso(running.started_at), (

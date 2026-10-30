@@ -405,3 +405,13 @@ def make_record():
         )
 
     return _make
+
+
+@pytest.fixture()
+def client():
+    """Flask test client bound to the in-process app (files may define their own)."""
+    import app as app_module
+
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        yield c

@@ -26,6 +26,12 @@ import timing_log
 from tests._timing_capture import parse_line
 
 
+def _one(items):
+    """The only item, asserted, so a missing line reads as a failed assertion."""
+    assert len(items) == 1, f"expected exactly one timing line, got {items!r}"
+    return items[0]
+
+
 class TestLoggerPlacement:
     def test_the_logger_is_outside_the_alphabot_hierarchy_and_does_not_propagate(self):
         assert timing_log.TIMING_LOGGER_NAME == "planetstopper.timing"
@@ -57,7 +63,7 @@ class TestRendering:
     def test_the_record_is_logged_at_info(self, timing_records):
         timing_log.emit("probe", "ok")
 
-        (record,) = timing_records.records
+        record = _one(timing_records.records)
         assert record.levelno == logging.INFO
 
 
@@ -67,7 +73,7 @@ class TestSanitizer:
     def test_a_value_cannot_split_or_forge_a_line(self, timing_records):
         timing_log.emit("probe", "ok", note=self.HOSTILE)
 
-        (text,) = timing_records.lines
+        text = _one(timing_records.lines)
         assert text.isascii() and text.isprintable(), f"unsafe characters survived: {text!r}"
         parsed = parse_line(text)
         assert list(parsed.fields) == ["note"], "the value must stay one field"
@@ -80,20 +86,20 @@ class TestSanitizer:
     def test_each_line_splitting_character_is_percent_encoded(self, timing_records, raw, encoded):
         timing_log.emit("probe", "ok", note=f"x{raw}y")
 
-        (text,) = timing_records.lines
+        text = _one(timing_records.lines)
         assert parse_line(text).fields["note"].upper() == f"x{encoded}y".upper()
 
     def test_a_word_is_sanitized_like_a_value(self, timing_records):
         timing_log.emit("probe", "/path with space\r\nforged event=1")
 
-        (text,) = timing_records.lines
+        text = _one(timing_records.lines)
         assert "\n" not in text and "\r" not in text
         assert parse_line(text).fields == {}, "a forged key=value must not become a field"
 
     def test_the_text_is_never_used_as_the_format_string(self, timing_records):
         timing_log.emit("probe", "100%s", note="%d%d%(x)s")
 
-        (text,) = timing_records.lines
+        text = _one(timing_records.lines)
         parsed = parse_line(text)
         assert [unquote(w) for w in parsed.words] == ["100%s"]
         assert unquote(parsed.fields["note"]) == "%d%d%(x)s"
@@ -110,7 +116,7 @@ class TestNeverRaises:
         assert timing_log.emit("probe", Unprintable(), n=Unprintable()) is None
 
         timing_log.emit("probe", "after")
-        assert timing_records.lines[-1] == "probe after"
+        assert timing_records.lines[-1:] == ["probe after"]
 
     def test_a_logging_fault_is_swallowed_and_later_lines_still_log(self, timing_records):
         def fault(_record):
@@ -123,7 +129,7 @@ class TestNeverRaises:
             timing_log.timing_logger.removeFilter(fault)
 
         timing_log.emit("probe", "after")
-        assert timing_records.lines[-1] == "probe after"
+        assert timing_records.lines[-1:] == ["probe after"]
 
 
 class TestStreamHandler:
@@ -150,5 +156,5 @@ class TestStreamHandler:
 
         timing_log.emit("probe", "ok", n=1)
 
-        (line,) = stream.getvalue().splitlines()
+        line = _one(stream.getvalue().splitlines())
         assert re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\s+probe ok n=1$", line), line

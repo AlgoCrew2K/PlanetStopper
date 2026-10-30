@@ -23,7 +23,6 @@ import json
 import queue
 import subprocess
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -209,9 +208,7 @@ class TestLineAndEventAreOneRecord:
         clients: list[queue.SimpleQueue] = [queue.SimpleQueue()]
         monkeypatch.setattr(app_module, "_sse_clients", clients)
         monkeypatch.setattr(app_module, "_cycle_refresh_body", lambda: None)
-        monkeypatch.setattr(
-            app_module, "_account_totals_cache", SimpleNamespace(mark_stale=lambda: None)
-        )
+        monkeypatch.setattr(app_module._account_totals_cache, "mark_stale", lambda: None)
         monkeypatch.setattr(app_module, "LOG_FILE", str(tmp_path / "engine.log"))
 
         def engine(cmd, **_kwargs):
