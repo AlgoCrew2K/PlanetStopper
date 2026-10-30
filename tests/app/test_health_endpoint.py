@@ -23,6 +23,8 @@ No live DB, no live network. -n0 only.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -236,3 +238,365 @@ def test_health_endpoint_name_not_in_settings_write_allowlist():
     assert "health" not in allowlist, (
         "'health' must never appear in _SETTINGS_WRITE_ALLOWLIST — /health is read-only"
     )
+
+
+# ---------------------------------------------------------------------------
+# Scheduler liveness and degradation
+#
+# /health keeps status, daemon_started_at and last_successful_cycle_at and adds
+# scheduler_last_tick_at, engine_running_since, last_cycle ({cycle_id, outcome,
+# completed_at} of the newest published record of any outcome, or null) and
+# degraded_reasons. The verdict comes from app._health_status() (no database read)
+# and the pure app._health_degraded_reasons(now_mono):
+#   scheduler_stalled  the last tick (before the first tick: the scheduler's start,
+#                      before that the process start) is 120 s old or more
+#   engine_overrun     an engine run has lasted MORE than 180 s
+#   engine_failing     the last 5 spawned runs (skips excluded) all read "failed"
+# Ages use app._monotonic; times shown use app._now_et.
+# ---------------------------------------------------------------------------
+
+_LAST_CYCLE_KEYS = {"cycle_id", "outcome", "completed_at"}
+_STAMP = "2026-10-22T16:00:01.308786-04:00"
+
+
+@pytest.fixture()
+def world(monkeypatch, monotonic_clock, et_clock, published_cycles):
+    """Clocks under test control, the event fan-out captured, a scheduler that runs no job,
+    and a daemon that started five seconds ago."""
+    monkeypatch.setattr(
+        app_module, "schedule", SimpleNamespace(run_pending=lambda: None, every=lambda: None)
+    )
+    monkeypatch.setattr(
+        app_module, "_DAEMON_STARTED_MONO", monotonic_clock.now - 5.0, raising=False
+    )
+    return SimpleNamespace(mono=monotonic_clock, et=et_clock, published=published_cycles)
+
+
+def _health(client, last_cycle_at: str | None = None) -> dict:
+    with patch.object(
+        app_module.database, "load_state", return_value={"last_successful_cycle_at": last_cycle_at}
+    ):
+        resp = client.get("/health")
+    assert resp.status_code == 200
+    return resp.get_json()
+
+
+def _reasons(world) -> list[str]:
+    fn = getattr(app_module, "_health_degraded_reasons", None)
+    if fn is None:
+        pytest.fail("app._health_degraded_reasons(now_mono) is missing")
+    return list(fn(world.mono.now))
+
+
+def _tick() -> None:
+    tick = getattr(app_module, "_scheduler_tick", None)
+    if tick is None:
+        pytest.fail("app._scheduler_tick() is missing")
+    tick()
+
+
+def _publish(record) -> None:
+    app_module._publish_cycle(record)
+
+
+class TestHealthReportsSchedulerAndEngine:
+    def test_healthy_daemon_reports_ok_the_newest_run_and_a_fresh_tick(
+        self, client, world, stub_engine, join_engine_threads
+    ):
+        _tick()
+        app_module.threaded_trigger()
+        assert join_engine_threads()
+        (record,) = world.published
+
+        data = _health(client, _STAMP)
+
+        assert data["status"] == "ok"
+        assert data["degraded_reasons"] == []
+        assert data["engine_running_since"] is None
+        assert set(data["last_cycle"]) == _LAST_CYCLE_KEYS
+        assert data["last_cycle"] == {
+            "cycle_id": record.cycle_id,
+            "outcome": record.outcome,
+            "completed_at": record.completed_at,
+        }
+        tick_at = datetime.fromisoformat(data["scheduler_last_tick_at"])
+        assert abs(world.et.now - tick_at) < timedelta(seconds=2)
+        assert data["daemon_started_at"] == app_module._DAEMON_STARTED_AT
+        assert data["last_successful_cycle_at"] == _STAMP
+
+    def test_the_tick_time_is_the_time_of_the_last_tick(self, client, world):
+        _tick()
+        world.et.now += timedelta(seconds=30)
+        data_before = _health(client)
+        _tick()
+        data_after = _health(client)
+
+        assert datetime.fromisoformat(
+            data_after["scheduler_last_tick_at"]
+        ) - datetime.fromisoformat(data_before["scheduler_last_tick_at"]) == timedelta(seconds=30)
+
+    def test_a_scheduler_silent_for_130_seconds_is_degraded(self, client, world):
+        _tick()
+        world.mono.advance(130.0)
+
+        data = _health(client)
+
+        assert data["status"] == "degraded"
+        assert data["degraded_reasons"] == ["scheduler_stalled"]
+
+    @pytest.mark.parametrize(
+        ("silence_s", "stalled"),
+        [(0.0, False), (60.0, False), (119.9, False), (120.0, True), (500.0, True)],
+    )
+    def test_the_scheduler_stall_threshold_is_120_seconds_or_more(self, world, silence_s, stalled):
+        _tick()
+        world.mono.advance(silence_s)
+
+        assert ("scheduler_stalled" in _reasons(world)) is stalled
+
+    def test_an_engine_run_longer_than_200_seconds_is_degraded_and_reports_when_it_began(
+        self, client, world
+    ):
+        run = app_module._begin_engine_run(world.et.now)
+        _tick()
+        world.mono.advance(200.0)
+        _tick()
+
+        data = _health(client)
+
+        assert data["status"] == "degraded"
+        assert data["degraded_reasons"] == ["engine_overrun"]
+        assert datetime.fromisoformat(data["engine_running_since"]) == world.et.now
+        assert run is not None
+
+    @pytest.mark.parametrize(
+        ("run_s", "overrun"), [(0.0, False), (180.0, False), (180.5, True), (900.0, True)]
+    )
+    def test_the_engine_overrun_threshold_is_more_than_180_seconds(self, world, run_s, overrun):
+        app_module._begin_engine_run(world.et.now)
+        world.mono.advance(run_s)
+        _tick()
+
+        assert ("engine_overrun" in _reasons(world)) is overrun
+
+    def test_five_failed_runs_in_a_row_are_degraded(self, client, world, make_record):
+        _tick()
+        for n in range(5):
+            _publish(make_record("failed", exit_code=1, cycle_id=f"failed-{n}"))
+
+        data = _health(client)
+
+        assert data["status"] == "degraded"
+        assert data["degraded_reasons"] == ["engine_failing"]
+        assert data["last_cycle"]["outcome"] == "failed"
+
+    @pytest.mark.parametrize(
+        ("outcomes", "failing"),
+        [
+            pytest.param(["failed"] * 4, False, id="four-failures"),
+            pytest.param(["failed"] * 4 + ["cycle"], False, id="a-success-in-the-window"),
+            pytest.param(["failed"] * 5 + ["cycle"], False, id="a-success-after-five-failures"),
+            pytest.param(["cycle"] + ["failed"] * 5, True, id="five-failures-after-a-success"),
+            pytest.param(["failed"] * 4 + ["skipped", "failed"], True, id="skips-are-not-runs"),
+            pytest.param(["failed"] * 5 + ["skipped"] * 3, True, id="skips-do-not-clear-failures"),
+            pytest.param(["failed"] * 3 + ["closed", "failed", "failed"], False, id="closed-is-ok"),
+            pytest.param(["failed"] * 4 + ["blackout"], False, id="blackout-is-ok"),
+        ],
+    )
+    def test_the_failing_window_is_the_last_five_spawned_runs(
+        self, world, make_record, outcomes, failing
+    ):
+        _tick()
+        for n, outcome in enumerate(outcomes):
+            _publish(
+                make_record(
+                    outcome,
+                    exit_code=1 if outcome == "failed" else (None if outcome == "skipped" else 0),
+                    cycle_id=f"{outcome}-{n}",
+                )
+            )
+
+        assert ("engine_failing" in _reasons(world)) is failing
+
+    def test_a_run_whose_engine_could_not_start_counts_as_failed(self, world, make_record):
+        _tick()
+        for n in range(5):
+            _publish(make_record("failed", exit_code=None, cycle_id=f"no-spawn-{n}"))
+
+        assert "engine_failing" in _reasons(world)
+
+    def test_last_cycle_is_the_newest_record_of_any_outcome_including_a_skip(
+        self, client, world, make_record
+    ):
+        _tick()
+        _publish(make_record("cycle", cycle_id="ran"))
+        _publish(make_record("skipped", exit_code=None, cycle_id="skipped-minute", changed=False))
+
+        data = _health(client)
+
+        assert data["last_cycle"]["cycle_id"] == "skipped-minute"
+        assert data["last_cycle"]["outcome"] == "skipped"
+        assert data["status"] == "ok"
+
+    def test_an_unauthenticated_client_gets_the_same_body(self, auth_enabled_client, client, world):
+        _tick()
+        with_auth_gate = _health(auth_enabled_client)
+        without = _health(client)
+
+        assert with_auth_gate == without
+        assert {"scheduler_last_tick_at", "engine_running_since", "last_cycle"} <= set(
+            with_auth_gate
+        )
+
+    def test_the_body_carries_no_credential_account_or_environment_value(
+        self, client, world, make_record, monkeypatch
+    ):
+        sentinel = "SENTINEL-HEALTH-VALUE-DO-NOT-LEAK-71c2"
+        for name in (
+            "COMPOSER_SECRET",
+            "COMPOSER_KEY_ID",
+            "ACCOUNT_ROTH",
+            "DASHBOARD_PASSWORD",
+            "SECRET_KEY",
+            "ALPACA_SECRET_KEY",
+        ):
+            monkeypatch.setenv(name, sentinel)
+        app_module._begin_engine_run(world.et.now)
+        _tick()
+        _publish(make_record("failed", exit_code=1))
+        world.mono.advance(200.0)
+
+        resp = client.get("/health")
+        body = resp.get_data(as_text=True)
+
+        assert resp.status_code == 200
+        assert sentinel not in body
+        assert "exit_code" not in body, "an exit code is not part of the public body"
+        data = resp.get_json()
+        assert set(data["last_cycle"]) == _LAST_CYCLE_KEYS
+
+    def test_a_daemon_that_just_started_with_no_run_is_ok_and_has_no_last_cycle(
+        self, client, world
+    ):
+        data = _health(client)
+
+        assert data["status"] == "ok"
+        assert data["degraded_reasons"] == []
+        assert data["last_cycle"] is None
+        assert data["engine_running_since"] is None
+
+    @pytest.mark.parametrize(
+        ("process_age_s", "scheduler_age_s", "stalled"),
+        [
+            pytest.param(5.0, None, False, id="process-just-started"),
+            pytest.param(119.0, None, False, id="process-under-120s"),
+            pytest.param(130.0, None, True, id="scheduler-thread-never-started"),
+            pytest.param(130.0, 10.0, False, id="scheduler-started-10s-ago"),
+            pytest.param(300.0, 125.0, True, id="scheduler-started-but-never-ticked"),
+        ],
+    )
+    def test_before_the_first_tick_age_runs_from_the_scheduler_start_or_the_process_start(
+        self, world, monkeypatch, process_age_s, scheduler_age_s, stalled
+    ):
+        monkeypatch.setattr(
+            app_module, "_DAEMON_STARTED_MONO", world.mono.now - process_age_s, raising=False
+        )
+        monkeypatch.setattr(
+            app_module,
+            "_scheduler_started_mono",
+            None if scheduler_age_s is None else world.mono.now - scheduler_age_s,
+            raising=False,
+        )
+
+        assert ("scheduler_stalled" in _reasons(world)) is stalled
+
+    def test_a_closed_market_run_is_a_healthy_run(self, client, world, make_record):
+        world.et.now = world.et.now.replace(hour=20, minute=0)
+        _tick()
+        _publish(
+            make_record(
+                "closed",
+                changed=False,
+                started_at=world.et.now.isoformat(),
+                completed_at=world.et.now.isoformat(),
+            )
+        )
+
+        data = _health(client, _STAMP)
+
+        assert data["status"] == "ok"
+        assert data["last_cycle"]["outcome"] == "closed"
+        assert data["last_successful_cycle_at"] == _STAMP
+
+    def test_two_reasons_at_once_are_both_listed_once(self, client, world):
+        app_module._begin_engine_run(world.et.now)
+        _tick()
+        world.mono.advance(200.0)
+
+        data = _health(client)
+
+        assert sorted(data["degraded_reasons"]) == ["engine_overrun", "scheduler_stalled"]
+        assert len(data["degraded_reasons"]) == 2
+
+    def test_the_friday_post_close_autotune_reads_as_an_overrun(self, client, world):
+        world.et.now = world.et.now.replace(day=23, hour=16, minute=0)  # Friday 2026-10-23
+        assert world.et.now.weekday() == 4
+        app_module._begin_engine_run(world.et.now)
+        world.et.now += timedelta(minutes=5)
+        world.mono.advance(200.0)
+        _tick()
+
+        data = _health(client)
+
+        assert data["status"] == "degraded"
+        assert "engine_overrun" in data["degraded_reasons"]
+
+    def test_the_verdict_is_assembled_by_health_status_with_no_database_read(
+        self, client, world, monkeypatch
+    ):
+        status_fn = getattr(app_module, "_health_status", None)
+        if status_fn is None:
+            pytest.fail("app._health_status() is missing")
+
+        def _no_database(*_a, **_k):
+            raise AssertionError("_health_status must not read the database")
+
+        monkeypatch.setattr(app_module.database, "load_state", _no_database)
+        monkeypatch.setattr(app_module.database, "get_ro_connection", _no_database)
+        monkeypatch.setattr(app_module.database, "get_connection", _no_database)
+        _tick()
+
+        status = status_fn()
+
+        assert set(status) == {
+            "status",
+            "degraded_reasons",
+            "scheduler_last_tick_at",
+            "engine_running_since",
+            "last_cycle",
+        }
+
+    def test_the_route_returns_the_helper_plus_the_two_state_fields(
+        self, client, world, monkeypatch
+    ):
+        helper = {
+            "status": "degraded",
+            "degraded_reasons": ["engine_failing"],
+            "scheduler_last_tick_at": "2026-10-22T10:43:00-04:00",
+            "engine_running_since": None,
+            "last_cycle": {"cycle_id": "x#1", "outcome": "failed", "completed_at": "t"},
+        }
+        monkeypatch.setattr(app_module, "_health_status", lambda: dict(helper), raising=False)
+
+        data = _health(client, _STAMP)
+
+        assert data == {
+            **helper,
+            "daemon_started_at": app_module._DAEMON_STARTED_AT,
+            "last_successful_cycle_at": _STAMP,
+        }
+
+    def test_the_named_thresholds(self):
+        assert getattr(app_module, "_HEALTH_SCHEDULER_STALL_S", None) == 120
+        assert getattr(app_module, "_HEALTH_ENGINE_OVERRUN_S", None) == 180
+        assert getattr(app_module, "_HEALTH_FAILING_RUNS", None) == 5

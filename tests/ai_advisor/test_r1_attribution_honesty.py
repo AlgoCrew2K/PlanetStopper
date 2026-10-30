@@ -989,8 +989,10 @@ def test_two_overlapping_warmup_starts_send_one_listing_and_both_families_show_n
     _assert_both_families(_get_badges(client, monkeypatch), _expected_names(_CAPTURED_PAGE))
 
 
-class _StopScheduler(Exception):
-    """Raised by the stand-in scheduler to leave the endless loop of run_scheduler."""
+class _StopScheduler(BaseException):
+    """Raised by the stand-in scheduler to leave the endless loop of run_scheduler.
+
+    BaseException so the loop-level catch in the scheduler tick cannot swallow it."""
 
 
 def _scheduled_jobs(monkeypatch) -> list:
