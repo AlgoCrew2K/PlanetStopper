@@ -120,7 +120,9 @@ def _plan_for(kind: str, site: str, monkeypatch):
     if kind == "max-tokens":
         body = load_fixture("messages/max_tokens.json")
         fake = AnthropicHttpFake.with_captured_page()
-        fake.queue_message(body)
+        # build plans retry a truncated reply up to its attempt bound
+        for _ in range(llm_request.NO_TOOL_CALL_ATTEMPTS + 2):
+            fake.queue_message(body)
         return fake, body["model"]
     if kind == "no-tool-call-every-attempt":
         fake = AnthropicHttpFake.with_captured_page()
@@ -224,7 +226,7 @@ def _run_retry_site(site, monkeypatch, fake) -> None:
         sb_support.install_generator_seam(monkeypatch, fake)
         queue = [text_only, text_only, success]
         run = lambda: gen.generate_build_plans(  # noqa: E731
-            gen.Objective.DIVERSIFY, sb_support.MEMBERSHIP
+            gen.Objective("diversify"), sb_support.MEMBERSHIP
         )
     else:
         import advisors.frontrunner_builder as fbld
