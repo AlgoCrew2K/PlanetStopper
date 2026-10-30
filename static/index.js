@@ -1587,6 +1587,19 @@
             .catch(function (err) { console.error('guard-alpha-summary load failed', err); });
     }
 
+    // Refetch on every cycle-complete event except one that states changed === false.
+    // Anything unparseable or missing the key refetches (never skip on doubt).
+    function handleCycleCompleteEvent(evt) {
+        var unchanged = false;
+        try {
+            var parsed = JSON.parse(evt.data);
+            unchanged = parsed !== null && typeof parsed === 'object' && parsed.changed === false;
+        } catch (e) { unchanged = false; }
+        if (unchanged) { return; }
+        loadState();
+        fetchGuardAlphaSummary(_heroWindow);
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
         // Poll floor is 15 s — matches the engine's minute cadence (see POLL_INTERVAL_MS).
         loadState();
@@ -1597,7 +1610,7 @@
             var _es = new EventSource('/api/events');
             // Finding 8: the $-saved panel rides the same event — a page left open
             // across the EOD post-mortem write (or a new guard event) updates live.
-            _es.addEventListener('cycle-complete', function () { loadState(); fetchGuardAlphaSummary(_heroWindow); });
+            _es.addEventListener('cycle-complete', handleCycleCompleteEvent);
             _es.onerror = function () { /* silent — poll fallback handles reconnect */ };
         }
 

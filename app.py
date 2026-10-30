@@ -4,6 +4,7 @@ import atexit
 import concurrent.futures
 import hmac
 import io
+import json
 import logging
 import math
 import os
@@ -19,6 +20,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from datetime import time as dt_time
 from zoneinfo import ZoneInfo
 
 import dotenv as _dotenv_module
@@ -724,12 +726,14 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
 
 
 # --- 1. Bot Execution Logic ---
-# Import-signature stubs for the cycle record and its publisher; the implementation replaces them.
+# Seconds of SSE silence before a keep-alive comment; read at call time so tests can patch it.
 _SSE_HEARTBEAT_S = 15
 
 
 @dataclass(frozen=True)
 class CycleRecord:
+    """One engine spawn: when it ran, how it ended and whether it wrote anything."""
+
     cycle_id: str
     started_at: str
     completed_at: str
@@ -740,26 +744,78 @@ class CycleRecord:
     running_since: str | None
 
     def event_payload(self) -> dict:
-        return {}
+        return {
+            "cycle_id": self.cycle_id,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "outcome": self.outcome,
+            "changed": self.changed,
+        }
 
 
 def _now_et() -> datetime:
-    return datetime.fromtimestamp(0, _ET)
+    return datetime.now(_ET)
+
+
+_cycle_id_lock = threading.Lock()
+_cycle_id_counters: dict[str, int] = {}
 
 
 def _mint_cycle_id(started_at: datetime) -> str:
-    return ""
+    second = started_at.replace(microsecond=0).isoformat()
+    with _cycle_id_lock:
+        n = _cycle_id_counters.get(second, 0) + 1
+        _cycle_id_counters.clear()  # only the current second needs a counter
+        _cycle_id_counters[second] = n
+    return f"{second}#{n}"
 
 
 def _classify_outcome(started_at: datetime, exit_code: int | None) -> str:
-    return ""
+    """Name the engine's branch for a spawn at *started_at*, using its own comparisons."""
+    if exit_code is None or exit_code != 0:
+        return "failed"
+    day = started_at.date()
+    now = started_at.time()
+    if (
+        not market_calendar.is_trading_day(day)
+        or now < dt_time(9, 30)
+        or now > market_calendar.post_mortem_cutoff(day)
+    ):
+        return "closed"
+    if market_calendar.rebalance_blackout_start(day) <= now < market_calendar.session_close(day):
+        return "blackout"
+    if now >= market_calendar.session_close(day):
+        return "eod"
+    return "cycle"
+
+
+def _post_mortem_signature(started_at: datetime):
+    path = os.path.join(analytics._POST_MORTEMS_DIR, f"post_mortem_{started_at.date()}.json")
+    try:
+        st = os.stat(path)
+        return (True, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (False, None, None)
+
+
+def _read_markers():
+    try:
+        return database.read_cycle_markers()
+    except Exception:
+        return (None, None)
+
+
+def _markers_changed(before, after, sig_before, sig_after) -> bool:
+    if before == (None, None) or after == (None, None):
+        return True  # an unobservable state is reported as changed
+    return before != after or sig_before != sig_after
 
 
 def _publish_cycle(record: CycleRecord) -> None:
-    return None
+    _notify_cycle_complete(record)
 
 
-def _notify_cycle_complete(record=None) -> None:
+def _notify_cycle_complete(record: CycleRecord) -> None:
     """Fan out a cycle-complete notification to all connected SSE clients.
 
     Called from trigger_alpha_bot() in a finally block — must never raise.
@@ -790,27 +846,34 @@ def _notify_cycle_complete(record=None) -> None:
          budget: thread spawn + queue puts are O(1) and do no I/O.
       3. Fan out the "cycle-complete" SSE event.
     """
-    # Step 1: atomically mask stale data from all lock-free readers.
-    _account_totals_cache.mark_stale()
+    if record.outcome != "skipped":
+        # Step 1: atomically mask stale data from all lock-free readers.
+        _account_totals_cache.mark_stale()
 
-    # Step 2: start the refresh before the fan-out so it has maximum lead time.
-    # _refresh_account_totals never raises (D-1 contract); daemon=True so it
-    # does not prevent process exit.
-    threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
+        # Step 2: start the refresh before the fan-out so it has maximum lead time.
+        # _refresh_account_totals never raises (D-1 contract); daemon=True so it
+        # does not prevent process exit.
+        threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
 
     # Step 3: fan out SSE notification (O(1) per client, no I/O).
+    payload = json.dumps(record.event_payload())
     with _sse_clients_lock:
         clients = list(_sse_clients)
 
     for q in clients:
         try:
-            q.put_nowait("cycle-complete")
+            q.put_nowait(("cycle-complete", payload))
         except Exception:
             pass  # full or closed — skip, do not raise
 
 
 def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
+    started_at = started_at if started_at is not None else _now_et()
+    cycle_id = cycle_id if cycle_id is not None else _mint_cycle_id(started_at)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
+    exit_code = None
+    before = _read_markers()
+    sig_before = _post_mortem_signature(started_at)
     try:
         cmd = [sys.executable, "alpha_bot_execution.py"]
         if force:
@@ -819,10 +882,39 @@ def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
         env["PYTHONIOENCODING"] = "utf-8"
         with open(LOG_FILE, "a", encoding="utf-8") as log_fh:
             subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
+        exit_code = 0
     except subprocess.CalledProcessError as e:
+        exit_code = e.returncode
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
     finally:
-        _notify_cycle_complete()
+        try:
+            after = _read_markers()
+            changed = _markers_changed(
+                before, after, sig_before, _post_mortem_signature(started_at)
+            )
+            try:
+                outcome = _classify_outcome(started_at, exit_code)
+            except Exception as exc:
+                # A calendar fault must not stop the publish; the state is unknown, so
+                # the record claims a change and clients refetch.
+                logging.getLogger(__name__).warning(
+                    "cycle outcome unclassified: %s", type(exc).__name__
+                )
+                outcome, changed = ("failed" if exit_code else "cycle"), True
+            _publish_cycle(
+                CycleRecord(
+                    cycle_id=cycle_id,
+                    started_at=started_at.isoformat(),
+                    completed_at=_now_et().isoformat(),
+                    outcome=outcome,
+                    changed=changed,
+                    exit_code=exit_code,
+                    running_cycle_id=None,
+                    running_since=None,
+                )
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("cycle publish failed: %s", type(exc).__name__)
 
 
 def threaded_trigger():
@@ -2525,10 +2617,11 @@ def sse_events():
         with _sse_clients_lock:
             _sse_clients.append(client_q)
         try:
+            yield "retry: 5000\n\n"  # headers and reconnect delay reach the client at once
             while True:
                 try:
-                    msg = client_q.get(timeout=15)  # 15 s heartbeat cadence
-                    yield f"event: {msg}\ndata: {{}}\n\n"
+                    name, data = client_q.get(timeout=_SSE_HEARTBEAT_S)
+                    yield f"event: {name}\ndata: {data}\n\n"
                 except queue.Empty:
                     yield ": heartbeat\n\n"
         finally:
