@@ -940,6 +940,30 @@ def _run_lens_pipeline() -> None:
     t.start()
 
 
+def _model_warmup_worker() -> None:
+    """Resolve both model knobs so page badges show display names (never raises).
+
+    Runs off the request and execution paths. Only the exception type is logged
+    at WARNING because exception text can carry credentials; the traceback goes
+    to DEBUG.
+    """
+    try:
+        client = ai_advisor._build_client()
+        first = model_config.resolve(model_config.Knob.SUGGESTION, client)
+        # One listing fills both families; after a failed listing a second
+        # resolve would just send another request, so stop.
+        if first.source != "unavailable":
+            model_config.resolve(model_config.Knob.SYNTHESIS, client)
+    except Exception as exc:
+        _daemon_log.warning("Model warm-up failed: %s", type(exc).__name__)
+        _daemon_log.debug("Model warm-up failure detail", exc_info=True)
+
+
+def _start_model_warmup() -> None:
+    """Run the model warm-up on a daemon thread; returns immediately."""
+    threading.Thread(target=_model_warmup_worker, daemon=True, name="model-warmup").start()
+
+
 def _incubation_tick_worker() -> None:
     """Background worker that runs the Strategy Incubation Gate's daily tick.
 
@@ -1438,6 +1462,8 @@ def run_scheduler():
     # incubation slot so all three off-hours jobs run without same-minute
     # contention.
     schedule.every().day.at("03:45").do(_run_retirement_recommender_tick)
+    # Daily re-list (only when the registry is stale) so new model releases reach the badges.
+    schedule.every().day.at("04:15").do(_start_model_warmup)
     while True:
         schedule.run_pending()
         time.sleep(1)
@@ -6517,29 +6543,6 @@ def _low_power(validation_days: "int | None") -> bool:
     return validation_days is not None and validation_days < MIN_POWER_FOLD_DAYS
 
 
-# AC-1/AC-2/AC-3/AC-16 (attribution honesty + coherence): every model-name
-# badge/copy string in the AI Advisor UI reads a resolved accessor value at
-# render time — never a hardcoded "Opus"/"Fable" literal. This map is
-# display-only humanization (mirrors the map-known/fallback-to-raw idiom in
-# advisors/prism_render.py) — an UNKNOWN model ID (a future model, or a test
-# monkeypatch marker) passes through unchanged rather than being dropped, so
-# a new model or a test fixture can never silently vanish from the badge.
-_MODEL_DISPLAY_NAMES = {
-    "claude-opus-4-8": "Claude Opus 4.8",
-    "claude-opus-4-7": "Claude Opus 4.7",
-    "claude-sonnet-5": "Claude Sonnet 5",
-    "claude-haiku-4-5": "Claude Haiku 4.5",
-    "claude-fable-5": "Claude Fable 5",
-    "claude-mythos-5": "Claude Mythos 5",
-}
-
-
-def _humanize_model_name(model_id: str) -> str:
-    """Map a raw model ID to a display-ready name; unmapped IDs (a future
-    model, or a test's monkeypatched marker string) pass through unchanged."""
-    return _MODEL_DISPLAY_NAMES.get(model_id, model_id)
-
-
 def _build_verification_count_line(summary: "dict") -> str:
     """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
     human-readable status line for the Overview tab's Numeric Verification
@@ -7162,16 +7165,10 @@ def ai_advisor_tab():
     except Exception:
         pass  # Empty-state rendered by template on [].
 
-    # AC-1/AC-2/AC-3 (attribution honesty): resolved at request time so a
-    # monkeypatch or an env-var change takes effect without a daemon restart —
-    # same pattern as every other accessor-driven value on this page.
-    # ADVISOR_SUGGESTION_MODEL (model_config) drives Strategy Builder's
-    # built-new label + the SB run-controls-note (AC-1/AC-3). ADVISOR_
-    # SYNTHESIS_MODEL (ai_advisor.resolve_advisor_model) drives Chat's badge
-    # + the Market Prism attribution (AC-1/AC-2) — a separate, independent
-    # knob per AC-16.
-    advisor_suggestion_model = _humanize_model_name(model_config.get_advisor_suggestion_model())
-    advisor_synthesis_model = _humanize_model_name(ai_advisor.resolve_advisor_model())
+    # Badges read the cached resolution only; the render never lists models,
+    # so it can never wait on the Models API (the startup warm-up fills it).
+    advisor_suggestion_model = model_config.peek(model_config.Knob.SUGGESTION).badge_text
+    advisor_synthesis_model = model_config.peek(model_config.Knob.SYNTHESIS).badge_text
 
     return render_template(
         "ai_advisor.html",
@@ -9024,6 +9021,7 @@ if __name__ == "__main__":
 
     # Start the scheduler thread
     threading.Thread(target=run_scheduler, daemon=True).start()
+    _start_model_warmup()
     port = int(os.environ.get("PORT", 5000))
     print(f"\nStarting Alpha Bot Control Center at http://localhost:{port}\n")
 
