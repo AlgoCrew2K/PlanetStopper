@@ -434,9 +434,11 @@ class TestStalenessBadgeMarkupInIndexHtml:
     def test_engine_status_label_initial_state_is_live_or_closed(self):
         """
         On a fresh server-side render the #engine-status-label must contain
-        either 'Live' or 'Closed' — never a blank or arbitrary value.
-        The Jinja template sets the initial text from meta.system_online:
-        truthy → 'Live', falsy/absent → 'Closed'.
+        one of the known labels — never a blank or arbitrary value. The Jinja
+        template sets the initial text from meta.system_online (truthy → 'Live',
+        falsy/absent → 'Closed'); inside the two scheduled windows (09:30 until the
+        day's first cycle, and the rebalance blackout) the page reads 'Opening' or
+        'Rebalance pause', so a run on the real clock at those minutes stays valid.
         """
         import re
 
@@ -447,8 +449,9 @@ class TestStalenessBadgeMarkupInIndexHtml:
         match = re.search(r'id="engine-status-label"[^>]*>([^<]*)<', html)
         assert match is not None, 'id="engine-status-label" element not found in rendered HTML.'
         label_text = match.group(1).strip()
-        assert label_text in ("Live", "Stale", "Closed"), (
-            f"#engine-status-label initial text must be Live, Stale, or Closed; got {label_text!r}"
+        assert label_text in ("Live", "Stale", "Closed", "Rebalance pause", "Opening"), (
+            "#engine-status-label initial text must be Live, Stale, Closed, Rebalance pause "
+            f"or Opening; got {label_text!r}"
         )
 
 
