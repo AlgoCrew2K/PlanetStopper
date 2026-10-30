@@ -9257,6 +9257,12 @@ if __name__ == "__main__":
 
     ensure_bot_state_seeded()
 
+    # One-time flatten of the stored close-snapshot chain; a failure must not block start.
+    try:
+        database.repair_close_snapshot_chain()
+    except Exception as _repair_exc:
+        logging.error("close snapshot repair raised: %s", type(_repair_exc).__name__)
+
     # Fill the account totals off-thread so the first polls are not value-weighted.
     _start_account_refresh("startup")
 
