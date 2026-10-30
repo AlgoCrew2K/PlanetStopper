@@ -723,10 +723,10 @@
 
         var symId = (typeof symIdOrIdx === 'string') ? symIdOrIdx : _symIds[symIdOrIdx];
         var sym = symId ? _botState[symId] : null;
-        if (!sym) return;
 
         var titleEl = document.getElementById('detail-panel-title');
-        if (titleEl) titleEl.textContent = sym.normalized_name || sym.name || 'Symphony Detail';
+        if (titleEl) titleEl.textContent = (sym && sym.name) || 'Symphony Detail';
+        if (!sym) return;
 
         // Live return: use triggered_at_return if triggered, else current_return
         var rawLive = sym.triggered ? sym.triggered_at_return : sym.current_return;
@@ -1595,6 +1595,27 @@
     // Update section count badges and "data as of" time from poll response.
     // Section counts derive from data.symphonies list (active = armed/triggered/tp_armed/para_armed).
     // The "data as of" legend span refreshes from meta.portfolio.data_as_of each tick.
+    // Entries of the state that belong to the picked account (all when none is picked).
+    function _inPickedAccount(entry) {
+        return !window.activeAccount || (entry && entry.account === window.activeAccount);
+    }
+
+    // Hide the cards of every other account while one is picked, and show the
+    // all-accounts captions on the hero and strip, which always cover every account.
+    function applyAccountFilter(data) {
+        var stateObj = (data && (data.bot_state || data.state)) || {};
+        var cards = document.querySelectorAll('.sym-card[data-sym-id]');
+        Array.prototype.forEach.call(cards, function (card) {
+            var show = _inPickedAccount(stateObj[card.getAttribute('data-sym-id')]);
+            card.hidden = !show;
+            card.style.display = show ? '' : 'none';
+        });
+        ['hero-scope-caption', 'strip-scope-caption'].forEach(function (id) {
+            var cap = document.getElementById(id);
+            if (cap) cap.hidden = !window.activeAccount;
+        });
+    }
+
     function updateSectionMeta(data) {
         // F-011: data.symphonies genuinely does not exist on the closed/frozen
         // /api/state branch (app.py emits state/bot_state only there) -- read the
@@ -1604,7 +1625,8 @@
         var stateObj = (data && (data.bot_state || data.state)) || {};
         var syms = Object.keys(stateObj)
             .map(function (k) { return stateObj[k]; })
-            .filter(function (v) { return v && typeof v === 'object' && 'name' in v; });
+            .filter(function (v) { return v && typeof v === 'object' && 'name' in v; })
+            .filter(_inPickedAccount);
         var activeCount  = syms.filter(function (s) {
             return s.armed || s.tp_armed || s.para_armed || s.triggered;
         }).length;
@@ -1703,6 +1725,7 @@
             // Account · all-time CR: fixed stat, not windowed — must fire on every poll
             // so cold-start (SSR omitted the element) resolves without a manual reload.
             function () { updateAccountAllTime(data); },
+            function () { applyAccountFilter(data); },
         ].forEach(function (fn) {
             try { fn(); } catch (e) { console.error('updateDashboard renderer error:', e); }
         });
@@ -1763,16 +1786,27 @@
         if (dataAsOf) { dataAsOf.textContent = 'connection lost'; }
     }
 
-    // A refresh is counted once it has settled: its renderers ran (or its failure was
-    // handled), every card's chart request has answered and every chart it built has drawn.
+    // Newest-request-wins: every call takes a sequence number and only the
+    // response (or failure) of the most recently issued call is applied, so a
+    // slow earlier response cannot overwrite a newer snapshot or account pick.
+    // Every call is counted once it has settled: its renderers ran (or its failure
+    // was handled), every card's chart request has answered and every chart it built
+    // has drawn.
+    var _stateRequestSeq = 0;
     function loadState() {
-        return fetch('/api/state')
+        var seq = ++_stateRequestSeq;
+        var query = window.activeAccount
+            ? '?account=' + encodeURIComponent(window.activeAccount)
+            : '';
+        return fetch('/api/state' + query)
             .then(function (r) { return r.json(); })
             .then(function (data) {
+                if (seq !== _stateRequestSeq) return;
                 lastSuccessfulPollAt = Date.now();
                 return updateDashboard(data);
             })
             .catch(function (err) {
+                if (seq !== _stateRequestSeq) return;
                 showConnectionLost();
                 console.error('state load failed', err);
             })
@@ -1889,6 +1923,8 @@
             })
             .catch(function (err) { console.error('guard-alpha-summary load failed', err); });
     }
+
+    window.loadState = loadState;
 
     document.addEventListener('DOMContentLoaded', function () {
         try { paintFirstFrame(); } catch (e) { console.error('first paint error:', e); }
