@@ -5566,9 +5566,18 @@ def api_performance():
     # AC-2: when the series is still empty (day-1 droplet), fall back to
     # shadow_history for the series so the chart is non-empty from day one.
     # The insufficient_history / quantstats-min-obs guard is unchanged.
+    #
+    # Both fallbacks read the UNWINDOWED shadow_history, so under a window token
+    # each is sliced to that token's calendar cutoff (the same slice the primary
+    # series gets): a row dated inside the window still charts, while rows older
+    # than the window drop out and leave the honest empty state instead of being
+    # returned under a window_start they predate.  An integer `days` is a row
+    # count with no cutoff and keeps the fallbacks untouched.
     if not dates and scope == "aggregate":
         try:
             _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
+            if is_window_token:
+                _fallback = _slice_series_by_window_cutoff(_fallback, days)
             if _fallback is not None:
                 # (dates, bot, held) -> held is live_returns (if-held), bot is
                 # shadow_returns. This fallback was the ORIGINAL inverted surface.
@@ -5583,6 +5592,8 @@ def api_performance():
     if not dates and scope == "aggregate":
         try:
             _single = analytics.get_single_day_shadow_returns()
+            if is_window_token:
+                _single = _slice_series_by_window_cutoff(_single, days)
             if _single is not None:
                 # Same (dates, bot, held) -> (shadow_returns, live_returns) mapping.
                 dates, shadow_returns, live_returns = _single
