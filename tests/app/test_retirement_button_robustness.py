@@ -213,4 +213,7 @@ class TestPriorRoundFixesSurviveTheRework:
             "retirement-rec-status" in success_branch or "retirement-status-chip" in success_branch
         ), "F4 regression: the status-chip update must survive the AC-7 clicked-element rework."
         assert "textContent" in success_branch or "innerText" in success_branch
-        assert "retirement-status-chip--" in success_branch
+        # The decision state is the dashboard's status pill: the success branch swaps the pill's
+        # class, not a page-local chip modifier.
+        assert "status-pill" in success_branch
+        assert "retirement-status-chip--" not in success_branch

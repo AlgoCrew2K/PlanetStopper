@@ -905,6 +905,19 @@ _TENURE_RENDER_HELPER_FN_NAMES = [
     "_is_whole_number",
 ]
 
+# The Retirement tab's render helpers: the summary tiles, the Overview pointer and the
+# exclusion-reason sentence. Each runs on every AI Advisor page load, is called from
+# ai_advisor_tab() (and, for the sentence, from the excluded-symphony resolver), and none may
+# reach a trade, a draft or a live-execution primitive.
+_RETIREMENT_TILES_HELPER_FN_NAME = "_build_retirement_summary_tiles"
+_RETIREMENT_POINTER_HELPER_FN_NAME = "_build_retirement_pointer"
+_RETIREMENT_EXCLUSION_SENTENCE_FN_NAME = "_retirement_exclusion_reason_sentence"
+_RETIREMENT_TAB_HELPER_FN_NAMES = [
+    _RETIREMENT_TILES_HELPER_FN_NAME,
+    _RETIREMENT_POINTER_HELPER_FN_NAME,
+    _RETIREMENT_EXCLUSION_SENTENCE_FN_NAME,
+]
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
@@ -913,6 +926,8 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     # Cycle 2e:
     _RETIREMENT_RUN_ROUTE_FN_NAME,
     _RETIREMENT_LAST_RUN_FETCH_FN_NAME,
+    # The Retirement tab:
+    *_RETIREMENT_TAB_HELPER_FN_NAMES,
     # Symphony tenure review:
     _TENURE_REVIEW_FETCH_FN_NAME,
     _RETIREMENT_API_ROUTE_FN_NAME,

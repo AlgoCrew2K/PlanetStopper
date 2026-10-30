@@ -21,7 +21,7 @@ Pinned data-testids (.claude/tdd-handoff.md "templates/ai_advisor.html"):
   retirement-run-now-status           status text element JS writes via textContent
 
 Pinned copy (case-insensitive substrings; the surrounding words are free):
-  never run          "Not run yet — runs nightly at 03:45, or use Run now."  (exact, plan AC-6)
+  never run          "Not run yet — runs nightly at 03:45 UTC, or use Run now."  (the schedule names its zone)
   series_unavailable "series unavailable"
   insufficient_symphonies "insufficient symphonies"
   internal_error     "internal error" + the summary's error_type
@@ -45,7 +45,7 @@ from tests.app._retirement_run_summary_stub import make_summary
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-_NEVER_RUN_TEXT = "Not run yet — runs nightly at 03:45, or use Run now."
+_NEVER_RUN_TEXT = "Not run yet — runs nightly at 03:45 UTC, or use Run now."
 _SUMMARY_ROLE = "RETIREMENT_RUN_SUMMARY"
 _REC_ROLE = "RETIREMENT_RECOMMENDATION"
 
@@ -134,9 +134,8 @@ def _render(client) -> str:
 
 
 def _panel(body: str) -> str:
-    start = body.index('data-testid="retirement-recommendations-panel"')
-    end = body.index("</section>", start)
-    return body[start:end]
+    # The section's own markup, by tag depth, wherever the page places it.
+    return _element_html(body, "retirement-recommendations-panel")
 
 
 _VOID_TAGS = frozenset(
@@ -323,10 +322,12 @@ class TestOkRunRendersEveryFact:
     def test_excluded_symphonies_are_listed_by_display_name_with_their_reasons(self, body):
         text = _sub_text(body, "retirement-last-run-excluded")
         assert "Alpha Rotation" in text
-        assert "no_account" in text
+        assert "No Composer account is recorded for this symphony." in text
         assert "Beta Momentum" in text
-        assert "HTTP 503" in text
-        assert "series_too_short" in text
+        assert "Its Composer series could not be fetched (HTTP 503)." in text
+        assert "Its Composer series has fewer than 2 daily returns." in text
+        for raw in ("no_account", "fetch_error", "series_too_short"):
+            assert raw not in text, f"the raw reason {raw} is shown"
 
     def test_an_excluded_symphony_missing_from_bot_state_falls_back_to_its_hash(self, body):
         text = _sub_text(body, "retirement-last-run-excluded")
