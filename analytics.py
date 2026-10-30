@@ -1608,7 +1608,7 @@ def get_history_with_cache_invalidation(days: int = 60, base_dir: str = ".") -> 
     return data
 
 
-def _load_position_value_weights() -> dict[str, float]:
+def _load_position_value_weights(state: dict | None = None) -> dict[str, float]:
     """Per-symphony position values from bot_state ``current_value`` — the genuine
     value-weight source for the canonical portfolio series (audit Finding 6: the
     prior abs(current_return) "value-weight proxy" let the day's biggest movers
@@ -1617,11 +1617,15 @@ def _load_position_value_weights() -> dict[str, float]:
     Only positive finite values participate. An empty dict means "no position
     values available" (day-1 droplet) and the caller degrades to EQUAL weight —
     never back to the abs-return proxy.
+
+    state: the already-loaded bot_state of the caller's request; read from the
+    database only when absent.
     """
-    try:
-        state = database.load_state()
-    except Exception:
-        return {}
+    if state is None:
+        try:
+            state = database.load_state()
+        except Exception:
+            return {}
     weights: dict[str, float] = {}
     for sym_id, entry in (state or {}).items():
         if not isinstance(entry, dict):
@@ -1638,6 +1642,8 @@ def _load_position_value_weights() -> dict[str, float]:
 def get_portfolio_daily_returns_from_shadow(
     db_file: str | None = None,
     days: int = 125,
+    conn: sqlite3.Connection | None = None,
+    state: dict | None = None,
 ) -> tuple[list[str], list[float]] | None:
     """Build a continuous portfolio-level daily return series from shadow_history.
 
@@ -1651,13 +1657,22 @@ def get_portfolio_daily_returns_from_shadow(
     This is the correct source for the hero chart hist series: it is continuous
     (written every cycle for every tracked symphony, not only on exit days), so its
     compounded terminal value converges to the real portfolio return over time.
+
+    conn: optional shared read-only connection (used, never closed here), so a
+    request can read every figure from one committed view of the table.
+    state: the caller's already-loaded bot_state for the value weights.
     """
     import sqlite3
 
     _db_file = db_file if db_file is not None else _get_shadow_db_file()
     try:
-        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
-        rows = conn.execute(
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        )
+        rows = _conn.execute(
             "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
             "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
@@ -1665,7 +1680,8 @@ def get_portfolio_daily_returns_from_shadow(
             "                  AND s2.trading_day = shadow_history.trading_day) "
             "ORDER BY trading_day ASC, symphony_id ASC",
         ).fetchall()
-        conn.close()
+        if _owns_conn:
+            _conn.close()
     except Exception:
         return None
 
@@ -1687,7 +1703,7 @@ def get_portfolio_daily_returns_from_shadow(
     if len(sorted_days) < 2:
         return None
 
-    value_weights = _load_position_value_weights()
+    value_weights = _load_position_value_weights(state)
 
     out_dates: list[str] = []
     out_returns: list[float] = []
@@ -1717,6 +1733,7 @@ def get_portfolio_bot_and_held_daily_returns(
     db_file: str | None = None,
     days: int | None = 125,
     conn: sqlite3.Connection | None = None,
+    state: dict | None = None,
 ) -> tuple[list[str], list[float], list[float]] | None:
     """Build BOTH the portfolio Bot and Held continuous daily-return series from
     shadow_history — the source for the hero chart's two distinct lines (AC-4b/F2-F3).
@@ -1752,6 +1769,7 @@ def get_portfolio_bot_and_held_daily_returns(
                  threaded so get_portfolio_max_drawdown's per-poll call doesn't
                  reintroduce the connects-per-poll class of defect F-1 fixed
                  elsewhere in this file).
+        state:   the caller's already-loaded bot_state for the value weights.
 
     Returns:
         (dates_ascending, bot_daily_returns_pct, held_daily_returns_pct), or None
@@ -1799,7 +1817,7 @@ def get_portfolio_bot_and_held_daily_returns(
     if len(sorted_days) < 2:
         return None
 
-    value_weights = _load_position_value_weights()
+    value_weights = _load_position_value_weights(state)
 
     out_dates: list[str] = []
     bot_returns: list[float] = []
