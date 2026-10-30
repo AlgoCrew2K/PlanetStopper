@@ -105,7 +105,12 @@ class TestVarsLockedCountAccuracy:
             {"locked_vars": ["TRIGGER_THRESHOLD_PCT", "MC_FLOOR"]} if "alpha" in name else None
         )
 
-        with patch.object(app_module, "database", mock_db):
+        # Cards (and their strategy lookups) are built from live state only while the market
+        # is open; after the close the page is served from the close snapshot.
+        with (
+            patch.object(app_module, "database", mock_db),
+            patch.object(app_module, "get_market_state", return_value="open"),
+        ):
             resp = client.get("/")
 
         assert resp.status_code == 200

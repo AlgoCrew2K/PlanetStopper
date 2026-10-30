@@ -515,6 +515,7 @@ class TestRepairYieldsToTheEngine:
     def test_engine_save_made_while_the_repair_waits_for_the_lock_survives_the_repair(
         self,
     ):
+        write_raw_row(load_record_text(_NESTED))
         before = json.loads(load_record_text(_NESTED))
         engine_has_lock = threading.Event()
         repair_is_waiting = threading.Event()

@@ -107,7 +107,9 @@ def _seed_symphonies(n: int, *, start_index: int = 0) -> list[str]:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 datetime.now(_ET).isoformat(),
-                datetime.now(_ET).isoformat(),
+                # The engine stamps ts_et to the second with no offset; the response reads rows at
+                # or before the saved state's second, so a longer stamp would sort after it.
+                datetime.now(_ET).strftime("%Y-%m-%dT%H:%M:%S"),
                 today,
                 sym_id,
                 1.5,
@@ -373,7 +375,9 @@ def _seed_frozen_snapshot(n: int, *, start_index: int = 0) -> list[str]:
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 datetime.now(_ET).isoformat(),
-                datetime.now(_ET).isoformat(),
+                # The engine stamps ts_et to the second with no offset; the response reads rows at
+                # or before the saved state's second, so a longer stamp would sort after it.
+                datetime.now(_ET).strftime("%Y-%m-%dT%H:%M:%S"),
                 today,
                 sym_id,
                 1.5,

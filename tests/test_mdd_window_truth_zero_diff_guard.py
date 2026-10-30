@@ -66,7 +66,10 @@ _MATH_ENGINE = _REPO_ROOT / "math_engine.py"
 # 8bbb51ab.../772886ea..., matching these exactly) -- not a fresh/unverified
 # re-pin.
 _PINNED_HASHES = {
-    "alpha_bot_execution.py": "8bbb51aba6618d26a95b3b606d34bd84a0f8b157e93b771aca7e96576d1a886c",
+    # Re-pinned for the one-line close-snapshot builder change (the account-map loop
+    # keeps only dict values that carry `name`), the named exception of the
+    # refresh-timing close-snapshot cycle; math_engine.py is unchanged.
+    "alpha_bot_execution.py": "a512d874e2d499a0bf6d245bed640d37dba7da5398262ad06f0b667ec0a08992",
     "math_engine.py": "772886ead636e67e2c801339268608b39180d846a749fee924debd27c915de5e",
 }
 

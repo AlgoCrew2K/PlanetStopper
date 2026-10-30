@@ -259,7 +259,12 @@ def test_api_state_hist_dates_populated_from_db(monkeypatch):
             "exit_authority": "per_symphony",
             "daemon_started_at": "2026-05-19T00:00:00Z",
         }
-        with patch.object(app_module, "get_api_state_dict", return_value=stub_no_strip):
+        # The strip is computed once inside the request now; "no strip yet" is a
+        # computation that returned nothing, so the analytics history fills the arrays.
+        with (
+            patch.object(app_module, "get_api_state_dict", return_value=stub_no_strip),
+            patch.object(app_module, "_compute_portfolio_strip", return_value={}),
+        ):
             with patch.object(app_module, "database") as db_mock:
                 db_mock.load_state.return_value = {}
                 db_mock.get_ro_connection.return_value = MagicMock()
@@ -308,7 +313,12 @@ def test_api_state_hist_bot_held_parallel_and_nonzero(monkeypatch):
             "exit_authority": "per_symphony",
             "daemon_started_at": "2026-05-19T00:00:00Z",
         }
-        with patch.object(app_module, "get_api_state_dict", return_value=stub_no_strip):
+        # The strip is computed once inside the request now; "no strip yet" is a
+        # computation that returned nothing, so the analytics history fills the arrays.
+        with (
+            patch.object(app_module, "get_api_state_dict", return_value=stub_no_strip),
+            patch.object(app_module, "_compute_portfolio_strip", return_value={}),
+        ):
             with patch.object(app_module, "database") as db_mock:
                 db_mock.load_state.return_value = {}
                 db_mock.get_ro_connection.return_value = MagicMock()
@@ -2101,7 +2111,15 @@ def test_api_state_hist_dates_not_capped_when_db_has_more_data(client, monkeypat
             hist_bot=[0.001 * (i + 1) for i in range(35)],
             hist_held=[0.0008 * (i + 1) for i in range(35)],
         )
-        with patch.object(app_module, "database") as db_mock:
+        # The one portfolio computation of the request is where the strip comes from.
+        with (
+            patch.object(
+                app_module,
+                "_compute_portfolio_strip",
+                return_value=mock_gad.return_value["portfolio_strip"],
+            ),
+            patch.object(app_module, "database") as db_mock,
+        ):
             db_mock.load_state.return_value = {}
             db_mock.normalize_name.side_effect = lambda n: (n or "").lower().replace(" ", "_")
             db_mock.get_ro_connection.return_value = MagicMock()
