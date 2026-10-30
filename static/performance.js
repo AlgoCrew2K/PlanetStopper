@@ -40,19 +40,19 @@
     // Order defines rendering order; risk-adjusted metrics lead per the design hierarchy
     // (ux-design-deliverable.md §2.1 — capital preservation north star ranks risk above return).
     // kind 'pp' = fraction-scale delta rendered as percentage points (e.g. +1.70pp).
+    // kind 'pct_mag' = a fraction shown as a positive magnitude (the Max DD legs: a
+    // drawdown of -0.132 reads 13.20%, as the dashboard shows it); its delta cell is
+    // still the signed fraction difference, so the sign says which leg drew down less.
     // invert (AC-7 / MAPERF-05, optional — defaults falsy when omitted): true for
     // lower-is-better metrics (e.g. volatility), mirroring index.js's Risk Profile
     // panel invertDelta flag (index.js:466-479) — flips which sign of the raw
     // (shadow - live) delta renders as the "good" color. The displayed VALUE and
     // arrow direction are UNCHANGED by invert — only the color decision flips.
-    // The trailing entries (upside_capture / downside_capture) are Tier 2 benchmark
-    // placeholders: they have no data feed yet, so they render as 'not yet available'
-    // (data-unavail) — never a fabricated number.
     var METRIC_LABELS = [
         // --- risk-adjusted: primary (bold) ---
         ['sharpe',              'Sharpe',                    'num',      true],
         ['sortino',             'Sortino',                   'num',      false],
-        ['max_drawdown',        'Max drawdown',              'pct_frac', true],
+        ['max_drawdown',        'Max DD',                    'pct_mag',  true],
         ['max_drawdown_delta',  'Max DD reduction',          'pp',       false],  // derived
         ['calmar',              'Calmar',                    'num',      false],
         // --- volatility ---
@@ -62,14 +62,7 @@
         ['total_return',        'Total return',              'pct_frac', true],
         ['annualized_return',   'Annualized return (CAGR)',  'pct_frac', false],
         ['win_rate',            'Win rate',                  'frac',     false],
-        // --- roadmap placeholders (Tier 2, no benchmark feed → 'not yet available') ---
-        ['upside_capture',      'Upside capture vs SPY',     'pct',      false],
-        ['downside_capture',    'Downside capture vs SPY',   'pct',      false],
     ];
-
-    // Tier 2 benchmark metrics: no SPY/TQQQ data feed exists yet, so these always
-    // render as unavailable placeholders (never a fabricated value).
-    var TIER2_PLACEHOLDER_KEYS = ['upside_capture', 'downside_capture'];
 
     function fmt(value, kind) {
         if (value === null || value === undefined) return '—';
@@ -77,11 +70,10 @@
         if (Math.abs(value) > 1000) return '—';
         // pct_frac: quantstats returns fractions; multiply by 100 for display
         if (kind === 'pct_frac') return (value * 100).toFixed(2) + '%';
+        if (kind === 'pct_mag') return (Math.abs(value) * 100).toFixed(2) + '%';
         if (kind === 'frac') return (value * 100).toFixed(2) + '%';
         // pp: fraction-scale delta shown as percentage points (e.g. 0.017 → +1.70pp)
         if (kind === 'pp') return (value >= 0 ? '+' : '') + (value * 100).toFixed(2) + 'pp';
-        // pct: already a percentage value (Tier 2 capture %) — rare, kept for completeness
-        if (kind === 'pct') return value.toFixed(1) + '%';
         return value.toFixed(3);
     }
 
@@ -91,8 +83,11 @@
         if (!isFinite(live) || !isFinite(shadow)) return '—';
         if (Math.abs(live) > 1000 || Math.abs(shadow) > 1000) return '—';
         var delta = shadow - live;
-        var formatted = fmt(delta, kind);
-        if (delta > 0) return '↑ +' + formatted;
+        // The delta is the signed difference even where the legs show magnitudes.
+        var formatted = fmt(delta, kind === 'pct_mag' ? 'pct_frac' : kind);
+        if (formatted === '—') return formatted;
+        // One sign per delta: the 'pp' kind already carries its own '+', the others do not.
+        if (delta > 0) return '↑ ' + (formatted.charAt(0) === '+' ? '' : '+') + formatted;
         if (delta < 0) return '↓ ' + formatted;
         return formatted;
     }
@@ -284,21 +279,6 @@
         return 'inherit';
     }
 
-    // Tier 2 placeholder row: the operator sees the roadmap metric, but the value
-    // columns render an explicit 'not yet available' dash — never a fabricated number.
-    // data-unavail='true' marks the row distinct from live data rows.
-    function placeholderRow(label) {
-        var unavail = '<span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">—</span>';
-        return (
-            '<tr data-testid="metric-row" data-unavail="true">'
-            + '<td>' + label + '</td>'
-            + '<td style="text-align:right;color:var(--studio-ink-faint);">' + unavail + '</td>'
-            + '<td style="text-align:right;color:var(--studio-ink-faint);">' + unavail + '</td>'
-            + '<td class="delta" style="text-align:right;"></td>'
-            + '</tr>'
-        );
-    }
-
     function renderMetrics(payload) {
         var tbody = document.getElementById('metrics-tbody');
         if (!tbody) return;
@@ -324,11 +304,6 @@
 
         var rows = METRIC_LABELS.map(function (spec) {
             var key = spec[0], label = spec[1], kind = spec[2], isPrimary = spec[3], invert = spec[4];
-
-            // Tier 2 benchmark metrics: no data feed → always a placeholder row.
-            if (TIER2_PLACEHOLDER_KEYS.indexOf(key) !== -1) {
-                return placeholderRow(label);
-            }
 
             var liveVal   = live[key];
             var shadowVal = shadow[key];
@@ -476,8 +451,15 @@
                     txt += ' · ' + win + 'd window';
                 }
             } else if (win != null) {
-                var winLabel = typeof win === 'string' ? win.toUpperCase() : String(win);
+                // A window token reads as its button does (60d, YTD, 1Y, 5Y), then the
+                // first day actually held: the span of the observations counted above.
+                var winLabel = typeof win === 'string'
+                    ? (/^\d+d$/.test(win) ? win : win.toUpperCase())
+                    : String(win);
                 txt += ' · ' + winLabel + ' window';
+                if (payload.date_range && payload.date_range.start) {
+                    txt += ' · from ' + payload.date_range.start;
+                }
             }
             caption.textContent = txt;
         }
@@ -493,17 +475,11 @@
         return active ? active.getAttribute('data-value') : '';
     }
 
-    // AC-5 (MAPERF-03, cross-plan correction): YTD sends the LITERAL string
-    // 'ytd' — not a computed calendar-days-since-Jan-1 count. The six other
-    // Performance-tab buttons (30/60/90/125/252/1260) stay deliberate
-    // TRADING-day counts by design; only YTD's contract changes. The server
-    // (/api/performance) resolves the literal 'ytd' token to a Jan-1 CALENDAR
-    // cutoff via analytics._window_cutoff_date — the same helper the dashboard
-    // hero-chart/strip picker already uses — instead of the old approximate
-    // calendar-count-fed-into-a-trading-day-slice (which over-fetched past
-    // Jan 1 whenever the ratio of calendar-to-trading days diverged).
+    // Each window button carries the token the route understands (30d 60d 90d 125d
+    // ytd 1y 5y) and it is sent as it is: /api/performance resolves it to a calendar
+    // cutoff with analytics._window_cutoff_date, the helper the dashboard's picker
+    // uses, so a window covers the same span on every page.
     function resolveDays(raw) {
-        if (raw === 'ytd') return 'ytd';
         return raw;
     }
 
@@ -574,13 +550,32 @@
             });
     }
 
+    // Display names by Composer id, from /api/performance/symphonies. The panels below
+    // get the id from their routes and show the name; an id with no known name (the
+    // list failed) shows as itself.
+    var _symphonyNameById = {};
+
+    function rememberSymphonyNames(symphonies) {
+        symphonies.forEach(function (sym) { _symphonyNameById[sym.id] = sym.name; });
+    }
+
+    // First cell of a panel row: the display name, with the id in a title attribute.
+    function symphonyLabelCell(symphonyId) {
+        var td = document.createElement('td');
+        var name = _symphonyNameById[symphonyId];
+        td.textContent = name || symphonyId;
+        if (name) td.setAttribute('title', symphonyId);
+        return td;
+    }
+
     function loadSymphonies() {
         return fetch('/api/performance/symphonies')
             .then(function (resp) { return resp.json(); })
             .then(function (body) {
+                var symphonies = (body && body.symphonies) || [];
+                rememberSymphonyNames(symphonies);
                 var picker = document.getElementById('symphony-picker');
                 if (!picker) return;
-                var symphonies = (body && body.symphonies) || [];
                 picker.innerHTML = '';
                 if (symphonies.length === 0) {
                     var opt = document.createElement('option');
@@ -688,9 +683,7 @@
         var tr = document.createElement('tr');
         tr.setAttribute('data-testid', 'guard-alpha-preconditions-row');
 
-        var nameTd = document.createElement('td');
-        nameTd.textContent = symphonyId;
-        tr.appendChild(nameTd);
+        tr.appendChild(symphonyLabelCell(symphonyId));
 
         var sampleTd = document.createElement('td');
         sampleTd.textContent = sampleLabel;
@@ -712,33 +705,14 @@
         return tr;
     }
 
-    // The route's uniform degraded-row contract means "replay" is always a
-    // full object, never bare null -- a cold/missing cache (cache-hit-only
-    // per the operator ruling; never fetches to backfill) shows as
-    // verdict=INSUFFICIENT_DATA + n_obs=0. Swap in this friendlier copy for
-    // that specific case instead of a row of dashes.
-    var PRECOND_REPLAY_UNAVAILABLE_MESSAGE =
-        'replay sample unavailable — populates after the next autotune run';
-
-    function preconditionUnavailableRowEl(symphonyId, sampleLabel) {
-        var tr = document.createElement('tr');
-        tr.setAttribute('data-testid', 'guard-alpha-preconditions-row');
-        tr.className = 'precond-row-unavailable';
-
-        var nameTd = document.createElement('td');
-        nameTd.textContent = symphonyId;
-        tr.appendChild(nameTd);
-
-        var sampleTd = document.createElement('td');
-        sampleTd.textContent = sampleLabel;
-        tr.appendChild(sampleTd);
-
-        var msgTd = document.createElement('td');
-        msgTd.colSpan = 5;
-        msgTd.textContent = PRECOND_REPLAY_UNAVAILABLE_MESSAGE;
-        tr.appendChild(msgTd);
-
-        return tr;
+    // The route's uniform degraded-row contract means "replay" is always a full
+    // object, never bare null: a cold or missing cache (cache-hit-only per the
+    // operator ruling; never fetches to backfill) reads verdict=INSUFFICIENT_DATA with
+    // n_obs=0. Its row renders as every other row does, with dashes; the panel note
+    // says once why the replay samples are missing.
+    function _replayIsCold(entry) {
+        var replay = entry && entry.replay;
+        return !!replay && replay.verdict === 'INSUFFICIENT_DATA' && replay.n_obs === 0;
     }
 
     // Panel-level empty state (AC-7 edge case: "all symphonies insufficient ->
@@ -754,6 +728,7 @@
     function renderGuardAlphaPreconditions(data) {
         var tbody = document.getElementById('guard-alpha-preconditions-tbody');
         var emptyState = document.getElementById('guard-alpha-preconditions-empty-state');
+        var note = document.getElementById('guard-alpha-preconditions-note');
         if (!tbody || !emptyState) return;
 
         var symphonies = (data && data.symphonies) || {};
@@ -761,6 +736,7 @@
         var anyUsable = ids.some(function (id) { return _preconditionEntryIsUsable(symphonies[id]); });
 
         while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+        if (note) note.hidden = true;
 
         if (ids.length === 0 || !anyUsable) {
             emptyState.style.display = '';
@@ -770,15 +746,19 @@
         emptyState.style.display = 'none';
         ids.forEach(function (id) {
             var entry = symphonies[id];
-            var replay = entry.replay;
-            var replayIsColdCache = replay && replay.verdict === 'INSUFFICIENT_DATA' && replay.n_obs === 0;
-            if (replayIsColdCache) {
-                tbody.appendChild(preconditionUnavailableRowEl(id, 'Replay'));
-            } else if (replay) {
-                tbody.appendChild(preconditionRowEl(id, 'Replay', replay));
-            }
+            if (entry.replay) tbody.appendChild(preconditionRowEl(id, 'Replay', entry.replay));
             if (entry.shadow) tbody.appendChild(preconditionRowEl(id, 'Shadow', entry.shadow));
         });
+
+        // One note for the panel, not a message per row: some replay samples are cold.
+        var cold = ids.filter(function (id) { return _replayIsCold(symphonies[id]); }).length;
+        if (note && cold > 0) {
+            note.textContent = cold === ids.length
+                ? 'Replay samples are unavailable until the next autotune run.'
+                : 'Replay samples are unavailable for ' + cold + (cold === 1 ? ' symphony' : ' symphonies')
+                    + ' until the next autotune run.';
+            note.hidden = false;
+        }
     }
 
     function fetchGuardAlphaPreconditions() {
@@ -816,9 +796,7 @@
         var tr = document.createElement('tr');
         tr.setAttribute('data-testid', 'exit-turnover-row');
 
-        var nameTd = document.createElement('td');
-        nameTd.textContent = symphonyId;
-        tr.appendChild(nameTd);
+        tr.appendChild(symphonyLabelCell(symphonyId));
 
         var windows = (turnover && turnover.windows) || {};
         tr.appendChild(turnoverWindowCell(windows['30']));
@@ -828,7 +806,7 @@
         var dragTd = document.createElement('td');
         dragTd.style.textAlign = 'right';
         var drag = turnover && turnover.est_annual_friction_drag_pct;
-        dragTd.textContent = (drag === null || drag === undefined) ? '--' : Number(drag).toFixed(3) + '%';
+        dragTd.textContent = (drag === null || drag === undefined) ? '--' : Number(drag).toFixed(2) + '%';
         tr.appendChild(dragTd);
 
         return tr;
@@ -867,6 +845,7 @@
             })
             .then(function (body) {
                 var symphonies = (body && body.symphonies) || [];
+                rememberSymphonyNames(symphonies);
                 if (symphonies.length === 0) {
                     renderExitTurnover([]);
                     return;
@@ -898,8 +877,12 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         wireUI();
-        loadSymphonies().then(refresh);
-        fetchGuardAlphaPreconditions();
+        // The preconditions panel labels its rows with the names loadSymphonies()
+        // fetches, so it asks for its rows once that has settled (success or failure).
+        loadSymphonies().then(function () {
+            refresh();
+            fetchGuardAlphaPreconditions();
+        });
         fetchExitTurnover();
 
         // Post-mortems land once a day; the preconditions and exit-turnover
