@@ -227,15 +227,6 @@ def test_not_applicable_verdict_is_visually_distinct_from_real_verdicts(
 # ===========================================================================
 
 
-@pytest.fixture
-def live_client():
-    import app as flask_app
-
-    flask_app.app.config["TESTING"] = True
-    with flask_app.app.test_client() as client:
-        yield client
-
-
 def _observe(symphony_id) -> int:
     import database
 
@@ -269,41 +260,41 @@ class TestSymphonyCellShowsDisplayName:
         ],
         ids=["parentheses", "trailing_space", "apostrophe"],
     )
-    def test_cell_reads_the_display_name_with_the_key_in_a_title(self, live_client, picker):
+    def test_cell_reads_the_display_name_with_the_key_in_a_title(self, flask_client, picker):
         import database
 
         database.save_state(load_captured_bot_state())
         _hash, name = pick_symphony(picker)
         key = database.normalize_name(name)
-        cell = _symphony_cell(live_client, _observe(key))
+        cell = _symphony_cell(flask_client, _observe(key))
         assert cell.text == name.strip()
         assert any(key == t or key in t for t in cell.titles_in_subtree()), (
             "the stored key belongs in a title attribute"
         )
 
-    def test_cell_reads_the_stored_key_when_no_live_symphony_matches(self, live_client):
+    def test_cell_reads_the_stored_key_when_no_live_symphony_matches(self, flask_client):
         import database
 
         database.save_state(load_captured_bot_state())
-        cell = _symphony_cell(live_client, _observe("a symphony no longer held"))
+        cell = _symphony_cell(flask_client, _observe("a symphony no longer held"))
         assert cell.text == "a symphony no longer held"
 
     @pytest.mark.parametrize("empty_key", ["", None], ids=["empty_string", "null"])
-    def test_cell_reads_the_dash_for_an_empty_key(self, live_client, empty_key):
+    def test_cell_reads_the_dash_for_an_empty_key(self, flask_client, empty_key):
         import database
 
         database.save_state(load_captured_bot_state())
-        assert _symphony_cell(live_client, _observe(empty_key)).text == "—"
+        assert _symphony_cell(flask_client, _observe(empty_key)).text == "—"
 
-    def test_cell_reads_the_stored_key_when_no_state_is_stored(self, live_client):
-        cell = _symphony_cell(live_client, _observe("any stored key"))
+    def test_cell_reads_the_stored_key_when_no_state_is_stored(self, flask_client):
+        cell = _symphony_cell(flask_client, _observe("any stored key"))
         assert cell.text == "any stored key"
 
-    def test_a_display_name_carrying_markup_renders_as_literal_text(self, live_client):
+    def test_a_display_name_carrying_markup_renders_as_literal_text(self, flask_client):
         import database
 
         symphony_hash, _name = captured_symphonies()[0]
         database.save_state(state_with_markup_name(symphony_hash))
-        cell = _symphony_cell(live_client, _observe(database.normalize_name(MARKUP_NAME)))
+        cell = _symphony_cell(flask_client, _observe(database.normalize_name(MARKUP_NAME)))
         assert cell.text == MARKUP_NAME
         assert [n for n in cell.iter() if n.tag == "b"] == [], "no markup element was created"
