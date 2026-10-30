@@ -31,6 +31,8 @@ from tests.app._refresh_timing_state_world import (
     install_account_total_drift,
     load_record,
     mask_account_totals,
+    polled_figures,
+    rendered_page_figures,
     seeded_world,
 )
 
@@ -187,4 +189,28 @@ class TestValuesMatchReference:
         assert not changed, (
             f"{branch}: portfolio_strip figures differ from the reference "
             f"(reference, served): {changed}"
+        )
+
+
+class TestServerRenderEqualsFirstPoll:
+    """With no engine cycle between `GET /` and the first poll, every value the page renders
+    from the server equals what the poll hands the dashboard script."""
+
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_rows_headline_counts_and_as_of_are_identical_on_render_and_poll(
+        self, monkeypatch, tmp_path, branch
+    ):
+        world = seeded_world(monkeypatch, tmp_path, branch)
+
+        rendered = rendered_page_figures(world.page())
+        polled = polled_figures(world.poll())
+
+        differing = {
+            key: (rendered[key], polled[key]) for key in polled if rendered.get(key) != polled[key]
+        }
+        assert not differing, (
+            f"{branch}: the page and the first poll disagree (rendered, polled): {differing}"
+        )
+        assert all(rendered[key] is not None for key in ("today_bot", "today_held", "tracked")), (
+            "the page must render the rows for this comparison to mean anything"
         )

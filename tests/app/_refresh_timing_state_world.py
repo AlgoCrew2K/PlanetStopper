@@ -295,9 +295,7 @@ class World:
         state.update(json.loads(json.dumps(live[label]["entries"])))
         state["last_successful_cycle_at"] = live[label]["last_successful_cycle_at"]
         if with_snapshot:
-            state["last_market_close_snapshot"] = json.loads(
-                json.dumps(self._records["snapshot"])
-            )
+            state["last_market_close_snapshot"] = json.loads(json.dumps(self._records["snapshot"]))
         database_module.save_state(state)
 
     def stamp(self, label: str) -> str:

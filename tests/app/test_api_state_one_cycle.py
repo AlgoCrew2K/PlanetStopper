@@ -162,7 +162,9 @@ class TestPollAfterTheEngineExits:
             for key, expected in golden["portfolio_strip"].items()
             if key != "data_as_of" and body["portfolio_strip"].get(key) != expected
         }
-        assert not changed, f"strip figures differ from the reference (reference, served): {changed}"
+        assert not changed, (
+            f"strip figures differ from the reference (reference, served): {changed}"
+        )
 
     def test_server_render_rows_equal_the_reference_strip(self, monkeypatch, tmp_path):
         golden = load_record("golden_ref_api_state_open.json")["portfolio_strip"]
@@ -180,9 +182,7 @@ class TestPollAfterTheEngineExits:
 
 
 class TestFailuresNeverProduceAPartialMix:
-    def test_failure_to_open_the_committed_read_connection_answers_500(
-        self, monkeypatch, tmp_path
-    ):
+    def test_failure_to_open_the_committed_read_connection_answers_500(self, monkeypatch, tmp_path):
         world = _world_after_previous_cycle(monkeypatch, tmp_path)
 
         def fail_to_open(*_args, **_kwargs):
@@ -222,9 +222,7 @@ class TestFailuresNeverProduceAPartialMix:
             return None  # what the helper returns when its own query raises
 
         world = _world_after_previous_cycle(monkeypatch, tmp_path)
-        monkeypatch.setattr(
-            analytics_module, "_load_latest_shadow_row_for_analytics", failed_read
-        )
+        monkeypatch.setattr(analytics_module, "_load_latest_shadow_row_for_analytics", failed_read)
         before = world.poll()
 
         world.seed_cycle("m")
