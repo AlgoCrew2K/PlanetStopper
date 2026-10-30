@@ -431,7 +431,7 @@ def test_performance_metrics_table_has_required_metric_labels(perf_client):
         "Annualized",
         "Sharpe",
         "Sortino",
-        "Max drawdown",
+        "Max DD",
         "Calmar",
         "Win rate",
     ):

@@ -143,7 +143,9 @@ def test_ac5_resolve_days_emits_the_literal_ytd_token_not_a_calendar_count():
         "resolveDays still calls ytdDays() -- AC-5 (as corrected) requires "
         f"resolveDays('ytd') to return the literal string 'ytd' instead. Body:\n{fn_body}"
     )
-    assert re.search(r"return\s+['\"]ytd['\"]", fn_body), (
+    # Every window token now reaches the route as the literal string its button carries, so
+    # either an explicit 'ytd' return or a pass-through of the raw value satisfies this.
+    assert re.search(r"return\s+(['\"]ytd['\"]|raw)\b", fn_body), (
         "resolveDays does not return the literal string 'ytd' for the ytd case -- "
         f"got body:\n{fn_body}"
     )

@@ -276,71 +276,20 @@ def test_performance_metrics_table_has_volatility_reduction_row():
     )
 
 
-def test_performance_metrics_table_has_spy_tqqq_placeholder_rows():
+def test_performance_metrics_table_has_no_row_for_a_metric_without_a_producer():
     """
-    Tier 2 benchmark rows (upside_capture, downside_capture vs SPY) must be
-    rendered as placeholder rows with data-unavail='true' when no benchmark
-    data feed is configured.
-
-    Source: ux-design-deliverable.md §Change 2 placeholder row rendering:
-      "Row data-unavail='true' attribute for test assertions"
-
-    This is a critical safety test: placeholder rows must exist in the template
-    so the operator sees the roadmap item, but they must NEVER carry fabricated
-    data from a misconfigured or missing feed.
+    Upside/downside capture vs SPY have no data feed, so the table carries no row
+    for them at all: a row of dashes is a dead row, and the roadmap belongs in the
+    plan, not in the operator's risk table.
     """
     import app as app_module
 
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client, _patch_analytics_phase2():
         html = client.get("/performance").data.decode("utf-8")
-    assert 'data-unavail="true"' in html, (
-        "Phase 2 performance.html must render Tier 2 placeholder rows with "
-        'data-unavail="true" so they are distinguishable from live data rows. '
-        "Source: ux-design-deliverable.md §Change 2 placeholder row rendering."
-    )
-
-
-def test_performance_placeholder_rows_do_not_show_fake_numbers():
-    """
-    Tier 2 placeholder rows must not show any numeric value for upside/downside
-    capture. The placeholder must show '—' (em dash or double dash) indicating
-    data is unavailable.
-
-    This is the primary safety contract: if the operator reads a number in a
-    Tier 2 row, that number must be real benchmark data, never fabricated.
-
-    We assert presence of the metric-unavail CSS class or '—' content near
-    the Tier 2 label text in the rendered HTML. The exact pattern tolerates
-    both 'upside capture' and 'downside capture' label variants.
-    """
-    import app as app_module
-
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as client, _patch_analytics_phase2():
-        html = client.get("/performance").data.decode("utf-8")
-
-    # The placeholder must include either metric-unavail class or a dash character
-    # near the 'capture' label text.
-    has_unavail_signal = (
-        'class="metric-unavail"' in html
-        or "metric-unavail" in html
-        or (
-            "capture" in html.lower()
-            and (
-                "data-unavail" in html
-                or "—" in html  # em-dash
-                or ">—<" in html  # HTML dash entity
-                or ">--<" in html  # double-dash fallback
-            )
-        )
-    )
-    assert has_unavail_signal, (
-        "Tier 2 'upside/downside capture vs SPY' rows must render with an "
-        "unavailability signal (metric-unavail class, data-unavail attribute, or "
-        "dash value) — never a fabricated numeric value. "
-        "Source: ux-design-deliverable.md §2.4 Data Availability States."
-    )
+    assert "capture vs SPY" not in html, "no capture-ratio row may be served"
+    assert "data-unavail" not in html, "no placeholder row may be served"
+    assert "metric-unavail" not in html
 
 
 def test_performance_metrics_table_phase2_has_more_than_seven_rows():
@@ -657,28 +606,16 @@ def test_performance_js_phase2_metric_labels_includes_max_drawdown_delta():
     )
 
 
-def test_performance_js_phase2_renders_upside_capture_as_placeholder():
+def test_performance_js_has_no_placeholder_row_logic_for_unfed_metrics():
     """
-    performance.js must handle upside_capture as a placeholder row (Tier 2).
-    When value is null/undefined, the row renders with data-unavail='true'
-    and a dash, not a number.
-
-    Source: ux-design-deliverable.md §Change 2 placeholder row rendering:
-      "Row data-unavail='true' attribute for test assertions"
-      "Both value columns: <span class='metric-unavail' ...>—</span>"
-
-    We assert the JS contains logic for the data-unavail rendering path,
-    not that a specific value is rendered.
+    performance.js renders only metrics that have a producer: no Tier 2 key list,
+    no placeholder row builder, no data-unavail marker.
     """
     js_path = PROJECT_ROOT / "static" / "performance.js"
     content = js_path.read_text(encoding="utf-8")
 
-    has_unavail_logic = "data-unavail" in content or "metric-unavail" in content
-    assert has_unavail_logic, (
-        "static/performance.js must include logic for rendering Tier 2 placeholder "
-        "rows with data-unavail='true' and a dash when value is null. "
-        "Source: ux-design-deliverable.md §Change 2 placeholder row rendering."
-    )
+    for forbidden in ("data-unavail", "metric-unavail", "TIER2_PLACEHOLDER_KEYS", "placeholderRow", "upside_capture", "downside_capture"):
+        assert forbidden not in content, f"static/performance.js must not carry {forbidden!r}"
 
 
 # ---------------------------------------------------------------------------
