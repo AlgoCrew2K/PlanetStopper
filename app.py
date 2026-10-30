@@ -2,9 +2,10 @@
 
 import atexit
 import concurrent.futures
+import functools
 import hmac
 import inspect
-import io
+import json
 import logging
 import math
 import os
@@ -20,7 +21,9 @@ import time
 import types
 import uuid
 from collections.abc import Callable
-from datetime import UTC, date, datetime
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
 from zoneinfo import ZoneInfo
 
 import dotenv as _dotenv_module
@@ -37,6 +40,7 @@ import database
 import llm_request
 import market_calendar
 import model_config
+import timing_log
 from market_calendar import get_market_state
 
 _ET = ZoneInfo("America/New_York")
@@ -413,7 +417,7 @@ def health():
         _state = {}
     return jsonify(
         {
-            "status": "ok",
+            **_health_status(),
             "daemon_started_at": _DAEMON_STARTED_AT,
             "last_successful_cycle_at": _state.get("last_successful_cycle_at"),
         }
@@ -422,6 +426,8 @@ def health():
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
+# werkzeug's own request log stays off; the middleware writes the one access line per request.
+app.wsgi_app = timing_log.AccessLogMiddleware(app.wsgi_app)
 
 # Single-worker executor for dashboard background writes (fleet alert dismiss).
 # A persistent worker thread owns the I/O so Flask request handlers return
@@ -642,6 +648,17 @@ def _account_basis_past_grace() -> bool:
     return stamp is None or _monotonic() - stamp >= _ACCOUNT_BASIS_STALE_AFTER_S
 
 
+def _cycle_refresh_body() -> None:
+    """Refresh after an engine run unless another refresh is already in flight."""
+    if not _ACCOUNT_REFRESH_FLIGHT.acquire(blocking=False):
+        _daemon_log.info("cycle refresh not started: a refresh is already in flight")
+        return
+    try:
+        _refresh_account_totals()
+    finally:
+        _ACCOUNT_REFRESH_FLIGHT.release()
+
+
 def _start_account_refresh(reason: str) -> bool:
     """Run _refresh_account_totals on a daemon thread unless one is already in flight."""
     if not _ACCOUNT_REFRESH_FLIGHT.acquire(blocking=False):
@@ -783,7 +800,211 @@ def _acquire_daemon_singleton(pidfile: str) -> None:
 
 
 # --- 1. Bot Execution Logic ---
-def _notify_cycle_complete() -> None:
+# Seconds of SSE silence before a keep-alive comment; read at call time so tests can patch it.
+_SSE_HEARTBEAT_S = 15
+
+
+@dataclass(frozen=True)
+class CycleRecord:
+    """One engine spawn: when it ran, how it ended and whether it wrote anything."""
+
+    cycle_id: str
+    started_at: str
+    completed_at: str
+    outcome: str
+    changed: bool
+    exit_code: int | None
+    running_cycle_id: str | None
+    running_since: str | None
+
+    def event_payload(self) -> dict:
+        return {
+            "cycle_id": self.cycle_id,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "outcome": self.outcome,
+            "changed": self.changed,
+        }
+
+
+def _now_et() -> datetime:
+    return datetime.now(_ET)
+
+
+# Scheduled engine pause windows: the session start runs its first cycle for a few minutes.
+_OPENING_PHASE_MINUTES = 5  # minutes after 09:30 ET during which the first cycle is expected
+
+
+def _engine_phase(now_et: datetime, market_state: str, last_cycle_at) -> str:
+    """Name the engine phase: closed, blackout, opening or running (pure, no clock read)."""
+    if market_state != "open":
+        return "closed"
+    day = now_et.date()
+    if (
+        market_calendar.rebalance_blackout_start(day)
+        <= now_et.time()
+        < market_calendar.session_close(day)
+    ):
+        return "blackout"
+    open_at = datetime.combine(day, dt_time(9, 30), tzinfo=_ET)
+    if open_at <= now_et < open_at + timedelta(minutes=_OPENING_PHASE_MINUTES):
+        try:
+            cycle_dt = datetime.fromisoformat(str(last_cycle_at).replace("Z", "+00:00"))
+            if cycle_dt.tzinfo is None:
+                cycle_dt = cycle_dt.replace(tzinfo=_ET)
+            first_cycle_done = cycle_dt >= open_at
+        except (TypeError, ValueError):
+            first_cycle_done = False
+        if not first_cycle_done:
+            return "opening"
+    return "running"
+
+
+_cycle_id_lock = threading.Lock()
+_cycle_id_counters: dict[str, int] = {}
+
+
+def _mint_cycle_id(started_at: datetime) -> str:
+    second = started_at.replace(microsecond=0).isoformat()
+    with _cycle_id_lock:
+        n = _cycle_id_counters.get(second, 0) + 1
+        _cycle_id_counters.clear()  # only the current second needs a counter
+        _cycle_id_counters[second] = n
+    return f"{second}#{n}"
+
+
+def _classify_outcome(started_at: datetime, exit_code: int | None) -> str:
+    """Name the engine's branch for a spawn at *started_at*, using its own comparisons."""
+    if exit_code is None or exit_code != 0:
+        return "failed"
+    day = started_at.date()
+    now = started_at.time()
+    if (
+        not market_calendar.is_trading_day(day)
+        or now < dt_time(9, 30)
+        or now > market_calendar.post_mortem_cutoff(day)
+    ):
+        return "closed"
+    if market_calendar.rebalance_blackout_start(day) <= now < market_calendar.session_close(day):
+        return "blackout"
+    if now >= market_calendar.session_close(day):
+        return "eod"
+    return "cycle"
+
+
+def _post_mortem_signature(started_at: datetime):
+    path = os.path.join(analytics._POST_MORTEMS_DIR, f"post_mortem_{started_at.date()}.json")
+    try:
+        st = os.stat(path)
+        return (True, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (False, None, None)
+
+
+def _read_markers():
+    try:
+        return database.read_cycle_markers()
+    except Exception:
+        return (None, None)
+
+
+def _markers_changed(before, after, sig_before, sig_after) -> bool:
+    if before == (None, None) or after == (None, None):
+        return True  # an unobservable state is reported as changed
+    return before != after or sig_before != sig_after
+
+
+# --- Engine run slot and scheduler liveness ---------------------------------------------
+# Thresholds for the /health verdict; the engine lock is never read here.
+_HEALTH_SCHEDULER_STALL_S = 120  # seconds without a scheduler tick (two missed minutes)
+_HEALTH_ENGINE_OVERRUN_S = 180  # seconds one engine run may last before it reads as overrun
+_HEALTH_FAILING_RUNS = 5  # consecutive failed spawned runs that read as failing
+
+_DAEMON_STARTED_MONO: float = _monotonic()
+_ENGINE_RUN_LOCK = threading.Lock()
+_engine_run: "EngineRun | None" = None
+_last_cycle_record: CycleRecord | None = None
+_RECENT_RUN_OUTCOMES: "_collections.deque[str]" = _collections.deque(maxlen=_HEALTH_FAILING_RUNS)
+_scheduler_last_tick_mono: float | None = None
+_scheduler_last_tick_at: str | None = None
+_scheduler_started_mono: float | None = None
+
+
+@dataclass(frozen=True)
+class EngineRun:
+    """The engine run in flight: its id, ET start and monotonic start."""
+
+    cycle_id: str
+    started_at: datetime
+    started_mono: float
+
+
+def _begin_engine_run(started_at: datetime) -> "EngineRun | None":
+    """Take the single run slot, or return None when a run is already in flight."""
+    global _engine_run
+    with _ENGINE_RUN_LOCK:
+        if _engine_run is not None:
+            return None
+        _engine_run = EngineRun(_mint_cycle_id(started_at), started_at, _monotonic())
+        return _engine_run
+
+
+def _end_engine_run(cycle_id: str) -> None:
+    """Free the slot only when it still belongs to *cycle_id*."""
+    global _engine_run
+    with _ENGINE_RUN_LOCK:
+        if _engine_run is not None and _engine_run.cycle_id == cycle_id:
+            _engine_run = None
+
+
+def _engine_run_state() -> "EngineRun | None":
+    return _engine_run
+
+
+# Monotonic start of each in-flight engine run, read once by _publish_cycle for duration_s.
+_cycle_started_mono: dict[str, float] = {}
+
+
+def _log_skipped_minute(record: CycleRecord) -> None:
+    running = _engine_run_state()
+    running_s = _monotonic() - running.started_mono if running is not None else None
+    timing_log.emit(
+        "cycle",
+        cycle_id=record.cycle_id,
+        outcome="skipped",
+        started_at=record.started_at,
+        running_cycle_id=record.running_cycle_id,
+        running_since=record.running_since,
+        running_s=None if running_s is None else f"{running_s:.1f}",
+    )
+
+
+def _log_finished_cycle(record: CycleRecord) -> None:
+    started_mono = _cycle_started_mono.pop(record.cycle_id, None)
+    duration = None if started_mono is None else f"{_monotonic() - started_mono:.1f}"
+    timing_log.emit(
+        "cycle",
+        cycle_id=record.cycle_id,
+        outcome=record.outcome,
+        started_at=record.started_at,
+        ended_at=record.completed_at,
+        duration_s=duration,
+        exit_code=record.exit_code,
+    )
+
+
+def _publish_cycle(record: CycleRecord) -> None:
+    global _last_cycle_record
+    _last_cycle_record = record
+    if record.outcome == "skipped":
+        _log_skipped_minute(record)
+    else:
+        _log_finished_cycle(record)
+        _RECENT_RUN_OUTCOMES.append(record.outcome)
+    _notify_cycle_complete(record)
+
+
+def _notify_cycle_complete(record: CycleRecord) -> None:
     """Fan out a cycle-complete notification to all connected SSE clients.
 
     Called from trigger_alpha_bot() in a finally block — must never raise.
@@ -814,27 +1035,36 @@ def _notify_cycle_complete() -> None:
          budget: thread spawn + queue puts are O(1) and do no I/O.
       3. Fan out the "cycle-complete" SSE event.
     """
-    # Step 1: atomically mask stale data from all lock-free readers.
-    _account_totals_cache.mark_stale()
+    if record.outcome != "skipped":
+        # Step 1: atomically mask stale data from all lock-free readers.
+        _account_totals_cache.mark_stale()
 
-    # Step 2: start the refresh before the fan-out so it has maximum lead time.
-    # _refresh_account_totals never raises (D-1 contract); daemon=True so it
-    # does not prevent process exit.
-    threading.Thread(target=_refresh_account_totals, daemon=True, name="cycle-refresh").start()
+        # Step 2: start the refresh before the fan-out so it has maximum lead time.
+        # _refresh_account_totals never raises (D-1 contract); daemon=True so it
+        # does not prevent process exit.  Single flight with the minute refresh: a
+        # Composer call already in flight serves this cycle too.
+        threading.Thread(target=_cycle_refresh_body, daemon=True, name="cycle-refresh").start()
 
     # Step 3: fan out SSE notification (O(1) per client, no I/O).
+    payload = json.dumps(record.event_payload())
     with _sse_clients_lock:
         clients = list(_sse_clients)
 
     for q in clients:
         try:
-            q.put_nowait("cycle-complete")
+            q.put_nowait(("cycle-complete", payload))
         except Exception:
             pass  # full or closed — skip, do not raise
 
 
-def trigger_alpha_bot(force=False):
+def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
+    started_at = started_at if started_at is not None else _now_et()
+    cycle_id = cycle_id if cycle_id is not None else _mint_cycle_id(started_at)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
+    _cycle_started_mono[cycle_id] = _monotonic()
+    exit_code = None
+    before = _read_markers()
+    sig_before = _post_mortem_signature(started_at)
     try:
         cmd = [sys.executable, "alpha_bot_execution.py"]
         if force:
@@ -843,14 +1073,152 @@ def trigger_alpha_bot(force=False):
         env["PYTHONIOENCODING"] = "utf-8"
         with open(LOG_FILE, "a", encoding="utf-8") as log_fh:
             subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
+        exit_code = 0
     except subprocess.CalledProcessError as e:
+        exit_code = e.returncode
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
     finally:
-        _notify_cycle_complete()
+        try:
+            _end_engine_run(cycle_id)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "engine slot release failed: %s", type(exc).__name__
+            )
+        try:
+            after = _read_markers()
+            changed = _markers_changed(
+                before, after, sig_before, _post_mortem_signature(started_at)
+            )
+            try:
+                outcome = _classify_outcome(started_at, exit_code)
+            except Exception as exc:
+                # A calendar fault must not stop the publish; the state is unknown, so
+                # the record claims a change and clients refetch.
+                logging.getLogger(__name__).warning(
+                    "cycle outcome unclassified: %s", type(exc).__name__
+                )
+                outcome, changed = ("failed" if exit_code else "cycle"), True
+            _publish_cycle(
+                CycleRecord(
+                    cycle_id=cycle_id,
+                    started_at=started_at.isoformat(),
+                    completed_at=_now_et().isoformat(),
+                    outcome=outcome,
+                    changed=changed,
+                    exit_code=exit_code,
+                    running_cycle_id=None,
+                    running_since=None,
+                )
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("cycle publish failed: %s", type(exc).__name__)
 
 
 def threaded_trigger():
-    threading.Thread(target=trigger_alpha_bot, daemon=True).start()
+    started_at = _now_et()
+    run = _begin_engine_run(started_at)
+    if run is None:
+        running = _engine_run_state()
+        instant = started_at.isoformat()
+        _publish_cycle(
+            CycleRecord(
+                cycle_id=_mint_cycle_id(started_at),
+                started_at=instant,
+                completed_at=instant,
+                outcome="skipped",
+                changed=False,
+                exit_code=None,
+                running_cycle_id=running.cycle_id if running else None,
+                running_since=running.started_at.isoformat() if running else None,
+            )
+        )
+        return
+    try:
+        threading.Thread(
+            target=trigger_alpha_bot,
+            kwargs={"cycle_id": run.cycle_id, "started_at": run.started_at},
+            daemon=True,
+            name="engine-cycle",
+        ).start()
+    except Exception as exc:
+        _end_engine_run(run.cycle_id)
+        _daemon_log.error("engine thread could not start: %s", type(exc).__name__)
+
+
+class _GuardedJobCall(functools.partial):
+    """A scheduled call that logs a fault by type and returns, so the slot is rescheduled."""
+
+    label = ""
+
+    def __call__(self, *args, **kwargs):
+        try:
+            return super().__call__(*args, **kwargs)
+        except Exception as exc:
+            _daemon_log.error("scheduled job %s failed: %s", self.label, type(exc).__name__)
+            _daemon_log.debug("scheduled job %s traceback", self.label, exc_info=True)
+            return None
+
+
+def _guard(job, label: str):
+    """Wrap the callable of *job* so a raising slot never stops the scheduler or siblings."""
+    inner = job.job_func
+    guarded = _GuardedJobCall(inner.func, *inner.args, **inner.keywords)
+    guarded.label = label
+    functools.update_wrapper(guarded, inner)
+    job.job_func = guarded
+    return job
+
+
+def _scheduler_tick() -> None:
+    global _scheduler_last_tick_mono, _scheduler_last_tick_at
+    try:
+        schedule.run_pending()
+    except Exception as exc:
+        _daemon_log.error("scheduler pass failed: %s", type(exc).__name__)
+    _scheduler_last_tick_mono = _monotonic()
+    _scheduler_last_tick_at = _now_et().isoformat()
+
+
+def _health_degraded_reasons(now_mono: float) -> list[str]:
+    reasons: list[str] = []
+    if _scheduler_last_tick_mono is not None:
+        since = _scheduler_last_tick_mono
+    elif _scheduler_started_mono is not None:
+        since = _scheduler_started_mono
+    else:
+        since = _DAEMON_STARTED_MONO
+    if now_mono - since >= _HEALTH_SCHEDULER_STALL_S:
+        reasons.append("scheduler_stalled")
+    run = _engine_run_state()
+    if run is not None and now_mono - run.started_mono > _HEALTH_ENGINE_OVERRUN_S:
+        reasons.append("engine_overrun")
+    outcomes = list(_RECENT_RUN_OUTCOMES)
+    if len(outcomes) >= _HEALTH_FAILING_RUNS and all(
+        o == "failed" for o in outcomes[-_HEALTH_FAILING_RUNS:]
+    ):
+        reasons.append("engine_failing")
+    return reasons
+
+
+def _health_status() -> dict:
+    reasons = _health_degraded_reasons(_monotonic())
+    run = _engine_run_state()
+    last = _last_cycle_record
+    return {
+        "status": "degraded" if reasons else "ok",
+        "degraded_reasons": reasons,
+        "scheduler_last_tick_at": _scheduler_last_tick_at,
+        "engine_running_since": run.started_at.isoformat() if run else None,
+        "last_cycle": (
+            {
+                "cycle_id": last.cycle_id,
+                "outcome": last.outcome,
+                "completed_at": last.completed_at,
+            }
+            if last
+            else None
+        ),
+    }
 
 
 def _run_trigger_retention():
@@ -868,6 +1236,17 @@ def _run_trigger_retention():
         print(
             f"[retention] pruned {shadow_deleted} old shadow_history rows (>{shadow_retention_days}d)"  # noqa: E501  # un-wrappable long line
         )
+
+
+def _log_total_stats_call(started: float, **outcome) -> None:
+    """One timing line per total-stats call: the route template, never the account id."""
+    timing_log.emit(
+        "composer",
+        "GET",
+        "/portfolio/accounts/{account}/total-stats",
+        **outcome,
+        ms=round((timing_log.clock() - started) * 1000),
+    )
 
 
 def _refresh_account_totals() -> None:
@@ -901,7 +1280,13 @@ def _refresh_account_totals() -> None:
             "authorization": f"Bearer {secret}",
             "Content-Type": "application/json",
         }
-        resp = requests.get(url, headers=headers, timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S)
+        _call_started = timing_log.clock()
+        try:
+            resp = requests.get(url, headers=headers, timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S)
+        except Exception as _call_exc:
+            _log_total_stats_call(_call_started, error=type(_call_exc).__name__)
+            raise
+        _log_total_stats_call(_call_started, status=resp.status_code)
         if resp.status_code == 200:
             data = resp.json()
             # Acquire the shared cache lock before writing multiple keys so that
@@ -966,9 +1351,9 @@ def _refresh_account_totals() -> None:
     except Exception as _exc:
         _daemon_log.error(
             "_refresh_account_totals failed — account totals cache unchanged: %s",
-            _exc,
-            exc_info=True,
+            type(_exc).__name__,
         )
+        _daemon_log.debug("_refresh_account_totals detail: %s", _exc, exc_info=True)
 
 
 def _lens_pipeline_worker() -> None:
@@ -1750,23 +2135,32 @@ def _run_retirement_recommender_tick() -> None:
 
 
 def run_scheduler():
-    schedule.every().minute.at(":00").do(threaded_trigger)
-    schedule.every().minute.at(":00").do(_refresh_account_totals)
-    schedule.every().day.at("02:00").do(_run_trigger_retention)
+    global _scheduler_started_mono
+    _scheduler_started_mono = _monotonic()
+    _guard(schedule.every().minute.at(":00").do(threaded_trigger), ":00 engine spawn")
+    # The refresh runs on its own thread so a held Composer call never delays the spawn.
+    _guard(
+        schedule.every().minute.at(":00").do(_start_account_refresh, "minute"),
+        ":00 account refresh",
+    )
+    _guard(schedule.every().day.at("02:00").do(_run_trigger_retention), "02:00 trigger retention")
     # Component 7+8: daily off-hours lens pipeline — Market Prism summary (CYCLE4-BRIEF.md).
     # Runs at 03:00 (off-hours) so it never overlaps the live market-hours execution path.
-    schedule.every().day.at("03:00").do(_run_lens_pipeline)
+    _guard(schedule.every().day.at("03:00").do(_run_lens_pipeline), "03:00 lens pipeline")
     # Strategy Incubation Gate daily tick — staggered 30 minutes after the lens
     # pipeline slot so the two off-hours jobs never contend for the same minute.
-    schedule.every().day.at("03:30").do(_run_incubation_tick)
+    _guard(schedule.every().day.at("03:30").do(_run_incubation_tick), "03:30 incubation tick")
     # Retirement Recommender daily tick — staggered 15 minutes after the
     # incubation slot so all three off-hours jobs run without same-minute
     # contention.
-    schedule.every().day.at("03:45").do(_run_retirement_recommender_tick)
+    _guard(
+        schedule.every().day.at("03:45").do(_run_retirement_recommender_tick),
+        "03:45 retirement recommender",
+    )
     # Daily re-list (only when the registry is stale) so new model releases reach the badges.
-    schedule.every().day.at("04:15").do(_start_model_warmup)
+    _guard(schedule.every().day.at("04:15").do(_start_model_warmup), "04:15 model warmup")
     while True:
-        schedule.run_pending()
+        _scheduler_tick()
         time.sleep(1)
 
 
@@ -2274,8 +2668,16 @@ def dashboard():
     _today_close = market_calendar.session_close(datetime.now(_ET).date())
     session_close_display = _today_close.strftime("%H:%M ET")
 
+    _phase_now = datetime.now(_ET)
+    engine_phase = _engine_phase(
+        _phase_now,
+        get_market_state(_phase_now),
+        bot_state.get("last_successful_cycle_at"),
+    )
+
     return render_template(
         "index.html",
+        engine_phase=engine_phase,
         vars_locked_count=vars_locked_count,
         active_route="dashboard",
         meta=meta,
@@ -3023,10 +3425,11 @@ def sse_events():
         with _sse_clients_lock:
             _sse_clients.append(client_q)
         try:
+            yield "retry: 5000\n\n"  # headers and reconnect delay reach the client at once
             while True:
                 try:
-                    msg = client_q.get(timeout=15)  # 15 s heartbeat cadence
-                    yield f"event: {msg}\ndata: {{}}\n\n"
+                    name, data = client_q.get(timeout=_SSE_HEARTBEAT_S)
+                    yield f"event: {name}\ndata: {data}\n\n"
                 except queue.Empty:
                     yield ": heartbeat\n\n"
         finally:
@@ -3059,7 +3462,9 @@ def _et_trading_day_bounds(now_et: datetime) -> tuple[str, str]:
 def get_state():
     try:
         _ro_conn = database.get_ro_connection()
-        market_state = get_market_state(datetime.now(_ET))
+        # One ET reading per request so every date lookup agrees across midnight.
+        _req_now_et = datetime.now(_ET)
+        market_state = get_market_state(_req_now_et)
 
         # AC-P2.12.2: additive fields — computed once, merged into every response branch.
         _api_state = get_api_state_dict()
@@ -3170,6 +3575,11 @@ def get_state():
                 )
 
         state_data = database.load_state()
+        _additive["engine_phase"] = _engine_phase(
+            _req_now_et,
+            market_state,
+            (state_data or {}).get("last_successful_cycle_at"),
+        )
 
         # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
         if market_state in ("closed_frozen", "pre_market"):
@@ -3635,7 +4045,7 @@ def get_state():
         # No live state — return waiting with market_state context and notice on fresh deploy.
         # AC-DM.3.4: closed + no snapshot + empty state → notice fields included in waiting.
         if not state_data:
-            today_str, _ = _et_trading_day_bounds(datetime.now(_ET))
+            today_str, _ = _et_trading_day_bounds(_req_now_et)
             try:
                 shadow_divergence = database.get_shadow_divergence(today_str)
             except Exception:
@@ -3793,7 +4203,7 @@ def get_state():
         # Build symphonies list for M1 analytics helpers from bot_state.
         # Fields derived: last_percent_change from current_return/100, value from current_value.
         # Composer CR/MDD fields use None default so missing data is distinguishable from 0.0.
-        today_str, today_start = _et_trading_day_bounds(datetime.now(_ET))
+        today_str, today_start = _et_trading_day_bounds(_req_now_et)
         symphonies_list = []
         for k in symphony_keys:
             s = state_data[k]
@@ -3832,7 +4242,7 @@ def get_state():
             state_data[k]["last_trigger"] = last_trigger_by_sym.get(k)
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
-        _today_et = datetime.now(_ET).strftime("%Y-%m-%d")
+        _today_et = _req_now_et.strftime("%Y-%m-%d")
         # F-1: ONE shared read-only connection for the whole per-symphony
         # enrichment loop AND the _compute_portfolio_strip call right below it
         # (was: each of the 3 per-symphony analytics calls, PLUS every
@@ -7158,7 +7568,8 @@ def flush_resync():
         t.join(timeout=15.0)
         resync_ok = "portfolio_cr" in _account_totals_cache
     except Exception as exc:
-        _daemon_log.error("flush_resync: Composer resync failed: %s", exc)
+        _daemon_log.error("flush_resync: Composer resync failed: %s", type(exc).__name__)
+        _daemon_log.debug("flush_resync: Composer resync detail: %s", exc, exc_info=True)
         errors.append(f"resync: {exc}")
 
     _daemon_log.info(
@@ -9967,10 +10378,10 @@ def api_autotune_runs():
 
 
 if __name__ == "__main__":
-    # Reconfigure stdout to UTF-8 so emoji/non-Latin-1 chars don't crash on
-    # Windows (cp1252 default).  Guarded to __main__ so pytest's capture is
-    # not affected when this module is imported during test collection.
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    # UTF-8, line-buffered stdout (emoji/non-Latin-1 chars must not crash on Windows cp1252, and
+    # journald must see each line at once) plus the timing-line handler.  Guarded to __main__ so
+    # pytest's capture is not affected when this module is imported during test collection.
+    timing_log.configure_daemon_output()
 
     # Enforce daemon singleton BEFORE starting Flask or the scheduler thread.
     # If another Planet Stopper is alive this call prints an error and exits non-zero.

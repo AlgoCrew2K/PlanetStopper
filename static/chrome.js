@@ -222,6 +222,19 @@ function updateEngineStatus(data) {
     return;
   }
 
+  var phase = data && data.engine_phase;
+  if (phase === 'blackout' || phase === 'opening') {
+    if (dot)  dot.style.background = 'var(--studio-ink-dim)';
+    label.style.color = 'var(--studio-ink-dim)';
+    label.textContent = phase === 'blackout' ? 'Rebalance pause' : 'Opening';
+    if (wrap) {
+      wrap.title = phase === 'blackout'
+        ? 'Scheduled pause before the close; stops resume at the close.'
+        : 'Scheduled session start; the first cycle is running.';
+    }
+    return;
+  }
+
   var cycleAt = (data && data.last_successful_cycle_at) || (meta && meta.last_cycle_at);
   var stale = cycleAt ? (Date.now() - new Date(cycleAt).getTime() > 2 * 60 * 1000) : false;
 

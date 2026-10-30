@@ -404,55 +404,45 @@ class TestRefreshAccountTotals:
 
 
 class TestSchedulerRegistration:
-    def test_run_scheduler_registers_refresh_account_totals(self):
+    def test_run_scheduler_registers_the_minute_account_refresh_as_a_thread_start(self):
         """
-        run_scheduler() must register _refresh_account_totals in the schedule.
+        The :00 slot starts the account refresh on its own thread (_start_account_refresh),
+        so a Composer call that hangs never holds the scheduler thread; the refresh function
+        itself is not registered on the scheduler.
 
-        This test stubs `schedule.every()` to capture registered jobs and asserts
-        that _refresh_account_totals appears as a registered job function.
+        The jobs are read from a real scheduler whose run_pending raises a BaseException
+        stopper (the loop-level catch swallows every Exception), so nothing runs.
         """
+        from types import SimpleNamespace
+
         import schedule as schedule_module
 
-        registered_jobs = []
+        class _Stop(BaseException):
+            pass
 
-        original_every = schedule_module.every
+        class _RegisterOnly(schedule_module.Scheduler):
+            def run_pending(self):
+                raise _Stop
 
-        class _CapturingChain:
-            """Captures the final .do(fn) call target."""
-
-            def __getattr__(self, name):
-                return self
-
-            def do(self, fn, *args, **kwargs):
-                registered_jobs.append(fn)
-                return self
-
-            def __call__(self, *args, **kwargs):
-                return self
-
-        def _capturing_every(*args, **kwargs):
-            return _CapturingChain()
-
-        # Patch schedule.every so run_scheduler() doesn't actually spin.
-        # Also patch schedule.run_pending and time.sleep to prevent the while-True.
-        with (
-            patch.object(schedule_module, "every", side_effect=_capturing_every),
-            patch.object(schedule_module, "run_pending"),
-            patch("time.sleep", side_effect=StopIteration),
+        scheduler = _RegisterOnly()
+        with patch.object(
+            app_module,
+            "schedule",
+            SimpleNamespace(every=scheduler.every, run_pending=scheduler.run_pending),
         ):
             try:
                 app_module.run_scheduler()
-            except StopIteration:
-                pass  # Expected — breaks out of the while True loop after 1 iteration
+            except _Stop:
+                pass  # Expected: leaves the while True loop after registering every slot
 
-        refresh_fn = getattr(app_module, "_refresh_account_totals", None)
-        assert refresh_fn is not None, (
-            "_refresh_account_totals must exist on app module before this test can pass."
+        minute_jobs = [j for j in scheduler.jobs if j.unit == "minutes"]
+        registered = [getattr(j.job_func, "func", j.job_func) for j in minute_jobs]
+        names = [getattr(fn, "__name__", repr(fn)) for fn in registered]
+
+        assert getattr(app_module, "_start_account_refresh", None) in registered, (
+            f"run_scheduler() must register _start_account_refresh on the minute schedule; "
+            f"registered minute jobs: {names}"
         )
-
-        assert refresh_fn in registered_jobs, (
-            f"run_scheduler() must register _refresh_account_totals via schedule.every(); "
-            f"registered jobs: {[getattr(fn, '__name__', repr(fn)) for fn in registered_jobs]}. "
-            f"Add: schedule.every().minute.at(':00').do(_refresh_account_totals) "
-            f"(or equivalent) to run_scheduler()."
+        assert app_module._refresh_account_totals not in registered, (
+            f"the refresh itself must not run on the scheduler thread; registered: {names}"
         )

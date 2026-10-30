@@ -28,6 +28,7 @@ import pathlib
 import re
 import threading
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 from zoneinfo import ZoneInfo
@@ -1599,6 +1600,118 @@ class TestLiveBranchAccountBasisGrace:
             "An in-flight refresh must not hide a last success that is 130 s old."
         )
         assert resync.get("status") == 200
+
+    @pytest.mark.parametrize("starter", ["minute-refresh", "post-cycle-refresh"])
+    def test_in_flight_refresh_never_hides_a_stale_last_success(
+        self, live_client, monkeypatch, tmp_path, composer_total_stats, monotonic_clock, starter
+    ):
+        """Whichever refresh is in flight (the per-minute start or the thread that the
+        end of an engine run starts), the chip waits for the last success to be 90 s old
+        and then shows, naming that success rather than the refresh in flight."""
+        client, app_module = live_client
+        monkeypatch.setattr(real_analytics, "_POST_MORTEMS_DIR", str(tmp_path / "post_mortems"))
+        success_instant = datetime(2026, 10, 21, 10, 15, 30, tzinfo=_ET)
+        with patch.object(app_module, "datetime", _frozen_datetime_class(success_instant)):
+            _refresh_succeeds(app_module, composer_total_stats)
+        expected_as_of = success_instant.strftime(app_module._ACCOUNT_BASIS_TS_FMT)
+        t0 = monotonic_clock.now
+        monotonic_clock.now = t0 + 40.0
+        composer_total_stats.mode = "hold"
+        if starter == "minute-refresh":
+            assert app_module._start_account_refresh("minute") is True
+        else:
+            app_module._notify_cycle_complete(
+                app_module.CycleRecord(
+                    cycle_id="2026-10-21T10:16:00-04:00#1",
+                    started_at="2026-10-21T10:16:00-04:00",
+                    completed_at="2026-10-21T10:16:09-04:00",
+                    outcome="cycle",
+                    changed=True,
+                    exit_code=0,
+                    running_cycle_id=None,
+                    running_since=None,
+                )
+            )
+        try:
+            assert composer_total_stats.started.wait(timeout=5.0), (
+                f"the {starter} must reach Composer (the held request)."
+            )
+            inside = self._poll_strip(client, app_module, monkeypatch)
+            monotonic_clock.now = t0 + 130.0
+            past = self._poll_strip(client, app_module, monkeypatch)
+        finally:
+            composer_total_stats.release.set()
+            for refresh in threading.enumerate():
+                if refresh.name in ("cycle-refresh",) or refresh.name.startswith(
+                    "account-refresh-"
+                ):
+                    refresh.join(timeout=10.0)
+
+        assert "account_basis_stale" not in inside, (
+            f"While the {starter} is in flight and the last success is 40 s old, the live "
+            "strip must not raise the stale flag."
+        )
+        assert past.get("account_basis_stale") is True, (
+            f"A {starter} in flight must not hide a last success that is 130 s old."
+        )
+        assert past.get("account_basis_as_of") == expected_as_of, (
+            "the stale chip must name the last successful refresh, not the one in flight"
+        )
+
+    @pytest.mark.parametrize(
+        "failure_mode",
+        [
+            "status_503",
+            "read_timeout",
+            "connection_error",
+            "reply_is_not_json",
+            "reply_lacks_a_field",
+        ],
+    )
+    def test_failed_refresh_leaves_every_success_record_as_the_last_real_success(
+        self, live_client, monkeypatch, composer_total_stats, monotonic_clock, failure_mode
+    ):
+        """The monotonic stamp, the wall-clock as-of text and the last-good totals are
+        one record of the last real success; a failed attempt changes none of them."""
+        _client, app_module = live_client
+        success_instant = datetime(2026, 10, 21, 10, 15, 30, tzinfo=_ET)
+        with patch.object(app_module, "datetime", _frozen_datetime_class(success_instant)):
+            _refresh_succeeds(app_module, composer_total_stats)
+        stamp = app_module._account_totals_last_success_mono
+        as_of = app_module._account_totals_last_success_at
+        last_good = dict(app_module._account_totals_last_good)
+        assert stamp is not None
+        assert as_of == success_instant.strftime(app_module._ACCOUNT_BASIS_TS_FMT)
+        assert last_good, "a real success must leave last-good totals to compare against"
+        monotonic_clock.advance(60.0)
+
+        if failure_mode == "reply_is_not_json":
+
+            def _json_failure():
+                raise ValueError("reply body is not JSON")
+
+            monkeypatch.setattr(
+                app_module.requests,
+                "get",
+                lambda *args, **kwargs: SimpleNamespace(status_code=200, json=_json_failure),
+            )
+            app_module._refresh_account_totals()
+        elif failure_mode == "reply_lacks_a_field":
+            body = {k: v for k, v in composer_total_stats.payload.items() if k != "portfolio_value"}
+            monkeypatch.setattr(
+                app_module.requests,
+                "get",
+                lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: body),
+            )
+            app_module._refresh_account_totals()
+        else:
+            _refresh_fails(app_module, composer_total_stats, failure_mode)
+
+        assert app_module._account_totals_last_success_mono == stamp
+        assert app_module._account_totals_last_success_at == as_of
+        assert app_module._account_totals_last_good == last_good, (
+            f"a failed refresh ({failure_mode}) must not replace the last-good totals"
+        )
 
 
 class TestServerRenderedAccountBasisGrace:
