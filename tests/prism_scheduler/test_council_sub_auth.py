@@ -132,3 +132,27 @@ def test_council_subprocess_preserves_other_env(monkeypatch):
     assert "ANTHROPIC_API_KEY" not in captured_env, (
         "ANTHROPIC_API_KEY must still be stripped even when other vars are present"
     )
+
+
+# ---------------------------------------------------------------------------
+# Command line stays as before apart from the model tag.
+# ---------------------------------------------------------------------------
+
+
+def test_council_command_keeps_budget_format_permission_flags_and_prompt(monkeypatch):
+    """The generic model tag changes only the argument after --model: the spend cap, the
+    output format, the permission flag and the prompt carrying the run id stay on the
+    command, and the env still lacks the metered key."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-should-not-reach-subprocess")
+    run_id = "test-run-id-cmd-shape"
+
+    with patch("prism_scheduler.subprocess.run", return_value=_make_proc(0)) as mock_run:
+        prism_scheduler._run_prism(run_id)
+
+    cmd = mock_run.call_args[0][0]
+    assert cmd[cmd.index("--model") + 1] == "opus"
+    assert cmd[cmd.index("--max-budget-usd") + 1] == str(prism_scheduler.MAX_BUDGET_USD)
+    assert cmd[cmd.index("--output-format") + 1] == "json"
+    assert "--dangerously-skip-permissions" in cmd
+    assert run_id in cmd[-1], "the final argument must be the prompt carrying the run id"
+    assert "ANTHROPIC_API_KEY" not in mock_run.call_args.kwargs["env"]
