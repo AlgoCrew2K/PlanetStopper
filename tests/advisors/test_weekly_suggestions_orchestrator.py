@@ -352,3 +352,238 @@ class TestDeploymentDocsHaveWeeklySuggestionsSection:
             "/etc/planetstopper/council-env (that is the Prism council's OAuth-token "
             "file; the weekly scheduler is an SDK/metered-API-key path, AC-B3)."
         )
+
+
+# ===========================================================================
+# One model resolution per weekly run, and the reason each degraded item ended with
+# ===========================================================================
+
+import logging  # noqa: E402
+
+from tests._anthropic_http_fake import AnthropicHttpFake, load_fixture  # noqa: E402
+from tests.advisors import logic_change_http_support as _logic_support  # noqa: E402
+from tests.llm_request.conftest import error_outcome, message_body, newest_id  # noqa: E402
+
+_WEEKLY_LOGGER = "advisors.weekly_suggestions_scheduler"
+_BUILD_LOGGER = "advisors.strategy_builder_scheduler"
+_RELISTED_PAGE = "models/relisted_newer_fable.json"
+
+
+def _suggestion_resolver(model_clock):
+    """A registry-backed resolver over a fake whose listing changes after the first call.
+
+    Returns ``(resolve_now, resolved_ids, fake)``. ``resolve_now()`` resolves the
+    suggestion family exactly as a site does and records the id. The first call also
+    moves the clock past the daily relist and swaps the served page for one that holds a
+    newer fable-line model, so any later resolution that is not pinned to the run would
+    name the newer model.
+    """
+    import model_config
+
+    fake = AnthropicHttpFake.with_captured_page()
+    resolved_ids: list[str] = []
+
+    def resolve_now() -> str:
+        choice = model_config.resolve(model_config.Knob.SUGGESTION, fake.client)
+        resolved_ids.append(choice.model_id)
+        if len(resolved_ids) == 1:
+            model_clock.advance_past_relist()
+            fake.set_pages([load_fixture(_RELISTED_PAGE)])
+        return choice.model_id
+
+    return resolve_now, resolved_ids, fake
+
+
+def _spy(resolve_now):
+    def _fn(*_args, **_kwargs):
+        resolve_now()
+
+    return _fn
+
+
+class TestAWeeklyRunKeepsOneModelFromStartToEnd:
+    def _patch_engines(self, monkeypatch, resolve_now):
+        import advisors.frontrunner_builder as fbld
+        import advisors.strategy_builder_engine as sbe
+        import advisors.strategy_builder_scheduler as sb_sched
+        import advisors.weekly_suggestions_scheduler as weekly
+
+        monkeypatch.setattr(sb_sched, "_already_ran_this_week", lambda: False)
+        monkeypatch.setattr(
+            "advisors.build_plan_generator.load_atlas_candidates", lambda *a, **k: []
+        )
+        monkeypatch.setattr(sbe, "propose_strategies", _spy(resolve_now))
+        monkeypatch.setattr(fbld, "_resolve_live_symphony_roster", lambda: ["roster-a", "roster-b"])
+        monkeypatch.setattr(fbld, "_run_build_for_symphony", _spy(resolve_now))
+        monkeypatch.setattr(weekly, "run_weekly_asset_swap_suggestions", _spy(resolve_now))
+        monkeypatch.setattr(weekly, "run_weekly_logic_change_suggestions", _spy(resolve_now))
+
+    def test_the_whole_weekly_sweep_names_the_model_it_started_with(
+        self, unresolved_models, model_clock, monkeypatch
+    ):
+        import advisors.weekly_suggestions_scheduler as weekly
+        import model_config
+
+        resolve_now, resolved_ids, fake = _suggestion_resolver(model_clock)
+        self._patch_engines(monkeypatch, resolve_now)
+        first_listed = newest_id("fable")
+
+        weekly.run_weekly_suggestions()
+
+        # 4 objectives + 2 roster symphonies + swap loop + logic loop
+        assert len(resolved_ids) == 8
+        assert set(resolved_ids) == {first_listed}, resolved_ids
+        newer = newest_id("fable", load_fixture(_RELISTED_PAGE)["data"])
+        assert newer != first_listed, "self-guard: the relisted page must hold a newer model"
+        after = model_config.resolve(model_config.Knob.SUGGESTION, fake.client).model_id
+        assert after == newer, "the pin must end with the run, not outlive it"
+
+    def test_the_weekly_strategy_builder_run_started_alone_pins_its_own_run(
+        self, unresolved_models, model_clock, monkeypatch
+    ):
+        import advisors.strategy_builder_scheduler as sb_sched
+
+        resolve_now, resolved_ids, _fake = _suggestion_resolver(model_clock)
+        self._patch_engines(monkeypatch, resolve_now)
+
+        sb_sched.run_weekly_build()
+
+        assert len(resolved_ids) == 6  # 4 objectives + 2 roster symphonies
+        assert set(resolved_ids) == {newest_id("fable")}, resolved_ids
+
+    def test_a_frontrunner_build_started_alone_pins_its_own_run(
+        self, unresolved_models, model_clock, monkeypatch
+    ):
+        import advisors.frontrunner_builder as fbld
+
+        resolve_now, resolved_ids, _fake = _suggestion_resolver(model_clock)
+        monkeypatch.setattr(fbld, "_run_build_for_symphony", _spy(resolve_now))
+
+        fbld.run_frontrunner_build(["roster-a", "roster-b", "roster-c"])
+
+        assert len(resolved_ids) == 3
+        assert set(resolved_ids) == {newest_id("fable")}, resolved_ids
+
+
+def _loop_records(caplog, logger_name):
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == logger_name and r.levelno >= logging.WARNING
+    ]
+
+
+def _assert_reason_is_a_code_only(text: str) -> None:
+    assert "claude-" not in text
+    assert "Service temporarily unavailable" not in text
+
+
+_TWO_SYMPHONIES = {
+    "hash-weekly-aaa": {"name": "weekly example one"},
+    "hash-weekly-bbb": {"name": "weekly example two"},
+}
+
+
+class TestWeeklyRunsLogWhyEachItemDegraded:
+    def test_an_all_model_unavailable_week_logs_each_swap_symphony_with_the_code(
+        self, unresolved_models, monkeypatch, caplog
+    ):
+        import advisors.asset_swap_engine as ase
+        import advisors.weekly_suggestions_scheduler as weekly
+        from tests import _asset_swap_llm_support as swap_support
+
+        fake = AnthropicHttpFake()
+        for _ in range(8):
+            fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        monkeypatch.setattr("database.load_state", lambda: dict(_TWO_SYMPHONIES))
+        monkeypatch.setattr(
+            "symphony_logic.fetch_symphony_score", lambda *a, **k: swap_support.held_tree()
+        )
+        monkeypatch.setattr(weekly, "_build_correlation_data", lambda tickers: {})
+        monkeypatch.setattr(weekly, "_fetch_lens_scores", lambda: {})
+        monkeypatch.setattr(ase, "_build_client", lambda: fake.client)
+        monkeypatch.setattr(ase, "_has_composer_key", lambda: True)
+        monkeypatch.setattr(ase, "get_tradeable_set", lambda **k: swap_support.tradeable_universe())
+
+        with caplog.at_level(logging.INFO, logger=_WEEKLY_LOGGER):
+            weekly.run_weekly_asset_swap_suggestions()
+
+        warnings = _loop_records(caplog, _WEEKLY_LOGGER)
+        for symphony_hash in _TWO_SYMPHONIES:
+            assert any(symphony_hash in w and "model_unavailable" in w for w in warnings), warnings
+        for text in warnings:
+            _assert_reason_is_a_code_only(text)
+        assert fake.message_requests == []
+
+    def test_an_all_model_unavailable_week_logs_each_logic_symphony_with_the_code(
+        self, unresolved_models, monkeypatch, caplog
+    ):
+        import advisors.weekly_suggestions_scheduler as weekly
+
+        fake = AnthropicHttpFake()
+        for _ in range(8):
+            fake.queue_listing_outcome(error_outcome("503_unavailable.json"))
+        _logic_support.install_engine_world(monkeypatch, fake)
+        monkeypatch.setattr("database.load_state", lambda: dict(_TWO_SYMPHONIES))
+        monkeypatch.setattr(
+            "symphony_logic.fetch_symphony_score", lambda *a, **k: _logic_support.load_tree()
+        )
+
+        with caplog.at_level(logging.INFO, logger=_WEEKLY_LOGGER):
+            weekly.run_weekly_logic_change_suggestions()
+
+        warnings = _loop_records(caplog, _WEEKLY_LOGGER)
+        for symphony_hash in _TWO_SYMPHONIES:
+            assert any(symphony_hash in w and "model_unavailable" in w for w in warnings), warnings
+        for text in warnings:
+            _assert_reason_is_a_code_only(text)
+        assert fake.message_requests == []
+
+    def test_an_all_model_unavailable_week_logs_each_strategy_builder_objective(
+        self, unresolved_models, monkeypatch, caplog
+    ):
+        import advisors.frontrunner_builder as fbld
+        import advisors.strategy_builder_scheduler as sb_sched
+        from advisors.strategy_builder_engine import Objective
+        from tests import _sb_generation_harness as sb_support
+
+        fake = sb_support.fake_with_failing_listing()
+        monkeypatch.setattr(sb_sched, "_already_ran_this_week", lambda: False)
+        monkeypatch.setattr(fbld, "run_frontrunner_build", lambda *a, **k: None)
+
+        with caplog.at_level(logging.INFO, logger=_BUILD_LOGGER):
+            with sb_support.install_chain_seams(monkeypatch, fake):
+                sb_sched.run_weekly_build()
+
+        warnings = _loop_records(caplog, _BUILD_LOGGER)
+        for objective in Objective:
+            assert any(objective.value in w and "model_unavailable" in w for w in warnings), (
+                objective.value,
+                warnings,
+            )
+        for text in warnings:
+            _assert_reason_is_a_code_only(text)
+        assert fake.message_requests == []
+
+    def test_a_refusal_for_one_symphony_is_logged_and_the_next_symphony_still_runs(
+        self, monkeypatch, caplog
+    ):
+        import advisors.weekly_suggestions_scheduler as weekly
+
+        fake = AnthropicHttpFake.with_captured_page()
+        fake.queue_message(message_body("refusal_reasoning_extraction.json"))
+        fake.queue_message(_logic_support.reply_with_tool_edit(_logic_support.real_edit()))
+        _logic_support.install_engine_world(monkeypatch, fake)
+        monkeypatch.setattr("database.load_state", lambda: dict(_TWO_SYMPHONIES))
+        monkeypatch.setattr(
+            "symphony_logic.fetch_symphony_score", lambda *a, **k: _logic_support.load_tree()
+        )
+        first, second = _TWO_SYMPHONIES
+
+        with caplog.at_level(logging.INFO, logger=_WEEKLY_LOGGER):
+            weekly.run_weekly_logic_change_suggestions()
+
+        warnings = _loop_records(caplog, _WEEKLY_LOGGER)
+        assert any(first in w and "refusal" in w for w in warnings), warnings
+        assert not any(second in w for w in warnings), "the next symphony ran and did not degrade"
+        assert len(fake.message_requests) == 2

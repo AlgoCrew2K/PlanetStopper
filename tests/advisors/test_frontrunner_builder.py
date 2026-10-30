@@ -1195,3 +1195,83 @@ class TestFrontrunnerRunOverlayJob:
         assert any(
             "refusal" in text and refusal["stop_details"]["category"] in text for text in warnings
         ), warnings
+
+
+def _relisted_page() -> dict:
+    return load_fixture("models/relisted_newer_fable.json")
+
+
+def _strings_and_keys(node):
+    """Every dict key and every string value anywhere inside ``node``."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield str(key)
+            yield from _strings_and_keys(value)
+    elif isinstance(node, (list, tuple)):
+        for item in node:
+            yield from _strings_and_keys(item)
+    elif isinstance(node, str):
+        yield node
+
+
+class TestQueuedProposalNamesNoModel:
+    """A queued proposal is the operator's decision record for an overlay, not for a model.
+
+    The model that wrote the overlay is a fact about one generation call (it may be a
+    fallback model); a stored model id would go stale and could name a model that never
+    served the reply. Nothing in the queued row carries one.
+    """
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            pytest.param(lambda: message_body(_CAPTURED_OVERLAY_REPLY), id="primary-model-reply"),
+            pytest.param(
+                lambda: _overlay_variant("fallback_served_tool.json"), id="fallback-model-reply"
+            ),
+        ],
+    )
+    def test_no_argument_of_the_proposal_write_carries_a_model_id(
+        self, fbld, overlay_fake, overlay_job, monkeypatch, reply
+    ):
+        body = reply()
+        _run_job(fbld, overlay_fake, monkeypatch, body)
+
+        assert overlay_job.call_count == 1
+        call = overlay_job.call_args
+        stored = list(_strings_and_keys([list(call.args), call.kwargs]))
+        served_ids = {body["model"], *[r["id"] for r in CAPTURED["data"]]}
+        for text in stored:
+            assert text not in served_ids, f"a model id {text!r} is stored on the proposal"
+            assert not _VERSIONED_MODEL_ID.search(text), text
+        lowered = {text.lower() for text in stored}
+        assert not {"model", "model_id", "generation_model", "served_by"} & lowered
+
+
+class TestFrontrunnerRunKeepsOneModel:
+    def test_a_run_whose_listing_changes_mid_run_names_one_model_in_every_request(
+        self, fbld, overlay_job, monkeypatch, unresolved_models, model_clock
+    ):
+        fake = AnthropicHttpFake.with_captured_page()
+        first_listed = newest_id("fable")
+        newer = newest_id("fable", _relisted_page()["data"])
+        assert newer != first_listed, "self-guard: the relisted page must hold a newer model"
+
+        def move_the_listing(recorded):
+            if len(fake.message_requests) == 1:
+                model_clock.advance_past_relist()
+                fake.set_pages([_relisted_page()])
+            return None
+
+        fake.set_message_responder(move_the_listing)
+
+        _run_job(
+            fbld,
+            fake,
+            monkeypatch,
+            message_body("text_only_with_tools.json"),
+            message_body(_CAPTURED_OVERLAY_REPLY),
+        )
+
+        assert _models_named(fake) == [first_listed, first_listed]
+        assert overlay_job.call_count == 1
