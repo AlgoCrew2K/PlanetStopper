@@ -55,11 +55,7 @@
         if (isEmpty) return;
 
         var totalAlpha = typeof payload.total_alpha === 'number' ? payload.total_alpha.toFixed(2) + '%' : '--';
-        // DE-GAS-COHERENCE-001: ABS magnitude, no sign character -- direction is
-        // conveyed by color alone here (this hero stat has no accompanying word).
-        var totalSaved = typeof payload.total_saved === 'number'
-            ? '$' + Math.abs(payload.total_saved).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-            : '--';
+        var totalSaved = dollarSavedText(payload.total_saved);
         var triggers = typeof payload.trigger_count === 'number' ? String(payload.trigger_count) : '--';
         var winRate = typeof payload.win_rate === 'number' ? payload.win_rate.toFixed(1) + '%' : '--';
 
@@ -89,6 +85,18 @@
     function setId(id, text) {
         var el = document.getElementById(id);
         if (el) el.textContent = text;
+    }
+
+    // The one place a dollar result becomes text (the hero tile and every reason card):
+    // "$" + the magnitude with thousands separators + " saved" or " lost" by the sign of
+    // the figure. The magnitude rounds with toFixed (ties away from zero), the rule
+    // analytics.format_dollar_saved applies to the Discord text, so the two never
+    // disagree on a tie. A value that is not a number reads "--" with no word.
+    function dollarSavedText(value) {
+        if (typeof value !== 'number') return '--';
+        var parts = Math.abs(value).toFixed(2).split('.');
+        if (/^\d+$/.test(parts[0])) parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        return '$' + parts.join('.') + (value < 0 ? ' lost' : ' saved');
     }
 
     // ---------------------------------------------------------------------------
@@ -249,12 +257,6 @@
             var alphaColor = alphaNum !== null
                 ? (alphaNum >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg'))
                 : cssVar('--studio-ink');
-            // DE-GAS-COHERENCE-001: ABS magnitude + a sign-conditional word --
-            // never a naked minus under the unconditional literal 'saved'.
-            var dollars = typeof s.dollars === 'number'
-                ? '$' + Math.abs(s.dollars).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                : '--';
-            var dollarsWord = typeof s.dollars === 'number' && s.dollars < 0 ? 'lost' : 'saved';
             var stripToken = reasonStripColor(reason);
             var badge = reasonBadge(reason);
             var winRateNum = s.count > 0 ? (s.wins / s.count) * 100 : 0;
@@ -283,7 +285,7 @@
                 '<div style="font-size:1.75rem;font-weight:800;color:' + alphaColor + ';line-height:1;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;">' +
                 escHtml(alphaStr) + '</div>' +
                 '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;margin-bottom:0.75rem;">' +
-                'cumulative α · ' + escHtml(dollars) + ' ' + dollarsWord +
+                'cumulative α · ' + escHtml(dollarSavedText(s.dollars)) +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.375rem;padding-top:0.75rem;border-top:1px solid ' + cssVar('--studio-border') + ';">' +
                 '<div><div style="font-size:0.5625rem;color:' + cssVar('--studio-ink-dim') + ';text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Triggers</div>' +
@@ -362,17 +364,29 @@
 
     function renderDayDrilldown(dateStr) {
         var exits = (lastPayload && lastPayload.daily_exits && lastPayload.daily_exits[dateStr]) || [];
+        // List the day's exits by trigger time (HH:MM, earliest first); an exit with
+        // no time goes last. Exits that share a time, and the untimed ones, keep the
+        // file's order: the index is the last sort key, so no sort stability is assumed.
+        var ordered = exits.map(function (e, index) {
+            return { exit: e, ts: e.time_triggered || e.ts || '', index: index };
+        }).sort(function (a, b) {
+            if (!a.ts !== !b.ts) return a.ts ? -1 : 1;
+            if (a.ts !== b.ts) return a.ts < b.ts ? -1 : 1;
+            return a.index - b.index;
+        });
         // Reuse the existing triggers-tbody surface rather than a parallel
         // render target — renderTriggers sets its own "Today's exits (N)"
         // heading first, overridden with the selected day's label below.
         renderTriggers({
-            todays_exits: exits.map(function (e) {
+            todays_exits: ordered.map(function (o) {
                 return {
-                    ts: e.time_triggered || e.ts || '',
-                    symphony_id: e.symphony_id,
-                    symphony_name: e.symphony_name || e.symphony_id,
-                    reason: e.reason,
-                    detail: e.detail
+                    ts: o.ts,
+                    symphony_id: o.exit.symphony_id,
+                    // The name the producer wrote; an exit without one says so
+                    // rather than showing the identifier as if it were a name.
+                    symphony_name: o.exit.symphony_name || 'name not recorded',
+                    reason: o.exit.reason,
+                    detail: o.exit.detail
                 };
             })
         });
@@ -387,12 +401,10 @@
     // ---------------------------------------------------------------------------
 
     function windowDays(val) {
-        if (val === 'ytd') {
-            var now = new Date();
-            var startOfYear = new Date(now.getFullYear(), 0, 1);
-            return Math.ceil((now - startOfYear) / 86400000);
-        }
-        return parseInt(val, 10) || 90;
+        // YTD travels as the token; the server resolves it to 1 January, the same
+        // cutoff the dashboard and the Performance tab use for it.
+        if (val === 'ytd') return val;
+        return parseInt(val, 10) || 30;
     }
 
     window.loadHistory = function loadHistory(windowVal) {
@@ -413,7 +425,7 @@
             });
     };
 
-    var currentWindow = '90';
+    var currentWindow = '30';
 
     window.historySelectWindow = function historySelectWindow(btn, windowVal) {
         var strip = document.getElementById('window-picker');

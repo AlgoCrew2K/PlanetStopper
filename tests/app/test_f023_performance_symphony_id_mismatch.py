@@ -510,16 +510,22 @@ def test_performance_aggregate_scope_response_shape_unchanged(client, monkeypatc
         "window_days",
     }
     ac5_coverage_disclosure_keys = {"actual_days", "coverage_days", "date_range"}
+    # The calendar-window contract adds `window_start`; an integer `days` means trailing rows,
+    # so it is present and null.
+    window_boundary_keys = {"window_start"}
     assert baseline_keys <= set(body.keys()), (
         f"aggregate scope response is MISSING baseline keys -- a genuine "
         f"regression, not the AC-5 addition. Missing: "
         f"{baseline_keys - set(body.keys())}. Got keys: {sorted(body.keys())}"
     )
-    assert set(body.keys()) == baseline_keys | ac5_coverage_disclosure_keys, (
+    assert (
+        set(body.keys()) == baseline_keys | ac5_coverage_disclosure_keys | window_boundary_keys
+    ), (
         f"aggregate scope response shape changed by more than AC-5's 3 "
-        f"named coverage-disclosure fields -- unexpected extra/missing "
-        f"keys. Got keys: {sorted(body.keys())}"
+        f"named coverage-disclosure fields and the window boundary -- unexpected "
+        f"extra/missing keys. Got keys: {sorted(body.keys())}"
     )
+    assert body["window_start"] is None, "an integer days value carries no calendar cutoff"
     for key in ac5_coverage_disclosure_keys:
         assert key in body, (
             f"AC-5 coverage-disclosure field {key!r} missing from aggregate response"

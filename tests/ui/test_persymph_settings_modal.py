@@ -1635,3 +1635,238 @@ def test_post_symphony_settings_rejects_out_of_range_int_live_mode(
             f"F8: POST with live_mode=2 must return 400; got {resp.status_code}. "
             f"Body: {resp.get_json()!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Modal title: the symphony's display name, the Composer hash only in a title attribute
+#
+# The route is read over the real database seeded from captured records; its answer is
+# fed to the real static/settings-modal.js under node, whose markup is parsed (nothing
+# is matched against a hand-typed string). The hash the page was opened with stays the
+# identifier every request targets.
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+import pathlib  # noqa: E402
+import urllib.parse  # noqa: E402
+
+from tests.ui._iife_node_harness import parse_markup, run_modal_scenario  # noqa: E402
+
+# Captured when this module is imported, before the conftest stub replaces load_state.
+_REAL_LOAD_STATE = database.load_state
+
+_BOT_STATE_FX = (
+    pathlib.Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "prod_droplet"
+    / "bot_state_positions.json"
+)
+_HASH_A = "iaSOOUsmnCJHiZvbrWfs"
+_HASH_B = "lW4ZzWuqR8tEO2DhXbil"
+# A Composer-format id that is in no captured bot_state: the "not in the live state" case.
+_HASH_ABSENT = "Zq7Lm2Xc9Vb4Nt6Pw1Rk"
+_LOCK_KEY = "TAKE_PROFIT_MC_PCT"
+
+
+@pytest.fixture
+def captured_modal_state(monkeypatch):
+    """Two captured symphonies in bot_state, read by the real load_state."""
+    fx = json.loads(_BOT_STATE_FX.read_text(encoding="utf-8"))
+    database.save_state({_HASH_A: fx[_HASH_A], _HASH_B: fx[_HASH_B]})
+    monkeypatch.setattr(database, "load_state", _REAL_LOAD_STATE)
+    _mock_env(monkeypatch)
+    return {"names": {_HASH_A: fx[_HASH_A]["name"], _HASH_B: fx[_HASH_B]["name"]}}
+
+
+def _modal_json(client, hash_id: str) -> dict:
+    resp = client.get("/api/symphony-settings/" + urllib.parse.quote(hash_id, safe=""))
+    assert resp.status_code == 200
+    return resp.get_json()
+
+
+def _get_route(hash_id: str) -> str:
+    return f"GET /api/symphony-settings/{urllib.parse.quote(hash_id, safe='')}"
+
+
+def _assert_hash_only_in_title(html: str, hash_id: str, name: str):
+    parsed = parse_markup(html)
+    assert not any(hash_id in text for text in parsed.texts), (
+        "the Composer hash must not be visible text"
+    )
+    stray = [
+        (tag, attr) for tag, attr, value in parsed.attrs if hash_id in value and attr != "title"
+    ]
+    assert not stray, f"the hash may appear only in a title attribute, also found in {stray}"
+    titled = [e for e in parsed.titled if e["title"] == hash_id]
+    assert titled, "the title element must carry the hash in its title attribute"
+    assert titled[0]["text"].strip() == name.strip(), (
+        f"the title must read the display name, got {titled[0]['text']!r}"
+    )
+
+
+def _assert_no_identifier(html: str, *identifiers: str):
+    for identifier in identifiers:
+        assert identifier not in html, f"{identifier!r} must not appear in this state"
+
+
+def test_symphony_settings_route_returns_the_display_name(client, captured_modal_state):
+    body = _modal_json(client, _HASH_A)
+    assert body["display_name"] == captured_modal_state["names"][_HASH_A]
+    assert {"live_mode", "global_live", "parameters", "locked_vars", "advisor_observations"} <= set(
+        body
+    ), "adding the name must not remove an existing key"
+
+
+def test_symphony_settings_route_resolves_the_name_when_asked_by_normalized_name(
+    client, captured_modal_state
+):
+    name = captured_modal_state["names"][_HASH_A]
+    body = _modal_json(client, database.normalize_name(name))
+    assert body["display_name"] == name
+
+
+def test_symphony_settings_route_returns_a_null_name_for_an_id_not_in_the_live_state(
+    client, captured_modal_state
+):
+    body = _modal_json(client, _HASH_ABSENT)
+    assert "display_name" in body, "the key is always present"
+    assert body["display_name"] is None
+
+
+def test_modal_title_reads_the_display_name_with_the_hash_only_in_a_title_attribute(
+    client, captured_modal_state
+):
+    name = captured_modal_state["names"][_HASH_A]
+    routes = {_get_route(_HASH_A): {"json": _modal_json(client, _HASH_A)}}
+    out = run_modal_scenario(
+        routes,
+        [{"op": "open", "id": _HASH_A}, {"op": "settle"}, {"op": "snapshot", "label": "loaded"}],
+    )
+    _assert_hash_only_in_title(out["snapshots"]["loaded"], _HASH_A, name)
+
+
+def test_modal_shows_no_identifier_while_loading(client, captured_modal_state):
+    names = captured_modal_state["names"]
+    routes = {_get_route(_HASH_A): {"json": _modal_json(client, _HASH_A)}}
+    out = run_modal_scenario(
+        routes,
+        [{"op": "open", "id": _HASH_A}, {"op": "snapshot", "label": "loading"}],
+    )
+    _assert_no_identifier(out["snapshots"]["loading"], _HASH_A, names[_HASH_A])
+
+
+def test_modal_error_state_shows_the_hash(client, captured_modal_state):
+    out = run_modal_scenario(
+        {_get_route(_HASH_A): {"reject": True}},
+        [{"op": "open", "id": _HASH_A}, {"op": "settle"}, {"op": "snapshot", "label": "error"}],
+    )
+    parsed = parse_markup(out["snapshots"]["error"])
+    assert any(_HASH_A in text for text in parsed.texts), "the error modal must name the hash"
+
+
+def test_modal_with_a_null_display_name_shows_the_hash_as_its_title(client, captured_modal_state):
+    body = _modal_json(client, _HASH_ABSENT)
+    assert body["display_name"] is None
+    out = run_modal_scenario(
+        {_get_route(_HASH_ABSENT): {"json": body}},
+        [{"op": "open", "id": _HASH_ABSENT}, {"op": "settle"}, {"op": "snapshot", "label": "n"}],
+    )
+    parsed = parse_markup(out["snapshots"]["n"])
+    assert any(_HASH_ABSENT in text for text in parsed.texts)
+
+
+def test_confirm_dialog_names_the_symphony_by_display_name(client, captured_modal_state):
+    name = captured_modal_state["names"][_HASH_A]
+    body = _modal_json(client, _HASH_A)
+    assert body["live_mode"] is False, "the go-live dialog opens only from a dry-run symphony"
+    out = run_modal_scenario(
+        {_get_route(_HASH_A): {"json": body}},
+        [
+            {"op": "open", "id": _HASH_A},
+            {"op": "settle"},
+            {"op": "click", "id": "sym-settings-live-toggle"},
+            {"op": "click", "id": "sym-settings-save"},
+            {"op": "snapshotAppended", "label": "confirm"},
+        ],
+    )
+    confirm = out["snapshots"]["confirm"]
+    assert "Confirm live trading" in confirm, "the confirm dialog must have opened"
+    _assert_hash_only_in_title(confirm, _HASH_A, name)
+    assert [f for f in out["fetches"] if f["method"] == "POST"] == [], "nothing is saved yet"
+
+
+def test_reopening_for_another_symphony_shows_the_second_symphonys_name(
+    client, captured_modal_state
+):
+    names = captured_modal_state["names"]
+    routes = {
+        _get_route(_HASH_A): {"json": _modal_json(client, _HASH_A)},
+        _get_route(_HASH_B): {"json": _modal_json(client, _HASH_B)},
+    }
+    out = run_modal_scenario(
+        routes,
+        [
+            {"op": "open", "id": _HASH_A},
+            {"op": "settle"},
+            {"op": "snapshot", "label": "first"},
+            {"op": "click", "id": "sym-settings-close"},
+            {"op": "open", "id": _HASH_B},
+            {"op": "snapshot", "label": "second_loading"},
+            {"op": "settle"},
+            {"op": "snapshot", "label": "second"},
+        ],
+    )
+    snaps = out["snapshots"]
+    _assert_hash_only_in_title(snaps["first"], _HASH_A, names[_HASH_A])
+    _assert_no_identifier(snaps["second_loading"], _HASH_A, _HASH_B, names[_HASH_A], names[_HASH_B])
+    _assert_hash_only_in_title(snaps["second"], _HASH_B, names[_HASH_B])
+    assert names[_HASH_A] not in snaps["second"], "the first symphony's name must not linger"
+
+
+def test_a_symphony_without_a_name_does_not_inherit_the_previous_symphonys_name(
+    client, captured_modal_state
+):
+    names = captured_modal_state["names"]
+    routes = {
+        _get_route(_HASH_A): {"json": _modal_json(client, _HASH_A)},
+        _get_route(_HASH_ABSENT): {"json": _modal_json(client, _HASH_ABSENT)},
+    }
+    out = run_modal_scenario(
+        routes,
+        [
+            {"op": "open", "id": _HASH_A},
+            {"op": "settle"},
+            {"op": "click", "id": "sym-settings-close"},
+            {"op": "open", "id": _HASH_ABSENT},
+            {"op": "settle"},
+            {"op": "snapshot", "label": "absent"},
+        ],
+    )
+    html = out["snapshots"]["absent"]
+    assert names[_HASH_A] not in html, "a stale name must not label another symphony"
+    assert any(_HASH_ABSENT in text for text in parse_markup(html).texts)
+
+
+def test_saving_a_lock_change_still_posts_to_the_hash_url_with_the_same_body(
+    client, captured_modal_state
+):
+    body = _modal_json(client, _HASH_A)
+    assert _LOCK_KEY not in body["locked_vars"]
+    url = f"/api/symphony-settings/{urllib.parse.quote(_HASH_A, safe='')}"
+    out = run_modal_scenario(
+        {_get_route(_HASH_A): {"json": body}, f"POST {url}": {"json": {"status": "success"}}},
+        [
+            {"op": "open", "id": _HASH_A},
+            {"op": "settle"},
+            {"op": "clickLock", "key": _LOCK_KEY},
+            {"op": "click", "id": "sym-settings-save"},
+            {"op": "settle"},
+        ],
+    )
+    posts = [f for f in out["fetches"] if f["method"] == "POST"]
+    assert len(posts) == 1
+    assert posts[0]["url"] == url, "the save must target the Composer hash, never the display name"
+    assert posts[0]["body"] == {
+        "live_mode": body["live_mode"],
+        "locked_vars": [*body["locked_vars"], _LOCK_KEY],
+    }

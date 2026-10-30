@@ -857,6 +857,8 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
     fake_sym_id = "acc123__sym456"
     fake_history = {fake_sym_id: {f"2026-05-{d:02d}": [{"return": 0.5}] for d in range(1, 30)}}
 
+    import database
+
     with (
         patch("autotuner.database") as mock_db,
         patch("autotuner._collect_sim_returns", return_value=test_returns_pct),
@@ -887,6 +889,9 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
             "frozen_at": "2026-05-26T00:00:00Z",
         }
         mock_db.get_spec_facets_for_bundle.return_value = crra_facets
+        # The objective rule is a pure function of the facets; the whole-module patch would
+        # otherwise turn it into a MagicMock, so route it to the real one.
+        mock_db.objective_kind_for_facets.side_effect = database.objective_kind_for_facets
         mock_db.get_symphony_strategy.return_value = fake_strat_data
         mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "_")
         mock_db.load_chart_history.return_value = {}

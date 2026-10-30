@@ -242,6 +242,7 @@
       border-color: var(--studio-neg);
       justify-content: flex-end;
     }
+    .toggle-btn:disabled { cursor: default; }
     .toggle-knob {
       width: 24px;
       height: 24px;
@@ -465,7 +466,8 @@
       font-weight: 500;
       letter-spacing: 0.04em;
       display: flex;
-      gap: 6px;
+      flex-wrap: wrap;
+      gap: 2px 6px;
     }
     .sym-has-override { color: var(--studio-accent); font-weight: 700; }
     .sym-locked-count { color: var(--studio-warn); }
@@ -487,7 +489,6 @@
       border-bottom: 1px solid var(--studio-rule);
     }
     .sym-detail-name { font-size: 16px; font-weight: 700; color: var(--studio-ink); letter-spacing: -0.01em; }
-    .sym-detail-id { font-size: 10.5px; color: var(--studio-ink-faint); margin-top: 2px; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
 
     .btn-reset-globals {
       padding: 6px 11px;
@@ -888,8 +889,9 @@
                 ⚠ Real-money mode. Every trigger will send a liquidation to Composer.
                 Discord receives an audit alert on every panic-stop call regardless of live state.
               </div>
+              <div class="field-hint">Live trading is armed in the server's .env file, not from the dashboard. This switch shows the current mode and cannot change it.</div>
             </div>
-            <button type="button" class="toggle-btn" id="live-toggle" role="switch" aria-checked="false" data-on="0">
+            <button type="button" class="toggle-btn" id="live-toggle" role="switch" aria-checked="false" aria-readonly="true" data-on="0" disabled>
               <span class="toggle-knob"></span>
             </button>
           </div>

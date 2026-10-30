@@ -58,6 +58,9 @@
 
     // ── Modal state ───────────────────────────────────────────────────────────
     var _currentSymphonyId = null;
+    // The symphony's display name from the last successful load. Reset on every open so a
+    // symphony without one (or a failed load) never shows the previous symphony's name.
+    var _currentDisplayName = null;
     var _modalData = null;         // last-fetched API response
     var _pendingLockedVars = null; // local edits before Save
     // Track pending toggle state independently from _modalData.live_mode so
@@ -68,6 +71,7 @@
     window.openSymphonySettings = function (evt, symphonyId) {
         if (evt) { evt.stopPropagation(); }
         _currentSymphonyId = symphonyId;
+        _currentDisplayName = null;
         _pendingLockedVars = null;
         _pendingLiveMode = undefined;
         _renderLoadingModal();
@@ -76,6 +80,8 @@
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 _modalData = data;
+                _currentDisplayName = (typeof data.display_name === 'string' && data.display_name)
+                    ? data.display_name : null;
                 _pendingLockedVars = (data.locked_vars || []).slice();
                 _pendingLiveMode = undefined;
                 _renderModal(false);
@@ -176,6 +182,7 @@
             '<div style="padding:32px;text-align:center;color:var(--studio-ink-dim);font-size:13px;">Loading…</div>',
             '',
             '',
+            false,
             false
         );
         _wireCloseButtons();
@@ -187,7 +194,8 @@
             '<div style="padding:32px;color:var(--studio-neg);font-size:13px;">' + _esc(msg) + '</div>',
             '',
             '',
-            false
+            false,
+            true
         );
         _wireCloseButtons();
     }
@@ -386,7 +394,7 @@
 
         var el = _getOrCreateModalEl();
         // modeBadge injected as 4th arg so _surfaceHtml places it in the header (AC-2).
-        el.innerHTML = _surfaceHtml(body, footer, modeBadge, true);
+        el.innerHTML = _surfaceHtml(body, footer, modeBadge, true, true);
 
         _wireCloseButtons();
         _wireLockedVarButtons();
@@ -403,7 +411,12 @@
         var existing = document.getElementById('sym-settings-confirm');
         if (existing) { existing.parentNode.removeChild(existing); }
 
-        var symphonyLabel = _currentSymphonyId || 'this symphony';
+        // The name leads; the Composer hash stays in a title attribute. With no name (or no id)
+        // the stored identifier is shown unchanged.
+        var symphonyLabel = _currentSymphonyId
+            ? '<strong title="' + _esc(_currentSymphonyId) + '">' +
+              _esc(_currentDisplayName || _currentSymphonyId) + '</strong>'
+            : '<strong>this symphony</strong>';
 
         var html = '<div id="sym-settings-confirm" role="dialog" aria-modal="true"' +
             ' aria-label="Confirm live trading"' +
@@ -421,7 +434,7 @@
             '<span>⚠</span> Confirm live trading</div></div>' +
             '<div style="padding:16px 18px;font-size:13px;color:var(--studio-ink);line-height:1.55;">' +
             'You are about to enable real-money live trading for ' +
-            '<strong>' + _esc(symphonyLabel) + '</strong>. ' +
+            symphonyLabel + '. ' +
             'This symphony will execute live sell orders via your connected brokerage account ' +
             'the next time an exit signal fires.</div>' +
             '<div style="padding:12px 18px 16px;display:flex;justify-content:flex-end;gap:10px;">' +
@@ -565,7 +578,8 @@
 
     // _surfaceHtml builds the modal shell.  modeBadge is injected into the header
     // so the effective-mode badge (AC-2) is always visible regardless of body scroll.
-    function _surfaceHtml(bodyHtml, footerHtml, modeBadgeHtml, hasFooter) {
+    // showIdentity is false while loading, when no identifier may be shown yet.
+    function _surfaceHtml(bodyHtml, footerHtml, modeBadgeHtml, hasFooter, showIdentity) {
         var footerSection = hasFooter
             ? '<div style="flex-shrink:0;border-top:1px solid var(--studio-rule);padding:14px 18px;' +
               'display:flex;flex-direction:column;gap:10px;background:var(--studio-paper);">' +
@@ -590,8 +604,11 @@
             '<div style="font-size:16px;font-weight:700;color:var(--studio-ink);' +
             'letter-spacing:-0.01em;line-height:1.25;' +
             'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"' +
-            ' title="' + _esc(_currentSymphonyId || '') + '">' +
-            _esc(_currentSymphonyId || '') + '</div>' +
+            (showIdentity
+                ? ' title="' + _esc(_currentSymphonyId || '') + '">' +
+                  _esc(_currentDisplayName || _currentSymphonyId || '')
+                : '>&nbsp;') +
+            '</div>' +
             '<div style="margin-top:7px;" id="sym-settings-mode-badge">' +
             (modeBadgeHtml || '') + '</div>' +
             '</div>' +

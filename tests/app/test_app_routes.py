@@ -989,3 +989,76 @@ def test_dashboard_root_returns_200(client, monkeypatch):
     monkeypatch.setattr(app_module, "render_template", lambda *_a, **_kw: "<html></html>")
     resp = client.get("/")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# 11. Save after "Reset to globals" (money path): the stored row, the live flag, the env
+#
+# The Settings page's reset sends {"params": {}, "locked_vars": []} for the symphony. The
+# engine then falls back to the globals for that symphony, and the next autotune may tune
+# the dimensions the locks held. These tests run the real route over the real database.
+# ---------------------------------------------------------------------------
+
+_RESET_SYMPHONY = "(INVEST) LQD + EYEG 5 ways Full Market"
+_NEIGHBOUR_SYMPHONY = "Corporate Chaos 5 ways "
+
+
+def _doubled_params():
+    import database
+
+    return {k: v * 2 for k, v in database.DEFAULT_STRATEGY.items()}
+
+
+def _post_reset(client, *names):
+    import database
+
+    body = {
+        "globals": {},
+        "symphonies": {
+            database.normalize_name(n): {"params": {}, "locked_vars": []} for n in names
+        },
+    }
+    return client.post("/api/settings", json=body)
+
+
+def test_saving_a_reset_stores_empty_params_and_no_locks(client, isolated_env_file):
+    import database
+
+    database.save_symphony_strategy(_RESET_SYMPHONY, _doubled_params(), ["MAX_SQUEEZE_FLOOR"])
+
+    resp = _post_reset(client, _RESET_SYMPHONY)
+
+    assert resp.status_code == 200 and resp.get_json()["status"] == "success"
+    stored = database.get_symphony_strategy(_RESET_SYMPHONY)
+    assert stored["params"] == {}, "a reset leaves the symphony with no stored parameters"
+    assert stored["locked_vars"] == [], "a reset leaves the symphony with no locks"
+
+
+def test_saving_a_reset_keeps_the_symphonys_live_mode(client, isolated_env_file):
+    """The row is updated in place: replacing it would silently turn live trading off."""
+    import database
+
+    database.save_symphony_strategy(_RESET_SYMPHONY, _doubled_params(), ["MAX_SQUEEZE_FLOOR"])
+    database.set_symphony_live_mode(_RESET_SYMPHONY, 1, "test")
+    assert database.get_symphony_live_mode(_RESET_SYMPHONY) == 1
+
+    assert _post_reset(client, _RESET_SYMPHONY).status_code == 200
+
+    assert database.get_symphony_live_mode(_RESET_SYMPHONY) == 1
+
+
+def test_saving_a_reset_touches_no_other_symphony_and_writes_no_env_key(client, isolated_env_file):
+    import database
+
+    other_params = _doubled_params()
+    database.save_symphony_strategy(_RESET_SYMPHONY, _doubled_params(), ["MAX_SQUEEZE_FLOOR"])
+    database.save_symphony_strategy(_NEIGHBOUR_SYMPHONY, other_params, ["TRIGGER_THRESHOLD_PCT"])
+    neighbour_before = database.get_symphony_strategy(_NEIGHBOUR_SYMPHONY)
+    env_before = isolated_env_file.read_bytes()
+
+    assert _post_reset(client, _RESET_SYMPHONY).status_code == 200
+
+    assert database.get_symphony_strategy(_NEIGHBOUR_SYMPHONY) == neighbour_before
+    assert isolated_env_file.read_bytes() == env_before, (
+        "a body with no globals must not write the .env file"
+    )

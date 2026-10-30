@@ -261,12 +261,13 @@ def test_history_window_selector_has_7_options(hist_client):
         assert label in html, f"Window option '{label}' missing from history page"
 
 
-def test_history_window_default_90d(hist_client):
-    """Default window must be 90d (selected on initial load)."""
+def test_history_window_default_is_the_30_day_button(hist_client):
+    """The 30d button is the only one selected on initial load."""
     resp = hist_client.get("/history")
     html = resp.data.decode("utf-8", errors="replace")
-    # 90 should be the default selected value
-    assert 'value="90"' in html or "value='90'" in html
+    buttons = re.findall(r"<button\b[^>]*data-window=[^>]*>", html)
+    active = [b for b in buttons if re.search(r'class="[^"]*\bactive\b', b)]
+    assert len(active) == 1 and 'data-window="30"' in active[0], active
 
 
 # ===========================================================================
@@ -690,39 +691,39 @@ def test_history_js_render_hero_total_saved_colored_by_sign():
     )
 
 
+def _extract_js_function_body(content: str, name: str) -> str:
+    stripped = re.sub(r"//[^\n]*", "", content)
+    start = re.search(rf"function\s+{name}\s*\(", stripped)
+    assert start is not None, f"{name} function not found in history.js"
+    brace_start = stripped.index("{", start.end())
+    depth = 0
+    for i in range(brace_start, len(stripped)):
+        if stripped[i] == "{":
+            depth += 1
+        elif stripped[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return stripped[brace_start + 1 : i]
+    pytest.fail(f"Could not extract {name} body")
+
+
 def test_history_js_render_hero_total_saved_value_has_no_naked_minus():
     """setId('val-total-saved', totalSaved) formats the VALUE upstream of the
     color fix above (history.js ~58-60) -- a negative total_saved must render
     as an ABS magnitude, never a leading '-$'. Same operator-locked
     abs+no-sign+word convention as the dashboard panel
     (tests/app/test_dollar_saved_panel_sign_coherence.py)."""
-    js_path = PROJECT_ROOT / "static" / "history.js"
-    content = js_path.read_text(encoding="utf-8")
-    stripped = re.sub(r"//[^\n]*", "", content)
+    content = (PROJECT_ROOT / "static" / "history.js").read_text(encoding="utf-8")
+    hero = _extract_js_function_body(content, "renderHero")
+    helper = _extract_js_function_body(content, "dollarSavedText")
 
-    start = re.search(r"function\s+renderHero\s*\(", stripped)
-    assert start is not None
-    brace_start = stripped.index("{", start.end())
-    depth = 0
-    i = brace_start
-    while i < len(stripped):
-        if stripped[i] == "{":
-            depth += 1
-        elif stripped[i] == "}":
-            depth -= 1
-            if depth == 0:
-                body = stripped[brace_start + 1 : i]
-                break
-        i += 1
-    else:
-        pytest.fail("Could not extract renderHero body")
-
-    total_saved_fmt_idx = body.find("totalSaved")
-    assert total_saved_fmt_idx != -1, "renderHero must still build a totalSaved display string"
-    fmt_block = body[total_saved_fmt_idx : total_saved_fmt_idx + 300]
-    assert "Math.abs" in fmt_block, (
-        "the totalSaved format string must apply Math.abs to payload.total_saved -- "
-        f"a negative figure must not leak a naked minus. Block: {fmt_block!r}"
+    # The behaviour lives in the shared helper; renderHero must route the total through it.
+    assert re.search(r"totalSaved\s*=\s*dollarSavedText\(\s*payload\.total_saved\s*\)", hero), (
+        f"renderHero must build totalSaved through dollarSavedText. Body: {hero!r}"
+    )
+    assert "Math.abs" in helper, (
+        "dollarSavedText must apply Math.abs to the value -- "
+        f"a negative figure must not leak a naked minus. Body: {helper!r}"
     )
 
 
@@ -758,30 +759,30 @@ def _extract_render_reason_cards_body(content: str) -> str:
 
 def test_history_js_reason_card_dollars_uses_abs_magnitude():
     js_path = PROJECT_ROOT / "static" / "history.js"
-    body = _extract_render_reason_cards_body(js_path.read_text(encoding="utf-8"))
-    assert re.search(r"Math\.abs\(\s*s\.dollars", body), (
-        "renderReasonCards must apply Math.abs to s.dollars before formatting -- "
-        "today a negative by-reason dollar total renders with a naked leading minus "
-        f"(e.g. '$-50.00 saved'). Body: {body!r}"
+    content = js_path.read_text(encoding="utf-8")
+    body = _extract_render_reason_cards_body(content)
+    helper = _extract_js_function_body(content, "dollarSavedText")
+    assert re.search(r"dollarSavedText\(\s*s\.dollars\s*\)", body), (
+        "renderReasonCards must format s.dollars through dollarSavedText so a negative "
+        f"by-reason total never renders '$-50.00 saved'. Body: {body!r}"
+    )
+    assert re.search(r"Math\.abs\(\s*value", helper), (
+        f"dollarSavedText must apply Math.abs to the value. Body: {helper!r}"
     )
 
 
 def test_history_js_reason_card_dollars_word_is_sign_conditional():
-    js_path = PROJECT_ROOT / "static" / "history.js"
-    body = _extract_render_reason_cards_body(js_path.read_text(encoding="utf-8"))
-    assert "'lost'" in body, (
-        "renderReasonCards must reference the antonym word 'lost' for a negative "
-        "by-reason dollar total -- today the trailing word is the unconditional "
-        "literal 'saved' regardless of sign"
+    content = (PROJECT_ROOT / "static" / "history.js").read_text(encoding="utf-8")
+    body = _extract_render_reason_cards_body(content)
+    helper = _extract_js_function_body(content, "dollarSavedText")
+    assert re.search(r"dollarSavedText\(\s*s\.dollars\s*\)", body), (
+        f"renderReasonCards must take its dollar caption from dollarSavedText. Body: {body!r}"
     )
-    # Guard against a false-pass where 'lost' is merely present as dead code --
-    # the word must actually gate on s.dollars' sign near the dollars caption.
-    dollars_idx = body.find("s.dollars")
-    assert dollars_idx != -1
-    nearby = body[dollars_idx : dollars_idx + 600]
-    assert "'lost'" in nearby, (
-        "the 'lost' word must live in the SAME rendering block as the dollars "
-        f"caption, not merely somewhere else in the function. Nearby: {nearby!r}"
+    # Guard against a false-pass where 'lost' is merely present as dead code: the word
+    # must actually gate on the value's sign.
+    assert re.search(r"value\s*<\s*0\s*\?\s*'\s*lost'\s*:\s*'\s*saved'", helper), (
+        "dollarSavedText must pick 'lost' for a negative value and 'saved' otherwise. "
+        f"Body: {helper!r}"
     )
 
 

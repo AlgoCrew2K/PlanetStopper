@@ -253,12 +253,6 @@
             line-height: 1.4;
         }
 
-        /* Tier 2 placeholder cell — visually de-emphasized, never carries a number. */
-        .metric-unavail {
-            color: var(--studio-ink-faint);
-            opacity: 0.55;
-        }
-
         .metrics-overflow {
             overflow-x: auto;
         }
@@ -374,13 +368,6 @@
             border-color: var(--studio-warn);
             background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
         }
-
-        /* A cold/missing replay cache never drops the replay column from the
-           table -- this styles that honest-unavailable row (AC-8). */
-        .precond-row-unavailable td {
-            color: var(--studio-ink-dim);
-            font-style: italic;
-        }
     </style>
 </head>
 
@@ -412,14 +399,18 @@
                         <option value="" disabled selected>Loading...</option>
                     </select>
                 </div>
+                <!-- Each button's data-value is the window token /api/performance resolves to a
+                     calendar cutoff (the dashboard picker's cutoffs). The page opens on 60d, the
+                     shortest window that can hold the minimum-history rule: 30d spans about 21
+                     trading days, below the {{ min_history_days }} observations that rule needs. -->
                 <div class="seg-control" data-testid="window-control" id="days-picker" role="group" aria-label="Window">
-                    <button type="button" data-value="30" data-testid="window-btn-30">30d</button>
-                    <button type="button" data-value="60" data-testid="window-btn-60" class="active" aria-pressed="true">60d</button>
-                    <button type="button" data-value="90" data-testid="window-btn-90">90d</button>
-                    <button type="button" data-value="125" data-testid="window-btn-125">125d</button>
+                    <button type="button" data-value="30d" data-testid="window-btn-30">30d</button>
+                    <button type="button" data-value="60d" data-testid="window-btn-60" class="active" aria-pressed="true">60d</button>
+                    <button type="button" data-value="90d" data-testid="window-btn-90">90d</button>
+                    <button type="button" data-value="125d" data-testid="window-btn-125">125d</button>
                     <button type="button" data-value="ytd" data-testid="window-btn-ytd">YTD</button>
-                    <button type="button" data-value="252" data-testid="window-btn-1y">1Y</button>
-                    <button type="button" data-value="1260" data-testid="window-btn-5y">5Y</button>
+                    <button type="button" data-value="1y" data-testid="window-btn-1y">1Y</button>
+                    <button type="button" data-value="5y" data-testid="window-btn-5y">5Y</button>
                 </div>
             </div>
         </header>
@@ -503,7 +494,7 @@
                             <td>Sortino</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
                         </tr>
                         <tr data-testid="metric-row" data-primary="true">
-                            <td>Max drawdown</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>--</td>
+                            <td>Max DD</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>--</td>
                         </tr>
                         <tr data-testid="metric-row">
                             <td>Max DD reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
@@ -525,14 +516,6 @@
                         </tr>
                         <tr data-testid="metric-row">
                             <td>Win rate</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
-                        </tr>
-                        <!-- Tier 2 benchmark placeholders: no SPY/TQQQ data feed yet → never a
-                             fabricated number (ux-design-deliverable.md §2.4 Data Availability States). -->
-                        <tr data-testid="metric-row" data-unavail="true">
-                            <td>Upside capture vs SPY</td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td class="delta" style="text-align:right"></td>
-                        </tr>
-                        <tr data-testid="metric-row" data-unavail="true">
-                            <td>Downside capture vs SPY</td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td style="text-align:right;color:var(--studio-ink-faint)"><span class="metric-unavail" title="Requires SPY/TQQQ benchmark data feed — not yet available">&mdash;</span></td><td class="delta" style="text-align:right"></td>
                         </tr>
                     </tbody>
                 </table>
@@ -569,6 +552,10 @@
                     <tbody id="guard-alpha-preconditions-tbody"></tbody>
                 </table>
             </div>
+            <!-- One panel-level note when some replay samples are cold (no cached replay series
+                 yet); renderGuardAlphaPreconditions() fills and shows it. -->
+            <p data-testid="guard-alpha-preconditions-note" id="guard-alpha-preconditions-note"
+                class="metrics-caption" hidden></p>
             <p data-testid="guard-alpha-preconditions-empty-state" id="guard-alpha-preconditions-empty-state"
                 class="metrics-caption" style="display:none">
                 No symphony has enough persistence-check data yet — this populates after the

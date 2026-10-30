@@ -78,12 +78,18 @@ any module import.
 
 from __future__ import annotations
 
+import copy
+import json
+import pathlib
 import re
 from unittest.mock import patch
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+
+from advisors.prism_numeric_verifier import verify_cited_numbers
+from tests._ux_truth_support import parse_html
 
 # ---------------------------------------------------------------------------
 # Flask test client
@@ -362,12 +368,16 @@ def test_clean_case_renders_verdict_pill_and_count_line(client):
     html = resp.get_data(as_text=True)
 
     assert 'data-testid="prism-verify-verdict"' in html
-    assert ">clean<" in html, (
-        f"verdict pill must render the literal verdict text 'clean'. "
-        f"HTML snippet (first 3000 chars): {html[:3000]!r}"
-    )
 
     summary = _VERIFICATION_ROW_CLEAN["raw_response"]["summary"]
+    # This row's verdict is "clean" while some checks are unverifiable, so the pill
+    # states the verified count instead of the bare verdict (see the verdict-pill
+    # section below).
+    expected_pill = f"{summary['n_pass']} of {summary['n_checks']} verified"
+    assert f">{expected_pill}<" in html, (
+        f"verdict pill must read {expected_pill!r} when only some checks verified. "
+        f"HTML snippet (first 3000 chars): {html[:3000]!r}"
+    )
     expected_line = f"{summary['n_pass']} verified · {summary['n_unverifiable']} unverifiable"
     assert 'data-testid="prism-verify-count-line"' in html
     assert expected_line in html, f"expected count line {expected_line!r} not found in HTML"
@@ -402,12 +412,18 @@ def test_clean_case_details_holds_all_27_checks_as_styled_pills(client):
         f"found {len(full_matches)}: {full_matches!r}"
     )
 
-    # Count the rendered class ATTRIBUTE usage, not a bare substring — the page's
-    # <style> block also contains a `.prism-verify-badge--unverifiable {` CSS
-    # selector rule, which would inflate a naive `html.count(...)` by one.
+    # Count the pills INSIDE the disclosure, not every use of the class: the page's
+    # <style> block holds a `.prism-verify-badge--unverifiable {` selector rule, and
+    # the verdict pill itself carries that class when only some checks verified.
     n_unverifiable = sum(1 for c in _CLEAN_CHECKS if c["classification"] == "unverifiable")
-    unverifiable_pill_count = html.count(
-        'class="prism-verify-badge prism-verify-badge--unverifiable"'
+    details = parse_html(html).find(testid="prism-verify-details")
+    assert details is not None
+    unverifiable_pill_count = len(
+        [
+            n
+            for n in details.iter()
+            if "prism-verify-badge" in n.classes and "prism-verify-badge--unverifiable" in n.classes
+        ]
     )
     assert unverifiable_pill_count == n_unverifiable, (
         "each unverifiable check inside the <details> full list must render as a "
@@ -523,7 +539,8 @@ def test_overlay_renders_even_when_checks_list_is_empty(client):
 @pytest.mark.parametrize(
     "verdict,expected_label,expected_class",
     [
-        ("clean", "clean", "prism-verify-badge--pass"),
+        # "clean" is not listed: its label depends on the verified counts (see the
+        # verdict-pill section below).
         ("flags-detected", "flags-detected", "prism-verify-badge--flagged"),
         ("overrides-detected", "overrides-detected", "prism-verify-badge--overridden"),
         ("no-verifiable-claims", "no-verifiable-claims", "prism-verify-badge--unverifiable"),
@@ -639,3 +656,236 @@ def test_actionable_case_flagged_and_overridden_appear_in_both_actionable_and_fu
             f"{html.count(annotation)} occurrences. HTML snippet (first 3000 chars): "
             f"{html[:3000]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 8. The verdict pill never reads a green "clean" over unverifiable checks.
+#
+# Rows below come from the real producer, advisors.prism_numeric_verifier
+# .verify_cited_numbers, run over the captured council claims in
+# tests/fixtures/prism_verifier (four claims: one each classified pass, flagged,
+# overridden and unverifiable). The test picks claims by the classification the
+# fixture records for them, so the verified counts are the producer's own, never typed.
+# ---------------------------------------------------------------------------
+
+_PV_FIXTURE = json.loads(
+    (
+        pathlib.Path(__file__).parent.parent
+        / "fixtures"
+        / "prism_verifier"
+        / "verify_cited_numbers_mixed_classifications.json"
+    ).read_text(encoding="utf-8")
+)
+_PASS_STYLE = "prism-verify-badge--pass"
+_UNVERIFIABLE_STYLE = "prism-verify-badge--unverifiable"
+_FLAGGED_STYLE = "prism-verify-badge--flagged"
+
+
+def _claims_classified(*classes: str) -> list[str]:
+    """Indicators the fixture records under any of ``classes``."""
+    return [ind for ind, cls in _PV_FIXTURE["expected_classifications"].items() if cls in classes]
+
+
+def _producer_row(indicators: list[str] | None, *, cited_numbers=None) -> dict:
+    """A MARKET_PRISM_VERIFICATION row built from verify_cited_numbers' own output.
+
+    ``indicators`` limits the council's claims to those indicators (``None`` keeps all);
+    ``cited_numbers`` replaces the claim list outright.
+    """
+    fx = copy.deepcopy(_PV_FIXTURE)
+    row = fx["market_prism_row"]
+    claims = row["raw_response"]["cited_numbers"]
+    if cited_numbers is not None:
+        row["raw_response"]["cited_numbers"] = cited_numbers
+    elif indicators is not None:
+        row["raw_response"]["cited_numbers"] = [c for c in claims if c["indicator"] in indicators]
+    result = verify_cited_numbers(fx["run_id"], row, fx["lens_sections"])
+    return {
+        "id": 802,
+        "advisor_role": "MARKET_PRISM_VERIFICATION",
+        "subject_id": "global",
+        "verdict": None,
+        "created_at": "2026-07-06 03:05:00",
+        "raw_response": {"run_id": _RUN_ID, "verified_at": "2026-07-06T03:05:00Z", **result},
+    }
+
+
+def _pill(client, row):
+    resp = _get_ai_advisor(client, row)
+    assert resp.status_code == 200
+    pill = parse_html(resp.get_data(as_text=True)).find(testid="prism-verify-verdict")
+    assert pill is not None, "the verdict pill must render when a verification row exists"
+    return pill
+
+
+def _summary_counts(row: dict) -> tuple[int, int]:
+    summary = row["raw_response"]["summary"]
+    return summary["n_pass"], summary["n_checks"]
+
+
+class TestVerdictPillStatesTheVerifiedCount:
+    def test_every_check_verified_reads_clean_in_the_pass_style(self, client):
+        row = _producer_row(_claims_classified("pass"))
+        n_pass, n_checks = _summary_counts(row)
+        assert row["raw_response"]["verdict"] == "clean" and n_pass == n_checks > 0, "self-guard"
+        pill = _pill(client, row)
+        assert pill.text == "clean"
+        assert _PASS_STYLE in pill.classes
+
+    def test_clean_with_unverifiable_checks_states_the_count_in_the_unverifiable_style(
+        self, client
+    ):
+        row = _producer_row(_claims_classified("pass", "unverifiable"))
+        n_pass, n_checks = _summary_counts(row)
+        assert row["raw_response"]["verdict"] == "clean" and 0 < n_pass < n_checks, "self-guard"
+        pill = _pill(client, row)
+        assert pill.text == f"{n_pass} of {n_checks} verified"
+        assert _UNVERIFIABLE_STYLE in pill.classes
+        assert _PASS_STYLE not in pill.classes
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            lambda s: s.pop("n_pass"),
+            lambda s: s.pop("n_checks"),
+            lambda s: (s.pop("n_pass"), s.pop("n_checks")),
+            lambda s: s.update(n_pass=None),
+            lambda s: s.update(n_checks="32"),
+        ],
+        ids=["no_n_pass", "no_n_checks", "neither", "n_pass_null", "n_checks_string"],
+    )
+    def test_clean_without_readable_counts_says_so_in_the_unverifiable_style(self, client, damage):
+        row = _producer_row(_claims_classified("pass", "unverifiable"))
+        damage(row["raw_response"]["summary"])
+        pill = _pill(client, row)
+        assert pill.text == "verified count unavailable"
+        assert _UNVERIFIABLE_STYLE in pill.classes
+        assert _PASS_STYLE not in pill.classes
+
+    def test_flagged_verdict_keeps_its_label_and_style_whatever_the_counts(self, client):
+        row = _producer_row(_claims_classified("flagged", "unverifiable"))
+        assert row["raw_response"]["verdict"] == "flags-detected", "self-guard"
+        pill = _pill(client, row)
+        assert pill.text == "flags-detected"
+        assert _FLAGGED_STYLE in pill.classes
+
+    def test_no_numeric_claims_reads_as_it_always_has(self, client):
+        row = _producer_row(None, cited_numbers=[])
+        assert row["raw_response"]["verdict"] == "no-numeric-claims", "self-guard"
+        pill = _pill(client, row)
+        assert pill.text == "no-numeric-claims"
+        assert _UNVERIFIABLE_STYLE in pill.classes
+
+    def test_only_unverifiable_claims_read_as_no_verifiable_claims(self, client):
+        row = _producer_row(_claims_classified("unverifiable"))
+        assert row["raw_response"]["verdict"] == "no-verifiable-claims", "self-guard"
+        pill = _pill(client, row)
+        assert pill.text == "no-verifiable-claims"
+        assert _UNVERIFIABLE_STYLE in pill.classes
+
+    def test_no_verification_row_renders_no_verification_block(self, client):
+        resp = _get_ai_advisor(client, None)
+        assert resp.status_code == 200
+        tree = parse_html(resp.get_data(as_text=True))
+        assert tree.find(testid="prism-verification") is None
+        assert tree.find(testid="prism-verify-verdict") is None
+
+    def test_a_check_outside_the_four_classes_counts_against_the_verified_total(self, client):
+        """The producer's summary counts only the four classes, so a check of no known class
+        is in ``n_checks`` and in none of the four buckets; ``n_pass`` stays below it."""
+        from advisors.prism_numeric_verifier import _derive_verdict, _summarize
+
+        pass_check = next(
+            c for c in _producer_row(_claims_classified("pass"))["raw_response"]["checks"]
+        )
+        unclassified = {**pass_check, "indicator": "UNCLASSIFIED", "classification": "unclassified"}
+        checks = [dict(pass_check, indicator=f"PASS_{i}") for i in range(9)] + [unclassified]
+        summary = _summarize(checks)
+        row = _producer_row(_claims_classified("pass"))
+        row["raw_response"].update(checks=checks, summary=summary, verdict=_derive_verdict(summary))
+        assert row["raw_response"]["verdict"] == "clean", "self-guard: the producer says clean"
+        assert (summary["n_pass"], summary["n_checks"]) == (9, 10), "self-guard"
+        pill = _pill(client, row)
+        assert pill.text == "9 of 10 verified"
+        assert _UNVERIFIABLE_STYLE in pill.classes
+
+    def test_count_line_actionable_badges_and_show_all_list_are_unchanged(self, client):
+        from app import _build_verification_count_line
+
+        row = _producer_row(None)
+        resp = _get_ai_advisor(client, row)
+        tree = parse_html(resp.get_data(as_text=True))
+        summary = row["raw_response"]["summary"]
+        line = tree.find(testid="prism-verify-count-line")
+        assert line is not None and line.text == _build_verification_count_line(summary)
+        actionable = {
+            c["indicator"]
+            for c in row["raw_response"]["checks"]
+            if c["classification"] in ("flagged", "overridden")
+        }
+        top_level = {
+            n.attrs["data-testid"].removeprefix("prism-verify-check-")
+            for n in tree.iter()
+            if n.attrs.get("data-testid", "").startswith("prism-verify-check-")
+            and not n.attrs["data-testid"].startswith("prism-verify-check-full-")
+        }
+        assert top_level == actionable
+        assert f"Show all {summary['n_checks']} checks" in tree.text
+
+
+class TestVerdictDisplayHelper:
+    """``_build_verdict_display(verdict, summary)`` returns (label, css class)."""
+
+    @staticmethod
+    def _call(verdict, summary):
+        from app import _build_verdict_display
+
+        return _build_verdict_display(verdict, summary)
+
+    def test_clean_with_every_check_passing(self):
+        assert self._call("clean", {"n_checks": 7, "n_pass": 7}) == ("clean", _PASS_STYLE)
+
+    def test_clean_with_some_checks_unverified(self):
+        assert self._call("clean", {"n_checks": 32, "n_pass": 18}) == (
+            "18 of 32 verified",
+            _UNVERIFIABLE_STYLE,
+        )
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            None,
+            {},
+            {"n_checks": 5},
+            {"n_pass": 5},
+            {"n_checks": 5, "n_pass": None},
+            {"n_checks": "5", "n_pass": 5},
+        ],
+    )
+    def test_clean_without_readable_counts(self, summary):
+        assert self._call("clean", summary) == ("verified count unavailable", _UNVERIFIABLE_STYLE)
+
+    @pytest.mark.parametrize(
+        "verdict,style",
+        [
+            ("flags-detected", "prism-verify-badge--flagged"),
+            ("overrides-detected", "prism-verify-badge--overridden"),
+            ("no-verifiable-claims", _UNVERIFIABLE_STYLE),
+            ("no-numeric-claims", _UNVERIFIABLE_STYLE),
+        ],
+    )
+    def test_other_verdicts_ignore_the_counts(self, verdict, style):
+        assert self._call(verdict, {"n_checks": 5, "n_pass": 5}) == (verdict, style)
+        assert self._call(verdict, None) == (verdict, style)
+
+    def test_unknown_and_missing_verdicts_keep_their_fallbacks(self):
+        assert self._call(None, {"n_checks": 5, "n_pass": 5}) == ("unknown", _UNVERIFIABLE_STYLE)
+        assert self._call("some-future-verdict", None) == (
+            "some-future-verdict",
+            _UNVERIFIABLE_STYLE,
+        )
+
+    def test_summary_argument_is_optional(self):
+        from app import _build_verdict_display
+
+        assert _build_verdict_display("flags-detected") == ("flags-detected", _FLAGGED_STYLE)

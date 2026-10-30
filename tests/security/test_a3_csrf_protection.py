@@ -284,3 +284,41 @@ def test_csrf_protection_is_configured_on_flask_app():
         f"before_request functions: "
         f"{[getattr(f, '__name__', repr(f)) for f in app_module.app.before_request_funcs.get(None, [])]}."
     )
+
+
+# ---------------------------------------------------------------------------
+# A refused settings save: the answer is an HTML 403 and nothing is written.
+#
+# The Settings page parses the answer as JSON; a body that is not JSON is why the page must
+# check the response status before parsing it. The refusal itself must also leave the
+# stored per-symphony row exactly as it was, whatever the body asked for.
+# ---------------------------------------------------------------------------
+
+
+def test_a_refused_settings_save_is_an_html_403_and_writes_nothing(client, tmp_path, monkeypatch):
+    import database
+
+    env_path = tmp_path / ".env"
+    env_path.write_text("EXIT_AUTHORITY=per_symphony\n", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_path))
+    symphony = "(INVEST) LQD + EYEG 5 ways Full Market"
+    params = {k: v * 2 for k, v in database.DEFAULT_STRATEGY.items()}
+    database.save_symphony_strategy(symphony, params, ["MAX_SQUEEZE_FLOOR"])
+    row_before = database.get_symphony_strategy(symphony)
+    env_before = env_path.read_bytes()
+
+    resp = client.post(
+        "/api/settings",
+        json={
+            "globals": {"EXIT_AUTHORITY": "port_level"},
+            "symphonies": {
+                database.normalize_name(symphony): {"params": {}, "locked_vars": []},
+            },
+        },
+    )
+
+    assert resp.status_code == 403
+    assert resp.mimetype == "text/html", "the refusal is not JSON, so a page must check the status"
+    assert resp.get_json(silent=True) is None
+    assert database.get_symphony_strategy(symphony) == row_before
+    assert env_path.read_bytes() == env_before

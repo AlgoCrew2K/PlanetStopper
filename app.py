@@ -58,6 +58,10 @@ _PERFORMANCE_MIN_HISTORY_DAYS = 30
 # original F-2 mitigation decay silently once shadow_history crossed 30 days).
 _MDD_MIN_OBS = 30
 _PERFORMANCE_VALID_SCOPES = ("aggregate", "symphony")
+# Calendar-window tokens /api/performance accepts for `days`, in the order the page's
+# buttons show them; each resolves through analytics._window_cutoff_date, the same
+# cutoff the dashboard strip and hero chart use.
+_PERFORMANCE_WINDOW_TOKENS = ("30d", "60d", "90d", "125d", "ytd", "1y", "5y")
 _PERFORMANCE_METRIC_KEYS = (
     "total_return",
     "annualized_return",
@@ -5766,7 +5770,10 @@ def resend_discord():
 
 
 @app.route("/api/history/<int:days>")
+@app.route("/api/history/<any(ytd):days>")
 def get_history(days):
+    # `days` is a calendar-day count or the token "ytd" (1 January through today,
+    # resolved by analytics._window_cutoff_date like every other window token).
     stats = analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)
     stats["window_days"] = days
     # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
@@ -5781,7 +5788,9 @@ def get_history(days):
     _hist_daily_dates = stats.get("daily_dates") or []
     _hist_actual_days = len(_hist_daily_dates)
     stats["actual_days"] = _hist_actual_days
-    stats["coverage_days"] = min(days, _hist_actual_days)
+    stats["coverage_days"] = (
+        _hist_actual_days if isinstance(days, str) else min(days, _hist_actual_days)
+    )
     stats["date_range"] = {
         "start": _hist_daily_dates[0] if _hist_daily_dates else None,
         "end": _hist_daily_dates[-1] if _hist_daily_dates else None,
@@ -5901,7 +5910,8 @@ def api_performance():
 
     Query params:
         scope:        "aggregate" (default) or "symphony"
-        days:         integer history window (default 60)
+        days:         an integer trailing-row count, or a calendar window token
+                      (30d 60d 90d 125d ytd 1y 5y); default 60
         symphony_id:  required when scope=symphony
 
     Response shape (binding — see tests/app/test_performance_routes.py):
@@ -5934,16 +5944,13 @@ def api_performance():
         ), 400
 
     raw_days = request.args.get("days", "60")
-    # AC-5 (MAPERF-03, cross-plan correction): the Performance tab's YTD button
-    # sends the literal token "ytd" (not a computed calendar-days-since-Jan-1
-    # count) — resolved here to a Jan-1 CALENDAR cutoff via the same
-    # analytics._window_cutoff_date helper /api/hero-chart and /api/strip use.
-    # Every OTHER value on this param (the six numeric buttons: 30/60/90/125/
-    # 252/1260) stays a deliberate TRADING-day count by design — only YTD's
-    # contract changes; the numeric buttons are untouched.
-    is_ytd = raw_days == "ytd"
-    if is_ytd:
-        days: int | str = "ytd"
+    # `days` is either a window token (30d 60d 90d 125d ytd 1y 5y), resolved to a
+    # CALENDAR cutoff by the same analytics._window_cutoff_date helper /api/hero-chart
+    # and /api/strip use (AC-5 MAPERF-03), or an integer trailing-row count (the
+    # dashboard detail panel sends days=60 and keeps getting its last 60 rows).
+    is_window_token = raw_days in _PERFORMANCE_WINDOW_TOKENS
+    if is_window_token:
+        days: int | str = raw_days
     else:
         try:
             days = int(raw_days)
@@ -5951,7 +5958,9 @@ def api_performance():
             return jsonify(
                 {
                     "status": "error",
-                    "message": "days must be an integer",
+                    "message": (
+                        "days must be an integer or one of " + ", ".join(_PERFORMANCE_WINDOW_TOKENS)
+                    ),
                 }
             ), 400
 
@@ -5964,10 +5973,9 @@ def api_performance():
             }
         ), 400
 
-    # "ytd" fetches the FULL series and slices it to the Jan-1 cutoff (both
-    # scopes); every other value fetches exactly `days` trailing trading days
-    # (unchanged trading-day-count contract for the six numeric buttons).
-    _fetch_days = None if is_ytd else days
+    # A window token fetches the FULL series and slices it to the token's calendar
+    # cutoff (both scopes); an integer fetches exactly `days` trailing trading days.
+    _fetch_days = None if is_window_token else days
 
     if scope == "aggregate":
         # Finding 4: the aggregate series is the CANONICAL value-weighted portfolio
@@ -5978,8 +5986,8 @@ def api_performance():
         dates, live_returns, shadow_returns = [], [], []
         try:
             _series = analytics.get_portfolio_bot_and_held_daily_returns(days=_fetch_days)
-            if is_ytd:
-                _series = _slice_series_by_window_cutoff(_series, "ytd")
+            if is_window_token:
+                _series = _slice_series_by_window_cutoff(_series, days)
             if _series is not None:
                 # Producer returns (dates, bot, held); the payload vocabulary is
                 # live_returns = if-held (held), shadow_returns = PS-exited (bot) —
@@ -5999,8 +6007,8 @@ def api_performance():
             _sym_series = analytics.get_symphony_bot_and_held_daily_returns(
                 symphony_id, days=_fetch_days
             )
-            if is_ytd:
-                _sym_series = _slice_series_by_window_cutoff(_sym_series, "ytd")
+            if is_window_token:
+                _sym_series = _slice_series_by_window_cutoff(_sym_series, days)
             if _sym_series is not None:
                 dates, shadow_returns, live_returns = _sym_series
         except Exception:
@@ -6015,9 +6023,18 @@ def api_performance():
     # AC-2: when the series is still empty (day-1 droplet), fall back to
     # shadow_history for the series so the chart is non-empty from day one.
     # The insufficient_history / quantstats-min-obs guard is unchanged.
+    #
+    # Both fallbacks read the UNWINDOWED shadow_history, so under a window token
+    # each is sliced to that token's calendar cutoff (the same slice the primary
+    # series gets): a row dated inside the window still charts, while rows older
+    # than the window drop out and leave the honest empty state instead of being
+    # returned under a window_start they predate.  An integer `days` is a row
+    # count with no cutoff and keeps the fallbacks untouched.
     if not dates and scope == "aggregate":
         try:
             _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
+            if is_window_token:
+                _fallback = _slice_series_by_window_cutoff(_fallback, days)
             if _fallback is not None:
                 # (dates, bot, held) -> held is live_returns (if-held), bot is
                 # shadow_returns. This fallback was the ORIGINAL inverted surface.
@@ -6032,6 +6049,8 @@ def api_performance():
     if not dates and scope == "aggregate":
         try:
             _single = analytics.get_single_day_shadow_returns()
+            if is_window_token:
+                _single = _slice_series_by_window_cutoff(_single, days)
             if _single is not None:
                 # Same (dates, bot, held) -> (shadow_returns, live_returns) mapping.
                 dates, shadow_returns, live_returns = _single
@@ -6064,8 +6083,15 @@ def api_performance():
     # than aliasing so the AC-5 contract doesn't implicitly depend on
     # observation_count's name never changing. "ytd" has no fixed numeric
     # request to cap against, so coverage_days is the actual count in that case
-    # (never a TypeError from min()'ing a string against an int).
-    _coverage_days = observation_count if is_ytd else min(days, observation_count)
+    # (never a TypeError from min()'ing a string against an int). The same holds
+    # for every window token: its span is calendar days, not a row count.
+    _coverage_days = observation_count if is_window_token else min(days, observation_count)
+    # window_start states the calendar cutoff a token window began at; an integer
+    # window is a row count and has none.
+    _window_start = None
+    if is_window_token:
+        _cutoff = analytics._window_cutoff_date(days)
+        _window_start = _cutoff.isoformat() if isinstance(_cutoff, date) else None
     response_body = {
         "scope": scope,
         "dates": list(dates),
@@ -6076,6 +6102,7 @@ def api_performance():
         "observation_count": observation_count,
         "insufficient_history": insufficient_history,
         "window_days": days,
+        "window_start": _window_start,
         "actual_days": observation_count,
         "coverage_days": _coverage_days,
         "date_range": {
@@ -6891,7 +6918,7 @@ def save_settings():
 
 @app.route("/api/symphony-settings/<symphony_name>", methods=["GET"])
 def get_symphony_settings(symphony_name: str):
-    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations.  # noqa: E501  # un-wrappable long line
+    """Return per-symphony modal state: live_mode, global_live, parameters, locked_vars, advisor observations, display_name.  # noqa: E501  # un-wrappable long line
 
     Consumes the read-only DB path for parameters/locked_vars/live_mode and
     the env for the global master-switch flag.  Never writes; never reruns the engine.
@@ -6913,6 +6940,8 @@ def get_symphony_settings(symphony_name: str):
     # via bot_state before querying, falling back to symphony_name if no match found.
     bot_state = database.load_state()
     obs_symphony_id = symphony_name  # fallback: pass as-is (may yield 0 rows on hash)
+    # The live symphony's name; stays None when the id matches no bot_state entry.
+    display_name = None
     for sym_key, sym_data in bot_state.items():
         if not isinstance(sym_data, dict) or "name" not in sym_data:
             continue
@@ -6924,6 +6953,7 @@ def get_symphony_settings(symphony_name: str):
             or normalized_sym_name == symphony_name
         ):
             obs_symphony_id = normalized_sym_name
+            display_name = sym_data["name"]
             break
     advisor_observations = database.get_advisor_observations_for_symphony(obs_symphony_id)
 
@@ -6934,6 +6964,7 @@ def get_symphony_settings(symphony_name: str):
             "parameters": strategy.get("params", {}),
             "locked_vars": strategy.get("locked_vars", []),
             "advisor_observations": advisor_observations,
+            "display_name": display_name,
         }
     )
 
@@ -7239,6 +7270,54 @@ def _low_power(validation_days: "int | None") -> bool:
     return validation_days is not None and validation_days < MIN_POWER_FOLD_DAYS
 
 
+# Strategy Builder card labels (UX data-truth AC-7): the ONE mapping from the
+# stored objective / template values to the words a card shows. The Jinja
+# stored cards read labels stamped from it in ai_advisor_tab(); the live-run
+# renderer (static/ai_advisor.js) reads the same mapping from the Strategy
+# Builder panel's data-sb-labels attribute, so the two surfaces cannot drift.
+_SB_OBJECTIVE_LABELS = {
+    "diversify": "Diversify portfolio",
+    "cut_drawdown": "Cut drawdown",
+    "lift_risk_adjusted": "Lift risk-adjusted return",
+    "volatility_mitigation": "Volatility mitigation",
+}
+_SB_SOURCE_LABELS = {
+    "built-new": "Built new",
+    "atlas-suggested": "Atlas community",
+}
+# Shown when a stored value is absent, null, or not a key of its mapping --
+# never the raw stored value, an underscore token, or a blank.
+_SB_LABEL_NOT_RECORDED = "not recorded"
+
+
+def _sb_label(mapping: "dict[str, str]", stored_value) -> "str | None":
+    """Return the human label for a stored value, or None when it has none."""
+    if isinstance(stored_value, str):
+        return mapping.get(stored_value)
+    return None
+
+
+def _symphony_display_names_by_key(bot_state) -> "dict[str, str]":
+    """Map each live symphony's normalized name to its display name as stored.
+
+    Advisor rows (autotune runs, observations) are keyed by
+    ``database.normalize_name(display_name)``, not by Composer hash, so the
+    lookup key is the normalized name. Only entries shaped like a symphony
+    (a dict with a string ``name``) count: ``bot_state`` also holds portfolio
+    metadata that has no name. The first entry wins when two normalize alike.
+    """
+    names: dict[str, str] = {}
+    if not isinstance(bot_state, dict):
+        return names
+    for entry in bot_state.values():
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if isinstance(name, str):
+            names.setdefault(database.normalize_name(name), name)
+    return names
+
+
 def _build_verification_count_line(summary: "dict") -> str:
     """Format the MARKET_PRISM_VERIFICATION summary counts into a compact,
     human-readable status line for the Overview tab's Numeric Verification
@@ -7278,7 +7357,33 @@ _VERDICT_BADGE_CLASS = {
 }
 
 
-def _build_verdict_display(verdict: "str | None") -> "tuple[str, str]":
+_VERDICT_BADGE_CLASS_UNVERIFIED = "prism-verify-badge--unverifiable"
+_VERIFIED_COUNT_UNAVAILABLE_LABEL = "verified count unavailable"
+
+
+def _readable_verified_counts(summary: "dict | None") -> "tuple[int, int] | None":
+    """Return (n_pass, n_checks) when the summary holds a usable pair, else None.
+
+    Usable means both are real integers (a bool is not one), the check count is
+    positive and the passing count lies between zero and the check count. A
+    missing, null, string or out-of-range value means the pill cannot state a
+    count.
+    """
+    if not isinstance(summary, dict):
+        return None
+    n_pass = summary.get("n_pass")
+    n_checks = summary.get("n_checks")
+    for value in (n_pass, n_checks):
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+    if n_checks < 1 or not 0 <= n_pass <= n_checks:
+        return None
+    return n_pass, n_checks
+
+
+def _build_verdict_display(
+    verdict: "str | None", summary: "dict | None" = None
+) -> "tuple[str, str]":
     """Map a MARKET_PRISM_VERIFICATION verdict string to (label, css_class) for
     the Overview tab's verdict pill (2026-07 redesign, /review PR #92).
 
@@ -7289,9 +7394,23 @@ def _build_verdict_display(verdict: "str | None") -> "tuple[str, str]":
     "nothing was checked" when the data doesn't say so) — it renders a neutral
     unverifiable-class pill labeled with the raw string, or "unknown" when
     verdict itself is falsy.
+
+    A `clean` verdict reads "clean" in the pass style only when every check
+    passed. When some did not, the pill states the count ("18 of 32 verified")
+    in the unverifiable style, because a green "clean" over unverifiable checks
+    overstates what was verified; when the summary holds no usable counts it
+    reads "verified count unavailable" in the same style. Every other verdict
+    ignores `summary`.
     """
+    if verdict == "clean":
+        counts = _readable_verified_counts(summary)
+        if counts is None:
+            return _VERIFIED_COUNT_UNAVAILABLE_LABEL, _VERDICT_BADGE_CLASS_UNVERIFIED
+        n_pass, n_checks = counts
+        if n_pass < n_checks:
+            return f"{n_pass} of {n_checks} verified", _VERDICT_BADGE_CLASS_UNVERIFIED
     label = verdict if verdict else "unknown"
-    css_class = _VERDICT_BADGE_CLASS.get(verdict, "prism-verify-badge--unverifiable")
+    css_class = _VERDICT_BADGE_CLASS.get(verdict, _VERDICT_BADGE_CLASS_UNVERIFIED)
     return label, css_class
 
 
@@ -7379,6 +7498,9 @@ def ai_advisor_tab():
     try:
         from advisors import correlation_diagnostic as _corr_diag  # noqa: PLC0415
 
+        # The caveat is always on: assign it before any computation that can
+        # fail, so a failed series build still renders the whole caveat.
+        crisis_caveat = _corr_diag.CRISIS_CAVEAT
         _history = analytics.get_history_with_cache_invalidation(
             base_dir=analytics._POST_MORTEMS_DIR
         )
@@ -7393,7 +7515,6 @@ def ai_advisor_tab():
             if _live_rets:
                 _series_dict[_sym_id] = dict(zip(_dates, _live_rets))
         correlation_matrix = _corr_diag.compute_pairwise_correlations(_series_dict)
-        crisis_caveat = _corr_diag.CRISIS_CAVEAT
     except Exception:
         pass  # Correlations panel renders as insufficient_data on any error.
 
@@ -7534,7 +7655,9 @@ def ai_advisor_tab():
                         _ver_raw.get("summary", {}) if isinstance(_ver_raw, dict) else {}
                     ) or {}
                     _ver_verdict = _ver_raw.get("verdict") if isinstance(_ver_raw, dict) else None
-                    _verdict_label, _verdict_class = _build_verdict_display(_ver_verdict)
+                    _verdict_label, _verdict_class = _build_verdict_display(
+                        _ver_verdict, _ver_summary
+                    )
                     market_prism_verification = {
                         "checks": _annotated_checks,
                         "summary": _ver_summary,
@@ -7607,6 +7730,10 @@ def ai_advisor_tab():
             _rr = _obs.get("raw_response")
             if not isinstance(_rr, dict):
                 _rr = {}
+            # Card words (AC-7): None when the stored value has no label; the
+            # template then reads the shared "not recorded" text.
+            _obs["_sb_objective_label"] = _sb_label(_SB_OBJECTIVE_LABELS, _rr.get("objective"))
+            _obs["_sb_source_label"] = _sb_label(_SB_SOURCE_LABELS, _rr.get("template_id"))
             _rules_text = _rr.get("rules_text") or ""
             if isinstance(_rules_text, str) and len(_rules_text) > _sb_chat_max:
                 _rules_text = _rules_text[:_sb_chat_max]
@@ -7700,6 +7827,21 @@ def ai_advisor_tab():
                 _ai_advisor_bot_state = {}
             _ai_advisor_bot_state_loaded = True
         return _ai_advisor_bot_state
+
+    # Observations table, Symphony cell (UX data-truth AC-5): stamp each row's
+    # live display name (`_symphony_name`) so the cell reads the name and keeps
+    # the stored key only in a title attribute. A row whose key matches no live
+    # symphony, or an empty key, is left unstamped and the cell reads the stored
+    # key (or the dash). Reads the shared lazy bot_state, and only when some row
+    # carries a key to look up.
+    if any(isinstance(_o.get("symphony_id"), str) and _o["symphony_id"] for _o in observations):
+        _obs_names = _symphony_display_names_by_key(_ensure_ai_advisor_bot_state())
+        for _o in observations:
+            _o_key = _o.get("symphony_id")
+            if isinstance(_o_key, str) and _o_key:
+                _o_name = _obs_names.get(database.normalize_name(_o_key))
+                if _o_name:
+                    _o["_symphony_name"] = _o_name
 
     # Cycle 2e (retirement-visibility AC-5/AC-6): the "last run" block. Read
     # ONCE here (the latest run of ANY status) and the cards' run (AC-5b: the
@@ -7911,6 +8053,9 @@ def ai_advisor_tab():
         chat_available=chat_available,
         sb_observations=sb_observations,
         sb_card_artifacts=sb_card_artifacts,
+        sb_objective_labels=_SB_OBJECTIVE_LABELS,
+        sb_source_labels=_SB_SOURCE_LABELS,
+        sb_label_not_recorded=_SB_LABEL_NOT_RECORDED,
         market_prism_summary=market_prism_summary,
         market_prism_verification=market_prism_verification,
         retirement_recommendations=retirement_recommendations,
@@ -9719,6 +9864,12 @@ _BASELINE_DECISION_TOKENS = {
 
 _FROZEN_EVAL_SHARPE_THRESHOLD = 0.0
 
+# The objectives an autotune card has a name for. A spec bundle can carry an
+# objective_kind this code does not recognise; the route reports that exactly
+# as it reports a run with no readable bundle (null), so no card ever prints a
+# raw stored value as if it were a named objective.
+_AUTOTUNE_NAMED_OBJECTIVES = frozenset({"crra_eu", "sortino_loss_aversion"})
+
 
 def _normalize_autotune_row(row: dict) -> dict:
     """Normalize an autotune run dict for the /api/autotune-runs response (FP-T1-06).
@@ -9755,6 +9906,18 @@ def api_autotune_runs():
     list)`); the streak is computed from the RAW (pre-normalization) rows so
     its "Adopted AI" comparison always matches autotuner.py's real persisted
     literal, independent of _normalize_autotune_row's short-token remap.
+
+    UX data-truth AC-1/AC-5: each row additively gains two more keys, both
+    always present and null when they cannot be named:
+
+    * `objective` -- the objective the run optimised, read from its spec bundle
+      through database.get_autotune_run_objectives (the same rule the optimizer
+      applies). One of `crra_eu` / `sortino_loss_aversion`; null when the run has
+      no readable bundle or its bundle selects a value this code has no name for
+      (the card then prints its generic score label, never the raw value).
+    * `symphony_name` -- the symphony's display name from the live state, found
+      by the row's normalized key; null when the live state does not hold it
+      (the card then shows the stored key). The state is read once per request.
     """
     _ro_conn = database.get_ro_connection()
     try:
@@ -9766,10 +9929,37 @@ def api_autotune_runs():
             sym_id: analytics.compute_never_adopted_streak(sym_rows)
             for sym_id, sym_rows in by_symphony.items()
         }
+
+        objectives: dict = {}
+        live_names: dict[str, str] = {}
+        if rows:
+            try:
+                objectives = database.get_autotune_run_objectives(
+                    [r["id"] for r in rows if r.get("id") is not None]
+                )
+            except Exception as exc:
+                _daemon_log.warning(
+                    "autotune-runs objective lookup skipped: %s", type(exc).__name__
+                )
+            try:
+                live_names = _symphony_display_names_by_key(database.load_state())
+            except Exception as exc:
+                _daemon_log.warning(
+                    "autotune-runs symphony-name lookup skipped: %s", type(exc).__name__
+                )
+
         normalized = []
         for r in rows:
             n = _normalize_autotune_row(r)
             n["never_adopted_streak"] = never_adopted_streaks[r["symphony_id"]]
+            objective = objectives.get(r.get("id"))
+            n["objective"] = objective if objective in _AUTOTUNE_NAMED_OBJECTIVES else None
+            symphony_key = r["symphony_id"]
+            n["symphony_name"] = (
+                live_names.get(database.normalize_name(symphony_key))
+                if isinstance(symphony_key, str)
+                else None
+            )
             normalized.append(n)
         return jsonify(normalized)
     finally:
