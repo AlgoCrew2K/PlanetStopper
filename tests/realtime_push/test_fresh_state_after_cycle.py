@@ -99,7 +99,7 @@ class TestCycleCompletionInvalidatesStaleCache:
             "in the cycle-completion hook so /api/state never serves data from the prior cycle."
         )
 
-    def test_notify_cycle_complete_clears_account_totals_cache(self):
+    def test_notify_cycle_complete_clears_account_totals_cache(self, make_cycle_record):
         """_notify_cycle_complete() must clear or refresh _account_totals_cache.
 
         This is the direct unit test for the cache-invalidation contract on the
@@ -113,7 +113,7 @@ class TestCycleCompletionInvalidatesStaleCache:
         # _notify_cycle_complete may call _refresh_account_totals (live Composer) —
         # mock requests.get to prevent a live call.
         with patch("requests.get", return_value=MagicMock(status_code=200, json=lambda: {})):
-            app_module._notify_cycle_complete()
+            app_module._notify_cycle_complete(make_cycle_record())
 
         current_value = app_module._account_totals_cache.get("portfolio_value", None)
         assert current_value != pytest.approx(_STALE_SENTINEL, rel=1e-6), (
@@ -125,7 +125,9 @@ class TestCycleCompletionInvalidatesStaleCache:
 
 
 class TestGetStateReturnsUpdatedValuesAfterCycleWrite:
-    def test_get_state_does_not_return_stale_cached_portfolio_value(self, client):
+    def test_get_state_does_not_return_stale_cached_portfolio_value(
+        self, client, make_cycle_record
+    ):
         """/api/state must not return a stale portfolio_value that predates the
         most recently completed engine cycle.
 
@@ -144,7 +146,7 @@ class TestGetStateReturnsUpdatedValuesAfterCycleWrite:
 
         # Simulate cycle completion: call invalidation hook directly
         with patch("requests.get", return_value=MagicMock(status_code=200, json=lambda: {})):
-            app_module._notify_cycle_complete()
+            app_module._notify_cycle_complete(make_cycle_record())
 
         response = client.get("/api/state")
         assert response.status_code == 200, (
@@ -185,7 +187,7 @@ class TestCacheRestoresFreshDataAfterCycle:
     clearing the stale flag so subsequent reads return FRESH data.
     """
 
-    def test_notify_cycle_complete_triggers_account_totals_refresh(self):
+    def test_notify_cycle_complete_triggers_account_totals_refresh(self, make_cycle_record):
         """_notify_cycle_complete() must invoke _refresh_account_totals() (directly
         or via a spawned thread) so the cache re-populates after mark_stale().
 
@@ -213,7 +215,7 @@ class TestCacheRestoresFreshDataAfterCycle:
 
         with patch("app._refresh_account_totals", side_effect=_spy_refresh):
             with patch("requests.get", return_value=MagicMock(status_code=200, json=lambda: {})):
-                app_module._notify_cycle_complete()
+                app_module._notify_cycle_complete(make_cycle_record())
 
         # Give the background thread up to 3 s to complete.
         refresh_was_called = refresh_called.wait(timeout=3.0)
@@ -227,7 +229,9 @@ class TestCacheRestoresFreshDataAfterCycle:
             "_notify_cycle_complete(), AFTER the SSE fan-out."
         )
 
-    def test_cache_is_populated_with_fresh_data_after_notify_cycle_complete(self):
+    def test_cache_is_populated_with_fresh_data_after_notify_cycle_complete(
+        self, make_cycle_record
+    ):
         """After _notify_cycle_complete() completes and the refresh thread finishes,
         _account_totals_cache must contain FRESH non-empty data — not be masked.
 
@@ -262,7 +266,7 @@ class TestCacheRestoresFreshDataAfterCycle:
             refresh_done.set()
 
         with patch("app._refresh_account_totals", side_effect=_mock_refresh):
-            app_module._notify_cycle_complete()
+            app_module._notify_cycle_complete(make_cycle_record())
 
         refresh_done.wait(timeout=3.0)
 
@@ -282,7 +286,7 @@ class TestCacheRestoresFreshDataAfterCycle:
         )
 
     def test_get_state_returns_fresh_account_totals_after_cycle_with_successful_composer(
-        self, client
+        self, client, make_cycle_record
     ):
         """GET /api/state must return non-empty portfolio_strip.account_value after
         a simulated cycle completion where Composer responds successfully.
@@ -332,7 +336,7 @@ class TestCacheRestoresFreshDataAfterCycle:
             refresh_done.set()
 
         with patch("app._refresh_account_totals", side_effect=_mock_refresh):
-            app_module._notify_cycle_complete()
+            app_module._notify_cycle_complete(make_cycle_record())
 
         refresh_done.wait(timeout=3.0)
 

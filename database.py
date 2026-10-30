@@ -328,6 +328,27 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def read_cycle_markers() -> tuple[str | None, str | None]:
+    """Read only the two engine-written cycle markers, never the whole bot_state blob.
+
+    Returns (last_successful_cycle_at, last_market_close_snapshot.trading_day); any
+    failure returns (None, None) so the caller treats the state as unobservable.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT json_extract(data, '$.last_successful_cycle_at'),"
+                " json_extract(data, '$.last_market_close_snapshot.trading_day')"
+                " FROM bot_state WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        return (row[0], row[1]) if row else (None, None)
+    except Exception:
+        return (None, None)
+
+
 def _sanitize_state_for_json(value):
     """Recursively coerce a bot_state tree to JSON-safe native Python.
 

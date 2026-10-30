@@ -1339,3 +1339,74 @@ class TestSqueezeDocstringNoLongerClaimsMarketOpen:
             f"{acceptable_phrases} were found in the docstring. "
             f"The anchor is the action-window open, not NYSE market open (09:30)."
         )
+
+
+# ===========================================================================
+# SECTION: Rebalance blackout and post-mortem cutoff helpers (daemon side)
+# ===========================================================================
+
+
+def _engine_window_minutes() -> dict[str, tuple[str, int]]:
+    """Read the blackout and cutoff offsets the engine hard-codes, straight from its source."""
+    import re
+
+    source = (pathlib.Path(__file__).parent.parent.parent / "alpha_bot_execution.py").read_text(
+        encoding="utf-8"
+    )
+    found: dict[str, tuple[str, int]] = {}
+    for name in ("rebalance_blackout", "post_mortem_cutoff"):
+        matches = re.findall(
+            rf"^\s*{name}\s*=\s*\(\s*\w+\s*([-+])\s*timedelta\(minutes=(\d+)\)\s*\)\.time\(\)",
+            source,
+            flags=re.MULTILINE,
+        )
+        assert len(matches) == 1, (
+            f"expected exactly one `{name} = (<close> +/- timedelta(minutes=N)).time()` in "
+            f"alpha_bot_execution.py, found {len(matches)}: the daemon's copy of the window "
+            "can no longer be checked against the engine"
+        )
+        found[name] = (matches[0][0], int(matches[0][1]))
+    return found
+
+
+class TestRebalanceBlackoutAndCutoffHelpers:
+    """The daemon classifies a run by the engine's own windows, so it needs the same two
+    times the engine derives inline. Expected values are recomputed from the golden session
+    close of each date, never typed."""
+
+    @pytest.mark.parametrize(
+        "case",
+        _SESSION_TIMES_FIXTURE["cases"],
+        ids=[c["date"] for c in _SESSION_TIMES_FIXTURE["cases"]],
+    )
+    def test_blackout_and_cutoff_follow_the_sessions_close(self, case: dict) -> None:
+        day = datetime.strptime(case["date"], "%Y-%m-%d").date()
+        close_hour, close_minute = (int(p) for p in case["expected_session_close"].split(":"))
+        close = datetime.combine(day, dt_time(close_hour, close_minute))
+
+        blackout = market_calendar.rebalance_blackout_start(day)
+        cutoff = market_calendar.post_mortem_cutoff(day)
+
+        assert blackout == (close - timedelta(minutes=7)).time(), case["reason"]
+        assert cutoff == (close + timedelta(minutes=5)).time(), case["reason"]
+        assert blackout.tzinfo is None and cutoff.tzinfo is None
+
+    def test_constants_equal_the_offsets_the_engine_hard_codes(self) -> None:
+        """Tripwire: the engine stays untouched, so the daemon's copy must not drift from it."""
+        engine = _engine_window_minutes()
+
+        assert engine["rebalance_blackout"] == ("-", market_calendar.REBALANCE_BLACKOUT_MINUTES)
+        assert engine["post_mortem_cutoff"] == ("+", market_calendar.POST_MORTEM_GRACE_MINUTES)
+
+    def test_constants_carry_a_source_comment_naming_the_engine_lines(self) -> None:
+        source = (pathlib.Path(__file__).parent.parent.parent / "market_calendar.py").read_text(
+            encoding="utf-8"
+        )
+        for constant in ("REBALANCE_BLACKOUT_MINUTES", "POST_MORTEM_GRACE_MINUTES"):
+            lines = source.splitlines()
+            index = next(i for i, line in enumerate(lines) if line.startswith(f"{constant} ="))
+            window = "\n".join(lines[max(0, index - 4) : index + 1])
+            assert "alpha_bot_execution" in window, (
+                f"{constant} needs a source comment citing the engine's inline window "
+                "(project rule: no unexplained constants in the math layers' neighbours)"
+            )
