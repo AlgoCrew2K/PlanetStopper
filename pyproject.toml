@@ -82,7 +82,7 @@ quote-style = "double"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = """
-    -ra --strict-markers -m 'not live and not slow and not perf'
+    -ra --strict-markers -m 'not live and not slow and not perf and not browser'
     -n 2 --dist loadfile
     --deselect tests/meta/test_zero_skip_xfail_close.py::test_full_suite_reports_zero_skips_and_zero_xfails
     --deselect tests/meta/test_zero_skip_xfail_close.py::test_pytest_collect_only_does_not_emit_any_forbidden_node_id
@@ -91,6 +91,7 @@ markers = [
     "live: tests that hit live APIs (deselect via -m 'not live')",
     "slow: long-running property/calibration tests (deselected by default; opt in via -m 'slow')",
     "perf: wall-clock latency benchmarks; excluded from default run (opt-in: pytest -m perf)",
+    "browser: drives a real browser through Playwright; deselected by default, run at the merge gate with -m browser",
 ]
 
 # xdist parallelization notes (Phase 1 — 2026-06-01; worker cap added 2026-06-12):

@@ -848,6 +848,7 @@
           <!-- Cumulative Bot-vs-Held chart -->
           <div class="cum-chart-wrap" style="position:relative;">
             <canvas data-testid="cum-chart" id="cum-chart" style="width:100%;height:100%;"></canvas>
+            <div id="hero-chart-empty" data-testid="hero-chart-empty" class="legend-as-of" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);" hidden>No portfolio history to chart yet</div>
             <!-- Non-blocking caption — shows when available history is shorter than selected window. Chart still renders what it has. -->
             <div id="hero-chart-na" style="display:none;position:absolute;bottom:4px;left:50%;transform:translateX(-50%);pointer-events:none;">
               <span style="font-size:10px;font-weight:600;color:var(--studio-ink-faint);background:var(--studio-chip-bg);padding:2px 8px;border-radius:10px;white-space:nowrap;">Limited history — showing available data</span>
@@ -1869,6 +1870,7 @@
       }
     });
   </script>
+  <script type="application/json" id="dashboard-initial-data" data-testid="dashboard-initial-data">{{ (dashboard_initial_data | default({})) | tojson }}</script>
   <script src="{{ url_for('static', filename='index.js') }}"></script>
   <script src="{{ url_for('static', filename='settings-modal.js') }}"></script>
 </body>

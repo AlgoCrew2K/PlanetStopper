@@ -3,6 +3,7 @@
 import atexit
 import concurrent.futures
 import hmac
+import inspect
 import io
 import logging
 import math
@@ -1850,9 +1851,65 @@ def dashboard():
         accounts_map=accounts_map,
         cvar_diagnostic=cvar_diagnostic,
         session_close_display=session_close_display,
+        dashboard_initial_data=_dashboard_initial_data(meta, bot_state),
         sleeves=_build_sleeves_panel_context(),
         atlas_cache_health=_atlas_cache_health(),
     )
+
+
+# The day cap the /api/state poll series carries; the page needs it to judge a fallback series.
+def _producer_day_cap(producer) -> int | None:
+    """The producer's own ``days`` default when it is a positive int, else None.
+
+    The cap only feeds a cosmetic caption, so a reshaped producer must not break import.
+    """
+    try:
+        default = inspect.signature(producer).parameters["days"].default
+    except (KeyError, TypeError, ValueError):
+        return None
+    if isinstance(default, int) and not isinstance(default, bool) and default > 0:
+        return default
+    return None
+
+
+_HERO_POLL_DAY_CAP = _producer_day_cap(
+    getattr(analytics, "get_portfolio_bot_and_held_daily_returns", None)
+)
+
+
+def _dashboard_initial_data(meta: dict | None, bot_state: dict) -> dict:
+    """Chart data embedded in the dashboard render so the charts draw at first paint.
+
+    ``hero`` is the default-window series (local shadow history only, no network);
+    ``hero_poll_tail`` describes the series the next ``/api/state`` poll will carry, so
+    the page can tell a changed series from an unchanged one; ``sparks`` carries each
+    card's exit-marker fields.
+    """
+    portfolio = meta.get("portfolio") if isinstance(meta, dict) else None
+    portfolio = portfolio if isinstance(portfolio, dict) else {}
+    dates = portfolio.get("hist_dates") or []
+    bot = portfolio.get("hist_bot") or []
+    held = portfolio.get("hist_held") or []
+    tail = {"length": len(dates), "last_date": None, "last_bot": None, "last_held": None}
+    if dates:
+        tail["last_date"] = dates[-1]
+        tail["last_bot"] = bot[-1] if bot else None
+        tail["last_held"] = held[-1] if held else None
+    sparks = {
+        (v.get("id") or key): {
+            "triggered": bool(v.get("triggered")),
+            "triggered_at_time": v.get("triggered_at_time"),
+            "triggered_reason": v.get("triggered_reason"),
+        }
+        for key, v in bot_state.items()
+        if isinstance(v, dict) and "name" in v
+    }
+    return {
+        "hero": _hero_chart_body(_DEFAULT_HERO_WINDOW),
+        "hero_poll_tail": tail,
+        "hero_poll_cap": _HERO_POLL_DAY_CAP,
+        "sparks": sparks,
+    }
 
 
 _MARKET_STATE_UNSET = object()
@@ -3588,8 +3645,7 @@ def _slice_series_by_window_cutoff(
     return [dates[i] for i in idx], [series_a[i] for i in idx], [series_b[i] for i in idx]
 
 
-@app.route("/api/hero-chart/<window>")
-def get_hero_chart(window):
+def _hero_chart_body(window: str) -> dict[str, object]:
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
     window values: 30d, 60d, 90d, 125d, ytd, 1y, all
@@ -3630,30 +3686,34 @@ def get_hero_chart(window):
             bot_series = _compound(bot_daily)
             held_series = _compound(held_daily)
             insufficient = len(dates) < required
-            return jsonify(
-                {
-                    "hist_dates": dates,
-                    "hist_bot": bot_series,
-                    "hist_held": held_series,
-                    "window": window,
-                    "source": "shadow_history",
-                    "insufficient_history": insufficient,
-                    "available_days": len(dates),
-                }
-            )
-    except Exception:
-        _daemon_log.error("get_hero_chart bot/held series failed", exc_info=True)
+            return {
+                "hist_dates": dates,
+                "hist_bot": bot_series,
+                "hist_held": held_series,
+                "window": window,
+                "source": "shadow_history",
+                "insufficient_history": insufficient,
+                "available_days": len(dates),
+            }
+    except Exception as exc:
+        # Exception text can carry paths and data, so only the type reaches the ERROR line.
+        _daemon_log.error("get_hero_chart bot/held series failed: %s", type(exc).__name__)
+        _daemon_log.debug("get_hero_chart bot/held series detail", exc_info=True)
 
-    return jsonify(
-        {
-            "hist_dates": [],
-            "hist_bot": [],
-            "hist_held": [],
-            "window": window,
-            "insufficient_history": True,
-            "available_days": 0,
-        }
-    )
+    return {
+        "hist_dates": [],
+        "hist_bot": [],
+        "hist_held": [],
+        "window": window,
+        "insufficient_history": True,
+        "available_days": 0,
+    }
+
+
+@app.route("/api/hero-chart/<window>")
+def get_hero_chart(window):
+    """Return hist_dates/hist_bot/hist_held for the requested time window."""
+    return jsonify(_hero_chart_body(window))
 
 
 # Window tokens accepted by the picker + the windowed-strip route. Lowercase URL

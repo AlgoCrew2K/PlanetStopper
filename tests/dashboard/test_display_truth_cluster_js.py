@@ -258,41 +258,50 @@ class TestF016PortfolioHeaderNullNotCoercedToZero:
 
 
 class TestF025HeroChartYAxisVisible:
+    """Run through the whole of static/index.js under node (the hero is built
+    by the page's own load path, from the embedded series), not by slicing
+    source text: the hero's construction moved out of renderHeroChart."""
+
     def test_y_axis_display_is_not_false(self):
-        """renderHeroChart's Chart.js config (~index.js:117-122) currently sets
-        `scales: { x: { display: false }, y: { display: false } }` -- BOTH axes
-        hidden. The hero chart plots a different metric (day-by-day cumulative,
-        shadow-history basis, ~-3%) directly beneath the VW-lifetime scalar
-        headline (~+34%) -- opposite sign, ~12x magnitude -- with no axis to
-        self-diagnose against. PM ruling: the Y-axis (magnitude) is the
-        requirement; the X-axis is the implementer's judgment call (the
-        hero-data-as-of legend span already covers time) -- this test asserts
-        ONLY the y-axis literal `display: false` construct is gone."""
-        content = _read_index_js()
-        body = _slice_function(content, "function renderHeroChart(")
-        assert not re.search(r"y:\s*\{\s*display:\s*false\s*\}", body), (
-            "F-025 FAIL: renderHeroChart's Chart.js scales config still sets "
-            "`y: { display: false }` -- the hero chart's own magnitude scale must "
-            "be visible so its ~-3% day-by-day series can't be visually conflated "
-            "with the adjacent ~+34% lifetime scalar headline (a ~12x, "
-            "opposite-sign gap the audit flagged as reading like 'the tool "
-            "contradicts itself')."
+        from tests.dashboard import _index_js_harness as hx
+
+        world = hx.get_world("default")
+        summary = hx.run_scenario(world, "await H.boot({}); return { s: H.summary() };")["result"][
+            "s"
+        ]
+        constructed = summary["cum-chart"]["constructed"]
+        assert constructed, "the hero chart must be constructed"
+        assert constructed[0]["yDisplay"] is not False, (
+            "F-025 FAIL: the hero chart's own magnitude scale must stay visible so its "
+            "~-3% day-by-day series can't be visually conflated with the adjacent ~+34% "
+            "lifetime scalar headline (a ~12x, opposite-sign gap the audit flagged)."
         )
 
-    def test_plotted_series_assignment_is_byte_unchanged(self):
-        """Regression pin (AC-5: presentation-only, plotted SERIES byte-unchanged):
-        applyHeroWindow must still assign the raw sliced bot/held arrays straight
-        into the Chart.js datasets, with no transform introduced alongside the
-        axis/label fix."""
-        content = _read_index_js()
-        body = _slice_function(content, "function applyHeroWindow(")
-        assert "_cumChart.data.datasets[0].data = sliced.bot;" in body, (
-            "F-025 regression FAIL: applyHeroWindow no longer assigns "
-            "sliced.bot verbatim to dataset[0].data -- the plotted Bot series "
-            "must stay byte-unchanged; only axis/label presentation may change."
-        )
-        assert "_cumChart.data.datasets[1].data = sliced.held;" in body, (
-            "F-025 regression FAIL: applyHeroWindow no longer assigns "
-            "sliced.held verbatim to dataset[1].data -- the plotted Held series "
-            "must stay byte-unchanged; only axis/label presentation may change."
-        )
+    def test_plotted_series_are_the_served_series_without_a_transform(self):
+        """AC-5 of that cycle (presentation-only, plotted SERIES unchanged): the
+        arrays the hero plots are the arrays the server returned, key for key,
+        at load, after a window click and after a poll."""
+        from tests.dashboard import _index_js_harness as hx
+
+        world = hx.get_world("default")
+        scenario = r"""
+        await H.boot({});
+        const atLoad = H.summary()['cum-chart'];
+        await H.click('[data-testid="window-90d"]'); await H.completeAnimations();
+        const afterClick = H.summary()['cum-chart'];
+        await H.tick(); await H.completeAnimations();
+        return { atLoad: atLoad, afterClick: afterClick, afterPoll: H.summary()['cum-chart'] };
+        """
+        r = hx.run_scenario(world, scenario)["result"]
+        for stage, body in (
+            ("atLoad", world["hero"]["30d"]),
+            ("afterClick", world["hero"]["90d"]),
+            ("afterPoll", world["hero"]["90d"]),
+        ):
+            hero = r[stage]
+            assert hero["datasets"][0]["data"] == body["hist_bot"], (
+                f"{stage}: Bot series was transformed"
+            )
+            assert hero["datasets"][1]["data"] == body["hist_held"], (
+                f"{stage}: Held series was transformed"
+            )
