@@ -1,0 +1,113 @@
+{
+  "capture_day": "2026-10-21",
+  "cycles": [
+    {
+      "cycle_id": "20261021_1603",
+      "rows": [
+        {
+          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "current_return": -0.66,
+          "cycle_id": "20261021_1603",
+          "id": 357063,
+          "is_post_trigger": 0,
+          "math_mode": "per_symphony",
+          "position_epoch": "28eb287dcb294a9a96e3975b5af6d345",
+          "shadow_return": -0.66,
+          "symphony_id": "5XjzXjdGnjh99MIsdM97",
+          "trading_day": "2026-10-21",
+          "trigger_id": null,
+          "ts_et": "2026-10-21T16:03:02",
+          "ts_utc": "2026-10-21T20:03:05Z"
+        },
+        {
+          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "current_return": 0.29,
+          "cycle_id": "20261021_1603",
+          "id": 357064,
+          "is_post_trigger": 1,
+          "math_mode": "per_symphony",
+          "position_epoch": "87cef415493c451f9d4f407356f87549",
+          "shadow_return": 0.05,
+          "symphony_id": "nOyb55RMGVCKPiYXv7TI",
+          "trading_day": "2026-10-21",
+          "trigger_id": 498,
+          "ts_et": "2026-10-21T16:03:02",
+          "ts_utc": "2026-10-21T20:03:05Z"
+        }
+      ]
+    },
+    {
+      "cycle_id": "20261021_1604",
+      "rows": [
+        {
+          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "current_return": -0.66,
+          "cycle_id": "20261021_1604",
+          "id": 357074,
+          "is_post_trigger": 0,
+          "math_mode": "per_symphony",
+          "position_epoch": "28eb287dcb294a9a96e3975b5af6d345",
+          "shadow_return": -0.66,
+          "symphony_id": "5XjzXjdGnjh99MIsdM97",
+          "trading_day": "2026-10-21",
+          "trigger_id": null,
+          "ts_et": "2026-10-21T16:04:01",
+          "ts_utc": "2026-10-21T20:04:04Z"
+        },
+        {
+          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "current_return": 0.29,
+          "cycle_id": "20261021_1604",
+          "id": 357075,
+          "is_post_trigger": 1,
+          "math_mode": "per_symphony",
+          "position_epoch": "87cef415493c451f9d4f407356f87549",
+          "shadow_return": 0.05,
+          "symphony_id": "nOyb55RMGVCKPiYXv7TI",
+          "trading_day": "2026-10-21",
+          "trigger_id": 498,
+          "ts_et": "2026-10-21T16:04:01",
+          "ts_utc": "2026-10-21T20:04:04Z"
+        }
+      ]
+    }
+  ],
+  "symphonies": {
+    "triggered": {
+      "previous_day_last_row": {
+        "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "current_return": 0.11,
+        "cycle_id": "20261020_1604",
+        "id": 352961,
+        "is_post_trigger": 0,
+        "math_mode": "per_symphony",
+        "position_epoch": "87cef415493c451f9d4f407356f87549",
+        "shadow_return": 0.11,
+        "symphony_id": "nOyb55RMGVCKPiYXv7TI",
+        "trading_day": "2026-10-20",
+        "trigger_id": null,
+        "ts_et": "2026-10-20T16:04:01",
+        "ts_utc": "2026-10-20T20:04:04Z"
+      },
+      "symphony_id": "nOyb55RMGVCKPiYXv7TI"
+    },
+    "untriggered": {
+      "previous_day_last_row": {
+        "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "current_return": -0.45999999999999996,
+        "cycle_id": "20261020_1604",
+        "id": 352960,
+        "is_post_trigger": 0,
+        "math_mode": "per_symphony",
+        "position_epoch": "28eb287dcb294a9a96e3975b5af6d345",
+        "shadow_return": -0.45999999999999996,
+        "symphony_id": "5XjzXjdGnjh99MIsdM97",
+        "trading_day": "2026-10-20",
+        "trigger_id": null,
+        "ts_et": "2026-10-20T16:04:01",
+        "ts_utc": "2026-10-20T20:04:04Z"
+      },
+      "symphony_id": "5XjzXjdGnjh99MIsdM97"
+    }
+  }
+}

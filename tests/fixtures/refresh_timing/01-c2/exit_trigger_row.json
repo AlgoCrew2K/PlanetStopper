@@ -1,0 +1,14 @@
+{
+  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "also_true_json": "[]",
+  "at_return": 0.13,
+  "cycle_id": "2026-10-22T11:32:01.651793-04:00",
+  "gate_state_json": "{\"high_water_mark\": 0.22, \"vwap_ticks\": 0, \"vwap_bleed_ticks\": 0, \"mc_prob\": 5.1, \"symphony_vol\": 0.5045266503932619, \"also_true\": []}",
+  "id": 509,
+  "math_mode": null,
+  "port_trigger_id": null,
+  "symphony_id": "nOyb55RMGVCKPiYXv7TI",
+  "triggered_reason": "Take-Profit",
+  "ts_et": "2026-10-22T11:33:08",
+  "ts_utc": "2026-10-22T15:33:08Z"
+}

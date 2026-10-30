@@ -1,0 +1,62 @@
+{
+  "captured_at_utc": "2026-10-23T00:55:46Z",
+  "case": "01-c2-shadow-rows",
+  "facts": {
+    "columns": [
+      "id",
+      "ts_utc",
+      "ts_et",
+      "trading_day",
+      "symphony_id",
+      "account_id",
+      "cycle_id",
+      "current_return",
+      "shadow_return",
+      "is_post_trigger",
+      "trigger_id",
+      "math_mode",
+      "position_epoch"
+    ],
+    "cycles_oldest_first": [
+      {
+        "cycle_id": "20261021_1603",
+        "first_ts_utc": "2026-10-21T20:03:05Z",
+        "last_ts_utc": "2026-10-21T20:03:06Z",
+        "rows_all_symphonies": 11,
+        "rows_for_the_two_symphonies": 2,
+        "symphonies_all": 11
+      },
+      {
+        "cycle_id": "20261021_1604",
+        "first_ts_utc": "2026-10-21T20:04:04Z",
+        "last_ts_utc": "2026-10-21T20:04:04Z",
+        "rows_all_symphonies": 11,
+        "rows_for_the_two_symphonies": 2,
+        "symphonies_all": 11
+      }
+    ],
+    "newest_shadow_history_ts_utc_at_capture": "2026-10-22T20:04:03Z",
+    "rows_on_day_without_cycle_id": 0,
+    "selection": {
+      "candidates_in_both_cycles": 11,
+      "triggered_has_post_trigger_rows_in_cycles": true,
+      "triggered_in_both_cycles": true,
+      "triggered_selection": "newest exit_triggers row among symphonies with is_post_trigger rows in the two cycles",
+      "triggered_symphony_id": "nOyb55RMGVCKPiYXv7TI",
+      "untriggered_in_both_cycles": true,
+      "untriggered_selection": "lowest id present in both cycles with no is_post_trigger row and no exit that day",
+      "untriggered_symphony_id": "5XjzXjdGnjh99MIsdM97"
+    }
+  },
+  "record": {
+    "bytes": 3700,
+    "file": "shadow_rows_two_cycles.json",
+    "sha256": "ccd51d83790659d622697f6df88c2c14281550a5f4ba89320d1dfa98f135190d"
+  },
+  "script": "tests/fixtures/refresh_timing/capture.py",
+  "source": {
+    "database": "alphabot_state.db",
+    "row_key": "trading_day = 2026-10-21; the two newest cycle_id values by MAX(ts_utc); symphony_id in (triggered, untriggered); plus each symphony's newest earlier row",
+    "table": "shadow_history"
+  }
+}

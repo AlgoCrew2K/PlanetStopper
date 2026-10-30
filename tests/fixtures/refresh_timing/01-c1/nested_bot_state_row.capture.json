@@ -1,0 +1,43 @@
+{
+  "captured_at_utc": "2026-10-23T00:55:19Z",
+  "case": "01-c1-bot-state-row",
+  "facts": {
+    "gzip_bytes": 275429,
+    "json_round_trip_identical": true,
+    "last_market_close_snapshot_occurrences": 1,
+    "max_json_depth": 265,
+    "non_symphony_top_level_keys": [
+      "date",
+      "last_execution_mode",
+      "last_market_close_snapshot",
+      "last_successful_cycle_at",
+      "post_mortem_run"
+    ],
+    "raw_bytes": 2065179,
+    "raw_sha256": "f9de4ca66297eaf909914353fd45ea2752d2fd145979e18bc2758aad9b0d4fa7",
+    "storage_class": "text",
+    "symphony_entry_count": 12,
+    "top_level_key_count": 17,
+    "top_level_snapshot_keys": [
+      "accounts_map",
+      "captured_at_et",
+      "data_as_of",
+      "portfolio_strip",
+      "shadow_divergence",
+      "trading_day"
+    ],
+    "top_level_type": "dict",
+    "utf8_decodable": true
+  },
+  "record": {
+    "bytes": 275429,
+    "file": "nested_bot_state_row.json.gz",
+    "sha256": "534b7838bca588e533736bcb77360fc920baf273307854c7ca42998690ba0be7"
+  },
+  "script": "tests/fixtures/refresh_timing/capture.py",
+  "source": {
+    "database": "alphabot_state.db",
+    "row_key": "id = 1",
+    "table": "bot_state"
+  }
+}
