@@ -50,6 +50,18 @@ _WAIT_MS = 6_000
 # The marked-up part of the name: a bold element would show only this word.
 MARKUP_INNER_WORD = "Ridge"
 
+# The pages load Chart.js from a CDN, which the sweep refuses with the rest of the network.
+# Charts draw nothing a name appears in, so the request is answered with a script that
+# defines an inert ``Chart``; without it the pages report an unrelated "Chart is not
+# defined" and the console-error check could not tell that from a name defect.
+_CHART_LIBRARY_HOST = "cdn.jsdelivr.net"
+_INERT_CHART_LIBRARY = (
+    "function Chart(){this.data={datasets:[]};this.options={};}"
+    "Chart.prototype.update=Chart.prototype.destroy=Chart.prototype.resize=function(){};"
+    "Chart.defaults={font:{},plugins:{},color:''};Chart.register=function(){};"
+    "window.Chart=Chart;"
+)
+
 # Enough one-per-day shadow rows to clear guard_preconditions.N_MIN_OBS, so the
 # preconditions panel renders rows instead of its empty state.
 _SHADOW_DAYS = 45
@@ -182,8 +194,13 @@ def probe(firefox, server):
     state = SimpleNamespace(page=page, server=server, console_errors=[], page_errors=[])
 
     def refuse_outbound(route):
-        if route.request.url.startswith(server.base_url):
+        url = route.request.url
+        if url.startswith(server.base_url):
             route.continue_()
+        elif _CHART_LIBRARY_HOST in url and url.endswith("chart.js"):
+            route.fulfill(
+                status=200, content_type="application/javascript", body=_INERT_CHART_LIBRARY
+            )
         else:
             route.abort()
 
@@ -301,7 +318,9 @@ def test_settings_modal_title_shows_the_name_literally(probe, markup_symphony):
     probe.page.goto(probe.server.base_url + "/")
     probe.page.evaluate("(key) => window.openSymphonySettings(null, key)", markup_symphony.key)
     title_selector = f'#sym-settings-modal [data-modal-surface] [title="{markup_symphony.key}"]'
-    assert_name_is_literal(probe, markup_symphony, title_selector, title_expected=markup_symphony.key)
+    assert_name_is_literal(
+        probe, markup_symphony, title_selector, title_expected=markup_symphony.key
+    )
 
 
 def test_settings_modal_confirm_dialog_shows_the_name_literally(probe, markup_symphony):
@@ -392,7 +411,10 @@ def test_settings_detail_header_and_list_entry_show_the_name_literally(probe, ma
         "the settings detail never rendered",
     )
     assert_name_is_literal(
-        probe, markup_symphony, "#sym-detail .sym-detail-name", title_expected=markup_symphony.key
+        probe,
+        markup_symphony,
+        "#sym-detail .sym-detail-name",
+        title_expected=markup_symphony.normalized,
     )
     # The list entry carries the name in its own title attribute: it must hold the characters
     # literally, which an unescaped attribute would cut short at the first quote or bracket.
