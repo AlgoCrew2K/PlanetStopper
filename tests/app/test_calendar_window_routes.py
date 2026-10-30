@@ -185,6 +185,73 @@ def test_a_history_shorter_than_the_minimum_reports_insufficient_with_what_exist
     assert body["insufficient_history"] is True
 
 
+# A token window that holds no rows must read as empty. The day-1 fallbacks fetch the
+# whole series, so without the same cutoff they hand back rows from before the window
+# and the response labels them with the window's own `window_start`.
+ALL_WINDOW_TOKENS = ["30d", "60d", "90d", "125d", "ytd", "1y", "5y"]
+DAYS_BEFORE_EVERY_WINDOW = 2000  # older than the 5y cutoff (1825) and any 1 January
+
+
+def _assert_empty_window(body: dict) -> None:
+    assert body["window_start"] is not None, "a token window states its cutoff"
+    assert body["dates"] == [] and body["live_returns"] == [] and body["shadow_returns"] == []
+    assert body["observation_count"] == 0 and body["actual_days"] == 0
+    assert body["coverage_days"] == 0
+    assert body["date_range"] == {"start": None, "end": None}
+    assert body["insufficient_history"] is True
+    for leg in ("live_metrics", "shadow_metrics"):
+        assert all(v is None for v in body[leg].values()), (
+            f"{leg} must carry no figure for a window that holds no rows: {body[leg]!r}"
+        )
+
+
+@pytest.mark.parametrize("token", ALL_WINDOW_TOKENS)
+def test_a_window_that_holds_no_rows_is_empty_even_when_older_days_exist(
+    client, monkeypatch, token
+):
+    today = _freeze(monkeypatch, "2026-08-20T12:00:00")
+    old_days = _weekdays(
+        today - timedelta(days=DAYS_BEFORE_EVERY_WINDOW),
+        today - timedelta(days=DAYS_BEFORE_EVERY_WINDOW - 14),
+    )
+    assert len(old_days) >= 2, "fixture integrity: two or more days so the full series exists"
+    _seed_flat_history(old_days)
+
+    body = _get(client, f"scope=aggregate&days={token}")
+
+    _assert_empty_window(body)
+    assert body["window_days"] == token
+
+
+@pytest.mark.parametrize("token", ALL_WINDOW_TOKENS)
+def test_a_single_day_older_than_the_window_is_empty_not_the_one_day_chart(
+    client, monkeypatch, token
+):
+    today = _freeze(monkeypatch, "2026-08-20T12:00:00")
+    old_day = _weekdays(
+        today - timedelta(days=DAYS_BEFORE_EVERY_WINDOW),
+        today - timedelta(days=DAYS_BEFORE_EVERY_WINDOW - 6),
+    )[:1]
+    _seed_flat_history(old_day)
+
+    body = _get(client, f"scope=aggregate&days={token}")
+
+    _assert_empty_window(body)
+
+
+@pytest.mark.parametrize("token", ["30d", "1y", "ytd"])
+def test_a_first_day_inside_the_window_still_charts_its_one_day(client, monkeypatch, token):
+    today = _freeze(monkeypatch, "2026-08-20T12:00:00")
+    _seed_flat_history([today.isoformat()])
+
+    body = _get(client, f"scope=aggregate&days={token}")
+
+    assert body["dates"] == [today.isoformat()]
+    assert body["observation_count"] == 1
+    assert body["date_range"] == {"start": today.isoformat(), "end": today.isoformat()}
+    assert all(d >= body["window_start"] for d in body["dates"])
+
+
 @pytest.mark.parametrize("bad", ["abc", "2w", "-", "1.5"])
 def test_an_unrecognised_days_value_is_refused_naming_the_integers_and_tokens(client, bad):
     resp = client.get(f"/api/performance?scope=aggregate&days={bad}")
