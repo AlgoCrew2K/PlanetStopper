@@ -231,3 +231,56 @@ def composer_total_stats(tmp_path, monkeypatch, captured_symphony_entry):
         yield stub
     finally:
         stub.release.set()
+
+
+@pytest.fixture()
+def client():
+    """A Flask test client for tests that do not need a special one (a test file that defines
+    its own ``client`` keeps using that)."""
+    import app as app_module
+
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        yield c
+
+
+@pytest.fixture(autouse=True)
+def _reset_review_run_state(monkeypatch):
+    """Give every tests/app/ test a fresh, idle review run state with no remembered failed
+    attempt.
+
+    The state is one module-level object shared by the nightly tick, the on-demand route
+    and the panel, so a test that takes it (or records a failed attempt) would otherwise
+    change what the next test's page and API report. A run that is still holding the old
+    object finishes against it and cannot touch the new one. Production code must reach the
+    state as ``tenure_review.REVIEW_RUN_STATE`` at each use (never a name bound at import),
+    which is what makes this replacement take effect everywhere.
+    """
+    import advisors.tenure_review as tenure_review
+
+    monkeypatch.setattr(tenure_review, "REVIEW_RUN_STATE", type(tenure_review.REVIEW_RUN_STATE)())
+    yield
+
+
+@pytest.fixture()
+def no_review_accounts(monkeypatch, tmp_path):
+    """Make the nightly tick's tenure-review stage a no-op for a test that runs the tick.
+
+    The 03:45 tick starts the tenure review and then the recommender run. The review reads
+    its Composer accounts from the env file (which wins over os.environ) and from the process
+    environment; the developer .env is real, so a test that runs the tick without this would
+    read real accounts. ENV_FILE_PATH is redirected to an empty file and every account /
+    threshold key is removed, which makes the review stop at "no Composer account configured"
+    before any request. A test that exercises the review itself sets its own accounts."""
+    import app as app_module
+
+    env_file = tmp_path / "no_review_accounts.env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
+    for key in (
+        "ACCOUNT_INDIVIDUAL",
+        "ACCOUNT_ROTH",
+        "ACCOUNT_TRAD",
+        "TENURE_REVIEW_MIN_TRADING_DAYS",
+    ):
+        monkeypatch.delenv(key, raising=False)

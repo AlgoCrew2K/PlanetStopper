@@ -1294,4 +1294,61 @@
     window.retDispatchDecision = retDispatchDecision;
     window.retirementRunNow = retirementRunNow;
 
+    // "Run review now": one bodyless POST. Statuses 202, 409, 401, 403 and any
+    // other non-200 show fixed text; a 200 carrying an error key shows the
+    // server's error text (an exception type name). Every message is set with
+    // textContent, never a thrown error's message. The global hooks answer an
+    // unauthenticated XHR with 401 JSON and a missing CSRF token with a 403 HTML
+    // page; neither body is parsed. A refusal gets the negative-token class; the next attempt clears it.
+    function retRunReview(btnEl) {
+        if (!btnEl || btnEl.disabled) { return; }
+        btnEl.disabled = true;
+        var messageEl = document.querySelector('[data-testid="tenure-review-run-message"]');
+        function show(text, refused) {
+            if (!messageEl) { return; }
+            messageEl.textContent = text;
+            messageEl.classList.toggle('tenure-review-run-message--refused', !!refused);
+        }
+        (async function () {
+            try {
+                var token = _csrfToken;
+                if (!token) {
+                    var tokenResp = await fetch('/api/csrf-token');
+                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
+                    var tokenData = await tokenResp.json();
+                    token = tokenData.csrf_token;
+                }
+                var resp = await fetch('/ai-advisor/retirement/review/run', {
+                    method: 'POST',
+                    headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+                });
+                if (resp.status === 202) {
+                    show('Review started: reload this page when it finishes', false);
+                } else if (resp.status === 409) {
+                    show('a review is already running', false);
+                } else if (resp.status === 401) {
+                    show('Session expired: sign in again', true);
+                } else if (resp.status === 403) {
+                    show('Request refused: reload the page', true);
+                } else if (resp.status === 200) {
+                    var refusal = '';
+                    try {
+                        var body = await resp.json();
+                        if (body && typeof body.error === 'string') { refusal = body.error.trim(); }
+                    } catch (parseErr) {
+                        refusal = '';
+                    }
+                    show(refusal || 'Request failed: HTTP 200', true);
+                } else {
+                    show('Request failed: HTTP ' + resp.status, true);
+                }
+            } catch (err) {
+                show('Request failed: network error', true);
+            } finally {
+                btnEl.disabled = false;
+            }
+        })();
+    }
+    window.retRunReview = retRunReview;
+
 })();

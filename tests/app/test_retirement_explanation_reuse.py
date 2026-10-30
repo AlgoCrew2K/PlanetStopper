@@ -85,9 +85,13 @@ the reuse-vs-regenerate decision.
 
 from __future__ import annotations
 
+import inspect
+from datetime import datetime
+
 import pytest
 
-from tests.app._retirement_run_summary_stub import with_summary
+from tests.app import _tenure_review_job_builders as jb
+from tests.app._retirement_producers import PRODUCER_KINDS, RetirementProducer
 
 _CANDIDATE_HASH = "cand-reuse-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
@@ -114,6 +118,33 @@ _DEFAULT_SIBLING_METRICS = {
     "max_drawdown": -0.06,
     "calmar": 3.00,
 }
+
+
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
+_ACTIVE: dict[str, RetirementProducer] = {}
+
+
+@pytest.fixture(autouse=True)
+def producer(request):
+    """The producer of recommendations this test drives: the tenure review job unless the test's
+    class is parametrized over both (``indirect``). Both finish a recommendation in the one shared
+    helper, so the reuse contract is the same for both. ``_run_worker_with_mocked_prior_rows`` reads
+    the active one."""
+    active = RetirementProducer(getattr(request, "param", "review"))
+    _ACTIVE["producer"] = active
+    yield active
+    _ACTIVE.clear()
+
+
+_BOTH_PRODUCERS = pytest.mark.parametrize("producer", PRODUCER_KINDS, indirect=True)
 
 
 def _sample_raw_response(
@@ -223,16 +254,13 @@ def _run_worker_with_mocked_prior_rows(prior_rows, new_rec, *, explain_return="f
         return len(recs)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(
-            recommender_module,
-            "build_recommendations_with_summary",
-            with_summary(lambda **kw: [new_rec]),
-        )
+        active = _ACTIVE["producer"]
+        active.install(mp, lambda: [new_rec])
         mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
         mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
         mp.setattr(db_module, "get_advisor_observations_for_role", lambda *a, **kw: prior_rows)
 
-        app_module._retirement_recommender_tick_worker()
+        active.run()
 
     return explain_calls, persisted
 
@@ -242,6 +270,7 @@ def _run_worker_with_mocked_prior_rows(prior_rows, new_rec, *, explain_return="f
 # ===========================================================================
 
 
+@_BOTH_PRODUCERS
 class TestReuseWhenUnchanged:
     def test_new_pair_no_prior_history_generates_fresh(self, isolated_db):
         new_rec = _sample_raw_response()
@@ -351,6 +380,7 @@ class TestReuseWhenUnchanged:
 # ===========================================================================
 
 
+@_BOTH_PRODUCERS
 class TestRegenerateWhenChanged:
     def test_regenerates_when_correlation_materially_changed(self, isolated_db):
         prior = _prior_row(1, _sample_raw_response(correlation=0.80))
@@ -421,17 +451,16 @@ class TestRegenerateWhenChanged:
         explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
         assert len(explain_calls) == 1
 
-    def test_regenerates_when_n_obs_changed(self, isolated_db):
-        """n_obs is compared EXACTLY (an int, _round_floats leaves it
-        untouched) -- RETIREMENT_LOOKBACK_DAYS is a fixed-size rolling
-        window, so in the steady state n_obs should stay constant night-to-
-        night for a mature pair; a genuine change signals a real data-
-        availability shift (e.g. a gap) worth re-explaining, not noise."""
-        prior = _prior_row(1, _sample_raw_response(n_obs=200))
-        new_rec = _sample_raw_response(n_obs=150)
+    def test_reuses_when_only_the_observation_count_changed(self, isolated_db):
+        """The review's evidence window grows by a trading day every day, so the number of
+        aligned observations moves with it and no longer decides whether last night's
+        prose still describes the pair: the count is left out of the comparison."""
+        prior = _prior_row(1, _sample_raw_response(n_obs=200), explanation="last night's prose")
+        new_rec = _sample_raw_response(n_obs=201)
 
-        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
-        assert len(explain_calls) == 1
+        explain_calls, persisted = _run_worker_with_mocked_prior_rows([prior], new_rec)
+        assert explain_calls == []
+        assert persisted[0]["explanation"] == "last night's prose"
 
     def test_regenerates_when_candidate_metric_changed(self, isolated_db):
         """One of the 5 per-symphony metrics the composite is derived from
@@ -561,6 +590,7 @@ class TestRegenerateWhenChanged:
         assert len(explain_calls) == 1
 
 
+@_BOTH_PRODUCERS
 class TestMostRecentPriorRowGoverns:
     def test_uses_the_most_recent_prior_row_when_multiple_exist(self, isolated_db):
         """Two prior rows exist for the same pair (older + newer). The
@@ -588,11 +618,11 @@ class TestMostRecentPriorRowGoverns:
 # ===========================================================================
 
 
+@_BOTH_PRODUCERS
 class TestFailOpen:
-    def test_reuse_lookup_raising_falls_back_to_fresh_generation(self, isolated_db):
+    def test_reuse_lookup_raising_falls_back_to_fresh_generation(self, isolated_db, producer):
         import advisors.retirement_explainer as explainer_module
         import advisors.retirement_recommender as recommender_module
-        import app as app_module
         import database as db_module
 
         new_rec = _sample_raw_response()
@@ -611,20 +641,16 @@ class TestFailOpen:
             raise RuntimeError("simulated DB read failure")
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [new_rec]),
-            )
+            producer.install(mp, lambda: [new_rec])
             mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
             mp.setattr(db_module, "get_advisor_observations_for_role", _raise)
 
             try:
-                app_module._retirement_recommender_tick_worker()
+                producer.run()
             except Exception as exc:  # noqa: BLE001
                 pytest.fail(
-                    f"_retirement_recommender_tick_worker must never propagate a "
+                    f"the producer ({producer.kind}) must never propagate a "
                     f"reuse-lookup failure: {type(exc).__name__}: {exc}"
                 )
 
@@ -677,9 +703,10 @@ class TestFailOpen:
 # ===========================================================================
 
 
+@_BOTH_PRODUCERS
 class TestBoundedSpendEndToEnd:
     def test_three_consecutive_nights_unchanged_pair_calls_explainer_exactly_once(
-        self, isolated_db
+        self, isolated_db, producer
     ):
         """The actual claim AC-4 makes: 'bounded, non-recurring metered spend
         for a persistently-flagged pair.' Real DB (only build_recommendations/
@@ -705,23 +732,19 @@ class TestBoundedSpendEndToEnd:
             return [_sample_raw_response()]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: _fixed_recs()),
-            )
+            producer.install(mp, lambda: _fixed_recs())
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()  # night 1
-            app_module._retirement_recommender_tick_worker()  # night 2
-            app_module._retirement_recommender_tick_worker()  # night 3
+            producer.run()  # night 1
+            producer.run()  # night 2
+            producer.run()  # night 3
 
         assert explain_call_count["n"] == 1, (
             f"Expected explain_recommendation to be called exactly ONCE across 3 "
             f"consecutive nights of an unchanged pair, got {explain_call_count['n']}."
         )
 
-    def test_mixed_batch_reuse_and_fresh_are_independent_per_pair(self, isolated_db):
+    def test_mixed_batch_reuse_and_fresh_are_independent_per_pair(self, isolated_db, producer):
         """A tick with TWO pairs -- one persistently flagged (should reuse),
         one brand new (should explain) -- must decide each independently."""
         import advisors.retirement_explainer as explainer_module
@@ -746,30 +769,291 @@ class TestBoundedSpendEndToEnd:
             return f"explanation for {r['candidate_id']}"
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [_sample_raw_response(stable_candidate, stable_sibling)]),
-            )
+            producer.install(mp, lambda: [_sample_raw_response(stable_candidate, stable_sibling)])
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
-            app_module._retirement_recommender_tick_worker()  # night 1 for the stable pair
+            producer.run()  # night 1 for the stable pair
 
         explained_candidates.clear()
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(
-                    lambda **kw: [
-                        _sample_raw_response(stable_candidate, stable_sibling),  # unchanged
-                        _sample_raw_response(new_candidate, new_sibling),  # brand new
-                    ]
-                ),
+            producer.install(
+                mp,
+                lambda: [
+                    _sample_raw_response(stable_candidate, stable_sibling),  # unchanged
+                    _sample_raw_response(new_candidate, new_sibling),  # brand new
+                ],
             )
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
-            app_module._retirement_recommender_tick_worker()  # night 2
+            producer.run()  # night 2
 
         assert explained_candidates == [new_candidate], (
             f"Expected ONLY the brand-new pair to be explained on night 2 (the stable "
             f"pair should reuse), got {explained_candidates!r}."
         )
+
+
+# ===========================================================================
+# The review run's evidence window moves every day: reuse must look through
+# it, date each explanation, and carry the original date on reuse
+# ===========================================================================
+
+# Fields the review run adds to a recommendation whose values move with the calendar or
+# identify the run, so none of them may decide whether an explanation is still current.
+_MOVING_KEYS = {
+    "n_obs": (200, 201),
+    "as_of_trading_day": ("2026-10-16", "2026-10-19"),
+    "window_last": ("2026-10-16", "2026-10-19"),
+    "window_days": (230, 231),
+    "composite_window_first": ("2026-04-17", "2026-04-20"),
+    "composite_window_last": ("2026-10-16", "2026-10-19"),
+    "composite_window_days": (125, 126),
+    "review_run_id": ("a" * 32, "b" * 32),
+    "explanation_written_on": ("2026-10-17", "2026-10-20"),
+}
+_WINDOW_FIELDS = {
+    "as_of_trading_day": "2026-10-19",
+    "window_first": "2025-11-14",
+    "window_last": "2026-10-19",
+    "window_days": 231,
+    "composite_window_first": "2026-04-20",
+    "composite_window_last": "2026-10-19",
+    "composite_window_days": 126,
+}
+
+
+def _review_rec(**overrides):
+    return {**_sample_raw_response(), **_WINDOW_FIELDS, **overrides}
+
+
+class TestReuseLooksThroughTheMovingWindow:
+    @pytest.mark.parametrize("key", sorted(_MOVING_KEYS))
+    def test_a_change_in_only_this_field_still_reuses_the_stored_explanation(
+        self, isolated_db, key
+    ):
+        """Rejects a comparison that leaves out only some of the window and run fields: the
+        growing window would make an unchanged pair look changed every trading day."""
+        old, new = _MOVING_KEYS[key]
+        prior = _prior_row(1, _review_rec(**{key: old}), explanation="stored prose")
+        new_rec = _review_rec(**{key: new})
+
+        explain_calls, persisted = _run_worker_with_mocked_prior_rows([prior], new_rec)
+
+        assert explain_calls == [], f"a change in {key} alone must not re-bill the explainer"
+        assert persisted[0]["explanation"] == "stored prose"
+
+    def test_a_change_in_the_first_day_of_the_pair_window_does_not_reuse(self, isolated_db):
+        """The window's first day is the start of the realized history, fixed for a pair, so a
+        change in it is a change in what the figures describe."""
+        prior = _prior_row(1, _review_rec(window_first="2025-11-14"), explanation="stored prose")
+        new_rec = _review_rec(window_first="2025-12-01")
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+
+        assert len(explain_calls) == 1
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"correlation": 0.83},
+            {"candidate_composite": 0.27},
+            {"stressed_correlation": 0.70},
+            {"structural_redundancy_gate_passed": False},
+            {"basis_label": "another basis"},
+        ],
+        ids=["correlation", "composite", "stressed correlation", "gate", "basis"],
+    )
+    def test_a_figure_that_changed_at_two_decimals_does_not_reuse_even_with_a_moving_window(
+        self, isolated_db, change
+    ):
+        prior = _prior_row(1, _review_rec(), explanation="stored prose")
+        new_rec = _review_rec(**change, window_last="2026-10-20", window_days=232)
+
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([prior], new_rec)
+
+        assert len(explain_calls) == 1
+
+
+class TestEachExplanationCarriesTheDayItWasWritten:
+    def test_a_fresh_explanation_is_dated_with_the_eastern_day_of_the_run_not_the_as_of_day(
+        self, isolated_db, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, jb.NOW_ET)  # 2026-10-20 03:45 ET; the as-of day is 10-19
+
+        _, persisted = _run_worker_with_mocked_prior_rows([], _review_rec())
+
+        assert persisted[0]["explanation"] == "fresh explanation"
+        assert persisted[0]["explanation_written_on"] == "2026-10-20"
+
+    def test_a_reused_explanation_keeps_the_day_it_was_first_written(
+        self, isolated_db, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, jb.NOW_ET)
+        prior = _prior_row(
+            1, _review_rec(explanation_written_on="2026-09-01"), explanation="stored prose"
+        )
+
+        explain_calls, persisted = _run_worker_with_mocked_prior_rows([prior], _review_rec())
+
+        assert explain_calls == []
+        assert persisted[0]["explanation"] == "stored prose"
+        assert persisted[0]["explanation_written_on"] == "2026-09-01", (
+            "reuse must show the original written date, not the day of this run"
+        )
+
+    def test_a_reused_explanation_of_a_row_that_never_recorded_a_day_is_not_given_one(
+        self, isolated_db, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, jb.NOW_ET)
+        prior = _prior_row(1, _review_rec(), explanation="stored prose")  # no written day stored
+
+        explain_calls, persisted = _run_worker_with_mocked_prior_rows([prior], _review_rec())
+
+        assert explain_calls == []
+        assert persisted[0].get("explanation_written_on") is None, (
+            "an unknown original day is not replaced by today's date"
+        )
+
+    def test_a_missing_explanation_has_no_written_day(self, isolated_db, monkeypatch):
+        jb.freeze_app_clock(monkeypatch, jb.NOW_ET)
+
+        _, persisted = _run_worker_with_mocked_prior_rows([], _review_rec(), explain_return=None)
+
+        assert persisted[0]["explanation"] is None
+        assert persisted[0].get("explanation_written_on") is None, (
+            "a date beside 'explanation unavailable' would date something never written"
+        )
+
+
+class TestBoundedSpendAcrossDays:
+    def test_an_unchanged_pair_is_explained_once_while_the_window_moves_over_three_days(
+        self, isolated_db, monkeypatch
+    ):
+        """Real persistence and the real reuse lookup; only the runner and the explainer are
+        replaced. Each run dates itself later and carries a longer window, and two of the
+        three runs share a calendar day."""
+        import advisors.retirement_explainer as explainer_module
+        import app as app_module
+
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
+        explained = {"n": 0}
+
+        def _explain(r):
+            explained["n"] += 1
+            return f"explanation #{explained['n']}"
+
+        monkeypatch.setattr(explainer_module, "explain_recommendation", _explain)
+        nights = [
+            (datetime(2026, 10, 20, 3, 45, tzinfo=jb.ET), 231, "2026-10-19"),
+            (datetime(2026, 10, 20, 15, 0, tzinfo=jb.ET), 231, "2026-10-19"),
+            (datetime(2026, 10, 21, 3, 45, tzinfo=jb.ET), 232, "2026-10-20"),
+        ]
+        current = {}
+        jb.patch_runner(
+            monkeypatch,
+            lambda: [
+                _review_rec(
+                    window_days=current["days"],
+                    window_last=current["last"],
+                    as_of_trading_day=current["last"],
+                    composite_window_last=current["last"],
+                    n_obs=current["days"] - 1,
+                )
+            ],
+        )
+        for instant, days, last in nights:
+            current.update(days=days, last=last)
+            jb.freeze_app_clock(monkeypatch, instant)
+            app_module._tenure_review_job("nightly")
+
+        assert explained["n"] == 1, (
+            f"the unchanged pair was explained {explained['n']} times over three runs"
+        )
+        stored = jb.rec_rows()
+        assert len(stored) == 3
+        assert {r["raw_response"]["explanation"] for r in stored} == {"explanation #1"}
+        assert {r["raw_response"]["explanation_written_on"] for r in stored} == {"2026-10-20"}, (
+            "every reuse keeps the day the text was first written"
+        )
+
+    def test_a_correlation_that_differs_at_two_decimals_is_explained_again_and_dated_anew(
+        self, isolated_db, monkeypatch
+    ):
+        import advisors.retirement_explainer as explainer_module
+        import app as app_module
+
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
+        explained = {"n": 0}
+
+        def _explain(r):
+            explained["n"] += 1
+            return f"explanation #{explained['n']}"
+
+        monkeypatch.setattr(explainer_module, "explain_recommendation", _explain)
+        correlations = iter([0.80, 0.83])
+        jb.patch_runner(monkeypatch, lambda: [_review_rec(correlation=next(correlations))])
+        jb.freeze_app_clock(monkeypatch, datetime(2026, 10, 20, 3, 45, tzinfo=jb.ET))
+        app_module._tenure_review_job("nightly")
+        jb.freeze_app_clock(monkeypatch, datetime(2026, 10, 21, 3, 45, tzinfo=jb.ET))
+        app_module._tenure_review_job("nightly")
+
+        assert explained["n"] == 2
+        newest = jb.rec_rows()[0]["raw_response"]
+        assert newest["explanation"] == "explanation #2"
+        assert newest["explanation_written_on"] == "2026-10-21"
+
+    def test_a_different_sibling_is_explained_again_and_the_old_pairs_text_is_not_reused(
+        self, isolated_db, monkeypatch
+    ):
+        import advisors.retirement_explainer as explainer_module
+        import app as app_module
+
+        other_sibling = "sib-reuse-ccc"
+        _seed_named_roster(
+            {
+                _CANDIDATE_HASH: _CANDIDATE_NAME,
+                _SIBLING_HASH: _SIBLING_NAME,
+                other_sibling: "Another Sibling",
+            }
+        )
+        explained: list[str] = []
+
+        def _explain(r):
+            explained.append(r["sibling_id"])
+            return f"explanation for {r['sibling_id']}"
+
+        monkeypatch.setattr(explainer_module, "explain_recommendation", _explain)
+        siblings = iter([_SIBLING_HASH, other_sibling])
+        jb.patch_runner(monkeypatch, lambda: [_review_rec(sibling_id=next(siblings))])
+        jb.freeze_app_clock(monkeypatch, datetime(2026, 10, 20, 3, 45, tzinfo=jb.ET))
+        app_module._tenure_review_job("nightly")
+        jb.freeze_app_clock(monkeypatch, datetime(2026, 10, 21, 3, 45, tzinfo=jb.ET))
+        app_module._tenure_review_job("nightly")
+
+        assert explained == [_SIBLING_HASH, other_sibling]
+        newest = jb.rec_rows()[0]["raw_response"]
+        assert newest["explanation"] == f"explanation for {other_sibling}"
+        assert newest["explanation_written_on"] == "2026-10-21"
+
+
+class TestThePreparationStepCanBeCalledOnItsOwn:
+    def test_it_takes_the_written_day_by_keyword_and_completes_the_list_it_is_given(
+        self, isolated_db
+    ):
+        """The step the job calls between the review run and the write: names resolved, evidence
+        rounded to two decimals, an explanation (or none) and the day it was written, all on the
+        recommendation dicts of the list passed in."""
+        import advisors.retirement_explainer as explainer_module
+        import app as app_module
+
+        signature = inspect.signature(app_module._prepare_retirement_recs_for_persist)
+        assert signature.parameters["written_on"].kind is inspect.Parameter.KEYWORD_ONLY
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
+        recs = [_review_rec(correlation=0.8043219)]
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(explainer_module, "explain_recommendation", lambda r: "prepared text")
+            app_module._prepare_retirement_recs_for_persist(recs, written_on="2026-10-20")
+
+        assert recs[0]["candidate_name"] == _CANDIDATE_NAME
+        assert recs[0]["sibling_name"] == _SIBLING_NAME
+        assert recs[0]["correlation"] == 0.80
+        assert recs[0]["explanation"] == "prepared text"
+        assert recs[0]["explanation_written_on"] == "2026-10-20"

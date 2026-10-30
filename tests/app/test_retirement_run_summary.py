@@ -667,7 +667,17 @@ class TestApiLastRun:
             "sibling_name",
         ):
             assert key in rec, key
-        assert set(data) == {"recommendations", "last_run", "cards_run"}
+        # The Cycle 2e keys (last_run, cards_run) plus the tenure review's review_* keys: the
+        # response is exactly their union.
+        assert set(data) == {
+            "recommendations",
+            "last_run",
+            "cards_run",
+            "review_run",
+            "review_entries",
+            "review_status",
+            "review_read_failed",
+        }
 
     def test_a_latest_zero_rec_run_empties_recommendations_but_keeps_last_run(
         self, client, isolated_db

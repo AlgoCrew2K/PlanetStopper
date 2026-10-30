@@ -996,7 +996,7 @@
             font-size: 0.6875rem;
             font-weight: 700;
             border: 1px solid var(--studio-border);
-            margin-top: 0.25rem;
+            margin-top: var(--studio-space-xs);
         }
         .retirement-status-chip--pending {
             color: var(--studio-ink-dim);
@@ -1022,7 +1022,7 @@
         }
 
         .retirement-checklist {
-            margin-top: 0.75rem;
+            margin-top: var(--studio-space-sm);
             padding-top: 0.75rem;
             border-top: 1px solid var(--studio-border);
             font-size: 0.8125rem;
@@ -1093,6 +1093,110 @@
             font-style: italic;
             color: var(--studio-ink-dim);
             margin: -0.375rem 0 0.75rem;
+        }
+
+        /* Symphony tenure review: tokens only. */
+        .tenure-review-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+        .tenure-review-run-message {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+        }
+        .tenure-review-run-message--refused {
+            color: var(--studio-neg);
+        }
+        .tenure-review-evidence-heading {
+            font-weight: 700;
+            color: var(--studio-ink);
+            font-size: 0.75rem;
+            margin-bottom: 0.125rem;
+        }
+        .tenure-review-notice {
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+        .tenure-review-notice--failed {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+        }
+        .tenure-review-run {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            font-size: 0.75rem;
+            color: var(--studio-ink-dim);
+            margin-bottom: 0.75rem;
+        }
+        .tenure-review-entry {
+            border: 1px solid var(--studio-border);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.75rem;
+            font-size: 0.8125rem;
+        }
+        .tenure-review-entry-head {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.375rem;
+        }
+        .tenure-review-name {
+            font-weight: 700;
+            color: var(--studio-ink);
+        }
+        .tenure-review-line {
+            color: var(--studio-ink-dim);
+            font-size: 0.75rem;
+            margin-bottom: 0.25rem;
+        }
+        .tenure-verdict-chip {
+            display: inline-block;
+            padding: 0.2rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.6875rem;
+            font-weight: 700;
+            white-space: nowrap;
+            border: 1px solid var(--studio-border);
+            color: var(--studio-ink-dim);
+        }
+        .tenure-verdict-chip--retire_candidate {
+            color: var(--studio-neg);
+            border-color: var(--studio-neg);
+        }
+        .tenure-verdict-chip--watch {
+            color: var(--studio-ink);
+            border-color: var(--studio-ink-dim);
+        }
+        .tenure-verdict-chip--keep {
+            color: var(--studio-pos);
+            border-color: var(--studio-pos);
+        }
+        .tenure-verdict-chip--none {
+            color: var(--studio-ink-dim);
+            border-color: var(--studio-border);
+        }
+        .tenure-review-evidence-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        .tenure-review-evidence {
+            border: 1px solid var(--studio-border);
+            border-radius: 0.5rem;
+            padding: 0.5rem 0.75rem;
+        }
+        .tenure-review-evidence-meta, .tenure-review-evidence-figure {
+            color: var(--studio-ink-dim);
+            font-size: 0.6875rem;
         }
 
         /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
@@ -1575,8 +1679,242 @@
         <!-- live status chip, Approve/Reject buttons, and the             -->
         <!-- deterministic wind-down checklist on approved cards.          -->
         <!-- ============================================================ -->
+        {# One lifecycle block (explanation, status, Approve/Reject, checklist) shared by the legacy recommendation cards and the review entries. #}
+        {% macro retirement_lifecycle(candidate_id, explanation, written_on, status, checklist, allow_actions, show_explanation) %}
+                    {% if show_explanation %}
+                    <div class="retirement-rec-explanation" data-testid="retirement-rec-explanation">
+                        {%- if explanation is string and explanation.strip() %}{{ explanation }}{% if written_on is string %}{% if written_on.strip() %} (written {{ written_on }}){% endif %}{% elif written_on is not none %} (written not recorded){% endif %}{% elif explanation is none or explanation is string %}explanation unavailable{% else %}not recorded{% endif -%}
+                    </div>
+                    {% endif %}
+                    {% if candidate_id %}
+                    <span class="retirement-status-chip retirement-status-chip--{{ status or 'pending' }}"
+                          data-testid="retirement-rec-status">
+                        {{- (status or 'pending') | capitalize -}}
+                    </span>
+                    {% endif %}
+                    {% if allow_actions and (status or 'pending') == 'pending' %}
+                    <div class="retirement-rec-actions">
+                        <button type="button"
+                                class="run-trigger-btn"
+                                data-testid="retirement-approve-btn"
+                                data-candidate-id="{{ candidate_id }}"
+                                onclick="retDispatchDecision('approve', this)">
+                            Approve retirement
+                        </button>
+                        <button type="button"
+                                class="discuss-btn"
+                                data-testid="retirement-reject-btn"
+                                data-candidate-id="{{ candidate_id }}"
+                                onclick="retDispatchDecision('reject', this)">
+                            Reject
+                        </button>
+                    </div>
+                    {% endif %}
+                    {% if status == 'approved' %}
+                    <div class="retirement-checklist" data-testid="retirement-checklist">
+                        <div class="retirement-checklist-header">Manual wind-down checklist</div>
+                        {% if checklist %}
+                            {# Display name from build_checklist, honest fallback to the raw hash. #}
+                            <div class="retirement-checklist-candidate">{{ (checklist.get('candidate_name') or checklist.get('candidate_id', '')) }}</div>
+                            {% if checklist.get('holdings_available') and checklist.get('holdings') %}
+                            <div class="retirement-checklist-holdings">
+                                Current holdings: {{ checklist.get('holdings', []) | join(', ') }}
+                            </div>
+                            {% else %}
+                            <div class="retirement-checklist-holdings retirement-checklist-holdings--unavailable">
+                                {{- checklist.get('unavailable_note') -}}
+                            </div>
+                            {% endif %}
+                            <ol class="retirement-checklist-steps">
+                                {% for step in checklist.get('steps', []) %}
+                                <li>{{ step }}</li>
+                                {% endfor %}
+                            </ol>
+                        {% else %}
+                            <p class="prism-empty">Checklist unavailable.</p>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+        {% endmacro %}
+
+        {# One figure line: the value, or the figure's name with its stored reason when it is null. A count of days is a whole number; a unit that ends the figure's name is not repeated. #}
+        {% macro tenure_figure(fig_name, fig, population=none, with_population=false) %}
+            {% set fig_label = fig_name | replace('_', ' ') %}
+            {% if fig is mapping %}
+                {% set unit = fig.get('unit') %}
+                {% set value = fig.get('value') %}
+                {% if value is finite_number and (unit != 'days' or value is whole_number) %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% else %}{{ value | tenure_number }}{% endif %}
+                    {%- if unit == 'percent' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
+                    {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</div>
+                {% elif value is finite_number %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not computable, not recorded</div>
+                {% else %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not computable, {{ fig.get('reason') | tenure_text }}</div>
+                {% endif %}
+            {% else %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not recorded</div>
+            {% endif %}
+        {% endmacro %}
+
+        {# One evidence item: heading, label, provenance, then every figure the stored item holds. #}
+        {% macro tenure_evidence_item(name, item, missing_items) %}
+            {% set item = item if item is mapping else {} %}
+            {% set headings = {'performance': 'Performance', 'composite': 'Composite score', 'redundancy': 'Redundancy', 'backtest': 'Backtest', 'marginal': 'Marginal contribution', 'long_vix': 'Long VIX hedge'} %}
+            <div class="tenure-review-evidence" data-testid="tenure-review-evidence-{{ name }}">
+                <div class="tenure-review-evidence-heading" data-testid="tenure-review-evidence-heading">{{ headings.get(name, name) }}</div>
+                {% set lbl = item.get('label') %}
+                {% set w = item.get('window') %}
+                {% set reason_on_not_used_line = name == 'redundancy' and item.get('pair') is not mapping and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
+                <div class="retirement-rec-basis">{{ lbl if lbl is string and lbl.strip() else name | replace('_', ' ') }}</div>
+                {% if item.get('status') == 'available' %}
+                {% elif item.get('status') == 'not_applicable' %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">not applicable{% if not reason_on_not_used_line %}: {{ item.get('reason') | tenure_text }}{% endif %}</div>
+                {% else %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">unavailable{% if not reason_on_not_used_line %}: {{ item.get('reason') | tenure_text }}{% endif %}</div>
+                {% endif %}
+                {% if item.get('status') == 'available' or item.get('pair') is mapping or w is mapping %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">subject: {{ item.get('subject') | tenure_text }}</div>
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">source: {{ item.get('source') | tenure_text }}</div>
+                {% endif %}
+                {% if w is mapping %}
+                <div class="tenure-review-evidence-meta retirement-rec-meta">window: {{ w.get('first') | tenure_text }} to {{ w.get('last') | tenure_text }}, {% if w.get('days') is not whole_number %}days not recorded{% elif w.get('sessions') is not whole_number %}trading sessions not recorded{% elif w.get('days') < w.get('sessions') %}{{ 'holdings on ' if name == 'long_vix' else '' }}{{ w.get('days') | int }} of {{ w.get('sessions') | int }} trading days{% else %}{{ w.get('days') | int }} trading days{% endif %}</div>
+                {% endif %}
+                {% if item.get('status') == 'available' and item.get('figures') is mapping %}
+                {% for fig_name, fig in item.get('figures').items() %}
+                    {{ tenure_figure(fig_name, fig, item.get('population_size'), name == 'composite') }}
+                {% endfor %}
+                {% elif item.get('status') == 'available' and item.get('pair') is not mapping %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">figures: not recorded</div>
+                {% endif %}
+                {% set pair = item.get('pair') %}
+                {% if pair is mapping %}
+                {% set ugate = pair.get('uncertainty_gate') if pair.get('uncertainty_gate') is mapping else {} %}
+                {% set sgate = pair.get('structural_gate') if pair.get('structural_gate') is mapping else {} %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">paired with: {% set sn = pair.get('sibling_name') %}{{ sn if sn is string and sn.strip() else (pair.get('sibling_id') | tenure_text) }}</div>
+                {% for fig_name in ('correlation', 'ci_lower', 'ci_upper', 'stressed_correlation', 'holdings_overlap') %}
+                    {{ tenure_figure(fig_name, pair.get(fig_name)) }}
+                {% endfor %}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">aligned days: {{ pair.get('n_obs') | tenure_whole }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">uncertainty gate: {{ ugate.get('text') | tenure_text }}</div>
+                <div class="tenure-review-evidence-figure retirement-rec-gates">structural redundancy gate: {{ sgate.get('text') | tenure_text }}</div>
+                {% if pair.get('note') is string and pair.get('note').strip() %}
+                <div class="tenure-review-evidence-meta retirement-rec-meta">{{ pair.get('note') }}</div>
+                {% endif %}
+                {% elif item.get('status') == 'available' and item.get('summary') is string and item.get('summary').strip() %}
+                <div class="tenure-review-evidence-meta retirement-rec-meta">{{ item.get('summary') }}</div>
+                {% endif %}
+                {% if name == 'redundancy' and missing_items is sequence and missing_items is not string and missing_items is not mapping and 'redundancy' in missing_items %}
+                <div class="tenure-review-evidence-meta retirement-rec-meta">not used in the verdict: {{ item.get('reason') | tenure_text }}</div>
+                {% endif %}
+                {% set not_compared = item.get('not_compared') %}
+                {% if not_compared is sequence and not_compared is not string and not_compared is not mapping %}
+                {% for peer in not_compared if peer is mapping %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">not compared: {{ peer.get('display_name') | tenure_text }}, {{ peer.get('reason') | tenure_text }}</div>
+                {% endfor %}
+                {% endif %}
+                {% set excluded = item.get('excluded') %}
+                {% if excluded is sequence and excluded is not string and excluded is not mapping %}
+                {% for ex in excluded if ex is mapping %}
+                    <div class="tenure-review-evidence-meta retirement-rec-meta">left out: {{ ex.get('display_name') | tenure_text }}, {{ ex.get('reason') | tenure_text }}</div>
+                {% endfor %}
+                {% endif %}
+            </div>
+        {% endmacro %}
+
         <section class="matrix-card" data-testid="retirement-recommendations-panel">
             <div class="matrix-card-header">Retirement Recommendations</div>
+
+            {# Symphony tenure review: header, run state, then one entry per live symphony. #}
+            <div class="tenure-review-header">
+                <button type="button"
+                        class="run-trigger-btn"
+                        data-testid="tenure-review-run-btn"
+                        onclick="retRunReview(this)">Run review now</button>
+                <span class="tenure-review-run-message" data-testid="tenure-review-run-message"
+                      role="status" aria-live="polite"></span>
+            </div>
+            {% if tenure_review_status is mapping and tenure_review_status.get('running') %}
+            <div class="tenure-review-notice" data-testid="tenure-review-running-notice">review running since {{ tenure_review_status.get('running_since') | tenure_eastern }}</div>
+            {% endif %}
+            {% if tenure_review_status is mapping and tenure_review_status.get('last_failed_attempt') is mapping %}
+            <div class="tenure-review-notice tenure-review-notice--failed" data-testid="tenure-review-failed-notice">latest review attempt failed: {{ tenure_review_status.last_failed_attempt.get('reason') | tenure_text }} ({{ tenure_review_status.last_failed_attempt.get('at') | tenure_eastern }})</div>
+            {% endif %}
+
+            {% if tenure_review is mapping %}
+            <div class="tenure-review-run">
+                <span data-testid="tenure-review-as-of">as of trading day {{ tenure_review.get('as_of_trading_day') | tenure_text }}</span>
+                {% if tenure_review.get('degraded') is true %}
+                <div class="tenure-review-notice" data-testid="tenure-review-degraded-notice">Some Composer reads did not complete in this run; the affected items say why.</div>
+                {% endif %}
+                <span data-testid="tenure-review-run-time">run completed {% if tenure_review_completed_et %}{{ tenure_review_completed_et }} ET{% else %}time not recorded{% endif %}</span>
+                {% if tenure_review.get('trigger') is string %}
+                <span data-testid="tenure-review-trigger">trigger: {{ tenure_review.get('trigger') | tenure_text | replace('_', ' ') }}</span>
+                {% endif %}
+                <span data-testid="tenure-review-threshold">threshold in effect: {% if tenure_review.get('threshold_in_effect') is whole_number %}{{ tenure_review.get('threshold_in_effect') | int }} trading days{% else %}not recorded{% endif %}</span>
+                {% if tenure_review.get('threshold_note') is string and tenure_review.get('threshold_note').strip() %}
+                <span data-testid="tenure-review-threshold-note">{{ tenure_review.get('threshold_note') }}</span>
+                {% endif %}
+            </div>
+            {% if not tenure_review_entries %}
+            <p class="prism-empty" data-testid="tenure-review-no-symphonies">No live symphonies in this review.</p>
+            {% endif %}
+            {% for e in tenure_review_entries %}
+            {% set sid = e.get('symphony_id') if e.get('symphony_id') is string else '' %}
+            {% set verdict_mod = e.get('verdict') if e.get('verdict') in ('retire_candidate', 'watch', 'keep') else 'none' %}
+            {% set basis = e.get('basis') if e.get('basis') is mapping else {} %}
+            {% set ev = e.get('evidence') if e.get('evidence') is mapping else {} %}
+            {% set status = e.get('approval_status') %}
+            {% set vtext = e.get('verdict_text') %}
+            {% set chip_mod = verdict_mod if vtext is string and vtext.strip() else 'none' %}
+            <div class="tenure-review-entry retirement-rec-card" data-testid="tenure-review-entry" data-symphony-id="{{ sid }}">
+                <div class="tenure-review-entry-head retirement-rec-pair">
+                    <span class="tenure-review-name" data-testid="tenure-review-name" title="{{ sid }}">{% set dn = e.get('display_name') %}{{ dn if dn is string and dn.strip() else (sid if sid.strip() else 'not recorded') }}</span>
+                    <span class="tenure-verdict-chip tenure-verdict-chip--{{ chip_mod }}" data-testid="tenure-review-verdict-chip">{{ e.get('verdict_text') | tenure_text }}</span>
+                </div>
+                {% if 'tenure_trading_days' in e %}
+                <div class="tenure-review-line retirement-rec-meta" data-testid="tenure-review-tenure">tenure: {{ e.get('tenure_trading_days') | tenure_whole }}{% if e.get('tenure_trading_days') is whole_number %} trading days{% endif %}</div>
+                {% endif %}
+                {% if 'eligibility_text' in e %}
+                <div class="tenure-review-line retirement-rec-meta" data-testid="tenure-review-eligibility">{{ e.get('eligibility_text') | tenure_text }}</div>
+                {% endif %}
+                {% set reasons = e.get('verdict_reasons') %}
+                {% set reasons_list = reasons is sequence and reasons is not string and reasons is not mapping %}
+                {% if 'verdict_reasons' in e and (reasons or not reasons_list) %}
+                <div class="tenure-review-line" data-testid="tenure-review-verdict-reasons">because: {% if reasons_list %}{% for r in reasons %}{% if not loop.first %}; {% endif %}{{ r | tenure_text }}{% endfor %}{% else %}not recorded{% endif %}</div>
+                {% endif %}
+                <div class="tenure-review-line" data-testid="tenure-review-basis">basis: {{ basis.get('label') | tenure_text }}
+                    {%- if basis.get('fallback_reason') is string and basis.get('fallback_reason').strip() %}; {{ basis.get('fallback_reason') }}{% endif %}
+                    {%- if basis.get('series_begins') is string and basis.get('series_begins').strip() %}{% if basis.get('kind') == 'shadow' %}; first shadow return {{ basis.get('series_begins') }} (measured from the previous session's close){% else %}; series begins {{ basis.get('series_begins') }}{% endif %}{% endif %}
+                    {%- if basis.get('tenure_begins') is string and basis.get('tenure_begins').strip() %}; tenure begins {{ basis.get('tenure_begins') }}{% endif %}</div>
+                {% set missing = e.get('missing_items') %}
+                {% set missing_list = missing is sequence and missing is not string and missing is not mapping %}
+                {% if 'missing_items' in e and (missing or not missing_list) %}
+                <div class="tenure-review-line" data-testid="tenure-review-missing">missing: {% if not missing_list %}not recorded{% endif %}{% for m in (missing if missing_list else []) %}{% set mi = ev.get(m) if m is string else none %}{% if not loop.first %}; {% endif %}{{ (m | replace('_', ' ')) if m is string and m.strip() else 'not recorded' }} ({% if mi is mapping and mi.get('status') == 'not_applicable' %}not applicable: {% endif %}{{ (mi.get('reason') if mi is mapping else none) | tenure_text }}){% endfor %}</div>
+                {% endif %}
+                <div class="tenure-review-evidence-grid">
+                    {% for name in ('performance', 'composite', 'redundancy', 'backtest', 'marginal', 'long_vix') %}
+                    {{ tenure_evidence_item(name, ev.get(name), e.get('missing_items')) }}
+                    {% endfor %}
+                </div>
+                {% if sid.strip() and (e.get('verdict') == 'retire_candidate' or status) %}
+                <div class="tenure-review-lifecycle" data-testid="retirement-recommendation-card">
+                    {{ retirement_lifecycle(sid, e.get('explanation'), e.get('explanation_written_on'), status, e.get('_checklist'), e.get('verdict') == 'retire_candidate' and sid.strip(), e.get('verdict') == 'retire_candidate') }}
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% elif tenure_review_read_failed %}
+            <p class="tenure-review-notice tenure-review-notice--failed" data-testid="tenure-review-read-failed">Review unavailable: the stored review could not be read.</p>
+            {% else %}
+            {% if not retirement_recommendations %}
+            <div data-testid="retirement-recommendations-empty">
+                <p class="prism-empty" data-testid="tenure-review-empty">No review yet. Use the button above to run the first one.</p>
+            </div>
+            {% else %}
+            <p class="tenure-review-notice" data-testid="tenure-review-empty">No review yet. Use the button above to run the first one.</p>
+            {% endif %}
+            {% endif %}
 
             {# Cycle 2e (retirement-visibility AC-6): the "last run" block is #}
             {# ALWAYS present, above the cards, so a run that recommended     #}
@@ -1704,23 +2042,30 @@
             {% if retirement_recommendations %}
                 {% for rec in retirement_recommendations %}
                 <div class="retirement-rec-card" data-testid="retirement-recommendation-card">
-                    {# AC-1 (Cycle 2c): resolved display name is primary; the raw    #}
-                    {# Composer hash stays available but secondary (title tooltip). #}
-                    {% set _cand_display = rec.get('candidate_name') or rec.get('candidate_id', '') %}
-                    {% set _sib_display = rec.get('sibling_name') or rec.get('sibling_id', '') %}
+                    {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
+                    {# A stored id, name or label that is not non-blank text reads "not recorded"; a card without a usable candidate id offers no decision. #}
+                    {% set _cid = rec.get('candidate_id') %}
+                    {% set _sid = rec.get('sibling_id') %}
+                    {% set _cid_ok = _cid is string and _cid.strip() %}
+                    {% set _sid_ok = _sid is string and _sid.strip() %}
+                    {% set _cname = rec.get('candidate_name') %}
+                    {% set _sname = rec.get('sibling_name') %}
+                    {% set _cand_display = (_cname if _cname is string and _cname.strip() else _cid) if _cid_ok else 'not recorded' %}
+                    {% set _sib_display = (_sname if _sname is string and _sname.strip() else _sid) if _sid_ok else 'not recorded' %}
                     <div class="retirement-rec-pair">
-                        <span class="retirement-rec-candidate" title="{{ rec.get('candidate_id', '') | e }}">{{ _cand_display | e }}</span>
+                        <span class="retirement-rec-candidate" title="{{ (_cid if _cid_ok else 'not recorded') | e }}">{{ _cand_display | e }}</span>
                         <span aria-hidden="true">&rarr;</span>
-                        <span class="retirement-rec-sibling" title="{{ rec.get('sibling_id', '') | e }}">kept: {{ _sib_display | e }}</span>
+                        <span class="retirement-rec-sibling" title="{{ (_sid if _sid_ok else 'not recorded') | e }}">kept: {{ _sib_display | e }}</span>
                     </div>
                     <div class="retirement-rec-meta">
                         <span data-testid="retirement-rec-correlation">
-                            Correlation: {{ "%.2f" | format(rec.correlation) if rec.get('correlation') is not none else '—' }}
+                            Correlation: {{ rec.get('correlation') | tenure_number if rec.get('correlation') is not none else '—' }}
                         </span>
                         <span>
                             Composite gap:
                             {%- if rec.get('sibling_composite') is not none and rec.get('candidate_composite') is not none %}
-                                {{ "%.2f" | format(rec.sibling_composite - rec.candidate_composite) }}
+                                {# 1e300 bounds the operands so their difference cannot overflow to infinity. #}{% set sc = rec.sibling_composite %}{% set cc = rec.candidate_composite %}
+                                {{ (sc - cc) | tenure_number if sc is finite_number and cc is finite_number and -1e300 < sc < 1e300 and -1e300 < cc < 1e300 else 'not recorded' }}
                             {%- else %}
                                 —
                             {%- endif %}
@@ -1730,65 +2075,11 @@
                         <span>Uncertainty gate: {{ 'passed' if rec.get('uncertainty_gate_passed') else 'not met' }}</span>
                         <span>Structural-redundancy gate: {{ 'passed' if rec.get('structural_redundancy_gate_passed') else 'not met' }}</span>
                     </div>
-                    <div class="retirement-rec-basis">{{ rec.get('basis_label', '') | e }}</div>
-                    <div class="retirement-rec-explanation" data-testid="retirement-rec-explanation">
-                        {%- if rec.get('explanation') %}{{ rec.get('explanation') | e }}{% else %}explanation unavailable{% endif -%}
-                    </div>
-                    <span class="retirement-status-chip retirement-status-chip--{{ rec.get('approval_status', 'pending') | e }}"
-                          data-testid="retirement-rec-status">
-                        {{- rec.get('approval_status', 'pending') | capitalize | e -}}
-                    </span>
-                    {% if rec.get('approval_status', 'pending') == 'pending' %}
-                    <div class="retirement-rec-actions">
-                        <button type="button"
-                                class="run-trigger-btn"
-                                data-testid="retirement-approve-btn"
-                                data-candidate-id="{{ rec.get('candidate_id', '') | e }}"
-                                onclick="retDispatchDecision('approve', this)">
-                            Approve retirement
-                        </button>
-                        <button type="button"
-                                class="discuss-btn"
-                                data-testid="retirement-reject-btn"
-                                data-candidate-id="{{ rec.get('candidate_id', '') | e }}"
-                                onclick="retDispatchDecision('reject', this)">
-                            Reject
-                        </button>
-                    </div>
-                    {% endif %}
-                    {% if rec.get('approval_status') == 'approved' %}
-                    {% set cl = rec.get('_checklist') %}
-                    <div class="retirement-checklist" data-testid="retirement-checklist">
-                        <div class="retirement-checklist-header">Manual wind-down checklist</div>
-                        {% if cl %}
-                            {# AC-3 (Cycle 2c): render build_checklist's already-resolved #}
-                            {# candidate_name -- honest fallback to the raw hash.          #}
-                            <div class="retirement-checklist-candidate">{{ (cl.get('candidate_name') or cl.get('candidate_id', '')) | e }}</div>
-                            {% if cl.get('holdings_available') and cl.get('holdings') %}
-                            <div class="retirement-checklist-holdings">
-                                Current holdings: {{ cl.get('holdings', []) | join(', ') | e }}
-                            </div>
-                            {% else %}
-                            <div class="retirement-checklist-holdings retirement-checklist-holdings--unavailable">
-                                {{- cl.get('unavailable_note') | e -}}
-                            </div>
-                            {% endif %}
-                            <ol class="retirement-checklist-steps">
-                                {% for step in cl.get('steps', []) %}
-                                <li>{{ step | e }}</li>
-                                {% endfor %}
-                            </ol>
-                        {% else %}
-                            <p class="prism-empty">Checklist unavailable.</p>
-                        {% endif %}
-                    </div>
-                    {% endif %}
+                    {% set _lbl = rec.get('basis_label') %}
+                    <div class="retirement-rec-basis">{{ (_lbl if _lbl is string and _lbl.strip() else 'not recorded') | e }}</div>
+                    {{ retirement_lifecycle(_cid if _cid_ok else '', rec.get('explanation'), rec.get('explanation_written_on'), rec.get('approval_status', 'pending'), rec.get('_checklist'), _cid_ok, true) }}
                 </div>
                 {% endfor %}
-            {% else %}
-                <p class="prism-empty" data-testid="retirement-recommendations-empty">
-                    No retirement recommendations yet — advisory, read-only.
-                </p>
             {% endif %}
         </section>{# /retirement-recommendations-panel #}
 

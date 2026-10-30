@@ -17,16 +17,17 @@ Cycle 2e: the worker now calls build_recommendations_with_summary
 targets the new entry point (via the ``with_summary`` stub adapter), keeping
 each test's original intent.
 
-Lazy-import mocking note: _retirement_recommender_tick_worker does
-`from advisors.retirement_recommender import (build_recommendations,
-persist_recommendations)` INSIDE the function body (CC-2) -- patching the
-MODULE-level attributes (advisors.retirement_recommender.build_recommendations
-etc.) before calling the worker is picked up correctly, since a `from X
-import Y` executes at call time and reads Y off X's current namespace. Same
-pattern applies to the explainer import this cycle adds.
+Since the review run replaced the old producer, the night's recommendations come from
+advisors.tenure_review_runner.run_tenure_review (the "build" step below), which the tests
+replace with a stand-in over the real result types. The job imports the runner, the
+persistence function and the explainer INSIDE its body (CC-2), so patching the MODULE-level
+attributes of those modules before calling the worker is picked up: a `from X import Y`
+executes at call time and reads Y off X's current namespace.
 
-Expected state: RED until app.py's _retirement_recommender_tick_worker is
-extended to call advisors.retirement_explainer.explain_recommendation.
+Each wiring test runs through both producers of recommendations -- the shared review job
+(app._tenure_review_job) and the Cycle 2e recommender worker
+(app._retirement_recommender_tick_worker) -- because both finish a recommendation in the one
+shared helper.
 """
 
 from __future__ import annotations
@@ -39,9 +40,65 @@ from unittest.mock import patch
 import pytest
 
 import app as app_module
+from tests.app import _tenure_review_job_builders as jb
+from tests.app._retirement_producers import PRODUCER_KINDS
 from tests.app._retirement_run_summary_stub import with_summary
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# The review run is one of the two sources of the night's recommendations; the other is the
+# Cycle 2e recommender's producer (patched below as build_recommendations_with_summary).
+_RUN = "advisors.tenure_review_runner.run_tenure_review"
+
+
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
+@pytest.fixture(autouse=True)
+def _scratch_environment(monkeypatch):
+    """The run reads account and threshold settings from the environment file: never the
+    developer's real one."""
+    jb.hide_environment(monkeypatch)
+
+
+@pytest.fixture(params=PRODUCER_KINDS)
+def kind(request):
+    """Which producer a wiring test drives: the tenure review job, then the Cycle 2e
+    recommender worker. Both finish a recommendation in the one shared helper, so the
+    explainer wiring below is the same for both."""
+    return request.param
+
+
+def _source(kind, recs, hook=None):
+    """The patch that makes the chosen producer return ``recs`` (a list, or a callable giving
+    one); ``hook(kwargs)``, when given, runs first, as the producer's "build" step."""
+    if kind == "review":
+        return patch(_RUN, side_effect=jb.fake_runner(recs, hook=hook))
+
+    def build(**kwargs):
+        if hook is not None:
+            hook(kwargs)
+        return list(recs() if callable(recs) else recs)
+
+    return patch(
+        "advisors.retirement_recommender.build_recommendations_with_summary",
+        side_effect=with_summary(build),
+    )
+
+
+def _run(kind):
+    """Run the chosen producer once, on the calling thread."""
+    if kind == "review":
+        app_module._tenure_review_job("nightly")
+    else:
+        app_module._retirement_recommender_tick_worker()
+
 
 # AC-9 (Cycle 2e): the invariant the retired golden-SHA pin protected was
 # "advisors/retirement_recommender.py stays LLM-free" (Cycle 2b AC-2). A byte
@@ -282,19 +339,16 @@ def test_retirement_recommender_module_never_imports_ai_advisor():
 # ===========================================================================
 
 
-def test_worker_calls_explainer_once_per_recommendation():
+def test_worker_calls_explainer_once_per_recommendation(kind):
     recs = _sample_recs()
     with (
-        patch(
-            "advisors.retirement_recommender.build_recommendations_with_summary",
-            side_effect=with_summary(lambda **kw: recs),
-        ),
+        _source(kind, recs),
         patch("advisors.retirement_recommender.persist_recommendations", return_value=len(recs)),
         patch(
             "advisors.retirement_explainer.explain_recommendation", return_value="explanation text"
         ) as mock_explain,
     ):
-        app_module._retirement_recommender_tick_worker()
+        _run(kind)
 
     assert mock_explain.call_count == len(recs), (
         f"Expected explain_recommendation to be called once per recommendation "
@@ -302,7 +356,7 @@ def test_worker_calls_explainer_once_per_recommendation():
     )
 
 
-def test_worker_stamps_explanation_into_each_recs_raw_response_before_persist():
+def test_worker_stamps_explanation_into_each_recs_raw_response_before_persist(kind):
     recs = _sample_recs()
     captured_persist_arg: list[dict] = []
 
@@ -311,17 +365,14 @@ def test_worker_stamps_explanation_into_each_recs_raw_response_before_persist():
         return len(recs_arg)
 
     with (
-        patch(
-            "advisors.retirement_recommender.build_recommendations_with_summary",
-            side_effect=with_summary(lambda **kw: recs),
-        ),
+        _source(kind, recs),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch(
             "advisors.retirement_explainer.explain_recommendation",
             return_value="stamped explanation",
         ),
     ):
-        app_module._retirement_recommender_tick_worker()
+        _run(kind)
 
     assert len(captured_persist_arg) == len(recs), (
         "persist_recommendations must be called with all recommendations, stamped."
@@ -333,15 +384,14 @@ def test_worker_stamps_explanation_into_each_recs_raw_response_before_persist():
         )
 
 
-def test_explainer_runs_after_build_and_before_persist_ordering():
+def test_explainer_runs_after_build_and_before_persist_ordering(kind):
     """Explicit call-order assertion (not just call-count) -- explain must
     happen strictly between build and persist, never before build, never
     after persist."""
     events: list[str] = []
 
-    def _fake_build(**kwargs):
+    def _fake_build(kwargs):
         events.append("build")
-        return _sample_recs()
 
     def _fake_explain(rec):
         events.append(f"explain:{rec['candidate_id']}")
@@ -352,16 +402,13 @@ def test_explainer_runs_after_build_and_before_persist_ordering():
         return len(recs_arg)
 
     with (
-        patch(
-            "advisors.retirement_recommender.build_recommendations_with_summary",
-            side_effect=with_summary(_fake_build),
-        ),
+        _source(kind, _sample_recs, hook=_fake_build),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch("advisors.retirement_explainer.explain_recommendation", side_effect=_fake_explain),
     ):
-        app_module._retirement_recommender_tick_worker()
+        _run(kind)
 
-    assert events[0] == "build", f"build_recommendations must run first, got order {events}."
+    assert events[0] == "build", f"the review run must come first, got order {events}."
     assert events[-1] == "persist", f"persist_recommendations must run last, got order {events}."
     explain_events = [e for e in events if e.startswith("explain:")]
     assert len(explain_events) == 2, f"Expected 2 explain events, got {events}."
@@ -375,7 +422,7 @@ def test_explainer_runs_after_build_and_before_persist_ordering():
         )
 
 
-def test_explainer_failure_none_does_not_block_persistence():
+def test_explainer_failure_none_does_not_block_persistence(kind):
     """AC-9: the explainer never gates persistence -- a None explanation
     (e.g. the LLM is down) still lets persist_recommendations run with every
     recommendation, explanation stamped as None."""
@@ -387,35 +434,29 @@ def test_explainer_failure_none_does_not_block_persistence():
         return len(recs_arg)
 
     with (
-        patch(
-            "advisors.retirement_recommender.build_recommendations_with_summary",
-            side_effect=with_summary(lambda **kw: recs),
-        ),
+        _source(kind, recs),
         patch("advisors.retirement_recommender.persist_recommendations", side_effect=_fake_persist),
         patch("advisors.retirement_explainer.explain_recommendation", return_value=None),
     ):
-        app_module._retirement_recommender_tick_worker()
+        _run(kind)
 
     assert len(captured) == len(recs), "A None explanation must never block persistence."
     for rec in captured:
         assert rec.get("explanation") is None
 
 
-def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(caplog):
+def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(kind, caplog):
     """AC-9: no recommendations tonight -> the explainer is never invoked at
     all (nothing to explain), persist_recommendations is still called
     (honoring the existing Cycle-2a contract) with an empty list."""
     with (
-        patch(
-            "advisors.retirement_recommender.build_recommendations_with_summary",
-            side_effect=with_summary(lambda **kw: []),
-        ),
+        _source(kind, []),
         patch(
             "advisors.retirement_recommender.persist_recommendations", return_value=0
         ) as mock_persist,
         patch("advisors.retirement_explainer.explain_recommendation") as mock_explain,
     ):
-        app_module._retirement_recommender_tick_worker()
+        _run(kind)
 
     mock_explain.assert_not_called()
     mock_persist.assert_called_once()
@@ -425,7 +466,7 @@ def test_empty_recommendations_never_calls_explainer_or_persist_with_anything(ca
     )
 
 
-def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(caplog):
+def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(kind, caplog):
     """Defense-in-depth: explain_recommendation is D-1/never-raises by its
     own contract, but if it somehow did raise (a contract violation), the
     worker must catch it, log type(exc).__name__ only, and continue --
@@ -434,10 +475,7 @@ def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(
     recs = _sample_recs()
 
     with (
-        patch(
-            "advisors.retirement_recommender.build_recommendations_with_summary",
-            side_effect=with_summary(lambda **kw: recs),
-        ),
+        _source(kind, recs),
         patch("advisors.retirement_recommender.persist_recommendations", return_value=len(recs)),
         patch(
             "advisors.retirement_explainer.explain_recommendation",
@@ -446,10 +484,10 @@ def test_explainer_unexpected_exception_is_logged_and_does_not_crash_the_worker(
         caplog.at_level(logging.WARNING),
     ):
         try:
-            app_module._retirement_recommender_tick_worker()
+            _run(kind)
         except Exception as exc:  # noqa: BLE001
             pytest.fail(
-                f"_retirement_recommender_tick_worker must never propagate an "
+                f"the producer ({kind}) must never propagate an "
                 f"explainer exception: {type(exc).__name__}: {exc}"
             )
 

@@ -22,8 +22,10 @@ Retry policy
 ------------
 Exponential backoff: 1 s → 2 s → 4 s → 8 s.  ``max_retries`` is a per-call
 parameter (default 4).  The maximum cumulative wait is bounded by
-``BACKTEST_MAX_RETRY_WAIT_SECONDS``.  429 responses respect the ``Retry-After``
-header when present; otherwise the first backoff interval is used.
+``BACKTEST_MAX_RETRY_WAIT_SECONDS`` for a caller with the default ``min_retry_wait_seconds``
+only; a larger floor can outrun it.  429 responses respect the ``Retry-After``
+header when present, clamped to 60 s; otherwise the first backoff interval is used.
+A caller may raise every wait to a floor with ``min_retry_wait_seconds``.
 
 Rate limit
 ----------
@@ -34,7 +36,9 @@ does not sleep between separate ``run_backtest`` calls.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -53,8 +57,13 @@ logger = logging.getLogger(__name__)
 # Backoff intervals (seconds) indexed by attempt number (0-based).
 _BACKOFF_INTERVALS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0)
 
-# Hard ceiling on cumulative retry wait — sum of all backoff intervals.
-BACKTEST_MAX_RETRY_WAIT_SECONDS: float = sum(_BACKOFF_INTERVALS)  # 15 s
+# Longest wait taken on a server's Retry-After say-so, seconds: the length of Composer's
+# per-minute rate-limit window, so a mistaken or hostile header cannot stall a caller for hours.
+_MAX_RETRY_AFTER_SECONDS: float = 60.0
+
+# Ceiling on the cumulative retry wait of a default caller, seconds: the longest case is every
+# one of the four default retries answered 429 with a Retry-After at the clamp.
+BACKTEST_MAX_RETRY_WAIT_SECONDS: float = len(_BACKOFF_INTERVALS) * _MAX_RETRY_AFTER_SECONDS
 
 # Explicit per-request HTTP timeout.  Composer serialises a full decision-tree
 # plus per-day portfolio values so 120 s is required for large symphonies.
@@ -233,6 +242,21 @@ def _parse_response(body: dict, symphony_id: str) -> BacktestResult:
     )
 
 
+def _retry_after_seconds(header: str | None, fallback: float) -> float:
+    """The wait a Retry-After header asks for, in seconds, within 0..the clamp.
+
+    Only a plain number of seconds is honoured; an HTTP-date, words, an empty value or
+    nan fall back to ``fallback``. Negative values wait 0, large or infinite ones the clamp.
+    """
+    try:
+        seconds = float(header)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return fallback
+    if math.isnan(seconds):
+        return fallback
+    return min(max(seconds, 0.0), _MAX_RETRY_AFTER_SECONDS)
+
+
 def _error_result(reason: str) -> BacktestResult:
     """Construct a failure ``BacktestResult`` with the given reason string."""
     return BacktestResult(stats=None, data_warnings=[], error=reason)
@@ -254,6 +278,11 @@ def run_backtest(
     broker: str = _DEFAULT_BROKER,
     backtest_version: str = _DEFAULT_BACKTEST_VERSION,
     max_retries: int = 4,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    compact_body: bool = False,
+    retry_on_rate_limit: bool = True,
+    min_retry_wait_seconds: float = 0.0,
 ) -> BacktestResult:
     """Submit an inline symphony tree to ``POST /api/v0.1/backtest`` and parse the result.
 
@@ -281,6 +310,15 @@ def run_backtest(
         Maximum number of retry attempts after transient failures.  A value of
         0 means no retries (first attempt only).  Bounded retry loops only —
         never unbounded.
+    start_date / end_date:
+        ISO dates added to the request body only when given.
+    compact_body:
+        Send the body as compact ASCII JSON text (``data=``) instead of
+        ``json=``; a large tree otherwise exceeds the request size limit (413).
+    retry_on_rate_limit:
+        When False a 429 returns its error result at once instead of waiting and retrying.
+    min_retry_wait_seconds:
+        Floor for every wait before a retry, seconds. Default 0 (no floor).
 
     Returns
     -------
@@ -302,7 +340,19 @@ def run_backtest(
         "broker": broker,
         "backtest_version": backtest_version,
     }
+    if start_date is not None:
+        body["start_date"] = start_date
+    if end_date is not None:
+        body["end_date"] = end_date
     headers = get_composer_headers()
+    post_kwargs: dict[str, Any] = {"json": body, "allow_redirects": False}
+    if compact_body:
+        try:
+            payload = json.dumps(body, separators=(",", ":"), allow_nan=False)
+        except (ValueError, TypeError) as exc:
+            return _error_result(f"request body not serializable: {type(exc).__name__}")
+        post_kwargs = {"data": payload, "allow_redirects": False}
+        headers = {**headers, "Content-Type": "application/json"}
 
     logger.debug(
         "run_backtest: POST %s | symphony_id=%s capital=%.0f broker=%s version=%s",
@@ -320,7 +370,7 @@ def run_backtest(
     for attempt in range(max_retries + 1):
         try:
             response = requests.post(
-                url, json=body, headers=headers, timeout=_BACKTEST_REQUEST_TIMEOUT
+                url, headers=headers, timeout=_BACKTEST_REQUEST_TIMEOUT, **post_kwargs
             )
             logger.info(
                 "run_backtest: POST /backtest HTTP %d (attempt %d/%d)",
@@ -337,9 +387,12 @@ def run_backtest(
                 return _parse_response(data, sid)
 
             if response.status_code == 429:
-                retry_after = float(response.headers.get("Retry-After", _BACKOFF_INTERVALS[0]))
+                retry_after = _retry_after_seconds(
+                    response.headers.get("Retry-After"), _BACKOFF_INTERVALS[0]
+                )
                 last_reason = f"HTTP 429 rate limit exceeded; Retry-After={retry_after:.0f}s"
-                if attempt < max_retries:
+                if retry_on_rate_limit and attempt < max_retries:
+                    retry_after = max(retry_after, min_retry_wait_seconds)
                     logger.info(
                         "run_backtest: rate-limited (429), sleeping %.1f s (attempt %d)",
                         retry_after,
@@ -350,10 +403,11 @@ def run_backtest(
                 return _error_result(last_reason)
 
             if response.status_code in _RETRYABLE_HTTP_STATUSES and attempt < max_retries:
-                delay = (
+                delay = max(
                     backoff_schedule[attempt]
                     if attempt < len(backoff_schedule)
-                    else _BACKOFF_INTERVALS[-1]
+                    else _BACKOFF_INTERVALS[-1],
+                    min_retry_wait_seconds,
                 )
                 last_reason = f"HTTP {response.status_code} (transient)"
                 logger.info(
@@ -371,7 +425,7 @@ def run_backtest(
 
         except requests.Timeout as exc:
             last_reason = f"request timed out after {_BACKTEST_REQUEST_TIMEOUT}s: {exc}"
-            logger.info("run_backtest: timeout on attempt %d — %s", attempt + 1, exc)
+            logger.info("run_backtest: timeout on attempt %d — %s", attempt + 1, type(exc).__name__)
             # Timeout is not worth retrying (the server may still be processing);
             # return an error result immediately.
             return _error_result(last_reason)
@@ -389,7 +443,7 @@ def run_backtest(
                     if attempt < len(backoff_schedule)
                     else _BACKOFF_INTERVALS[-1]
                 )
-                time.sleep(delay)
+                time.sleep(max(delay, min_retry_wait_seconds))
                 continue
             return _error_result(last_reason)
 

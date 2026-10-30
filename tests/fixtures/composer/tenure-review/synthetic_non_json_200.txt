@@ -1,0 +1,2 @@
+<!doctype html>
+<html><head><title>synthetic non-JSON 200</title></head><body>SYNTHETIC FIXTURE: hand-written, not a Composer response. Stands in for an HTTP 200 whose body is not JSON.</body></html>

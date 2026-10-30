@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -486,6 +487,22 @@ _daemon_log.setLevel(logging.DEBUG)
 _daemon_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
 _daemon_fh.setLevel(logging.DEBUG)
 _daemon_log.addHandler(_daemon_fh)
+# The tenure review's run path logs one INFO line per Composer request; these loggers are
+# not children of "alphabot", so the daemon's file handler is attached to each directly.
+for _run_path_logger_name in (
+    "advisors.composer_portfolio_client",
+    "advisors.composer_backtest_client",
+    "advisors.tenure_review_runner",
+):
+    _run_path_logger = logging.getLogger(_run_path_logger_name)
+    _run_path_logger.setLevel(logging.INFO)
+    _run_path_logger.addHandler(_daemon_fh)
+    # Without any handler the logging module's last resort printed warnings to standard error
+    # (the journal); the file handler removes it, so a WARNING-level stream handler restores it
+    # without sending the per-request INFO lines there.
+    _run_path_stderr = logging.StreamHandler()
+    _run_path_stderr.setLevel(logging.WARNING)
+    _run_path_logger.addHandler(_run_path_stderr)
 
 
 @app.before_request
@@ -1044,7 +1061,7 @@ def _round_floats(value, ndigits: int):
     dict/list shapes are walked (into candidate_metrics/sibling_metrics);
     bool/int/str/None pass through unchanged. bool MUST be checked before
     float/int (bool is an int subclass in Python, and int is never rounded
-    here -- see n_obs, which is intentionally compared exactly).
+    here -- see n_obs, which is an int and passes through unchanged).
     """
     if isinstance(value, bool):
         return value
@@ -1057,11 +1074,37 @@ def _round_floats(value, ndigits: int):
     return value
 
 
+# Run-stamped and moving-window keys: they change every run without changing what an
+# explanation was written about, so the reuse comparison ignores them and the explainer is
+# never shown them. window_first stays in the comparison (the pair's first day is evidence).
+# Both producers stamp their rows with a run id of their own -- "run_id" (the recommender
+# run, Cycle 2e) and "review_run_id" (the tenure review) -- and both are bookkeeping that
+# scopes a card to its run, never evidence.
+_EXPLAINER_WITHHELD_KEYS = frozenset(
+    {
+        "explanation",
+        "run_id",
+        "review_run_id",
+        "as_of_trading_day",
+        "explanation_written_on",
+        "n_obs",
+        "window_last",
+        "window_days",
+        "composite_window_first",
+        "composite_window_last",
+        "composite_window_days",
+    }
+)
+
+
 def _canonical_evidence_snapshot(rec: dict) -> dict:
     """Return a rounded snapshot of every evidence field in `rec` EXCEPT
     "explanation" (the value being reused) and the pair-identity keys
     "candidate_id"/"sibling_id" (already matched by construction to find
-    this prior row -- not citable evidence).
+    this prior row -- not citable evidence) and the run-stamped keys in
+    _EXPLAINER_WITHHELD_KEYS. The explainer is shown a copy of the rec with those
+    withheld keys removed, so the reuse comparison and the explainer's evidence
+    ignore the same keys.
 
     Cycle 2e (retirement-visibility AC-4): "run_id" is excluded too. The 03:45
     tick (and a manual "Run now") stamps a FRESH run_id on every rec each run;
@@ -1075,7 +1118,7 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     explainer._build_explain_messages json.dumps()s the WHOLE rec and
     instructs the LLM to ground claims in ALL supplied evidence, so a
     curated subset could miss a materially-drifted field (e.g.
-    stressed_correlation, ci_lower/ci_upper, n_obs, or an individual
+    stressed_correlation, ci_lower/ci_upper, or an individual
     candidate_metrics/sibling_metrics value) the LLM could still cite. Every
     float is rounded recursively (including into nested metrics dicts); a
     key missing on either side of the comparison makes the two snapshots
@@ -1084,7 +1127,7 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     with zero special-casing. Future-proof against schema growth: a NEW
     raw_response field automatically joins the comparison.
     """
-    excluded = {"explanation", "candidate_id", "sibling_id", "run_id"}
+    excluded = {"explanation", "candidate_id", "sibling_id", *_EXPLAINER_WITHHELD_KEYS}
     snapshot = {k: v for k, v in rec.items() if k not in excluded}
     return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
 
@@ -1229,6 +1272,87 @@ def _persist_retirement_run_summary(summary: dict, persisted_count: int) -> None
         _daemon_log.error("Retirement run summary persist failed: %s", type(exc).__name__)
 
 
+def _prepare_retirement_recs_for_persist(recs: list[dict], *, written_on: str) -> None:
+    """Complete each recommendation in `recs` in place before it is persisted.
+
+    Per recommendation: resolve candidate_name/sibling_name from live
+    database.load_state() (honest raw-id fallback; only set when absent),
+    round numeric evidence to _MATERIAL_CHANGE_ROUND_NDIGITS, then reuse the
+    most recent prior explanation for an unchanged pair or ask the explainer.
+    A fresh non-empty explanation is dated `written_on`; a reused one keeps the
+    day stored on the prior row (None when that row stored none). An explainer
+    failure degrades that one recommendation to no explanation and never
+    blocks the rest. Only type(exc).__name__ is logged (D-1).
+    """
+    if not recs:
+        return
+    from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
+
+    try:
+        _ret_bot_state = database.load_state()
+    except Exception:
+        _ret_bot_state = {}
+    try:
+        from advisors.frontrunner_builder import (  # lazy (CC-2)
+            resolve_incumbent_display_name as _resolve_ret_name,
+        )
+    except Exception:
+        _resolve_ret_name = None
+
+    # ONE role-wide query per call (not one per rec): the
+    # {(candidate_id, sibling_id): raw} map every reuse decision looks up.
+    try:
+        _prior_rows = database.get_advisor_observations_for_role(
+            "RETIREMENT_RECOMMENDATION", limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+        )
+        _prior_map = _build_retirement_prior_row_map(_prior_rows)
+    except Exception:
+        _prior_map = {}
+
+    for rec in recs:
+        # Only set when absent, never clobber a value a caller already supplied.
+        if "candidate_name" not in rec:
+            rec["candidate_name"] = (
+                _resolve_ret_name(_ret_bot_state, rec.get("candidate_id"))
+                if _resolve_ret_name is not None
+                else rec.get("candidate_id")
+            )
+        if "sibling_name" not in rec:
+            rec["sibling_name"] = (
+                _resolve_ret_name(_ret_bot_state, rec.get("sibling_id"))
+                if _resolve_ret_name is not None
+                else rec.get("sibling_id")
+            )
+
+        # Round BEFORE the reuse-vs-fresh decision and before the explainer
+        # sees it, so the cited precision equals the compared and persisted
+        # precision. _round_floats returns a new structure; write it back into
+        # the caller's dict.
+        rounded = _round_floats(rec, _MATERIAL_CHANGE_ROUND_NDIGITS)
+        rec.clear()
+        rec.update(rounded)
+
+        reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
+        if reused_explanation is not None:
+            prior_raw = _prior_map.get((rec.get("candidate_id"), rec.get("sibling_id"))) or {}
+            rec["explanation"] = reused_explanation
+            rec["explanation_written_on"] = prior_raw.get("explanation_written_on")
+            continue
+        try:
+            # The explainer is not shown what the reuse comparison looks through, so a
+            # fresh text cannot cite a figure that a later run would reuse with a stale value.
+            shown = {k: v for k, v in rec.items() if k not in _EXPLAINER_WITHHELD_KEYS}
+            rec["explanation"] = explain_recommendation(shown)
+        except Exception as exc:
+            _daemon_log.warning(
+                "Retirement explainer failed for %s: %s",
+                rec.get("candidate_id"),
+                type(exc).__name__,
+            )
+            rec["explanation"] = None
+        rec["explanation_written_on"] = written_on if rec["explanation"] else None
+
+
 def _retirement_recommender_tick_worker() -> None:
     """Background worker that runs the Retirement Recommender's daily tick.
 
@@ -1299,6 +1423,14 @@ def _retirement_recommender_tick_worker() -> None:
     persisted -- regardless of whether that rec's explanation is reused or
     freshly generated.
 
+    Tenure-review merge: the enrichment / rounding / reuse-or-explain pass
+    that the Cycle 2b/2c/2d paragraphs above describe is implemented ONCE,
+    in _prepare_retirement_recs_for_persist, and called both here and by the
+    tenure review job (_tenure_review_job). It additionally stamps each rec's
+    explanation_written_on (the day a fresh explanation was written, or the
+    prior row's day for a reused one), and shows the explainer a copy of the
+    rec without _EXPLAINER_WITHHELD_KEYS (run_id among them).
+
     D-1 error contract: only type(exc).__name__ appears in log records at
     WARNING+ -- a producer failure must never crash the scheduler thread.
     """
@@ -1333,81 +1465,9 @@ def _retirement_recommender_tick_worker() -> None:
             rec["run_id"] = summary["run_id"]
 
         if recs:
-            from advisors.retirement_explainer import explain_recommendation  # lazy (CC-2)
-
-            try:
-                _ret_bot_state = database.load_state()
-            except Exception:
-                _ret_bot_state = {}
-            try:
-                from advisors.frontrunner_builder import (  # lazy (CC-2)
-                    resolve_incumbent_display_name as _resolve_ret_name,
-                )
-            except Exception:
-                _resolve_ret_name = None
-
-            # PR#140 review finding 2: ONE role-wide query per tick (not one
-            # per rec) -- builds the {(candidate_id, sibling_id): raw} map
-            # every rec's reuse decision below looks up against.
-            try:
-                _prior_rows = database.get_advisor_observations_for_role(
-                    "RETIREMENT_RECOMMENDATION", limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
-                )
-                _prior_map = _build_retirement_prior_row_map(_prior_rows)
-            except Exception:
-                _prior_map = {}
-
-            for _i, rec in enumerate(recs):
-                # A real build_recommendations() rec never carries these keys
-                # (they are not part of the recommender's authoritative
-                # schema) -- only set them when absent, never clobber a
-                # value a caller already supplied.
-                if "candidate_name" not in rec:
-                    rec["candidate_name"] = (
-                        _resolve_ret_name(_ret_bot_state, rec.get("candidate_id"))
-                        if _resolve_ret_name is not None
-                        else rec.get("candidate_id")
-                    )
-                if "sibling_name" not in rec:
-                    rec["sibling_name"] = (
-                        _resolve_ret_name(_ret_bot_state, rec.get("sibling_id"))
-                        if _resolve_ret_name is not None
-                        else rec.get("sibling_id")
-                    )
-
-                # PR#140 2nd /code-review findings 2+3 (Cycle 2d, AC-2): round
-                # every numeric field to _MATERIAL_CHANGE_ROUND_NDIGITS BEFORE
-                # the reuse-vs-fresh decision AND before explain_recommendation
-                # sees it -- so the LLM never cites a number more precise than
-                # what gets persisted/rendered (closes finding 3's stale-
-                # citation window), and a stable pair's rounded evidence is
-                # byte-identical night-to-night even though build_recommendations
-                # legitimately returns slightly different raw floats each run
-                # (restores finding 2's reuse spend savings). _round_floats is
-                # pure (returns a NEW structure) -- reassign onto recs[_i] so
-                # persist_recommendations(recs) sees the rounded values
-                # regardless of which branch below runs; a rebind of the
-                # loop-local `rec` name alone would not propagate. n_obs (int)
-                # passes through _round_floats unrounded, as always.
-                rec = _round_floats(rec, _MATERIAL_CHANGE_ROUND_NDIGITS)
-                recs[_i] = rec
-
-                reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
-                if reused_explanation is not None:
-                    rec["explanation"] = reused_explanation
-                    continue
-                try:
-                    rec["explanation"] = explain_recommendation(rec)
-                except Exception as exc:
-                    # Defense-in-depth: explain_recommendation is D-1/never-
-                    # raises by its own contract, but a violation must never
-                    # take down the whole tick or leak the raw exception.
-                    _daemon_log.warning(
-                        "Retirement explainer failed for %s: %s",
-                        rec.get("candidate_id"),
-                        type(exc).__name__,
-                    )
-                    rec["explanation"] = None
+            _prepare_retirement_recs_for_persist(
+                recs, written_on=datetime.now(_ET).date().isoformat()
+            )
         if not build_failed:
             try:
                 _persisted = persist_recommendations(recs)
@@ -1437,6 +1497,158 @@ def _retirement_recommender_tick_worker() -> None:
         summary["status"] = "internal_error"
         summary["error_type"] = failure_type
     _persist_retirement_run_summary(summary, persisted_count)
+
+
+_TENURE_REVIEW_THRESHOLD_KEY = "TENURE_REVIEW_MIN_TRADING_DAYS"
+_TENURE_REVIEW_ACCOUNT_KEYS = ("ACCOUNT_INDIVIDUAL", "ACCOUNT_ROTH", "ACCOUNT_TRAD")
+_TENURE_REVIEW_FAILED_TEXT = "review failed"
+
+
+def _tenure_review_settings() -> dict:
+    """The review's settings, read fresh from the env file (the file wins over os.environ)."""
+    file_values = dotenv_values(ENV_FILE_PATH)
+    env = {}
+    for key in (_TENURE_REVIEW_THRESHOLD_KEY, *_TENURE_REVIEW_ACCOUNT_KEYS):
+        value = file_values.get(key)
+        if value is None:
+            value = os.environ.get(key)
+        if value is not None:
+            env[key] = value
+    return env
+
+
+def _eastern_stamp(moment: datetime) -> str:
+    """moment as "YYYY-MM-DD HH:MM" US Eastern; the one builder of that text."""
+    return moment.astimezone(_ET).strftime("%Y-%m-%d %H:%M")
+
+
+def _log_tenure_review_end(
+    trigger: str, run_id: str, ending: str, recommendations: int | None = None
+) -> None:
+    """The run's completion line: trigger, US Eastern time, run id and how the run ended.
+
+    A completed run also names how many recommendation rows it wrote.
+    """
+    count = "" if recommendations is None else f" recommendations={recommendations}"
+    _daemon_log.info(
+        "Tenure review end: trigger=%s at=%s run_id=%s %s%s",
+        trigger,
+        f"{_eastern_stamp(datetime.now(_ET))} ET",
+        run_id,
+        ending,
+        count,
+    )
+
+
+def _tenure_review_job(trigger: str, owner: object | None = None) -> None:
+    """Run one symphony tenure review under the run slot and persist what it found.
+
+    `owner` is the token from the caller's REVIEW_RUN_STATE.try_start; with none,
+    the job claims the slot itself and returns doing nothing when it is taken.
+    Recommendation rows are written before the run row and never for a run that
+    did not complete. A failure after they were written (the run row's write)
+    leaves them stored; each carries the review_run_id, and the readers ignore
+    the rows of a run that no run row describes. Never raises; only
+    type(exc).__name__ is logged and recorded.
+    """
+    tenure_review: types.ModuleType | None = None
+    run_id: str | None = None
+    try:
+        from advisors import tenure_review  # lazy (CC-2)
+
+        if owner is None:
+            owner = tenure_review.REVIEW_RUN_STATE.try_start(trigger)
+            if not owner:
+                _daemon_log.info(
+                    "Tenure review (%s) skipped: a review is already running.", trigger
+                )
+                return
+        from advisors import tenure_review_runner  # lazy (CC-2)
+
+        now_et = datetime.now(_ET)
+        run_id = uuid.uuid4().hex
+        _daemon_log.info(
+            "Tenure review start: trigger=%s at=%s run_id=%s",
+            trigger,
+            f"{_eastern_stamp(now_et)} ET",
+            run_id,
+        )
+        env = _tenure_review_settings()
+        outcome = tenure_review_runner.run_tenure_review(
+            account_ids=tenure_review_runner.configured_account_ids(env),
+            threshold_raw=env.get(_TENURE_REVIEW_THRESHOLD_KEY),
+            now_et=now_et,
+            run_id=run_id,
+            trigger=trigger,
+            account_labels=tenure_review_runner.configured_account_labels(env),
+        )
+        if not outcome.completed:
+            reason = outcome.failure_reason or _TENURE_REVIEW_FAILED_TEXT
+            _daemon_log.warning("Tenure review did not complete: %s", reason)
+            _log_tenure_review_end(trigger, run_id, "did not complete")
+            tenure_review.REVIEW_RUN_STATE.finish_failure(owner, reason, datetime.now(_ET))
+            return
+        result = outcome.result
+        recs = result.recommendations
+        for rec in recs:
+            rec["review_run_id"] = run_id
+        _prepare_retirement_recs_for_persist(recs, written_on=now_et.date().isoformat())
+        from advisors.retirement_recommender import persist_recommendations  # lazy (CC-2)
+
+        persist_recommendations(recs)
+        for rec in recs:
+            for entry in result.entries:
+                if entry.get("symphony_id") == rec.get("candidate_id"):
+                    entry["explanation"] = rec.get("explanation")
+                    entry["explanation_written_on"] = rec.get("explanation_written_on")
+        database.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=run_id,
+            verdict="completed",
+            raw_response={
+                **tenure_review.run_record(result, datetime.now(_ET)),
+                "degraded": bool(outcome.degraded),
+            },
+        )
+        tenure_review.REVIEW_RUN_STATE.finish_success(owner)
+        _log_tenure_review_end(trigger, run_id, "completed", len(recs))
+    except Exception as exc:
+        _daemon_log.error("Tenure review failed: %s", type(exc).__name__)
+        if run_id is not None:
+            _log_tenure_review_end(trigger, run_id, f"failed {type(exc).__name__}")
+        if tenure_review is not None and owner:
+            tenure_review.REVIEW_RUN_STATE.finish_failure(
+                owner, type(exc).__name__, datetime.now(_ET)
+            )
+    finally:
+        if tenure_review is not None and owner:
+            tenure_review.REVIEW_RUN_STATE.release(owner)
+
+
+def _nightly_review_already_done(tenure_review: types.ModuleType) -> bool:
+    """True when the newest nightly run is not degraded and covers the as-of day now and
+    the threshold now in effect. A stored run that cannot be read, or a failed read or
+    parse, means the review should run. Never raises."""
+    try:
+        as_of = tenure_review.as_of_trading_day(datetime.now(_ET)).isoformat()
+        threshold = tenure_review.parse_threshold(
+            _tenure_review_settings().get(_TENURE_REVIEW_THRESHOLD_KEY)
+        ).value
+        rows = database.get_advisor_observations_for_role(
+            tenure_review.TENURE_REVIEW_RUN_ROLE, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+        )
+        for row in rows:
+            raw = row.get("raw_response")
+            if isinstance(raw, dict) and raw.get("trigger") == "nightly":
+                return (
+                    raw.get("degraded") is not True
+                    and raw.get("as_of_trading_day") == as_of
+                    and raw.get("threshold_in_effect") == threshold
+                )
+        return False
+    except Exception:
+        return False
 
 
 def _retirement_scheduled_tick_body() -> None:
@@ -1469,23 +1681,67 @@ def _retirement_run_now_body() -> None:
         _RETIREMENT_RUN_LOCK.release()
 
 
-def _run_retirement_recommender_tick() -> None:
-    """Non-blocking daily off-hours wrapper for the retirement recommender tick.
+def _retirement_nightly_tick_body(owner: object) -> None:
+    """Thread body of the scheduled 03:45 tick: the tenure review, then the
+    recommender run.
 
-    Spawns a daemon thread so the scheduler thread returns immediately — the
-    tick never blocks the 1-minute execution path (arch constraint 1). It
-    ALWAYS builds and starts that thread; the single-flight check against a
-    concurrent manual Run-now happens inside the thread
-    (_retirement_scheduled_tick_body).
+    `owner` is the REVIEW_RUN_STATE token the tick wrapper claimed before it
+    built the thread. Stage 1 is the symphony tenure review (_tenure_review_job,
+    which releases that token). Stage 2 is the Cycle 2e recommender run
+    (_retirement_scheduled_tick_body), whose single-flight decision against a
+    concurrent Run-now lives inside it, never in the scheduler thread. The
+    stages are independent: neither raises (D-1), and stage 2 still runs when
+    stage 1 did not complete, so a Composer outage that fails the review still
+    leaves the recommender run's own summary row.
     """
-    import threading
+    try:
+        _tenure_review_job("nightly", owner)
+    finally:
+        _retirement_scheduled_tick_body()
 
-    t = threading.Thread(
-        target=_retirement_scheduled_tick_body,
-        daemon=True,
-        name="retirement-recommender-tick",
-    )
-    t.start()
+
+def _run_retirement_recommender_tick() -> None:
+    """Non-blocking daily off-hours wrapper for the nightly retirement tick.
+
+    The tick starts the symphony tenure review and, in the same daemon thread
+    right after it, the Cycle 2e recommender run. It starts NOTHING (and writes
+    nothing) when the newest completed nightly review already covers the as-of
+    day at the threshold in effect (a weekend or holiday tick would repeat a full
+    review of the same session) or when a review is already running; both
+    cases log one INFO line.
+
+    The review slot is claimed BEFORE the thread is built, so a second tick or
+    a request in that window is refused; a thread that cannot be built or
+    started gives the slot back, and the scheduler loop never sees an
+    exception. The scheduler thread returns immediately -- the tick never
+    blocks the 1-minute execution path (arch constraint 1) -- and the
+    recommender stage's single-flight check against a concurrent manual
+    Run-now happens inside the thread (_retirement_scheduled_tick_body).
+    """
+    owner = None
+    tenure_review = None
+    try:
+        from advisors import tenure_review  # lazy (CC-2)
+
+        if _nightly_review_already_done(tenure_review):
+            _daemon_log.info(
+                "Nightly tenure review skipped: the as-of day is already reviewed "
+                "at the threshold in effect."
+            )
+            return
+        owner = tenure_review.REVIEW_RUN_STATE.try_start("nightly")
+        if not owner:
+            _daemon_log.info("Nightly tenure review skipped: a review is already running.")
+            return
+        threading.Thread(
+            target=lambda: _retirement_nightly_tick_body(owner),
+            daemon=True,
+            name="retirement-recommender-tick",
+        ).start()
+    except Exception as exc:
+        _daemon_log.error("Nightly tenure review could not start: %s", type(exc).__name__)
+        if owner:
+            tenure_review.REVIEW_RUN_STATE.release(owner)
 
 
 def run_scheduler():
@@ -4565,24 +4821,24 @@ def api_incubation():
     return jsonify({"incubating": out})
 
 
-def _join_retirement_approval_status(recs: list[dict]) -> None:
-    """Stamp approval_status onto each retirement recommendation dict in
-    place, read FRESH from the mutable retirement_decisions table on every
-    call -- never cached (Cycle 2c, AC-6).
+def _join_retirement_approval_status(
+    recs: list[dict], *, id_key: str = "candidate_id", absent_status: str | None = "pending"
+) -> None:
+    """Stamp approval_status onto each dict in recs in place, read FRESH from
+    the mutable retirement_decisions table on every call -- never cached.
 
-    Shared by BOTH _fetch_retirement_recommendations (backs GET /api/
-    retirement-recommendations) and the AI Advisor Overview-tab panel
-    prefetch, so a programmatic API consumer and the rendered panel always
-    agree on decision state. A database.get_retirement_decisions() read
-    failure degrades every row to the honest "pending" default rather than
-    raising -- mirrors this route's existing per-row-degrades-gracefully
-    convention (see api_incubation above). Never raises.
+    The one join of the decisions table, shared by the recommendation list
+    (id_key "candidate_id", a missing decision reads "pending") and the tenure
+    review entries (id_key "symphony_id", a missing decision reads None, so an
+    undecided symphony is distinguishable from one stored as pending). Used by
+    _fetch_retirement_recommendations (backs GET /api/retirement-
+    recommendations and the AI Advisor panel prefetch) and _fetch_tenure_review,
+    so the API and the rendered panel always agree on decision state. A
+    database.get_retirement_decisions() read failure leaves every row at
+    absent_status rather than raising. Never raises.
 
-    PR#140 2nd /code-review finding 6 (Cycle 2d, AC-5): a no-op on an empty
-    list, BEFORE calling database.get_retirement_decisions() -- mirrors
-    _refresh_retirement_display_names's own existing empty-list skip. Avoids
-    an unnecessary DB read on the honest-empty-state common case (no
-    RETIREMENT_RECOMMENDATION rows, or every row in the batch malformed).
+    A no-op on an empty list, BEFORE calling database.get_retirement_decisions(),
+    which avoids a DB read on the honest-empty-state common case.
     """
     if not recs:
         return
@@ -4593,8 +4849,10 @@ def _join_retirement_approval_status(recs: list[dict]) -> None:
     except Exception:
         decisions_by_id = {}
     for rec in recs:
-        decision = decisions_by_id.get(rec.get("candidate_id"))
-        rec["approval_status"] = (decision or {}).get("approval_status") or "pending"
+        rec_id = rec.get(id_key)
+        # A stored id that is not text (a list, a dict) cannot key the lookup.
+        decision = decisions_by_id.get(rec_id) if isinstance(rec_id, str) else None
+        rec["approval_status"] = (decision or {}).get("approval_status") or absent_status
 
 
 def _refresh_retirement_display_names(
@@ -4670,12 +4928,17 @@ def _refresh_retirement_display_names(
         return fresh
 
     for rec in recs:
-        rec["candidate_name"] = _resolved_or_persisted_or_hash(
-            rec.get("candidate_id"), rec.get("candidate_name")
-        )
-        rec["sibling_name"] = _resolved_or_persisted_or_hash(
-            rec.get("sibling_id"), rec.get("sibling_name")
-        )
+        # A stored id that is not usable text (not text, empty, blank, a number, a boolean,
+        # a list, a dict) cannot be resolved: that field keeps whatever name it carries;
+        # the other field and the other rows are unaffected.
+        if isinstance(rec.get("candidate_id"), str) and rec["candidate_id"].strip():
+            rec["candidate_name"] = _resolved_or_persisted_or_hash(
+                rec["candidate_id"], rec.get("candidate_name")
+            )
+        if isinstance(rec.get("sibling_id"), str) and rec["sibling_id"].strip():
+            rec["sibling_name"] = _resolved_or_persisted_or_hash(
+                rec["sibling_id"], rec.get("sibling_name")
+            )
 
 
 def _fetch_retirement_last_run() -> dict | None:
@@ -4802,26 +5065,44 @@ def _fetch_retirement_cards_run(last_run: dict | None = _RETIREMENT_LAST_RUN_UNS
 def _fetch_retirement_recommendations(
     limit: int | None = None,
     bot_state_getter: Callable[[], dict] | None = None,
+    review_run_id: str | None = None,
+    review_unreadable: bool = False,
     *,
     cards_run: dict | None = _RETIREMENT_LAST_RUN_UNSET,
+    include_review_rows: bool = True,
 ) -> list[dict]:
-    """Return the LATEST SUCCESSFUL RUN's persisted RETIREMENT_RECOMMENDATION raw_response dicts.
+    """Return the persisted RETIREMENT_RECOMMENDATION raw_response dicts of the latest run(s).
 
-    Cycle 2e (retirement-visibility AC-5, revised by AC-5b): when
+    Two producers write this role, and each scopes its rows to its own run; a row
+    is returned at most once.
+
+    Tenure review: with review_run_id (the newest completed review run), the rows
+    whose own review_run_id equals it are returned -- unless include_review_rows
+    is False, which the panel passes because it renders those rows as review
+    entries and asks only for the others. review_unreadable (a review run row is
+    stored but cannot be read, so which rows belong to it is unknown) returns no
+    review rows. A known review run, readable or not, also switches off the
+    latest-calendar-date fallback described below.
+
+    Recommender run (Cycle 2e, retirement-visibility AC-5, revised by AC-5b): when
     _fetch_retirement_cards_run finds a latest successful (status "ok", truthy
     run_id) run, ONLY the recommendation rows stamped with that run's run_id
     are returned -- so a later successful run that finds nothing (a 14:00 "Run
     now" with no pairs) correctly empties the panel instead of leaving an
     earlier run's cards on it, while a later FAILED run (series unavailable,
     internal error, too few symphonies) never hides the last good run's cards
-    (approved ones included). With no successful run recorded, a failed summary
-    read, or only run-id-less summaries, the pre-Cycle-2e latest-calendar-date
-    behavior described below is kept unchanged. `cards_run` lets a caller that
-    already resolved that summary (the panel prefetch and the API route, which
-    also render it) pass that SAME snapshot in so the cards and the page can
-    never disagree about which run they come from and no second lookup is
-    issued; omitted, it is resolved here. An explicit None means "no usable
-    successful run" (legacy path, no re-read).
+    (approved ones included). `cards_run` lets a caller that already resolved
+    that summary (the panel prefetch and the API route, which also render it)
+    pass that SAME snapshot in so the cards and the page can never disagree
+    about which run they come from and no second lookup is issued; omitted, it
+    is resolved here. An explicit None means "no usable successful run" (no
+    re-read).
+
+    With neither a review run nor a successful recommender run, the
+    pre-Cycle-2e latest-calendar-date behavior described below is kept
+    unchanged, except that rows stamped with a review_run_id are never listed
+    there: with no completed review run to name, they may be the remains of a
+    run that failed.
 
     Shared by GET /api/retirement-recommendations (AC-9) and the AI Advisor
     Overview-tab panel prefetch (AC-10) -- one fetch+flatten implementation,
@@ -4878,14 +5159,33 @@ def _fetch_retirement_recommendations(
             cards_run = None  # a failed summary read degrades to the legacy path
     rows = database.get_advisor_observations_for_role("RETIREMENT_RECOMMENDATION", limit=limit)
     run_id = cards_run.get("run_id") if isinstance(cards_run, dict) else None
+    review_rows_wanted = include_review_rows and review_run_id is not None
+    review_known = review_run_id is not None or review_unreadable
     out: list[dict] = []
-    if run_id:
+    if run_id or review_rows_wanted:
+        # A completed review run and a successful recommender run each own the
+        # rows stamped with their own id, so a nightly and a later on-demand run
+        # never both show, and rows of a run that never completed or of the
+        # pre-review nights stay hidden.
         for row in rows:
             raw = row.get("raw_response")
-            if isinstance(raw, dict) and raw.get("run_id") == run_id:
+            if not isinstance(raw, dict):
+                continue
+            if (review_rows_wanted and raw.get("review_run_id") == review_run_id) or (
+                run_id and raw.get("run_id") == run_id
+            ):
                 out.append(raw)
-    else:
-        dated_rows = [row for row in rows if row.get("created_at")]
+    elif not review_known:
+        # Rows stamped with a review_run_id belong to a run; with no completed run row
+        # to name, they may be the remains of a run that failed, so they are not listed.
+        dated_rows = [
+            row
+            for row in rows
+            if row.get("created_at")
+            and not (
+                isinstance(row.get("raw_response"), dict) and "review_run_id" in row["raw_response"]
+            )
+        ]
         if not dated_rows:
             return []
         latest_date = max(row["created_at"][:10] for row in dated_rows)
@@ -4900,6 +5200,132 @@ def _fetch_retirement_recommendations(
     return out
 
 
+def _format_eastern_run_time(completed_at: object) -> str | None:
+    """Return completed_at as "YYYY-MM-DD HH:MM" US Eastern, or None when it is not a
+    readable ISO timestamp. A stamp without an offset is read as UTC, the zone the
+    review stores. Never raises."""
+    if not isinstance(completed_at, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(completed_at)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return _eastern_stamp(moment)
+    except (ValueError, OverflowError):
+        return None
+
+
+_NOT_RECORDED_TEXT = "not recorded"
+_TIME_NOT_RECORDED_TEXT = "time not recorded"
+
+
+@app.template_filter("tenure_text")
+def _tenure_text(value: object) -> str:
+    """A stored text as stored, or "not recorded" when it is absent or not a text, so the
+    panel never prints Python's None or a stored list."""
+    return value if isinstance(value, str) and value.strip() else _NOT_RECORDED_TEXT
+
+
+@app.template_filter("tenure_number")
+def _tenure_number(value: object) -> str:
+    """A finite stored number to two decimals, else "not recorded" (never nan, inf or True)."""
+    if not _is_finite_number(value):
+        return _NOT_RECORDED_TEXT
+    # An int is printed by its digits: float formatting overflows for a huge one.
+    if isinstance(value, int):
+        return f"{value}.00"
+    text = f"{value:.2f}"
+    # A value that rounds to zero prints 0.00, never -0.00.
+    return "0.00" if text == "-0.00" else text
+
+
+@app.template_filter("tenure_whole")
+def _tenure_whole(value: object) -> str:
+    """A stored whole number as an integer, else "not recorded" (2.5 is never truncated)."""
+    return str(int(value)) if _is_whole_number(value) else _NOT_RECORDED_TEXT
+
+
+@app.template_filter("tenure_eastern")
+def _tenure_eastern(value: object) -> str:
+    """A stored timestamp as "YYYY-MM-DD HH:MM ET", else "time not recorded"."""
+    stamp = _format_eastern_run_time(value)
+    return f"{stamp} ET" if stamp else _TIME_NOT_RECORDED_TEXT
+
+
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    # An int is always finite; math.isfinite would convert a huge one to a float.
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
+
+
+def _is_whole_number(value: object) -> bool:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return True
+    return isinstance(value, float) and math.isfinite(value) and value.is_integer()
+
+
+app.jinja_env.tests["finite_number"] = _is_finite_number
+app.jinja_env.tests["whole_number"] = _is_whole_number
+
+
+def _fetch_tenure_review() -> tuple[dict | None, list[dict], dict, bool]:
+    """Return (run header, entries, run state, read_failed) for the newest stored tenure review.
+
+    Shared by GET /api/retirement-recommendations and the AI Advisor panel. Reads
+    only: the stored run row, the decisions table and the in-process run state.
+    The header is the stored run record without its entries; entries are copies
+    of the stored entries (non-dict items skipped) plus a live approval_status.
+    read_failed is True when the newest run row cannot be used (the read raised,
+    the record is not a dict or carries no run_id, or the review module cannot
+    be imported); the header is then None and the entries are empty, and the
+    callers list no recommendation, because which run owns them is unknown.
+    No stored run at all is not a failure. A stored entries value that is not a list makes the run unreadable. The review_run_id that the caller
+    passes to _fetch_retirement_recommendations is the header's run_id.
+    Never raises.
+    """
+    status: dict = {
+        "running": False,
+        "running_since": None,
+        "trigger": None,
+        "last_failed_attempt": None,
+    }
+    try:
+        from advisors import tenure_review  # noqa: PLC0415
+    except Exception as exc:
+        _daemon_log.debug(
+            "_fetch_tenure_review: review module unavailable (%s)", type(exc).__name__
+        )
+        return None, [], status, True
+    try:
+        status = tenure_review.REVIEW_RUN_STATE.snapshot()
+    except Exception as exc:
+        _daemon_log.debug("_fetch_tenure_review: run state unavailable (%s)", type(exc).__name__)
+    run: dict | None = None
+    entries: list[dict] = []
+    read_failed = False
+    try:
+        rows = database.get_advisor_observations_for_role(
+            tenure_review.TENURE_REVIEW_RUN_ROLE, limit=1
+        )
+        if rows:
+            raw = rows[0].get("raw_response")
+            if isinstance(raw, dict) and raw.get("run_id"):
+                stored = raw.get("entries")
+                if isinstance(stored, list):
+                    run = {k: v for k, v in raw.items() if k != "entries"}
+                    entries = [dict(e) for e in stored if isinstance(e, dict)]
+                else:
+                    read_failed = True
+            else:
+                read_failed = True
+    except Exception as exc:
+        _daemon_log.debug("_fetch_tenure_review: read failed (%s)", type(exc).__name__)
+        run, entries, read_failed = None, [], True
+    _join_retirement_approval_status(entries, id_key="symphony_id", absent_status=None)
+    return run, entries, status, read_failed
+
+
 @app.route("/api/retirement-recommendations")
 def api_retirement_recommendations():
     """Return the current advisory retirement recommendations (AC-9).
@@ -4912,19 +5338,37 @@ def api_retirement_recommendations():
     LIVE_EXECUTION interaction. GET never writes.
 
     Response shape: {"recommendations": [<raw_response dict, flattened to top
-    level>, ...], "last_run": <dict | null>, "cards_run": <dict | null>} --
-    exactly those three keys. "last_run" (Cycle 2e, AC-5) is the latest
-    RETIREMENT_RUN_SUMMARY row's raw_response of ANY status (run_id/run_at/
-    source/status/per-gate blocked counts/excluded symphonies/... -- see
-    advisors.retirement_recommender's summary), null when no run has been
-    recorded or its read fails (the rest of the response is still served,
-    status stays 200). "cards_run" (AC-5b) is the summary the
-    "recommendations" were scoped to -- the newest run with status "ok" and a
-    run_id (== last_run when the latest run is ok; an earlier run's summary
-    after a failed night) -- and null on the legacy calendar-date path (no such
-    run) or when its read fails. A failed night therefore never empties the
+    level>, ...], "last_run": <dict | null>, "cards_run": <dict | null>,
+    "review_run": <newest stored review run header or null>,
+    "review_entries": [<one stored entry per live symphony, plus a live
+    approval_status that is null when no decision exists>], "review_status":
+    {running, running_since, trigger, last_failed_attempt}, "review_read_failed":
+    <true when the newest stored review cannot be read, else false>} --
+    exactly those seven keys.
+
+    "last_run" (Cycle 2e, AC-5) is the latest RETIREMENT_RUN_SUMMARY row's
+    raw_response of ANY status (run_id/run_at/source/status/per-gate blocked
+    counts/excluded symphonies/... -- see advisors.retirement_recommender's
+    summary), null when no run has been recorded or its read fails (the rest of
+    the response is still served, status stays 200). "cards_run" (AC-5b) is the
+    summary the recommender run's "recommendations" were scoped to -- the newest
+    run with status "ok" and a run_id (== last_run when the latest run is ok; an
+    earlier run's summary after a failed night) -- and null when there is no such
+    run or its read fails. A failed night therefore never empties the
     recommendations; an ok run that found nothing does. The Run-now JS polls
     this route until last_run.run_id changes.
+
+    The "review_*" keys describe the symphony tenure review: the stored run
+    header (run_id, as_of_trading_day, started_at, completed_at, trigger,
+    threshold_in_effect, threshold_note and composite_window), one entry per live
+    symphony, and the in-process run state.
+
+    The "recommendations" list is the union of both producers' latest runs (see
+    _fetch_retirement_recommendations): with a completed review run it holds the
+    rows carrying that run's review_run_id; with a successful recommender run it
+    also holds the rows carrying that run's run_id; with neither it holds the
+    latest night's rows; a review run row that cannot be read contributes no
+    rows.
 
     Each recommendation item carries the authoritative raw_response schema
     verbatim (candidate_id, sibling_id, correlation, ci_lower, ci_upper,
@@ -4941,8 +5385,12 @@ def api_retirement_recommendations():
     against current bot_state) -- never cached, never stored back into the
     row's raw_response.
 
-    Empty -> {"recommendations": []}, never a 500; a read failure degrades to
-    the same empty list rather than 500ing (mirrors api_incubation).
+    Empty -> {"recommendations": []} with last_run and cards_run null,
+    review_run null, review_entries [], review_status the idle run state and
+    review_read_failed false, never a 500. A stored review run's header holds
+    run_id, as_of_trading_day, started_at, completed_at, trigger,
+    threshold_in_effect, threshold_note and composite_window. A read failure
+    degrades to the same empty list rather than 500ing (mirrors api_incubation).
 
     Strict-JSON safe: every numeric field (including nested candidate_metrics/
     sibling_metrics) is sanitized through a local NaN/Infinity guard (mirrors
@@ -4956,7 +5404,7 @@ def api_retirement_recommendations():
             return None
         if isinstance(value, dict):
             return {k: _json_safe(v) for k, v in value.items()}
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             return [_json_safe(v) for v in value]
         return value
 
@@ -4978,8 +5426,13 @@ def api_retirement_recommendations():
         _daemon_log.debug("api_retirement_recommendations: cards_run read failed", exc_info=True)
         cards_run = None
 
+    review_run, review_entries, review_status, review_read_failed = _fetch_tenure_review()
     try:
-        raw_rows = _fetch_retirement_recommendations(cards_run=cards_run)
+        raw_rows = _fetch_retirement_recommendations(
+            review_run_id=review_run.get("run_id") if review_run else None,
+            review_unreadable=review_read_failed,
+            cards_run=cards_run,
+        )
     except Exception:
         _daemon_log.debug("api_retirement_recommendations: read failed", exc_info=True)
         raw_rows = []
@@ -4998,6 +5451,10 @@ def api_retirement_recommendations():
             "recommendations": out,
             "last_run": _json_safe(last_run),
             "cards_run": _json_safe(cards_run),
+            "review_run": _json_safe(review_run),
+            "review_entries": _json_safe(review_entries),
+            "review_status": _json_safe(review_status),
+            "review_read_failed": review_read_failed,
         }
     )
 
@@ -7263,7 +7720,24 @@ def ai_advisor_tab():
     except Exception:
         retirement_cards_run = None
 
+    # Symphony tenure review: the newest stored review run, its entries, the
+    # in-process run state and whether the stored run could be read.
+    (
+        tenure_review_run,
+        tenure_review_entries,
+        tenure_review_status,
+        tenure_review_read_failed,
+    ) = _fetch_tenure_review()
+    tenure_review_completed_et = _format_eastern_run_time(
+        tenure_review_run.get("completed_at") if tenure_review_run else None
+    )
+
     retirement_recommendations: list[dict] = []
+    # The cards below the review are the recommender run's (Cycle 2e), or the
+    # pre-run legacy cards when neither producer has a run. The review run's own
+    # rows are rendered as review entries, so include_review_rows=False leaves
+    # them out (no card twice), and a known review run (readable or not) turns
+    # the legacy fallback off.
     try:
         # Cycle 2d (AC-4, PR#140 2nd /code-review finding 5): pass the
         # shared closure so _refresh_retirement_display_names's bot_state
@@ -7272,7 +7746,10 @@ def ai_advisor_tab():
         # use, instead of independently calling database.load_state() again.
         retirement_recommendations = _fetch_retirement_recommendations(
             bot_state_getter=_ensure_ai_advisor_bot_state,
+            review_run_id=tenure_review_run.get("run_id") if tenure_review_run else None,
+            review_unreadable=tenure_review_read_failed,
             cards_run=retirement_cards_run,
+            include_review_rows=False,
         )
     except Exception:
         pass  # Empty-state rendered by template on [].
@@ -7287,7 +7764,7 @@ def ai_advisor_tab():
     # ------------------------------------------------------------------ #
     # Retirement approval status + display names: both now resolved       #
     # INSIDE _fetch_retirement_recommendations() itself -- approval_status #
-    # via _join_retirement_approval_status (Cycle 2c, AC-6) and            #
+    # via _join_retirement_approval_status (Cycle 2c) and                  #
     # candidate_name/sibling_name via _refresh_retirement_display_names    #
     # (PR#140 review finding 3) -- so this panel and GET /api/retirement-  #
     # recommendations always agree on both. Every rec already carries a   #
@@ -7295,30 +7772,41 @@ def ai_advisor_tab():
     # by the time it reaches here; the template reads those fields        #
     # directly (no separate panel-local resolution needed).               #
     # ------------------------------------------------------------------ #
-    _ret_any_approved = any(
-        _rec.get("approval_status") == "approved" for _rec in retirement_recommendations
-    )
-
-    # Checklist assembly (AC-6/AC-7 glue): deterministic, no LLM, built
-    # ONLY for approved cards -- never inside the approve route itself
-    # (AC-5: "Approve writes status ONLY"). Shares the lazy bot_state
-    # loader defined above with the frontrunner block below.
-    if _ret_any_approved:
+    # Wind-down checklist: deterministic, no LLM, built ONLY
+    # for approved items the panel renders -- never inside the approve route
+    # itself (approving writes the status only). One loop serves the review
+    # entries (their own symphony_id, named as their row is) and the
+    # recommendation cards the panel lists (the recommender run's cards, or the
+    # legacy cards when neither producer has a run). A completed review run's
+    # own recommendation rows are not rendered as cards (the review entries
+    # carry them), so they get no checklist of their own.
+    _checklist_jobs: list[tuple[dict, dict, str | None]] = [
+        (_entry, {"candidate_id": _entry.get("symphony_id")}, _entry.get("display_name"))
+        for _entry in tenure_review_entries
+        if _entry.get("approval_status") == "approved"
+    ]
+    _checklist_jobs += [
+        (_rec, _rec, None)
+        for _rec in retirement_recommendations
+        if _rec.get("approval_status") == "approved"
+    ]
+    if _checklist_jobs:
         _ret_bot_state = _ensure_ai_advisor_bot_state()
         try:
             from advisors.retirement_checklist import build_checklist  # noqa: PLC0415
         except Exception:
             build_checklist = None
-        for _rec in retirement_recommendations:
-            if _rec["approval_status"] != "approved":
-                continue
+        for _target, _source, _row_name in _checklist_jobs:
             if build_checklist is None:
-                _rec["_checklist"] = None
+                _target["_checklist"] = None
                 continue
             try:
-                _rec["_checklist"] = build_checklist(_rec, _ret_bot_state)
+                _checklist = build_checklist(_source, _ret_bot_state)
+                if isinstance(_row_name, str) and _row_name and isinstance(_checklist, dict):
+                    _checklist = {**_checklist, "candidate_name": _row_name}
+                _target["_checklist"] = _checklist
             except Exception:
-                _rec["_checklist"] = None
+                _target["_checklist"] = None
 
     # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
@@ -7428,6 +7916,11 @@ def ai_advisor_tab():
         retirement_last_run=retirement_last_run,
         retirement_cards_run=retirement_cards_run,
         retirement_last_run_excluded=retirement_last_run_excluded,
+        tenure_review=tenure_review_run,
+        tenure_review_entries=tenure_review_entries,
+        tenure_review_status=tenure_review_status,
+        tenure_review_read_failed=tenure_review_read_failed,
+        tenure_review_completed_et=tenure_review_completed_et,
         frontrunner_proposals=frontrunner_proposals,
         overlay_not_recorded_text=overlay_not_recorded_text,
         advisor_suggestion_model=advisor_suggestion_model,
@@ -8589,7 +9082,7 @@ def _dispatch_retirement_decision(approval_status: str):
     """
     body = request.get_json(silent=True) or {}
     candidate_id = body.get("candidate_id")
-    if not isinstance(candidate_id, str) or not candidate_id or len(candidate_id) > 300:
+    if not isinstance(candidate_id, str) or not candidate_id.strip() or len(candidate_id) > 300:
         return jsonify(
             {"success": False, "approval_status": None, "error": "invalid candidate_id"}
         ), 200
@@ -8691,6 +9184,35 @@ def ai_advisor_retirement_run():
         return jsonify({"status": "error", "error": type(exc).__name__}), 500
 
     return jsonify({"status": "started"}), 202
+
+
+@app.route("/ai-advisor/retirement/review/run", methods=["POST"])
+def ai_advisor_retirement_review_run():
+    """Start one on-demand symphony tenure review in the background.
+
+    Reads no body. Claims the single run slot (409 when a review is running),
+    runs the job on a daemon thread (a stop never waits on a review) and answers
+    202 at once. A thread that cannot be built or started gives the slot back
+    and answers 200 with the exception type name only. Advisory only: no
+    Composer write, no trade primitive.
+    """
+    from advisors import tenure_review  # lazy (CC-2)
+
+    owner = tenure_review.REVIEW_RUN_STATE.try_start("on_demand")
+    if not owner:
+        return jsonify({"status": "already_running", "message": "a review is already running"}), 409
+    try:
+        threading.Thread(
+            target=_tenure_review_job,
+            args=("on_demand", owner),
+            daemon=True,
+            name="tenure-review-on-demand",
+        ).start()
+    except Exception as exc:
+        tenure_review.REVIEW_RUN_STATE.release(owner)
+        _daemon_log.error("Tenure review could not be started: %s", type(exc).__name__)
+        return jsonify({"error": type(exc).__name__}), 200
+    return jsonify({"status": "started", "message": "review started"}), 202
 
 
 def _compute_suggestion_gates(suggestion, symphony_id: str) -> dict:

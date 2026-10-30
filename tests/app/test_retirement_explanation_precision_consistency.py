@@ -47,9 +47,14 @@ decision.
 
 from __future__ import annotations
 
+import json
+import re
+from types import SimpleNamespace
+
 import pytest
 
-from tests.app._retirement_run_summary_stub import with_summary
+from tests.app import _tenure_review_job_builders as jb
+from tests.app._retirement_producers import PRODUCER_KINDS, RetirementProducer
 
 _CANDIDATE_HASH = "cand-precision-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
@@ -74,6 +79,30 @@ _DEFAULT_SIBLING_METRICS = {
     "max_drawdown": -0.06,
     "calmar": 3.00,
 }
+
+
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
+
+
+_ACTIVE: dict[str, RetirementProducer] = {}
+
+
+@pytest.fixture(autouse=True, params=PRODUCER_KINDS)
+def producer(request):
+    """Run every test in this module through each producer of recommendations (the tenure
+    review job, then the Cycle 2e recommender worker): both finish a recommendation in the one
+    shared helper, so the rounding / reuse / explainer-input contract is the same for both.
+    ``_run_worker_with_mocked_prior_rows`` reads the active one."""
+    active = RetirementProducer(request.param)
+    _ACTIVE["producer"] = active
+    yield active
+    _ACTIVE.clear()
 
 
 def _sample_raw_response(
@@ -186,16 +215,13 @@ def _run_worker_with_mocked_prior_rows(prior_rows, new_rec, *, explain_return="f
         return len(recs)
 
     with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(
-            recommender_module,
-            "build_recommendations_with_summary",
-            with_summary(lambda **kw: [new_rec]),
-        )
+        active = _ACTIVE["producer"]
+        active.install(mp, lambda: [new_rec])
         mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
         mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
         mp.setattr(db_module, "get_advisor_observations_for_role", lambda *a, **kw: prior_rows)
 
-        app_module._retirement_recommender_tick_worker()
+        active.run()
 
     return explain_calls, persisted
 
@@ -278,12 +304,8 @@ class TestPersistedEvidenceIsRounded:
     def test_n_obs_stays_an_exact_int_never_coerced_to_float(self, isolated_db):
         raw_rec = _sample_raw_response(n_obs=187)
 
-        explain_calls, persisted = _run_worker_with_mocked_prior_rows([], raw_rec)
+        _, persisted = _run_worker_with_mocked_prior_rows([], raw_rec)
 
-        assert explain_calls[0]["n_obs"] == 187
-        assert isinstance(explain_calls[0]["n_obs"], int), (
-            "n_obs must never be coerced to a float by the rounding step."
-        )
         assert persisted[0]["n_obs"] == 187
         assert isinstance(persisted[0]["n_obs"], int)
 
@@ -319,8 +341,11 @@ class TestExplainerInputMatchesPersistedEvidence:
 
         assert len(explain_calls) == 1
         assert len(persisted) == 1
-        seen_by_explainer = {k: v for k, v in explain_calls[0].items() if k != "explanation"}
-        persisted_evidence = {k: v for k, v in persisted[0].items() if k != "explanation"}
+        # The keys the explainer is not shown (the explanation, the run stamps and the moving
+        # window keys) are not evidence it could cite; every key it IS shown must match.
+        not_evidence = set(_STAMPED_AND_MOVING_KEYS)
+        seen_by_explainer = {k: v for k, v in explain_calls[0].items() if k not in not_evidence}
+        persisted_evidence = {k: v for k, v in persisted[0].items() if k not in not_evidence}
         assert seen_by_explainer == persisted_evidence, (
             "The evidence the explainer was shown must be byte-identical to what "
             "gets persisted (and therefore rendered on the card/API) -- otherwise "
@@ -337,7 +362,7 @@ class TestExplainerInputMatchesPersistedEvidence:
 
 class TestSteadyStateFullPrecisionRecomputation:
     def test_reuse_restored_when_raw_recomputation_noise_rounds_identically_night_to_night(
-        self, isolated_db
+        self, isolated_db, producer
     ):
         """Finding-2 core claim: build_recommendations legitimately returns
         SLIGHTLY different raw floats each night (real walk-forward
@@ -363,15 +388,11 @@ class TestSteadyStateFullPrecisionRecomputation:
             return [_sample_raw_response(correlation=next(night_values))]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: _fixed_recs()),
-            )
+            producer.install(mp, lambda: _fixed_recs())
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()  # night 1
-            app_module._retirement_recommender_tick_worker()  # night 2
+            producer.run()  # night 1
+            producer.run()  # night 2
 
         assert explain_call_count["n"] == 1, (
             f"Expected exactly ONE explain_recommendation call across 2 nights of raw "
@@ -379,7 +400,9 @@ class TestSteadyStateFullPrecisionRecomputation:
             f"{explain_call_count['n']} -- finding-2's spend savings must be restored."
         )
 
-    def test_regenerates_when_raw_recomputation_genuinely_drifts_beyond_2dp(self, isolated_db):
+    def test_regenerates_when_raw_recomputation_genuinely_drifts_beyond_2dp(
+        self, isolated_db, producer
+    ):
         import advisors.retirement_explainer as explainer_module
         import advisors.retirement_recommender as recommender_module
         import app as app_module
@@ -398,15 +421,11 @@ class TestSteadyStateFullPrecisionRecomputation:
             return [_sample_raw_response(correlation=next(night_values))]
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: _fixed_recs()),
-            )
+            producer.install(mp, lambda: _fixed_recs())
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()  # night 1
-            app_module._retirement_recommender_tick_worker()  # night 2
+            producer.run()  # night 1
+            producer.run()  # night 2
 
         assert explain_call_count["n"] == 2, (
             "A genuine (post-rounding) drift must still force a regen on night 2 -- "
@@ -461,3 +480,124 @@ class TestFullPrecisionPriorTransition:
             "extra LLM call per already-stable pair."
         )
         assert persisted[0]["explanation"] == "pre-2d full-precision explanation"
+
+
+# ===========================================================================
+# The explainer is not shown what the reuse comparison looks through
+# ===========================================================================
+
+# The keys the reuse comparison leaves out because they move with the calendar or name the run:
+# an explanation that cites one of them goes stale while the comparison says it is current, and
+# a later run reuses that text with the old figure in it. The pair identity keys are left out of
+# the comparison too, but they cannot go stale (the prior row is found by them) and the
+# explainer's callers read them, so they stay.
+_STAMPED_AND_MOVING_KEYS = (
+    "explanation",
+    "run_id",
+    "review_run_id",
+    "as_of_trading_day",
+    "explanation_written_on",
+    "n_obs",
+    "window_last",
+    "window_days",
+    "composite_window_first",
+    "composite_window_last",
+    "composite_window_days",
+)
+_WINDOW_FIELDS = {
+    "window_first": "2025-12-02",
+    "window_last": "2026-10-16",
+    "window_days": 227,
+    "composite_window_first": "2026-04-21",
+    "composite_window_last": "2026-10-16",
+    "composite_window_days": 126,
+    "as_of_trading_day": "2026-10-19",
+    "explanation": "an old explanation carried on the record",
+    "explanation_written_on": "2026-10-01",
+}
+
+
+def _rec_with_window_fields(**overrides):
+    return {**_sample_raw_response(**overrides), **_WINDOW_FIELDS}
+
+
+class TestTheExplainerIsNotShownWhatTheReuseComparisonLooksThrough:
+    @pytest.mark.parametrize("key", _STAMPED_AND_MOVING_KEYS)
+    def test_the_recommendation_it_receives_lacks_the_key(self, isolated_db, key):
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([], _rec_with_window_fields())
+
+        assert len(explain_calls) == 1
+        assert key not in explain_calls[0], (
+            f"the explainer was shown {key!r}, which the reuse comparison ignores: a reused "
+            "explanation could cite its value after it changed"
+        )
+
+    def test_it_still_receives_the_evidence_the_comparison_does_look_at(self, isolated_db):
+        explain_calls, _ = _run_worker_with_mocked_prior_rows([], _rec_with_window_fields())
+
+        seen = explain_calls[0]
+        assert seen["correlation"] == 0.80 and seen["candidate_composite"] == 0.20
+        assert seen["candidate_name"] == _CANDIDATE_NAME and seen["sibling_name"] == _SIBLING_NAME
+        assert seen["window_first"] == "2025-12-02", "the pair's first day is part of the evidence"
+        assert seen["candidate_id"] == _CANDIDATE_HASH and seen["sibling_id"] == _SIBLING_HASH
+
+    def test_the_stored_record_keeps_every_key_the_explainer_was_not_shown(
+        self, isolated_db, producer
+    ):
+        _, persisted = _run_worker_with_mocked_prior_rows([], _rec_with_window_fields())
+
+        stored = persisted[0]
+        for key in ("n_obs", "window_last", "window_days", "composite_window_days"):
+            assert key in stored, f"{key} was dropped from the stored record"
+        assert stored["n_obs"] == 200 and stored["window_last"] == "2026-10-16"
+        assert stored[producer.stamp_key], "the producer stamps its run id on the stored record"
+        assert stored["explanation"] == "fresh explanation"
+        assert stored["explanation_written_on"], "a fresh explanation is dated"
+
+    def test_the_explainer_is_given_a_copy_so_the_record_is_not_changed_by_what_it_is_shown(
+        self, isolated_db, monkeypatch, producer
+    ):
+        import advisors.retirement_explainer as explainer_module
+        import advisors.retirement_recommender as recommender_module
+
+        persisted: list[dict] = []
+        monkeypatch.setattr(
+            recommender_module, "persist_recommendations", lambda recs, **kw: persisted.extend(recs)
+        )
+
+        def hostile(rec):
+            rec.clear()  # an explainer that empties what it is given
+            return "text"
+
+        producer.install(monkeypatch, lambda: [_rec_with_window_fields()])
+        monkeypatch.setattr(explainer_module, "explain_recommendation", hostile)
+
+        producer.run()
+
+        assert persisted and persisted[0]["candidate_id"] == _CANDIDATE_HASH
+        assert persisted[0]["n_obs"] == 200
+
+    def test_the_prompt_the_real_explainer_sends_carries_none_of_the_keys(
+        self, isolated_db, monkeypatch, producer
+    ):
+        import ai_advisor
+
+        sent: list[dict] = []
+
+        def create(**kwargs):
+            sent.append(kwargs)
+            return SimpleNamespace(content=[SimpleNamespace(text="It repeats a stronger one.")])
+
+        client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        monkeypatch.setattr(ai_advisor, "_build_client", lambda: client)
+        producer.install(monkeypatch, lambda: [_rec_with_window_fields()], stub_explainer=False)
+
+        producer.run()
+
+        assert len(sent) == 1, "premise: the real explainer made its one request"
+        prompt = sent[0]["messages"][0]["content"]
+        evidence = json.loads(re.search(r"```json\n(.*?)\n```", prompt, re.S).group(1))
+        for key in _STAMPED_AND_MOVING_KEYS:
+            assert key not in evidence, f"the prompt carries {key!r}"
+        assert evidence["correlation"] == 0.80
+        assert evidence["candidate_name"] == _CANDIDATE_NAME
