@@ -437,25 +437,32 @@ def test_all_truncated_with_partial_lists_degrades_honestly_not_admits(bpg):
     )
 
 
-def test_retry_after_truncation_to_unparseable_response_degrades_cleanly(bpg):
-    """B9 (Revise gap): a truncated first response followed by a NON-truncated but
-    UNPARSEABLE response (no tool_use block) flows into the existing clean-degrade path —
-    the retry result is parsed by the same downstream logic, so it degrades to empty plans
-    with a reason, never raises, never returns garbage."""
+def test_retry_after_truncation_to_text_only_replies_shares_the_attempt_bound(bpg):
+    """B9: a truncated first response followed by NON-truncated replies with no tool_use block
+    keeps drawing on the SAME bounded attempts (a missing tool call is retried now that the
+    tool is no longer forced), so the run makes exactly MAX_GENERATION_ATTEMPTS requests and
+    degrades to empty plans with the honest no_tool_call code, never raises."""
     text_block = MagicMock()
     text_block.type = "text"
     text_block.text = "I refuse to use the tool."
-    unparseable = MagicMock()
-    unparseable.stop_reason = "end_turn"  # NOT truncation, but no tool_use block
-    unparseable.content = [text_block]
-    unparseable.usage = MagicMock()
-    unparseable.usage.output_tokens = 20
-    client = _client_with_create_returning(_truncated_response(), unparseable)
+
+    def _text_only(*_a, **_k):
+        reply = MagicMock()
+        reply.stop_reason = "end_turn"  # NOT truncation, but no tool_use block
+        reply.content = [text_block]
+        reply.usage = MagicMock()
+        reply.usage.output_tokens = 20
+        return reply
+
+    client = MagicMock()
+    client.messages.create.side_effect = [_truncated_response(), _text_only(), _text_only()]
     with _patch_client(bpg, client):
         result = bpg.generate_build_plans(_objective(bpg, "diversify"), _BIG_UNIVERSE, n_plans=12)
-    assert client.messages.create.call_count == 2, "must retry once after truncation"
-    assert result.plans == [], "an unparseable retry response degrades to empty plans"
-    assert isinstance(result.reason, str) and result.reason, "must surface a reason"
+    assert client.messages.create.call_count == bpg.MAX_GENERATION_ATTEMPTS, (
+        "truncation and a missing tool call share one attempt bound"
+    )
+    assert result.plans == [], "text-only replies degrade to empty plans"
+    assert result.reason == "no_tool_call"
 
 
 # ===========================================================================

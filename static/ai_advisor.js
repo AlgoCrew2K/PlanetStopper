@@ -890,7 +890,7 @@
                         if (val) { evidenceParts.push(key + ': ' + val); }
                     });
                     html += '<div class="run-controls-note" data-testid="sb-live-generation-provenance">' +
-                        'Model: ' + escHtml(prov.generation_model || '') +
+                        'Model: ' + escHtml(prov.generation_model || 'model unavailable') +
                         (evidenceParts.length ? ' · Context — ' + escHtml(evidenceParts.join(', ')) : '') +
                         (prov.run_id ? ' · Run: ' + escHtml(prov.run_id) : '') +
                         '</div>';

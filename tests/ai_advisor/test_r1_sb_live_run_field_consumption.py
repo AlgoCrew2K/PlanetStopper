@@ -35,7 +35,27 @@ silently drops a field reference, not to certify the live UI.
 
 from __future__ import annotations
 
+import json
 import pathlib
+import re
+import shutil
+import subprocess
+
+import pytest
+
+from tests._sb_generation_harness import (
+    CAPTURED_MODELS,
+    atlas_candidate,
+    conforming_diversify_plans,
+    fake_with_captured_page,
+    fake_with_failing_listing,
+    fallback_reply_with_plans,
+    install_chain_seams,
+    newest_active_record,
+    post_strategy_builder_run,
+    text_only_reply,
+    tool_reply_with_plans,
+)
 
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 _AI_ADVISOR_JS = _PROJECT_ROOT / "static" / "ai_advisor.js"
@@ -177,3 +197,154 @@ def test_ac12_sb_live_run_consumes_screens_skipped_field():
     assert "screens_skipped" in block, (
         "AC-12 GAP: sbRunAnalysis() does not consume data.screens_skipped."
     )
+
+
+# ---------------------------------------------------------------------------
+# Executed render: the real static/ai_advisor.js under node, fed the JSON the real
+# route produced (HTTP fake behind the generator, other live seams stubbed). Unlike
+# the text-window guards above, these prove what the operator reads on the page.
+# ---------------------------------------------------------------------------
+
+_NODE_HARNESS = r"""
+const vm = require('vm'); const fs = require('fs');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const data = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+function el(id) {
+  return {id, style: {}, value: '', textContent: '', innerHTML: '', disabled: false, dataset: {},
+    classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }},
+    addEventListener() {}, removeEventListener() {}, setAttribute() {}, getAttribute() { return null; },
+    appendChild() {}, querySelector() { return null; }, querySelectorAll() { return []; },
+    focus() {}, scrollIntoView() {}};
+}
+const els = {};
+const document = {
+  getElementById(id) { return els[id] || (els[id] = el(id)); },
+  querySelector() { return null; }, querySelectorAll() { return []; },
+  addEventListener() {}, createElement() { return el('x'); },
+  body: el('body'), documentElement: el('html')};
+const window = {addEventListener() {}, location: {reload() {}}};
+const fetch = async (url) => {
+  if (url === '/api/csrf-token') { return {ok: true, json: async () => ({csrf_token: 't'})}; }
+  return {ok: true, status: 200, json: async () => data};
+};
+const ctx = vm.createContext({document, window, fetch, console, setTimeout,
+  setInterval: () => 0, clearInterval() {}, clearTimeout() {}, location: window.location});
+vm.runInContext(src, ctx);
+(async () => {
+  await window.sbRunAnalysis();
+  console.log(JSON.stringify({results: els['sb-run-results'].innerHTML, error: els['sb-run-error'].textContent}));
+})();
+"""
+
+
+@pytest.fixture()
+def client():
+    import app as app_module
+
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        yield c
+
+
+def _render_run_results(tmp_path, route_body: dict) -> str:
+    """Execute the real sbRunAnalysis() against ``route_body``; return the results area's HTML."""
+    assert shutil.which("node") is not None, "node is required to execute the render tests"
+    harness = tmp_path / "harness.js"
+    harness.write_text(_NODE_HARNESS, encoding="utf-8")
+    payload = tmp_path / "route_body.json"
+    payload.write_text(json.dumps(route_body), encoding="utf-8")
+    done = subprocess.run(
+        ["node", str(harness), str(_AI_ADVISOR_JS), str(payload)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert done.returncode == 0, f"node failed:\n{done.stderr}"
+    rendered = json.loads(done.stdout.strip().splitlines()[-1])
+    assert rendered["error"] == "", f"the run rendered its error branch: {rendered['error']}"
+    return rendered["results"]
+
+
+def _block(html: str, testid: str) -> str:
+    match = re.search(rf'data-testid="{testid}">(.*?)</div>', html, re.S)
+    assert match, f"no element data-testid={testid!r} in the rendered results:\n{html}"
+    return match.group(1)
+
+
+def _route_body(client, monkeypatch, fake, *, atlas=None) -> dict:
+    with install_chain_seams(monkeypatch, fake, atlas=atlas):
+        resp = post_strategy_builder_run(client)
+    assert resp.status_code == 200
+    return resp.get_json()
+
+
+def test_unresolved_model_run_renders_model_unavailable_not_a_blank_model(
+    client, monkeypatch, tmp_path, unresolved_models
+):
+    body = _route_body(client, monkeypatch, fake_with_failing_listing(), atlas=[atlas_candidate()])
+    assert body["provenance"]["generation_model"] == "", "precondition: the route reports no model"
+    html = _render_run_results(tmp_path, body)
+
+    provenance = _block(html, "sb-live-generation-provenance")
+    assert "model unavailable" in provenance
+    assert not re.search(r"Model:\s*(?:·|<|$)", provenance), (
+        f"the model line must not render an empty model: {provenance!r}"
+    )
+    assert "model_unavailable" in _block(html, "sb-live-mode-notice")
+
+
+def test_degraded_fable_run_notice_is_rendered_without_the_word_opus(client, monkeypatch, tmp_path):
+    fake = fake_with_captured_page()
+    for _ in range(3):
+        fake.queue_message(text_only_reply())
+    body = _route_body(client, monkeypatch, fake, atlas=[atlas_candidate()])
+    html = _render_run_results(tmp_path, body)
+
+    notice = _block(html, "sb-live-mode-notice")
+    assert "no_tool_call" in notice
+    assert newest_active_record("fable", CAPTURED_MODELS)["display_name"] in notice
+    assert "opus" not in html.lower(), "a suggestion-family call is never labelled Opus"
+
+
+def test_healthy_run_model_line_shows_the_model_that_answered(client, monkeypatch, tmp_path):
+    fake = fake_with_captured_page()
+    reply = tool_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    body = _route_body(client, monkeypatch, fake)
+    html = _render_run_results(tmp_path, body)
+
+    provenance = _block(html, "sb-live-generation-provenance")
+    assert reply["model"] in provenance
+    assert "model unavailable" not in provenance
+    assert "sb-live-mode-notice" not in html
+
+
+def test_fallback_served_run_model_line_shows_the_serving_model(client, monkeypatch, tmp_path):
+    fake = fake_with_captured_page()
+    reply = fallback_reply_with_plans(conforming_diversify_plans())
+    fake.queue_message(reply)
+    body = _route_body(client, monkeypatch, fake)
+    html = _render_run_results(tmp_path, body)
+
+    assert reply["model"] in _block(html, "sb-live-generation-provenance")
+
+
+def test_mode_notice_markup_is_escaped_in_the_rendered_results(tmp_path):
+    hostile = '<img src=x onerror="alert(1)">'
+    html = _render_run_results(
+        tmp_path,
+        {
+            "survivors": [],
+            "rejected": [],
+            "n_candidates": 0,
+            "fdr_adjusted_threshold": None,
+            "error": None,
+            "built_new_count": 0,
+            "atlas_count": 0,
+            "mode_notice": hostile,
+            "provenance": None,
+        },
+    )
+    notice = _block(html, "sb-live-mode-notice")
+    assert "<img" not in notice
+    assert "&lt;img" in notice
