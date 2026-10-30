@@ -1,0 +1,50 @@
+[
+  {
+    "trading_day": "2026-06-24",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "cycle_id": "20260624_1604",
+    "ts_utc": "2026-06-24T20:04:03Z",
+    "ts_et": "2026-06-24T16:04:01",
+    "current_return": -0.4,
+    "shadow_return": -0.4,
+    "is_post_trigger": 0,
+    "position_epoch": "04ee2fad07ef40aca5b0566bc18e30be"
+  },
+  {
+    "trading_day": "2026-06-25",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "cycle_id": "20260625_1604",
+    "ts_utc": "2026-06-25T20:04:04Z",
+    "ts_et": "2026-06-25T16:04:01",
+    "current_return": -0.24,
+    "shadow_return": -0.24,
+    "is_post_trigger": 0,
+    "position_epoch": "04ee2fad07ef40aca5b0566bc18e30be"
+  },
+  {
+    "trading_day": "2026-06-26",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "cycle_id": "20260626_1604",
+    "ts_utc": "2026-06-26T20:04:04Z",
+    "ts_et": "2026-06-26T16:04:01",
+    "current_return": 0.51,
+    "shadow_return": 0.51,
+    "is_post_trigger": 0,
+    "position_epoch": "04ee2fad07ef40aca5b0566bc18e30be"
+  },
+  {
+    "trading_day": "2026-06-29",
+    "symphony_id": "5XjzXjdGnjh99MIsdM97",
+    "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "cycle_id": "20260629_1604",
+    "ts_utc": "2026-06-29T20:04:03Z",
+    "ts_et": "2026-06-29T16:04:01",
+    "current_return": -4.6,
+    "shadow_return": -3.9600000000000004,
+    "is_post_trigger": 1,
+    "position_epoch": "04ee2fad07ef40aca5b0566bc18e30be"
+  }
+]
