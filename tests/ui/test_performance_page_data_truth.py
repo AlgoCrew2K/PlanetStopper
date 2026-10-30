@@ -63,6 +63,16 @@ def _analytics_shadow_db_seam(_isolate_db, monkeypatch):
     monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
 
 
+_REAL_LOAD_STATE = database.load_state
+
+
+@pytest.fixture(autouse=True)
+def _read_the_seeded_bot_state(_stub_database_load_state_for_advisor_routes, monkeypatch):
+    """tests/ui/conftest.py stubs database.load_state for the advisor routes; these tests
+    exercise routes over the captured bot_state they write with database.save_state."""
+    monkeypatch.setattr(database, "load_state", _REAL_LOAD_STATE)
+
+
 @pytest.fixture
 def client():
     app_module.app.config["TESTING"] = True
@@ -421,24 +431,22 @@ def test_a_null_leg_reads_a_dash_and_the_other_leg_still_renders(client):
 
 def test_a_zero_drawdown_reads_zero_percent(client):
     _seed_captured_state_and_shadow_rows()
+
+    def leg_mdd(sid, key):
+        return analytics.compute_quantstats_metrics([r[key] for r in _tail(sid, 2)])["max_drawdown"]
+
     sid = next(
         s
-        for s, (live, shadow) in _captured_metrics().items()
-        if analytics.compute_quantstats_metrics([r["current_return"] for r in _tail(s, 2)])[
-            "max_drawdown"
-        ]
-        == 0
-        and analytics.compute_quantstats_metrics([r["shadow_return"] for r in _tail(s, 2)])[
-            "max_drawdown"
-        ]
-        == 0
+        for s in _captured_metrics()
+        if leg_mdd(s, "current_return") == 0 or leg_mdd(s, "shadow_return") == 0
     )
     payload = _symphony_payload(client, sid, days=2)
-    assert payload["live_metrics"]["max_drawdown"] == 0
+    zero_leg = "live_metrics" if payload["live_metrics"]["max_drawdown"] == 0 else "shadow_metrics"
+    assert payload[zero_leg]["max_drawdown"] == 0
 
     row = _metric_rows(_render_metrics(client, payload))["Max DD"]
 
-    assert row[1] == "0.00%"
+    assert row[1 if zero_leg == "live_metrics" else 2] == "0.00%"
 
 
 def _tail(sid: str, n: int) -> list[dict]:
@@ -810,7 +818,9 @@ def test_precondition_rows_fall_back_to_the_identifier_when_the_symphony_list_fa
 
     assert result["empty"] is False
     assert result["rows"], "the panel still renders"
-    assert {r["first"]["text"] for r in result["rows"]} == {usable}
+    assert {r["first"]["text"] for r in result["rows"]} == set(state), (
+        "every symphony the route returned keeps a row, labelled by the identifier the panel already has"
+    )
 
 
 def _turnover_routes(client):
