@@ -1732,7 +1732,6 @@ def _active_fleet_alert() -> dict | None:
 _DIAL_DASH = "—"
 _DIAL_EMPTY_OFFSET = "94.25"  # circumference of the r=15 dial arc, 2*pi*15, in SVG user units
 _DIAL_SENTINEL_ABS = 900  # engine uses +-999 as "not set"; the client treats abs >= 900 as unset
-_JS_TO_FIXED_MAX = 1e21  # Number.prototype.toFixed prints exponent text from this magnitude up
 _DIAL_WARN_BELOW_PCT = 15  # arc turns warn colour below this reading (percent)
 _DIAL_DIM_ABOVE_PCT = 80  # arc turns dim above this reading (percent)
 
@@ -1744,7 +1743,7 @@ def _first_paint_verdict(sym: dict) -> dict:
         isinstance(ga, bool)
         or not isinstance(ga, (int, float))
         or not math.isfinite(ga)
-        or abs(ga) >= _JS_TO_FIXED_MAX
+        or abs(ga) >= analytics.JS_TO_FIXED_EXPONENT_FROM
     ):
         return {"_verdict_text": _DIAL_DASH, "_verdict_has_value": False}
     magnitude = analytics.js_to_fixed(abs(ga), 1)
