@@ -57,6 +57,10 @@ _PERFORMANCE_MIN_HISTORY_DAYS = 30
 # original F-2 mitigation decay silently once shadow_history crossed 30 days).
 _MDD_MIN_OBS = 30
 _PERFORMANCE_VALID_SCOPES = ("aggregate", "symphony")
+# Calendar-window tokens /api/performance accepts for `days`, in the order the page's
+# buttons show them; each resolves through analytics._window_cutoff_date, the same
+# cutoff the dashboard strip and hero chart use.
+_PERFORMANCE_WINDOW_TOKENS = ("30d", "60d", "90d", "125d", "ytd", "1y", "5y")
 _PERFORMANCE_METRIC_KEYS = (
     "total_return",
     "annualized_return",
@@ -5309,7 +5313,10 @@ def resend_discord():
 
 
 @app.route("/api/history/<int:days>")
+@app.route("/api/history/<any(ytd):days>")
 def get_history(days):
+    # `days` is a calendar-day count or the token "ytd" (1 January through today,
+    # resolved by analytics._window_cutoff_date like every other window token).
     stats = analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)
     stats["window_days"] = days
     # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
@@ -5324,7 +5331,9 @@ def get_history(days):
     _hist_daily_dates = stats.get("daily_dates") or []
     _hist_actual_days = len(_hist_daily_dates)
     stats["actual_days"] = _hist_actual_days
-    stats["coverage_days"] = min(days, _hist_actual_days)
+    stats["coverage_days"] = (
+        _hist_actual_days if isinstance(days, str) else min(days, _hist_actual_days)
+    )
     stats["date_range"] = {
         "start": _hist_daily_dates[0] if _hist_daily_dates else None,
         "end": _hist_daily_dates[-1] if _hist_daily_dates else None,
@@ -5444,7 +5453,8 @@ def api_performance():
 
     Query params:
         scope:        "aggregate" (default) or "symphony"
-        days:         integer history window (default 60)
+        days:         an integer trailing-row count, or a calendar window token
+                      (30d 60d 90d 125d ytd 1y 5y); default 60
         symphony_id:  required when scope=symphony
 
     Response shape (binding — see tests/app/test_performance_routes.py):
@@ -5477,16 +5487,13 @@ def api_performance():
         ), 400
 
     raw_days = request.args.get("days", "60")
-    # AC-5 (MAPERF-03, cross-plan correction): the Performance tab's YTD button
-    # sends the literal token "ytd" (not a computed calendar-days-since-Jan-1
-    # count) — resolved here to a Jan-1 CALENDAR cutoff via the same
-    # analytics._window_cutoff_date helper /api/hero-chart and /api/strip use.
-    # Every OTHER value on this param (the six numeric buttons: 30/60/90/125/
-    # 252/1260) stays a deliberate TRADING-day count by design — only YTD's
-    # contract changes; the numeric buttons are untouched.
-    is_ytd = raw_days == "ytd"
-    if is_ytd:
-        days: int | str = "ytd"
+    # `days` is either a window token (30d 60d 90d 125d ytd 1y 5y), resolved to a
+    # CALENDAR cutoff by the same analytics._window_cutoff_date helper /api/hero-chart
+    # and /api/strip use (AC-5 MAPERF-03), or an integer trailing-row count (the
+    # dashboard detail panel sends days=60 and keeps getting its last 60 rows).
+    is_window_token = raw_days in _PERFORMANCE_WINDOW_TOKENS
+    if is_window_token:
+        days: int | str = raw_days
     else:
         try:
             days = int(raw_days)
@@ -5494,7 +5501,9 @@ def api_performance():
             return jsonify(
                 {
                     "status": "error",
-                    "message": "days must be an integer",
+                    "message": (
+                        "days must be an integer or one of " + ", ".join(_PERFORMANCE_WINDOW_TOKENS)
+                    ),
                 }
             ), 400
 
@@ -5507,10 +5516,9 @@ def api_performance():
             }
         ), 400
 
-    # "ytd" fetches the FULL series and slices it to the Jan-1 cutoff (both
-    # scopes); every other value fetches exactly `days` trailing trading days
-    # (unchanged trading-day-count contract for the six numeric buttons).
-    _fetch_days = None if is_ytd else days
+    # A window token fetches the FULL series and slices it to the token's calendar
+    # cutoff (both scopes); an integer fetches exactly `days` trailing trading days.
+    _fetch_days = None if is_window_token else days
 
     if scope == "aggregate":
         # Finding 4: the aggregate series is the CANONICAL value-weighted portfolio
@@ -5521,8 +5529,8 @@ def api_performance():
         dates, live_returns, shadow_returns = [], [], []
         try:
             _series = analytics.get_portfolio_bot_and_held_daily_returns(days=_fetch_days)
-            if is_ytd:
-                _series = _slice_series_by_window_cutoff(_series, "ytd")
+            if is_window_token:
+                _series = _slice_series_by_window_cutoff(_series, days)
             if _series is not None:
                 # Producer returns (dates, bot, held); the payload vocabulary is
                 # live_returns = if-held (held), shadow_returns = PS-exited (bot) —
@@ -5542,8 +5550,8 @@ def api_performance():
             _sym_series = analytics.get_symphony_bot_and_held_daily_returns(
                 symphony_id, days=_fetch_days
             )
-            if is_ytd:
-                _sym_series = _slice_series_by_window_cutoff(_sym_series, "ytd")
+            if is_window_token:
+                _sym_series = _slice_series_by_window_cutoff(_sym_series, days)
             if _sym_series is not None:
                 dates, shadow_returns, live_returns = _sym_series
         except Exception:
@@ -5607,8 +5615,15 @@ def api_performance():
     # than aliasing so the AC-5 contract doesn't implicitly depend on
     # observation_count's name never changing. "ytd" has no fixed numeric
     # request to cap against, so coverage_days is the actual count in that case
-    # (never a TypeError from min()'ing a string against an int).
-    _coverage_days = observation_count if is_ytd else min(days, observation_count)
+    # (never a TypeError from min()'ing a string against an int). The same holds
+    # for every window token: its span is calendar days, not a row count.
+    _coverage_days = observation_count if is_window_token else min(days, observation_count)
+    # window_start states the calendar cutoff a token window began at; an integer
+    # window is a row count and has none.
+    _window_start = None
+    if is_window_token:
+        _cutoff = analytics._window_cutoff_date(days)
+        _window_start = _cutoff.isoformat() if isinstance(_cutoff, date) else None
     response_body = {
         "scope": scope,
         "dates": list(dates),
@@ -5619,6 +5634,7 @@ def api_performance():
         "observation_count": observation_count,
         "insufficient_history": insufficient_history,
         "window_days": days,
+        "window_start": _window_start,
         "actual_days": observation_count,
         "coverage_days": _coverage_days,
         "date_range": {
