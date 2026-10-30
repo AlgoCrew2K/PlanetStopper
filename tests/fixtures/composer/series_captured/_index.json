@@ -1,0 +1,196 @@
+{
+ "captured_utc": "2026-10-22T20:50:58.274063+00:00",
+ "endpoint": "GET /api/v0.1/portfolio/accounts/{account}/symphonies/{symphony_id}",
+ "symphonies": [
+  {
+   "symphony_id": "5XjzXjdGnjh99MIsdM97",
+   "name": "Land of Feaver'd Allocations: Intelligent Novas",
+   "status": 200,
+   "points": 150,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-03-19T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 150
+   }
+  },
+  {
+   "symphony_id": "8FAXAnQmYi1INDubazeC",
+   "name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
+   "status": 200,
+   "points": 235,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2025-11-13T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 235
+   }
+  },
+  {
+   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
+   "name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
+   "status": 200,
+   "points": 284,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2025-09-05T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 284
+   }
+  },
+  {
+   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
+   "name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
+   "status": 200,
+   "points": 0,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": null,
+   "last_utc": null,
+   "utc_times": {}
+  },
+  {
+   "symphony_id": "MoAkUHnavSYw3oONiUxe",
+   "name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
+   "status": 200,
+   "points": 148,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-03-23T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 148
+   }
+  },
+  {
+   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
+   "name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
+   "status": 200,
+   "points": 389,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2025-04-04T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 389
+   }
+  },
+  {
+   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
+   "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+   "status": 200,
+   "points": 158,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-03-09T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 158
+   }
+  },
+  {
+   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
+   "name": "Planet of the Paragons: EYEG of the LQD",
+   "status": 200,
+   "points": 150,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-03-19T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 150
+   }
+  },
+  {
+   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
+   "name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
+   "status": 200,
+   "points": 572,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2024-07-12T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 572
+   }
+  },
+  {
+   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
+   "name": "Corporate Chaos 5 ways ",
+   "status": 200,
+   "points": 150,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-03-19T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 150
+   }
+  },
+  {
+   "symphony_id": "q7WQHwLzt49cMgFBzHsX",
+   "name": "Planet of the Golden Age: Arrival of the NewRunners",
+   "status": 200,
+   "points": 30,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-09-10T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 30
+   }
+  },
+  {
+   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
+   "name": "Planet of the Golden Age (Buy Copy)",
+   "status": 200,
+   "points": 141,
+   "keys": [
+    "deposit_adjusted_series",
+    "epoch_ms",
+    "series"
+   ],
+   "first_utc": "2026-04-01T00:00:00+00:00",
+   "last_utc": "2026-10-21T00:00:00+00:00",
+   "utc_times": {
+    "00:00": 141
+   }
+  }
+ ]
+}
