@@ -270,37 +270,26 @@ class TestF5GuardAlphaBadgeAtExit:
     an 'at exit' qualifier so operators don't interpret it as a current value.
     """
 
-    def test_triggered_verdict_gave_up_text_has_at_exit_qualifier(self):
+    def test_triggered_verdict_text_is_followed_by_the_at_exit_qualifier(self):
         """
-        F-5a: the 'gave up Xα' branch of the triggered-verdict block must contain
-        an 'at exit' qualifier (inline text or a labelled span).
-        """
-        html = _html()
-        # Find the 'gave up' branch.
-        gave_up_idx = html.find("gave up")
-        assert gave_up_idx != -1, (
-            "F-5a FAIL: 'gave up' text not found in templates/index.html. "
-            "Cannot verify at-exit qualifier."
-        )
-        # Within 200 chars of 'gave up' there must be 'at exit'.
-        nearby = html[gave_up_idx : gave_up_idx + 200]
-        assert "at exit" in nearby.lower(), (
-            "F-5a FAIL: the 'gave up Xα' badge does not have an 'at exit' qualifier "
-            "within 200 chars. Operators will read the badge as the current live CR gap."
-        )
-
-    def test_triggered_verdict_good_call_text_has_at_exit_qualifier(self):
-        """
-        F-5b: the 'saved +Xα' branch of the triggered-verdict block must also
-        carry 'at exit' so both positive and negative outcomes are correctly qualified.
+        F-5a: the verdict text element is followed (within the same verdict block) by
+        the labelled 'at exit' qualifier span, for both the 'gave up' and 'saved +'
+        branches (the branch wording is server-built text; the rendered output of both
+        branches is pinned in test_card_verdict_dial_first_paint.py).
         """
         html = _html()
-        saved_idx = html.find("saved +")
-        assert saved_idx != -1, "F-5b FAIL: 'saved +' text not found in templates/index.html."
-        nearby = html[saved_idx : saved_idx + 200]
+        verdict_idx = html.find('data-field="verdict-text"')
+        assert verdict_idx != -1, (
+            "F-5a FAIL: no data-field='verdict-text' element in templates/index.html; "
+            "the verdict text has no addressable element."
+        )
+        nearby = html[verdict_idx : verdict_idx + 600]
+        assert 'data-testid="guard-alpha-at-exit"' in nearby, (
+            "F-5a FAIL: the verdict text is not followed by the guard-alpha-at-exit span."
+        )
         assert "at exit" in nearby.lower(), (
-            "F-5b FAIL: the 'saved +Xα' badge does not have an 'at exit' qualifier. "
-            "Both positive and negative guard_alpha badges must be qualified."
+            "F-5a FAIL: the qualifier span carries no 'at exit' text. Operators will read "
+            "the badge as the current live CR gap."
         )
 
     def test_guard_alpha_at_exit_testid_present(self):

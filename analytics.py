@@ -45,6 +45,7 @@ import os
 import re
 import sqlite3
 from datetime import UTC, date
+from decimal import ROUND_HALF_UP, Decimal
 
 import database
 
@@ -2255,6 +2256,23 @@ def compute_windowed_portfolio_strip(
         "insufficient_history": insufficient_history,
         "window": str(window).lower(),
     }
+
+
+_JS_TO_FIXED_EXPONENT_FROM = 1e21  # ECMAScript Number::toString switches to exponent form here
+
+
+def js_to_fixed(value: float, places: int) -> str:
+    """Round as the browser's Number.prototype.toFixed (finite; from 1e21 up, exponent text).
+
+    Ties go away from zero over the exact binary value, so server-rendered text that
+    the client rewrites on the next poll never flickers between two roundings.
+    """
+    if abs(value) >= _JS_TO_FIXED_EXPONENT_FROM:
+        return repr(float(value))
+    quantum = Decimal(1).scaleb(-places)
+    text = str(Decimal(value).quantize(quantum, rounding=ROUND_HALF_UP))
+    # The browser prints (-0).toFixed(2) as "0.00", but keeps the sign of -0.04 at one place.
+    return text[1:] if value == 0 and text.startswith("-") else text
 
 
 def format_dollar_saved(
