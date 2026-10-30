@@ -1,0 +1,11 @@
+{
+  "status": 404,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "not_found_error",
+      "message": "model: opus"
+    },
+    "request_id": "req_011CgHtMscB8uuvPErRX2Kkw"
+  }
+}
