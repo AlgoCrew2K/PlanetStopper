@@ -1,0 +1,1645 @@
+{
+ "_provenance": {
+  "kind": "golden master of the reference engine's EOD output",
+  "engine_under_test": "alpha_bot_execution.py as at base commit 3be84137 (blob 3ec7d27a44f7e935e22c49649b3354c5fbd57e01, byte-identical to 37c8e983's)",
+  "run_at_head": "3cd7dff815cad701ff4d1e4a97de264c099940b8",
+  "input": "R1 nested_bot_state_row.json.gz with date set to 2026-10-23, engine main() at 2026-10-23 16:02 ET (a Friday), real temporary state database, Composer fetch reporting each symphony of R1 where it stands (tests/engine/test_close_snapshot_builder.py composer_payloads), Alpaca history one SPY day, reporting and autotuner patched",
+  "extraction": "eod_observation(after, post_mortem_path) of tests/engine/test_close_snapshot_builder.py: the new snapshot without accounts_map, post_mortem_run, last_successful_cycle_at, every stored key except the snapshot, and the post-mortem file",
+  "command": "python -m pytest tests/engine/test_zz_scratch_golden.py -n0 (an untracked scratch test calling write_stored_state, engine_cycle and eod_observation, then dumping them with json.dumps(indent=1); deleted after the run)",
+  "excluded": "accounts_map: the reference's holds the nested chain, so S-1.1 recomputes it from the stored entries instead of comparing it here",
+  "limit": "portfolio_strip is mostly null or zero because the temporary database holds only the close day's shadow rows; the golden still pins that the builder change moves no other field"
+ },
+ "observation": {
+  "snapshot_without_accounts_map": {
+   "trading_day": "2026-10-23",
+   "captured_at_et": "16:02:00 ET",
+   "data_as_of": "16:02 ET",
+   "portfolio_strip": {
+    "today_change": {
+     "if_held": 0.0,
+     "dry_run": 0.0
+    },
+    "cumulative_return": {
+     "if_held": null,
+     "dry_run": null
+    },
+    "max_drawdown": {
+     "if_held": null,
+     "dry_run": null,
+     "if_held_lifetime": null,
+     "n_obs": 0
+    }
+   },
+   "shadow_divergence": {
+    "by_symphony": {
+     "iaSOOUsmnCJHiZvbrWfs": -2.8000000000000007,
+     "lW4ZzWuqR8tEO2DhXbil": -2.7399999999999993,
+     "nOyb55RMGVCKPiYXv7TI": 0.61,
+     "qF5ZU7ALjrlhxrGEwsyJ": -1.2800000000000011,
+     "8FAXAnQmYi1INDubazeC": -2.1899999999999995,
+     "5XjzXjdGnjh99MIsdM97": -0.43000000000000016,
+     "hvPiGP1O7AHfutHE3Fjy": -0.5100000000000002,
+     "INfCn3eKsu6i4oTTqdUp": 0.0,
+     "Gpaw3IhZghQPRE6AdEKx": -1.67,
+     "MoAkUHnavSYw3oONiUxe": -2.49,
+     "n2ooAZTvBRN6ZzpMmWmU": -0.9899999999999998,
+     "q7WQHwLzt49cMgFBzHsX": 1.0599999999999998
+    },
+    "portfolio": -1.1325034000791157
+   }
+  },
+  "post_mortem_run": "2026-10-23",
+  "last_successful_cycle_at": "2026-10-23T16:02:00-04:00",
+  "state_without_snapshot": {
+   "iaSOOUsmnCJHiZvbrWfs": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -4.15,
+    "prev_return": -5.92,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": true,
+    "triggered": true,
+    "mc_history": [
+     99.42,
+     99.02,
+     99.3,
+     99.33999999999999,
+     98.54
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "f524279522dd48a282925406fa7d09a2",
+    "name": "(INVEST) LQD + EYEG 5 ways Full Market",
+    "current_holdings": [
+     {
+      "ticker": "EDC",
+      "allocation": 0.132962746
+     },
+     {
+      "ticker": "UCO",
+      "allocation": 0.098848361
+     },
+     {
+      "ticker": "SCHD",
+      "allocation": 0.001265326
+     },
+     {
+      "ticker": "TECL",
+      "allocation": 0.099822414
+     },
+     {
+      "ticker": "TQQQ",
+      "allocation": 0.197795315
+     },
+     {
+      "ticker": "URTY",
+      "allocation": 0.006067841
+     },
+     {
+      "ticker": "UVIX",
+      "allocation": 0.395565229
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.066649908
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -8.72,
+    "current_value": 826.72,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 1.0451116957880873,
+    "_last_trigger_id": 503,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -8.72,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -5.92,
+    "triggered_at_hwm": -4.15,
+    "triggered_at_stop": -3.0,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "SCHD": 35.04,
+     "TECL": 192.165,
+     "URTY": 64.855,
+     "YINN": 21.14
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "EDC",
+      "allocation": 0.328995632,
+      "price": 0.0
+     },
+     {
+      "ticker": "SCHD",
+      "allocation": 0.001215412,
+      "price": 35.04
+     },
+     {
+      "ticker": "TECL",
+      "allocation": 0.507032989,
+      "price": 192.165
+     },
+     {
+      "ticker": "URTY",
+      "allocation": 0.005849725,
+      "price": 64.855
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.15534756,
+      "price": 21.14
+     }
+    ]
+   },
+   "lW4ZzWuqR8tEO2DhXbil": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -4.17,
+    "prev_return": -5.96,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": true,
+    "triggered": true,
+    "mc_history": [
+     99.42,
+     99.02,
+     99.3,
+     99.33999999999999,
+     98.54
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "9005e0aca52b44d8b8aeb092dbfe4494",
+    "name": "Planet of the Paragons: EYEG of the LQD",
+    "current_holdings": [
+     {
+      "ticker": "UVIX",
+      "allocation": 0.999004625
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -8.7,
+    "current_value": 605.05,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 1.0509107093830952,
+    "_last_trigger_id": 501,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -8.7,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -5.96,
+    "triggered_at_hwm": -4.17,
+    "triggered_at_stop": -3.0,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "TECL": 192.165,
+     "YINN": 21.14
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "EDC",
+      "allocation": 0.330634324,
+      "price": 0.0
+     },
+     {
+      "ticker": "TECL",
+      "allocation": 0.512094167,
+      "price": 192.165
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.156244214,
+      "price": 21.14
+     }
+    ]
+   },
+   "nOyb55RMGVCKPiYXv7TI": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": 0.74,
+    "prev_return": 0.13,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     3.9600000000000004,
+     4.42,
+     3.92,
+     5.52,
+     5.1
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 2,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 0,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "35768ca02e2e4075b297e77da45fc424",
+    "name": "Corporate Chaos 5 ways ",
+    "current_holdings": [
+     {
+      "ticker": "VO",
+      "allocation": 0.024961637
+     },
+     {
+      "ticker": "UCO",
+      "allocation": 0.099690037
+     },
+     {
+      "ticker": "XLB",
+      "allocation": 0.099876107
+     },
+     {
+      "ticker": "XLF",
+      "allocation": 0.099832512
+     },
+     {
+      "ticker": "XLP",
+      "allocation": 0.099865151
+     },
+     {
+      "ticker": "XLY",
+      "allocation": 0.074695582
+     },
+     {
+      "ticker": "TECL",
+      "allocation": 0.099774415
+     },
+     {
+      "ticker": "UVIX",
+      "allocation": 0.400238253
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": 0.74,
+    "current_value": 848.63,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 0.3249692225562325,
+    "_last_trigger_id": 509,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": 0.74,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "Take-Profit",
+    "triggered_at_return": 0.13,
+    "triggered_at_hwm": 0.22,
+    "triggered_at_stop": 0.13,
+    "triggered_at_time": "11:33",
+    "trigger_prices": {
+     "QQQ": 707.86,
+     "XLY": 115.16
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "VO",
+      "allocation": 0.184436796,
+      "price": 0.0
+     },
+     {
+      "ticker": "QQQ",
+      "allocation": 0.061356031,
+      "price": 707.86
+     },
+     {
+      "ticker": "XLB",
+      "allocation": 0.124349044,
+      "price": 0.0
+     },
+     {
+      "ticker": "XLF",
+      "allocation": 0.188786224,
+      "price": 0.0
+     },
+     {
+      "ticker": "XLK",
+      "allocation": 0.060379322,
+      "price": 0.0
+     },
+     {
+      "ticker": "XLP",
+      "allocation": 0.252664768,
+      "price": 0.0
+     },
+     {
+      "ticker": "XLY",
+      "allocation": 0.124072888,
+      "price": 115.16
+     }
+    ]
+   },
+   "qF5ZU7ALjrlhxrGEwsyJ": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -2.13,
+    "prev_return": -5.0400237893381155,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     97.92,
+     98.22,
+     98.18,
+     98.06,
+     97.98
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "42c3ec1e41b74d5a90cfa0c71c538ece",
+    "name": "Planet of the Golden Age (Buy Copy)",
+    "current_holdings": [
+     {
+      "ticker": "FAS",
+      "allocation": 0.002784461
+     },
+     {
+      "ticker": "GDX",
+      "allocation": 0.005024116
+     },
+     {
+      "ticker": "LQD",
+      "allocation": 0.005232766
+     },
+     {
+      "ticker": "SCHD",
+      "allocation": 0.002766542
+     },
+     {
+      "ticker": "URTY",
+      "allocation": 0.003782794
+     },
+     {
+      "ticker": "UVXY",
+      "allocation": 0.489902819
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.48951923
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -6.3100000000000005,
+    "current_value": 1417.77,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 1.445560260968786,
+    "_last_trigger_id": 502,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -6.3100000000000005,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -5.029999999999999,
+    "triggered_at_hwm": -2.13,
+    "triggered_at_stop": -2.9971049357085287,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "STPZ": 52.43,
+     "SOXX": 489.845,
+     "QQQ": 713.035,
+     "YINN": 21.14,
+     "GDX": 83.49,
+     "LQD": 103.845,
+     "TQQQ": 69.0,
+     "URTY": 64.855,
+     "FAS": 163.69,
+     "GLD": 372.255,
+     "XLK": 184.95,
+     "SCHD": 35.04,
+     "XLI": 165.99,
+     "VTWO": 111.54
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "STPZ",
+      "allocation": 0.014101199,
+      "price": 52.43
+     },
+     {
+      "ticker": "SOXX",
+      "allocation": 0.030876817,
+      "price": 489.845
+     },
+     {
+      "ticker": "QQQ",
+      "allocation": 0.063045749,
+      "price": 713.035
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.243545837,
+      "price": 21.14
+     },
+     {
+      "ticker": "GDX",
+      "allocation": 0.005058989,
+      "price": 83.49
+     },
+     {
+      "ticker": "XTL",
+      "allocation": 0.019567652,
+      "price": 0.0
+     },
+     {
+      "ticker": "LQD",
+      "allocation": 0.005139683,
+      "price": 103.845
+     },
+     {
+      "ticker": "TQQQ",
+      "allocation": 0.012148478,
+      "price": 69.0
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.49640871,
+      "price": 0.0
+     },
+     {
+      "ticker": "URTY",
+      "allocation": 0.003707825,
+      "price": 64.855
+     },
+     {
+      "ticker": "FAS",
+      "allocation": 0.002709399,
+      "price": 163.69
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.007161032,
+      "price": 372.255
+     },
+     {
+      "ticker": "XLK",
+      "allocation": 0.02858151,
+      "price": 184.95
+     },
+     {
+      "ticker": "SCHD",
+      "allocation": 0.002701865,
+      "price": 35.04
+     },
+     {
+      "ticker": "XLI",
+      "allocation": 0.01957921,
+      "price": 165.99
+     },
+     {
+      "ticker": "VTWO",
+      "allocation": 0.015872547,
+      "price": 111.54
+     }
+    ]
+   },
+   "8FAXAnQmYi1INDubazeC": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -2.6,
+    "prev_return": -5.12861830713538,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     100.0,
+     100.0,
+     100.0,
+     100.0,
+     100.0
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "e332d840aaf54cfa8934134f421852f5",
+    "name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
+    "current_holdings": [
+     {
+      "ticker": "BIL",
+      "allocation": 0.075155576
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.249036328
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.099612533
+     },
+     {
+      "ticker": "UGL",
+      "allocation": 0.003420605
+     },
+     {
+      "ticker": "DULL",
+      "allocation": 0.047200177
+     },
+     {
+      "ticker": "SOXL",
+      "allocation": 0.261171362
+     },
+     {
+      "ticker": "UVIX",
+      "allocation": 0.131791647
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.131554921
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -7.21,
+    "current_value": 1494.38,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 1.4996138862921464,
+    "_last_trigger_id": 500,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -7.21,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -5.0200000000000005,
+    "triggered_at_hwm": -2.6,
+    "triggered_at_stop": -3.0,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "BIL": 91.6,
+     "GLD": 372.255,
+     "UGL": 43.37,
+     "USD": 76.67,
+     "YINN": 21.14
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "BIL",
+      "allocation": 0.073415384,
+      "price": 91.6
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.409907863,
+      "price": 0.0
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.118837145,
+      "price": 372.255
+     },
+     {
+      "ticker": "UGL",
+      "allocation": 0.003401924,
+      "price": 43.37
+     },
+     {
+      "ticker": "USD",
+      "allocation": 0.267271355,
+      "price": 76.67
+     },
+     {
+      "ticker": "DULL",
+      "allocation": 0.042667939,
+      "price": 0.0
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.081740827,
+      "price": 21.14
+     }
+    ]
+   },
+   "5XjzXjdGnjh99MIsdM97": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -1.5599999999999998,
+    "prev_return": -2.55,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     98.56,
+     99.02,
+     98.76,
+     98.56,
+     98.54
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "28eb287dcb294a9a96e3975b5af6d345",
+    "name": "Land of Feaver'd Allocations: Intelligent Novas",
+    "current_holdings": [
+     {
+      "ticker": "BTAL",
+      "allocation": 0.19956634
+     },
+     {
+      "ticker": "UVIX",
+      "allocation": 0.300077409
+     },
+     {
+      "ticker": "UVXY",
+      "allocation": 0.149871895
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.349468507
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -2.98,
+    "current_value": 957.76,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 0.733335140954921,
+    "_last_trigger_id": 505,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -2.98,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -2.55,
+    "triggered_at_hwm": -1.5599999999999998,
+    "triggered_at_stop": -1.5282089704632358,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "SHY": 81.42,
+     "UGL": 43.37,
+     "YINN": 21.14
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "EDC",
+      "allocation": 0.196001003,
+      "price": 0.0
+     },
+     {
+      "ticker": "EVT",
+      "allocation": 0.13625988,
+      "price": 0.0
+     },
+     {
+      "ticker": "SHY",
+      "allocation": 0.20403979,
+      "price": 81.42
+     },
+     {
+      "ticker": "UGL",
+      "allocation": 0.065347169,
+      "price": 43.37
+     },
+     {
+      "ticker": "UUP",
+      "allocation": 0.203894972,
+      "price": 0.0
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.18520989,
+      "price": 21.14
+     }
+    ]
+   },
+   "hvPiGP1O7AHfutHE3Fjy": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -1.5599999999999998,
+    "prev_return": -2.55,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     98.56,
+     99.02,
+     98.76,
+     98.56,
+     98.54
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "bb7a7f671a414ce3b27a23ee8140a996",
+    "name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
+    "current_holdings": [
+     {
+      "ticker": "VXX",
+      "allocation": 0.332916884
+     },
+     {
+      "ticker": "VIXM",
+      "allocation": 0.332975499
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.333112083
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -3.06,
+    "current_value": 1205.18,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 0.7333376957023929,
+    "_last_trigger_id": 504,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -3.06,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -2.55,
+    "triggered_at_hwm": -1.5599999999999998,
+    "triggered_at_stop": -1.5282243149645809,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "SHY": 81.42,
+     "UGL": 43.37,
+     "YINN": 21.14
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "EDC",
+      "allocation": 0.196005819,
+      "price": 0.0
+     },
+     {
+      "ticker": "EVT",
+      "allocation": 0.136254747,
+      "price": 0.0
+     },
+     {
+      "ticker": "SHY",
+      "allocation": 0.204040842,
+      "price": 81.42
+     },
+     {
+      "ticker": "UGL",
+      "allocation": 0.065352922,
+      "price": 43.37
+     },
+     {
+      "ticker": "UUP",
+      "allocation": 0.20388987,
+      "price": 0.0
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.185206935,
+      "price": 21.14
+     }
+    ]
+   },
+   "INfCn3eKsu6i4oTTqdUp": {
+    "high_water_mark": 0.47387281067613246,
+    "shadow_hwm": 0.47387281067613246,
+    "prev_return": null,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": false,
+    "mc_history": [],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 0,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "49be5185a7df493c94219d01885f982a",
+    "name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
+    "current_holdings": [
+     {
+      "ticker": "EEV",
+      "allocation": 0.1555858
+     },
+     {
+      "ticker": "XMPT",
+      "allocation": 0.027779454
+     },
+     {
+      "ticker": "RCG",
+      "allocation": 0.207862783
+     },
+     {
+      "ticker": "VIG",
+      "allocation": 0.001753858
+     },
+     {
+      "ticker": "UST",
+      "allocation": 0.163240592
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.028575621
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.206720601
+     },
+     {
+      "ticker": "DHS",
+      "allocation": 0.001279291
+     },
+     {
+      "ticker": "KMLM",
+      "allocation": 0.202771607
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": null,
+    "current_return": 0.47387281067613246,
+    "current_value": 1035.09,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 0.3466144316119761,
+    "_last_trigger_id": 335,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": 0.47387281067613246,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false
+   },
+   "Gpaw3IhZghQPRE6AdEKx": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -1.72,
+    "prev_return": -4.770479097399159,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     98.78,
+     98.22,
+     98.18,
+     98.06,
+     97.98
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "943c78a9229c48048db6d7692490b778",
+    "name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
+    "current_holdings": [
+     {
+      "ticker": "SH",
+      "allocation": 0.245827984
+     },
+     {
+      "ticker": "EUM",
+      "allocation": 0.245964438
+     },
+     {
+      "ticker": "UYG",
+      "allocation": 0.004920536
+     },
+     {
+      "ticker": "XLV",
+      "allocation": 0.003719482
+     },
+     {
+      "ticker": "BTAL",
+      "allocation": 0.246309861
+     },
+     {
+      "ticker": "SCHD",
+      "allocation": 0.005769584
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.246493307
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -6.39,
+    "current_value": 1551.27,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 1.392235411322897,
+    "_last_trigger_id": 506,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -6.39,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -4.72,
+    "triggered_at_hwm": -1.72,
+    "triggered_at_stop": -2.887368798002527,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "DFEN": 44.245,
+     "STPZ": 52.43,
+     "XLV": 180.17,
+     "SOXL": 90.84,
+     "SOXX": 489.845,
+     "QQQ": 713.035,
+     "YINN": 21.14,
+     "GDX": 83.49,
+     "HYG": 76.97,
+     "TQQQ": 69.0,
+     "GLD": 372.255,
+     "XLK": 184.95,
+     "SCHD": 35.04,
+     "XLI": 165.99,
+     "VTWO": 111.54
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "DFEN",
+      "allocation": 0.010886756,
+      "price": 44.245
+     },
+     {
+      "ticker": "STPZ",
+      "allocation": 0.020006671,
+      "price": 52.43
+     },
+     {
+      "ticker": "XLV",
+      "allocation": 0.003631885,
+      "price": 180.17
+     },
+     {
+      "ticker": "SOXL",
+      "allocation": 0.009820598,
+      "price": 90.84
+     },
+     {
+      "ticker": "SOXX",
+      "allocation": 0.042956608,
+      "price": 489.845
+     },
+     {
+      "ticker": "QQQ",
+      "allocation": 0.088094281,
+      "price": 713.035
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.143300091,
+      "price": 21.14
+     },
+     {
+      "ticker": "GDX",
+      "allocation": 0.006863086,
+      "price": 83.49
+     },
+     {
+      "ticker": "HYG",
+      "allocation": 0.008403485,
+      "price": 76.97
+     },
+     {
+      "ticker": "XTL",
+      "allocation": 0.021985916,
+      "price": 0.0
+     },
+     {
+      "ticker": "TQQQ",
+      "allocation": 0.021219449,
+      "price": 69.0
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.479601429,
+      "price": 0.0
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.014684103,
+      "price": 372.255
+     },
+     {
+      "ticker": "XLK",
+      "allocation": 0.043947562,
+      "price": 184.95
+     },
+     {
+      "ticker": "SCHD",
+      "allocation": 0.005611559,
+      "price": 35.04
+     },
+     {
+      "ticker": "XLI",
+      "allocation": 0.022088409,
+      "price": 165.99
+     },
+     {
+      "ticker": "VTWO",
+      "allocation": 0.02236943,
+      "price": 111.54
+     },
+     {
+      "ticker": "UYG",
+      "allocation": 0.004773043,
+      "price": 0.0
+     }
+    ]
+   },
+   "MoAkUHnavSYw3oONiUxe": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -3.02,
+    "prev_return": -4.663944845775995,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     100.0,
+     99.64,
+     100.0,
+     99.33999999999999,
+     99.06
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "de758ee80a744aa797e418f47b229cb6",
+    "name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
+    "current_holdings": [
+     {
+      "ticker": "GLD",
+      "allocation": 0.003424597
+     },
+     {
+      "ticker": "UGL",
+      "allocation": 0.004356454
+     },
+     {
+      "ticker": "BTAL",
+      "allocation": 0.198008378
+     },
+     {
+      "ticker": "UVIX",
+      "allocation": 0.297738762
+     },
+     {
+      "ticker": "UVXY",
+      "allocation": 0.14869805
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.346746925
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -7.12,
+    "current_value": 935.32,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 1.6949555055125025,
+    "_last_trigger_id": 507,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -7.12,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -4.63,
+    "triggered_at_hwm": -3.02,
+    "triggered_at_stop": -3.0,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "STPZ": 52.43,
+     "SOXX": 489.845,
+     "QQQ": 713.035,
+     "YINN": 21.14,
+     "GDX": 83.49,
+     "TECL": 192.165,
+     "UGL": 43.37,
+     "TQQQ": 69.0,
+     "GLD": 372.255,
+     "XLK": 184.95,
+     "XLI": 165.99,
+     "VTWO": 111.54
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "STPZ",
+      "allocation": 0.017688966,
+      "price": 52.43
+     },
+     {
+      "ticker": "SOXX",
+      "allocation": 0.047993565,
+      "price": 489.845
+     },
+     {
+      "ticker": "QQQ",
+      "allocation": 0.078711685,
+      "price": 713.035
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.039476784,
+      "price": 21.14
+     },
+     {
+      "ticker": "GDX",
+      "allocation": 0.015805545,
+      "price": 83.49
+     },
+     {
+      "ticker": "XTL",
+      "allocation": 0.024548697,
+      "price": 0.0
+     },
+     {
+      "ticker": "TECL",
+      "allocation": 0.3596843,
+      "price": 192.165
+     },
+     {
+      "ticker": "UGL",
+      "allocation": 0.004319394,
+      "price": 43.37
+     },
+     {
+      "ticker": "TQQQ",
+      "allocation": 0.018549438,
+      "price": 69.0
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.255221715,
+      "price": 0.0
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.003365242,
+      "price": 372.255
+     },
+     {
+      "ticker": "XLK",
+      "allocation": 0.038791565,
+      "price": 184.95
+     },
+     {
+      "ticker": "XLI",
+      "allocation": 0.024564461,
+      "price": 165.99
+     },
+     {
+      "ticker": "VTWO",
+      "allocation": 0.019820097,
+      "price": 111.54
+     }
+    ]
+   },
+   "n2ooAZTvBRN6ZzpMmWmU": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": -1.6,
+    "prev_return": -3.3207647405377507,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     99.36,
+     99.2,
+     99.42,
+     99.5,
+     99.44
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 16,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "b23f86cf46814929a7a6073e3fa7d81a",
+    "name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
+    "current_holdings": [
+     {
+      "ticker": "VXX",
+      "allocation": 0.125255617
+     },
+     {
+      "ticker": "NVO",
+      "allocation": 0.067494091
+     },
+     {
+      "ticker": "GE",
+      "allocation": 0.05851947
+     },
+     {
+      "ticker": "BTAL",
+      "allocation": 0.055686061
+     },
+     {
+      "ticker": "DWSH",
+      "allocation": 0.014482722
+     },
+     {
+      "ticker": "LLY",
+      "allocation": 0.045990903
+     },
+     {
+      "ticker": "EDZ",
+      "allocation": 0.055435802
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.166429069
+     },
+     {
+      "ticker": "IALT",
+      "allocation": 0.073935876
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.055682514
+     },
+     {
+      "ticker": "UVXY",
+      "allocation": 0.167193457
+     },
+     {
+      "ticker": "COST",
+      "allocation": 0.078300572
+     },
+     {
+      "ticker": "SPLV",
+      "allocation": 0.034497975
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "stop_trigger": -999.0,
+    "current_return": -4.29,
+    "current_value": 1502.48,
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "last_holdings_positive": true,
+    "mc_prob": null,
+    "active_stop_distance": 0.9294273662162498,
+    "_last_trigger_id": 508,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -4.29,
+    "disarm_confirm_count": 0,
+    "current_return_is_reconstructed": false,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -3.3000000000000003,
+    "triggered_at_hwm": -1.6,
+    "triggered_at_stop": -1.9806175582565964,
+    "triggered_at_time": "09:50",
+    "trigger_prices": {
+     "BITI": 18.06,
+     "YINN": 21.14,
+     "FBTC": 70.83,
+     "SPXU": 34.51,
+     "TQQQ": 69.0,
+     "BITU": 14.21,
+     "MSTR": 146.67,
+     "SRTY": 27.435,
+     "QID": 14.2,
+     "GLD": 372.255,
+     "BIL": 91.6,
+     "USD": 76.67,
+     "PSQ": 25.81
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "BITI",
+      "allocation": 0.056240456,
+      "price": 18.06
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.055875657,
+      "price": 21.14
+     },
+     {
+      "ticker": "UUP",
+      "allocation": 0.060428015,
+      "price": 0.0
+     },
+     {
+      "ticker": "FBTC",
+      "allocation": 0.065182143,
+      "price": 70.83
+     },
+     {
+      "ticker": "SPXU",
+      "allocation": 0.012820955,
+      "price": 34.51
+     },
+     {
+      "ticker": "TQQQ",
+      "allocation": 0.05050164,
+      "price": 69.0
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.274476957,
+      "price": 0.0
+     },
+     {
+      "ticker": "BITU",
+      "allocation": 0.050391842,
+      "price": 14.21
+     },
+     {
+      "ticker": "MSTR",
+      "allocation": 0.082339612,
+      "price": 146.67
+     },
+     {
+      "ticker": "FTLS",
+      "allocation": 0.059870879,
+      "price": 0.0
+     },
+     {
+      "ticker": "SRTY",
+      "allocation": 0.012658511,
+      "price": 27.435
+     },
+     {
+      "ticker": "QID",
+      "allocation": 0.036338442,
+      "price": 14.2
+     },
+     {
+      "ticker": "GLD",
+      "allocation": 0.044490944,
+      "price": 372.255
+     },
+     {
+      "ticker": "VIXM",
+      "allocation": 0.060782948,
+      "price": 0.0
+     },
+     {
+      "ticker": "BIL",
+      "allocation": 0.027175235,
+      "price": 91.6
+     },
+     {
+      "ticker": "USD",
+      "allocation": 0.03315464,
+      "price": 76.67
+     },
+     {
+      "ticker": "PSQ",
+      "allocation": 0.01277499,
+      "price": 25.81
+     }
+    ]
+   },
+   "last_execution_mode": false,
+   "date": "2026-10-23",
+   "last_successful_cycle_at": "2026-10-23T16:02:00-04:00",
+   "post_mortem_run": "2026-10-23",
+   "q7WQHwLzt49cMgFBzHsX": {
+    "high_water_mark": -999.0,
+    "shadow_hwm": 0.05,
+    "prev_return": -2.230290373305199,
+    "armed": false,
+    "tp_armed": false,
+    "para_armed": false,
+    "triggered": true,
+    "mc_history": [
+     90.42,
+     89.98,
+     90.22,
+     90.56,
+     88.08
+    ],
+    "below_stop_count": 0,
+    "above_tp_count": 0,
+    "disarm_confirm_count": 0,
+    "vwap_ticks": 0,
+    "vwap_bleed_ticks": 10,
+    "breakeven_locked": false,
+    "hwm_hold_ticks": 0,
+    "position_epoch": "11c96102ee2f4602af32303ad3ca78db",
+    "current_return": -0.95,
+    "current_return_is_reconstructed": false,
+    "current_value": 892.1,
+    "name": "Planet of the Golden Age: Arrival of the NewRunners",
+    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "symphony_vol": 0.0,
+    "current_holdings": [
+     {
+      "ticker": "XLB",
+      "allocation": 0.005761657
+     },
+     {
+      "ticker": "UVXY",
+      "allocation": 0.491427759
+     },
+     {
+      "ticker": "VIXY",
+      "allocation": 0.491045831
+     },
+     {
+      "ticker": "VTWO",
+      "allocation": 0.010771354
+     }
+    ],
+    "simple_return": null,
+    "net_deposits": null,
+    "time_weighted_return": null,
+    "max_drawdown": null,
+    "_maperf15_static_streak": 0,
+    "_maperf15_warned": false,
+    "_maperf15_last_raw_return": -0.95,
+    "last_holdings_positive": true,
+    "stop_trigger": -999.0,
+    "mc_prob": null,
+    "active_stop_distance": 0.8570782261535785,
+    "_last_trigger_id": 510,
+    "triggered_reason": "VWAP Bleed Cut",
+    "triggered_at_return": -2.01,
+    "triggered_at_hwm": -0.1,
+    "triggered_at_stop": -1.9685048444395927,
+    "triggered_at_time": "12:06",
+    "trigger_prices": {
+     "SOXX": 481.16,
+     "QQQ": 713.12,
+     "GDX": 81.85,
+     "EDC": 59.32,
+     "UVIX": 37.98
+    },
+    "triggered_basket_snapshot": [
+     {
+      "ticker": "STPZ",
+      "allocation": 0.013838425,
+      "price": 0.0
+     },
+     {
+      "ticker": "SOXX",
+      "allocation": 0.02077326,
+      "price": 481.16
+     },
+     {
+      "ticker": "QQQ",
+      "allocation": 0.042859792,
+      "price": 713.12
+     },
+     {
+      "ticker": "YINN",
+      "allocation": 0.162455134,
+      "price": 0.0
+     },
+     {
+      "ticker": "GDX",
+      "allocation": 0.012076397,
+      "price": 81.85
+     },
+     {
+      "ticker": "XTL",
+      "allocation": 0.018929104,
+      "price": 0.0
+     },
+     {
+      "ticker": "XLB",
+      "allocation": 0.005781807,
+      "price": 0.0
+     },
+     {
+      "ticker": "EDC",
+      "allocation": 0.335291723,
+      "price": 59.32
+     },
+     {
+      "ticker": "UVIX",
+      "allocation": 0.310889089,
+      "price": 37.98
+     },
+     {
+      "ticker": "XLK",
+      "allocation": 0.018950407,
+      "price": 0.0
+     },
+     {
+      "ticker": "XLI",
+      "allocation": 0.01914976,
+      "price": 0.0
+     },
+     {
+      "ticker": "VTWO",
+      "allocation": 0.010864508,
+      "price": 0.0
+     }
+    ]
+   }
+  },
+  "post_mortem_file": {
+   "shadow_divergence": {
+    "by_symphony": {
+     "iaSOOUsmnCJHiZvbrWfs": -2.8000000000000007,
+     "lW4ZzWuqR8tEO2DhXbil": -2.7399999999999993,
+     "nOyb55RMGVCKPiYXv7TI": 0.61,
+     "qF5ZU7ALjrlhxrGEwsyJ": -1.2800000000000011,
+     "8FAXAnQmYi1INDubazeC": -2.1899999999999995,
+     "5XjzXjdGnjh99MIsdM97": -0.43000000000000016,
+     "hvPiGP1O7AHfutHE3Fjy": -0.5100000000000002,
+     "INfCn3eKsu6i4oTTqdUp": 0.0,
+     "Gpaw3IhZghQPRE6AdEKx": -1.67,
+     "MoAkUHnavSYw3oONiUxe": -2.49,
+     "n2ooAZTvBRN6ZzpMmWmU": -0.9899999999999998,
+     "q7WQHwLzt49cMgFBzHsX": 1.0599999999999998
+    },
+    "portfolio": -1.1325034000791157
+   }
+  }
+ }
+}
