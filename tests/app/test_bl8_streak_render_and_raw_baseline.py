@@ -31,12 +31,25 @@ variant specifically, and confirms the <2/streak case renders nothing.
 
 from __future__ import annotations
 
+import copy
+import json
 import pathlib
+import re
 
 import pytest
 
 import app as app_module
 import database
+from tests._ai_advisor_js_harness import render_autotune_list
+from tests._ux_truth_support import (
+    captured_symphonies,
+    load_captured_bot_state,
+    parse_html,
+    phase1_facets,
+    pick_symphony,
+    register_bundle,
+    save_run,
+)
 
 _AI_ADVISOR_JS = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor.js"
 
@@ -193,3 +206,304 @@ class TestStreakRenderTextContract:
             "must render NOTHING (a single non-adopted run isn't a pattern "
             f"worth flagging); window:\n{window_after}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The run card names its objective, its Frozen-eval state and its symphony truly.
+#
+# Route half: GET /api/autotune-runs reports, for every row, the objective its spec bundle
+# set (or null when the bundle cannot be read) and the symphony's display name from the live
+# state (or null). Card half: the real static/ai_advisor.js renders those rows under node.
+# ---------------------------------------------------------------------------
+
+_LEGACY_NULLS = (
+    pathlib.Path(__file__).parent.parent
+    / "fixtures"
+    / "autotuner"
+    / "dsr_surfacing"
+    / "autotune_run_legacy_nulls.json"
+)
+_ROUTE_URL = "/api/autotune-runs"
+_UNREADABLE_BUNDLE_HASH = "f" * 64
+_DECISION_LABEL = {"apply": "Apply", "reject": "Reject", "fallback": "Fallback"}
+
+
+def _rows(client) -> list[dict]:
+    resp = client.get(_ROUTE_URL)
+    assert resp.status_code == 200
+    rows = resp.get_json()
+    assert isinstance(rows, list), "the route stays a bare JSON array"
+    return rows
+
+
+def _row(rows: list[dict], run_id: int) -> dict:
+    return next(r for r in rows if r["id"] == run_id)
+
+
+def _cards(list_html: str) -> list:
+    return parse_html(list_html).find_all(testid="autotune-run-row")
+
+
+def _card_for(rows: list[dict], run_id: int):
+    """Render the real list once under node and return the card for ``run_id``."""
+    row = _row(rows, run_id)
+    cards = _cards(render_autotune_list({_ROUTE_URL: rows})[0])
+    assert len(cards) == len(rows), "one card per route row"
+    return cards[rows.index(row)]
+
+
+def _ancestors_within(node, ceiling):
+    found = []
+    current = node.parent
+    while current is not None and current is not ceiling:
+        found.append(current)
+        current = current.parent
+    return found
+
+
+def _save_legacy_null_row(symphony_id: str = "legacy_symphony") -> int:
+    fixture = json.loads(_LEGACY_NULLS.read_text(encoding="utf-8"))["row"]
+    return database.save_autotune_run(
+        fixture["run_timestamp"],
+        symphony_id,
+        fixture["oos_alpha"],
+        fixture["train_alpha"],
+        fixture["baseline_decision"],
+        fixture["fallback_oos_alpha"],
+        fixture["default_oos_alpha"],
+        selection_tstat=fixture["selection_tstat"],
+        naive_sharpe=fixture["naive_sharpe"],
+        validation_sharpe=fixture["validation_sharpe"],
+        frozen_eval_sharpe=fixture["frozen_eval_sharpe"],
+    )
+
+
+class TestAutotuneRunsRouteObjectiveAndName:
+    def test_crra_bundle_row_reports_crra_eu(self, client):
+        run_id = save_run("crra-sym", register_bundle(phase1_facets()))
+        assert _row(_rows(client), run_id).get("objective") == "crra_eu"
+
+    def test_sortino_bundle_row_reports_sortino_loss_aversion(self, client):
+        bundle = register_bundle({**phase1_facets(), "objective_kind": "sortino_loss_aversion"})
+        run_id = save_run("sortino-sym", bundle)
+        assert _row(_rows(client), run_id).get("objective") == "sortino_loss_aversion"
+
+    def test_rows_with_no_readable_bundle_report_null_under_the_key(self, client):
+        legacy = _save_legacy_null_row()
+        unstored = save_run("unstored-sym", _UNREADABLE_BUNDLE_HASH, "2026-10-27T04:00:00")
+        rows = _rows(client)
+        for run_id in (legacy, unstored):
+            row = _row(rows, run_id)
+            assert "objective" in row, "the key is always present, null when unreadable"
+            assert row["objective"] is None
+
+    def test_every_row_carries_objective_and_symphony_name_keys(self, client):
+        save_run("a", register_bundle(phase1_facets()), "2026-10-27T04:00:00")
+        save_run("b", None, "2026-10-27T05:00:00")
+        for row in _rows(client):
+            assert {"objective", "symphony_name"} <= set(row), sorted(row)
+
+    def test_existing_row_fields_are_untouched(self, client):
+        run_id = save_run("keep-sym", register_bundle(phase1_facets()), frozen_eval_sharpe=0.7)
+        row = _row(_rows(client), run_id)
+        for key in (
+            "run_timestamp",
+            "symphony_id",
+            "baseline_decision",
+            "naive_sharpe",
+            "selection_tstat",
+            "frozen_eval_verdict",
+            "never_adopted_streak",
+        ):
+            assert key in row, f"{key} must stay on the row"
+        assert row["frozen_eval_verdict"] == "passed"
+
+    def test_symphony_name_is_the_live_display_name_for_a_normalized_key(self, client):
+        database.save_state(load_captured_bot_state())
+        picked = [
+            pick_symphony(lambda n: n != n.strip()),  # trailing space in the stored name
+            pick_symphony(lambda n: "'" in n),  # apostrophe
+            pick_symphony(lambda n: "(" in n),  # parentheses
+        ]
+        ids = {
+            name: save_run(database.normalize_name(name), None, f"2026-10-27T0{i}:00:00")
+            for i, (_hash, name) in enumerate(picked)
+        }
+        rows = _rows(client)
+        for _hash, name in picked:
+            assert _row(rows, ids[name]).get("symphony_name") == name, (
+                "symphony_name is the entry's display name exactly as stored"
+            )
+
+    def test_symphony_name_is_null_when_the_symphony_is_not_in_the_live_state(self, client):
+        database.save_state(load_captured_bot_state())
+        run_id = save_run("a symphony no longer held", None)
+        row = _row(_rows(client), run_id)
+        assert "symphony_name" in row and row["symphony_name"] is None
+        assert row["symphony_id"] == "a symphony no longer held"
+
+    def test_symphony_name_is_null_when_no_state_is_stored(self, client):
+        run_id = save_run("any key", None)
+        row = _row(_rows(client), run_id)
+        assert "symphony_name" in row and row["symphony_name"] is None
+
+    def test_a_metadata_entry_in_the_state_is_never_a_symphony_name(self, client):
+        """bot_state also holds portfolio metadata; only entries shaped like a symphony count."""
+        state = load_captured_bot_state()
+        state["last_market_close_snapshot"] = {"date": "2026-10-26", "value": 1.0}
+        state["post_mortem_run"] = {"label": "not a symphony"}
+        database.save_state(state)
+        run_id = save_run("post_mortem_run", None)
+        row = _row(_rows(client), run_id)
+        assert "symphony_name" in row and row["symphony_name"] is None
+
+
+class TestAutotuneRunCardRender:
+    def test_crra_card_names_its_score_with_the_haircut_tooltip(self, client):
+        run_id = save_run("crra-sym", register_bundle(phase1_facets()), naive_sharpe=1.2345678)
+        card = _card_for(_rows(client), run_id)
+        assert re.search(r"Best CRRA-EU score\s*1\.2346", card.text), card.text
+        tips = [t.lower() for t in card.titles_in_subtree()]
+        assert any("best trial" in t and "haircut" in t for t in tips), tips
+
+    def test_sortino_card_names_its_score(self, client):
+        bundle = register_bundle({**phase1_facets(), "objective_kind": "sortino_loss_aversion"})
+        run_id = save_run("sortino-sym", bundle, naive_sharpe=0.8765432)
+        card = _card_for(_rows(client), run_id)
+        assert re.search(r"Best Sortino score\s*0\.8765", card.text), card.text
+        assert "CRRA-EU" not in card.text
+
+    @pytest.mark.parametrize("which", ["no_bundle", "unstored_bundle"])
+    def test_unreadable_bundle_falls_back_to_a_generic_label_naming_both_objectives(
+        self, client, which
+    ):
+        bundle = None if which == "no_bundle" else _UNREADABLE_BUNDLE_HASH
+        run_id = save_run("fallback-sym", bundle, naive_sharpe=1.2345678)
+        card = _card_for(_rows(client), run_id)
+        assert re.search(r"Best objective score\s*1\.2346", card.text), card.text
+        assert "CRRA-EU" not in card.text and "Sortino" not in card.text
+        tips = " ".join(card.titles_in_subtree())
+        assert "CRRA-EU" in tips and "Sortino" in tips, "the fallback tooltip names both objectives"
+
+    @pytest.mark.parametrize("objective_kind", ["crra_eu", "sortino_loss_aversion", None])
+    def test_no_bare_sortino_or_sharpe_label_remains_on_the_card(self, client, objective_kind):
+        bundle = (
+            None
+            if objective_kind is None
+            else register_bundle({**phase1_facets(), "objective_kind": objective_kind})
+        )
+        run_id = save_run("labels-sym", bundle)
+        text = _card_for(_rows(client), run_id).text
+        remainder = re.sub(r"Best (CRRA-EU|Sortino|objective) score", "", text)
+        assert "Sortino" not in remainder and "Sharpe" not in remainder, text
+
+    def test_null_naive_score_reads_na_under_the_generic_label(self, client):
+        run_id = _save_legacy_null_row()
+        card = _card_for(_rows(client), run_id)
+        assert re.search(r"Best objective score\s*N/A", card.text), card.text
+
+    def test_zero_naive_score_is_a_number_never_na(self, client):
+        run_id = save_run("zero-sym", None, naive_sharpe=0.0)
+        text = _card_for(_rows(client), run_id).text
+        assert re.search(r"Best objective score\s*0\.0000", text), text
+        assert not re.search(r"Best objective score\s*N/A", text)
+
+    def test_passed_verdict_renders_a_pill_in_the_positive_token(self, client):
+        run_id = save_run("pass-sym", None, frozen_eval_sharpe=0.9)
+        card = _card_for(_rows(client), run_id)
+        pill = card.find(cls="frozen-eval-pill")
+        assert pill is not None and pill.text == "passed"
+        assert "--studio-pos" in pill.attrs.get("style", "")
+        assert "not evaluated" not in card.text
+
+    def test_failed_verdict_renders_a_pill_in_the_negative_token(self, client):
+        run_id = save_run("fail-sym", None, frozen_eval_sharpe=-0.4)
+        pill = _card_for(_rows(client), run_id).find(cls="frozen-eval-pill")
+        assert pill is not None and pill.text == "failed"
+        assert "--studio-neg" in pill.attrs.get("style", "")
+
+    def test_null_verdict_reads_not_evaluated_with_no_pill_element(self, client):
+        run_id = save_run("none-sym", None, frozen_eval_sharpe=None)
+        rows = _rows(client)
+        assert _row(rows, run_id)["frozen_eval_verdict"] is None, "self-guard: route sends null"
+        card = _card_for(rows, run_id)
+        assert "Frozen-eval not evaluated" in card.text
+        assert card.find(cls="frozen-eval-pill") is None
+        notice = next(n for n in card.iter() if n.text == "Frozen-eval not evaluated")
+        styled = [notice, *_ancestors_within(notice, card)]
+        assert any("--studio-ink-dim" in n.attrs.get("style", "") for n in styled), (
+            "the not-evaluated line is dim ink"
+        )
+
+    def test_missing_verdict_key_reads_the_same_as_a_null_verdict(self, client):
+        run_id = save_run("missing-sym", None, frozen_eval_sharpe=None)
+        rows = copy.deepcopy(_rows(client))
+        del _row(rows, run_id)["frozen_eval_verdict"]
+        card = _card_for(rows, run_id)
+        assert "Frozen-eval not evaluated" in card.text
+        assert card.find(cls="frozen-eval-pill") is None
+
+    def test_repeated_poll_renders_hold_one_score_and_one_frozen_eval_line_per_card(self, client):
+        save_run(
+            "a", register_bundle(phase1_facets()), "2026-10-27T04:00:00", frozen_eval_sharpe=0.5
+        )
+        save_run("b", None, "2026-10-27T05:00:00", frozen_eval_sharpe=None)
+        rows = _rows(client)
+        renders = render_autotune_list({_ROUTE_URL: rows}, polls=2)
+        assert len(renders) == 3
+        for markup in renders:
+            cards = _cards(markup)
+            assert len(cards) == len(rows)
+            for card in cards:
+                assert len(re.findall(r"Best (?:CRRA-EU|Sortino|objective) score", card.text)) == 1
+                assert card.text.count("Frozen-eval") == 1
+        assert renders[0] == renders[1] == renders[2], "a re-render replaces, never appends"
+
+    def test_failed_fetch_shows_the_load_failure_and_no_card(self):
+        renders = render_autotune_list({_ROUTE_URL: {"__reject__": "network down"}})
+        tree = parse_html(renders[0])
+        assert "Failed to load runs" in tree.text
+        assert tree.find_all(testid="autotune-run-row") == []
+
+    def test_decision_pill_t_stat_and_streak_line_render_from_the_row(self, client):
+        stamps = ["2026-10-12T04:00:00", "2026-10-19T04:00:00", "2026-10-26T04:00:00"]
+        ids = [
+            save_run("streak-sym", None, stamps[0], baseline_decision="Reverted to Fallback"),
+            save_run("streak-sym", None, stamps[1], baseline_decision="Reset to Global Default"),
+            save_run(
+                "streak-sym",
+                None,
+                stamps[2],
+                baseline_decision="Rejected",
+                selection_tstat=2.3456789,
+            ),
+        ]
+        rows = _rows(client)
+        newest = _row(rows, ids[2])
+        assert newest["never_adopted_streak"]["status"] == "streak", "self-guard"
+        card = _card_for(rows, ids[2])
+        pill = card.find(cls="decision-pill")
+        assert pill is not None and pill.text == _DECISION_LABEL[newest["baseline_decision"]]
+        assert re.search(r"Sel t-stat\s*2\.3457", card.text), card.text
+        streak = card.find(cls="autotune-run-streak")
+        assert streak is not None
+        assert streak.text == (
+            f"{newest['never_adopted_streak']['streak_weeks']} consecutive runs "
+            "without adopting a tuned config"
+        )
+
+    def test_name_shows_the_display_name_with_the_key_only_in_the_title(self, client):
+        database.save_state(load_captured_bot_state())
+        _hash, name = captured_symphonies()[0]
+        key = database.normalize_name(name)
+        run_id = save_run(key, None)
+        label = _card_for(_rows(client), run_id).find(cls="autotune-run-name")
+        assert label is not None
+        assert label.text == name.strip()
+        assert key in label.title and key != label.text
+
+    def test_name_falls_back_to_the_stored_key_when_the_symphony_is_not_held(self, client):
+        database.save_state(load_captured_bot_state())
+        run_id = save_run("a symphony no longer held", None)
+        label = _card_for(_rows(client), run_id).find(cls="autotune-run-name")
+        assert label is not None and label.text == "a symphony no longer held"

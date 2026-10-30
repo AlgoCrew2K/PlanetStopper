@@ -63,14 +63,17 @@ Fixture: tests/fixtures/ai_advisor/m6/strategy_builder_observations_basic.json
 
 from __future__ import annotations
 
+import copy
 import json
 import pathlib
 import re
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
+from tests._ux_truth_support import parse_html
 
 # ---------------------------------------------------------------------------
 # Repository root and fixture loading
@@ -1465,3 +1468,220 @@ def test_post_run_does_not_call_real_atlas_in_offline_suite(client, _stub_commun
         "If this assertion fails the patch seam is broken — the route may be reaching "
         "real Atlas (MongoDB) during the offline suite."
     )
+
+
+# ===========================================================================
+# Strategy Builder cards name their objective and source in words.
+#
+# Rows are written by the real producers (_persist_survivor, _persist_rejected) into the
+# per-test database and rendered by the real route; nothing below patches an accessor.
+# A row with a key removed is the producer's own row with that key deleted and re-inserted
+# under a new candidate id (a derived record, see tests/fixtures/ux_data_truth/PROVENANCE.md).
+# ===========================================================================
+
+_OBJECTIVE_LABELS = {
+    "diversify": "Diversify portfolio",
+    "cut_drawdown": "Cut drawdown",
+    "lift_risk_adjusted": "Lift risk-adjusted return",
+    "volatility_mitigation": "Volatility mitigation",
+}
+_SOURCE_LABELS = {"built-new": "Built new", "atlas-suggested": "Atlas community"}
+_SB_SYMPHONY = "sb-symphony-key"
+_INCUMBENT_TREE = json.loads(
+    (
+        _REPO_ROOT
+        / "tests"
+        / "fixtures"
+        / "advisors"
+        / "frontrunner"
+        / "real_tree_07_iaSOOUsmnCJHiZvbrWfs.json"
+    ).read_text(encoding="utf-8")
+)
+
+
+def _candidate(candidate_id: str, objective, template_id):
+    from advisors.strategy_builder_engine import CandidateInfo
+
+    params = {} if objective is _OMIT else {"objective": objective}
+    return CandidateInfo(
+        candidate_id=candidate_id,
+        tree=copy.deepcopy(_INCUMBENT_TREE),
+        template_id=template_id,
+        params=params,
+        metrics={"annualized_return": 0.11, "sharpe": 0.9, "calmar": 0.7, "max_drawdown": -0.2},
+    )
+
+
+def _gate(decision: str):
+    return SimpleNamespace(
+        verdict=SimpleNamespace(decision=decision),
+        winner_p_adj=0.02,
+        caveats=["Selected on backtest"],
+    )
+
+
+_OMIT = object()
+
+
+def _write_card(kind: str, candidate_id: str, objective, template_id) -> None:
+    """Write one card through the real producer: kind is 'survivor' or 'rejected'."""
+    from advisors import strategy_builder_engine as engine
+
+    info = _candidate(candidate_id, objective, template_id)
+    if kind == "survivor":
+        engine._persist_survivor(_SB_SYMPHONY, info, _gate("ADOPT_CANDIDATE"), 4, n_survivors=1)
+    else:
+        engine._persist_rejected(_SB_SYMPHONY, info, _gate("WITHHELD_FDR"), 4, n_survivors=0)
+
+
+def _rewrite_without(candidate_id: str, new_id: str, drop: str, *, set_to=_OMIT) -> None:
+    """Derived record: the producer's row for ``candidate_id`` with ``drop`` removed or replaced."""
+    row = next(
+        r
+        for r in app_module.database.get_advisor_observations_for_role("STRATEGY_BUILDER")
+        if r["subject_id"] == candidate_id
+    )
+    raw = copy.deepcopy(row["raw_response"])
+    raw.pop(drop, None)
+    if set_to is not _OMIT:
+        raw[drop] = set_to
+    raw["candidate_id"] = new_id
+    app_module.database.insert_advisor_observation(
+        advisor_role="STRATEGY_BUILDER",
+        symphony_id=row["symphony_id"],
+        subject_type=row["subject_type"],
+        subject_id=new_id,
+        verdict=row["verdict"],
+        raw_response=raw,
+    )
+
+
+def _sb_tree(client):
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+    return parse_html(resp.get_data(as_text=True))
+
+
+def _card_by_id(tree, candidate_id: str, kind_class: str):
+    """The Strategy Builder card of the given kind whose title carries ``candidate_id``."""
+    for card in tree.find_all(cls=kind_class):
+        title = card.find(cls="card-candidate-id")
+        if title is not None and candidate_id in title.text:
+            return card
+    raise AssertionError(f"no {kind_class} card for {candidate_id}")
+
+
+_KIND_CLASS = {"survivor": "proposal-card--survivor", "rejected": "proposal-card--rejected"}
+
+
+class TestStoredCardLabels:
+    @pytest.mark.parametrize("kind", ["survivor", "rejected"])
+    def test_card_reads_objective_and_source_in_words_and_leads_its_title_with_the_objective(
+        self, client, kind
+    ):
+        _write_card(kind, "vol-mit-7", "volatility_mitigation", "built-new")
+        card = _card_by_id(_sb_tree(client), "vol-mit-7", _KIND_CLASS[kind])
+        strip = card.find(testid="objective-strip")
+        assert strip is not None
+        assert "Objective: Volatility mitigation" in strip.text
+        assert "Source: Built new" in strip.text
+        assert "Template" not in strip.text
+        title = card.find(cls="card-candidate-id")
+        assert title.text.startswith("Volatility mitigation"), title.text
+        secondary = title.find(cls="stat-nil")
+        assert secondary is not None and secondary.text == "vol-mit-7", (
+            "the candidate id stays on the title as a secondary label"
+        )
+
+    @pytest.mark.parametrize("kind", ["survivor", "rejected"])
+    def test_every_objective_and_source_value_reads_from_one_mapping_without_underscores(
+        self, client, kind
+    ):
+        expected: dict[str, tuple[str, str]] = {}
+        sources = list(_SOURCE_LABELS)
+        for i, objective in enumerate(_OBJECTIVE_LABELS):
+            # Alternate the source so both values appear on this card kind.
+            source = sources[(i + (kind == "rejected")) % 2]
+            _write_card(kind, f"cand-{kind}-{i}", objective, source)
+            expected[f"cand-{kind}-{i}"] = (_OBJECTIVE_LABELS[objective], _SOURCE_LABELS[source])
+        assert {s for _o, s in expected.values()} == set(_SOURCE_LABELS.values()), "self-guard"
+        tree = _sb_tree(client)
+        for candidate_id, (objective_label, source_label) in expected.items():
+            card = _card_by_id(tree, candidate_id, _KIND_CLASS[kind])
+            strip = card.find(testid="objective-strip")
+            assert f"Objective: {objective_label}" in strip.text
+            assert f"Source: {source_label}" in strip.text
+            assert "_" not in strip.text
+            assert "_" not in card.find(cls="card-candidate-id").text.replace(candidate_id, "")
+
+    @pytest.mark.parametrize("kind", ["survivor", "rejected"])
+    @pytest.mark.parametrize("variant", ["key_removed", "null", "unknown_value"])
+    def test_absent_or_unknown_objective_reads_not_recorded(self, client, kind, variant):
+        _write_card(kind, "base-obj", "cut_drawdown", "built-new")
+        replacement = {"key_removed": _OMIT, "null": None, "unknown_value": "legacy_mix"}[variant]
+        _rewrite_without("base-obj", "derived-obj", "objective", set_to=replacement)
+        card = _card_by_id(_sb_tree(client), "derived-obj", _KIND_CLASS[kind])
+        strip = card.find(testid="objective-strip")
+        assert "Objective: not recorded" in strip.text
+        assert "Source: Built new" in strip.text, "the other half still reads from its value"
+        assert "legacy_mix" not in strip.text
+
+    @pytest.mark.parametrize("kind", ["survivor", "rejected"])
+    @pytest.mark.parametrize("variant", ["key_removed", "null", "unknown_value"])
+    def test_absent_or_unknown_source_reads_not_recorded(self, client, kind, variant):
+        _write_card(kind, "base-src", "diversify", "atlas-suggested")
+        replacement = {"key_removed": _OMIT, "null": None, "unknown_value": "community"}[variant]
+        _rewrite_without("base-src", "derived-src", "template_id", set_to=replacement)
+        card = _card_by_id(_sb_tree(client), "derived-src", _KIND_CLASS[kind])
+        strip = card.find(testid="objective-strip")
+        assert "Source: not recorded" in strip.text
+        assert "Objective: Diversify portfolio" in strip.text
+        assert "community" not in strip.text.replace("Atlas community", "")
+
+    def test_backtest_failed_card_reads_objective_and_source_in_words(self, client):
+        """The failed-backtest branch keys on a ``backtest_error`` key no producer writes at
+        the Ref, so this card is the producer's rejected row with that key added (derived)."""
+        _write_card("rejected", "base-bt", "lift_risk_adjusted", "atlas-suggested")
+        _rewrite_without(
+            "base-bt", "derived-bt", "backtest_error", set_to="Composer API returned 422"
+        )
+        card = _card_by_id(_sb_tree(client), "derived-bt", "proposal-card--backtest-failed")
+        strip = card.find(testid="objective-strip")
+        assert "Objective: Lift risk-adjusted return" in strip.text
+        assert "Source: Atlas community" in strip.text
+        assert "Template" not in strip.text and "_" not in strip.text
+
+
+def _leaves(value) -> list:
+    if isinstance(value, dict):
+        return [leaf for v in value.values() for leaf in _leaves(v)]
+    if isinstance(value, list):
+        return [leaf for v in value for leaf in _leaves(v)]
+    return [value]
+
+
+class TestLabelMappingReachesTheLiveRunRenderer:
+    def _labels(self, client) -> dict:
+        panel = _sb_tree(client).find(testid="tab-panel-strategy-builder")
+        assert panel is not None
+        assert "data-sb-labels" in panel.attrs, "the panel carries the mapping for the live cards"
+        return json.loads(panel.attrs["data-sb-labels"])
+
+    def test_attribute_holds_every_objective_and_source_label(self, client):
+        leaves = _leaves(self._labels(client))
+        for label in (*_OBJECTIVE_LABELS.values(), *_SOURCE_LABELS.values()):
+            assert label in leaves, f"{label!r} missing from data-sb-labels"
+
+    def test_attribute_is_keyed_by_the_stored_objective_and_source_values(self, client):
+        text = json.dumps(self._labels(client))
+        for stored in (*_OBJECTIVE_LABELS, *_SOURCE_LABELS):
+            assert f'"{stored}"' in text, f"{stored!r} must be a key of the mapping"
+
+    def test_stored_cards_and_the_attribute_read_one_mapping(self, client):
+        assert app_module._SB_OBJECTIVE_LABELS == _OBJECTIVE_LABELS
+        assert app_module._SB_SOURCE_LABELS == _SOURCE_LABELS
+        labels = self._labels(client)
+        assert set(_leaves(labels)) >= {
+            *app_module._SB_OBJECTIVE_LABELS.values(),
+            *app_module._SB_SOURCE_LABELS.values(),
+        }

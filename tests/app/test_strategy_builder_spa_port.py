@@ -52,6 +52,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app as app_module
+from tests._ux_truth_support import parse_html
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _BASIC_FIXTURE_PATH = (
@@ -877,3 +878,46 @@ class TestRouteTestsSPAModelVerification:
             "After SPA-port the route returns 302 — update this assertion to assert 302 "
             "or redirect status (AC7 requires tests updated to the SPA model)."
         )
+
+
+# ===========================================================================
+# Banners say what tab they sit on.
+# ===========================================================================
+
+_LOGIC_CHANGES_BANNER_TEXT = (
+    "Logic-change proposals carry the highest overfitting risk. "
+    "FDR/Yekutieli correction applied. Survivors are sound-but-unprovable."
+)
+
+
+class TestBannersSayTrueThings:
+    def test_strategy_builder_banner_headline_names_strategy_builder(self, advisor_page_html):
+        banner = parse_html(advisor_page_html).find(testid="strategy-builder-risk-banner")
+        assert banner is not None
+        headline = banner.find("strong")
+        assert headline is not None and "Strategy Builder" in headline.text, headline.text
+        lowered = banner.text.lower()
+        assert "logic-change" not in lowered and "logic change" not in lowered, banner.text
+
+    def test_strategy_builder_banner_stays_non_dismissible_with_its_body_sentences(
+        self, advisor_page_html
+    ):
+        banner = parse_html(advisor_page_html).find(testid="strategy-builder-risk-banner")
+        assert banner is not None
+        for node in banner.iter():
+            assert node.tag not in {"button", "input", "a"}, "no control inside the banner"
+            marks = " ".join([*node.classes, node.attrs.get("data-testid", "")]).lower()
+            assert "dismiss" not in marks and "close" not in marks
+        for sentence in (
+            "multiple-testing correction (FDR/Yekutieli)",
+            "sound-but-unprovable",
+            "selection-bias exposure",
+        ):
+            assert sentence in banner.text, f"banner lost its {sentence!r} sentence"
+
+    def test_logic_changes_banner_text_is_unchanged(self, advisor_page_html):
+        panel = parse_html(advisor_page_html).find(testid="tab-panel-logic-changes")
+        assert panel is not None
+        banner = panel.find(testid="fdr-warning-banner")
+        assert banner is not None
+        assert banner.find(cls="fdr-warning-banner-text").text == _LOGIC_CHANGES_BANNER_TEXT

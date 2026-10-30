@@ -31,6 +31,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._ux_truth_support import load_captured_bot_state, parse_html, pick_symphony
+
 
 @pytest.fixture(scope="function")
 def flask_client():
@@ -207,3 +209,85 @@ def test_not_applicable_verdict_is_visually_distinct_from_real_verdicts(
             "obs-placeholder / data-verdict-kind). It reads like a real verdict. "
             "AC-6: make feature-off rows structurally distinct or omit them."
         )
+
+
+# ===========================================================================
+# The Symphony cell names the symphony by its display name, from the live state.
+#
+# State and observations are written through the real writers; the route is not
+# patched. The cell keeps the stored key only in a title attribute, and shows the
+# stored key (or the dash) when the live state cannot name the symphony.
+# ===========================================================================
+
+
+@pytest.fixture
+def live_client():
+    import app as flask_app
+
+    flask_app.app.config["TESTING"] = True
+    with flask_app.app.test_client() as client:
+        yield client
+
+
+def _observe(symphony_id) -> int:
+    import database
+
+    return database.insert_advisor_observation(
+        advisor_role="OVERFITTING_CONSCIENCE",
+        subject_type="autotune_run",
+        subject_id="1",
+        verdict="WATCH",
+        symphony_id=symphony_id,
+        raw_response={"note": "selection drift"},
+    )
+
+
+def _symphony_cell(client, obs_id: int):
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+    row = parse_html(resp.get_data(as_text=True)).find("tr", attr=("data-obs-id", str(obs_id)))
+    assert row is not None, "the observation must render a row"
+    cell = row.find(testid="obs-symphony")
+    assert cell is not None
+    return cell
+
+
+class TestSymphonyCellShowsDisplayName:
+    @pytest.mark.parametrize(
+        "picker",
+        [
+            lambda n: "(" in n,
+            lambda n: n != n.strip(),
+            lambda n: "'" in n,
+        ],
+        ids=["parentheses", "trailing_space", "apostrophe"],
+    )
+    def test_cell_reads_the_display_name_with_the_key_in_a_title(self, live_client, picker):
+        import database
+
+        database.save_state(load_captured_bot_state())
+        _hash, name = pick_symphony(picker)
+        key = database.normalize_name(name)
+        cell = _symphony_cell(live_client, _observe(key))
+        assert cell.text == name.strip()
+        assert any(key == t or key in t for t in cell.titles_in_subtree()), (
+            "the stored key belongs in a title attribute"
+        )
+
+    def test_cell_reads_the_stored_key_when_no_live_symphony_matches(self, live_client):
+        import database
+
+        database.save_state(load_captured_bot_state())
+        cell = _symphony_cell(live_client, _observe("a symphony no longer held"))
+        assert cell.text == "a symphony no longer held"
+
+    @pytest.mark.parametrize("empty_key", ["", None], ids=["empty_string", "null"])
+    def test_cell_reads_the_dash_for_an_empty_key(self, live_client, empty_key):
+        import database
+
+        database.save_state(load_captured_bot_state())
+        assert _symphony_cell(live_client, _observe(empty_key)).text == "—"
+
+    def test_cell_reads_the_stored_key_when_no_state_is_stored(self, live_client):
+        cell = _symphony_cell(live_client, _observe("any stored key"))
+        assert cell.text == "any stored key"

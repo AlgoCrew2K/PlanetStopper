@@ -2268,6 +2268,16 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
     return [dict(zip(_SPEC_FACET_COLUMNS, row)) for row in rows]
 
 
+def objective_kind_for_facets(facets_by_name: dict) -> str:
+    """Import-signature stub; the implementer replaces the body."""
+    return ""
+
+
+def get_autotune_run_objectives(run_ids: "list[int]") -> "dict[int, str | None]":
+    """Import-signature stub; the implementer replaces the body."""
+    return {}
+
+
 # --- 018: Researcher DOF Ledger ---
 # Append-only degrees-of-freedom ledger for the NN1 multiple-testing haircut.
 # Records every facet evaluated on a strategy P&L / strategy-return basis.

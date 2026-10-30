@@ -51,6 +51,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import app as app_module
+from tests._ux_truth_support import parse_html
 
 # ---------------------------------------------------------------------------
 # Module stub injection helpers
@@ -697,3 +698,48 @@ class TestConsumerModuleIdentityNeverDivergesFromCanonicalSysModulesEntry:
             "with no exception raised anywhere -- the exact 'returns an empty "
             "set instead of the expected pair' failure mode this guards."
         )
+
+
+# ===========================================================================
+# The caveat banner states the stress sentence once and carries the whole caveat.
+#
+# The route and template run unpatched; only the pairwise computation is controlled,
+# so the banner's text is whatever the page renders from CRISIS_CAVEAT.
+# ===========================================================================
+
+_STRESS_SENTENCE = "Correlations destabilize toward 1.0 in market stress."
+
+
+def _caveat_banner_text(test_client) -> str:
+    resp = test_client.get("/ai-advisor")
+    assert resp.status_code == 200
+    banner = parse_html(resp.get_data(as_text=True)).find(testid="crisis-caveat-banner")
+    assert banner is not None, "the caveat banner is always on"
+    return banner.text
+
+
+def _assert_whole_caveat_stated_once(text: str) -> None:
+    from advisors.correlation_diagnostic import CRISIS_CAVEAT
+
+    assert text.count(_STRESS_SENTENCE) == 1, text
+    assert CRISIS_CAVEAT in text, "the rest of the caveat must still be shown"
+
+
+def test_caveat_states_the_stress_sentence_once_with_pairs_present(test_client, two_pair_matrix):
+    _inject_correlation_diagnostic_stub(two_pair_matrix)
+    _assert_whole_caveat_stated_once(_caveat_banner_text(test_client))
+
+
+def test_caveat_still_renders_whole_when_no_pairs_exist(test_client):
+    _inject_correlation_diagnostic_stub([])
+    _assert_whole_caveat_stated_once(_caveat_banner_text(test_client))
+
+
+def test_caveat_still_renders_whole_when_the_series_computation_fails(test_client, monkeypatch):
+    from advisors import correlation_diagnostic
+
+    def _boom(_series):
+        raise RuntimeError("series computation failed")
+
+    monkeypatch.setattr(correlation_diagnostic, "compute_pairwise_correlations", _boom)
+    _assert_whole_caveat_stated_once(_caveat_banner_text(test_client))

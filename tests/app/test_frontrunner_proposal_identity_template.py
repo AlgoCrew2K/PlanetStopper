@@ -105,11 +105,18 @@ TEST EXECUTION: python -m pytest tests/app/test_frontrunner_proposal_identity_te
 
 from __future__ import annotations
 
+import json
+import pathlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import app as app_module
+from tests._ux_truth_support import (
+    captured_symphonies,
+    load_captured_bot_state,
+    parse_html,
+)
 
 # ---------------------------------------------------------------------------
 # Shared stub helpers — verbatim mirror of test_frontrunner_builder_template.py
@@ -769,3 +776,61 @@ class TestResolveIncumbentDisplayNameMutationProof:
             f"own duplicated inline resolution logic instead of the shared F8 "
             f"function. card slice: {card[:2000]!r}"
         )
+
+
+# ===========================================================================
+# The card title names the incumbent by its display name, from the live state.
+#
+# State and proposal are written through the real writers (database.save_state,
+# database.insert_frontrunner_proposal) from the captured droplet record; nothing
+# below patches a database accessor, so the prefetch and the template are exercised
+# as production runs them.
+# ===========================================================================
+
+_REAL_INCUMBENT_TREE = (
+    pathlib.Path(__file__).parent.parent
+    / "fixtures"
+    / "advisors"
+    / "frontrunner"
+    / "real_tree_07_iaSOOUsmnCJHiZvbrWfs.json"
+)
+
+
+def _seed_pending_proposal(incumbent_hash: str, *, hold_incumbent: bool) -> int:
+    state = load_captured_bot_state()
+    if not hold_incumbent:
+        state.pop(incumbent_hash)
+    app_module.database.save_state(state)
+    return app_module.database.insert_frontrunner_proposal(
+        symphony_id=incumbent_hash,
+        proposal_source="frontrunner_builder",
+        candidate_tree=json.loads(_REAL_INCUMBENT_TREE.read_text(encoding="utf-8")),
+        metrics_json=dict(_FR_METRICS_WITH_OVERLAY),
+    )
+
+
+def _card_title(client, proposal_id: int):
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+    tree = parse_html(resp.get_data(as_text=True))
+    card = tree.find(attr=("id", f"fr-card-{proposal_id}"))
+    assert card is not None, "the pending proposal must render a card"
+    title = card.find(cls="card-candidate-id")
+    assert title is not None, "the card has a title"
+    return title
+
+
+class TestCardTitleNamesTheIncumbent:
+    def test_title_reads_the_display_name_and_keeps_the_hash_in_its_title_attribute(self, client):
+        incumbent_hash, name = next(
+            pair for pair in captured_symphonies() if pair[0] == "iaSOOUsmnCJHiZvbrWfs"
+        )
+        title = _card_title(client, _seed_pending_proposal(incumbent_hash, hold_incumbent=True))
+        assert title.text == name
+        assert title.title == incumbent_hash
+        assert incumbent_hash not in title.text
+
+    def test_title_reads_the_hash_when_the_incumbent_is_no_longer_held(self, client):
+        incumbent_hash = "iaSOOUsmnCJHiZvbrWfs"
+        title = _card_title(client, _seed_pending_proposal(incumbent_hash, hold_incumbent=False))
+        assert title.text == incumbent_hash
