@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from datetime import UTC, datetime
 from typing import Any
+
+import llm_request
+import model_config
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +247,11 @@ def _extract_json_object(raw_text: str) -> str:
     return text[start:]
 
 
+# Thinking shares the output budget; the request carries no timeout, and the SDK rejects a
+# non-streaming request above 21333 tokens without one.
+_SYNTHESIS_MAX_TOKENS = 16000
+
+
 def _synthesize_via_claude(
     per_lens: dict[str, dict],
     per_lens_digest: dict,
@@ -285,12 +292,18 @@ def _synthesize_via_claude(
             '{"overall_sentiment": "<label>", "sentiment_rationale": "<rationale>"}'
         )
 
-        response = client.messages.create(
-            model=os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8"),
-            max_tokens=256,
+        reply = llm_request.send(
+            client,
+            model_config.Knob.SYNTHESIS,
+            effort="high",
+            max_tokens=_SYNTHESIS_MAX_TOKENS,
             messages=[{"role": "user", "content": synthesis_prompt}],
         )
-        raw_text = response.content[0].text.strip()
+        if reply.reason is not None:
+            reason_text = reply.reason_text()
+            logger.warning("Claude synthesis unavailable: %s", reason_text)
+            return _SENTIMENT_LIMITED_INPUTS, f"Synthesis unavailable ({reason_text})."
+        raw_text = reply.text().strip()
 
         # Claude (especially Haiku) frequently wraps the JSON payload in
         # markdown code fences (```json ... ```) or adds leading/trailing prose.

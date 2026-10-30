@@ -36,6 +36,7 @@ import json
 import logging
 
 import ai_advisor
+import llm_request
 import model_config
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,11 @@ logger = logging.getLogger(__name__)
 # Token budget for a single concise explanation -- smaller than the general
 # advisor chat's budget (1024) since this is a fixed 2-4 sentence answer,
 # not open-ended multi-turn conversation.
-_EXPLAINER_MAX_TOKENS = 512
+_EXPLAINER_MAX_TOKENS = 8000  # holds thinking plus the 2-4 sentence answer
 
 # Client-side timeout, matching this codebase's existing LLM-call convention
 # for advisory (off-execution-path) calls.
-_EXPLAINER_REQUEST_TIMEOUT_SECONDS = 30.0
+_EXPLAINER_REQUEST_TIMEOUT_SECONDS = 180.0  # thinking replies are slow
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +118,12 @@ def explain_recommendation(recommendation: dict) -> str | None:
         logger.warning("retirement_explainer: client construction failed: %s", type(exc).__name__)
         return None
 
-    # Layer 2 -- call the LLM (plain text, not tool-use).
+    # Layer 2 -- call the LLM through the shared request helper.
     try:
-        sdk_response = client.messages.create(
-            model=model_config.get_advisor_suggestion_model(),
+        reply = llm_request.send(
+            client,
+            model_config.Knob.SUGGESTION,
+            effort="high",
             max_tokens=_EXPLAINER_MAX_TOKENS,
             system=_EXPLAIN_SYSTEM_PROMPT,
             messages=_build_explain_messages(recommendation),
@@ -130,14 +133,13 @@ def explain_recommendation(recommendation: dict) -> str | None:
         logger.warning("retirement_explainer: messages.create failed: %s", type(exc).__name__)
         return None
 
-    # Layer 3 -- extract the text response (mirrors advisor_chat's pattern).
+    if reply.reason is not None:
+        logger.warning("retirement_explainer: no explanation: %s", reply.reason_text())
+        return None
+
+    # Layer 3 -- Reply.text() reads only text blocks.
     try:
-        text_blocks = [
-            block.text
-            for block in (getattr(sdk_response, "content", None) or [])
-            if hasattr(block, "text") and block.text
-        ]
-        answer = "\n".join(text_blocks).strip()
+        answer = reply.text().strip()
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
         logger.warning("retirement_explainer: response extraction failed: %s", type(exc).__name__)
         return None
