@@ -221,12 +221,11 @@ def test_a_failed_refresh_keeps_the_prior_tile_without_a_second_word(client, pm_
         routes,
         """
         await H.boot();
-        await H.click(%r);
         const before = H.text(%r);
         await H.tick();
         return { before: before, after: H.text(%r), calls: H.fetchLog.filter(function (u) { return u === '/api/history/30'; }).length };
         """
-        % (_pick("30"), VALUE, VALUE),
+        % (VALUE, VALUE),
     )
 
     assert result["calls"] == 2, "the poll must have re-requested the 30-day window"

@@ -635,7 +635,7 @@ def test_mixed_replay_samples_render_the_usable_row_and_the_note_names_how_many_
     replay_rows = [r for r in result["rows"] if r["cells"][1] == "Replay"]
     assert any(r["cells"][2] not in DASH and r["cells"][2][0] in "-0123456789" for r in replay_rows)
     assert result["note"]["visible"]
-    assert re.search(rf"{len(cold)}", result["note"]["text"]), result["note"]["text"]
+    assert re.search(rf"\b{len(cold)}\b", result["note"]["text"]), result["note"]["text"]
     assert not any("replay sample unavailable" in c for r in result["rows"] for c in r["cells"])
 
 
