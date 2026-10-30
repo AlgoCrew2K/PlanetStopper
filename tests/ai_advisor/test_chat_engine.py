@@ -147,7 +147,9 @@ def _make_fake_llm_response(
     text is a fixture-style explanatory string — no producer-computed values
     (no rates, prices, trade amounts).  Shape assertions only.
     """
-    content_block = SimpleNamespace(text=text)
+    # A real text block carries type "text": the chat site reads its answer from blocks of that
+    # type only, so a block without a type is not an answer.
+    content_block = SimpleNamespace(type="text", text=text)
     return SimpleNamespace(
         content=[content_block],
         model="claude-opus-4-7",

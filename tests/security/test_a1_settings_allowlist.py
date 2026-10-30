@@ -400,3 +400,124 @@ def test_settings_allowlist_covers_operator_configurable_globals():
             f"It is legitimately set by the operator from the dashboard. "
             f"Current allowlist: {sorted(allowlist) if hasattr(allowlist, '__iter__') else allowlist!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The model override knobs are operator configuration made in .env, never through the dashboard
+# ---------------------------------------------------------------------------
+
+_MODEL_OVERRIDE_KNOBS = ["ADVISOR_SUGGESTION_MODEL", "ADVISOR_SYNTHESIS_MODEL"]
+
+
+@pytest.fixture
+def real_env_file(monkeypatch, tmp_path):
+    """A real ``.env`` on disk (real ``set_key``), so a write shows up as changed bytes."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("EXECUTION_START_TIME=09:35\n", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
+    return env_file
+
+
+@pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
+def test_post_settings_rejects_a_model_override_knob_and_leaves_the_env_file_unchanged(
+    knob, client, real_env_file, _stub_database
+):
+    before = real_env_file.read_bytes()
+
+    resp = client.post("/api/settings", json={"globals": {knob: "any-model-id"}, "symphonies": {}})
+
+    assert resp.status_code == 400
+    assert knob in resp.get_json()["message"]
+    assert real_env_file.read_bytes() == before
+    assert knob not in app_module._SETTINGS_WRITE_ALLOWLIST
+
+
+@pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
+def test_post_settings_writes_nothing_when_a_model_knob_rides_with_an_allowed_key(
+    knob, client, real_env_file, _stub_database
+):
+    before = real_env_file.read_bytes()
+    payload = {"globals": {"EXECUTION_START_TIME": "09:40", knob: "any-model-id"}}
+
+    resp = client.post("/api/settings", json={**payload, "symphonies": {}})
+
+    assert resp.status_code == 400
+    assert real_env_file.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# The same rejection with the auth gate and the CSRF check both enforced: a logged-in session with a
+# valid token reaches the route, so the 400 can only come from the allowlist and not from a gate
+# ---------------------------------------------------------------------------
+
+_GATE_PASSWORD = "example-dashboard-password"
+_GATE_SECRET_KEY = "example-flask-secret-key"
+
+
+@pytest.fixture
+def gated_client(monkeypatch):
+    """A logged-in client with the auth gate and the CSRF check both switched on."""
+    monkeypatch.setenv("DASHBOARD_PASSWORD", _GATE_PASSWORD)
+    monkeypatch.setenv("SECRET_KEY", _GATE_SECRET_KEY)
+    monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+    monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+    app_module._AUTH_FAILED_ATTEMPTS.clear()
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        token = c.get("/api/csrf-token").get_json()["csrf_token"]
+        login = c.post(
+            "/login",
+            data={"password": _GATE_PASSWORD},
+            headers={"X-CSRF-Token": token},
+            follow_redirects=False,
+        )
+        assert login.status_code == 302
+        yield c
+    app_module._AUTH_FAILED_ATTEMPTS.clear()
+
+
+@pytest.fixture
+def csrf_header(gated_client):
+    resp = gated_client.get("/api/csrf-token")
+    assert resp.status_code == 200
+    return {"X-CSRF-Token": resp.get_json()["csrf_token"]}
+
+
+@pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
+@pytest.mark.parametrize("rides_with_allowed_key", [False, True], ids=["alone", "with-allowed-key"])
+def test_post_settings_rejects_a_model_override_knob_with_auth_and_csrf_enforced(
+    knob, rides_with_allowed_key, gated_client, csrf_header, real_env_file, _stub_database
+):
+    before = real_env_file.read_bytes()
+    globals_payload = {knob: "any-model-id"}
+    if rides_with_allowed_key:
+        globals_payload["EXECUTION_START_TIME"] = "09:40"
+
+    resp = gated_client.post(
+        "/api/settings",
+        json={"globals": globals_payload, "symphonies": {}},
+        headers=csrf_header,
+    )
+
+    assert resp.status_code == 400
+    assert knob in resp.get_json()["message"]
+    assert real_env_file.read_bytes() == before
+
+
+@pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
+def test_post_settings_with_a_model_override_knob_is_stopped_by_each_gate_before_the_allowlist(
+    knob, gated_client, csrf_header, real_env_file, _stub_database
+):
+    """The gates are really on: without the token the request is refused as CSRF (403), and a
+    session that is not logged in is refused as unauthenticated (401); neither writes."""
+    before = real_env_file.read_bytes()
+    payload = {"globals": {knob: "any-model-id"}, "symphonies": {}}
+
+    without_token = gated_client.post("/api/settings", json=payload)
+    assert without_token.status_code == 403
+
+    with app_module.app.test_client() as logged_out:
+        unauthenticated = logged_out.post("/api/settings", json=payload, headers=csrf_header)
+    assert unauthenticated.status_code == 401
+
+    assert real_env_file.read_bytes() == before

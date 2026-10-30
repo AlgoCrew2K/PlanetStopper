@@ -77,7 +77,8 @@ import pytest
 
 import ai_advisor
 import app as app_module
-from ai_advisor import ConfigSuggestionsResponse
+from tests._anthropic_http_fake import AnthropicHttpFake
+from tests._suggest_and_chat_routes import message_body
 
 # ---------------------------------------------------------------------------
 # Fixture loading
@@ -102,29 +103,15 @@ _FIXTURE_ADOPTED = _load_fixture("autotune_run_adopted_ai.json")
 # ---------------------------------------------------------------------------
 
 
-def _make_empty_llm_response() -> ConfigSuggestionsResponse:
-    """Return an empty-suggestions response — the valid Claude abstention case."""
-    return ConfigSuggestionsResponse(suggestions=[])
-
-
-def _make_anthropic_client_mock() -> MagicMock:
-    """Build a mock Anthropic client whose messages.parse() returns an empty
-    suggestions list, simulating Claude abstaining (the common case for
-    symphonies with no statistically-significant edge).
-
-    We construct a ParsedTextBlock-shaped mock so the extraction loop in
-    request_suggestions (ai_advisor.py:531-535) resolves a valid instance.
+def _make_anthropic_client_mock():
+    """A real Anthropic client on the in-process HTTP fake whose every Messages reply is the
+    captured empty-suggestions answer, simulating Claude abstaining (the common case for
+    symphonies with no statistically-significant edge). The suggestions site reads the reply
+    text itself, so the empty list arrives as the structured text block of a captured reply.
     """
-    response_instance = _make_empty_llm_response()
-    parsed_block = MagicMock()
-    parsed_block.parsed_output = response_instance
-
-    sdk_response = MagicMock()
-    sdk_response.content = [parsed_block]
-
-    client_mock = MagicMock()
-    client_mock.messages.parse.return_value = sdk_response
-    return client_mock
+    fake = AnthropicHttpFake.with_captured_page()
+    fake.set_message_responder(lambda _recorded: message_body("thinking_structured.json"))
+    return fake.client
 
 
 @pytest.fixture
