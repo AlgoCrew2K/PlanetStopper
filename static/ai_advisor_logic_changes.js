@@ -339,7 +339,7 @@
                 if (val) { evidenceParts.push(key + ": " + val); }
             });
             provenanceHtml = `<div class="run-controls-note" data-testid="lc-live-generation-provenance">` +
-                `Model: ${_escapeHtml(prov.generation_model || "")}` +
+                `Model: ${_escapeHtml(prov.generation_model || "model unavailable")}` +
                 (evidenceParts.length ? ` · Context — ${_escapeHtml(evidenceParts.join(", "))}` : "") +
                 (prov.run_id ? ` · Run: ${_escapeHtml(prov.run_id)}` : "") +
                 `</div>`;

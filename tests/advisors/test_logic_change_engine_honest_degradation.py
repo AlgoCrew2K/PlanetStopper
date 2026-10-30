@@ -21,6 +21,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.advisors import logic_change_http_support as support
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _FIXTURE_TREE_PATH = (
     _REPO_ROOT / "tests" / "fixtures" / "symphony_logic" / "sample_score_small.json"
@@ -201,3 +203,327 @@ def test_engine_never_raises_across_failure_modes__suggest(
             f"D-1 GAP ({failure_setup}): suggest_logic_changes raised {type(exc).__name__}: {exc}"
         )
     assert result is not None
+
+
+# ===========================================================================
+# Reply-level degradation through the real route and engine against the
+# Anthropic HTTP fake: a reply without a tool call is retried up to 3 attempts
+# in total; a refusal or a truncation stops at once; every empty run says why.
+# ===========================================================================
+
+_EMPTY_RUN_PREFIX = "no logic change was generated this run"
+
+
+@pytest.fixture
+def degraded(monkeypatch):
+    """Run the route once against a fake that answers with the queued outcomes.
+
+    Returns ``(response_json, fake, observation_write_spy)``.
+    """
+
+    def _run(*outcomes, page: str = support.CAPTURED_MODELS_PAGE):
+        fake = support.new_fake(page)
+        spy = support.install_route_world(monkeypatch, fake)
+        for outcome in outcomes:
+            fake.queue_message(outcome)
+        data = support.evaluate_via_route()
+        return data, fake, spy
+
+    return _run
+
+
+def test_three_text_only_replies_send_three_requests_then_report_no_tool_call(degraded):
+    text_only = support.load_fixture(support.TEXT_ONLY_REPLY)
+
+    data, fake, spy = degraded(text_only, text_only, text_only)
+
+    assert len(fake.message_requests) == 3, "the attempt bound is 3 requests in total"
+    assert fake.misuse == [], "a fourth request would have found no scripted reply"
+    assert data["survivors"] == 0
+    assert "no_tool_call" in data["message"], f"message must name the reason: {data!r}"
+    assert set(data["provenance"]) == {"generation_model", "mode", "evidence_injected", "run_id"}
+    assert spy.call_count == 0, "nothing is persisted when no edit was generated"
+    assert support.all_proposals(data) == []
+
+
+def test_each_attempt_is_a_fresh_user_turn_with_the_same_prompt(degraded):
+    text_only = support.load_fixture(support.TEXT_ONLY_REPLY)
+
+    _data, fake, _spy = degraded(text_only, text_only, text_only)
+
+    bodies = [r.body for r in fake.message_requests]
+    assert len(bodies) == 3, "self-guard: the three attempts must have been sent"
+    assert all(b["messages"][-1]["role"] == "user" for b in bodies), (
+        "a retry must not end on an assistant turn (a prefill is rejected by models that think)"
+    )
+    assert len({b["messages"][0]["content"] for b in bodies}) == 1
+
+
+def test_second_attempt_tool_reply_is_used(degraded):
+    edit = support.real_edit()
+
+    data, fake, _spy = degraded(
+        support.load_fixture(support.TEXT_ONLY_REPLY), support.reply_with_tool_edit(edit)
+    )
+
+    assert len(fake.message_requests) == 2
+    assert [p["tweak_param_key"] for p in support.all_proposals(data)] == [edit["param_key"]]
+    assert "no_tool_call" not in data["message"]
+
+
+def test_third_attempt_tool_reply_is_used(degraded):
+    edit = support.real_edit()
+    text_only = support.load_fixture(support.TEXT_ONLY_REPLY)
+
+    data, fake, _spy = degraded(text_only, text_only, support.reply_with_tool_edit(edit))
+
+    assert len(fake.message_requests) == 3
+    assert [p["tweak_param_key"] for p in support.all_proposals(data)] == [edit["param_key"]]
+
+
+@pytest.mark.parametrize(
+    ("reply_path", "expected_text", "absent_text"),
+    [
+        (support.REFUSAL_REASONING_EXTRACTION_REPLY, "refusal: reasoning_extraction", None),
+        (support.REFUSAL_NULL_CATEGORY_REPLY, "refusal", "refusal:"),
+    ],
+)
+def test_refusal_stops_after_one_request_and_names_the_category_when_present(
+    degraded, reply_path, expected_text, absent_text
+):
+    refusal = support.load_fixture(reply_path)
+
+    data, fake, spy = degraded(refusal, refusal, refusal)
+
+    assert len(fake.message_requests) == 1, "the same request is not sent again after a refusal"
+    assert expected_text in data["message"], f"message must name the reason: {data!r}"
+    if absent_text is not None:
+        assert absent_text not in data["message"], "a null category adds no category text"
+    assert data["survivors"] == 0
+    assert spy.call_count == 0
+    assert data["provenance"]["generation_model"] == refusal["model"], (
+        "a refused run still reports the model that refused"
+    )
+
+
+def test_max_tokens_stops_after_one_request_and_persists_nothing(degraded):
+    truncated = support.load_fixture(support.MAX_TOKENS_REPLY)
+
+    data, fake, spy = degraded(truncated, truncated, truncated)
+
+    assert len(fake.message_requests) == 1, "a truncated reply is not retried at this site"
+    assert "max_tokens" in data["message"], f"message must name the reason: {data!r}"
+    assert spy.call_count == 0
+    assert support.all_proposals(data) == []
+
+
+def test_refusal_after_partial_tool_input_discards_the_partial_edit(degraded):
+    partial = support.refusal_after_partial_tool_reply(support.real_edit())
+
+    data, _fake, spy = degraded(partial)
+
+    assert support.all_proposals(data) == [], (
+        "the edit that arrived before the refusal must not be evaluated"
+    )
+    assert spy.call_count == 0
+    assert "refusal" in data["message"]
+
+
+@pytest.mark.parametrize(
+    ("rejection", "code"),
+    [
+        pytest.param("errors/404_not_found.json", "override_model_not_found", id="not-found"),
+        pytest.param(
+            "errors/400_invalid_request.json", "override_request_rejected", id="request-rejected"
+        ),
+    ],
+)
+def test_override_the_api_rejects_is_reported_by_variable_name_without_retry(
+    degraded, monkeypatch, rejection, code
+):
+    override = support.newest_model_id(support.models_page(), "opus")
+    monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", override)
+    rejected = support.load_fixture(rejection)
+
+    data, fake, spy = degraded(rejected, rejected, rejected)
+
+    assert len(fake.message_requests) == 1, "an override is never swapped for the newest model"
+    assert [r.body["model"] for r in fake.message_requests] == [override]
+    assert "ADVISOR_SUGGESTION_MODEL" in data["message"]
+    assert code in data["message"]
+    assert spy.call_count == 0
+    assert fake.listing_requests == [], "an override is never listed or validated"
+
+
+def test_unresolved_family_costs_one_listing_sequence_per_route_run(monkeypatch, unresolved_models):
+    fake = support.new_fake()
+    support.install_route_world(monkeypatch, fake)
+    support.queue_failing_listings(fake)
+
+    data = support.evaluate_via_route()
+
+    assert "model_unavailable" in data["message"], "self-guard: the run must have degraded"
+    assert fake.listing_sequences == 1, (
+        "a failed listing is paid once per run, not once per attempt"
+    )
+    assert fake.message_requests == []
+
+
+# ---------------------------------------------------------------------------
+# both public entry points: every empty run says why, in one format
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_unresolved_family_empty_run_message_has_the_reason_format(
+    entry, monkeypatch, unresolved_models
+):
+    fake = support.new_fake()
+    support.queue_failing_listings(fake)
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (model_unavailable)"
+    assert fake.message_requests == []
+    assert result.provenance["generation_model"] == ""
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_unresolved_family_costs_one_listing_sequence_per_entry_run(
+    entry, monkeypatch, unresolved_models
+):
+    fake = support.new_fake()
+    support.queue_failing_listings(fake)
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (model_unavailable)", "self-guard"
+    assert fake.listing_sequences == 1, (
+        "a failed listing is paid once per run, not once per attempt"
+    )
+    assert fake.message_requests == []
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_no_tool_call_empty_run_message_has_the_reason_format(entry, monkeypatch):
+    fake = support.new_fake()
+    text_only = support.load_fixture(support.TEXT_ONLY_REPLY)
+    for _ in range(3):
+        fake.queue_message(text_only)
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (no_tool_call)"
+    assert len(fake.message_requests) == 3
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_refusal_empty_run_message_names_the_category(entry, monkeypatch):
+    fake = support.new_fake()
+    fake.queue_message(support.load_fixture(support.REFUSAL_REASONING_EXTRACTION_REPLY))
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (refusal: reasoning_extraction)"
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_a_generated_edit_that_the_gate_does_not_pass_keeps_the_gate_message(entry, monkeypatch):
+    fake = support.new_fake()
+    fake.queue_message(support.reply_with_tool_edit(support.real_edit()))
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert result.proposals, "self-guard: the reply must have produced a proposal to gate"
+    assert _EMPTY_RUN_PREFIX not in result.message, (
+        "an edit was generated; the empty-run reason format is for runs that generated nothing"
+    )
+
+
+# ---------------------------------------------------------------------------
+# a retired model that nothing replaces: the run names no model that served it
+# ---------------------------------------------------------------------------
+
+
+def _warm_suggestion_model_id() -> str:
+    """The id the registry holds before the run (seeded from the captured page by the autouse fixture)."""
+    import model_config
+
+    peeked = model_config.peek(model_config.Knob.SUGGESTION).model_id
+    assert peeked, "self-guard: the registry must be warm so the retired-model path is reachable"
+    return peeked
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_retired_model_with_no_replacement_reports_no_serving_model(entry, monkeypatch):
+    warmed = _warm_suggestion_model_id()
+    fake = support.new_fake()
+    fake.queue_message(support.load_fixture("errors/404_not_found.json"))
+
+    result = support.ENTRY_RUNNERS[entry](fake, monkeypatch)
+
+    assert [r.body["model"] for r in fake.message_requests] == [warmed], (
+        "the resolved model answered 404 and the relisting offered no different model: one request"
+    )
+    assert result.message == f"{_EMPTY_RUN_PREFIX} (model_unavailable)"
+    assert result.provenance["generation_model"] == "", (
+        "no model served this run, so the id that was requested must not be reported as the "
+        f"generating model: {result.provenance!r}"
+    )
+
+
+@pytest.mark.parametrize("entry", sorted(support.ENTRY_RUNNERS))
+def test_generator_stand_in_that_fills_no_reply_keeps_the_gate_message_and_the_resolved_model(
+    entry, monkeypatch
+):
+    import advisors.logic_change_engine as lce
+
+    warmed = _warm_suggestion_model_id()
+    fake = support.new_fake()
+    support.install_engine_world(monkeypatch, fake)
+    monkeypatch.setattr(lce, "generate_reasoned_logic_candidates", lambda *a, **k: [])
+    objective = lce.LogicChangeObjective(objective_type="reduce_drawdown", measured_value=0.0)
+
+    if entry == "operator":
+        result = lce.propose_operator_logic_change(
+            "sym-1",
+            support.load_tree(),
+            objective=objective,
+            change_description=support.ROUTE_CHANGE_DESCRIPTION,
+        )
+    else:
+        result = lce.suggest_logic_changes("sym-1", support.load_tree(), objective)
+
+    assert result.message == lce.NO_SURVIVORS_MESSAGE
+    assert result.provenance["generation_model"] == warmed, (
+        "no request was attempted, so the resolved model stays; only a returned reply replaces it"
+    )
+    assert fake.message_requests == []
+
+
+# ---------------------------------------------------------------------------
+# security: failure detail never reaches the response
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "error_fixture",
+    [
+        "errors/400_invalid_request.json",
+        "errors/401_authentication.json",
+        "errors/403_permission.json",
+        "errors/429_rate_limit.json",
+        "errors/500_api_error.json",
+        "errors/529_overloaded.json",
+    ],
+)
+def test_security_api_error_text_is_never_echoed_in_the_response(degraded, error_fixture):
+    error = support.load_fixture(error_fixture)
+
+    data, _fake, spy = degraded(error)
+
+    assert data["survivors"] == 0
+    assert spy.call_count == 0
+    leaked = error["body"]["error"]["message"]
+    assert leaked not in json.dumps(data), "the API error message must stay in the server log"
+    assert error["body"].get("request_id", "request-id-absent") not in json.dumps(data)
