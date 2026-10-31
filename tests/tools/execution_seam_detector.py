@@ -264,6 +264,7 @@ _R2_3_DEFAULT_TARGETS: list[str] = [
     "tests/advisors/test_asset_swap_production_wiring.py",
     "tests/ui/test_asset_swap_route_reasoning_provenance.py",
     "tests/ui/test_asset_swap_routes.py",
+    "tests/ui/test_asset_swap_panel_generation_reasons.py",
     "tests/ai_advisor/test_as_live_generation_provenance_render.py",
     "tests/advisors/test_advisor_liveness_gate.py",
     "tests/advisors/test_weekly_asset_swap_suggestions_loop.py",
