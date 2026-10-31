@@ -350,7 +350,8 @@ def test_dashboard_no_max_width_cap_on_top_level_container():
 
 def test_performance_no_max_width_cap_on_top_level_container():
     """D-LAY-01 (Performance): Same max-width audit for the Performance page."""
-    src = _PERFORMANCE_HTML.read_text(encoding="utf-8")
+    # Responsive breakpoints are not container caps: strip @media blocks, as the History audit does.
+    src = _strip_media_query_breakpoints(_PERFORMANCE_HTML.read_text(encoding="utf-8"))
     max_width_matches = re.findall(r"max-width\s*:\s*(\d+)px", src)
     # 88rem ≈ 1408px at 16px base — still caps 4K
     max_width_rem_matches = re.findall(r"max-width\s*:\s*([\d.]+)rem", src)

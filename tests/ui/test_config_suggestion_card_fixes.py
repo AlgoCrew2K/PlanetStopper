@@ -53,7 +53,12 @@ class TestGridFloor:
         at typical viewport widths, causing overflow.  22rem fits 3 cards.
         """
         html = _read_html()
-        assert "minmax(22rem, 1fr)" in html, (
+        # ``min(100%, 22rem)`` keeps the 22rem floor at desktop widths (100% of the track is wider)
+        # and only lowers it where the track is narrower than 22rem, so it satisfies the floor.
+        floor = re.search(
+            r"minmax\(\s*(?:22rem|min\(\s*100%\s*,\s*22rem\s*\))\s*,\s*1fr\s*\)", html
+        )
+        assert floor, (
             "templates/ai_advisor.html .suggestions-col is missing "
             "'minmax(22rem, 1fr)'. "
             "The grid-template-columns value must use 22rem (not 28rem) so "
