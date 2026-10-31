@@ -214,6 +214,10 @@ class TestCardsAndOlderRuns:
         assert _EMPTY_TEXT in loaded["list"]
         assert _cards(loaded["list"]) == []
         assert loaded["older"]["displayed"] is False
+        # Before any script runs the page already holds the older-runs details, hidden:
+        # with no runs there is nothing for the script to reveal.
+        details = pb.parse_html(w.get_page(client)).find("autotune-older-runs")
+        assert details is not None and "hidden" in details.attrs
 
     def test_one_run_per_symphony_leaves_the_details_hidden(self, client):
         _save_runs(_symphony_keys(11), 1)
