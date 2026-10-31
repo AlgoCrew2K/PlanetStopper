@@ -361,6 +361,7 @@
 
     var _stripRequestSeq = 0;      // only the newest strip request may apply
     var _stripAnsweredToken = null; // the window whose strip request was last answered; null before the first
+    var _stripFiguresBlank = false; // a pick wrote dashes and no strip has answered for the picked window yet
 
     // Ann. Vol row. vol is inverted: lower is better for this capital-preservation system.
     // vol_bot/vol_held are fractions; a null on either side reads as dashes, never as a
@@ -444,13 +445,67 @@
         if (deltaEl) {
             deltaEl.hidden = !supplied;
             if (supplied) {
+                // Held minus Bot, in percentage points (the unit of the headline beside it).
                 var saved = held - bot;
-                deltaEl.textContent = '\u03b1 ' + fmtPct(saved);
+                deltaEl.textContent = '\u03b1 ' + fmtPp(saved);
                 setPosNeg(deltaEl, saved);
             }
         }
         var notice = document.querySelector('[data-testid="mdd-insufficient-label"]');
         if (notice) notice.hidden = supplied;
+    }
+
+    // The window's figures are not known: the headline reads '--', the Max DD row and the Ann.
+    // Vol row show dashes (no digit, no bar, no leader) and no claim about the window's history
+    // is made. Written the moment a window is picked, so nothing of the previous window stays
+    // under the new label, and left in place when the strip cannot be loaded.
+    function blankWindowedFigures() {
+        var el = document.getElementById('guard-alpha-headline');
+        if (el) {
+            el.textContent = fmtPp(null);
+            el.style.color = cs('--studio-ink-dim');
+        }
+        var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
+        var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
+        if (botText) botText.textContent = '—';
+        if (heldText) heldText.textContent = '—';
+        var mddBotBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
+        var mddHeldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
+        mddBotBars.forEach(function (bar) { bar.style.width = '0%'; });
+        mddHeldBars.forEach(function (bar) { bar.style.width = '0%'; });
+        applyBarClasses(mddBotBars, mddHeldBars, null);
+        var mddDelta = document.querySelector('[data-testid="comp-mdd-delta"]');
+        if (mddDelta) mddDelta.hidden = true;
+        var mddNotice = document.querySelector('[data-testid="mdd-insufficient-label"]');
+        if (mddNotice) mddNotice.hidden = true;
+        // A pending Ann. Vol row is shown with dashes; only an answer with no volatility hides it.
+        var volBotText = document.querySelector('[data-testid="comp-vol-bot-text"]');
+        var volHeldText = document.querySelector('[data-testid="comp-vol-held-text"]');
+        var volDelta = document.querySelector('[data-testid="comp-vol-delta"]');
+        if (volBotText) volBotText.textContent = 'Bot —';
+        if (volHeldText) volHeldText.textContent = 'Held —';
+        if (volDelta) volDelta.textContent = 'α —';
+        var volBotBars = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
+        var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
+        volBotBars.forEach(function (bar) { bar.style.width = '0%'; });
+        volHeldBars.forEach(function (bar) { bar.style.width = '0%'; });
+        applyBarClasses(volBotBars, volHeldBars, null);
+    }
+
+    // The visible notice for a window whose strip could not be loaded; it names the window.
+    // Cleared by the next pick and by the next strip that answers.
+    function showStripNotice(token) {
+        var el = document.getElementById('guard-alpha-window-notice');
+        if (!el) return;
+        el.textContent = 'Could not load the ' + (WINDOW_LABELS[token] || token) + ' window';
+        el.hidden = false;
+    }
+
+    function clearStripNotice() {
+        var el = document.getElementById('guard-alpha-window-notice');
+        if (!el) return;
+        el.textContent = '';
+        el.hidden = true;
     }
 
     // The one writer of the headline value, its window label, the Max DD row and the Ann. Vol
@@ -470,10 +525,12 @@
         updateVolRow(strip);
     }
 
-    // Asks for the picked window's strip. Newest request wins, and an answer applies only
-    // while its window is still the picked one; a refused, failed or malformed answer
-    // changes nothing (the last values stay). A failed request leaves the window unanswered,
-    // so the next refresh asks again.
+    // Asks for the picked window's strip. Newest request wins, and an answer or a failure applies
+    // only while its window is still the picked one. A refused, failed or malformed answer writes
+    // no figure: after a pick the figures stay the dashes the pick wrote and a notice names the
+    // window; a refresh of a window that already shows its own figures keeps them (they are that
+    // window's, one refresh old). A failed request leaves the window unanswered, so the next
+    // refresh asks again, and the next good answer clears the notice.
     function requestWindowedStrip(token) {
         var seq = ++_stripRequestSeq;
         return fetch('/api/strip/' + token)
@@ -483,11 +540,19 @@
             })
             .then(function (strip) {
                 if (seq !== _stripRequestSeq || token !== _heroWindow) return;
+                if (!strip || typeof strip !== 'object' || strip.error || !('guard_alpha' in strip)) {
+                    throw new Error('strip answer is not a strip');
+                }
                 _stripAnsweredToken = token;
-                if (!strip || typeof strip !== 'object' || strip.error || !('guard_alpha' in strip)) return;
+                _stripFiguresBlank = false;
+                clearStripNotice();
                 applyWindowedStrip(token, strip);
             })
-            .catch(function (err) { console.error('windowed strip load failed', err); });
+            .catch(function (err) {
+                console.error('windowed strip load failed', err);
+                if (seq !== _stripRequestSeq || token !== _heroWindow) return;
+                if (_stripFiguresBlank) showStripNotice(token);
+            });
     }
 
     // Per applied body: the strip is asked for when the body carries newer data than the last
@@ -1068,9 +1133,11 @@
     // The stats row and its sub-labels, from a state entry. Written at open and by every poll.
     function writeDetailFigures(sym) {
         // Live return: use triggered_at_return if triggered, else current_return
+        // A triggered entry's figure is its frozen exit return; the live return is a different
+        // quantity and never stands in for it. An unknown figure (absent, null, not finite, or the
+        // engine's not-set sentinel) is a dash, never +0.00%: 0.0 is a known value, "unknown" is not.
         var rawLive = sym.triggered ? sym.triggered_at_return : sym.current_return;
-        var liveRet = sentinelToNull(typeof rawLive === 'number' ? rawLive : null);
-        if (liveRet == null) liveRet = 0;
+        var liveRet = sentinelToNull(typeof rawLive === 'number' && isFinite(rawLive) ? rawLive : null);
         // sentinelToNull covers both -999 and +999 variants
         var stopLevel = sentinelToNull(typeof sym.stop_trigger === 'number' ? sym.stop_trigger : null);
         var shadowPeak = sentinelToNull(typeof sym.shadow_hwm === 'number' ? sym.shadow_hwm : null);
@@ -1081,8 +1148,9 @@
 
         var elLive = document.getElementById('dp-live-ret');
         if (elLive) {
-            elLive.textContent = fmtPct(liveRet);
-            elLive.style.color = liveRet >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+            elLive.textContent = liveRet === null ? '—' : fmtPct(liveRet);
+            elLive.style.color = liveRet === null ? cs('--studio-ink-dim')
+                : (liveRet >= 0 ? cs('--studio-pos') : cs('--studio-neg'));
         }
         var elLiveSub = document.getElementById('dp-live-ret-sub');
         if (elLiveSub) elLiveSub.textContent = sym.triggered ? 'frozen at exit' : 'real-time';
@@ -1568,19 +1636,21 @@
             var ts = ev.timestamp || ev.time || '';
             var hhmm = ts.length >= 16 ? ts.slice(11, 16) : ts;
             var kind = (ev.event_type || ev.kind || 'info').toLowerCase();
-            var msg = ev.message || ev.msg || '';
+            var msg = String(ev.message || ev.msg || '');
             var color = kindColorMap[kind] || 'var(--studio-ink-dim)';
             var kindLabel = kind.toUpperCase();
             // Extract reason from message if present
             var reasonMatch = msg.match(/^([A-Z_]+(?:\s[A-Z_]+)*):\s*/);
             var reason = reasonMatch ? msg.slice(reasonMatch[0].length) : msg;
             var kindDisplay = kindLabel + (reasonMatch ? ' · ' + reasonMatch[1] : '');
+            // The message carries a symphony name (the engine logs "<name> ARMED (trail)") and a
+            // name is authored outside this app, so every field of the row is written as text.
             return '<div class="event-row">' +
-                '<span class="event-ts">' + hhmm + '</span>' +
+                '<span class="event-ts">' + escHtml(hhmm) + '</span>' +
                 '<div class="event-body">' +
                   '<span class="event-dot" style="background:' + color + ';"></span>' +
-                  '<div class="event-kind" style="color:' + color + ';">' + kindDisplay + '</div>' +
-                  '<div class="event-detail">' + reason + '</div>' +
+                  '<div class="event-kind" style="color:' + color + ';">' + escHtml(kindDisplay) + '</div>' +
+                  '<div class="event-detail">' + escHtml(reason) + '</div>' +
                 '</div>' +
                 '</div>';
         }).join('');
@@ -1614,9 +1684,10 @@
         container.innerHTML = Object.entries(params).map(function (pair) {
             var k = pair[0]; var v = pair[1];
             var lockBadge = locked.has(k) ? ' <span style="color:var(--studio-accent);font-size:9px;" title="Locked from autotuner">&#9670;</span>' : '';
+            // The name and a string value are written as text; the lock badge is this file's own markup.
             return '<div class="var-row">' +
-                '<span class="var-key">' + k + lockBadge + '</span>' +
-                '<span class="var-val">' + (typeof v === 'number' ? v.toFixed(v % 1 === 0 ? 0 : 3) : v) + '</span>' +
+                '<span class="var-key">' + escHtml(k) + lockBadge + '</span>' +
+                '<span class="var-val">' + (typeof v === 'number' ? v.toFixed(v % 1 === 0 ? 0 : 3) : escHtml(v)) + '</span>' +
                 '</div>';
         }).join('');
     }
@@ -1857,11 +1928,12 @@
             var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
             if (deltaEl) {
                 if (bot !== null && held !== null) {
+                    // Bot minus Held, in percentage points (the unit of the headline above).
                     var deltaAlpha = bot - held;
-                    deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
+                    deltaEl.textContent = 'α ' + fmtPp(deltaAlpha);
                     setPosNeg(deltaEl, deltaAlpha);
                 } else {
-                    deltaEl.textContent = 'α ' + fmtPct(null);
+                    deltaEl.textContent = 'α ' + fmtPp(null);
                     deltaEl.classList.remove('pos', 'neg');
                 }
             }
@@ -2871,6 +2943,12 @@
                 // again together with the value it describes (F1).
                 var winLabel = document.getElementById('guard-alpha-window-label');
                 if (winLabel) winLabel.textContent = WINDOW_LABELS[token] || btn.textContent;
+                // The figures beside that label are the previous window's until the strip answers,
+                // so they read as dashes until then (and stay dashed if the strip cannot be loaded).
+                _stripAnsweredToken = null;
+                _stripFiguresBlank = true;
+                blankWindowedFigures();
+                clearStripNotice();
                 // The picker drives the chart lines (latest click wins) and the
                 // headline value, its window label and the Ann. Vol row (windowed
                 // strip) -- NOT the Today/Cumulative/Max DD rows, which stay on genuine

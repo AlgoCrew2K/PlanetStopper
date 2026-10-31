@@ -748,6 +748,8 @@
           <div class="hero-top">
             <div>
               <div class="guard-alpha-label">Guard effect on portfolio &middot; <span id="guard-alpha-window-label">30d</span></div>
+              {# Shown by the picker when the picked window's strip could not be loaded: the figures beside the label then stay dashes and this names the window. #}
+              <div id="guard-alpha-window-notice" data-testid="guard-alpha-window-notice" class="legend-as-of" role="status" style="color:var(--studio-warn);" hidden></div>
               {# The headline is the portfolio guard effect over the picked window: the Bot return
                  minus the If-held return, each compounded over the window, over every symphony
                  (the gap between the chart's two lines; also Performance's figure for the same
@@ -824,10 +826,18 @@
         <div data-testid="hero-right">
           <span id="strip-scope-caption" class="legend-as-of" hidden>All accounts</span>
           <!-- Bot-vs-Held comparison rows -->
-          {% set cr_bot = (meta.portfolio.cr if meta is defined and meta.portfolio is defined else 0) or 0 %}
-          {% set cr_held = (meta.portfolio.cr_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
-          {% set tc_bot = (meta.portfolio.tc if meta is defined and meta.portfolio is defined else 0) or 0 %}
-          {% set tc_held = (meta.portfolio.tc_if_held if meta is defined and meta.portfolio is defined else 0) or 0 %}
+          {# A figure the strip does not carry stays none in the _hero_*_raw names and prints a dash; the zero
+             the names below fall back to only keeps the bar widths, the winner marks and the delta arithmetic
+             defined. A known 0.0 is a number and prints as one. #}
+          {% set _hero_p = (meta.portfolio if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else {}) %}
+          {% set _hero_cr_bot_raw = _hero_p.get('cr') %}
+          {% set _hero_cr_held_raw = _hero_p.get('cr_if_held') %}
+          {% set _hero_tc_bot_raw = _hero_p.get('tc') %}
+          {% set _hero_tc_held_raw = _hero_p.get('tc_if_held') %}
+          {% set cr_bot = _hero_cr_bot_raw if _hero_cr_bot_raw is not none else 0 %}
+          {% set cr_held = _hero_cr_held_raw if _hero_cr_held_raw is not none else 0 %}
+          {% set tc_bot = _hero_tc_bot_raw if _hero_tc_bot_raw is not none else 0 %}
+          {% set tc_held = _hero_tc_held_raw if _hero_tc_held_raw is not none else 0 %}
           {# [Fixed, DE-PERF-WINDOW-TRUTH-001, 2026-09-03, mdd-review BLOCK
              finding case 3 of 3]: the prior `(... if ... else 0) or 0` form
              coerced a genuine None (portfolio-wide MDD unavailable) to a
@@ -890,9 +900,9 @@
                    todays_percent_change) and includes uninvested cash, unlike the
                    per-card held figure which is symphony-scoped. #}
                 <span class="vs-row-label">Today <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
-                <span data-testid="comp-today-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-today-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_held_raw is not none %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none and _hero_tc_held_raw is not none %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }} pp{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): discloses a
                      degraded account fetch (stale-cache fallback or value-weighted
                      floor) directly on the row that depends on it. Hidden by default
@@ -931,9 +941,9 @@
                      bare "Cumulative · lifetime" text as vs-row-label's only content.
                      Display-only; zero change to the underlying value computation. -->
                 <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5pp when cash flows exist. Excludes symphonies with no Composer cost basis.">&#9432;</span>
-                <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_held_raw is not none %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }} pp{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4: see the comp-today-basis-chip comment above -- identical
                      honesty-disclosure chip for the Cumulative row. -->
                 <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-warn);margin-left:6px;"></span>
@@ -963,7 +973,7 @@
                 <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data and _mdd_held_raw is not none %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
                 {# F-2: hide the alpha delta when insufficient history — comparison is misleading.
                    Both the label and the delta are rendered, one hidden, so a poll can swap them. #}
-                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if mdd_insufficient %} hidden{% endif %}>{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if mdd_insufficient %} hidden{% endif %}>{% if has_live_data and _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }} pp{% else %}&mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
