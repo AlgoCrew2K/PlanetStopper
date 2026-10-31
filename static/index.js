@@ -382,12 +382,15 @@
             }
             volBotBars.forEach(function (el) { el.style.width = botW.toFixed(1) + '%'; });
             volHeldBars.forEach(function (el) { el.style.width = heldW.toFixed(1) + '%'; });
+            applyBarClasses(volBotBars, volHeldBars, volBotWins);
         } else {
             if (volBotText)  volBotText.textContent  = 'Bot —';
             if (volHeldText) volHeldText.textContent = 'Held —';
             if (volDelta)    volDelta.textContent    = 'α —';
             volBotBars.forEach(function (el)  { el.style.width = '0%'; });
             volHeldBars.forEach(function (el) { el.style.width = '0%'; });
+            // Without both legs no side leads.
+            applyBarClasses(volBotBars, volHeldBars, null);
         }
     }
 
@@ -576,6 +579,32 @@
         el.textContent = text;
     }
 
+    // Names the session of a tape that is not today's: one span beside the canvas, text
+    // "<session_date> session", present only while the tape's session differs from the ET
+    // day. A body naming either date less (a store that records no date) names no session.
+    // The date is written as text; the span is cleared by the next tape that is today's.
+    function setSparkSessionCaption(canvas, chartBody) {
+        var parent = canvas.parentNode;
+        if (!parent) return;
+        var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
+        var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
+        var text = session && today && session !== today ? session + ' session' : '';
+        var el = parent.querySelector('.spark-session');
+        if (!el) {
+            if (!text) return;
+            parent.style.position = 'relative';
+            el = document.createElement('span');
+            el.className = 'spark-session legend-as-of';
+            el.style.position = 'absolute';
+            el.style.top = '0';
+            el.style.left = '2px';
+            el.style.pointerEvents = 'none';
+            parent.appendChild(el);
+        }
+        el.textContent = text;
+        el.hidden = !text;
+    }
+
     function sparkHeldDataset(data) {
         return {
             data: data.map(function (d) { return d.held != null ? d.held : null; }),
@@ -614,6 +643,7 @@
             }
             var ctx = canvas.getContext('2d');
             if (!ctx) return;
+            setSparkSessionCaption(canvas, chartData);
             var labels = data.map(function (d) { return d.time || ''; });
             var returns = data.map(function (d) { return d['return'] !== undefined ? d['return'] : 0; });
             var hasHeld = data.some(function (d) { return d.held != null; });
@@ -673,12 +703,26 @@
         return Promise.all(charts.map(function (c) { return c.__drawn; }));
     }
 
+    // The state map holds symphony entries and flat metadata keys; a symphony entry is an
+    // object carrying a name (the server's own rule for telling them apart).
+    function isSymphonyEntry(v) {
+        return !!v && typeof v === 'object' && !Array.isArray(v) && 'name' in v;
+    }
+
+    // Newest request wins, per symphony: a chart answer applies only while no later request for
+    // the same symphony has been sent, so a slow older answer never replaces a newer tape.
+    var _chartRequestSeq = {};
+
     // Fetches one card's intraday series and draws it. Never rejects; resolves once the
     // request has settled and the card's chart has drawn (a card showing status text
     // holds none). onCharts, when given, receives the card's charts as soon as the
-    // request has settled.
+    // request has settled (an empty list for an answer a newer request has replaced).
+    // The card's MC dial is not written here: it follows the poll's reading (updateCards).
     function loadSpark(sym, onCharts) {
         var symId = sym.id;
+        var seq = (_chartRequestSeq[symId] || 0) + 1;
+        _chartRequestSeq[symId] = seq;
+        function replaced() { return seq !== _chartRequestSeq[symId]; }
         return fetch('/api/chart/' + symId)
             .then(function (r) {
                 if (!r.ok) throw new Error('chart request failed');
@@ -686,28 +730,29 @@
             })
             .then(function (data) {
                 if (!data || typeof data !== 'object') throw new Error('chart body unreadable');
+                if (replaced()) { if (onCharts) onCharts([]); return; }
                 var charts = renderSparkline(symId, data, sym);
                 if (onCharts) onCharts(charts);
-                try {
-                    // Thread the triggered/exited flag onto chartData so renderMcDial
-                    // can actively render the honest exited state instead of scanning
-                    // history for a (possibly stale, resurrected) reading.
-                    data.triggered = sym.triggered;
-                    renderMcDial(sym.id, data);
-                } catch (e) { console.error('mc dial render error:', e); }
                 return drawnPromise(charts);
             })
             .catch(function () {
+                if (replaced()) { if (onCharts) onCharts([]); return; }
                 var charts = renderSparkline(symId, null, sym);
                 if (onCharts) onCharts(charts);
                 return drawnPromise(charts);
             });
     }
 
-    function loadCharts(botState) {
+    // The tapes change only when the engine writes a new cycle: a refresh whose data stamp is
+    // the one already applied (the first poll after load included, which is compared with the
+    // stamp the page was rendered with) asks for none. A refresh with newer data asks once per
+    // symphony entry.
+    function loadCharts(botState, stampChanged) {
+        if (!stampChanged) return Promise.resolve([]);
         var settled = [];
-        Object.values(botState || {}).forEach(function (sym) {
-            if (!sym || !sym.id) return;
+        Object.keys(botState || {}).forEach(function (key) {
+            var sym = botState[key];
+            if (!isSymphonyEntry(sym) || !sym.id) return;
             settled.push(loadSpark(sym));
         });
         return Promise.all(settled);
@@ -794,16 +839,33 @@
         return marketState === 'open' ? 'vs held now' : 'at close';
     }
 
-    // Writes the text span and the basis label beside it, and un-hides the label. An absent
-    // guard_alpha writes nothing: the card keeps its dash and a hidden label.
+    // From this magnitude toFixed prints exponent text. The server render prints the dash for
+    // such a figure (analytics.JS_TO_FIXED_EXPONENT_FROM), so a poll must not print the text.
+    var JS_TO_FIXED_EXPONENT_FROM = 1e21;
+    var VERDICT_NO_VALUE_TEXT = '—';
+
+    // A guard alpha the verdict can print: a finite number below the bound. Anything else (absent,
+    // null, a string, NaN, a figure too large to print) has no verdict figure.
+    function usableGuardAlpha(ga) {
+        return typeof ga === 'number' && isFinite(ga) && Math.abs(ga) < JS_TO_FIXED_EXPONENT_FROM;
+    }
+
+    // Writes the text span and the basis label beside it. A usable guard alpha writes its
+    // wording and shows the label; any other value writes the dash and hides the label (a label
+    // is never shown beside no value), the server render's rule for the same entry.
     function writeVerdict(verdict, ga, marketState) {
-        if (verdict == null || typeof ga !== 'number' || !isFinite(ga)) return;
+        if (verdict == null) return;
+        var usable = usableGuardAlpha(ga);
         var textEl = verdict.querySelector('[data-field="verdict-text"]');
-        if (textEl) textEl.textContent = verdictText(ga);
+        if (textEl) textEl.textContent = usable ? verdictText(ga) : VERDICT_NO_VALUE_TEXT;
         var qualifier = verdict.querySelector('[data-testid="guard-alpha-basis"]');
         if (qualifier) {
-            qualifier.textContent = verdictBasisLabel(marketState);
-            qualifier.removeAttribute('hidden');
+            if (usable) {
+                qualifier.textContent = verdictBasisLabel(marketState);
+                qualifier.removeAttribute('hidden');
+            } else {
+                qualifier.setAttribute('hidden', '');
+            }
         }
     }
 
@@ -837,6 +899,9 @@
         if (!window.confirm('Sell "' + symName + '" to cash?\nThis will execute a live sell order.')) return;
         btn.disabled = true;
         btn.textContent = 'Selling…';
+        // The poll leaves a button in this state alone (updateCards): it is enabled again only by
+        // a refusal below, never by a card that reads as not exited.
+        btn.setAttribute('data-cash-state', 'selling');
         fetch('/api/sell_account', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
@@ -845,10 +910,13 @@
         .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             btn.textContent = 'In cash';
+            // Sold in this page load: no later poll turns the button back on.
+            btn.setAttribute('data-cash-state', 'sold');
         })
         .catch(function (err) {
             btn.disabled = false;
             btn.textContent = 'Cash Now';
+            btn.removeAttribute('data-cash-state');
             console.error('cashNow failed', err);
         });
     }
@@ -890,17 +958,21 @@
     // Detail panel
     // ---------------------------------------------------------------------------
 
-    function openDetailPanel(symIdOrIdx) {
-        document.getElementById('detail-panel').classList.add('open');
-        document.getElementById('detail-scrim').classList.add('open');
+    // The symphony the open panel shows, and the newest open: a request the panel makes applies
+    // only while it is still the newest one for the symphony the panel is open on.
+    var _detailSymId = null;
+    var _detailRequestSeq = 0;
+    var _detailNeedsFetch = false;  // opened before any poll named the symphony: ask once it does
+    var DETAIL_UNKNOWN_TITLE = 'Symphony Detail';
+    var DETAIL_NOT_IN_VIEW_TEXT = 'not in the current view';
 
-        var symId = (typeof symIdOrIdx === 'string') ? symIdOrIdx : _symIds[symIdOrIdx];
-        var sym = symId ? _botState[symId] : null;
+    function detailPanelIsOpen() {
+        var panel = document.getElementById('detail-panel');
+        return !!panel && panel.classList.contains('open');
+    }
 
-        var titleEl = document.getElementById('detail-panel-title');
-        if (titleEl) titleEl.textContent = (sym && sym.name) || 'Symphony Detail';
-        if (!sym) return;
-
+    // The stats row and its sub-labels, from a state entry. Written at open and by every poll.
+    function writeDetailFigures(sym) {
         // Live return: use triggered_at_return if triggered, else current_return
         var rawLive = sym.triggered ? sym.triggered_at_return : sym.current_return;
         var liveRet = sentinelToNull(typeof rawLive === 'number' ? rawLive : null);
@@ -940,68 +1012,138 @@
         var elAlphaSub = document.getElementById('dp-alpha-sub');
         if (elAlphaSub) elAlphaSub.textContent = ga != null ? (ga >= 0 ? 'saved vs hold' : 'gave up vs hold') : 'not exited';
 
-        // Populate Risk Math from bot state eagerly (B-04); chart fetch will overwrite with live data.
-        populateRiskMathFromState(sym, stopLevel, shadowPeak);
+        return { stopLevel: stopLevel, shadowPeak: shadowPeak };
+    }
 
-        fetchDetailChart(sym.id || symId, sym);
+    function writeDetailTitle(sym) {
+        var titleEl = document.getElementById('detail-panel-title');
+        if (titleEl) titleEl.textContent = (sym && sym.name) || DETAIL_UNKNOWN_TITLE;
+    }
+
+    // The panel's own requests: the tape, the events, the variables and the risk profile. Each
+    // answer applies only while this is still the newest open, on a panel that is still open.
+    function startDetailRequests(symId, sym, seq) {
+        fetchDetailChart(sym.id || symId, sym, seq);
 
         // Phase 2b (ux-design-deliverable.md §Change 5): Risk Profile section —
         // per-symphony Sharpe / Sortino / Max DD / Ann. volatility, bot vs if-held.
         // Fetched from /api/performance?scope=symphony so the panel shows the same
         // risk-adjusted metrics as the Performance page. Read-only; no engine rerun.
         var rpEl = document.getElementById('detail-risk-profile');
-        if (rpEl) {
-            rpEl.innerHTML = '';
-            fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
-                .then(function (r) { return r.json(); })
-                .then(function (p) {
-                    var bot = p.shadow_metrics || {};
-                    var held = p.live_metrics || {};
-                    // [label, botVal, heldVal, kind, invertDelta]
-                    // kind 'num' => raw value (Sharpe/Sortino); 'pct_frac' => fraction scaled to %.
-                    // invertDelta true => lower is better (Max DD, Ann. volatility).
-                    var rows = [
-                        ['Sharpe',          bot.sharpe,       held.sharpe,       'num',      false],
-                        ['Sortino',         bot.sortino,      held.sortino,      'num',      false],
-                        ['Max drawdown',    bot.max_drawdown, held.max_drawdown, 'pct_frac', true],
-                        ['Ann. volatility', bot.volatility,   held.volatility,   'pct_frac', true]
-                    ];
-                    var html = rows.map(function (row) {
-                        var label = row[0], bv = row[1], hv = row[2], kind = row[3], invert = row[4];
-                        var hasBoth = (bv != null && hv != null);
-                        var delta = hasBoth ? (bv - hv) : null;
-                        var deltaGood = invert ? (delta <= 0) : (delta >= 0);
-                        var dcol = (delta == null) ? 'inherit'
-                                 : deltaGood ? cs('--studio-pos') : cs('--studio-neg');
-                        function fmt(v) {
-                            if (v == null) return '—';
-                            return (kind === 'num') ? v.toFixed(2) : (v * 100).toFixed(1) + '%';
-                        }
-                        var deltaStr = (delta == null) ? '—'
-                            : (kind === 'num'
-                                ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
-                                : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
-                        // Match the existing .math-row pattern (index.html:1223-1258):
-                        // label + value share a flex row; hint sits below on its own line.
-                        return '<div class="math-row">'
-                            + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
-                            + '<span class="math-row-label">' + label + '</span>'
-                            + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
-                            + '</div>'
-                            + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
-                            + '</div>';
-                    }).join('');
-                    rpEl.innerHTML = html;
-                })
-                .catch(function () {
-                    // Graceful: leave the section empty on fetch failure — no JS error surfaced.
-                    rpEl.innerHTML = '';
-                });
+        if (!rpEl) return;
+        function current() { return seq === _detailRequestSeq && detailPanelIsOpen(); }
+        fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
+            .then(function (r) { return r.json(); })
+            .then(function (p) {
+                if (!current()) return;
+                var bot = p.shadow_metrics || {};
+                var held = p.live_metrics || {};
+                // [label, botVal, heldVal, kind, invertDelta]
+                // kind 'num' => raw value (Sharpe/Sortino); 'pct_frac' => fraction scaled to %.
+                // invertDelta true => lower is better (Max DD, Ann. volatility).
+                var rows = [
+                    ['Sharpe',          bot.sharpe,       held.sharpe,       'num',      false],
+                    ['Sortino',         bot.sortino,      held.sortino,      'num',      false],
+                    ['Max drawdown',    bot.max_drawdown, held.max_drawdown, 'pct_frac', true],
+                    ['Ann. volatility', bot.volatility,   held.volatility,   'pct_frac', true]
+                ];
+                var html = rows.map(function (row) {
+                    var label = row[0], bv = row[1], hv = row[2], kind = row[3], invert = row[4];
+                    var hasBoth = (bv != null && hv != null);
+                    var delta = hasBoth ? (bv - hv) : null;
+                    var deltaGood = invert ? (delta <= 0) : (delta >= 0);
+                    var dcol = (delta == null) ? 'inherit'
+                             : deltaGood ? cs('--studio-pos') : cs('--studio-neg');
+                    function fmt(v) {
+                        if (v == null) return '—';
+                        return (kind === 'num') ? v.toFixed(2) : (v * 100).toFixed(1) + '%';
+                    }
+                    var deltaStr = (delta == null) ? '—'
+                        : (kind === 'num'
+                            ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
+                            : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
+                    // Match the existing .math-row pattern (index.html:1223-1258):
+                    // label + value share a flex row; hint sits below on its own line.
+                    return '<div class="math-row">'
+                        + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
+                        + '<span class="math-row-label">' + label + '</span>'
+                        + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
+                        + '</div>'
+                        + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
+                        + '</div>';
+                }).join('');
+                rpEl.innerHTML = html;
+            })
+            .catch(function () {
+                // Graceful: leave the section empty on fetch failure — no JS error surfaced.
+                if (current()) rpEl.innerHTML = '';
+            });
+    }
+
+    function openDetailPanel(symIdOrIdx) {
+        document.getElementById('detail-panel').classList.add('open');
+        document.getElementById('detail-scrim').classList.add('open');
+
+        var symId = (typeof symIdOrIdx === 'string') ? symIdOrIdx : _symIds[symIdOrIdx];
+        var sym = symId ? _botState[symId] : null;
+
+        // Opening on another symphony takes the previous one's tape, events and variables off the
+        // panel at once: nothing of it may show under the new title while the new answers arrive.
+        var switched = _detailSymId !== null && symId !== _detailSymId;
+        _detailSymId = symId || null;
+        var seq = ++_detailRequestSeq;
+        if (switched) clearDetailPanelBody();
+        var rpEl = document.getElementById('detail-risk-profile');
+        if (rpEl) rpEl.innerHTML = '';
+
+        writeDetailTitle(sym);
+        // No poll has named this symphony yet: the first one fills the panel and asks for the rest.
+        _detailNeedsFetch = !sym;
+        if (!sym) return;
+
+        var kept = writeDetailFigures(sym);
+        // Populate Risk Math from bot state eagerly (B-04); chart fetch will overwrite with live data.
+        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak);
+        startDetailRequests(symId, sym, seq);
+    }
+
+    // Takes the previous symphony's tape, events and variables off the panel.
+    function clearDetailPanelBody() {
+        if (_intradayChart) { _intradayChart.destroy(); _intradayChart = null; }
+        var canvas = document.getElementById('intraday-canvas');
+        if (canvas) setSparkStatus(canvas, '');
+        disableOverlayToggles();
+        var events = document.getElementById('events-timeline');
+        if (events) events.textContent = '';
+        var vars = document.getElementById('vars-section');
+        if (vars) vars.textContent = '';
+    }
+
+    // The open panel follows each poll: the figures and the state-derived risk rows take the
+    // symphony's newest entry, and the tape (with the chart's toggles) is left as it is. An entry
+    // the body no longer carries leaves everything shown and says so; it reverts when the entry
+    // returns. A panel opened before any poll named its symphony fills from the first one that does.
+    function refreshOpenDetailPanel(botState) {
+        if (!_detailSymId || !detailPanelIsOpen()) return;
+        var sym = botState ? botState[_detailSymId] : null;
+        if (!isSymphonyEntry(sym)) {
+            var sub = document.getElementById('dp-live-ret-sub');
+            if (sub) sub.textContent = DETAIL_NOT_IN_VIEW_TEXT;
+            return;
+        }
+        writeDetailTitle(sym);
+        var kept = writeDetailFigures(sym);
+        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak, true);
+        if (_detailNeedsFetch) {
+            _detailNeedsFetch = false;
+            startDetailRequests(_detailSymId, sym, _detailRequestSeq);
         }
     }
 
-    function populateRiskMathFromState(sym, stopLevel, shadowPeak) {
-        // stopLevel and shadowPeak are already sentinel-guarded by openDetailPanel
+    // The risk rows a state entry can fill. The VWAP row is the tape's (the chart path writes it),
+    // so a poll passes keepVwap and leaves the text the chart gave it.
+    function populateRiskMathFromState(sym, stopLevel, shadowPeak, keepVwap) {
+        // stopLevel and shadowPeak are already sentinel-guarded by the caller
         var stopDist = (shadowPeak != null && stopLevel != null)
             ? ((shadowPeak - stopLevel).toFixed(2) + '%') : '--';
         var beVal = sym.breakeven_locked ? 'Active' : 'Off';
@@ -1011,31 +1153,43 @@
         var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
         var rawPara = sentinelToNull(typeof sym.para_velocity === 'number' ? sym.para_velocity : null);
         var paraVal = rawPara != null ? rawPara.toFixed(2) + '%' : '--';
-        // vwap_pct does not exist on bot_state; the chart path fills this in via
-        // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
-        var rawVwap = null;
-        var vwapVal = '--';
         var fields = [
             { id: 'dp-rm-mc',   val: mcVal },
             { id: 'dp-rm-stop', val: stopDist },
             { id: 'dp-rm-vol',  val: volVal },
             { id: 'dp-rm-para', val: paraVal },
-            { id: 'dp-rm-be',   val: beVal },
-            { id: 'dp-rm-vwap', val: vwapVal },
+            { id: 'dp-rm-be',   val: beVal }
         ];
+        // vwap_pct does not exist on bot_state; the chart path fills this in via
+        // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
+        if (!keepVwap) fields.push({ id: 'dp-rm-vwap', val: '--' });
         fields.forEach(function (f) {
             var el = document.getElementById(f.id);
             if (el) el.textContent = f.val;
         });
+        // The reading's bar follows its text.
+        var mcBar = document.getElementById('dp-rm-mc-bar');
+        if (mcBar) {
+            if (rawMc != null) {
+                mcBar.style.width = Math.max(0, Math.min(100, rawMc)) + '%';
+                mcBar.style.background = rawMc < 15 ? cs('--studio-warn') : (rawMc > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+            } else {
+                mcBar.style.width = '0%';
+                mcBar.style.background = cs('--studio-ink-faint');
+            }
+        }
     }
 
-    function fetchDetailChart(symId, sym) {
+    function fetchDetailChart(symId, sym, seq) {
         if (!symId) return;
         Promise.all([
-            fetch('/api/chart/' + symId).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+            fetch('/api/chart/' + symId).then(function (r) { return r.json(); }).catch(function () { return null; }),
             fetch('/api/logs/' + symId).then(function (r) { return r.json(); }).catch(function () { return []; }),
             fetch('/api/settings').then(function (r) { return r.json(); }).catch(function () { return {}; })
         ]).then(function (results) {
+            // Only the newest open's answers apply: the tape, the events and the variables of
+            // an earlier symphony that land late are dropped.
+            if (seq !== _detailRequestSeq || !detailPanelIsOpen()) return;
             // Pass settingsData (results[2]) to renderIntradayChart so the chart path
             // can read VWAP_BLEED_MULTIPLIER for the hint text (FIX 3 / Option A).
             renderIntradayChart(results[0], sym, results[2]);
@@ -1047,8 +1201,20 @@
     function renderIntradayChart(chartData, sym, settingsData) {
         var canvas = document.getElementById('intraday-canvas');
         if (!canvas) return;
+        // null = the request failed: a chart already drawn stays, an empty canvas says so.
+        if (chartData === null || typeof chartData !== 'object') {
+            if (!_intradayChart) setSparkStatus(canvas, SPARK_UNAVAILABLE_TEXT);
+            return;
+        }
         var data = chartData.data || [];
-        if (!data.length) return;
+        if (!data.length) {
+            // This symphony has no tape: the previous symphony's chart must not stay on the panel.
+            if (_intradayChart) { _intradayChart.destroy(); _intradayChart = null; }
+            disableOverlayToggles();
+            setSparkStatus(canvas, SPARK_NO_DATA_TEXT);
+            return;
+        }
+        setSparkStatus(canvas, '');
 
         if (_intradayChart) { _intradayChart.destroy(); _intradayChart = null; }
 
@@ -1110,6 +1276,14 @@
         renderRiskMathPanel(chartData, sym, settingsData);
     }
 
+    // With no chart the overlay toggles have nothing to switch.
+    function disableOverlayToggles() {
+        ['toggle-stop', 'toggle-breakeven', 'toggle-vwap', 'toggle-mc'].forEach(function (id) {
+            var btn = document.getElementById(id);
+            if (btn) btn.disabled = true;
+        });
+    }
+
     function wireOverlayToggles() {
         // Stop (idx 2) and Breakeven (idx 3) default ON; VWAP (4) and MC (5) default OFF.
         var toggleMap = {
@@ -1136,7 +1310,7 @@
             if (legendEl) legendEl.style.display = initiallyVisible ? 'inline-flex' : 'none';
 
             btn.onclick = function () {
-                if (!hasData) return;
+                if (!hasData || !_intradayChart) return;
                 var meta = _intradayChart.getDatasetMeta(dsIdx);
                 var nowHidden = ds.hidden === true || meta.hidden === true;
                 ds.hidden = !nowHidden;
@@ -1371,9 +1545,9 @@
             if (dataPoints[i].mc_prob != null) { mcProb = dataPoints[i].mc_prob; break; }
         }
         if (mcProb === null) mcProb = chartData.mc_prob != null ? chartData.mc_prob : (chartData.mc_pct != null ? chartData.mc_pct : null);
-        if (mcProb === null) return;
-        // The engine's +/-999 means "no reading": the same dash a first paint shows.
-        if (isSentinel(mcProb)) {
+        // No reading (the engine's +/-999, or none at all) reads the dash, the same as a first
+        // paint: an older reading never stands in for a missing one.
+        if (mcProb === null || typeof mcProb !== 'number' || !isFinite(mcProb) || isSentinel(mcProb)) {
             showNoReading();
             return;
         }
@@ -1406,6 +1580,29 @@
         el.classList.remove('pos', 'neg');
         if (value >= 0) el.classList.add('pos');
         else el.classList.add('neg');
+    }
+
+    // Marks the leader of a comparison row as the server render does: the leader's bar fill
+    // carries `winner` and the other's `loser`, and the leader's label (the `.vs-bar-label` of the
+    // same row, bot first) carries `winner`; a label never carries `loser`. botWins null means no
+    // side leads, so no element carries a class. Classes other than these two are left alone.
+    function applyBarClasses(botFills, heldFills, botWins) {
+        function mark(els, cls) {
+            Array.prototype.forEach.call(els, function (el) {
+                el.classList.remove('winner', 'loser');
+                if (cls) el.classList.add(cls);
+            });
+        }
+        mark(botFills, botWins === null ? '' : (botWins ? 'winner' : 'loser'));
+        mark(heldFills, botWins === null ? '' : (botWins ? 'loser' : 'winner'));
+        var anchor = botFills.length ? botFills[0] : (heldFills.length ? heldFills[0] : null);
+        var row = anchor && typeof anchor.closest === 'function' ? anchor.closest('.vs-row') : null;
+        var labels = row ? row.querySelectorAll('.vs-bar-label') : [];
+        if (labels.length >= 2) {
+            labels[0].classList.remove('winner');
+            labels[1].classList.remove('winner');
+            if (botWins !== null) labels[botWins ? 0 : 1].classList.add('winner');
+        }
     }
 
     // BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): the backend
@@ -1453,8 +1650,26 @@
         }
     }
 
+    // Max DD labels: the hero row and every card render both the "insufficient history" label and
+    // the alpha element, one hidden. They follow meta.portfolio.insufficient_history; a body that
+    // does not say leaves them as they are.
+    function applyMddLabels(data) {
+        var portfolio = (data && data.meta && data.meta.portfolio) || {};
+        var insufficient = portfolio.insufficient_history;
+        if (typeof insufficient !== 'boolean') return;
+        [['[data-testid="mdd-insufficient-label"]', '[data-testid="comp-mdd-delta"]'],
+         ['[data-testid="card-mdd-insufficient-label"]', '[data-field="mdd-alpha-badge"]']
+        ].forEach(function (pair) {
+            document.querySelectorAll(pair[0]).forEach(function (el) { el.hidden = !insufficient; });
+            document.querySelectorAll(pair[1]).forEach(function (el) { el.hidden = insufficient; });
+        });
+    }
+
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
+        applyMddLabels(data);
+        var insufficientHistory = !!(data && data.meta && data.meta.portfolio
+            && data.meta.portfolio.insufficient_history === true);
         // The account-basis helpers run only on a genuine state-poll payload.
         // 'data_as_of' is unconditionally set by _compute_portfolio_strip on every
         // /api/state poll (app.py), so it discriminates a poll from any other payload
@@ -1501,6 +1716,14 @@
             heldBars.forEach(function (el) {
                 el.style.width = Math.min(Math.abs(held) / maxAbs * 100, 100).toFixed(1) + '%';
             });
+            // The leader, by the rule the server render applies to the row (a missing leg reads
+            // as 0 there). Max DD: the smaller drawdown leads, and with too little history no
+            // side does.
+            var botWins;
+            if (row.higherIsBetter) botWins = (bot === null ? 0 : bot) >= (held === null ? 0 : held);
+            else if (insufficientHistory) botWins = null;
+            else botWins = Math.abs(bot === null ? 0 : bot) <= Math.abs(held === null ? 0 : held);
+            applyBarClasses(botBars, heldBars, botWins);
 
             var botText  = document.querySelector('[data-testid="comp-' + row.id + '-bot-text"]');
             var heldText = document.querySelector('[data-testid="comp-' + row.id + '-held-text"]');
@@ -1633,6 +1856,13 @@
                 card.querySelectorAll('[data-field="cr-held"]').forEach(function (el) { el.textContent = _fmtSignedPct(sym.cr_held); _setPosNegClass(el, sym.cr_held); });
                 card.querySelectorAll('[data-field="mdd-bot"]').forEach(function (el) { el.textContent = _fmtAbsPct(sym.mdd_bot); });
                 card.querySelectorAll('[data-field="mdd-held"]').forEach(function (el) { el.textContent = _fmtAbsPct(sym.mdd_held); });
+                // Composer's lifetime drawdown scalar, printed apart from the comparison above. A
+                // body from before the key existed leaves the printed figure alone.
+                if ('mdd_lifetime' in sym) {
+                    card.querySelectorAll('[data-field="mdd-lifetime"]').forEach(function (el) {
+                        el.textContent = _fmtAbsPct(sym.mdd_lifetime);
+                    });
+                }
 
                 // Show/hide + update the triggered-verdict outcome banner.
                 // The template always renders this element; display:none hides it until exit.
@@ -1645,6 +1875,19 @@
                         writeVerdict(verdict, sym.guard_alpha, data.market_state);
                     } else {
                         verdict.style.display = 'none';
+                    }
+                }
+
+                // Cash Now is for a card that has not exited: disabled while the card reads as
+                // triggered, enabled once it does not (a new session). A button whose sell is in
+                // flight or done keeps that state (data-cash-state) whatever the card reads.
+                var cashBtn = card.querySelector('[data-testid="cash-now-btn"]');
+                if (cashBtn != null) {
+                    var cashState = cashBtn.getAttribute('data-cash-state');
+                    if (cashState !== 'selling' && cashState !== 'sold') {
+                        var exited = !!sym.triggered;
+                        if (cashBtn.disabled !== exited) cashBtn.disabled = exited;
+                        if (cashBtn.textContent !== 'Cash Now') cashBtn.textContent = 'Cash Now';
                     }
                 }
 
@@ -1734,28 +1977,47 @@
         });
     }
 
-    function updateSectionMeta(data) {
-        // F-011: data.symphonies genuinely does not exist on the closed/frozen
-        // /api/state branch (app.py emits state/bot_state only there) -- read the
-        // real field, present on BOTH branches, and filter to symphony entries the
-        // same way the server does (isinstance(v, dict) and "name" in v) since
-        // state/bot_state also carries flat non-symphony metadata keys.
-        var stateObj = (data && (data.bot_state || data.state)) || {};
-        var syms = Object.keys(stateObj)
-            .map(function (k) { return stateObj[k]; })
-            .filter(function (v) { return v && typeof v === 'object' && 'name' in v; })
-            .filter(_inPickedAccount);
-        var activeCount  = syms.filter(function (s) {
-            return s.armed || s.tp_armed || s.para_armed || s.triggered;
-        }).length;
-        var standbyCount = syms.filter(function (s) {
-            return !s.armed && !s.tp_armed && !s.para_armed && !s.triggered;
-        }).length;
+    // The badges count the cards on the page: the cards of each section that are shown. The
+    // card list places the cards (updateCards), the account filter hides the other accounts'
+    // (applyAccountFilter), so this runs after both and reads what they left.
+    function updateSectionMeta() {
+        [['active-section', 'active-section-count'], ['standby-section', 'standby-section-count']]
+            .forEach(function (pair) {
+                var section = document.querySelector('[data-testid="' + pair[0] + '"]');
+                var badge = document.querySelector('[data-testid="' + pair[1] + '"]');
+                if (!section || !badge) return;
+                var shown = 0;
+                section.querySelectorAll('.sym-card').forEach(function (card) {
+                    if (!card.hidden && card.style.display !== 'none') shown += 1;
+                });
+                badge.textContent = shown;
+            });
+    }
 
-        var activeBadge  = document.querySelector('[data-testid="active-section-count"]');
-        var standbyBadge = document.querySelector('[data-testid="standby-section-count"]');
-        if (activeBadge)  activeBadge.textContent  = activeCount;
-        if (standbyBadge) standbyBadge.textContent = standbyCount;
+    // Each section lists its cards in the order of the response's card list (the order the page
+    // was rendered in). A card is moved only when the order differs, and moving a node keeps its
+    // canvas, so no chart is rebuilt.
+    function orderSectionCards(data) {
+        var syms = data && data.symphonies;
+        if (!Array.isArray(syms)) return;
+        var rank = {};
+        syms.forEach(function (sym, i) {
+            if (sym && sym.id && !(sym.id in rank)) rank[sym.id] = i;
+        });
+        function rankOf(card) {
+            var id = card.getAttribute('data-sym-id');
+            return id in rank ? rank[id] : syms.length;
+        }
+        ['active-section', 'standby-section'].forEach(function (testid) {
+            var section = document.querySelector('[data-testid="' + testid + '"]');
+            if (!section) return;
+            var grid = section.querySelector('.cards-grid') || section;
+            var cards = Array.prototype.filter.call(grid.children, function (c) { return c.classList.contains('sym-card'); });
+            var wanted = cards.slice().sort(function (a, b) { return rankOf(a) - rankOf(b); });
+            var differs = wanted.some(function (card, i) { return card !== cards[i]; });
+            if (!differs) return;
+            wanted.forEach(function (card) { grid.appendChild(card); });
+        });
     }
 
     // ---------------------------------------------------------------------------
@@ -1799,6 +2061,243 @@
 
         el.textContent = fmtPct(value);
         el.className = 'account-all-time-value ' + (value >= 0 ? 'pos' : 'neg');
+    }
+
+    // ---------------------------------------------------------------------------
+    // Panels the page render fixes and the poll now carries (data.dashboard_panels):
+    // the Managed Sleeves panel, the CVaR diagnostic panel and the Edit Vars badge.
+    // Each part is applied only when it is present and sound; a part whose read failed
+    // (null, or ok false), or a body with no dashboard_panels, leaves the panel as it is.
+    // Existing elements are written by textContent; a card or row the page lacks is cloned
+    // from the matching <template> and filled the same way. Nothing here writes innerHTML.
+    // ---------------------------------------------------------------------------
+
+    function setTextIfChanged(el, text) {
+        if (el && el.textContent !== text) el.textContent = text;
+    }
+
+    function fieldOf(root, name) {
+        return root.querySelector('[data-field="' + name + '"]');
+    }
+
+    // $12.34 as the server render prints a dollar figure (toFixed rounding); `missing` stands
+    // in for a figure that is absent.
+    function dollarText(value, missing) {
+        return typeof value === 'number' && isFinite(value) ? '$' + value.toFixed(2) : missing;
+    }
+
+    // The element with data-<attr>="<id>" among a container's element children, or null.
+    function childWithId(container, attr, id) {
+        var kids = container.children;
+        for (var i = 0; i < kids.length; i++) {
+            if (kids[i].getAttribute(attr) === id) return kids[i];
+        }
+        return null;
+    }
+
+    // A copy of a <template>'s first element, owned by this document; null when the page has none.
+    function cloneTemplateRoot(templateId) {
+        var template = document.getElementById(templateId);
+        var first = template && template.content ? template.content.firstElementChild : null;
+        return first ? document.importNode(first, true) : null;
+    }
+
+    // Puts `wanted` (elements already children of `container`) in that order, moving only an
+    // element that is out of place.
+    function placeInOrder(container, wanted) {
+        var cursor = container.firstElementChild;
+        wanted.forEach(function (el) {
+            if (cursor === el) {
+                cursor = el.nextElementSibling;
+            } else {
+                container.insertBefore(el, cursor);
+            }
+        });
+    }
+
+    function wireButton(button, handlerName, argsFn) {
+        button.addEventListener('click', function () {
+            var handler = window[handlerName];
+            if (typeof handler === 'function') handler.apply(window, argsFn().concat([button]));
+        });
+    }
+
+    function syncArmControl(rowEl, sleeveId, rule) {
+        var existing = rowEl.querySelector('[data-testid="sleeve-arm-control"]');
+        var wanted = rule.mode === 'SHADOW';
+        if (wanted && !existing) {
+            var template = cloneTemplateRoot('sleeve-rule-row-template');
+            var fresh = template ? template.querySelector('[data-testid="sleeve-arm-control"]') : null;
+            var actions = fieldOf(rowEl, 'rule-actions');
+            if (!fresh || !actions) return;
+            fresh.setAttribute('data-sleeve-id', String(sleeveId));
+            fresh.setAttribute('data-rule-id', String(rule.id));
+            wireButton(fresh, 'armSleeveRuleToPaper', function () { return [sleeveId, rule.id]; });
+            actions.appendChild(fresh);
+        } else if (!wanted && existing) {
+            existing.parentNode.removeChild(existing);
+        }
+    }
+
+    function syncRuleRow(rowEl, sleeveId, rule) {
+        setTextIfChanged(fieldOf(rowEl, 'rule-name'), String(rule.name));
+        setTextIfChanged(fieldOf(rowEl, 'rule-mode'), '(' + rule.mode + ')');
+        setTextIfChanged(fieldOf(rowEl, 'rule-today'), String(rule.today_fires));
+        setTextIfChanged(fieldOf(rowEl, 'rule-lifetime'), String(rule.lifetime_fires));
+        setTextIfChanged(fieldOf(rowEl, 'rule-realized'), dollarText(rule.realized_pnl_usd, 'n/a'));
+        syncArmControl(rowEl, sleeveId, rule);
+    }
+
+    function newRuleRow(sleeveId, rule) {
+        var rowEl = cloneTemplateRoot('sleeve-rule-row-template');
+        if (!rowEl) return null;
+        rowEl.setAttribute('data-rule-id', String(rule.id));
+        var arm = rowEl.querySelector('[data-testid="sleeve-arm-control"]');
+        if (arm) arm.parentNode.removeChild(arm);  // syncArmControl adds it for a SHADOW rule
+        return rowEl;
+    }
+
+    function syncSleeveCard(card, sleeve) {
+        setTextIfChanged(fieldOf(card, 'sleeve-name'), String(sleeve.name));
+        var badge = card.querySelector('[data-testid="sleeve-status-badge"]');
+        if (badge) {
+            setTextIfChanged(badge, String(sleeve.status));
+            var badgeClass = 'status-pill ' + sleeve.status_badge_class;
+            if (badge.className !== badgeClass) badge.className = badgeClass;
+        }
+        setTextIfChanged(fieldOf(card, 'sleeve-capital'), dollarText(sleeve.capital_usd, '\u2014'));
+        setTextIfChanged(fieldOf(card, 'sleeve-ledger-cash'), dollarText(sleeve.ledger_cash_usd, '\u2014'));
+        setTextIfChanged(fieldOf(card, 'sleeve-realized'), dollarText(sleeve.realized_pnl_usd, 'n/a'));
+
+        var rules = Array.isArray(sleeve.rules) ? sleeve.rules : [];
+        var rulesBox = fieldOf(card, 'sleeve-rules');
+        if (rulesBox) {
+            var wantedIds = {};
+            var rows = [];
+            rules.forEach(function (rule) {
+                if (!rule || rule.id === null || rule.id === undefined) return;
+                var id = String(rule.id);
+                wantedIds[id] = true;
+                var rowEl = childWithId(rulesBox, 'data-rule-id', id);
+                if (!rowEl) {
+                    rowEl = newRuleRow(sleeve.id, rule);
+                    if (!rowEl) return;
+                    rulesBox.appendChild(rowEl);
+                }
+                syncRuleRow(rowEl, sleeve.id, rule);
+                rows.push(rowEl);
+            });
+            Array.prototype.slice.call(rulesBox.children).forEach(function (rowEl) {
+                if (!wantedIds[rowEl.getAttribute('data-rule-id')]) rulesBox.removeChild(rowEl);
+            });
+            placeInOrder(rulesBox, rows);
+            rulesBox.hidden = rows.length === 0;
+        }
+
+        // A SHADOW sleeve has nothing to disarm: the button is inert, as the server renders it.
+        var inert = sleeve.status === 'SHADOW';
+        var disarm = card.querySelector('[data-testid="sleeve-disarm-control"]');
+        if (disarm) {
+            if (disarm.disabled !== inert) disarm.disabled = inert;
+            if (disarm.classList.contains('control-disabled') !== inert) {
+                disarm.classList.toggle('control-disabled', inert);
+            }
+        }
+    }
+
+    function newSleeveCard(sleeve) {
+        var card = cloneTemplateRoot('sleeve-card-template');
+        if (!card) return null;
+        var id = String(sleeve.id);
+        card.setAttribute('data-sleeve-id', id);
+        var disarm = card.querySelector('[data-testid="sleeve-disarm-control"]');
+        var remove = card.querySelector('[data-testid="sleeve-delete-control"]');
+        if (disarm) {
+            disarm.setAttribute('data-sleeve-id', id);
+            wireButton(disarm, 'disarmSleeve', function () { return [sleeve.id]; });
+        }
+        if (remove) {
+            remove.setAttribute('data-sleeve-id', id);
+            wireButton(remove, 'deleteSleeve', function () { return [sleeve.id]; });
+        }
+        return card;
+    }
+
+    function updateSleevesPanel(sleeves) {
+        var list = document.querySelector('[data-testid="sleeves-panel"] [data-field="sleeves-list"]');
+        if (!list) return;
+        var wantedIds = {};
+        var cards = [];
+        sleeves.forEach(function (sleeve) {
+            if (!sleeve || sleeve.id === null || sleeve.id === undefined) return;
+            var id = String(sleeve.id);
+            wantedIds[id] = true;
+            var card = childWithId(list, 'data-sleeve-id', id);
+            if (!card) {
+                card = newSleeveCard(sleeve);
+                if (!card) return;
+                list.appendChild(card);
+            }
+            syncSleeveCard(card, sleeve);
+            cards.push(card);
+        });
+        Array.prototype.slice.call(list.children).forEach(function (card) {
+            if (!wantedIds[card.getAttribute('data-sleeve-id')]) list.removeChild(card);
+        });
+        placeInOrder(list, cards);
+        var empty = document.querySelector('[data-testid="sleeves-empty"]');
+        if (empty) empty.hidden = cards.length > 0;
+    }
+
+    function finiteOrNull(v) {
+        return typeof v === 'number' && isFinite(v) ? v : null;
+    }
+
+    // The CVaR panel shows the latest diagnostic and is hidden while there is none. The words and
+    // figures follow the server render's: four places, a dash for a missing figure.
+    function renderCvarPanel(diagnostic) {
+        var panel = document.getElementById('cvar-diagnostic-panel');
+        if (!panel) return;
+        var has = !!diagnostic && typeof diagnostic === 'object';
+        var five = has ? finiteOrNull(diagnostic.cvar_5pct) : null;
+        var stderr = has ? finiteOrNull(diagnostic.cvar_5pct_stderr) : null;
+        var nTail = has ? finiteOrNull(diagnostic.cvar_n_tail) : null;
+        setTextIfChanged(fieldOf(panel, 'cvar-5pct'), five !== null ? five.toFixed(4) : '\u2014');
+        var cell = fieldOf(panel, 'cvar-stderr-cell');
+        if (cell) cell.hidden = five === null;
+        var stderrEl = fieldOf(panel, 'cvar-stderr');
+        if (stderrEl) {
+            setTextIfChanged(stderrEl, '\u00b1' + (stderr !== null ? stderr.toFixed(4) : '\u2014') + ' stderr');
+            stderrEl.setAttribute('data-cvar-stderr', stderr !== null ? String(stderr) : '');
+        }
+        var nEl = fieldOf(panel, 'cvar-n-tail');
+        if (nEl) {
+            setTextIfChanged(nEl, 'n=' + (nTail !== null ? String(nTail) : '\u2014'));
+            nEl.setAttribute('data-cvar-n-tail', nTail !== null ? String(nTail) : '');
+        }
+        panel.hidden = !has;
+    }
+
+    // The Edit Vars badge shows how many variables are locked, and is hidden and empty at zero.
+    function renderEditVarsBadge(count) {
+        var badge = document.querySelector('[data-testid="edit-vars-indicator"]');
+        if (!badge) return;
+        var shown = count > 0;
+        setTextIfChanged(badge, shown ? String(count) : '');
+        badge.hidden = !shown;
+        badge.style.display = shown ? 'inline-flex' : 'none';
+    }
+
+    function renderDashboardPanels(data) {
+        var panels = data && data.dashboard_panels;
+        if (!panels || typeof panels !== 'object') return;
+        if (Array.isArray(panels.sleeves)) updateSleevesPanel(panels.sleeves);
+        if (panels.cvar && typeof panels.cvar === 'object' && panels.cvar.ok === true) {
+            renderCvarPanel(panels.cvar.diagnostic);
+        }
+        if (typeof panels.vars_locked_count === 'number' && isFinite(panels.vars_locked_count)) {
+            renderEditVarsBadge(panels.vars_locked_count);
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -1856,17 +2355,23 @@
             function () { updateVerdicts(botState, data.market_state); },
             function () { if (typeof window.updateBanners === 'function') window.updateBanners(data); },
             function () { updateMiniStats(meta); },
-            function () { chartsSettled = loadCharts(botState); },
+            function () { chartsSettled = loadCharts(botState, stampChanged); },
             function () { if (typeof window.updateChromeTicker === 'function') window.updateChromeTicker(data, timing); },
             // cards-live: refresh per-symphony card value spans from data.symphonies.
             // Reuses POLL_INTERVAL_MS — no new timer. Cards stay live between hard-refreshes.
             function () { updateCards(data); },
-            // Update section count badges.
-            function () { updateSectionMeta(data); },
+            function () { orderSectionCards(data); },
             // Account · all-time CR: fixed stat, not windowed — must fire on every poll
             // so cold-start (SSR omitted the element) resolves without a manual reload.
             function () { updateAccountAllTime(data); },
             function () { applyAccountFilter(data); },
+            function () { updateSectionMeta(); },
+            // The header's mode pill and the hero legend's mode word follow the body.
+            function () { if (typeof window.updateModeIndicators === 'function') window.updateModeIndicators(meta); },
+            // The open detail panel follows the body.
+            function () { refreshOpenDetailPanel(botState); },
+            // The Sleeves and CVaR panels and the Edit Vars badge.
+            function () { renderDashboardPanels(data); },
             // Without a stream the poll is the only thing that moves the $-saved panel.
             function () { refreshPanelWithoutStream(); },
             function () { renderAsOf(); }

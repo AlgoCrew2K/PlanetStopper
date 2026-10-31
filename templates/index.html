@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+  <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     /* Universal + body reset live in static/layout.css (shared single source) */
@@ -653,7 +654,6 @@
 </head>
 
 <body>
-  <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
   {% include '_chrome.html' %}
 
   <div class="page-wrap">
@@ -759,7 +759,7 @@
           <div data-testid="chart-legend" class="chart-legend">
             <div class="legend-item">
               <div class="legend-swatch"></div>
-              <span>Planet Stopper ({{ 'live' if meta is defined and meta.mode == 'LIVE' else 'dry-run' }})</span>
+              <span>Planet Stopper (<span data-field="legend-mode">{{ 'live' if meta is defined and meta.mode == 'LIVE' else 'dry-run' }}</span>)</span>
             </div>
             <div class="legend-item">
               <div class="legend-swatch dashed"></div>
@@ -910,13 +910,12 @@
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
                 {# F-2: when insufficient_history, label row with annotation instead of alpha delta #}
-                <span class="vs-row-label">Max DD{% if mdd_insufficient %} <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
+                <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;"{% if not mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
                 <span data-testid="comp-mdd-bot-text" class="vs-val neg">{% if has_live_data and _mdd_bot_raw is not none %}Bot {{ "%.2f"|format(mdd_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data and _mdd_held_raw is not none %}Held {{ "%.2f"|format(mdd_held) }}%{% else %}&mdash;{% endif %}</span>
-                {# F-2: suppress alpha delta when insufficient history — comparison is misleading #}
-                {% if not mdd_insufficient %}
-                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>
-                {% endif %}
+                {# F-2: hide the alpha delta when insufficient history — comparison is misleading.
+                   Both the label and the delta are rendered, one hidden, so a poll can swap them. #}
+                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if mdd_insufficient %} hidden{% endif %}>{% if has_live_data %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }}%{% else %}&mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -1086,11 +1085,9 @@
       <div class="section-header" style="display:flex;align-items:center;gap:8px;">
         Active &mdash; Armed &amp; Triggered
         <span data-testid="active-section-count" style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--studio-chip-bg);border:1px solid var(--studio-rule);color:var(--studio-ink-dim);font-size:10px;font-weight:700;letter-spacing:0;">{{ active_syms | length }}</span>
-        {% if vars_locked_count is defined and vars_locked_count > 0 %}
-        <span data-testid="edit-vars-indicator" style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--studio-accent);color:var(--studio-white);font-size:10px;font-weight:700;letter-spacing:0;">{{ vars_locked_count }}</span>
-        {% else %}
-        <span data-testid="edit-vars-indicator" style="display:none;"></span>
-        {% endif %}
+        {# One span, hidden and empty at 0, so a poll can show the count or hide it again. #}
+        {% set _vars_shown = vars_locked_count is defined and vars_locked_count > 0 %}
+        <span data-testid="edit-vars-indicator"{% if not _vars_shown %} hidden{% endif %} style="display:{{ 'inline-flex' if _vars_shown else 'none' }};align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--studio-accent);color:var(--studio-white);font-size:10px;font-weight:700;letter-spacing:0;">{% if _vars_shown %}{{ vars_locked_count }}{% endif %}</span>
       </div>
       <div class="cards-grid">
         {% for sym in active_syms %}
@@ -1209,7 +1206,7 @@
                  needed here. #}
               {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
               <div class="cfg-cell">
-                <span class="cfg-label">Max DD {% if not _card_mdd_insufficient %}<span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span>{% else %}<span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
+                <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>α {{ "%+.1f"|format(mdd_alpha) }}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
                 <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
                 <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
               </div>
@@ -1221,7 +1218,7 @@
                grid cell, which would wrap awkwardly onto its own row. #}
             {% set _mdd_lifetime_raw = mdd_d.get("if_held_lifetime") if mdd_d is mapping else None %}
             <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-faint);padding-left:10px;margin-top:2px;">
-              Lifetime MDD: <span data-field="mdd-lifetime" style="opacity:0.7;">{% if _mdd_lifetime_raw is not none %}{{ "%.1f"|format(_mdd_lifetime_raw|abs) }}%{% else %}--{% endif %}</span>
+              Lifetime MDD: <span data-field="mdd-lifetime" style="opacity:0.7;">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
             </div>
           </div>
         </div>
@@ -1320,7 +1317,7 @@
                needed here. #}
             {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
             <div class="cfg-cell">
-              <span class="cfg-label">Max DD {% if not _card_mdd_insufficient %}<span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(mdd_alpha) }}</span>{% else %}<span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;">insufficient history (&lt;30d)</span>{% endif %}</span>
+              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>α {{ "%+.1f"|format(mdd_alpha) }}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
               <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
             </div>
@@ -1332,7 +1329,7 @@
              grid cell, which would wrap awkwardly onto its own row. #}
           {% set _mdd_lifetime_raw = mdd_d.get("if_held_lifetime") if mdd_d is mapping else None %}
           <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-faint);padding-left:10px;margin-top:2px;">
-            Lifetime MDD: <span data-field="mdd-lifetime" style="opacity:0.7;">{% if _mdd_lifetime_raw is not none %}{{ "%.1f"|format(_mdd_lifetime_raw|abs) }}%{% else %}--{% endif %}</span>
+            Lifetime MDD: <span data-field="mdd-lifetime" style="opacity:0.7;">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
           </div>
         </div>
         {% endfor %}
@@ -1504,16 +1501,88 @@
     </div>
   </aside>
 
+  {# The Sleeves panel's card and rule row. The loops below render them with the sleeve's data and the #}
+  {# two <template> elements after the section render them with empty values, so the page render and #}
+  {# the poll's new rows come from one markup. A real card's buttons carry inline handlers; the #}
+  {# template's do not (the poll wires its clones). #}
+  {% macro sleeve_rule_row(sleeve_id, rule, template=false) -%}
+  <div data-testid="sleeve-rule-row" data-rule-id="{{ rule.id }}" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
+    <span><span data-field="rule-name">{{ rule.name }}</span> <span data-field="rule-mode" style="color:var(--studio-ink-faint);">({{ rule.mode }})</span></span>
+    <span data-field="rule-actions" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
+      <span style="color:var(--studio-ink-dim);">today <span data-field="rule-today">{{ rule.today_fires }}</span> &middot; lifetime <span data-field="rule-lifetime">{{ rule.lifetime_fires }}</span> &middot; realized <span data-field="rule-realized">{{ rule.realized_text }}</span></span>
+      {% if rule.mode == 'SHADOW' or template %}
+      <button
+        type="button"
+        data-testid="sleeve-arm-control"
+        data-sleeve-id="{{ sleeve_id }}"
+        data-rule-id="{{ rule.id }}"
+        style="padding:3px 10px;border-radius:6px;background:transparent;color:var(--studio-pos);font-size:10.5px;font-weight:600;border:1px solid var(--studio-pos);cursor:pointer;"
+        {% if not template %}onclick="armSleeveRuleToPaper({{ sleeve_id }}, {{ rule.id }}, this)"{% endif %}
+      >Arm Paper</button>
+      {% endif %}
+    </span>
+  </div>
+  {%- endmacro %}
+
+  {% macro sleeve_card(sleeve, template=false) -%}
+      <div
+        data-testid="sleeve-card"
+        data-sleeve-id="{{ sleeve.id }}"
+        style="background:var(--studio-paper);border:1px solid var(--studio-rule);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);"
+      >
+        <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;">
+          <span class="card-name" data-field="sleeve-name">{{ sleeve.name }}</span>
+          <span
+            data-testid="sleeve-status-badge"
+            class="status-pill {{ sleeve.status_badge_class }}"
+          >{{ sleeve.status }}</span>
+        </div>
+        <div style="margin-top:6px;color:var(--studio-ink-dim);font-size:12px;">
+          Capital: <span data-field="sleeve-capital">{{ sleeve.capital_text }}</span>
+          &middot;
+          Ledger cash: <span data-field="sleeve-ledger-cash">{{ sleeve.ledger_cash_text }}</span>
+          &middot;
+          {# None = the ledger fold failed; render "n/a", never a $0.00 value claim (audit #7) #}
+          Realized: <span data-field="sleeve-realized">{{ sleeve.realized_text }}</span>
+        </div>
+
+        <div data-field="sleeve-rules" style="margin-top:8px;"{% if not sleeve.rules %} hidden{% endif %}>
+          {% for rule in sleeve.rules %}{{ sleeve_rule_row(sleeve.id, rule) }}{% endfor %}
+        </div>
+
+        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+          <button
+            type="button"
+            data-testid="sleeve-disarm-control"
+            data-sleeve-id="{{ sleeve.id }}"
+            class="{% if sleeve.status == 'SHADOW' %}control-disabled{% endif %}"
+            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-neg);font-size:10.5px;font-weight:600;border:1px solid var(--studio-neg);cursor:pointer;"
+            {% if not template %}onclick="disarmSleeve({{ sleeve.id }}, this)"{% endif %}
+            {% if sleeve.status == 'SHADOW' %}disabled{% endif %}
+          >Disarm</button>
+          <button
+            type="button"
+            data-testid="sleeve-delete-control"
+            data-sleeve-id="{{ sleeve.id }}"
+            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-ink-faint);font-size:10.5px;font-weight:600;border:1px solid var(--studio-rule);cursor:pointer;"
+            {% if not template %}onclick="deleteSleeve({{ sleeve.id }}, this)"{% endif %}
+          >Delete</button>
+        </div>
+      </div>
+  {%- endmacro %}
+
   {# M2 CVaR diagnostic panel — S-3 four-part display contract (read-only, arch constraint 2). #}
   {# All four S-3 elements are required: (a) stderr, (b) tail_obs_count, (c) diagnostic label, (d) bias warning. #}
   {# CVAR-001 Phase-1 scope limit (sprint-2-audit a6e4d9f8): cvar_diagnostic holds the FIRST symphony only. #}
   {# Multi-symphony portfolios silently omit other symphonies' CVaR diagnostics. Phase-2 will expand to a #}
   {# per-symphony dict for multi-row rendering. See app.py CVAR-001 comment for the TODO. #}
-  {% if cvar_diagnostic %}
+  {# The panel is always rendered, hidden while there is no diagnostic, so a poll that brings the #}
+  {# first diagnostic can show it and one that loses it can hide it. #}
   <section
     id="cvar-diagnostic-panel"
     aria-label="CVaR Diagnostic (M2)"
-    style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"
+    style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"{% if not cvar_diagnostic %}
+    hidden{% endif %}
   >
     <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-faint);margin-bottom:10px;">
       CVaR Diagnostic &mdash; 5th-Percentile Expected Shortfall
@@ -1522,26 +1591,24 @@
       {# S-3 element (a): stderr / uncertainty band #}
       <span>
         CVaR (5%):
-        {% if cvar_diagnostic.cvar_5pct is not none %}
-          {{ "%.4f"|format(cvar_diagnostic.cvar_5pct) }}
+        <span data-field="cvar-5pct">{{ cvar_view.five }}</span>
+        <span data-field="cvar-stderr-cell"{% if not cvar_view.show_stderr %} hidden{% endif %}>
           &nbsp;
           <span
-            data-cvar-stderr="{{ cvar_diagnostic.cvar_5pct_stderr }}"
+            data-cvar-stderr="{{ cvar_view.stderr_attr }}"
+            data-field="cvar-stderr"
             style="color:var(--studio-ink-faint);"
-          >
-            &plusmn;{{ "%.4f"|format(cvar_diagnostic.cvar_5pct_stderr) if cvar_diagnostic.cvar_5pct_stderr is not none else "&mdash;" }} stderr
-          </span>
-        {% else %}
-          <span style="color:var(--studio-ink-faint);">—</span>
-        {% endif %}
+          >{{ cvar_view.stderr }}</span>
+        </span>
       </span>
       {# S-3 element (b): tail_obs_count (n=N distinct tail observations) #}
       <span>
         Tail obs:
         <span
-          data-cvar-n-tail="{{ cvar_diagnostic.cvar_n_tail }}"
+          data-cvar-n-tail="{{ cvar_view.n_tail_attr }}"
+          data-field="cvar-n-tail"
           style="font-weight:500;"
-        >n={{ cvar_diagnostic.cvar_n_tail }}</span>
+        >{{ cvar_view.n_tail }}</span>
       </span>
     </div>
     {# S-3 element (c): load-bearing safety label — do not trade on this #}
@@ -1553,7 +1620,6 @@
       known-low-biased LOWER BOUND on tail severity, not a point estimate
     </div>
   </section>
-  {% endif %}
 
   {# Managed Sleeves panel (AC-16) — sleeve/rule status, per-rule fire counts, #}
   {# arm-to-paper/disarm controls, and the Atlas cache-health badge (audit #}
@@ -1586,78 +1652,18 @@
       </span>
     </div>
 
-    {% if sleeves %}
-    <div class="cards-grid">
-      {% for sleeve in sleeves %}
-      <div
-        data-testid="sleeve-card"
-        data-sleeve-id="{{ sleeve.id }}"
-        style="background:var(--studio-paper);border:1px solid var(--studio-rule);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);"
-      >
-        <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;">
-          <span class="card-name">{{ sleeve.name }}</span>
-          <span
-            data-testid="sleeve-status-badge"
-            class="status-pill {{ sleeve.status_badge_class }}"
-          >{{ sleeve.status }}</span>
-        </div>
-        <div style="margin-top:6px;color:var(--studio-ink-dim);font-size:12px;">
-          Capital: {% if sleeve.capital_usd is not none %}${{ "%.2f"|format(sleeve.capital_usd) }}{% else %}&mdash;{% endif %}
-          &middot;
-          Ledger cash: ${{ "%.2f"|format(sleeve.ledger_cash_usd) }}
-          &middot;
-          {# None = the ledger fold failed; render "n/a", never a $0.00 value claim (audit #7) #}
-          Realized: {% if sleeve.realized_pnl_usd is not none %}${{ "%.2f"|format(sleeve.realized_pnl_usd) }}{% else %}n/a{% endif %}
-        </div>
-
-        {% if sleeve.rules %}
-        <div style="margin-top:8px;">
-          {% for rule in sleeve.rules %}
-          <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
-            <span>{{ rule.name }} <span style="color:var(--studio-ink-faint);">({{ rule.mode }})</span></span>
-            <span style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
-              <span style="color:var(--studio-ink-dim);">today {{ rule.today_fires }} &middot; lifetime {{ rule.lifetime_fires }} &middot; realized {% if rule.realized_pnl_usd is not none %}${{ "%.2f"|format(rule.realized_pnl_usd) }}{% else %}n/a{% endif %}</span>
-              {% if rule.mode == 'SHADOW' %}
-              <button
-                type="button"
-                data-testid="sleeve-arm-control"
-                data-sleeve-id="{{ sleeve.id }}"
-                data-rule-id="{{ rule.id }}"
-                style="padding:3px 10px;border-radius:6px;background:transparent;color:var(--studio-pos);font-size:10.5px;font-weight:600;border:1px solid var(--studio-pos);cursor:pointer;"
-                onclick="armSleeveRuleToPaper({{ sleeve.id }}, {{ rule.id }}, this)"
-              >Arm Paper</button>
-              {% endif %}
-            </span>
-          </div>
-          {% endfor %}
-        </div>
-        {% endif %}
-
-        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
-          <button
-            type="button"
-            data-testid="sleeve-disarm-control"
-            data-sleeve-id="{{ sleeve.id }}"
-            class="{% if sleeve.status == 'SHADOW' %}control-disabled{% endif %}"
-            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-neg);font-size:10.5px;font-weight:600;border:1px solid var(--studio-neg);cursor:pointer;"
-            onclick="disarmSleeve({{ sleeve.id }}, this)"
-            {% if sleeve.status == 'SHADOW' %}disabled{% endif %}
-          >Disarm</button>
-          <button
-            type="button"
-            data-testid="sleeve-delete-control"
-            data-sleeve-id="{{ sleeve.id }}"
-            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-ink-faint);font-size:10.5px;font-weight:600;border:1px solid var(--studio-rule);cursor:pointer;"
-            onclick="deleteSleeve({{ sleeve.id }}, this)"
-          >Delete</button>
-        </div>
-      </div>
-      {% endfor %}
+    {# Shown exactly while there are no sleeves; a poll toggles it. #}
+    <div data-testid="sleeves-empty" style="color:var(--studio-ink-faint);font-size:12px;"{% if sleeves %} hidden{% endif %}>No sleeves configured yet.</div>
+    <div class="cards-grid" data-field="sleeves-list">
+      {% for sleeve in sleeves %}{{ sleeve_card(sleeve) }}{% endfor %}
     </div>
-    {% else %}
-    <div style="color:var(--studio-ink-faint);font-size:12px;">No sleeves configured yet.</div>
-    {% endif %}
   </section>
+
+  {# Empty-valued copies of the card and the rule row, for the rows a poll adds. #}
+  {% set _blank_rule = {"id": "", "name": "", "mode": "", "today_fires": "", "lifetime_fires": "", "realized_text": ""} %}
+  {% set _blank_sleeve = {"id": "", "name": "", "status": "", "status_badge_class": "standby", "capital_text": "", "ledger_cash_text": "", "realized_text": "", "rules": []} %}
+  <template id="sleeve-card-template">{{ sleeve_card(_blank_sleeve, true) }}</template>
+  <template id="sleeve-rule-row-template">{{ sleeve_rule_row("", _blank_rule, true) }}</template>
 
   <script>
     function pctColor(v) {

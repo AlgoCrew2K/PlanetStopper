@@ -2249,7 +2249,7 @@ def _sleeve_status_badge_class(status: str) -> str:
     return _SLEEVE_STATUS_BADGE_CLASSES.get(status, "standby")
 
 
-def _build_sleeves_panel_context() -> list[dict]:
+def _build_sleeves_panel_context(*, raise_on_read_failure: bool = False) -> list[dict]:
     """Assemble per-sleeve panel rows for dashboard() (AC-16): status,
     capital, ledger cash (vs the static capital_usd -- "cash ledger vs
     broker truth"; the broker-truth-mismatch signal itself is the existing
@@ -2280,6 +2280,10 @@ def _build_sleeves_panel_context() -> list[dict]:
     (2026-07-09): PAUSED_RECONCILIATION > BENCHED (any rule benched) > stale
     (EVERY enabled rule stale) > base status -- display-level only, the DB
     sleeve.status is never rewritten by a badge.
+
+    A failed read of the sleeves table answers an empty list, which reads as "no
+    sleeves"; a caller that must tell the two apart (the state poll's panels) passes
+    ``raise_on_read_failure=True`` and gets the exception instead.
     """
     from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
     from sleeves.rules import limits as sleeve_limits  # noqa: PLC0415
@@ -2288,6 +2292,8 @@ def _build_sleeves_panel_context() -> list[dict]:
     try:
         sleeve_rows = database.get_all_sleeves()
     except Exception:
+        if raise_on_read_failure:
+            raise
         return panel_sleeves
 
     now_utc = datetime.now(UTC)
@@ -2407,6 +2413,117 @@ def _build_sleeves_panel_context() -> list[dict]:
             }
         )
     return panel_sleeves
+
+
+def _is_plain_number(value) -> bool:
+    """A finite int or float (never a bool): the numbers the page prints."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _js_dollars(value, missing: str) -> str:
+    """``$12.34`` as the page's script prints a dollar figure (toFixed rounding), else ``missing``.
+    The server render and the state poll print one text."""
+    return "$" + analytics.js_to_fixed(value, 2) if _is_plain_number(value) else missing
+
+
+def _sleeves_for_render(sleeves: list[dict]) -> list[dict]:
+    """The Sleeves rows with the text the panel prints for each figure."""
+    shown = []
+    for sleeve in sleeves:
+        rules = [
+            {**rule, "realized_text": _js_dollars(rule.get("realized_pnl_usd"), "n/a")}
+            for rule in sleeve.get("rules") or []
+        ]
+        shown.append(
+            {
+                **sleeve,
+                "capital_text": _js_dollars(sleeve.get("capital_usd"), "\u2014"),
+                "ledger_cash_text": _js_dollars(sleeve.get("ledger_cash_usd"), "\u2014"),
+                "realized_text": _js_dollars(sleeve.get("realized_pnl_usd"), "n/a"),
+                "rules": rules,
+            }
+        )
+    return shown
+
+
+def _cvar_for_render(diagnostic: dict | None) -> dict:
+    """The text the CVaR panel prints for a diagnostic row (a dash for each missing figure)."""
+    row = diagnostic if isinstance(diagnostic, dict) else {}
+    five = row.get("cvar_5pct")
+    stderr = row.get("cvar_5pct_stderr")
+    n_tail = row.get("cvar_n_tail")
+    if isinstance(n_tail, float) and n_tail.is_integer():
+        n_tail = int(n_tail)
+    return {
+        "five": analytics.js_to_fixed(five, 4) if _is_plain_number(five) else "\u2014",
+        "show_stderr": _is_plain_number(five),
+        "stderr": "\u00b1"
+        + (analytics.js_to_fixed(stderr, 4) if _is_plain_number(stderr) else "\u2014")
+        + " stderr",
+        "stderr_attr": str(stderr) if _is_plain_number(stderr) else "",
+        "n_tail": "n=" + (str(n_tail) if _is_plain_number(n_tail) else "\u2014"),
+        "n_tail_attr": str(n_tail) if _is_plain_number(n_tail) else "",
+    }
+
+
+def _mdd_lifetime_text(value) -> str:
+    """A card's lifetime max drawdown as the page prints it: the magnitude to one place, ``--`` when
+    there is none."""
+    return analytics.js_to_fixed(abs(value), 1) + "%" if _is_plain_number(value) else "--"
+
+
+def _panels_unreadable() -> dict:
+    """What the poll carries for the panels when their builder itself fails: every part reads as
+    "could not read", so the page keeps what it shows."""
+    return {"sleeves": None, "cvar": {"ok": False, "diagnostic": None}, "vars_locked_count": None}
+
+
+def _dashboard_panels_payload(bot_state: dict) -> dict:
+    """The panels of ``/`` that the page render and the poll both print, read from the database.
+
+    ``sleeves`` is the Managed Sleeves rows (``None`` when the read failed, ``[]`` for no sleeves),
+    ``cvar`` the latest CVaR diagnostic of the first symphony (``ok`` false when the read failed,
+    ``diagnostic`` None when there is none yet) and ``vars_locked_count`` the locked variables across
+    the symphonies (``None`` when the read failed). Each part is read on its own, so one failure
+    changes only that part. Reads only: nothing here places, cancels or changes anything.
+    """
+    state = bot_state if isinstance(bot_state, dict) else {}
+    symphony_keys = [k for k, v in state.items() if _is_symphony_state_entry(v)]
+
+    try:
+        sleeves = _build_sleeves_panel_context(raise_on_read_failure=True)
+    except Exception:
+        sleeves = None
+
+    # Phase-1 scope: only the first symphony's diagnostic is shown (CVAR-001).
+    cvar: dict = {"ok": True, "diagnostic": None}
+    try:
+        if symphony_keys:
+            row = database.read_cvar_diagnostic_for_symphony(symphony_keys[0])
+            if isinstance(row, dict):
+                cvar["diagnostic"] = row
+    except Exception:
+        cvar = {"ok": False, "diagnostic": None}
+
+    # One read for every symphony: the poll must not open a connection per symphony.
+    try:
+        names = [database.normalize_name(state[key].get("name", "")) for key in symphony_keys]
+        counts = database.get_locked_var_counts(names)
+        if isinstance(counts, dict):
+            vars_locked_count: int | None = sum(counts.get(name, 0) for name in names)
+        else:
+            # A database that does not answer the bulk read with a mapping: ask for each
+            # symphony's strategy.
+            locked = 0
+            for name in names:
+                strategy = database.get_symphony_strategy(name)
+                if isinstance(strategy, dict):
+                    locked += len(strategy.get("locked_vars") or [])
+            vars_locked_count = locked
+    except Exception:
+        vars_locked_count = None
+
+    return {"sleeves": sleeves, "cvar": cvar, "vars_locked_count": vars_locked_count}
 
 
 def _atlas_cache_health() -> dict:
@@ -2604,14 +2721,12 @@ def _render_dashboard(
     meta = _build_meta(bot_state, market_state=market_state, portfolio_strip=portfolio_strip)
     portfolio_strip = view["portfolio_strip"]
 
-    vars_locked_count = 0
-    for sym_id, sym_data in bot_state.items():
-        if not isinstance(sym_data, dict) or "name" not in sym_data:
-            continue
-        name = database.normalize_name(sym_data.get("name", ""))
-        strategy = database.get_symphony_strategy(name)
-        if strategy:
-            vars_locked_count += len(strategy.get("locked_vars") or [])
+    # The same read the state poll carries (``dashboard_panels``), so the render and the poll agree.
+    try:
+        panels = _dashboard_panels_payload(live_state)
+    except Exception:
+        panels = _panels_unreadable()
+    vars_locked_count = panels["vars_locked_count"] or 0
 
     # Partition symphonies into active (armed/triggered) and standby.
     symphonies = api_state.get("symphonies") or [
@@ -2703,6 +2818,10 @@ def _render_dashboard(
                 coerce_none=False,
             )
 
+    for _s in symphonies:
+        if isinstance(_s, dict):
+            _s["_mdd_lifetime_text"] = _mdd_lifetime_text(_mdd_lifetime(_s))
+
     # First paint carries the verdict and dial text the client would write on its
     # first poll, so the card never shows a placeholder before then.
     if view["branch"] != "frozen":
@@ -2737,26 +2856,10 @@ def _render_dashboard(
         if _k:
             accounts_map[_k] = _lbl
 
-    # M2 CVaR diagnostic — read the latest diagnostic row for the first symphony.
-    # Dashboard is a read-only observer (arch constraint 2); this is a pure DB read.
-    # Sentinel: cvar_diagnostic=None when the table has no row yet (Phase-1 warm-up).
-    #
-    # CVAR-001 Phase-1 scope limit (sprint-2-audit a6e4d9f8): only the FIRST symphony's
-    # CVaR diagnostic is surfaced on the dashboard. Multi-symphony portfolios silently
-    # omit other symphonies' diagnostics. This is intentional for Phase-1 — the M2
-    # CVaR diagnostic is a proof-of-concept single-symphony display. Phase-2 will expand
-    # this to a per-symphony dict passed to the template for multi-row rendering.
-    # TODO(Phase-2): replace _first_sym_id with a full dict keyed by symphony_id.
-    cvar_diagnostic = None
-    try:
-        _first_sym_id = next(
-            (k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v),
-            None,
-        )
-        if _first_sym_id:
-            cvar_diagnostic = database.read_cvar_diagnostic_for_symphony(_first_sym_id)
-    except Exception:
-        pass  # non-blocking: dashboard renders without CVaR if the read fails
+    # M2 CVaR diagnostic: the latest row of the first symphony, from the panels read above
+    # (CVAR-001 Phase-1 scope limit: the first symphony only). None until the table has a row, and
+    # when the read failed.
+    cvar_diagnostic = panels["cvar"]["diagnostic"]
 
     _today_close = market_calendar.session_close(datetime.now(_ET).date())
     session_close_display = _today_close.strftime("%H:%M ET")
@@ -2792,7 +2895,8 @@ def _render_dashboard(
         ),
         fleet_alert=_fleet_alert,
         fleet_alert_text=_fleet_alert_sentence(_fleet_alert) if _fleet_alert else "",
-        sleeves=_build_sleeves_panel_context(),
+        sleeves=_sleeves_for_render(panels["sleeves"] or []),
+        cvar_view=_cvar_for_render(cvar_diagnostic),
         atlas_cache_health=_atlas_cache_health(),
     )
 
@@ -4074,6 +4178,12 @@ def _tc_cr_mdd_floats(s: dict) -> tuple:
     return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
 
 
+def _mdd_lifetime(s: dict):
+    """Composer's lifetime max-drawdown scalar for a card, or None."""
+    mdd = s.get("_mdd")
+    return mdd.get("if_held_lifetime") if isinstance(mdd, dict) else None
+
+
 def _symphony_card(sym_id: str, s: dict) -> dict:
     """One card of the /api/state `symphonies` list, built from a state or snapshot entry."""
     _tc_b, _tc_h, _cr_b, _cr_h, _mdd_b, _mdd_h = _tc_cr_mdd_floats(s)
@@ -4099,6 +4209,9 @@ def _symphony_card(sym_id: str, s: dict) -> dict:
         "cr_held": _cr_h,
         "mdd_bot": _mdd_b,
         "mdd_held": _mdd_h,
+        # The figure the card prints as "Lifetime MDD": Composer's own lifetime scalar, kept apart
+        # from the bot/held comparison. None when there is none (the card then prints "--").
+        "mdd_lifetime": _mdd_lifetime(s),
     }
 
 
@@ -4141,6 +4254,16 @@ def get_state():
         _meta_strip = _strip_with_hist_fallback(
             _portfolio_strip, _shadow_conn, view["weights_state"]
         )
+        # The Sleeves and CVaR panels and the Edit Vars badge, read for the live symphonies (the
+        # diagnostics and strategy rows are keyed by them, whichever state the cards show) from the
+        # same state the page render uses, so the render and this poll print one thing. A builder
+        # that fails must not take the response down: every part then reads as "could not read"
+        # and the page keeps its own.
+        try:
+            _additive["dashboard_panels"] = _dashboard_panels_payload(state_data or {})
+        except Exception as panels_exc:
+            _daemon_log.warning("dashboard panels read failed: %s", type(panels_exc).__name__)
+            _additive["dashboard_panels"] = _panels_unreadable()
 
         # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
         if view["branch"] == "frozen":
@@ -6774,7 +6897,15 @@ def get_chart_data(symphony_id):
     try:
         chart_data = database.load_chart_history()
         symphony_data = chart_data.get("symphonies", {}).get(symphony_id, [])
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        # Today's ET date, and the session the stored tape belongs to: the date the engine stamps
+        # in the chart store at its day rollover. A store that names no date names no session (it
+        # is never filled in from today's date). The held overlay is read for the tape's own
+        # session, else for today's ET date; the host's local date plays no part, because the host
+        # runs on UTC and its date is the next day from 20:00 ET.
+        et_date = datetime.now(_ET).strftime("%Y-%m-%d")
+        stored_date = chart_data.get("date")
+        session_date = stored_date if isinstance(stored_date, str) and stored_date else None
+        today_str = session_date or et_date
         try:
             rows = _ro_conn.execute(
                 "SELECT substr(ts_et, 12, 5) AS hhmm, shadow_return, current_return "
@@ -6801,7 +6932,10 @@ def get_chart_data(symphony_id):
                 for t in sorted(held_by_time.keys())
             ]
 
-        return jsonify({"status": "success", "data": symphony_data})
+        body = {"status": "success", "data": symphony_data, "et_date": et_date}
+        if session_date is not None:
+            body["session_date"] = session_date
+        return jsonify(body)
     except Exception as e:
         _daemon_log.error("get_chart_data failed for %s: %s", symphony_id, e, exc_info=True)
         return jsonify({"status": "error", "message": "An internal error occurred"}), 500

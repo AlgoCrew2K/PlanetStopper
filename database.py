@@ -730,6 +730,26 @@ def save_symphony_strategy(symphony_name, params, locked_vars):
     conn.close()
 
 
+def get_locked_var_counts(symphony_names) -> dict:
+    """How many variables each named symphony has locked, from ONE read-only query.
+
+    Keys are the normalized names. A symphony with no stored strategy row counts the default
+    locked variables, which is the count its first ``get_symphony_strategy`` call stores; this
+    read stores nothing. The dashboard's state poll asks for every symphony at once with this
+    instead of one connection per symphony.
+    """
+    names = {normalize_name(name) for name in symphony_names}
+    if not names:
+        return {}
+    conn = get_ro_connection()
+    try:
+        rows = conn.execute("SELECT symphony_name, locked_vars FROM symphony_strategies").fetchall()
+    finally:
+        conn.close()
+    stored = {name: len(json.loads(locked)) for name, locked in rows if name in names}
+    return {name: stored.get(name, len(DEFAULT_LOCKED_VARS)) for name in names}
+
+
 def get_symphony_live_mode(symphony_name: str) -> int:
     """Return the live_mode flag (0 or 1) for a symphony.
 

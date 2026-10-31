@@ -419,6 +419,33 @@ function updateEngineStatus(data) {
 }
 window.updateEngineStatus = updateEngineStatus;
 
+// ── Mode pill and hero legend word ────────────────────────────────────────
+// The header's mode pill (every page) and the dashboard hero legend's "(live)" / "(dry-run)" word
+// follow the mode a good body reports. LIVE and DRY RUN are the two values the engine reports;
+// a body with no mode, a null one or any other word writes nothing, so the elements keep what the
+// server rendered. The colours are the token references the server render uses. The legend word is
+// written only on a page that has one.
+var MODE_INDICATORS = {
+  'LIVE': { live: 'true', background: 'var(--studio-neg)', color: 'var(--studio-white)', legend: 'live' },
+  'DRY RUN': { live: 'false', background: 'var(--studio-chip-bg)', color: 'var(--studio-ink-dim)', legend: 'dry-run' }
+};
+
+function updateModeIndicators(meta) {
+  var mode = meta && typeof meta === 'object' ? meta.mode : null;
+  if (typeof mode !== 'string' || !Object.prototype.hasOwnProperty.call(MODE_INDICATORS, mode)) return;
+  var look = MODE_INDICATORS[mode];
+  var pill = document.querySelector('[data-testid="mode-pill"]');
+  if (pill) {
+    pill.textContent = mode;
+    pill.setAttribute('data-live', look.live);
+    pill.style.background = look.background;
+    pill.style.color = look.color;
+  }
+  var word = document.querySelector('[data-field="legend-mode"]');
+  if (word) word.textContent = look.legend;
+}
+window.updateModeIndicators = updateModeIndicators;
+
 // ── NEXT MM:SS countdown ──────────────────────────────────────────────────
 // Anchored at the moment the request was SENT with the seconds the server reported
 // (taken before its per-symphony work), and counted down on performance.now(), so a
