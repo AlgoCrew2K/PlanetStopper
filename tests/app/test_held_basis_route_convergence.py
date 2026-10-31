@@ -161,12 +161,17 @@ def _insert_shadow_row(
     shadow_return: float,
     current_return: float,
     trading_day: str | None = None,
+    ts_et: str | None = None,
 ) -> None:
     """trading_day defaults to the module's frozen _TRADING_DAY -- all
     existing call sites are byte-unchanged. TestClockBoundaryDeterminism
     passes an explicit trading_day to seed a DIFFERENT boundary-instant day.
+    ts_et defaults to the day's 13:30:02 stamp; a test whose saved state is stamped
+    earlier in the day passes the stamp of the cycle that wrote the state, since the
+    response reads only rows at or before that second.
     """
     _day = trading_day if trading_day is not None else _TRADING_DAY
+    _ts_et = ts_et if ts_et is not None else f"{_day}T13:30:02"
     conn = sqlite3.connect(db_path)
     conn.execute(
         "INSERT INTO shadow_history "
@@ -174,7 +179,7 @@ def _insert_shadow_row(
         "VALUES (?, ?, ?, ?, ?, ?)",
         (
             f"{_day}T13:30:02Z",
-            f"{_day}T13:30:02",
+            _ts_et,
             _day,
             symphony_id,
             current_return,
@@ -1432,6 +1437,7 @@ class TestClockBoundaryDeterminism:
             shadow_return=7.0,
             current_return=7.0,  # shadow-basis value -- renders ONLY on a trading_day match
             trading_day=boundary_day,
+            ts_et="2026-08-21T00:00:01",  # the cycle whose state the frozen clock stamps
         )
 
         resp = client.get("/api/state")

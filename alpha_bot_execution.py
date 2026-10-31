@@ -1119,7 +1119,7 @@ def main():
                 _eod_accounts_map: dict = {}
                 for _s_id in symphony_keys_eod:
                     _sym_data = bot_state.get(_s_id)
-                    if not isinstance(_sym_data, dict):
+                    if not isinstance(_sym_data, dict) or "name" not in _sym_data:
                         continue
                     _acc = _sym_data.get("account", "Unknown")
                     if _acc not in _eod_accounts_map:

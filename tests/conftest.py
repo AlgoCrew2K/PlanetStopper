@@ -377,6 +377,33 @@ def _disable_auth_for_tests(monkeypatch):
     _app_module._AUTH_FAILED_ATTEMPTS.clear()
 
 
+@pytest.fixture(autouse=True)
+def _committed_shadow_conn_for_stubbed_analytics(monkeypatch):
+    """Give a request a usable shadow connection when a test replaces `app.analytics`.
+
+    `app._committed_shadow_conn` opens `analytics._get_shadow_db_file()` read-only and a
+    failure to open answers 500 (the contract a route test pins by patching the function
+    itself). A test that swaps the whole `analytics` module for a mock makes that path
+    a mock, so the open fails before any stubbed reader runs. For that case only, hand
+    the request an empty in-memory connection: every reader is a stub and ignores it.
+    A real analytics module, or a mock that returns a real path, takes the real function.
+    """
+    import sqlite3
+
+    import app as _app_module
+
+    real = _app_module._committed_shadow_conn
+
+    def _connection_for_request(state):
+        path = _app_module.analytics._get_shadow_db_file()
+        # A MagicMock passes an os.PathLike check, so name the real path types.
+        if isinstance(path, (str, pathlib.PurePath)):
+            return real(state)
+        return sqlite3.connect(":memory:")
+
+    monkeypatch.setattr(_app_module, "_committed_shadow_conn", _connection_for_request)
+
+
 @pytest.fixture(scope="session")
 def _registry_seed_client():
     """One client over the captured Models API page, shared by every test's registry seed."""
@@ -488,6 +515,10 @@ def _reset_account_totals_cache():
         # last-good snapshot: a real refresh in one test would otherwise put a
         # later test that seeds last-good by hand inside the account-basis grace.
         _app_module._account_totals_last_success_mono = None
+        # The close-totals latch is process state of the daemon like the last-good snapshot:
+        # a real refresh in one test must not hand its totals to a later test's close snapshot.
+        if hasattr(_app_module, "_frozen_account_totals"):
+            _app_module._frozen_account_totals = None
 
     _drain_and_reset()
     yield

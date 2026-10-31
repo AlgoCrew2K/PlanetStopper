@@ -11,7 +11,7 @@ F-2   MDD winner-encoding suppressed + row annotated when insufficient_history.
 F-3   Hero "If Held" TC has an annotation indicating it is account-level.
 F-4   templates/index.html has an @media (max-width ~700px) block making hero-grid
       1-column.
-F-5   guard_alpha badge marks the value as "at exit".
+F-5   guard_alpha badge says what the value is measured against (not "at exit").
 F-ARMED  hero ARMED count equals the count of armed (not triggered) symphonies.
 F-CHAIN-LINK  GOLDEN REGRESSION tests pinning chain-link CR/MDD as correct
               per-day compounding (AC-M1F.3.2 / PA-M1F-16). NOT A BUG.
@@ -259,23 +259,24 @@ class TestF4ResponsiveHeroGrid:
 
 
 # ---------------------------------------------------------------------------
-# F-5  guard_alpha badge marks the value "at exit"
+# F-5  guard_alpha badge says what the value is measured against
 # ---------------------------------------------------------------------------
 
 
-class TestF5GuardAlphaBadgeAtExit:
+class TestF5GuardAlphaBadgeBasis:
     """
-    F-5: the guard_alpha badge on triggered symphony cards shows the CR gap at
-    the moment of exit, NOT the current live CR gap. The badge text must include
-    an 'at exit' qualifier so operators don't interpret it as a current value.
+    F-5: the guard_alpha badge on triggered symphony cards is the latest exit's return minus
+    the symphony's current return, so it moves every cycle while the market is open. The badge
+    carries a basis label so operators know what it is measured against, and the label never
+    says the figure is fixed at the exit.
     """
 
-    def test_triggered_verdict_text_is_followed_by_the_at_exit_qualifier(self):
+    def test_triggered_verdict_text_is_followed_by_the_basis_label(self):
         """
         F-5a: the verdict text element is followed (within the same verdict block) by
-        the labelled 'at exit' qualifier span, for both the 'gave up' and 'saved +'
-        branches (the branch wording is server-built text; the rendered output of both
-        branches is pinned in test_card_verdict_dial_first_paint.py).
+        the labelled basis span, for both the 'gave up' and 'saved +' branches (the branch
+        wording is server-built text; the rendered output of both branches is pinned in
+        test_card_verdict_dial_first_paint.py).
         """
         html = _html()
         verdict_idx = html.find('data-field="verdict-text"')
@@ -284,23 +285,22 @@ class TestF5GuardAlphaBadgeAtExit:
             "the verdict text has no addressable element."
         )
         nearby = html[verdict_idx : verdict_idx + 600]
-        assert 'data-testid="guard-alpha-at-exit"' in nearby, (
-            "F-5a FAIL: the verdict text is not followed by the guard-alpha-at-exit span."
+        assert 'data-testid="guard-alpha-basis"' in nearby, (
+            "F-5a FAIL: the verdict text is not followed by the guard-alpha-basis span."
         )
-        assert "at exit" in nearby.lower(), (
-            "F-5a FAIL: the qualifier span carries no 'at exit' text. Operators will read "
-            "the badge as the current live CR gap."
+        assert "at exit" not in nearby.lower(), (
+            "F-5a FAIL: the label says the figure is fixed at the exit; it moves each cycle."
         )
 
-    def test_guard_alpha_at_exit_testid_present(self):
+    def test_guard_alpha_basis_testid_present(self):
         """
-        F-5c: a data-testid='guard-alpha-at-exit' element must exist so automated
-        visual-QA can locate and verify the qualifier renders.
+        F-5c: a data-testid='guard-alpha-basis' element must exist so automated
+        visual-QA can locate and verify the label renders.
         """
         html = _html()
-        assert "guard-alpha-at-exit" in html, (
-            "F-5c FAIL: no data-testid='guard-alpha-at-exit' in templates/index.html. "
-            "Add a labelled span so the visual gate can verify the qualifier."
+        assert "guard-alpha-basis" in html, (
+            "F-5c FAIL: no data-testid='guard-alpha-basis' in templates/index.html. "
+            "Add a labelled span so the visual gate can verify the label."
         )
 
 

@@ -73,7 +73,6 @@ def _stub_meta_with_vol(vol_bot: float | None, vol_held: float | None) -> dict:
             "insufficient_history": False,
             "history_days": 35,
         },
-        "triggers_today": [],
     }
 
 

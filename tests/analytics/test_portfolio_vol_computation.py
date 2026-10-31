@@ -527,7 +527,6 @@ def test_vol_inversion_lower_vol_is_bot_win():
         "market_state_label": "Market closed",
         "clock_et": "09:30 ET",
         "portfolio": stub_portfolio,
-        "triggers_today": [],
     }
 
     app_module.app.config["TESTING"] = True
@@ -645,7 +644,6 @@ def test_vol_bar_width_is_wider_for_lower_vol_side():
         "market_state_label": "Market closed",
         "clock_et": "09:30 ET",
         "portfolio": stub_portfolio,
-        "triggers_today": [],
     }
 
     app_module.app.config["TESTING"] = True

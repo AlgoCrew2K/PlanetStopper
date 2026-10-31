@@ -673,6 +673,7 @@ def test_api_state_meta_portfolio_tc_matches_portfolio_strip_today_change_dry_ru
     with (
         patch.object(app_module, "get_api_state_dict", return_value=stub),
         patch.object(app_module, "database", db_mock),
+        patch.object(app_module, "_compute_portfolio_strip", return_value=strip),
     ):
         app_module.app.config["TESTING"] = True
         with app_module.app.test_client() as c:

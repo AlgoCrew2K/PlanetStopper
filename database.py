@@ -1,5 +1,6 @@
 """SQLite state management for Planet Stopper with Account-Level Strategies."""
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -396,6 +397,133 @@ def save_state(state_dict):
     )
     conn.commit()
     conn.close()
+
+
+# The engine holds the lock for at most one 1-minute cycle plus its stale expiry (60 s).
+_SNAPSHOT_REPAIR_LOCK_WAIT_S = 65  # seconds
+_SNAPSHOT_REPAIR_DB_TIMEOUT_S = 10.0  # seconds
+
+
+def _snapshot_repair_backup_path() -> str:
+    """Backup file beside the state database; the name matches the `*.db.*backup` ignore rule."""
+    db = _db_file()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return os.path.join(
+        os.path.dirname(os.path.abspath(db)),
+        f"{os.path.basename(db)}.pre-snapshot-repair-{stamp}.backup",
+    )
+
+
+def _flatten_close_snapshot(state: dict) -> tuple[dict, int]:
+    """Drop non-symphony entries (no `name`) from the close snapshot's account map."""
+    snapshot = state.get("last_market_close_snapshot") if isinstance(state, dict) else None
+    accounts = snapshot.get("accounts_map") if isinstance(snapshot, dict) else None
+    if not isinstance(accounts, dict):
+        return state, 0
+    removed = 0
+    for key in list(accounts):
+        entries = accounts[key]
+        if not isinstance(entries, list):
+            continue
+        kept = [e for e in entries if isinstance(e, dict) and "name" in e]
+        if len(kept) == len(entries):
+            continue
+        removed += len(entries) - len(kept)
+        if kept:
+            accounts[key] = kept
+        else:
+            del accounts[key]
+    return state, removed
+
+
+def _write_snapshot_repair_backup(path: str, raw: str) -> None:
+    created = False
+    try:
+        with open(path, "x", encoding="utf-8", newline="") as fh:
+            created = True
+            fh.write(raw)
+            fh.flush()
+            os.fsync(fh.fileno())
+        with open(path, encoding="utf-8", newline="") as fh:
+            if fh.read() != raw:
+                raise OSError("backup read-back mismatch")
+    except BaseException:
+        if created:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        raise
+
+
+def repair_close_snapshot_chain() -> str:
+    """One-time flatten of the stored close-snapshot chain. Never raises."""
+    try:
+        return _repair_close_snapshot_chain()
+    except Exception as exc:
+        logging.error("close snapshot repair failed: %s", type(exc).__name__)
+        return "write_failed"
+
+
+def _repair_close_snapshot_chain() -> str:
+    deadline = time.monotonic() + _SNAPSHOT_REPAIR_LOCK_WAIT_S
+    while not acquire_lock():
+        if time.monotonic() >= deadline:
+            logging.warning("close snapshot repair skipped: engine lock busy")
+            return "engine_busy"
+        time.sleep(1)
+    try:
+        conn = None
+        try:
+            conn = sqlite3.connect(
+                _db_file(), timeout=_SNAPSHOT_REPAIR_DB_TIMEOUT_S, isolation_level=None
+            )
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT data FROM bot_state WHERE id = 1").fetchone()
+            if not row or not isinstance(row[0], str):
+                conn.execute("ROLLBACK")
+                return "not_needed"
+            raw = row[0]
+            try:
+                state = json.loads(raw)
+            except ValueError:
+                conn.execute("ROLLBACK")
+                return "not_needed"
+            repaired, removed = _flatten_close_snapshot(state)
+            if removed == 0:
+                conn.execute("ROLLBACK")
+                return "not_needed"
+            if json.dumps(json.loads(raw)) != raw:
+                conn.execute("ROLLBACK")
+                logging.warning("close snapshot repair refused: stored row is not byte stable")
+                return "not_byte_stable"
+            backup = _snapshot_repair_backup_path()
+            try:
+                _write_snapshot_repair_backup(backup, raw)
+            except Exception as exc:
+                conn.execute("ROLLBACK")
+                logging.error("close snapshot repair backup failed: %s", type(exc).__name__)
+                return "backup_failed"
+            new_text = json.dumps(_sanitize_state_for_json(repaired))
+            conn.execute("UPDATE bot_state SET data = ? WHERE id = 1", (new_text,))
+            conn.execute("COMMIT")
+            logging.info(
+                "close snapshot repaired: removed %d entries, row %d -> %d chars, backup %s",
+                removed,
+                len(raw),
+                len(new_text),
+                os.path.basename(backup),
+            )
+            return "repaired"
+        except sqlite3.Error as exc:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.execute("ROLLBACK")
+            logging.error("close snapshot repair write failed: %s", type(exc).__name__)
+            return "write_failed"
+        finally:
+            if conn is not None:
+                conn.close()
+    finally:
+        release_lock()
 
 
 _WIPE_RESERVED_KEYS = {"date", "last_execution_mode", "last_market_close_snapshot"}

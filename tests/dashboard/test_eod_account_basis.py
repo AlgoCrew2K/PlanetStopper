@@ -128,6 +128,26 @@ def flask_client():
 # ---------------------------------------------------------------------------
 
 
+# The key of the snapshot _make_snapshot builds: (trading_day, captured_at_et).
+_SNAPSHOT_KEY = ("2026-07-01", "16:00:01 ET")
+
+
+def _latch_close_totals(app_module, **totals: float) -> None:
+    """Hold the given account totals as the ones latched for _make_snapshot's close.
+
+    After the close the frozen strip reads the totals latched for its snapshot, never the
+    live cache a later refresh moves. A field left out stays absent from the latch, which
+    is the partial state the independent-gating tests need. The live cache is emptied so
+    a read of it would show as a missing field.
+    """
+    app_module._account_totals_cache.clear()
+    app_module._frozen_account_totals = {
+        "key": _SNAPSHOT_KEY,
+        "totals": dict(totals),
+        "as_of": "2026-07-01 16:00:30 ET",
+    }
+
+
 def _setup_warm_cache(
     app_module,
     *,
@@ -135,15 +155,18 @@ def _setup_warm_cache(
     portfolio_tc: float,
     portfolio_cr: float,
 ) -> None:
-    """Populate _account_totals_cache with known account-level totals."""
-    app_module._account_totals_cache.clear()
-    app_module._account_totals_cache["portfolio_value"] = account_value
-    app_module._account_totals_cache["portfolio_tc"] = portfolio_tc
-    app_module._account_totals_cache["portfolio_cr"] = portfolio_cr
+    """Latch known account-level totals for the close snapshot."""
+    _latch_close_totals(
+        app_module,
+        portfolio_value=account_value,
+        portfolio_tc=portfolio_tc,
+        portfolio_cr=portfolio_cr,
+    )
 
 
 def _clear_cache(app_module) -> None:
     app_module._account_totals_cache.clear()
+    app_module._frozen_account_totals = None
 
 
 # ---------------------------------------------------------------------------
@@ -577,10 +600,10 @@ class TestFrozenIndependentFieldGating:
         snapshot = _make_snapshot(fx["symphony_value_sum"])
         bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
 
-        # Partial internal cache state: CR warm, TC absent (key never set), no last-good.
-        app_module._account_totals_cache.clear()
-        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
-        app_module._account_totals_cache["portfolio_cr"] = account_cr
+        # Partial latched state: CR warm, TC absent (key never set), no last-good.
+        _latch_close_totals(
+            app_module, portfolio_value=fx["account_value"], portfolio_cr=account_cr
+        )
         app_module._account_totals_last_good.clear()
 
         try:
@@ -644,10 +667,10 @@ class TestFrozenIndependentFieldGating:
         snapshot = _make_snapshot(fx["symphony_value_sum"])
         bot_state = {"date": "2026-07-01", "last_market_close_snapshot": snapshot}
 
-        # Partial internal cache state: TC warm, CR absent, no last-good at all.
-        app_module._account_totals_cache.clear()
-        app_module._account_totals_cache["portfolio_value"] = fx["account_value"]
-        app_module._account_totals_cache["portfolio_tc"] = account_if_held_tc
+        # Partial latched state: TC warm, CR absent, no last-good at all.
+        _latch_close_totals(
+            app_module, portfolio_value=fx["account_value"], portfolio_tc=account_if_held_tc
+        )
         app_module._account_totals_last_good.clear()
 
         try:

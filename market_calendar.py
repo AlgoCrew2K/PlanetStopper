@@ -6,9 +6,10 @@ The engine (alpha_bot_execution.py) calls is_trading_day, session_open, and
 session_close from this module for holiday-aware gating and dynamic close anchors.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 import pandas_market_calendars as mcal
 
@@ -158,3 +159,29 @@ def get_market_state(current_et) -> str:
         return "open"
 
     return "closed_frozen"
+
+
+# Calendar days the completed-session walk goes back before giving up; covers the longest
+# NYSE closure run (a holiday weekend plus an adjacent holiday) with room to spare.
+_COMPLETED_SESSION_LOOKBACK_DAYS = 10
+_NYSE_ZONE = ZoneInfo("America/New_York")
+
+
+def most_recent_completed_session(now_et: datetime) -> date | None:
+    """Newest trading day on or before now_et's ET date whose session close has passed.
+
+    An aware instant is converted to ET; a naive one is read as ET wall time. Half days
+    use their early close. Returns None when no such session lies within
+    _COMPLETED_SESSION_LOOKBACK_DAYS calendar days.
+    """
+    if now_et.tzinfo is not None:
+        now_et = now_et.astimezone(_NYSE_ZONE)
+    now_time = now_et.time().replace(tzinfo=None)
+    today = now_et.date()
+    for back in range(_COMPLETED_SESSION_LOOKBACK_DAYS + 1):
+        day = today - timedelta(days=back)
+        if not is_trading_day(day):
+            continue
+        if back > 0 or now_time >= session_close(day):
+            return day
+    return None
