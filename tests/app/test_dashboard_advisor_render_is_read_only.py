@@ -81,6 +81,9 @@ def _make_advisor_mock() -> MagicMock:
     }
     response = MagicMock()
     response.suggestions = [suggestion]
+    # ConfigSuggestionsResponse.serving_model is always a string; an auto-created
+    # MagicMock attribute would reach jsonify.
+    response.serving_model = "serving-model-double"
     mock.request_suggestions.return_value = (response, None)
     mock.assemble_advisor_context.return_value = {}
     # build_assessment_from_context is called by the route; return a plain dict

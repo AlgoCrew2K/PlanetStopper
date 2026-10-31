@@ -37,11 +37,27 @@
         return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
     }
 
-    // Builds a chart with its entry animation kept. The chart is "drawn" once its
-    // entry animation completes, or a render pass ends with no animation running (a
-    // render that ran none). chart.__drawn is a promise of that moment; whenDrawn()
-    // runs a callback synchronously at it.
+    // The chart library is a CDN script. When that request fails `Chart` is undefined
+    // and the page still has its numbers to show. Every use of the library goes
+    // through chartLibrary() / chartOn(), so a missing library reads as "no chart",
+    // never as a thrown ReferenceError that fails the refresh that carried the data.
+    function chartLibrary() {
+        return typeof Chart === 'function' ? Chart : null;
+    }
+
+    // The chart a canvas holds, or null (none drawn, or no chart library).
+    function chartOn(canvas) {
+        var lib = chartLibrary();
+        return (lib && lib.getChart(canvas)) || null;
+    }
+
+    // Builds a chart with its entry animation kept; null when the chart library is
+    // missing. The chart is "drawn" once its entry animation completes, or a render
+    // pass ends with no animation running (a render that ran none). chart.__drawn is a
+    // promise of that moment; whenDrawn() runs a callback synchronously at it.
     function createChart(canvas, config) {
+        var lib = chartLibrary();
+        if (!lib) return null;
         var state = { done: false, callbacks: [] };
         var resolveDrawn;
         var drawn = new Promise(function (resolve) { resolveDrawn = resolve; });
@@ -56,10 +72,10 @@
         config.plugins = (config.plugins || []).concat([{
             id: 'drawnSignal',
             afterRender: function (chart) {
-                if (!(Chart.animator && Chart.animator.running(chart))) fire();
+                if (!(lib.animator && lib.animator.running(chart))) fire();
             }
         }]);
-        var chart = new Chart(canvas, config);
+        var chart = new lib(canvas, config);
         chart.__drawn = drawn;
         chart.__drawnState = state;
         return chart;
@@ -116,7 +132,8 @@
     }
 
     // Draws a /api/hero-chart-shaped series: in place when the chart exists. A body
-    // with no points never replaces a drawn series. Returns the chart, or null when nothing was drawn.
+    // with no points never replaces a drawn series. Returns the chart, or null when nothing was drawn
+    // (no points, no canvas, or no chart library: the empty text shows then).
     function setHeroSeries(series) {
         var dates = series && series.hist_dates;
         if (!Array.isArray(dates) || !dates.length) return null;
@@ -173,6 +190,7 @@
                 scales: { x: { display: false }, y: { display: true } }
             }
         });
+        if (!_cumChart) { showHeroEmpty(); return null; }
         return _cumChart;
     }
 
@@ -462,7 +480,7 @@
         var held = [];
         var canvases = document.querySelectorAll('[data-testid="card-spark"][data-sym-id="' + symId + '"]');
         canvases.forEach(function (canvas) {
-            var chart = Chart.getChart(canvas);
+            var chart = chartOn(canvas);
             if (!data || !data.length) {
                 // A drawn chart stays as it is; only a canvas with none gets the status text.
                 if (chart) { held.push(chart); return; }
@@ -516,6 +534,10 @@
                 },
                 plugins: [sparkMarkerPlugin(symId)]
             });
+            if (!chart) {  // no chart library: the card shows its status text instead
+                setSparkStatus(canvas, SPARK_UNAVAILABLE_TEXT);
+                return;
+            }
             setSparkStatus(canvas, '');
             held.push(chart);
         });
@@ -905,7 +927,9 @@
             }
         }
 
-        _intradayChart = new Chart(canvas, {
+        // No chart library: the detail panel keeps its numbers (risk math below) without the chart.
+        var ChartLib = chartLibrary();
+        _intradayChart = !ChartLib ? null : new ChartLib(canvas, {
             type: 'line',
             data: {
                 labels: labels,
@@ -2010,7 +2034,7 @@
             _cumChart.update('none');
         }
         document.querySelectorAll('[data-testid="card-spark"]').forEach(function (canvas) {
-            var chart = Chart.getChart(canvas);
+            var chart = chartOn(canvas);
             if (!chart) return;
             chart.data.datasets[0].borderColor = lineToken('spark', 0);
             if (chart.data.datasets[1]) chart.data.datasets[1].borderColor = lineToken('spark', 1);
