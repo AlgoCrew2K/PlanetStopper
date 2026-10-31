@@ -290,10 +290,18 @@ def _world_specs() -> dict[str, dict]:
     }
 
 
+# Worlds built from the refresh-timing card worlds (tests/app/_refresh_timing_card_world.py): the
+# same two captured symphonies (one triggered, one armed) on a page rendered at market open, after the
+# close and before the next open, each with the bodies the real routes return for it.
+CARD_WORLDS = ("cards-open", "cards-frozen", "cards-premarket", "cards-panels")
+CARD_TRIGGERED_ID = "nOyb55RMGVCKPiYXv7TI"
+CARD_ARMED_ID = "5XjzXjdGnjh99MIsdM97"
+
+
 def get_world(name: str) -> dict:
     """Build (once per process) and return the named world."""
     if name not in _WORLD_CACHE:
-        _WORLD_CACHE[name] = _build_world(name)
+        _WORLD_CACHE[name] = _build_card_world(name) if name in CARD_WORLDS else _build_world(name)
     return _WORLD_CACHE[name]
 
 
@@ -543,6 +551,145 @@ def _build_world(name: str) -> dict:
     return world
 
 
+_PANEL_FIRE_AT = "2026-10-21 14:30:00"  # UTC, inside the card worlds' ET day
+
+
+def _first_symphony_entry(database) -> tuple[str, dict]:
+    state = database.load_state()
+    return next((k, v) for k, v in state.items() if isinstance(v, dict) and "name" in v)
+
+
+def _seed_panels_first(database) -> dict:
+    """Sleeves, rules, fires, a CVaR diagnostic and locked variables, through the real writers."""
+    ids: dict = {}
+    ids["s1"] = database.create_sleeve("Income sleeve", 1000.0, envelope_json="{}")
+    ids["r1"] = database.create_sleeve_rule(ids["s1"], "Trim on drawdown", json_doc="{}")
+    ids["r2"] = database.create_sleeve_rule(ids["s1"], "Buy the dip", json_doc="{}")
+    ids["s2"] = database.create_sleeve("Growth sleeve", 2500.0, envelope_json="{}")
+    database.update_sleeve_status(ids["s2"], "PAPER")
+    ids["r3"] = database.create_sleeve_rule(ids["s2"], "Rotate leaders", json_doc="{}")
+    database.insert_sleeve_rule_fire(
+        ids["r1"], ids["s1"], "buy", "ENTRY", "SHADOW", fired_at=_PANEL_FIRE_AT
+    )
+    sym_id, sym = _first_symphony_entry(database)
+    ids["cvar_symphony"] = sym_id
+    database.record_cvar_diagnostic(
+        "2026-10-21T10:43:00-04:00", sym_id, -0.0412, 0.0031, 12, -0.0388, 20, mode="live"
+    )
+    database.save_symphony_strategy(sym["name"], {}, ["TRAILING_STOP_PCT"])
+    return ids
+
+
+def _change_panels(database, ids: dict) -> None:
+    """One more fire; a rule added and another removed; a sleeve added and another removed; a newer
+    CVaR diagnostic; one more locked variable. The writers are the real ones; no accessor deletes a rule,
+    so that row goes by a direct delete on the world's own database file."""
+    import sqlite3
+
+    database.insert_sleeve_rule_fire(
+        ids["r1"], ids["s1"], "sell", "DEFENSIVE", "SHADOW", fired_at="2026-10-21 14:40:00"
+    )
+    ids["r4"] = database.create_sleeve_rule(ids["s1"], "Harvest losses", json_doc="{}")
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    try:
+        conn.execute("DELETE FROM sleeve_rules WHERE id = ?", (ids["r2"],))
+        conn.execute(
+            "UPDATE cvar_diagnostics SET ts_utc = '2026-10-21 14:00:00' WHERE cycle_id = ?",
+            ("2026-10-21T10:43:00-04:00",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    ids["s3"] = database.create_sleeve("Hedge sleeve", 500.0, envelope_json="{}")
+    ids["r5"] = database.create_sleeve_rule(ids["s3"], "Buy protection", json_doc="{}")
+    database.delete_sleeve(ids["s2"])
+    database.record_cvar_diagnostic(
+        "2026-10-21T10:44:00-04:00",
+        ids["cvar_symphony"],
+        -0.0518,
+        0.0044,
+        17,
+        -0.0490,
+        25,
+        mode="live",
+    )
+    _sym_id, sym = _first_symphony_entry(database)
+    database.save_symphony_strategy(
+        sym["name"], {}, ["TRAILING_STOP_PCT", "MC_EXIT_PCT", "VWAP_MULT"]
+    )
+
+
+def _build_card_world(name: str) -> dict:
+    """The page and the bodies the real routes return for a refresh-timing card world.
+
+    The market state comes from the real XNYS calendar at the world's instant (open at 10:44 ET,
+    closed after 16:00, pre-market at 08:00 the next day); nothing a producer returns is typed in.
+    """
+    import analytics
+    import database
+    from tests.app import _refresh_timing_card_world as cw
+
+    work_dir = tempfile.mkdtemp(prefix=f"charts_world_{name}_")
+    patch = pytest.MonkeyPatch()
+    try:
+        patch.setenv("DB_PATH", os.path.join(work_dir, "world.db"))
+        patch.setattr(analytics, "DB_FILE", os.path.join(work_dir, "world.db"))
+        # The card-world modules capture the real functions at their own import, which can happen
+        # after a conftest stub is installed; the real ones are put back before anything is built.
+        patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
+        patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
+        database.init_db()
+        if name in ("cards-open", "cards-panels"):
+            world = cw.open_cards_world(patch, Path(work_dir))
+        elif name == "cards-frozen":
+            world = cw.closed_cards_world(patch, Path(work_dir))
+            cw.seed_exit_row()
+        else:
+            world = cw.closed_cards_world(patch, Path(work_dir), cw.PRE_MARKET_INSTANT)
+            cw.seed_exit_row()
+        patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
+        patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
+        ids = _seed_panels_first(database) if name == "cards-panels" else {}
+        out: dict = {"html": world.page(), "state": world.poll()}
+        out["hero"] = {t: world.poll(f"/api/hero-chart/{t}") for t in HERO_TOKENS}
+        out["strips"] = {t: world.poll(f"/api/strip/{t}") for t in HERO_TOKENS}
+        out["summaries"] = {
+            t: world.poll(f"/api/guard-alpha-summary?window={t}") for t in HERO_TOKENS
+        }
+        out["charts"] = {
+            i: world.poll(f"/api/chart/{i}") for i in (CARD_TRIGGERED_ID, CARD_ARMED_ID)
+        }
+        instant = {
+            "cards-panels": cw.OPEN_INSTANT,
+            "cards-open": cw.OPEN_INSTANT,
+            "cards-frozen": cw.CLOSED_INSTANT,
+            "cards-premarket": cw.PRE_MARKET_INSTANT,
+        }[name]
+        out["seeded_today"] = instant.date().isoformat()
+        out["now_iso"] = instant.astimezone(_dt_mod.UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        out["spec_name"] = name
+        out["ids"] = [CARD_TRIGGERED_ID, CARD_ARMED_ID]
+        out["bot_state"] = out["state"].get("bot_state", {})
+        if name == "cards-panels":
+            # Later: the panels' data changes through the real writers, and the page and the poll
+            # are taken again. ``next`` carries the later poll in the shape ``run_scenario`` reads,
+            # plus the later server render for a cross-render comparison.
+            _change_panels(database, ids)
+            later_state = world.poll()
+            out["panel_ids"] = ids
+            out["next"] = {
+                "hero": out["hero"],
+                "charts": out["charts"],
+                "state": later_state,
+                "strips": out["strips"],
+                "summaries": out["summaries"],
+                "html": world.page(),
+            }
+    finally:
+        patch.undo()
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Running a scenario under node
 # ---------------------------------------------------------------------------
@@ -633,7 +780,7 @@ def seeded_now_iso(world: dict) -> str:
     Pinning the page's clock to the seeded day (``_build_world`` captures as of that day too)
     keeps both on one date at every hour, where the real UTC now is a day past the newest row
     for part of each evening west of UTC."""
-    return f"{world['seeded_today']}T12:00:00.000Z"
+    return world.get("now_iso") or f"{world['seeded_today']}T12:00:00.000Z"
 
 
 def window_cutoff_iso(token: str, today: _dt_mod.date | None = None) -> str | None:
@@ -691,7 +838,7 @@ const H = {
   eventSources: [], charts: [], animating: new Set(), globalPlugins: [],
   console: { errors: [], logs: [] }, unhandled: [],
   tokens: Object.assign({}, world.tokens.light), accentOverride: null, theme: 'light',
-  reloads: 0, navigations: [], streamAutoOpen: true, failNewStreams: false
+  reloads: 0, navigations: [], streamAutoOpen: true, failNewStreams: false, htmlWrites: []
 };
 let timerSeq = 0;
 process.on('unhandledRejection', function (e) { H.unhandled.push(String((e && e.message) || e)); });
@@ -715,6 +862,7 @@ class Emitter {
 class TextNode {
   constructor(data) { this.nodeType = 3; this.data = data; this.parentNode = null; }
   get textContent() { return this.data; }
+  cloneNode() { return new TextNode(this.data); }
 }
 function makeStyle() {
   const s = {};
@@ -804,12 +952,43 @@ class Element extends Emitter {
     if (s !== '') { const t = new TextNode(s); t.parentNode = this; this.childNodes.push(t); }
   }
   get innerHTML() { return this._innerHTML || ''; }
-  set innerHTML(v) { this.textContent = ''; this._innerHTML = String(v); }
+  set innerHTML(v) {
+    this.textContent = ''; this._innerHTML = String(v);
+    const within = [];
+    for (let e = this.parentNode; e && e.nodeType === 1; e = e.parentNode) { const t = e.getAttribute('data-testid'); if (t) within.push(t); }
+    H.htmlWrites.push({ tag: this.localName, id: this.id, testid: this.getAttribute('data-testid'), within: within, value: String(v) });
+  }
   get outerHTML() { return '<' + this.localName + '>' + this.textContent + '</' + this.localName + '>'; }
   insertAdjacentHTML() {}
-  appendChild(n) { if (n.parentNode) n.parentNode.removeChild(n); n.parentNode = this; this.childNodes.push(n); return n; }
+  appendChild(n) {
+    if (n.nodeType === 11) { n.childNodes.slice().forEach(function (c) { this.appendChild(c); }, this); return n; }
+    if (n.parentNode) n.parentNode.removeChild(n); n.parentNode = this; this.childNodes.push(n); return n;
+  }
+  get firstElementChild() { return this.children[0] || null; }
+  get lastElementChild() { const c = this.children; return c[c.length - 1] || null; }
+  get nextElementSibling() {
+    if (!this.parentNode) return null;
+    const c = this.parentNode.children; const i = c.indexOf(this);
+    return i >= 0 ? (c[i + 1] || null) : null;
+  }
+  get previousElementSibling() {
+    if (!this.parentNode) return null;
+    const c = this.parentNode.children; const i = c.indexOf(this);
+    return i > 0 ? c[i - 1] : null;
+  }
+  cloneNode(deep) {
+    const copy = this.nodeType === 11 ? new FragmentNode() : new Element(this.localName);
+    this._attrs.forEach(function (v, k) { copy._attrs.set(k, v); });
+    Object.keys(this.style).forEach(function (k) { copy.style[k] = this.style[k]; }, this);
+    if (deep) {
+      this.childNodes.forEach(function (c) { const cc = c.cloneNode(true); cc.parentNode = copy; copy.childNodes.push(cc); });
+      if (this.content) copy.content = this.content.cloneNode(true);
+    }
+    return copy;
+  }
   append() { const self = this; Array.prototype.forEach.call(arguments, function (n) { self.appendChild(typeof n === 'string' ? new TextNode(n) : n); }); }
   insertBefore(n, ref) {
+    if (n.nodeType === 11) { n.childNodes.slice().forEach(function (c) { this.insertBefore(c, ref); }, this); return n; }
     if (n.parentNode) n.parentNode.removeChild(n);
     const i = ref ? this.childNodes.indexOf(ref) : -1;
     n.parentNode = this;
@@ -831,6 +1010,11 @@ class Element extends Emitter {
   getContext() { if (!this._ctx) this._ctx = makeCtx(); return this._ctx; }
   focus() {} blur() {} scrollIntoView() {}
   getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0, right: 0, bottom: 0 }; }
+}
+
+// A DocumentFragment (what a <template>'s content is): its children are not part of the page tree.
+class FragmentNode extends Element {
+  constructor() { super('#document-fragment'); this.nodeType = 11; this.tagName = '#DOCUMENT-FRAGMENT'; this.localName = ''; }
 }
 
 // ---- selectors: compound selectors joined by descendant (space) and child (>) combinators
@@ -920,7 +1104,9 @@ function build(n) {
   if (typeof n === 'string') return new TextNode(n);
   const el = new Element(n.t);
   Object.keys(n.a || {}).forEach(function (k) { el.setAttribute(k, n.a[k]); });
-  (n.c || []).forEach(function (c) { const ch = build(c); ch.parentNode = el; el.childNodes.push(ch); });
+  // A <template>'s children live in its content fragment, never in the page tree.
+  const holder = n.t === 'template' ? (el.content = new FragmentNode()) : el;
+  (n.c || []).forEach(function (c) { const ch = build(c); ch.parentNode = holder; holder.childNodes.push(ch); });
   return el;
 }
 const root = build(world.tree);
@@ -932,8 +1118,10 @@ Object.assign(documentObj, {
   getElementById: function (id) { return queryAll(root, '#' + id)[0] || null; },
   querySelector: function (sel) { return queryAll(root, sel)[0] || null; },
   querySelectorAll: function (sel) { return queryAll(root, sel); },
-  createElement: function (t) { return new Element(t); },
-  createTextNode: function (d) { return new TextNode(d); }
+  createElement: function (t) { const e = new Element(t); if (String(t).toLowerCase() === 'template') e.content = new FragmentNode(); return e; },
+  createTextNode: function (d) { return new TextNode(d); },
+  createDocumentFragment: function () { return new FragmentNode(); },
+  importNode: function (node, deep) { return node.cloneNode(!!deep); }
 });
 
 // ------------------------------------------------------------------ Date
@@ -1275,6 +1463,21 @@ H.domReady = async function () {
   list.forEach(function (f) { try { f.call(documentObj, { type: 'DOMContentLoaded' }); } catch (e) { H.console.errors.push('DOMContentLoaded handler threw: ' + (e && e.stack || e)); } });
   await H.settle();
 };
+// A press the way a user's click reaches a control: nothing happens on a disabled control, the
+// element's own handler property runs, then its inline `onclick` attribute (evaluated in the page's
+// context with `event`), then the listeners. `H.click` skips the disabled check and the attribute.
+H.press = async function (sel) {
+  const el = queryAll(root, sel)[0];
+  if (!el) throw new Error('no element for ' + sel);
+  if (el.hasAttribute('disabled')) { await H.settle(); return false; }
+  const evt = { type: 'click', target: el, currentTarget: el, stopPropagation: function () {}, preventDefault: function () {} };
+  if (typeof el.onclick === 'function') el.onclick.call(el, evt);
+  const code = el.getAttribute('onclick');
+  if (code) { vm.runInContext('(function (event) {' + code + ' })', ctx).call(el, evt); }
+  el.dispatchEvent(evt);
+  await H.settle();
+  return true;
+};
 H.click = async function (sel) {
   const el = queryAll(root, sel)[0];
   if (!el) throw new Error('no element for ' + sel);
@@ -1366,7 +1569,12 @@ const sandbox = {
   performance: { now: function () { return perfNow; } },
   getComputedStyle: function () { return { getPropertyValue: function (n) { return H.tokens[n] === undefined ? '' : String(H.tokens[n]); } }; },
   Date: FakeDate, CustomEvent: CustomEventStub, Event: CustomEventStub,
-  location: { reload: function () { H.reloads++; }, search: '', href: 'http://localhost/' },
+  location: {
+    reload: function () { H.reloads++; },
+    assign: function (url) { H.navigations.push(String(url)); },
+    replace: function (url) { H.navigations.push(String(url)); },
+    search: '', href: 'http://localhost/'
+  },
   localStorage: { getItem: function () { return null; }, setItem: function () {} },
   navigator: { userAgent: 'harness' },
   addEventListener: function (t, f) { winEmitter.addEventListener(t, f); },

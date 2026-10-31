@@ -3216,3 +3216,135 @@ class TestEveryRetirementFunctionNeverReachesExecSeam:
         assert not _references_name_or_attr(node, _SAVE_SYMPHONY_ATTR), (
             f"{fn_name} references {_SAVE_SYMPHONY_ATTR}"
         )
+
+
+# ===========================================================================
+# Group J (dashboard refresh, the panels the poll carries): the read that gives
+# ``/api/state`` its Sleeves rows, CVaR diagnostic and locked-variables count.
+# The Sleeves rows come from ``sleeves.ledger`` and ``sleeves.rules.limits``,
+# the package that holds the Managed Sleeves order path; ``limits`` also holds
+# ``_post_bench_note``, which posts to a webhook, and ``sleeves.alpaca_orders``
+# holds the order functions. This read must reach none of them, and each check
+# below is shown to fail on a planted call.
+# ===========================================================================
+
+_PANELS_BUILDER_FN_NAME = "_dashboard_panels_payload"
+_PANELS_ENTRY_POINT_FN_NAMES = (_PANELS_BUILDER_FN_NAME, "get_state")
+# Names this read must never reference, beyond Group E's set (orders, symphony creation, the
+# live flag): cancelling an order, and the bench note's webhook post.
+_PANELS_FORBIDDEN_EXTRA_NAMES = ("cancel_order", "_post_bench_note")
+_SLEEVES_LEDGER_REL_PATH = "sleeves/ledger.py"
+_SLEEVES_LIMITS_REL_PATH = "sleeves/rules/limits.py"
+_BENCH_READ_FN_NAME = "is_rule_benched"
+_ORDER_MODULE_NAME = "alpaca_orders"
+
+
+# The state route and the meta it builds already read the live flag's value to report the mode; that
+# read is a display of the flag, not a write, and exists apart from the panels. The state route's
+# walk is held to exactly these two hits, so any other reference reachable from it is reported.
+_STATE_ROUTE_BASE_HITS = frozenset(
+    {"LIVE_EXECUTION via get_state", "LIVE_EXECUTION via _build_meta"}
+)
+
+
+def _panels_hits(tree: ast.Module, fn_name: str) -> list[str]:
+    """Group E's hits for the call graph of ``fn_name``, plus the extra names above."""
+    hits = _exec_seam_hits(tree, fn_name)
+    for node in _collect_transitive_local_call_subtrees(tree, fn_name):
+        for name in _PANELS_FORBIDDEN_EXTRA_NAMES:
+            if _references_name_or_attr(node, name) or name in _text_of(node):
+                hits.append(f"{name} via {getattr(node, 'name', '?')}")
+    if fn_name == "get_state":
+        hits = [h for h in hits if h not in _STATE_ROUTE_BASE_HITS]
+    return hits
+
+
+def _imported_module_names(tree: ast.Module) -> set[str]:
+    """Every module a tree imports, at any depth, whole dotted names and their last parts."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.update({alias.name, *alias.name.split(".")})
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            names.update({module, *module.split(".")})
+            names.update(alias.name for alias in node.names)
+    return names
+
+
+class TestThePanelsReadNeverReachesAnOrderOrACreation:
+    def test_the_builder_exists_and_the_state_route_reaches_it(self):
+        tree = _parse_app_py()
+        assert _find_function_def(tree, _PANELS_BUILDER_FN_NAME) is not None, (
+            f"app.py has no function named {_PANELS_BUILDER_FN_NAME!r}: the poll's panels have no builder"
+        )
+        reached = {
+            getattr(n, "name", None)
+            for n in _collect_transitive_local_call_subtrees(tree, "get_state")
+        }
+        assert _PANELS_BUILDER_FN_NAME in reached, "get_state never calls the panels builder"
+
+    @pytest.mark.parametrize("fn_name", _PANELS_ENTRY_POINT_FN_NAMES)
+    def test_the_call_graph_reaches_no_order_creation_or_live_flag(self, fn_name):
+        tree = _parse_app_py()
+        assert _find_function_def(tree, fn_name) is not None, f"app.py has no {fn_name!r}"
+        assert _panels_hits(tree, fn_name) == []
+
+    def test_the_ledger_module_imports_no_order_module(self):
+        tree = ast.parse(_read_source(_SLEEVES_LEDGER_REL_PATH))
+        assert _ORDER_MODULE_NAME not in _imported_module_names(tree)
+
+    def test_the_bench_read_never_reaches_the_bench_note_or_an_http_write(self):
+        tree = ast.parse(_read_source(_SLEEVES_LIMITS_REL_PATH))
+        subtrees = _collect_transitive_local_call_subtrees(tree, _BENCH_READ_FN_NAME)
+        reached = {getattr(n, "name", None) for n in subtrees}
+        assert "_post_bench_note" not in reached
+        assert _hits_http_writes(subtrees) == []
+
+
+_PANELS_PLANTS = {
+    "an order cancel": "cancel_order(planted_argument)",
+    "an order submit": "submit_order(planted_argument)",
+    "a sell to cash": "sell_account(planted_argument)",
+    "a symphony creation": "save_symphony(planted_argument)",
+    "an attribute symphony creation": "composer_draft_client.save_symphony(planted_argument)",
+    "the bench note": "_post_bench_note(planted_argument)",
+    "a write of the live flag": "LIVE_EXECUTION = True",
+}
+
+
+class TestThePanelsScanReportsAPlantedCall:
+    """Mutation proof: each plant goes into the builder, and the scan must fail on it."""
+
+    @pytest.mark.parametrize("plant", list(_PANELS_PLANTS))
+    def test_a_call_planted_in_the_builder_is_reported_from_the_builder_and_from_the_state_route(
+        self, plant
+    ):
+        statement = _PANELS_PLANTS[plant]
+        for entry_point in _PANELS_ENTRY_POINT_FN_NAMES:
+            tree = _tree_with_planted_call(_PANELS_BUILDER_FN_NAME, statement)
+            assert _panels_hits(tree, entry_point), (
+                f"{plant} planted in {_PANELS_BUILDER_FN_NAME} was not reported from {entry_point}"
+            )
+
+    @pytest.mark.parametrize("plant", [p for p in _PANELS_PLANTS if "live flag" not in p])
+    def test_a_call_planted_in_the_state_route_itself_is_reported(self, plant):
+        """The scan's own machinery fails on a plant today, whatever the builder's state. (The live
+        flag is excluded: the state route already names it to report the mode, so a second
+        reference there is not told apart by name.)"""
+        tree = _tree_with_planted_call("get_state", _PANELS_PLANTS[plant])
+        assert _panels_hits(tree, "get_state"), f"{plant} planted in get_state was not reported"
+
+    def test_an_order_import_planted_in_the_ledger_module_is_reported(self):
+        tree = ast.parse(_read_source(_SLEEVES_LEDGER_REL_PATH))
+        tree.body.extend(ast.parse("from sleeves import alpaca_orders").body)
+        assert _ORDER_MODULE_NAME in _imported_module_names(tree)
+
+    def test_a_bench_note_call_planted_in_the_bench_read_is_reported(self):
+        tree = ast.parse(_read_source(_SLEEVES_LIMITS_REL_PATH))
+        node = _find_module_level_function(tree, _BENCH_READ_FN_NAME)
+        assert node is not None
+        node.body.extend(ast.parse("_post_bench_note(rule_id)").body)
+        subtrees = _collect_transitive_local_call_subtrees(tree, _BENCH_READ_FN_NAME)
+        assert "_post_bench_note" in {getattr(n, "name", None) for n in subtrees}

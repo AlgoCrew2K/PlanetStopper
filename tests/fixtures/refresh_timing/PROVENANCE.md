@@ -32,6 +32,10 @@ A database file is never committed, including the launcher's copy of production 
 | `03-c1/` | dashboard-refresh, cycle 1 | none committed: producer worlds and derived stamps, guard alpha, vol and strips built at test time; see `03-c1/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `03-c2/` | dashboard-refresh, cycle 2 | none committed: the app's own error responses and re-stamped $-saved summaries; see `03-c2/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `03-c3/` | dashboard-refresh, cycle 3 | none committed: poll bodies with chosen phase, cycle age, countdown and degraded reasons; see `03-c3/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c4/` | dashboard-refresh, cycle 4 | none committed: card worlds (open, frozen, pre-market), derived guard alpha, status and order edits, tapes with session dates; see `03-c4/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c5/` | dashboard-refresh, cycle 5 | none committed: the `cards-panels` world (sleeves, fires, diagnostics, locked variables through the real writers, before and after a change), derived legs, modes and failure shapes; see `03-c5/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c6/` | dashboard-refresh, cycle 6 | none committed: derived exits and figures on one symphony's entry, detail answers; see `03-c6/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c7/` | dashboard-refresh, cycle 7 | none committed: the stored value `static/tweaks.js` writes, its invalid-JSON variant; see `03-c7/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `05-c2/` | observability-transport, cycle 2 | none copied; the 503 and timeout cases are derived at test time from `tests/fixtures/composer/v3-audit/total_stats.json` | derived, PM-5 sign-off recorded in the plan; see `05-c2/PROVENANCE.md` |
 
 Later cycles add their folder and a row here.

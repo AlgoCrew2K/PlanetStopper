@@ -139,6 +139,95 @@ def with_next_run(state: dict, seconds: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Derived per-symphony edits (one named field of one entry changed on a real body)
+# ---------------------------------------------------------------------------
+
+
+def card_entry(state: dict, symphony_id: str) -> dict:
+    """The poll's ``symphonies`` entry (the card) for a symphony id."""
+    return next(s for s in state["symphonies"] if s["id"] == symphony_id)
+
+
+def with_entry(state: dict, symphony_id: str, **fields) -> dict:
+    """The body with named fields of one symphony changed in the card list and in the state map.
+
+    ``None`` as a value sets the field to null; use ``without_entry_key`` to remove a key.
+    """
+    out = copy.deepcopy(state)
+    card_entry(out, symphony_id).update(fields)
+    for key in ("bot_state", "state"):
+        entry = (out.get(key) or {}).get(symphony_id)
+        if isinstance(entry, dict):
+            entry.update(fields)
+    return out
+
+
+def without_entry_key(state: dict, symphony_id: str, key: str) -> dict:
+    """The body with one key removed from a symphony's card and state entry."""
+    out = copy.deepcopy(state)
+    card_entry(out, symphony_id).pop(key, None)
+    for holder in ("bot_state", "state"):
+        entry = (out.get(holder) or {}).get(symphony_id)
+        if isinstance(entry, dict):
+            entry.pop(key, None)
+    return out
+
+
+def with_card_only(state: dict, symphony_id: str, **fields) -> dict:
+    """The body with named fields changed on the card list entry alone (the state map untouched)."""
+    out = copy.deepcopy(state)
+    card_entry(out, symphony_id).update(fields)
+    return out
+
+
+def with_state_only(state: dict, symphony_id: str, **fields) -> dict:
+    """The body with named fields changed on the state map entry alone (the card list untouched)."""
+    out = copy.deepcopy(state)
+    for key in ("bot_state", "state"):
+        entry = (out.get(key) or {}).get(symphony_id)
+        if isinstance(entry, dict):
+            entry.update(fields)
+    return out
+
+
+def for_account(state: dict, account: str) -> dict:
+    """The body as the route serves it for one picked account: other accounts' entries are dropped
+    from the card list and the state map."""
+    out = copy.deepcopy(state)
+    out["symphonies"] = [s for s in out["symphonies"] if s.get("account") == account]
+    for key in ("bot_state", "state"):
+        holder = out.get(key)
+        if isinstance(holder, dict):
+            for sym_id in [
+                k
+                for k, v in holder.items()
+                if isinstance(v, dict) and "name" in v and v.get("account") != account
+            ]:
+                del holder[sym_id]
+    return out
+
+
+def without_symphony(state: dict, symphony_id: str) -> dict:
+    """The body with one symphony absent from the card list and the state map (as after an account pick)."""
+    out = copy.deepcopy(state)
+    out["symphonies"] = [s for s in out["symphonies"] if s["id"] != symphony_id]
+    for key in ("bot_state", "state"):
+        holder = out.get(key)
+        if isinstance(holder, dict):
+            holder.pop(symphony_id, None)
+    return out
+
+
+def with_card_order(state: dict, ids: list[str]) -> dict:
+    """The body with the ``symphonies`` list in the given id order."""
+    out = copy.deepcopy(state)
+    by_id = {s["id"]: s for s in out["symphonies"]}
+    assert set(ids) == set(by_id), "the order must name every card once"
+    out["symphonies"] = [by_id[i] for i in ids]
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Derived strips and summaries
 # ---------------------------------------------------------------------------
 

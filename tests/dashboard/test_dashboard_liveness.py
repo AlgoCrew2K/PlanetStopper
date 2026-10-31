@@ -301,12 +301,14 @@ class TestCatchUp:
         await H.boot({ extras: true, state: H.bodies.poll });
         quiet();
         H.sleepFor(300000, { perf: true });
+        H.route('/api/state', { body: H.bodies.atWake });     // the daemon kept cycling while the lid was shut
         const n0 = H.fetchLog.length;
         __WAKE__
         await H.completeAnimations();
         return { sent: stateCount(n0), label: H.text('#engine-status-label') };
         """.replace("__WAKE__", wake),
             poll=poll_body(),
+            atWake=poll_body(at_ms=NOW_MS + 300_000),
         )
         assert r["sent"] == 1
         assert r["label"] == "Live", "the refresh that follows the wake clears the age cue"
@@ -722,9 +724,10 @@ class TestAPageLeftOpenOvernight:
         const sunday = header();
         await H.runTimers(DOWN - now(), { skipBelow: 5000 });
         H.failNewStreams = true;                              // the stream drops as the night begins
+        const errorAt = H.sandbox.performance.now();
         await H.streamError(0, true);
         await H.runTimers(UP - now(), { skipBelow: 600000 });
-        const night = { created: H.eventSources.map(function (e) { return e.createdAt; }),
+        const night = { errorAt: errorAt, created: H.eventSources.map(function (e) { return e.createdAt; }),
                         overlap: H.eventSources.map(function (e) { return e.liveWhenCreated; }) };
         H.failNewStreams = false;                             // the daemon answers again
         await H.runTimers(120000);
@@ -742,8 +745,9 @@ class TestAPageLeftOpenOvernight:
             now_ms=start,
             **_overnight_bodies(start),
         )
-        created = r["night"]["created"]
-        gaps = [b - a for a, b in zip(created, created[1:], strict=False)]
+        # Retry gaps run from the error that closed the stream, never from the boot stream.
+        attempts = [r["night"]["errorAt"], *r["night"]["created"][1:]]
+        gaps = [b - a for a, b in zip(attempts, attempts[1:], strict=False)]
         assert len(gaps) >= 800, f"the page gave up on the stream: {len(gaps)} attempts overnight"
         assert max(gaps) <= 60_000, f"a retry gap of {max(gaps)} ms overnight"
         assert max(r["night"]["overlap"][1:]) == 0, "two streams were open at once"

@@ -42,6 +42,13 @@ def _world() -> dict:
     return hx.get_world(WORLD)
 
 
+@pytest.fixture(autouse=True)
+def _world_captured_before_the_failure_is_staged():
+    """The world is captured through the app's own routes; a staged failure (auth gate on, the
+    state route raising) must not be what builds it, whichever test runs first."""
+    _world()
+
+
 def _stamp() -> str:
     return sup.render_stamp(_world())
 
