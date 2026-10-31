@@ -1232,6 +1232,20 @@ def _health_status() -> dict:
     }
 
 
+def _degraded_reasons() -> list[str]:
+    """The health helper's degraded reasons for a ``/api/state`` body.
+
+    A failed read gives an empty list, so the header never claims "Degraded" on a read error; the
+    warning names the exception type only, never its text.
+    """
+    try:
+        reasons = _health_status()["degraded_reasons"]
+        return list(reasons)
+    except Exception as exc:
+        _daemon_log.warning("degraded_reasons unavailable: %s", type(exc).__name__)
+        return []
+
+
 def _run_trigger_retention():
     from dotenv import dotenv_values
 
@@ -2841,6 +2855,9 @@ def _dashboard_initial_data(
         "hero_poll_tail": tail,
         "hero_poll_cap": _HERO_POLL_DAY_CAP,
         "sparks": sparks,
+        # The stamp the render prints beside the hero chart: the page compares the first
+        # poll's stamp with it to tell whether the poll carries newer data.
+        "data_stamp": portfolio.get("data_as_of"),
     }
 
 
@@ -4114,6 +4131,8 @@ def get_state():
             market_state,
             (state_data or {}).get("last_successful_cycle_at"),
         )
+        # One health reading per response, so the header label and the body agree.
+        _additive["degraded_reasons"] = _degraded_reasons()
         # ONE committed-cycle connection and ONE portfolio computation per response: the
         # hero (meta), the rows (portfolio_strip) and the cards all read from them.
         _shadow_conn = _committed_shadow_conn(_view_cut_state(state_data, market_state))

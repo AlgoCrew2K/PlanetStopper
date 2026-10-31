@@ -202,108 +202,207 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') closePanicModal();
 });
 
-// ── Engine status: Live / Stale / Closed ─────────────────────────────────
-// Single three-state indicator — no per-second counters. State changes only
-// on the poll cycle so there are no numbers that can look frozen.
-function updateEngineStatus(data) {
-  var dot   = document.getElementById('engine-status-dot');
-  var label = document.getElementById('engine-status-label');
-  var wrap  = document.getElementById('engine-status');
-  if (!label) return;
+// ── Engine status: one precedence, one writer ─────────────────────────────
+// renderEngineLabel() is the only function that writes #engine-status-label,
+// #engine-status-dot, the #engine-status title and the countdown's visibility. It
+// reads module state only, so every caller (a refresh outcome, the one-second tick)
+// gets the same answer. The order, highest first; the first rank that holds is shown:
+//   Connection Lost  the newest refresh ended in a handled failure
+//   Not updating     no data has arrived for more than NOT_UPDATING_AFTER_MS
+//   Degraded         the last good body lists degraded reasons
+//   Closed           the market is closed
+//   Rebalance pause  the engine's scheduled pause before the close
+//   Opening          the engine's scheduled session start
+//   Stale            the last cycle is older than STALE_AFTER_MS
+//   Live             otherwise
+// Every age is measured on performance.now() from the page's own receipt times, or on
+// the server's clock (the response's Date header) for the cycle's age; the browser's
+// wall clock never decides a label, because it can be minutes off.
+var NOT_UPDATING_AFTER_MS = 90000;
+var STALE_AFTER_MS = 2 * 60 * 1000;
+var MS_PER_MINUTE = 60000;
+var NEXT_RUN_PERIOD_S = 60;
+var SECONDS_PER_MINUTE = 60;
+var DEGRADED_REASON_TEXT = {
+  scheduler_stalled: 'Scheduler stalled: no engine spawn for 2 minutes or more.',
+  engine_overrun: 'An engine run has lasted over 3 minutes; minutes are being skipped.',
+  engine_failing: 'The last 5 engine runs failed.'
+};
+var DEGRADED_UNKNOWN_TEXT = 'The daemon reports a degraded state.';
+var CONNECTION_LOST_TITLE = 'The last refresh failed. The values shown are from the last data received.';
+var BLACKOUT_TITLE = 'Scheduled pause before the close; stops resume at the close.';
+var OPENING_TITLE = 'Scheduled session start; the first cycle is running.';
+var STALE_TITLE = 'Positions may not be actively guarded.';
 
-  var meta   = (data && data.meta) || {};
-  var isOpen = (data && data.market_state === 'open') || !!(meta.system_online);
+var _engineFailed = false;          // the newest refresh ended in a handled failure
+var _engineLastReceivedMono = null; // performance.now() when the last good body arrived
+var _engineBody = null;             // what the last good body said about the engine
+var _cycleAgeAtReceiptMs = null;    // the last cycle's age on the server's clock at receipt
+var _cycleAgeAnchorMono = null;     // performance.now() at that receipt
+var _countdownAnchor = null;        // { secs, atMono }: next_run_seconds and when it was true
 
-  if (!isOpen) {
-    if (dot)  dot.style.background = 'var(--studio-ink-dim)';
-    label.style.color = 'var(--studio-ink-dim)';
-    label.textContent = 'Closed';
-    if (wrap) wrap.title = '';
-    return;
-  }
-
-  var phase = data && data.engine_phase;
-  if (phase === 'blackout' || phase === 'opening') {
-    if (dot)  dot.style.background = 'var(--studio-ink-dim)';
-    label.style.color = 'var(--studio-ink-dim)';
-    label.textContent = phase === 'blackout' ? 'Rebalance pause' : 'Opening';
-    if (wrap) {
-      wrap.title = phase === 'blackout'
-        ? 'Scheduled pause before the close; stops resume at the close.'
-        : 'Scheduled session start; the first cycle is running.';
-    }
-    return;
-  }
-
-  var cycleAt = (data && data.last_successful_cycle_at) || (meta && meta.last_cycle_at);
-  var stale = cycleAt ? (Date.now() - new Date(cycleAt).getTime() > 2 * 60 * 1000) : false;
-
-  if (stale) {
-    if (dot)  dot.style.background = 'var(--studio-warn)';
-    label.style.color = 'var(--studio-warn)';
-    label.textContent = 'Stale';
-    if (wrap) wrap.title = 'Positions may not be actively guarded.';
-  } else {
-    if (dot)  dot.style.background = 'var(--studio-pos)';
-    label.style.color = 'var(--studio-pos)';
-    label.textContent = 'Live';
-    if (wrap) wrap.title = '';
-  }
+/** The receipt record of one response (suite contract RC-3), one plain object:
+ *  sentAtMono is performance.now() read just before the request was sent,
+ *  receivedAtMono is read when the response headers arrive, and serverNowMs is the
+ *  server's clock from the HTTP Date header (null when absent or unparseable). */
+function receiptTiming(sentAtMono, response) {
+  var serverNowMs = null;
+  try {
+    var header = response && response.headers && response.headers.get && response.headers.get('Date');
+    var parsed = header ? Date.parse(header) : NaN;
+    if (isFinite(parsed)) serverNowMs = parsed;
+  } catch (e) { serverNowMs = null; }
+  return { sentAtMono: sentAtMono, receivedAtMono: performance.now(), serverNowMs: serverNowMs };
 }
-window.updateEngineStatus = updateEngineStatus;
-// Alias so existing index.js callers of updateChromeTicker keep working.
-function updateChromeTicker(data) {
-  updateEngineStatus(data);
-  resyncNextCountdown(data);
+window.receiptTiming = receiptTiming;
+
+/** Whole minutes without data once the page has gone NOT_UPDATING_AFTER_MS with none, else null. */
+function notUpdatedForMinutes() {
+  if (_engineLastReceivedMono === null) return null;
+  var silentMs = performance.now() - _engineLastReceivedMono;
+  return silentMs > NOT_UPDATING_AFTER_MS ? Math.floor(silentMs / MS_PER_MINUTE) : null;
+}
+window.notUpdatedForMinutes = notUpdatedForMinutes;
+
+function _cycleIsStale() {
+  if (_cycleAgeAtReceiptMs === null || _cycleAgeAnchorMono === null) return false;
+  return _cycleAgeAtReceiptMs + (performance.now() - _cycleAgeAnchorMono) > STALE_AFTER_MS;
+}
+
+function _degradedTitle(reasons) {
+  return reasons.map(function (reason) {
+    return Object.prototype.hasOwnProperty.call(DEGRADED_REASON_TEXT, reason)
+      ? DEGRADED_REASON_TEXT[reason] : DEGRADED_UNKNOWN_TEXT;
+  }).join(' ');
+}
+
+// The label, colour token, tooltip and countdown visibility of the first rank that holds,
+// or null while the page knows nothing yet (the server render stands then).
+function _engineLabelState() {
+  if (_engineFailed) {
+    return { text: 'Connection Lost', token: 'neg', title: CONNECTION_LOST_TITLE, countdown: false };
+  }
+  var minutes = notUpdatedForMinutes();
+  if (minutes !== null) {
+    return { text: 'Not updating', token: 'warn', title: 'No data received for ' + minutes + ' min.', countdown: true };
+  }
+  var body = _engineBody;
+  if (body === null) return null;
+  if (body.degradedReasons.length) {
+    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons), countdown: true };
+  }
+  if (!body.isOpen) {
+    return { text: 'Closed', token: 'ink-dim', title: '', countdown: false };
+  }
+  if (body.phase === 'blackout') {
+    return { text: 'Rebalance pause', token: 'ink-dim', title: BLACKOUT_TITLE, countdown: true };
+  }
+  if (body.phase === 'opening') {
+    return { text: 'Opening', token: 'ink-dim', title: OPENING_TITLE, countdown: true };
+  }
+  if (_cycleIsStale()) {
+    return { text: 'Stale', token: 'warn', title: STALE_TITLE, countdown: true };
+  }
+  return { text: 'Live', token: 'pos', title: '', countdown: true };
+}
+
+function renderEngineLabel() {
+  var label = document.getElementById('engine-status-label');
+  if (!label) return;
+  var state = _engineLabelState();
+  if (state === null) return;
+  var dot = document.getElementById('engine-status-dot');
+  var wrap = document.getElementById('engine-status');
+  var countdown = document.getElementById('next-run-countdown');
+  var colour = 'var(--studio-' + state.token + ')';
+  if (dot) dot.style.background = colour;
+  label.style.color = colour;
+  label.textContent = state.text;
+  if (wrap) wrap.title = state.title;
+  if (countdown) countdown.style.display = state.countdown ? '' : 'none';
+}
+window.renderEngineLabel = renderEngineLabel;
+
+/** The newest refresh ended in a handled failure. */
+function noteRefreshFailed() {
+  _engineFailed = true;
+  renderEngineLabel();
+}
+window.noteRefreshFailed = noteRefreshFailed;
+
+/** A good body arrived: end the failed state and restart the silence clock. */
+function noteDataReceived(timing) {
+  _engineFailed = false;
+  if (timing && typeof timing.receivedAtMono === 'number') _engineLastReceivedMono = timing.receivedAtMono;
+  renderEngineLabel();
+}
+window.noteDataReceived = noteDataReceived;
+
+/** Stores what a good body says about the engine, re-anchors the countdown and redraws the label.
+ *  A timing with no server time keeps the previous Stale judgement: the browser's clock
+ *  must never decide it. */
+function updateChromeTicker(data, timing) {
+  var meta = (data && data.meta) || {};
+  var cycleAt = (data && data.last_successful_cycle_at) || (meta && meta.last_cycle_at);
+  var reasons = data && Array.isArray(data.degraded_reasons) ? data.degraded_reasons : [];
+  _engineBody = {
+    isOpen: (data && data.market_state === 'open') || !!meta.system_online,
+    phase: data && data.engine_phase,
+    degradedReasons: reasons.slice()
+  };
+  if (timing && typeof timing.serverNowMs === 'number') {
+    var cycleMs = cycleAt ? Date.parse(cycleAt) : NaN;
+    _cycleAgeAtReceiptMs = isFinite(cycleMs) ? timing.serverNowMs - cycleMs : null;
+    _cycleAgeAnchorMono = typeof timing.receivedAtMono === 'number' ? timing.receivedAtMono : performance.now();
+  }
+  resyncNextCountdown(data, timing);
+  renderEngineLabel();
 }
 window.updateChromeTicker = updateChromeTicker;
 
-// ── NEXT: MM:SS countdown ─────────────────────────────────────────────────
-// Ticks down every second; resynced from data.next_run_seconds (top-level
-// integer) on each /api/state poll. Falls back to parsing meta.next_run
-// "MM:SS" string. Hidden when market is closed.
-// NOTE: next_run_seconds can legitimately be 0 — use typeof checks, not
-// truthiness, so 0 is not mistaken for "no data".
-var _nextCountdownSecs = null;
+// Kept as the entry point existing callers use: a body with no receipt record.
+function updateEngineStatus(data) {
+  updateChromeTicker(data, null);
+}
+window.updateEngineStatus = updateEngineStatus;
 
-function _fmtCountdown(secs) {
-  if (secs == null || secs < 0) secs = 0;
-  var m = Math.floor(secs / 60);
-  var s = secs % 60;
-  return m + ':' + (s < 10 ? '0' : '') + s;
+// ── NEXT MM:SS countdown ──────────────────────────────────────────────────
+// Anchored at the moment the request was SENT with the seconds the server reported
+// (taken before its per-symphony work), and counted down on performance.now(), so a
+// slow response does not shift it. It wraps at the minute instead of stopping at zero.
+// Same text form as the server render (templates/_chrome.html). Its visibility is
+// written by renderEngineLabel. next_run_seconds can legitimately be 0: use typeof
+// checks, not truthiness.
+function _pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+function renderCountdown() {
+  var el = document.getElementById('next-run-countdown');
+  if (!el || _countdownAnchor === null) return;
+  var remaining = _countdownAnchor.secs - (performance.now() - _countdownAnchor.atMono) / 1000;
+  var secs = ((Math.floor(remaining) % NEXT_RUN_PERIOD_S) + NEXT_RUN_PERIOD_S) % NEXT_RUN_PERIOD_S;
+  el.textContent = 'NEXT ' + _pad2(Math.floor(secs / SECONDS_PER_MINUTE)) + ':' + _pad2(secs % SECONDS_PER_MINUTE);
 }
 
-function resyncNextCountdown(data) {
-  var el = document.getElementById('next-run-countdown');
-  if (!el) return;
-  var meta   = (data && data.meta) || {};
-  var isOpen = (data && data.market_state === 'open') || !!(meta.system_online);
-  if (!isOpen) {
-    el.style.display = 'none';
-    _nextCountdownSecs = null;
-    return;
-  }
-  el.style.display = '';
-  // top-level data.next_run_seconds is the authoritative integer field.
-  // Use typeof check so 0 (valid) is not treated as absent.
+function resyncNextCountdown(data, timing) {
+  var meta = (data && data.meta) || {};
+  var secs = null;
   if (data && typeof data.next_run_seconds === 'number') {
-    _nextCountdownSecs = data.next_run_seconds;
+    secs = data.next_run_seconds;
   } else if (meta.next_run && /^\d{1,2}:\d{2}$/.test(meta.next_run)) {
     var parts = meta.next_run.split(':');
-    _nextCountdownSecs = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+    secs = parseInt(parts[0], 10) * SECONDS_PER_MINUTE + parseInt(parts[1], 10);
   }
-  if (_nextCountdownSecs != null) {
-    el.textContent = 'NEXT: ' + _fmtCountdown(_nextCountdownSecs);
-  }
+  if (secs === null) return;
+  var sentAt = timing && typeof timing.sentAtMono === 'number' ? timing.sentAtMono : performance.now();
+  _countdownAnchor = { secs: secs, atMono: sentAt };
+  renderCountdown();
 }
 
-function _tickNextCountdown() {
-  var el = document.getElementById('next-run-countdown');
-  if (!el || el.style.display === 'none' || _nextCountdownSecs == null) return;
-  _nextCountdownSecs = Math.max(0, _nextCountdownSecs - 1);
-  el.textContent = 'NEXT: ' + _fmtCountdown(_nextCountdownSecs);
-}
-setInterval(_tickNextCountdown, 1000);
+// One tick a second: ages the label (Not updating, Stale) and the countdown. It sends no request.
+setInterval(function () {
+  renderEngineLabel();
+  renderCountdown();
+}, 1000);
 
 // ── Candidate alert: header badge for new weekly-suggestion survivors ─────
 // (feature-plans/candidate-alert.md AC-1..AC-6). chrome.js — not index.js —
