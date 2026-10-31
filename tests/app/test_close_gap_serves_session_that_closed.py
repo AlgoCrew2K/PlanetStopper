@@ -25,6 +25,7 @@ import pytest
 import app as app_module
 from tests.app._closed_session_world import ClosedWorld, build_history_world, store_close_snapshot
 from tests.app._refresh_timing_frozen_world import PREVIOUS_SESSION_SUFFIX, stored_snapshot
+from tests.app.test_clocked_weekend_to_monday_open import WEDNESDAY_SESSION
 from tests.app.test_closed_market_numbers_never_move import local, write_engine_cycle
 
 FRIDAY = "2026-10-30"
@@ -64,7 +65,7 @@ def figures(cw: ClosedWorld) -> dict:
     }
 
 
-def not_current_session(read: dict, what: str) -> list[str]:
+def not_current_session(read: dict, what: str, stale_day: str = FRIDAY) -> list[str]:
     """What is wrong with the markers of a poll that should describe the session that closed."""
     markers = read["_markers"]
     wrong = []
@@ -72,8 +73,8 @@ def not_current_session(read: dict, what: str) -> list[str]:
         wrong.append(f"{what}: the poll is marked as the previous session's snapshot")
     if PREVIOUS_SESSION_SUFFIX in str(markers["data_as_of"]):
         wrong.append(f"{what}: data_as_of reads {markers['data_as_of']!r}")
-    if markers["trading_day"] == FRIDAY:
-        wrong.append(f"{what}: the poll serves Friday's snapshot (trading_day {FRIDAY})")
+    if markers["trading_day"] == stale_day:
+        wrong.append(f"{what}: the poll serves the snapshot of {stale_day}")
     return wrong
 
 
@@ -210,3 +211,71 @@ def test_a_stored_snapshot_is_never_reported_missing(monkeypatch, tmp_path, day,
     cw.at(day, clock)
     present = {route: got for route, got in reasons(cw).items() if CLOSE_GAP_REASON in got}
     assert not present, f"{day} {clock} ET: {present}"
+
+
+# ---------------------------------------------------------------------------
+# An early-close day: the close is 13:00 ET, and the grace runs from 13:00
+# ---------------------------------------------------------------------------
+
+EARLY_CLOSE_DAY = "2026-11-27"  # the Friday after Thanksgiving: closes at 13:00 ET
+WEDNESDAY = WEDNESDAY_SESSION.session_day  # the last session with a snapshot stored
+
+
+def early_close_day_before_the_close(monkeypatch, tmp_path) -> ClosedWorld:
+    """Wednesday's close stored, the early-close day's last committed cycle written at 12:52 ET,
+    the account totals refreshed at 12:59:30, no snapshot yet for the early-close day."""
+    cw = build_history_world(
+        monkeypatch, tmp_path, WEDNESDAY_SESSION, first_history_day=date(2026, 10, 1)
+    )
+    write_engine_cycle(cw.world, local(EARLY_CLOSE_DAY, "12:52:10"), 1)
+    cw.composer.version += 1
+    cw.at(EARLY_CLOSE_DAY, "12:59:30")
+    app_module._refresh_account_totals()
+    return cw
+
+
+def test_a_poll_across_an_early_close_reads_the_same_today(monkeypatch, tmp_path):
+    cw = early_close_day_before_the_close(monkeypatch, tmp_path)
+    cw.at(EARLY_CLOSE_DAY, "12:59:50")
+    before = figures(cw)
+    assert cw.poll("/api/state")["market_state"] == "open"
+    assert before["state"]["today_change"] is not None, "fixture sanity: Today has a figure"
+
+    failures = []
+    for clock in ("13:00:00", "13:00:05", "13:00:35", "13:04:59"):
+        cw.at(EARLY_CLOSE_DAY, clock)
+        read = figures(cw)
+        assert cw.poll("/api/state")["market_state"] == "closed_frozen"
+        failures += moved_since(before, read, f"{EARLY_CLOSE_DAY} {clock} ET")
+        failures += not_current_session(read, f"{EARLY_CLOSE_DAY} {clock} ET", WEDNESDAY)
+    assert not failures, (
+        "the page changed across the 13:00 close, before any snapshot of the day was stored:\n"
+        + "\n".join(failures)
+    )
+
+
+@pytest.mark.parametrize("clock", ["13:00:05", "13:04:59"])
+def test_the_early_close_gap_is_not_reported_as_a_missing_snapshot(monkeypatch, tmp_path, clock):
+    cw = early_close_day_before_the_close(monkeypatch, tmp_path)
+    cw.at(EARLY_CLOSE_DAY, clock)
+    present = {route: got for route, got in reasons(cw).items() if CLOSE_GAP_REASON in got}
+    assert not present, f"{EARLY_CLOSE_DAY} {clock} ET is inside the grace: {present}"
+
+
+@pytest.mark.parametrize("clock", ["13:06:00", "14:30:00", "15:30:00"])
+def test_a_snapshot_missing_after_an_early_close_is_reported_from_the_early_grace(
+    monkeypatch, tmp_path, clock
+):
+    """Six minutes after 13:00 the grace is over, long before 16:05."""
+    cw = early_close_day_before_the_close(monkeypatch, tmp_path)
+    cw.at(EARLY_CLOSE_DAY, "12:59:50")
+    before = figures(cw)
+    cw.at(EARLY_CLOSE_DAY, clock)
+    read = figures(cw)
+    wrong = moved_since(before, read, f"{EARLY_CLOSE_DAY} {clock} ET")
+    assert not wrong, "\n".join(wrong)
+    missing = {route: got for route, got in reasons(cw).items() if CLOSE_GAP_REASON not in got}
+    assert not missing, (
+        f"{EARLY_CLOSE_DAY} {clock} ET: the 13:00 close has no snapshot six minutes later, yet "
+        f"these carry no {CLOSE_GAP_REASON!r}: {missing}"
+    )

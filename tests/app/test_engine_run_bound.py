@@ -392,3 +392,102 @@ def test_a_fault_on_the_line_printed_before_the_engine_starts_never_leaks_the_sl
     st.daemon._real_trigger()
     assert not st.records("skipped"), "the minute after the fault was skipped: the slot leaked"
     assert wait_for(lambda: st.engines.runs), "the minute after the fault did not start the engine"
+
+
+# ---------------------------------------------------------------------------
+# A run hung on the same date, before the open or at any hour of a trading day
+# ---------------------------------------------------------------------------
+
+
+def hang_from(monkeypatch, tmp_path, day: str, start: str):
+    """A daemon whose run begun at `start` (a :00 minute) never exits; returns the stage after the
+    first tick that spawned it."""
+    first = datetime.fromisoformat(f"{day}T{start}").replace(tzinfo=ET)
+    st = stage(
+        monkeypatch,
+        tmp_path,
+        hung_first,
+        (day, (first - timedelta(seconds=30)).strftime("%H:%M:%S")),
+    )
+    st.tick_range(first - timedelta(seconds=30), first + timedelta(seconds=30), 30)
+    assert len(st.engines.runs) == 1, f"fixture sanity: the {start} minute spawned the run"
+    return st
+
+
+@pytest.mark.parametrize(
+    ("start", "bound_ends", "last"),
+    [("09:20:00", "09:31:00", "09:34:00"), ("00:05:00", "00:16:00", "00:19:00")],
+    ids=["pre-open-0920", "small-hours-0005"],
+)
+def test_a_run_hung_before_the_open_on_a_trading_day_is_ended_after_600_seconds(
+    monkeypatch, tmp_path, start, bound_ends, last
+):
+    """Neither the earlier-date rule (same date) nor the session bound (not yet the session)
+    reaches these, yet a run hung at 09:20 blocks the morning start."""
+    st = hang_from(monkeypatch, tmp_path, MONDAY, start)
+    first = st.engines.runs[0]
+    started = first.started_et
+    st.tick_range(started + timedelta(seconds=60), started + timedelta(seconds=570), 30)
+    assert first.terminate_calls == [], "the run was signalled inside its first 600 seconds"
+
+    deadline = datetime.fromisoformat(f"{MONDAY}T{last}").replace(tzinfo=ET)
+    ended_at = st.advance_until(
+        lambda: bool(st.records(TERMINATED)), started + timedelta(seconds=570), deadline
+    )
+    assert ended_at is not None, (
+        f"a run started at {start} on a trading day was still alive at {last}: "
+        f"no record with outcome {TERMINATED!r}"
+    )
+    seconds = elapsed_at(first.terminate_calls[0], first)
+    limit = datetime.fromisoformat(f"{MONDAY}T{bound_ends}").replace(tzinfo=ET)
+    assert SESSION_BOUND_S <= seconds <= SESSION_BOUND_S + 61, (
+        f"the run was asked to terminate {seconds:.0f} s after it started"
+    )
+    assert first.terminate_calls and ended_at.astimezone(ET) <= limit + timedelta(seconds=2), (
+        f"the run begun at {start} was not ended by {bound_ends}"
+    )
+    st.tick_range(ended_at, ended_at + timedelta(minutes=3), 5)
+    assert len(st.engines.runs) >= 2, "no run was spawned after the hung one was ended"
+
+
+@pytest.mark.parametrize("hour_after", ["17:05:00", "17:30:00"])
+def test_a_run_started_after_the_close_is_left_alone_for_hours(monkeypatch, tmp_path, hour_after):
+    """Autotune starts only after the close: a run begun at 16:00:30 on a Friday and still alive
+    an hour later is not ended."""
+    st = stage(monkeypatch, tmp_path, lambda _i: HANGS, (FRIDAY, "16:00:00"))
+    started = datetime.fromisoformat(f"{FRIDAY}T16:00:30").replace(tzinfo=ET)
+    st.host.move(started)
+    run = app_module._begin_engine_run(started)
+    assert run is not None
+    thread = threading.Thread(
+        target=app_module.trigger_alpha_bot,
+        kwargs={"cycle_id": run.cycle_id, "started_at": run.started_at},
+        daemon=True,
+        name="engine-cycle",
+    )
+    thread.start()
+    assert wait_for(lambda: st.engines.runs), "the run never started"
+    run_process = st.engines.runs[0]
+    st.tick_range(
+        st.at(FRIDAY, "16:01:00"),
+        datetime.fromisoformat(f"{FRIDAY}T{hour_after}").replace(tzinfo=ET),
+        30,
+    )
+    try:
+        assert run_process.terminate_calls == [] and run_process.kill_calls == [], (
+            f"a run begun at 16:00:30 was signalled by {hour_after}"
+        )
+    finally:
+        run_process.kill()
+        thread.join(timeout=5)
+
+
+def test_a_run_hung_on_a_saturday_is_left_alone_until_monday_0925(monkeypatch, tmp_path):
+    st = hang_from(monkeypatch, tmp_path, "2026-10-31", "10:00:00")
+    run = st.engines.runs[0]
+    st.tick_range(st.at("2026-10-31", "10:01:00"), st.at("2026-10-31", "11:05:00"), 30)
+    assert run.terminate_calls == [], "a Saturday run was ended an hour after it began"
+    st.tick_range(st.at("2026-10-31", "11:05:30"), st.at(MONDAY, "09:24:30"), 30)
+    assert run.terminate_calls == [] and run.kill_calls == [], (
+        "a Saturday run was signalled before Monday 09:25"
+    )
