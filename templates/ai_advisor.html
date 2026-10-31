@@ -2065,8 +2065,9 @@
                 {% set unit = fig.get('unit') %}
                 {% set value = fig.get('value') %}
                 {% if value is finite_number and (unit != 'days' or value is whole_number) %}
-                {#- A drawdown is a magnitude: no sign is printed. -#}
-                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% elif fig_name == 'max_drawdown' %}{{ value | abs | tenure_number }}{% else %}{{ value | tenure_number }}{% endif %}
+                {#- A drawdown is a magnitude: no sign is printed, on any leg (max_drawdown, realized_, backtest_, with_, without_). The stored figures stay signed (a drawdown is at most zero) because the verdict compares them as stored. A gap between two legs reads in the same convention: the first leg's magnitude minus the second's, which with both legs at most zero is the stored gap with its sign turned; it is printed in words naming the shallower or the deeper leg. -#}
+                {% set gap_legs = {'max_drawdown_gap': ('realized', 'backtest'), 'max_drawdown_difference': ('without', 'with')}.get(fig_name) -%}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% elif gap_legs %}{% set shown = (0 - value) | round(2) %}{% if shown == 0 %}{{ gap_legs[0] }} and {{ gap_legs[1] }} are equally deep, {% else %}{{ gap_legs[0] }} is {{ 'shallower' if shown < 0 else 'deeper' }} than {{ gap_legs[1] }} by {% endif %}{{ shown | abs | tenure_number }}{% elif fig_name == 'max_drawdown' or fig_name.endswith('_max_drawdown') %}{{ value | abs | tenure_number }}{% else %}{{ value | tenure_number }}{% endif %}
                     {%- if unit == 'percent' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
                     {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</div>
                 {% elif value is finite_number %}

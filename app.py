@@ -416,38 +416,60 @@ _csrf_check_enabled: bool = True
 _CSRF_TOKEN: str = secrets.token_hex(32)
 
 
+# Values of the Sec-Fetch-Site request header that name a page of another origin.  "same-site"
+# is a page on a sibling host of the same registrable domain: the deployed host sits under a
+# domain that strangers share, so such a page is same-site with the dashboard and its form POSTs
+# carry the session cookie.  "same-origin", "none" (typed or bookmarked) and an absent header
+# (script clients, older browsers) are not refused by this rule.
+_REFUSED_FETCH_SITES = frozenset({"same-site", "cross-site"})
+
+
 def _validate_csrf() -> None:
     """Reject POST requests that lack the correct CSRF token.
 
-    Two acceptance channels (both must be same-origin):
+    Two acceptance channels:
     - X-CSRF-Token request header — used by fetch()/XHR callers (JSON POSTs
-      from the dashboard JS).  Browsers block cross-site scripts from setting
-      arbitrary request headers, so the header itself acts as the synchronizer
-      token for those callers.
-    - csrf_token form field — used by the native browser form POST on the login
-      page, which cannot set custom headers.  The form embeds the server-minted
-      token in a hidden input; same-origin enforcement is provided by the
-      synchronizer-token pattern (token is not guessable by a cross-site page).
-      The form-field channel is ONLY activated for form-encoded content types
+      from the dashboard JS) on every route.  Browsers block cross-site scripts
+      from setting arbitrary request headers, so the header itself acts as the
+      synchronizer token for those callers.
+    - csrf_token form field — the LOGIN endpoint only: the native browser form
+      POST on the login page cannot set custom headers.  The token is public
+      (GET /api/csrf-token serves it, as does the login page), so on any other
+      route a form field would let a form posted from a sibling-host page
+      through for every route that reads no JSON body.
+      The field is read only for form-encoded content types
       (application/x-www-form-urlencoded, multipart/form-data).  Accessing
       request.form on a JSON POST triggers Werkzeug body parsing, which enforces
       MAX_CONTENT_LENGTH before this CSRF check can fire — breaking the
       CSRF-before-body-size guard ordering invariant.
 
+    A POST whose Sec-Fetch-Site is same-site or cross-site is refused whatever
+    the token.  The token is compared as bytes: compare_digest raises on a
+    str that is not ASCII, which would answer 500 instead of 403.
+
     No new pip dependencies required.
     """
     if not _csrf_check_enabled:
         return
+    fetch_site = request.headers.get("Sec-Fetch-Site", "").strip().lower()
+    if fetch_site in _REFUSED_FETCH_SITES:
+        _daemon_log.warning(
+            "CSRF check refused %s %s (Sec-Fetch-Site: %s)",
+            request.method,
+            request.path,
+            fetch_site,
+        )
+        abort(403, description="Cross-site request refused")
     # Header channel: fetch()/XHR callers set X-CSRF-Token.
     token = request.headers.get("X-CSRF-Token", "")
-    # Form-field channel: native browser form POST (login page).  Gate on
+    # Form-field channel: the login page's native form POST only.  Gate on
     # content-type so we never touch request.form on JSON requests — that
     # would trigger body parsing and fire 413 before we can return 403.
-    if not token:
+    if not token and request.endpoint == "login":
         ct = request.content_type or ""
         if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
             token = request.form.get("csrf_token", "")
-    if not secrets.compare_digest(token, _CSRF_TOKEN):
+    if not secrets.compare_digest(token.encode("utf-8", "replace"), _CSRF_TOKEN.encode("utf-8")):
         _daemon_log.warning(
             "CSRF check failed on %s %s (token absent or incorrect)",
             request.method,
@@ -5353,7 +5375,8 @@ def guard_alpha_preconditions():
     """Per-symphony Kaminski & Lo (2014) stop-justification preconditions.
 
     Contract (feature-plans/guard-alpha-preconditions.md AC-6, AC-7, AC-8): for
-    every symphony in database.load_state(), returns a "replay" sample
+    every symphony in database.load_state() that is still held (the shared
+    no-longer-held rule leaves the others out), returns a "replay" sample
     (simulated if-held daily series from the last autotune/replay run) and a
     "shadow" sample (live if-held daily series since the current position was
     opened) -- {rho, rho_ci, sharpe_daily, n_obs, verdict, sample_source}.
@@ -5432,9 +5455,12 @@ def guard_alpha_preconditions():
 
     db_file = analytics._get_shadow_db_file()
     symphonies_out: dict = {}
+    # A symphony no longer held has no entry: every other surface leaves it out through this one
+    # shared rule, and the page's "replay samples unavailable N of M" counts the ids returned here.
+    no_longer_held = _no_longer_held_ids(bot_state_dict, None, datetime.now(_ET))
 
     for sym_id, sym_data in bot_state_dict.items():
-        if not _is_symphony_state_entry(sym_data):
+        if not _is_symphony_state_entry(sym_data) or sym_id in no_longer_held:
             continue
         try:
             try:
@@ -8586,13 +8612,59 @@ _SETTINGS_WRITE_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+# EXECUTION_START_TIME is read by the engine as "HH:MM" (alpha_bot_execution.py splits it on ":"
+# and converts both halves to int).  fullmatch, never match with "$": "$" also matches before a
+# trailing newline, which is how a second line reaches the file.
+_SETTINGS_START_TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
+# The two values engine/exit_authority.py recognizes; anything else degrades the badge.
+_SETTINGS_EXIT_AUTHORITIES = frozenset({"per_symphony", "port_level"})
+
+
+def _settings_number(value) -> float | None:
+    """The finite float a settings value stands for, or None when it is not a plain finite number.
+
+    A string must be ASCII with nothing around the number: float() itself strips whitespace, and
+    a newline that float() forgives would still be written to the file as a second line.  bool is
+    refused (float(True) is 1.0), as are nan, inf and anything that overflows to inf.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        if not value.isascii() or value != value.strip():
+            return None
+    elif not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _settings_global_value_is_valid(key: str, value) -> bool:
+    """Whether `value` may be written to .env for the allowlisted global `key`.
+
+    python-dotenv writes KEY='value' and escapes only the quote character, so a value ending in a
+    backslash lets the next quote in the file close it and a following value can carry a whole
+    line of its own (LIVE_EXECUTION=True, which the key allowlist keeps out).  Each key therefore
+    takes only its own plain shape.
+    """
+    if key == "EXECUTION_START_TIME":
+        return isinstance(value, str) and _SETTINGS_START_TIME.fullmatch(value) is not None
+    if key == "EXIT_AUTHORITY":
+        return isinstance(value, str) and value in _SETTINGS_EXIT_AUTHORITIES
+    return _settings_number(value) is not None
+
+
 @app.route("/api/settings", methods=["POST"])
 def save_settings():
     """Saves allowlisted globals to .env and symphony strategies to SQLite.
 
     Rejects any key not in _SETTINGS_WRITE_ALLOWLIST (including LIVE_EXECUTION
     and all credential keys) with a 400 so the client gets an actionable error
-    rather than a silent no-op.
+    rather than a silent no-op.  Every value is validated before the first write
+    (all or nothing): a bad value anywhere in the payload is a 400 that leaves
+    .env and the strategies as they were.
     """
     payload = request.json
 
@@ -8608,6 +8680,33 @@ def save_settings():
                 }
             ), 400
 
+        # Validate everything first.  The message names allowlisted keys only, never a value.
+        bad_globals = sorted(
+            key
+            for key, val in globals_payload.items()
+            if not _settings_global_value_is_valid(key, val)
+        )
+        strategies: list[tuple[str, dict[str, float], list]] = []
+        symphony_param_is_bad = False
+        for sym_name, strategy_data in payload.get("symphonies", {}).items():
+            params: dict[str, float] = {}
+            for param_key, param_val in strategy_data.get("params", {}).items():
+                number = _settings_number(param_val)
+                if number is None:
+                    symphony_param_is_bad = True
+                else:
+                    params[param_key] = number
+            strategies.append((sym_name, params, strategy_data.get("locked_vars", [])))
+        if bad_globals or symphony_param_is_bad:
+            problems = []
+            if bad_globals:
+                problems.append(f"invalid values for settings {bad_globals}")
+            if symphony_param_is_bad:
+                problems.append("a symphony parameter is not a finite number")
+            return jsonify(
+                {"status": "error", "message": "Nothing was saved: " + "; ".join(problems)}
+            ), 400
+
         for key, val in globals_payload.items():
             set_key(ENV_FILE_PATH, key, str(val))
 
@@ -8618,9 +8717,7 @@ def save_settings():
             set_key(ENV_FILE_PATH, "_exit_authority_changed_at", _changed_at)
 
         # Save Symphony Strategies
-        for sym_name, strategy_data in payload.get("symphonies", {}).items():
-            params = {k: float(v) for k, v in strategy_data.get("params", {}).items()}
-            locked = strategy_data.get("locked_vars", [])
+        for sym_name, params, locked in strategies:
             database.save_symphony_strategy(sym_name, params, locked)
 
         return jsonify({"status": "success", "message": "Variables updated successfully!"})
@@ -8770,6 +8867,12 @@ _REAL_POST_MORTEM_DATES = frozenset(
     }
 )
 
+# The production go-live day (the first day the live engine ran against real accounts).  The engine
+# writes a post-mortem every trading day from here on, so a file dated on or after this day is
+# production history and the flush never deletes it, however recent: the set above names only the
+# real files that existed when the synthetic backfill was cleaned up.  ISO dates compare as text.
+_PRODUCTION_GO_LIVE_DAY = "2026-06-22"
+
 
 # The arming flags the flush confirm lists, in the order shown: bot_state field -> label.
 _ARMED_SYMPHONY_FLAGS = (
@@ -8808,7 +8911,8 @@ def flush_resync():
     """Delete synthetic post_mortem backfill files, reset per-symphony bot_state, resync Composer.
 
     Phase 1 — File purge: scans analytics._POST_MORTEMS_DIR, removes files whose dates are
-      NOT in _REAL_POST_MORTEM_DATES, keeps real ones.  Invalidates the analytics cache.
+      NOT in _REAL_POST_MORTEM_DATES and fall before _PRODUCTION_GO_LIVE_DAY, keeps real ones
+      and every file from the go-live day on.  Invalidates the analytics cache.
     Phase 2 — Symphony state reset (background): loads bot_state, enumerates per-symphony
       entries (isinstance(v, dict) and "name" in v), strips runtime tracking fields (stop
       levels, returns, trigger flags), preserves "name" and "account".  Read happens on the
@@ -8836,7 +8940,7 @@ def flush_resync():
             continue
         date_str = m.group(1)
         fpath = os.path.join(pm_dir, fname)
-        if date_str in _REAL_POST_MORTEM_DATES:
+        if date_str in _REAL_POST_MORTEM_DATES or date_str >= _PRODUCTION_GO_LIVE_DAY:
             kept.append(fname)
         else:
             try:
