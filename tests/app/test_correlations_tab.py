@@ -65,6 +65,7 @@ from tests.app._correlations_view_support import (  # noqa: F401  (fixtures)
     seed_state_only,
     stored_pairs,
     tree_of,
+    with_field,
     with_run_at,
     with_run_at_removed,
     with_unmapped_exclusion_reason,
@@ -775,3 +776,52 @@ class TestCrisisCaveatInEveryState:
         text = self._banner_text(client)
         assert "Stress changes everything here." in text
         assert "destabilize" not in text, "the banner still shows the old fixed sentence"
+
+
+# ===========================================================================
+# A stored run that is malformed degrades; it never takes the page down
+# ===========================================================================
+
+_MALFORMED = {
+    "pairs_is_a_mapping": ("pairs", {"a": 1}),
+    "pairs_hold_junk": ("pairs", ["junk", 5, None, {"sym_a": "only-one-key"}]),
+    "pairs_hold_text_numbers": (
+        "pairs",
+        [{"sym_a": "a", "sym_b": "b", "correlation": "0.9", "n_obs": "many"}],
+    ),
+    "windows_is_a_list": ("series_windows", ["x"]),
+    "windows_hold_junk": ("series_windows", {"h": 5, "k": {"window_last": 20261021}}),
+    "threshold_is_missing": ("screen_threshold", None),
+    "threshold_is_text": ("screen_threshold", "high"),
+    "uncertainty_minimum_is_missing": ("uncertainty_min_aligned_days", None),
+    "stress_minimum_is_text": ("stress_gate_min_aligned_days", "many"),
+    "basis_is_a_number": ("basis_label", 7),
+    "exclusions_hold_junk": ("symphonies_without_series", ["x", 5, {"symphony_id": 3}]),
+}
+
+
+class TestMalformedStoredRun:
+    @pytest.mark.parametrize("field_and_value", list(_MALFORMED.values()), ids=list(_MALFORMED))
+    def test_a_corrupted_stored_field_still_renders_the_page_with_one_honest_block(
+        self, client, isolated_db, monkeypatch, field_and_value
+    ):
+        key, value = field_and_value
+        _recs, produced = captures.run_over_captures(monkeypatch)
+        seed_state_only(with_field(produced, key, value))
+
+        resp = client.get("/ai-advisor")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        panel = panel_of(body)
+        assert panel.find(testid="crisis-caveat-banner") is not None
+        table = panel.find(testid="correlation-matrix-table")
+        state = _state_node(panel)
+        assert (table is None) != (state is None), "exactly one of the matrix and a state block"
+        text = panel.text
+        assert "Traceback" not in body and "nan" not in text.lower().split()
+        assert "None" not in text and "{" not in text
+        if table is not None:
+            for cell in table.find_all(testid="corr-cell"):
+                assert cell.text == "undefined" or re.fullmatch(r"[+-]\d\.\d{2}", cell.text), (
+                    cell.text
+                )

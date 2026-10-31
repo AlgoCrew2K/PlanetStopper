@@ -32,6 +32,7 @@ the listed changes and fails on any other difference.
 |---|---|---|---|---|
 | `with_run_at_removed` | a `run_over_captures` summary | `run_at` removed | a run with no recorded time | S-2.3 |
 | `with_run_at` | a `run_over_captures` summary | `run_at` -> `2026-10-22T03:45:00Z` (the nightly slot's instant) | a run whose time is known, so the Eastern reading is checkable | S-2.1 |
+| `with_field` (one test, 11 cases) | a `run_over_captures` summary | one stored field replaced by a malformed value (`pairs` as a mapping or junk, `series_windows` as a list or junk, `screen_threshold` null or text, the two minimums null or text, `basis_label` a number, `symphonies_without_series` junk) | a corrupted stored run must degrade, not take the page down | support (security: malformed stored input) |
 | `with_unmapped_exclusion_reason` | a `run_over_captures` summary | `symphonies_without_series[0].reason` -> `retired_by_operator` | a reason the shared mapping does not know | S-5.4 |
 | `with_pair_correlations` | a `run_over_captures` summary | the named pairs' `correlation` replaced (-0.75, -1.0, -0.12; 0.65, 0.40, -0.40, 0.6449, 0.6499; 0.95, 0.70) | no captured pair is negative and none sits on a band boundary | S-6.1, S-6.2, S-6.3, S-6.4 |
 | `produced["screen_threshold"] = 0.72` (one test) | a `run_over_captures` summary | `screen_threshold` -> 0.72 | the legend must read the bound from the summary, not from a typed number | S-6.5 |

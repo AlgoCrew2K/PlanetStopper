@@ -10,6 +10,7 @@ named fields; ``tests/fixtures/retirement/derived/PROVENANCE.md`` lists every on
 
 * ``with_run_at_removed``, ``with_run_at``: a real producer summary without ``run_at``, or with
   ``run_at`` set to the nightly slot's instant;
+* ``with_field``: a real producer summary with one stored field replaced by a malformed value;
 * ``with_unmapped_exclusion_reason``: a real producer summary whose one exclusion reason is replaced;
 * ``with_pair_correlations``: a real producer summary whose named pairs carry another correlation;
 * ``name_override_*``: the live roster with only display names replaced;
@@ -77,6 +78,13 @@ def with_run_at_removed(summary: dict) -> dict:
 def with_run_at(summary: dict, run_at: str) -> dict:
     out = copy.deepcopy(summary)
     out["run_at"] = run_at
+    return out
+
+
+def with_field(summary: dict, key: str, value) -> dict:
+    """The summary with one top-level field replaced (a corrupted stored value)."""
+    out = copy.deepcopy(summary)
+    out[key] = value
     return out
 
 
