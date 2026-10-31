@@ -614,7 +614,14 @@ def test_performance_js_has_no_placeholder_row_logic_for_unfed_metrics():
     js_path = PROJECT_ROOT / "static" / "performance.js"
     content = js_path.read_text(encoding="utf-8")
 
-    for forbidden in ("data-unavail", "metric-unavail", "TIER2_PLACEHOLDER_KEYS", "placeholderRow", "upside_capture", "downside_capture"):
+    for forbidden in (
+        "data-unavail",
+        "metric-unavail",
+        "TIER2_PLACEHOLDER_KEYS",
+        "placeholderRow",
+        "upside_capture",
+        "downside_capture",
+    ):
         assert forbidden not in content, f"static/performance.js must not carry {forbidden!r}"
 
 
