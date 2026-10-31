@@ -804,11 +804,20 @@ class TestMergedPanel:
         stamp = panel.find("retirement-last-run-time")
         assert re.fullmatch(r"Last run \d{4}-\d\d-\d\d \d\d:\d\d ET", stamp.text())
 
-    def test_the_pointer_counts_only_the_recommender_runs_cards(self, merged):
-        # The pointer states the recommender's last run (as the tiles do); the review's own
-        # retire candidates are listed in the tab, not counted by the pointer.
+    def test_the_pointer_counts_the_review_candidates_waiting_for_a_decision(self, merged, client):
+        # The tab lists a retire candidate from the symphony review that waits for a decision. The
+        # pointer states the recommender's count of 0 and must not say nothing is pending.
         text = _pointer(merged).text()
-        assert "0 recommendations" in text
+        assert "0 recommendations" in text and "1 pending" in text
+        w.decide(client, "approve", pb.FULL_IDS["retire"])
+        after = _pointer(w.get_page(client)).text()
+        assert "0 recommendations" in after and "1 pending" not in after
+
+    def test_every_review_entry_is_a_sym_card_like_the_recommender_cards(self, merged):
+        entries = w.tab_panel(merged, "retirement").find_all("tenure-review-entry")
+        assert entries
+        assert all("sym-card" in e.classes() for e in entries)
+        assert all(len(w.by_class(e, "card-name")) == 1 for e in entries)
 
 
 # ===========================================================================
@@ -870,6 +879,25 @@ class TestHelpers:
         )["text"]
         assert "2 recommendations" in good and "1 pending" in good
         assert w.et_text(s["run_at"], _RUN_AT_FORMAT, -4) in good
+        # Review retire candidates count with the cards: a candidate with no decision, or a
+        # pending one, waits; an approved one, a rejected one and a non-candidate do not.
+        review = [
+            {"verdict": "retire_candidate", "approval_status": None},
+            {"verdict": "retire_candidate", "approval_status": "pending"},
+            {"verdict": "retire_candidate", "approval_status": "approved"},
+            {"verdict": "retire_candidate", "approval_status": "rejected"},
+            {"verdict": "keep", "approval_status": None},
+        ]
+        both = app_module._build_retirement_pointer(
+            {**s, "recommendations": 2},
+            [{"approval_status": "pending"}, {"approval_status": "approved"}],
+            review,
+        )["text"]
+        assert "2 recommendations" in both and "3 pending" in both
+        only_review = app_module._build_retirement_pointer({**s, "recommendations": 0}, [], review)[
+            "text"
+        ]
+        assert "0 recommendations" in only_review and "2 pending" in only_review
         failed = app_module._build_retirement_pointer(w.internal_error_summary(monkeypatch), [])[
             "text"
         ]

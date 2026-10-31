@@ -91,10 +91,10 @@ from a capture or a real producer, as follows.
 ### `ok` summary stamped at 2026-10-23T02:30:00Z (case: the ET date differs from the UTC date)
 - Same producer over the `_series_pair_scenario` series, run clock pinned to that instant.
 
-## Derived records (one captured record, named fields changed) - sign-off pending, requested from the PM
+## Derived records (one captured record, named fields changed) - signed off by the PM
 
 Each is the captured summary with only the named field changed; every other field is verbatim.
-Scenario rows that use one stay as tests; refuse a record and the test is removed.
+Scenario rows that use one stay as tests.
 
 | Derived record | Source | Changed field(s) | Why | Scenario |
 |---|---|---|---|---|
@@ -103,4 +103,4 @@ Scenario rows that use one stay as tests; refuse a record and the test is remove
 | D-3 | captured summary | the same eight keys set to null | the null edge | S-4.13 |
 | D-4 | captured summary | `symphonies_without_series[0].reason` -> "unexpected <b>reason</b> & more" | a reason the mapping lacks, with markup | S-7.3 |
 | D-5 | captured summary | `symphonies_without_series[0].reason` -> "", null, 5 or a list | an empty or non-text reason | S-7.4 |
-- Sign-off: pending (PM).
+- Sign-off: D-1, D-2, D-3, D-4 and D-5 signed off by the PM (coordinator ruling, 2026-10-30).
