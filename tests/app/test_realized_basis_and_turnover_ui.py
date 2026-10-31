@@ -163,7 +163,12 @@ class TestExitTurnoverJsWiring:
         this codebase checks for a 401 response.
         """
         js = _read(_PERFORMANCE_JS)
-        assert "401" in js, (
-            "static/performance.js must handle a 401 response from the new "
-            "fetch (401-guarded fetch pattern, house convention)."
+        # The page reads through the shared helper, which answers a 401 as kind 'unauthorized'.
+        turnover_read = js[js.index("/api/exit-turnover?symphony_id=") - 40 :]
+        assert "PSRequest.getJson(" in turnover_read[:80], (
+            "static/performance.js must read the turnover through the shared request helper "
+            "(401-guarded fetch pattern, house convention)."
+        )
+        assert "'unauthorized'" in turnover_read and "PSRequest.goLogin()" in turnover_read, (
+            "static/performance.js must send a 401 on the turnover read to the login page."
         )

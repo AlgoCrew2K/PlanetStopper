@@ -40,6 +40,7 @@ import pytest
 
 import app as app_module
 import database
+from tests._ai_advisor_autotune_panel_harness import drive
 from tests._ai_advisor_js_harness import render_autotune_list
 from tests._ux_truth_support import (
     MARKUP_NAME,
@@ -494,10 +495,9 @@ class TestAutotuneRunCardRender:
         assert renders[0] == renders[1] == renders[2], "a re-render replaces, never appends"
 
     def test_failed_fetch_shows_the_load_failure_and_no_card(self):
-        renders = render_autotune_list({_ROUTE_URL: {"__reject__": "network down"}})
-        tree = parse_html(renders[0])
-        assert "Failed to load runs" in tree.text
-        assert tree.find_all(testid="autotune-run-row") == []
+        (loaded,) = drive([{"op": "load"}], {_ROUTE_URL: {"__reject__": "network down"}})
+        assert loaded["notice"] == "Could not refresh runs"
+        assert parse_html(loaded["list"]).find_all(testid="autotune-run-row") == []
 
     def test_decision_pill_t_stat_and_streak_line_render_from_the_row(self, client):
         stamps = ["2026-10-12T04:00:00", "2026-10-19T04:00:00", "2026-10-26T04:00:00"]

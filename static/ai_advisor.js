@@ -8,14 +8,22 @@
 (function () {
     'use strict';
 
-    /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
-    var _csrfToken = null;
-    document.addEventListener('DOMContentLoaded', function () {
-        fetch('/api/csrf-token')
-            .then(function (r) { return r.json(); })
-            .then(function (b) { _csrfToken = b.csrf_token || null; })
-            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-    });
+    // The CSRF token and every POST's answer come from window.PSRequest (static/request_guard.js).
+    // A POST the session check refuses (403) is reported as refused after the token is read again;
+    // no control here sends it a second time: the operator's next click does.
+
+    /** A notice inside a card that keeps its buttons: the card says what was not sent. */
+    function showCardNotice(card, text) {
+        if (!card) return;
+        var notice = card.querySelector('[data-testid="card-not-sent"]');
+        if (!notice) {
+            notice = document.createElement('p');
+            notice.setAttribute('data-testid', 'card-not-sent');
+            notice.setAttribute('role', 'status');
+            card.appendChild(notice);
+        }
+        notice.textContent = text;
+    }
 
     // ---------------------------------------------------------------------------
     // Helpers
@@ -442,17 +450,26 @@
         btn.disabled = true;
         btn.textContent = 'Loading…';
 
-        fetch('/ai-advisor/suggest', {
+        PSRequest.postAction('/ai-advisor/suggest', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
             body: JSON.stringify({ symphony_id: symphonyId }),
         })
-            .then(function (resp) { return resp.json(); })
-            .then(function (body) {
-                if (body.error) {
+            .then(function (res) {
+                function showError(text) {
                     container.innerHTML = '';
                     errorEl.style.display = 'block';
-                    errorEl.textContent = 'Advisor unavailable: ' + body.error;
+                    errorEl.textContent = text;
+                }
+                if (res.networkError) { showError('Request failed: network error'); return; }
+                if (res.refused === 'csrf') {
+                    showError(PSRequest.notSentText(res, 'Click Run Claude advisor again.'));
+                    return;
+                }
+                var body = res.body;
+                if (!body) { showError('Request failed: the answer could not be read (HTTP ' + res.status + ')'); return; }
+                if (body.error) {
+                    showError('Advisor unavailable: ' + body.error);
                     return;
                 }
                 renderSuggestions(body.suggestions || [], symphonyId, body);
@@ -480,13 +497,24 @@
         var card = document.getElementById('card-' + index);
 
         card.style.opacity = '0.5';
-        fetch('/ai-advisor/accept', {
+        PSRequest.postAction('/ai-advisor/accept', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
             body: JSON.stringify({ symphony_id: symphonyId, suggestion: suggestion }),
         })
-            .then(function (resp) { return resp.json(); })
-            .then(function (body) {
+            .then(function (res) {
+                if (res.networkError) {
+                    card.style.opacity = '1';
+                    alert('Request failed: network error');
+                    return;
+                }
+                if (res.refused === 'csrf') {
+                    // Nothing was accepted and nothing is sent again: the card keeps its buttons.
+                    card.style.opacity = '1';
+                    showCardNotice(card, PSRequest.notSentText(res, 'Click Accept again.'));
+                    return;
+                }
+                var body = res.body || {};
                 if (body.status === 'accepted') {
                     card.innerHTML =
                         '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
@@ -495,10 +523,6 @@
                     card.style.opacity = '1';
                     alert('Rejected by C2 gate: ' + (body.error || body.status));
                 }
-            })
-            .catch(function (err) {
-                card.style.opacity = '1';
-                alert('Request failed: ' + err.message);
             });
     };
 
@@ -508,18 +532,24 @@
         var card = document.getElementById('card-' + index);
 
         card.style.opacity = '0.5';
-        fetch('/ai-advisor/reject', {
+        PSRequest.postAction('/ai-advisor/reject', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
             body: JSON.stringify({ symphony_id: symphonyId, suggestion: suggestion }),
         })
-            .then(function () {
+            .then(function (res) {
+                if (res.networkError) {
+                    card.style.opacity = '1';
+                    alert('Request failed: network error');
+                    return;
+                }
+                if (res.refused === 'csrf') {
+                    card.style.opacity = '1';
+                    showCardNotice(card, PSRequest.notSentText(res, 'Click Reject again.'));
+                    return;
+                }
                 card.innerHTML =
                     '<p style="color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">Rejected.</p>';
-            })
-            .catch(function (err) {
-                card.style.opacity = '1';
-                alert('Request failed: ' + err.message);
             });
     };
 
@@ -778,13 +808,47 @@
         if (details) details.hidden = older.length === 0;
     }
 
+    // A poll that does not bring a list never empties the cards: it adds this notice beside the
+    // list, and the next good poll removes it.
+    var RUNS_NOT_REFRESHED_TEXT = 'Could not refresh runs';
+
+    function setRunsNotice(list, text) {
+        var notice = document.querySelector('[data-testid="autotune-runs-notice"]');
+        if (!text) {
+            if (notice) notice.textContent = '';
+            return;
+        }
+        if (!notice) {
+            notice = document.createElement('p');
+            notice.setAttribute('data-testid', 'autotune-runs-notice');
+            notice.setAttribute('role', 'status');
+            notice.style.color = cssVar('--studio-neg');
+            if (list.parentNode) list.parentNode.insertBefore(notice, list);
+        }
+        notice.textContent = text;
+    }
+
     function loadRecentRuns() {
         var list = document.getElementById('autotune-runs-list');
         if (!list) return;
-        fetch('/api/autotune-runs')
-            .then(function (resp) { return resp.json(); })
-            .then(function (rows) {
-                if (!Array.isArray(rows) || !rows.length) {
+        var request = PSRequest.issue('autotune-runs');
+        return PSRequest.getJson('/api/autotune-runs').then(function (res) {
+            if (!PSRequest.isLatest('autotune-runs', request)) return;
+            if (!res.ok) {
+                // A lapsed session goes to the login page; any other answer is not a list of runs.
+                if (res.kind === 'unauthorized') { PSRequest.goLogin(); return; }
+                setRunsNotice(list, RUNS_NOT_REFRESHED_TEXT);
+                return;
+            }
+            var rows = res.body;
+            if (!Array.isArray(rows)) {
+                // An error object is not an empty list: keep the cards and say so.
+                setRunsNotice(list, RUNS_NOT_REFRESHED_TEXT);
+                return;
+            }
+            try {
+                setRunsNotice(list, '');
+                if (!rows.length) {
                     list.innerHTML =
                         '<div style="text-align:center;padding:1rem;' +
                         'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No tuning runs recorded yet.</div>';
@@ -798,14 +862,11 @@
                 renderOlderAutotuneRuns(parts.older);
                 // Last, and on its own: the cards are on screen whatever the chart does.
                 renderAutotuneSparkline(rows);
-            })
-            .catch(function (err) {
-                list.innerHTML =
-                    '<div style="text-align:center;padding:1rem;' +
-                    'color:' + cssVar('--studio-neg') + ';">Failed to load runs: ' + escHtml(err.message) + '</div>';
-                var olderDetails = document.getElementById('autotune-older-runs');
-                if (olderDetails) olderDetails.hidden = true;
-            });
+            } catch (err) {
+                console.error('autotune runs render failed', err);
+                setRunsNotice(list, RUNS_NOT_REFRESHED_TEXT);
+            }
+        });
     }
 
     // ---------------------------------------------------------------------------
@@ -983,8 +1044,8 @@
     // Strategy Builder tab functions (moved from inline script in deleted
     // ai_advisor_strategy_builder.html — AC5 of the SPA-port fold-in).
     //
-    // These functions are defined inside the IIFE so they share the _csrfToken
-    // closure, then exposed on window so Jinja onclick="sbRunAnalysis()" works.
+    // These functions are defined inside the IIFE, then exposed on window so
+    // Jinja onclick="sbRunAnalysis()" works.
     // ---------------------------------------------------------------------------
 
     /**
@@ -1013,9 +1074,9 @@
     /**
      * Strategy Builder run trigger.
      *
-     * Reads objective/universe/symphony from the controls panel, obtains the
-     * CSRF token from the prefetched _csrfToken (or fetches fresh on miss),
-     * then POSTs to /ai-advisor/strategy-builder/run with X-CSRF-Token header.
+     * Reads objective/universe/symphony from the controls panel and POSTs to
+     * /ai-advisor/strategy-builder/run through PSRequest.postAction (the CSRF token
+     * is the tab's own; a refused run says it was not sent and is never repeated).
      *
      * On success: renders the response IN-PLACE into #sb-run-results (survivor
      * cards, 0-survivor honest state, rejected-candidates collapsible) — never
@@ -1085,15 +1146,6 @@
         }
 
         try {
-            // Obtain CSRF token — use cached value or fetch fresh.
-            var csrfToken = _csrfToken;
-            if (!csrfToken) {
-                var tokenResp = await fetch('/api/csrf-token');
-                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
-                var tokenData = await tokenResp.json();
-                csrfToken = tokenData.csrf_token;
-            }
-
             // Build payload from the strategy-builder controls.
             var objective = (document.getElementById('sb-objective-select') || {}).value || 'diversify';
             var universeRaw = (document.getElementById('sb-universe-input') || {}).value || '';
@@ -1103,16 +1155,25 @@
             var symphonyId = (document.getElementById('sb-symphony-select') || {}).value || '';
 
             // POST to the unchanged action route.
-            var resp = await fetch('/ai-advisor/strategy-builder/run', {
+            var res = await PSRequest.postAction('/ai-advisor/strategy-builder/run', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRF-Token': csrfToken,
+                    'X-CSRF-Token': PSRequest.csrfToken() || '',
                 },
                 body: JSON.stringify({ objective: objective, universe: universe, symphony_id: symphonyId }),
             });
-
-            var data = await resp.json();
+            if (res.networkError) { throw new Error('network error'); }
+            if (res.refused === 'csrf') {
+                if (errDiv) {
+                    errDiv.textContent = PSRequest.notSentText(res, 'Click Run analysis again.');
+                    errDiv.style.display = 'block';
+                }
+                if (resultsDiv) { resultsDiv.innerHTML = ''; }
+                return;
+            }
+            var data = res.body;
+            if (!data) { throw new Error('the answer could not be read (HTTP ' + res.status + ')'); }
             if (data.error) {
                 // AC-11: error_category is a richer, still-sanitized cause token
                 // (a type(exc).__name__-shaped string) alongside the static
@@ -1258,60 +1319,120 @@
     // ---------------------------------------------------------------------------
     // Frontrunner Builder tab functions.
     //
-    // Defined inside the IIFE so they share the _csrfToken closure, then
-    // exposed on window so Jinja onclick="..." works.
+    // Defined inside the IIFE, then exposed on window so Jinja onclick="..." works.
     // ---------------------------------------------------------------------------
+
+    // After a build is started the tab asks for its outcome every FR_BUILD_POLL_INTERVAL_MS and gives
+    // up after FR_BUILD_POLL_TIMEOUT_MS. The poll is bounded, begins with the operator's click, and reads
+    // one small read-only route; the 15 s floor for unattended refresh is kept.
+    var FR_BUILD_POLL_INTERVAL_MS = 15000;
+    var FR_BUILD_POLL_TIMEOUT_MS = 1800000;
+    var FR_BUILD_LOST_TEXT = 'Build still running or lost; reload to check';
+    // True from the click that starts a build until the page shows its outcome (or gives up): the
+    // button stays disabled meanwhile and a second start from this tab sends nothing.
+    var _frBuildActive = false;
 
     /**
      * Frontrunner Builder run trigger.
      *
      * POSTs to /ai-advisor/frontrunner-builder/run. The route dispatches the
      * (genuinely multi-minute, all-live-symphonies) build to a background
-     * executor and returns immediately — there is no synchronous result to
-     * render. On success this shows a status message telling the operator to
-     * reload the page later; it deliberately does NOT auto-navigate (unlike
-     * sbRunAnalysis) since results are not ready yet when the response lands.
+     * executor and answers 202 with a run id. The button then stays disabled and
+     * the tab polls GET /api/frontrunner-build/last-run until the summary of THAT
+     * run appears: "Build finished: N new proposals", or the failure with its code.
+     * After 30 minutes with no outcome (a build lost to a restart included) it
+     * enables the button again and says so. It never navigates away.
      */
     async function frRunBuild() {
         var btn = document.getElementById('fr-run-btn');
         var statusDiv = document.getElementById('fr-run-status');
         var errDiv = document.getElementById('fr-run-error');
-        if (!btn) { return; }
+        if (!btn || btn.disabled || _frBuildActive) { return; }
 
+        _frBuildActive = true;
         btn.disabled = true;
         btn.textContent = 'Starting…';
         if (statusDiv) { statusDiv.textContent = ''; }
         if (errDiv) { errDiv.style.display = 'none'; errDiv.textContent = ''; }
 
-        try {
-            var csrfToken = _csrfToken;
-            if (!csrfToken) {
-                var tokenResp = await fetch('/api/csrf-token');
-                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
-                var tokenData = await tokenResp.json();
-                csrfToken = tokenData.csrf_token;
-            }
-
-            var resp = await fetch('/ai-advisor/frontrunner-builder/run', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                body: JSON.stringify({}),
-            });
-            var data = await resp.json();
-
-            if (data && data.error) {
-                if (errDiv) { errDiv.textContent = data.error; errDiv.style.display = 'block'; }
-            } else if (statusDiv) {
-                statusDiv.textContent =
-                    'Build started in the background — this can take several minutes for ' +
-                    'multiple symphonies. Reload this page afterward to see new proposals.';
-            }
-        } catch (err) {
-            if (errDiv) { errDiv.textContent = 'Request failed: ' + err.message; errDiv.style.display = 'block'; }
-        } finally {
+        function showError(text) {
+            if (errDiv) { errDiv.textContent = text; errDiv.style.display = 'block'; }
+        }
+        function finish() {
+            _frBuildActive = false;
             btn.disabled = false;
             btn.textContent = 'Run build';
         }
+
+        var res = await PSRequest.postAction('/ai-advisor/frontrunner-builder/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
+            body: JSON.stringify({}),
+        });
+        var data = res.body;
+        if (res.networkError) {
+            showError('Request failed: network error');
+            finish();
+            return;
+        }
+        if (res.refused === 'csrf') {
+            showError(PSRequest.notSentText(res, 'Click Run build again.'));
+            finish();
+            return;
+        }
+        if (data && data.error) {
+            // The route's own refusal (for example a missing API key), in its own words.
+            showError(data.error);
+            finish();
+            return;
+        }
+        if (!(res.status === 202 && data && typeof data.run_id === 'string' && data.run_id)) {
+            showError('The build did not start (HTTP ' + res.status + ').');
+            finish();
+            return;
+        }
+
+        // Started: wait for this run's summary, with the button disabled.
+        btn.textContent = 'Build running…';
+        if (statusDiv) {
+            statusDiv.textContent = 'Build started in the background — this can take several minutes ' +
+                'for multiple symphonies. This page shows the result here when it finishes.';
+        }
+        var runId = data.run_id;
+        var startedAt = Date.now();
+
+        function showOutcome(summary) {
+            if (summary.status === 'completed') {
+                var n = typeof summary.proposals === 'number' ? summary.proposals : 0;
+                if (statusDiv) {
+                    statusDiv.textContent = 'Build finished: ' + n + ' new ' +
+                        (n === 1 ? 'proposal' : 'proposals');
+                }
+            } else {
+                if (statusDiv) { statusDiv.textContent = ''; }
+                showError('Build failed' + (summary.error_code ? ' (' + String(summary.error_code) + ')' : ''));
+            }
+            finish();
+        }
+
+        async function pollOnce() {
+            if (Date.now() - startedAt >= FR_BUILD_POLL_TIMEOUT_MS) {
+                if (statusDiv) { statusDiv.textContent = FR_BUILD_LOST_TEXT; }
+                finish();
+                return;
+            }
+            var read = await PSRequest.getJson('/api/frontrunner-build/last-run');
+            if (read.ok && read.body && read.body.last_run && read.body.last_run.run_id === runId) {
+                showOutcome(read.body.last_run);
+                return;
+            }
+            if (!read.ok && read.kind === 'unauthorized') {
+                PSRequest.goLogin();
+                return;
+            }
+            setTimeout(pollOnce, FR_BUILD_POLL_INTERVAL_MS);
+        }
+        setTimeout(pollOnce, FR_BUILD_POLL_INTERVAL_MS);
     }
 
     /**
@@ -1331,49 +1452,48 @@
 
         var routePath = action === 'approve' ? '/ai-advisor/proposal/approve' : '/ai-advisor/proposal/reject';
 
-        (async function () {
-            try {
-                var csrfToken = _csrfToken;
-                if (!csrfToken) {
-                    var tokenResp = await fetch('/api/csrf-token');
-                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
-                    var tokenData = await tokenResp.json();
-                    csrfToken = tokenData.csrf_token;
-                }
+        function restore() {
+            if (card) { card.style.opacity = '1'; }
+            if (approveBtn) { approveBtn.disabled = false; }
+            if (rejectBtn) { rejectBtn.disabled = false; }
+        }
 
-                var resp = await fetch(routePath, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                    body: JSON.stringify({ proposal_id: proposalId }),
-                });
-                var data = await resp.json();
-
-                if (data && (data.success === true)) {
-                    if (card) {
-                        card.style.opacity = '1';
-                        var msg = action === 'approve'
-                            ? 'Approved — created in Composer' + (data.symphony_id ? ' (' + escHtml(data.symphony_id) + ')' : '') + '.'
-                            : 'Rejected.';
-                        var actionsRow = card.querySelector('.proposal-actions');
-                        if (actionsRow) {
-                            actionsRow.innerHTML =
-                                '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
-                                msg + '</p>';
-                        }
-                    }
-                } else {
-                    if (card) { card.style.opacity = '1'; }
-                    if (approveBtn) { approveBtn.disabled = false; }
-                    if (rejectBtn) { rejectBtn.disabled = false; }
-                    alert((action === 'approve' ? 'Approve' : 'Reject') + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
-                }
-            } catch (err) {
-                if (card) { card.style.opacity = '1'; }
-                if (approveBtn) { approveBtn.disabled = false; }
-                if (rejectBtn) { rejectBtn.disabled = false; }
-                alert('Request failed: ' + err.message);
+        PSRequest.postAction(routePath, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
+            body: JSON.stringify({ proposal_id: proposalId }),
+        }).then(function (res) {
+            var verb = action === 'approve' ? 'Approve' : 'Reject';
+            if (res.networkError) {
+                restore();
+                alert('Request failed: network error');
+                return;
             }
-        }());
+            if (res.refused === 'csrf') {
+                // Nothing was approved or rejected and nothing is sent again: the buttons come back.
+                restore();
+                alert(PSRequest.notSentText(res, 'Click ' + verb + ' again.'));
+                return;
+            }
+            var data = res.body;
+            if (data && (data.success === true)) {
+                if (card) {
+                    card.style.opacity = '1';
+                    var msg = action === 'approve'
+                        ? 'Approved — created in Composer' + (data.symphony_id ? ' (' + escHtml(data.symphony_id) + ')' : '') + '.'
+                        : 'Rejected.';
+                    var actionsRow = card.querySelector('.proposal-actions');
+                    if (actionsRow) {
+                        actionsRow.innerHTML =
+                            '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                            msg + '</p>';
+                    }
+                }
+            } else {
+                restore();
+                alert(verb + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
+            }
+        });
     }
 
     function frApprove(proposalId) {
@@ -1391,7 +1511,7 @@
      * Shared approve/reject dispatch for a retirement recommendation card
      * (Cycle 2b, AC-5/AC-7; reworked Cycle 2c, AC-7). Mirrors
      * frDispatchProposalAction's direct-element shape: CSRF header from
-     * /api/csrf-token, POST to /ai-advisor/retirement/{approve,reject} with
+     * PSRequest, POST to /ai-advisor/retirement/{approve,reject} with
      * {candidate_id}, disable-on-submit, status-message swap on success.
      *
      * btnEl is the CLICKED button element itself (the Jinja onclick handler
@@ -1421,63 +1541,62 @@
 
         var routePath = action === 'approve' ? '/ai-advisor/retirement/approve' : '/ai-advisor/retirement/reject';
 
-        (async function () {
-            try {
-                var csrfToken = _csrfToken;
-                if (!csrfToken) {
-                    var tokenResp = await fetch('/api/csrf-token');
-                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
-                    var tokenData = await tokenResp.json();
-                    csrfToken = tokenData.csrf_token;
-                }
+        function restore() {
+            if (card) { card.style.opacity = '1'; }
+            if (approveBtn) { approveBtn.disabled = false; }
+            if (rejectBtn) { rejectBtn.disabled = false; }
+        }
 
-                var resp = await fetch(routePath, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
-                    body: JSON.stringify({ candidate_id: candidateId }),
-                });
-                var data = await resp.json();
-
-                if (data && data.success === true) {
-                    if (card) {
-                        card.style.opacity = '1';
-                        // F3: color the confirmation by the actual action taken
-                        // -- a reject confirmation must never render in the
-                        // same success-green used for approve.
-                        var confirmColor = action === 'reject' ? cssVar('--studio-neg') : cssVar('--studio-pos');
-                        var msg = action === 'approve'
-                            ? 'Approved — reload this page to view the wind-down checklist.'
-                            : 'Rejected.';
-                        var actionsRow = card.querySelector('.retirement-rec-actions');
-                        if (actionsRow) {
-                            actionsRow.innerHTML =
-                                '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:700;">' +
-                                msg + '</p>';
-                        }
-                        // F4: the status pill must reflect the new decision
-                        // immediately, not just the actions row -- otherwise a
-                        // stale "Pending" pill sits next to the confirmation
-                        // message until the page is reloaded.
-                        var newStatus = action === 'reject' ? 'rejected' : 'approved';
-                        var statusChip = card.querySelector('[data-testid="retirement-rec-status"]');
-                        if (statusChip) {
-                            statusChip.textContent = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
-                            statusChip.className = 'status-pill ' + RETIREMENT_PILL_CLASS[newStatus];
-                        }
-                    }
-                } else {
-                    if (card) { card.style.opacity = '1'; }
-                    if (approveBtn) { approveBtn.disabled = false; }
-                    if (rejectBtn) { rejectBtn.disabled = false; }
-                    alert((action === 'approve' ? 'Approve' : 'Reject') + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
-                }
-            } catch (err) {
-                if (card) { card.style.opacity = '1'; }
-                if (approveBtn) { approveBtn.disabled = false; }
-                if (rejectBtn) { rejectBtn.disabled = false; }
-                alert('Request failed: ' + err.message);
+        PSRequest.postAction(routePath, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
+            body: JSON.stringify({ candidate_id: candidateId }),
+        }).then(function (res) {
+            var verb = action === 'approve' ? 'Approve' : 'Reject';
+            if (res.networkError) {
+                restore();
+                alert('Request failed: network error');
+                return;
             }
-        }());
+            if (res.refused === 'csrf') {
+                // Nothing was decided and nothing is sent again: the buttons come back.
+                restore();
+                alert(PSRequest.notSentText(res, 'Click ' + verb + ' again.'));
+                return;
+            }
+            var data = res.body;
+            if (data && data.success === true) {
+                if (card) {
+                    card.style.opacity = '1';
+                    // F3: color the confirmation by the actual action taken
+                    // -- a reject confirmation must never render in the
+                    // same success-green used for approve.
+                    var confirmColor = action === 'reject' ? cssVar('--studio-neg') : cssVar('--studio-pos');
+                    var msg = action === 'approve'
+                        ? 'Approved — reload this page to view the wind-down checklist.'
+                        : 'Rejected.';
+                    var actionsRow = card.querySelector('.retirement-rec-actions');
+                    if (actionsRow) {
+                        actionsRow.innerHTML =
+                            '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:700;">' +
+                            msg + '</p>';
+                    }
+                    // F4: the status pill must reflect the new decision
+                    // immediately, not just the actions row -- otherwise a
+                    // stale "Pending" pill sits next to the confirmation
+                    // message until the page is reloaded.
+                    var newStatus = action === 'reject' ? 'rejected' : 'approved';
+                    var statusChip = card.querySelector('[data-testid="retirement-rec-status"]');
+                    if (statusChip) {
+                        statusChip.textContent = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
+                        statusChip.className = 'status-pill ' + RETIREMENT_PILL_CLASS[newStatus];
+                    }
+                }
+            } else {
+                restore();
+                alert(verb + ' failed: ' + (data && data.error ? data.error : 'unknown error'));
+            }
+        });
     }
 
     // ---------------------------------------------------------------------------
@@ -1499,7 +1618,7 @@
      * Start a retirement-recommender run on demand and reload the page when it
      * lands.
      *
-     * POSTs to /ai-advisor/retirement/run (CSRF header from /api/csrf-token),
+     * POSTs to /ai-advisor/retirement/run (CSRF header from PSRequest),
      * which hands the multi-minute worker to a background thread and answers
      * 202 immediately -- or 409 {"status": "market_open"} while the market is
      * open (Run now is refused: the Composer API is shared with the live
@@ -1539,20 +1658,18 @@
             // The run id on file BEFORE we start: the poll below is done when it changes.
             var priorRunId = await readLastRunId();
 
-            var csrfToken = _csrfToken;
-            if (!csrfToken) {
-                var tokenResp = await fetch('/api/csrf-token');
-                if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
-                var tokenData = await tokenResp.json();
-                csrfToken = tokenData.csrf_token;
-            }
-
-            var resp = await fetch('/ai-advisor/retirement/run', {
+            var resp = await PSRequest.postAction('/ai-advisor/retirement/run', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
             });
-            var data = null;
-            try { data = await resp.json(); } catch (parseErr) { data = null; }
+            if (resp.networkError) { throw new Error('network error'); }
+            if (resp.refused === 'csrf') {
+                // Nothing started and nothing is sent again: the next click sends one request.
+                setStatus(PSRequest.notSentText(resp, 'Click Run now again.'));
+                if (btnEl) { btnEl.disabled = false; }
+                return;
+            }
+            var data = resp.body;
 
             // The route answers 409 for BOTH market_open and already_running, so
             // this check must come first or the generic 409 branch swallows it.
@@ -1603,12 +1720,12 @@
     window.retDispatchDecision = retDispatchDecision;
     window.retirementRunNow = retirementRunNow;
 
-    // "Run review now": one bodyless POST. Statuses 202, 409, 401, 403 and any
-    // other non-200 show fixed text; a 200 carrying an error key shows the
-    // server's error text (an exception type name). Every message is set with
-    // textContent, never a thrown error's message. The global hooks answer an
-    // unauthenticated XHR with 401 JSON and a missing CSRF token with a 403 HTML
-    // page; neither body is parsed. A refusal gets the negative-token class; the next attempt clears it.
+    // "Run review now": one bodyless POST. Statuses 202, 409, 401 and any other
+    // non-200 show fixed text; a 403 (the session check) is said as not sent and
+    // is never repeated; a 200 carrying an error key shows the server's error
+    // text (an exception type name). Every message is set with textContent,
+    // never a thrown error's message. A refusal gets the negative-token class;
+    // the next attempt clears it.
     function retRunReview(btnEl) {
         if (!btnEl || btnEl.disabled) { return; }
         btnEl.disabled = true;
@@ -1618,45 +1735,31 @@
             messageEl.textContent = text;
             messageEl.classList.toggle('tenure-review-run-message--refused', !!refused);
         }
-        (async function () {
-            try {
-                var token = _csrfToken;
-                if (!token) {
-                    var tokenResp = await fetch('/api/csrf-token');
-                    if (!tokenResp.ok) { throw new Error('Could not obtain CSRF token'); }
-                    var tokenData = await tokenResp.json();
-                    token = tokenData.csrf_token;
-                }
-                var resp = await fetch('/ai-advisor/retirement/review/run', {
-                    method: 'POST',
-                    headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
-                });
-                if (resp.status === 202) {
-                    show('Review started: reload this page when it finishes', false);
-                } else if (resp.status === 409) {
-                    show('a review is already running', false);
-                } else if (resp.status === 401) {
-                    show('Session expired: sign in again', true);
-                } else if (resp.status === 403) {
-                    show('Request refused: reload the page', true);
-                } else if (resp.status === 200) {
-                    var refusal = '';
-                    try {
-                        var body = await resp.json();
-                        if (body && typeof body.error === 'string') { refusal = body.error.trim(); }
-                    } catch (parseErr) {
-                        refusal = '';
-                    }
-                    show(refusal || 'Request failed: HTTP 200', true);
-                } else {
-                    show('Request failed: HTTP ' + resp.status, true);
-                }
-            } catch (err) {
+        PSRequest.postAction('/ai-advisor/retirement/review/run', {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
+        }).then(function (res) {
+            if (res.networkError) {
                 show('Request failed: network error', true);
-            } finally {
-                btnEl.disabled = false;
+            } else if (res.refused === 'csrf') {
+                // Nothing started and nothing is sent again: the next click sends one request.
+                show(PSRequest.notSentText(res, 'Click Run review now again.'), true);
+            } else if (res.status === 202) {
+                show('Review started: reload this page when it finishes', false);
+            } else if (res.status === 409) {
+                show('a review is already running', false);
+            } else if (res.status === 401) {
+                show('Session expired: sign in again', true);
+            } else if (res.status === 200) {
+                var refusal = '';
+                var body = res.body;
+                if (body && typeof body.error === 'string') { refusal = body.error.trim(); }
+                show(refusal || 'Request failed: HTTP 200', true);
+            } else {
+                show('Request failed: HTTP ' + res.status, true);
             }
-        })();
+            btnEl.disabled = false;
+        });
     }
     window.retRunReview = retRunReview;
 

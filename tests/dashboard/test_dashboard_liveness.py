@@ -117,6 +117,25 @@ def _minutes_text(ms: int) -> str:
 # ---------------------------------------------------------------------------
 
 
+class TestTheWorldHoldsAHealthySchedulerWhateverTheProcessAge:
+    """The bodies every scenario starts from carry no degraded reason, however long the test process has run.
+
+    The real health check counts from the daemon's start when no scheduler tick was stamped, so a world
+    built late in a long run (CI builds it after many other files) read "Degraded" on every label test.
+    """
+
+    def test_a_world_built_in_an_old_process_reports_no_degraded_reason(self, monkeypatch):
+        import app as app_module
+
+        threshold = app_module._HEALTH_SCHEDULER_STALL_S
+        monkeypatch.setattr(
+            app_module, "_DAEMON_STARTED_MONO", app_module._monotonic() - 10 * threshold
+        )
+        monkeypatch.setattr(app_module, "_scheduler_last_tick_mono", None)
+        world = hx._build_world(WORLD)
+        assert world["state"]["degraded_reasons"] == []
+
+
 class TestTheAgeCue:
     def test_after_90_seconds_without_data_the_header_and_the_as_of_say_so(self):
         body = poll_body()

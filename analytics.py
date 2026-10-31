@@ -2429,7 +2429,6 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     """
     import glob as _glob
     import json as _json
-    from datetime import date as _date
 
     # BL-5 (DE-AUDIT-BL5-001, audit #118 D3): window boundary derived via the
     # SAME shared cutoff helper /api/guard-alpha-summary and /api/strip/<window>
@@ -2521,7 +2520,9 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     stats["daily_dates"] = sorted(daily_map)
     stats["daily_exits"] = daily_exits_map
 
-    today_str = _date.today().isoformat()
+    # "Today" is the Eastern trading date, not the host's: the host runs on UTC, whose date moves on
+    # at 20:00 EDT, which would switch "Today's exits" to a file that does not exist yet.
+    today_str = datetime.now(_ET_STAMP_ZONE).date().isoformat()
     today_file = os.path.join(base_dir, "post_mortem_" + today_str + ".json")
     todays_exits: list = []
     try:

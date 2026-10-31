@@ -1,14 +1,5 @@
 'use strict';
 
-/** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
-var _chromeCsrfToken = null;
-document.addEventListener('DOMContentLoaded', function () {
-  fetch('/api/csrf-token')
-    .then(function (r) { return r.json(); })
-    .then(function (b) { _chromeCsrfToken = b.csrf_token || null; })
-    .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-});
-
 // ── Force-run button (FP-T3-02) ────────────────────────────────────────────
 // The route is disabled by design (the dashboard never spawns the engine): it answers 200
 // with a message saying runs come from the scheduler. The button shows the route's own
@@ -16,6 +7,8 @@ document.addEventListener('DOMContentLoaded', function () {
 var FORCE_RUN_LABEL = 'Force run now';
 var FORCE_RUN_RESULT_MS = 2000;   // "Triggered!" / "Error" stay this long
 var FORCE_RUN_MESSAGE_MS = 6000;  // the route's sentence needs longer to read
+var FORCE_RUN_NOT_SENT_TEXT = 'Not sent: click again';
+var FORCE_RUN_NOT_SENT_OFFLINE_TEXT = 'Not sent: connection failed, click again';
 
 function forceRun(e) {
   var btn = document.querySelector('[data-testid="force-run-btn"]');
@@ -29,29 +22,33 @@ function forceRun(e) {
       btn.disabled = false;
     }, holdMs);
   }
-  fetch('/api/trigger', { method: 'POST', headers: { 'X-CSRF-Token': _chromeCsrfToken || '' } })
-    .then(function (r) {
-      var ok = r.ok;
-      // A body that is not JSON (a proxy page, the CSRF refusal's HTML) is an error, even on 2xx.
-      return r.json().then(
-        function (d) { return { ok: ok, readable: true, body: d }; },
-        function () { return { ok: ok, readable: false, body: null }; }
-      );
-    })
-    .then(function (res) {
-      var message = (res.body && typeof res.body.message === 'string') ? res.body.message : '';
-      if (!res.readable) {
-        settle('Error', FORCE_RUN_RESULT_MS);
-      } else if (message) {
-        settle(message, FORCE_RUN_MESSAGE_MS);
-      } else {
-        settle(res.ok ? 'Triggered!' : 'Error', FORCE_RUN_RESULT_MS);
-      }
-      if (typeof window.loadState === 'function') window.loadState();
-    })
-    .catch(function () {
+  PSRequest.postAction('/api/trigger', {
+    method: 'POST',
+    headers: { 'X-CSRF-Token': PSRequest.csrfToken() || '' }
+  }).then(function (res) {
+    if (res.networkError) {
       settle('Error', FORCE_RUN_RESULT_MS);
-    });
+      return;
+    }
+    if (res.refused === 'csrf') {
+      // The session check refused the request: nothing ran and nothing is sent again. The next
+      // click uses the token just read (or, when that read failed too, says why it cannot).
+      settle(res.tokenRefreshed ? FORCE_RUN_NOT_SENT_TEXT : FORCE_RUN_NOT_SENT_OFFLINE_TEXT,
+        FORCE_RUN_RESULT_MS);
+      return;
+    }
+    // A body that is not JSON (a proxy page) is an error, even on 2xx.
+    var readable = res.body !== null;
+    var message = (res.body && typeof res.body.message === 'string') ? res.body.message : '';
+    if (!readable) {
+      settle('Error', FORCE_RUN_RESULT_MS);
+    } else if (message) {
+      settle(message, FORCE_RUN_MESSAGE_MS);
+    } else {
+      settle(res.ok ? 'Triggered!' : 'Error', FORCE_RUN_RESULT_MS);
+    }
+    if (typeof window.loadState === 'function') window.loadState();
+  });
 }
 document.addEventListener('DOMContentLoaded', function () {
   var forceRunBtn = document.querySelector('[data-testid="force-run-btn"]');
@@ -160,7 +157,7 @@ function escHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/\x22/g, '&quot;');
 }
 
 // ── Emergency Liquidate modal ─────────────────────────────────────────────
@@ -203,6 +200,10 @@ window.openPanicModal = openPanicModal;
 // What the operator is told about a /api/sell_account answer. Only text is produced here
 // (shown through alert); the request itself is built in submitPanicLiquidation and is the
 // same for every answer. A refusal never claims a liquidation and never goes unshown.
+var PANIC_CONFIRM_AGAIN = 'Click Confirm again.';
+var PANIC_SESSION_REFUSAL = 'The session check refused the request (HTTP 403), so nothing was liquidated.';
+var PANIC_TOKEN_UNREADABLE = 'Not sent: the connection failed, so the session could not be refreshed.';
+
 function _panicAnswerText(res) {
   var d = (res.body && typeof res.body === 'object') ? res.body : {};
   if (res.ok) {
@@ -212,11 +213,12 @@ function _panicAnswerText(res) {
     }
     return d.message || (d.executed ? 'Liquidation initiated.' : 'Dry-run: no action taken.');
   }
-  if (typeof d.message === 'string' && d.message) return d.message;
-  if (res.status === 403) {
-    return 'The session check refused the request (HTTP 403), so nothing was liquidated. ' +
-      'Reload the page and try again.';
+  if (res.refused === 'csrf') {
+    // Nothing was sent twice and nothing will be: the next Confirm click sends one new request.
+    return PANIC_SESSION_REFUSAL + ' ' +
+      (res.tokenRefreshed ? '' : PANIC_TOKEN_UNREADABLE + ' ') + PANIC_CONFIRM_AGAIN;
   }
+  if (typeof d.message === 'string' && d.message) return d.message;
   return 'The server refused the liquidation request (HTTP ' + res.status +
     '), so nothing was liquidated.';
 }
@@ -228,24 +230,21 @@ function submitPanicLiquidation() {
   var accountId = accountEl.value;
   var phrase = phraseEl.value;
   if (phrase !== 'LIQUIDATE') return;
-  fetch('/api/sell_account', {
+  PSRequest.postAction('/api/sell_account', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _chromeCsrfToken || '' },
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
     body: JSON.stringify({ account_id: accountId, confirm_account_id: accountId, confirm_phrase: phrase }),
-  }).then(function (r) {
-    var status = r.status;
-    var ok = r.ok;
-    return r.json().then(
-      function (d) { return { status: status, ok: ok, readable: true, body: d }; },
-      function () { return { status: status, ok: ok, readable: false, body: null }; }
-    );
   }).then(function (res) {
     closePanicModal();
-    alert(_panicAnswerText(res));
-  }, function () {
-    closePanicModal();
-    alert('The liquidation request could not be sent, so nothing was liquidated. ' +
-      'Check the connection and try again.');
+    if (res.networkError) {
+      alert('The liquidation request could not be sent, so nothing was liquidated. ' +
+        'Check the connection and try again.');
+      return;
+    }
+    alert(_panicAnswerText({
+      status: res.status, ok: res.ok, readable: res.body !== null, body: res.body,
+      refused: res.refused, tokenRefreshed: res.tokenRefreshed
+    }));
   });
 }
 window.submitPanicLiquidation = submitPanicLiquidation;
@@ -484,6 +483,78 @@ setInterval(function () {
   renderCountdown();
 }, 1000);
 
+// ── Header status poll (every page but the dashboard) ─────────────────────
+// A page that carries data-header-poll="1" on its nav has no /api/state poll of its own, so the header
+// would stay as the server rendered it: "Live" long after the close, a countdown that never counts,
+// a mode pill that never follows the live flag. This poll reads GET /api/header-status (a few hundred
+// bytes, no heavy state) and feeds the same functions the dashboard's poll feeds, so the labels follow
+// one precedence everywhere. The dashboard (no attribute) is driven by its own /api/state poll.
+//
+// Cadence: one read at load, then every HEADER_STATUS_POLL_MS (the engine cycles once a minute, so
+// 30 s keeps the label within a cycle of the truth and stays above the 15 s floor for polling). A tab
+// shown again, a page restored from the back-forward cache and the network returning each read at
+// once; signals inside RETURN_COALESCE_MS of each other send one read.
+var HEADER_STATUS_POLL_MS = 30000;
+var RETURN_COALESCE_MS = 1000;
+var HEADER_STATUS_URL = '/api/header-status';
+
+/** The operator's own account pick is never overwritten; until one is made the label follows the
+ *  account the server reports. */
+function applyWorkspaceLabel(meta) {
+  if (window.activeAccount) return;
+  var account = meta && typeof meta === 'object' ? meta.account : null;
+  if (!account || typeof account !== 'object') return;
+  var label = document.getElementById('ws-label');
+  var uuidEl = document.getElementById('ws-uuid');
+  if (label && typeof account.label === 'string') label.textContent = account.label;
+  if (uuidEl && typeof account.uuid_short === 'string') uuidEl.textContent = account.uuid_short;
+}
+
+function _headerBodyIsData(body) {
+  return !!body && typeof body === 'object' && body.status !== 'error';
+}
+
+/** One read of the header status. The newest read issued is the only one drawn. */
+function readHeaderStatus() {
+  var n = PSRequest.issue('header');
+  return PSRequest.getJson(HEADER_STATUS_URL).then(function (res) {
+    if (!PSRequest.isLatest('header', n)) return;
+    if (res.ok && _headerBodyIsData(res.body)) {
+      noteDataReceived(res.timing);
+      updateChromeTicker(res.body, res.timing);
+      updateModeIndicators(res.body.meta);
+      applyWorkspaceLabel(res.body.meta);
+      PSRequest.noteDaemonStart(res.body.daemon_started_at);
+    } else if (!res.ok && res.kind === 'unauthorized') {
+      PSRequest.goLogin();
+    } else {
+      noteRefreshFailed();
+    }
+  });
+}
+window.readHeaderStatus = readHeaderStatus;
+
+var _lastHeaderReturnMono = null;
+function headerCatchUp() {
+  var now = performance.now();
+  if (_lastHeaderReturnMono !== null && now - _lastHeaderReturnMono < RETURN_COALESCE_MS) return;
+  _lastHeaderReturnMono = now;
+  readHeaderStatus();
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  if (!document.querySelector('[data-header-poll="1"]')) return;
+  readHeaderStatus();
+  setInterval(readHeaderStatus, HEADER_STATUS_POLL_MS);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') headerCatchUp();
+  });
+  window.addEventListener('pageshow', function (evt) {
+    if (evt && evt.persisted) headerCatchUp();
+  });
+  window.addEventListener('online', headerCatchUp);
+});
+
 // ── Candidate alert: header badge for new weekly-suggestion survivors ─────
 // (feature-plans/candidate-alert.md AC-1..AC-6). chrome.js — not index.js —
 // because chrome.js is the only JS asset shared by all 4 screens (loaded via
@@ -530,11 +601,13 @@ window.fetchCandidateAlert = fetchCandidateAlert;
 // is about to navigate away. Best-effort: a failure here must never block
 // or interfere with the navigation itself (AC-4 works without JS at all).
 function markCandidateAlertViewed() {
-  fetch('/api/candidate-alert/mark-viewed', {
+  // A refusal (a stale token) only refreshes the token inside postAction: the badge keeps its
+  // count and the next click sends one new request.
+  PSRequest.postAction('/api/candidate-alert/mark-viewed', {
     method: 'POST',
-    headers: { 'X-CSRF-Token': _chromeCsrfToken || '' },
+    headers: { 'X-CSRF-Token': PSRequest.csrfToken() || '' },
     keepalive: true,
-  }).catch(function () { /* best-effort — navigation proceeds regardless */ });
+  });
 }
 window.markCandidateAlertViewed = markCandidateAlertViewed;
 

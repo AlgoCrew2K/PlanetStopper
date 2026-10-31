@@ -37,6 +37,7 @@ import subprocess
 from tests.dashboard._first_paint_dom import _HARNESS_JS, parse_markup
 
 AI_ADVISOR_JS = pathlib.Path(__file__).resolve().parents[1] / "static" / "ai_advisor.js"
+REQUEST_GUARD_JS = AI_ADVISOR_JS.with_name("request_guard.js")
 
 _PRELUDE = _HARNESS_JS.split("const rootEl = build(cfg.tree);")[0]
 
@@ -148,6 +149,8 @@ const sandbox = {
   },
   fetch: fetchStub,
   Date: FakeDate,
+  // The token holder times its reads; monotonic time moves with the virtual clock.
+  performance: { now: () => now - cfg.startMs + 1000 },
   setTimeout(fn, ms) { const id = ++timerSeq; timers.push({ id, at: now + (ms || 0), fn, interval: null }); return id; },
   setInterval(fn, ms) { const id = ++timerSeq; timers.push({ id, at: now + ms, fn, interval: ms }); return id; },
   clearTimeout(id) { const i = timers.findIndex((t) => t.id === id); if (i >= 0) timers.splice(i, 1); },
@@ -234,6 +237,7 @@ function pick(sel) {
 
 (async () => {
   const out = { initial: null, loaded: null, steps: [], requests, errors, ready: false };
+  run(cfg.guardScript, 'request_guard.js');
   run(cfg.script, 'ai_advisor.js');
   out.initial = observe();
   (docListeners['DOMContentLoaded'] || []).forEach((f) => {
@@ -373,6 +377,8 @@ def run_advisor_page(
     merged = {**DEFAULT_ROUTES, **(routes or {})}
     cfg = {
         "tree": parse_markup(html),
+        # The page loads the token holder before ai_advisor.js (templates/_chrome.html).
+        "guardScript": REQUEST_GUARD_JS.read_text(encoding="utf-8"),
         "script": AI_ADVISOR_JS.read_text(encoding="utf-8"),
         "routes": merged,
         "steps": steps or [],

@@ -35,6 +35,7 @@ import shutil
 import subprocess
 
 AI_ADVISOR_JS = pathlib.Path(__file__).resolve().parents[1] / "static" / "ai_advisor.js"
+REQUEST_GUARD_JS = AI_ADVISOR_JS.with_name("request_guard.js")
 
 _HARNESS = r"""
 const fs = require("fs");
@@ -54,6 +55,7 @@ function makeEl(id, testid, extra) {
     hasAttribute(name) { return name in this.attrs; },
     setAttribute(name, value) {
       this.attrs[name] = String(value);
+      if (name === "data-testid") { this.testid = String(value); byTestid[this.testid] = this; }
       if (name === "hidden") this.hidden = true;
       if (name === "open") this.open = true;
     },
@@ -63,6 +65,7 @@ function makeEl(id, testid, extra) {
       if (name === "open") this.open = false;
     },
     appendChild(child) { return child; },
+    insertBefore(child) { link(this, child); return child; },
     getContext() { return { canvas: this }; },
     querySelector(sel) { return findIn(this, sel); },
     querySelectorAll() { return []; },
@@ -172,6 +175,7 @@ const context = {
   setTimeout, clearTimeout, setInterval: (fn) => { intervals.push(fn); return intervals.length; },
   getComputedStyle: () => ({ getPropertyValue: () => "" }),
   sessionStorage: { setItem() {}, getItem() { return null; } },
+  performance: { now: () => Date.now() },
 };
 if (cfg.chart) context.Chart = Chart;
 const ctx = vm.createContext(context);
@@ -196,6 +200,7 @@ function snapshot() {
       listRecreated: olderList.recreated,
     },
     canvas: { displayed: isDisplayed(canvas) },
+    notice: byTestid["autotune-runs-notice"] ? byTestid["autotune-runs-notice"].textContent : null,
     chart: {
       constructed: constructed.slice(),
       thrown: thrown.slice(),
@@ -208,6 +213,9 @@ function snapshot() {
 }
 
 (async () => {
+  // The page loads the token holder before ai_advisor.js (templates/_chrome.html); its global is bare in a browser.
+  vm.runInContext(fs.readFileSync(cfg.guard_path, "utf8"), ctx, { filename: "request_guard.js" });
+  ctx.PSRequest = win.PSRequest;
   vm.runInContext(fs.readFileSync(cfg.js_path, "utf8"), ctx);
   const out = [];
   for (const step of cfg.steps) {
@@ -239,7 +247,13 @@ def drive(steps: list[dict], routes: dict, *, chart: bool = True) -> list[dict]:
     """
     assert shutil.which("node"), "node is required to run the real advisor script"
     payload = json.dumps(
-        {"routes": routes, "steps": steps, "chart": chart, "js_path": str(AI_ADVISOR_JS)}
+        {
+            "routes": routes,
+            "steps": steps,
+            "chart": chart,
+            "js_path": str(AI_ADVISOR_JS),
+            "guard_path": str(REQUEST_GUARD_JS),
+        }
     )
     result = subprocess.run(
         ["node", "-e", _HARNESS],

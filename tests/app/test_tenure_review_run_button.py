@@ -37,6 +37,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _JS_PATH = REPO_ROOT / "static" / "ai_advisor.js"
+_GUARD_JS_PATH = REPO_ROOT / "static" / "request_guard.js"
 
 RUN_URL = "/ai-advisor/retirement/review/run"
 CSRF_URL = "/api/csrf-token"
@@ -47,8 +48,13 @@ MESSAGES = {
     202: "Review started: reload this page when it finishes",
     409: "a review is already running",
     401: "Session expired: sign in again",
-    403: "Request refused: reload the page",
 }
+
+
+def _says_not_sent(message: str) -> bool:
+    """A 403 is the session check refusing the click: the control says nothing was sent and which click
+    sends it (the wording belongs to the shared helper, so the contract is what it must convey)."""
+    return bool(re.search(r"not sent", message, re.I) and re.search(r"click", message, re.I))
 
 
 def _source() -> str:
@@ -144,15 +150,16 @@ var document = {
   getElementById: function (id) { return __lookup('#' + id); },
   querySelector: function (sel) { return __lookup(sel); },
   querySelectorAll: function (sel) { var e = __lookup(sel); return e ? [e] : []; },
-  addEventListener: function () {},
+  addEventListener: function (type, fn) { if (type === 'DOMContentLoaded') { __domReady.push(fn); } },
   documentElement: { dataset: {} }
 };
+var __domReady = [];
 var window = {};
+var location = { assign: function () {} };
 function cssVar(name) { return 'var(' + name + ')'; }
 function escHtml(s) { return String(s); }
 function alert(text) { __log.alerts.push(String(text)); }
 
-var _csrfToken = __CSRF_PRESET__;
 var __scenario = __SCENARIO__;
 var __pendingRun = null;
 
@@ -186,7 +193,7 @@ function fetch(url, opts) {
   if (String(url) === '__CSRF_URL__') {
     if (__scenario.csrf === 'fail') { return Promise.resolve(__response({ status: 500, kind: 'html' })); }
     if (__scenario.csrf === 'unparsable') { return Promise.resolve(__response({ status: 200, kind: 'html' })); }
-    return Promise.resolve(__response({ status: 200, kind: 'json', body: { csrf_token: 'fetched-token' } }));
+    return Promise.resolve(__response({ status: 200, kind: 'json', body: { csrf_token: __scenario.token } }));
   }
   var spec = __nextRun();
   if (spec.mode === 'network-error') {
@@ -197,6 +204,11 @@ function fetch(url, opts) {
   }
   return Promise.resolve(__response(spec));
 }
+
+// The page loads the token holder before ai_advisor.js (templates/_chrome.html) and the holder reads
+// its token once when the page loads.
+__GUARD__
+var PSRequest = window.PSRequest;
 
 __FUNCTION__
 
@@ -214,6 +226,8 @@ function __state() {
 
 (async function () {
   var out = {};
+  __domReady.forEach(function (fn) { fn(); });
+  await __flush();
   __DRIVER__
   out.log = __log;
   console.log(JSON.stringify(out));
@@ -235,8 +249,19 @@ def _run(
     script = (
         _HARNESS.replace("__BUTTON__", BUTTON_TESTID)
         .replace("__MESSAGE__", MESSAGE_TESTID)
-        .replace("__CSRF_PRESET__", json.dumps(csrf_preset))
-        .replace("__SCENARIO__", json.dumps({"run": run, "csrf": csrf, "errorText": error_text}))
+        .replace(
+            "__SCENARIO__",
+            json.dumps(
+                {
+                    "run": run,
+                    # The token the page's holder reads at load; none means the read fails.
+                    "token": csrf_preset,
+                    "csrf": csrf if csrf_preset is not None or csrf != "ok" else "fail",
+                    "errorText": error_text,
+                }
+            ),
+        )
+        .replace("__GUARD__", _GUARD_JS_PATH.read_text(encoding="utf-8"))
         .replace("__CSRF_URL__", CSRF_URL)
         .replace("__RUN_URL__", RUN_URL)
         .replace("__FUNCTION__", function)
@@ -278,31 +303,40 @@ class TestRequestShape:
         assert headers.get("x-requested-with") == "XMLHttpRequest"
         assert headers.get("x-csrf-token") == "page-held-token"
         assert opts.get("body") in (None, ""), "the run action reads no request body"
-        assert [f for f in out["log"]["fetches"] if f["url"] == CSRF_URL] == [], (
-            "a token the page already holds must not be fetched again"
+        assert [f["url"] for f in out["log"]["fetches"]] == [CSRF_URL, RUN_URL], (
+            "a token the page already holds must not be fetched again by the click"
         )
 
-    def test_without_a_page_token_it_fetches_one_first_and_sends_that(self):
+    def test_a_page_with_no_token_still_sends_one_post_with_an_empty_token_and_reads_none_first(
+        self,
+    ):
         out = _run(
             _CLICK_AND_SETTLE,
-            run={"mode": "status", "status": 202, "kind": "json", "body": {"status": "started"}},
+            run={"mode": "status", "status": 403, "kind": "html"},
             csrf_preset=None,
         )
-        urls = [f["url"] for f in out["log"]["fetches"]]
-        assert urls == [CSRF_URL, RUN_URL]
-        assert _headers(out["log"]["fetches"][1]).get("x-csrf-token") == "fetched-token"
-        assert _headers(out["log"]["fetches"][1]).get("x-requested-with") == "XMLHttpRequest"
+        runs = [f for f in out["log"]["fetches"] if f["url"] == RUN_URL]
+        assert len(runs) == 1, "the refused request must not be sent a second time"
+        assert _headers(runs[0]).get("x-csrf-token") == ""
+        assert _headers(runs[0]).get("x-requested-with") == "XMLHttpRequest"
+        first_run = out["log"]["fetches"].index(runs[0])
+        assert [f["url"] for f in out["log"]["fetches"][:first_run]] == [CSRF_URL], (
+            "the only token read before the click is the one the page made when it loaded"
+        )
 
-    def test_when_no_token_can_be_obtained_nothing_is_posted_and_the_button_is_released(self):
+    def test_when_the_session_cannot_be_refreshed_the_refusal_says_so_and_the_button_is_released(
+        self,
+    ):
         out = _run(
             _CLICK_AND_SETTLE,
-            run={"mode": "status", "status": 202, "kind": "json", "body": {}},
+            run={"mode": "status", "status": 403, "kind": "html"},
             csrf_preset=None,
             csrf="fail",
         )
-        assert out["state"]["runCalls"] == 0
+        assert out["state"]["runCalls"] == 1
         assert out["state"]["disabled"] is False
-        assert out["state"]["message"].startswith("Request failed")
+        assert _says_not_sent(out["state"]["message"])
+        assert re.search(r"connection", out["state"]["message"], re.I)
 
 
 class TestMessagesByStatus:
@@ -322,7 +356,10 @@ class TestMessagesByStatus:
             },
             csrf_preset="tok",
         )
-        assert out["state"]["message"] == MESSAGES[status]
+        if status == 403:
+            assert _says_not_sent(out["state"]["message"])
+        else:
+            assert out["state"]["message"] == MESSAGES[status]
         assert out["state"]["disabled"] is False
 
     @pytest.mark.parametrize("status", [400, 404, 413, 429, 500, 502, 503])
@@ -341,7 +378,7 @@ class TestMessagesByStatus:
             run={"mode": "status", "status": 403, "kind": "html"},
             csrf_preset="tok",
         )
-        assert out["state"]["message"] == MESSAGES[403]
+        assert _says_not_sent(out["state"]["message"])
         assert out["log"]["alerts"] == [], "a refusal is shown in the panel, not in a dialog"
 
     def test_a_network_failure_releases_the_button_and_says_the_request_failed(self):
@@ -456,7 +493,7 @@ class TestOneRequestAtATime:
         assert out["afterResponse"]["message"] == MESSAGES[202]
         assert out["afterResponse"]["runCalls"] == 1
 
-    def test_the_button_is_disabled_even_while_the_token_is_still_being_fetched(self):
+    def test_the_button_is_disabled_the_moment_it_is_pressed(self):
         driver = """
         retRunReview(__button);
         out.immediately = __state();
@@ -465,7 +502,7 @@ class TestOneRequestAtATime:
         out = _run(
             driver,
             run={"mode": "pending", "status": 202, "kind": "json", "body": {}},
-            csrf_preset=None,
+            csrf_preset="tok",
         )
         assert out["immediately"]["disabled"] is True
 
@@ -525,14 +562,14 @@ class TestThrownErrorsAreNeverShown:
     def test_a_token_reply_that_cannot_be_parsed_shows_fixed_text_and_not_the_parser_message(self):
         out = _run(
             _CLICK_AND_SETTLE,
-            run={"mode": "status", "status": 202, "kind": "json", "body": {}},
+            run={"mode": "status", "status": 403, "kind": "html"},
             csrf_preset=None,
             csrf="unparsable",
             error_text=LEAKY_ERROR,
         )
         message = out["state"]["message"]
-        assert out["state"]["runCalls"] == 0, "nothing is posted without a token"
-        assert message.startswith("Request failed")
+        assert out["state"]["runCalls"] == 1, "the refused request is not sent a second time"
+        assert _says_not_sent(message)
         for fragment in ("secret-path", "abc123", "<html>", "Unexpected token"):
             assert fragment not in message, f"the parser error leaked into the panel: {message!r}"
         assert out["state"]["disabled"] is False
@@ -549,9 +586,9 @@ class TestThrownErrorsAreNeverShown:
                 break
         text = " ".join(reversed(comment))
         assert text, "retRunReview has no comment above it"
-        assert "401" in text and "JSON" in text, (
-            "the comment must say an unauthenticated XHR is answered with 401 JSON"
-        )
+        # Which body shape each refusal has is read by the shared request helper, and the status tests
+        # above run both shapes (a 401 JSON, a 403 HTML page); the comment names the two statuses.
+        assert "401" in text, "the comment must name the 401 refusal of an unauthenticated request"
         assert "403" in text, "the comment must name the 403 refusal of a missing CSRF token"
         assert "refusal from the global hooks is an HTML page" not in text, (
             "the comment still claims every refusal is an HTML page"

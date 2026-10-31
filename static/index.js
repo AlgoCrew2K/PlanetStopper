@@ -52,15 +52,9 @@
         'ytd': 'YTD', '1y': '1Y', 'all': 'All Time'
     };
 
-    /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
-    var _csrfToken = null;
-    document.addEventListener('DOMContentLoaded', function () {
-        fetch('/api/csrf-token')
-            .then(function (r) { return r.json(); })
-            .then(function (b) { _csrfToken = b.csrf_token || null; })
-            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-    });
-
+    // The CSRF token and every POST's answer come from window.PSRequest (static/request_guard.js,
+    // loaded before this file by the shared chrome). A POST the session check refuses (403) is
+    // reported as refused after the token is read again; no control here ever sends it a second time.
     function cs(varName) {
         return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
     }
@@ -83,7 +77,7 @@
     // The chart a canvas holds, or null (none drawn, or no chart library).
     function chartOn(canvas) {
         var lib = chartLibrary();
-        return (lib && lib.getChart(canvas)) || null;
+        return (lib && typeof lib.getChart === 'function' && lib.getChart(canvas)) || null;
     }
 
     // Builds a chart with its entry animation kept; null when the chart library is
@@ -902,22 +896,43 @@
         // The poll leaves a button in this state alone (updateCards): it is enabled again only by
         // a refusal below, never by a card that reads as not exited.
         btn.setAttribute('data-cash-state', 'selling');
-        fetch('/api/sell_account', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
-            body: JSON.stringify({ symphony_id: symId })
-        })
-        .then(function (r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            btn.textContent = 'In cash';
-            // Sold in this page load: no later poll turns the button back on.
-            btn.setAttribute('data-cash-state', 'sold');
-        })
-        .catch(function (err) {
+        // The note beside the button says why a click did not sell; the next click clears it.
+        var note = btn.parentNode ? btn.parentNode.querySelector('[data-testid="cash-now-note"]') : null;
+        if (note) note.textContent = '';
+        function refuse(text) {
             btn.disabled = false;
             btn.textContent = 'Cash Now';
             btn.removeAttribute('data-cash-state');
-            console.error('cashNow failed', err);
+            if (!btn.parentNode) return;
+            if (!note) {
+                note = document.createElement('span');
+                note.setAttribute('data-testid', 'cash-now-note');
+                note.setAttribute('role', 'status');
+                btn.parentNode.appendChild(note);
+            }
+            note.textContent = text;
+        }
+        PSRequest.postAction('/api/sell_account', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
+            body: JSON.stringify({ symphony_id: symId })
+        }).then(function (res) {
+            if (res.ok) {
+                btn.textContent = 'In cash';
+                // Sold in this page load: no later poll turns the button back on.
+                btn.setAttribute('data-cash-state', 'sold');
+                return;
+            }
+            if (res.networkError) {
+                refuse('Not sold: the request failed. Check the connection, then click Cash Now again.');
+            } else if (res.refused === 'csrf') {
+                refuse(PSRequest.notSentText(res, 'Click Cash Now again.'));
+            } else if (res.body && typeof res.body.message === 'string' && res.body.message) {
+                // The route's own refusal (a 400 names the missing or mismatched confirmation).
+                refuse('Not sold: ' + res.body.message);
+            } else {
+                refuse('Not sold: the server refused the request (HTTP ' + res.status + ').');
+            }
         });
     }
 
@@ -929,28 +944,41 @@
     // tripped_at_et is remembered so a stale poll cannot bring it back.
     // ---------------------------------------------------------------------------
 
+    var FLEET_DISMISS_FAILED_TEXT = 'Dismissal not saved';
+
     function dismissFleetAlert(btn) {
         var banner = document.getElementById('fleet-correlation-banner');
         var notice = document.getElementById('fleet-dismiss-notice');
         var alertAtClick = window._lastFleetAlert;
         if (btn) btn.disabled = true;
-        function refused() {
-            if (notice) notice.removeAttribute('hidden');
+        function refused(text) {
+            if (notice) {
+                notice.textContent = text;
+                notice.removeAttribute('hidden');
+            }
             if (btn) btn.disabled = false;
         }
-        fetch('/api/fleet-alert/dismiss', {
+        PSRequest.postAction('/api/fleet-alert/dismiss', {
             method: 'POST',
-            headers: { 'X-CSRF-Token': _csrfToken || '' }
-        })
-        .then(function (r) {
-            if (!r.ok) { refused(); return; }
+            headers: { 'X-CSRF-Token': PSRequest.csrfToken() || '' }
+        }).then(function (res) {
+            if (res.refused === 'csrf') {
+                // The session check refused it: the banner stays and the next click sends one request.
+                refused(res.tokenRefreshed
+                    ? 'Not dismissed: click Dismiss again'
+                    : 'Not sent: connection failed, click Dismiss again');
+                return;
+            }
+            if (!res.ok) { refused(FLEET_DISMISS_FAILED_TEXT); return; }
             window._dismissedFleetTrippedAt =
                 (alertAtClick && alertAtClick.tripped_at_et) || null;
-            if (notice) notice.setAttribute('hidden', '');
+            if (notice) {
+                notice.textContent = FLEET_DISMISS_FAILED_TEXT;
+                notice.setAttribute('hidden', '');
+            }
             if (banner) banner.setAttribute('hidden', '');
             if (btn) btn.disabled = false;
-        })
-        .catch(refused);
+        });
     }
     window.dismissFleetAlert = dismissFleetAlert;
 
@@ -2465,6 +2493,9 @@
                 if (outcome.superseded) return;
                 if (outcome.login) { goToLogin(); return; }
                 noteStateReceived(outcome.timing);
+                // A changed start stamp means the daemon restarted: read a new CSRF token now, so the
+                // operator's next click on a control carries a token the new process accepts.
+                if (window.PSRequest) window.PSRequest.noteDaemonStart(outcome.data.daemon_started_at);
                 return updateDashboard(outcome.data, outcome.timing);
             })
             .catch(function (err) {
@@ -2788,7 +2819,7 @@
 
     // ---------------------------------------------------------------------------
     // Managed Sleeves panel (AC-16) — arm-to-paper / disarm controls.
-    // Reuses the module's _csrfToken (fetched once on DOMContentLoaded above).
+    // Sends through PSRequest.postAction, which reads the token again after a refusal.
     // Arm-live and envelope-widen have their own multi-gate ceremonies (AC-3/
     // AC-14) and are deliberately NOT wired to a one-click control here — they
     // need a dedicated confirm-phrase modal, a follow-up UI pass, not a bare
@@ -2798,23 +2829,27 @@
     function armSleeveRuleToPaper(sleeveId, ruleId, btn) {
         if (!window.confirm('Arm this rule to PAPER? It will start placing real paper-account orders.')) return;
         btn.disabled = true;
-        fetch('/api/sleeves/' + sleeveId + '/rules/' + ruleId + '/arm', {
+        PSRequest.postAction('/api/sleeves/' + sleeveId + '/rules/' + ruleId + '/arm', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
             body: JSON.stringify({ target_mode: 'PAPER' })
-        })
-        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
-        .then(function (res) {
+        }).then(function (res) {
+            if (res.networkError) {
+                console.error('armSleeveRuleToPaper failed: request not completed');
+                btn.disabled = false;
+                return;
+            }
+            if (res.refused === 'csrf') {
+                window.alert(PSRequest.notSentText(res, 'Click Arm again.'));
+                btn.disabled = false;
+                return;
+            }
             if (!res.ok) {
                 window.alert('Arm rejected: ' + ((res.body && res.body.message) || 'unknown error'));
                 btn.disabled = false;
                 return;
             }
             location.reload();
-        })
-        .catch(function (err) {
-            console.error('armSleeveRuleToPaper failed', err);
-            btn.disabled = false;
         });
     }
     window.armSleeveRuleToPaper = armSleeveRuleToPaper;
@@ -2822,17 +2857,21 @@
     function disarmSleeve(sleeveId, btn) {
         if (!window.confirm('Disarm this sleeve? All autonomy stops immediately; re-arming requires the ceremony again.')) return;
         btn.disabled = true;
-        fetch('/api/sleeves/' + sleeveId + '/disarm', {
+        PSRequest.postAction('/api/sleeves/' + sleeveId + '/disarm', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' }
-        })
-        .then(function (r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' }
+        }).then(function (res) {
+            if (res.refused === 'csrf') {
+                window.alert(PSRequest.notSentText(res, 'Click Disarm again.'));
+                btn.disabled = false;
+                return;
+            }
+            if (!res.ok) {
+                console.error('disarmSleeve failed: HTTP ' + res.status);
+                btn.disabled = false;
+                return;
+            }
             location.reload();
-        })
-        .catch(function (err) {
-            console.error('disarmSleeve failed', err);
-            btn.disabled = false;
         });
     }
     window.disarmSleeve = disarmSleeve;
@@ -2840,22 +2879,26 @@
     function deleteSleeve(sleeveId, btn) {
         if (!window.confirm('Delete this sleeve? Refused unless it is flat (no open position) — delete never liquidates.')) return;
         btn.disabled = true;
-        fetch('/api/sleeves/' + sleeveId + '/delete', {
+        PSRequest.postAction('/api/sleeves/' + sleeveId + '/delete', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' }
-        })
-        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
-        .then(function (res) {
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' }
+        }).then(function (res) {
+            if (res.networkError) {
+                console.error('deleteSleeve failed: request not completed');
+                btn.disabled = false;
+                return;
+            }
+            if (res.refused === 'csrf') {
+                window.alert(PSRequest.notSentText(res, 'Click Delete again.'));
+                btn.disabled = false;
+                return;
+            }
             if (!res.ok) {
                 window.alert('Delete rejected: ' + ((res.body && res.body.message) || 'unknown error'));
                 btn.disabled = false;
                 return;
             }
             location.reload();
-        })
-        .catch(function (err) {
-            console.error('deleteSleeve failed', err);
-            btn.disabled = false;
         });
     }
     window.deleteSleeve = deleteSleeve;

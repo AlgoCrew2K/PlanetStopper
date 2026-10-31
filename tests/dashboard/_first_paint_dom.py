@@ -25,6 +25,7 @@ from html.parser import HTMLParser
 
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 INDEX_JS = _REPO / "static" / "index.js"
+REQUEST_GUARD_JS = _REPO / "static" / "request_guard.js"
 
 _VOID = {
     "area",
@@ -514,6 +515,7 @@ async function flush() { for (let i = 0; i < 40; i++) await new Promise((r) => s
       run(code, 'inline.js');
     });
   }
+  run(cfg.requestGuardJs, 'request_guard.js');
   run(cfg.indexJs, 'index.js');
   out.initial = observe();
 
@@ -568,6 +570,8 @@ def run_page(
     node = require_node()
     cfg = {
         "tree": parse_markup(html),
+        # The page loads the token holder before index.js (templates/_chrome.html).
+        "requestGuardJs": REQUEST_GUARD_JS.read_text(encoding="utf-8"),
         "indexJs": INDEX_JS.read_text(encoding="utf-8"),
         "routes": routes or {},
         "steps": steps or [],

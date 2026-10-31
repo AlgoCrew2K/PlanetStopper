@@ -59,6 +59,7 @@ from tests._sb_generation_harness import (
 
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 _AI_ADVISOR_JS = _PROJECT_ROOT / "static" / "ai_advisor.js"
+_REQUEST_GUARD_JS = _PROJECT_ROOT / "static" / "request_guard.js"
 
 _FN_START_ANCHOR = "async function sbRunAnalysis()"
 _FN_END_ANCHOR = "// Expose on window"
@@ -229,6 +230,9 @@ const fetch = async (url) => {
 };
 const ctx = vm.createContext({document, window, fetch, console, setTimeout,
   setInterval: () => 0, clearInterval() {}, clearTimeout() {}, location: window.location});
+// The page loads the token holder before ai_advisor.js (templates/_chrome.html).
+vm.runInContext(fs.readFileSync(process.argv[4], 'utf8'), ctx);
+ctx.PSRequest = window.PSRequest;
 vm.runInContext(src, ctx);
 (async () => {
   await window.sbRunAnalysis();
@@ -254,7 +258,7 @@ def _render_run_results(tmp_path, route_body: dict) -> str:
     payload = tmp_path / "route_body.json"
     payload.write_text(json.dumps(route_body), encoding="utf-8")
     done = subprocess.run(
-        ["node", str(harness), str(_AI_ADVISOR_JS), str(payload)],
+        ["node", str(harness), str(_AI_ADVISOR_JS), str(payload), str(_REQUEST_GUARD_JS)],
         capture_output=True,
         text=True,
         timeout=60,

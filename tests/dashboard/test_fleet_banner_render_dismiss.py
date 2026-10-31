@@ -529,15 +529,16 @@ def _shows_new_alert(fleet: dict) -> bool:
 
 
 @pytest.mark.parametrize(
-    "answer",
+    "answer, notice_says",
     [
-        {"status": 403, "body": {"error": "csrf"}},
-        {"status": 500, "body": {"error": "boom"}},
-        {"reject": True},
+        # A 403 is the session check refusing the click: the notice tells the operator to click again.
+        ({"status": 403, "body": {"error": "csrf"}}, "not dismissed"),
+        ({"status": 500, "body": {"error": "boom"}}, "not saved"),
+        ({"reject": True}, "not saved"),
     ],
     ids=["refused_403", "server_error_500", "network_failure"],
 )
-def test_unsaved_dismissal_keeps_the_banner_and_says_so(app_env, answer):
+def test_unsaved_dismissal_keeps_the_banner_and_says_so(app_env, answer, notice_says):
     w = _dismiss_world(app_env)
     run = _run(
         app_env,
@@ -548,7 +549,7 @@ def test_unsaved_dismissal_keeps_the_banner_and_says_so(app_env, answer):
     fleet = run["steps"][0]["obs"]["fleet"]
     assert fleet["hidden"] is False, "the banner hid although the dismissal was not saved"
     assert fleet["noticeHidden"] is False
-    assert "not saved" in fleet["noticeText"].lower()
+    assert notice_says in fleet["noticeText"].lower()
     assert fleet["btnDisabled"] is False, "the button must be usable again to retry"
 
 

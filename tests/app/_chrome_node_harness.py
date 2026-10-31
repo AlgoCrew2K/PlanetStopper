@@ -34,6 +34,7 @@ import subprocess
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 CHROME_JS = REPO / "static" / "chrome.js"
+REQUEST_GUARD_JS = REPO / "static" / "request_guard.js"
 NODE_TIMEOUT_SECONDS = 60
 
 PANIC_ACCOUNT_ID = "panic-account"
@@ -126,9 +127,13 @@ const ctx = {
   setInterval() { return 0; }, clearInterval() {},
   setTimeout(fn, ms) { timers.push({ fn, ms }); return timers.length; }, clearTimeout() {},
   loadState: undefined,
+  performance: { now: () => 1000 },
+  location: { assign() {} },
 };
 ctx.window = ctx;
 vm.createContext(ctx);
+// The page loads the token holder before chrome.js (templates/_chrome.html).
+vm.runInContext(input.guardSource, ctx, { filename: 'request_guard.js' });
 vm.runInContext(input.source, ctx, { filename: 'chrome.js' });
 
 function snap() {
@@ -200,6 +205,7 @@ def run(
     """
     assert node_available(), "node is not installed: the chrome.js harness cannot run"
     payload = {
+        "guardSource": REQUEST_GUARD_JS.read_text(encoding="utf-8"),
         "source": CHROME_JS.read_text(encoding="utf-8") if source is None else source,
         "steps": steps,
         "responses": responses,

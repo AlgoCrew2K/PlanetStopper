@@ -452,6 +452,25 @@ def _capture(client, frozen_today) -> dict:
     return out
 
 
+def _pin_scheduler_healthy(patch: pytest.MonkeyPatch) -> None:
+    """Give the app the scheduler state a running daemon has, so the body it serves reads healthy.
+
+    No scheduler runs under test, and the real health check counts the time since the process
+    started when no tick was ever stamped: a world built late in a long test process would
+    otherwise carry ``scheduler_stalled`` and the page would read "Degraded". The check itself is
+    the production one; only the scheduler's own tick stamp and the run history are set.
+    """
+    import collections
+
+    patch.setattr(_app_module, "_scheduler_last_tick_mono", _app_module._monotonic())
+    patch.setattr(_app_module, "_engine_run", None)
+    patch.setattr(
+        _app_module,
+        "_RECENT_RUN_OUTCOMES",
+        collections.deque(maxlen=_app_module._HEALTH_FAILING_RUNS),
+    )
+
+
 def _build_world(name: str) -> dict:
     spec = _world_specs()[name]
     import analytics
@@ -490,6 +509,7 @@ def _build_world(name: str) -> dict:
         patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
         patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
         patch.setattr(_app_module, "get_market_state", lambda *_a, **_k: "open")
+        _pin_scheduler_healthy(patch)
         database.init_db()
         database.save_state(bot_state)
 
@@ -638,6 +658,7 @@ def _build_card_world(name: str) -> dict:
         # after a conftest stub is installed; the real ones are put back before anything is built.
         patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
         patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
+        _pin_scheduler_healthy(patch)
         database.init_db()
         if name in ("cards-open", "cards-panels"):
             world = cw.open_cards_world(patch, Path(work_dir))

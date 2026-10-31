@@ -209,7 +209,11 @@ class TestRunNow:
         assert step["obs"]["reloads"] == 0
         assert step["obs"]["watched"]["run_btn"][0]["disabled"] is False
 
-    def test_a_missing_csrf_token_response_stops_before_the_post(self, never_run_page, tmp_path):
+    def test_a_page_with_no_token_sends_one_post_the_session_check_refuses_and_says_it_was_not_sent(
+        self, never_run_page, tmp_path
+    ):
+        """The page holds no token (its read failed): the click sends one POST, the hook refuses it, and
+        the page says nothing was sent, starts nothing, reloads nothing and never sends it again."""
         result = run_advisor_page(
             never_run_page,
             tmp_path,
@@ -217,12 +221,17 @@ class TestRunNow:
             routes={
                 _POLL: _snapshot("before"),
                 "/api/csrf-token": {"status": 500, "body": {}},
+                _RUN: {"status": 403, "body": {"error": "csrf"}},
             },
             watch=_WATCH,
         )
         step = result["steps"][0]
-        assert not any(r["method"] == "POST" and r["url"] == _RUN for r in step["requests"])
+        posts = [r for r in step["requests"] if r["method"] == "POST" and r["url"] == _RUN]
+        assert len(posts) == 1, "the refused request must not be sent a second time"
+        status = step["obs"]["watched"]["status"][0]["text"].lower()
+        assert "not sent" in status and "click" in status
         assert step["obs"]["reloads"] == 0
+        assert step["obs"]["watched"]["run_btn"][0]["disabled"] is False
 
     def test_the_status_survives_a_tab_switch_and_the_reload_still_lands_on_retirement(
         self, never_run_page, tmp_path

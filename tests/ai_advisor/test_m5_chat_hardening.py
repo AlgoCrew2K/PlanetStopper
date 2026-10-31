@@ -251,25 +251,29 @@ class TestAC1CsrfFlow:
             f"'reply' must be a non-empty string. Got: {body['reply']!r}"
         )
 
-    def test_js_chat_file_must_fetch_csrf_token_endpoint(self):
-        """Source-inspection: ai_advisor_chat.js must reference /api/csrf-token.
+    def test_js_chat_file_takes_its_token_from_the_pages_one_holder(self):
+        """Source-inspection: the chat POST carries a token the page's holder read from /api/csrf-token.
 
-        The JS must fetch the CSRF token before (or during) the chat POST.
-        The simplest verifiable signal is a reference to the token endpoint URL.
-        A JS that never calls /api/csrf-token cannot be attaching the token.
+        The page has one token holder (static/request_guard.js, loaded before the chat script), so the
+        chat script reads the token from it and holds no copy of the endpoint URL; the holder is what
+        reads /api/csrf-token. A chat script with neither cannot be attaching a token.
         """
         import pathlib
 
-        js_path = pathlib.Path(__file__).parent.parent.parent / "static" / "ai_advisor_chat.js"
-        assert js_path.exists(), f"ai_advisor_chat.js not found at {js_path}"
+        static = pathlib.Path(__file__).parent.parent.parent / "static"
+        chat_path = static / "ai_advisor_chat.js"
+        assert chat_path.exists(), f"ai_advisor_chat.js not found at {chat_path}"
 
-        source = js_path.read_text(encoding="utf-8")
-        assert "/api/csrf-token" in source, (
-            "ai_advisor_chat.js must contain a reference to '/api/csrf-token'. "
-            "The JS must fetch this endpoint to obtain the CSRF token before "
-            "POSTing to /ai-advisor/chat/send. "
-            "Without this, every chat POST will 403."
+        chat = chat_path.read_text(encoding="utf-8")
+        assert "PSRequest.csrfToken()" in chat, (
+            "ai_advisor_chat.js must take the CSRF token from the page's holder; without a token "
+            "every chat POST will 403."
         )
+        assert "/api/csrf-token" not in chat, (
+            "the chat script must not read the token endpoint itself"
+        )
+        holder = (static / "request_guard.js").read_text(encoding="utf-8")
+        assert "/api/csrf-token" in holder, "the holder must be what reads the token endpoint"
 
     def test_js_chat_file_must_attach_x_csrf_token_header(self):
         """Source-inspection: ai_advisor_chat.js must attach X-CSRF-Token header on POST.

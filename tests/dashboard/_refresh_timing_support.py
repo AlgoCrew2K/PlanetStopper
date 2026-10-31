@@ -21,7 +21,8 @@ from unittest.mock import patch
 
 from tests.dashboard import _index_js_harness as hx
 
-CHROME_AND_INDEX = ("static/chrome.js", "static/index.js")
+# Page order: _chrome.html loads the token holder before chrome.js, and index.js after both.
+CHROME_AND_INDEX = ("static/request_guard.js", "static/chrome.js", "static/index.js")
 INDEX_ONLY = ("static/index.js",)
 
 _STAMP_RE = re.compile(r"^(?P<day>\d{4}-\d\d-\d\d) (?P<hour>\d\d):(?P<minute>\d\d) ET$")

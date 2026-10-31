@@ -34,6 +34,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -446,9 +447,13 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
     (the label judges the cycle's age on the server's clock, never the browser's). Returns, per
     sequence, the state after each call."""
     assert shutil.which("node") is not None, "node is required to run static/chrome.js"
-    source = json.dumps(_CHROME_JS.read_text(encoding="utf-8"))
+    # The scripts are read from their paths inside node: chrome.js is too large to travel on a
+    # command line (Windows refuses a long one).
+    chrome_path = json.dumps(str(_CHROME_JS))
+    guard_path = json.dumps(str(_CHROME_JS.with_name("request_guard.js")))
     harness = f"""
     var vm = require('vm');
+    var fs = require('fs');
     var __sequences = {json.dumps(sequences)};
     var __out = {{}};
     Object.keys(__sequences).forEach(function (name) {{
@@ -478,7 +483,8 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
         }};
         sandbox.window = sandbox;
         var ctx = vm.createContext(sandbox);
-        vm.runInContext({source}, ctx, {{ filename: 'static/chrome.js' }});
+        vm.runInContext(fs.readFileSync({guard_path}, 'utf8'), ctx, {{ filename: 'static/request_guard.js' }});
+        vm.runInContext(fs.readFileSync({chrome_path}, 'utf8'), ctx, {{ filename: 'static/chrome.js' }});
         __out[name] = [];
         __sequences[name].forEach(function (payload) {{
             var data = JSON.parse(JSON.stringify(payload));
@@ -496,7 +502,10 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
     }});
     console.log(JSON.stringify(__out));
     """
-    result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=20)
+    with tempfile.TemporaryDirectory() as tmp:
+        script = Path(tmp) / "engine_status_harness.js"
+        script.write_text(harness, encoding="utf-8")
+        result = subprocess.run(["node", str(script)], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, f"static/chrome.js harness crashed:\n{result.stderr}"
     return json.loads(result.stdout.strip())
 
