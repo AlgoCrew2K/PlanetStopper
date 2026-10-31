@@ -492,7 +492,9 @@ def _build_world(name: str) -> dict:
     if spec.get("hostile_reason"):
         # Named-field edit of a real record: the stored exit reason.
         bot_state[TRIGGERED_VWAP_ID]["triggered_reason"] = HOSTILE_REASON
-    extra_rows: dict[str, int | None] = {}  # id -> offset (days back) of its newest row; None = no rows
+    extra_rows: dict[
+        str, int | None
+    ] = {}  # id -> offset (days back) of its newest row; None = no rows
     if "standby_no_rows" in spec.get("extra_symphonies", ()):
         bot_state[STANDBY_NO_ROWS_ID] = {
             **records[UNTRIGGERED_ID],
@@ -503,7 +505,11 @@ def _build_world(name: str) -> dict:
         }
         extra_rows[STANDBY_NO_ROWS_ID] = None
     if "no_longer_held" in spec.get("extra_symphonies", ()):
-        bot_state[NO_LONGER_HELD_ID] = {**records[NO_LONGER_HELD_ID], "triggered": False, "armed": False}
+        bot_state[NO_LONGER_HELD_ID] = {
+            **records[NO_LONGER_HELD_ID],
+            "triggered": False,
+            "armed": False,
+        }
         extra_rows[NO_LONGER_HELD_ID] = NO_LONGER_HELD_LAST_ROW_OFFSET_DAYS
 
     work_dir = tempfile.mkdtemp(prefix=f"charts_world_{name}_")
@@ -552,7 +558,9 @@ def _build_world(name: str) -> dict:
         for extra_id, newest_offset in extra_rows.items():
             if newest_offset is None:
                 continue
-            cutoff_day = (_dt_mod.date.fromisoformat(today) - _dt_mod.timedelta(days=newest_offset)).isoformat()
+            cutoff_day = (
+                _dt_mod.date.fromisoformat(today) - _dt_mod.timedelta(days=newest_offset)
+            ).isoformat()
             for day_index, day in enumerate(days):
                 if day <= cutoff_day:
                     # synthetic returns, labelled in tests/fixtures/no_longer_held/PROVENANCE.md
