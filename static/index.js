@@ -1087,9 +1087,12 @@
 
     function writeDetailTitle(sym, symId) {
         var titleEl = document.getElementById('detail-panel-title');
-        if (titleEl) {
-            titleEl.textContent = (sym && sym.name) || cardNameFor(symId) || DETAIL_UNKNOWN_TITLE;
-        }
+        if (!titleEl) return;
+        // An entry that names no usable symphony keeps the default title; only a panel opened
+        // before any state named its symphony reads the name the card carries.
+        titleEl.textContent = sym
+            ? (sym.name || DETAIL_UNKNOWN_TITLE)
+            : (cardNameFor(symId) || DETAIL_UNKNOWN_TITLE);
     }
 
     // The panel says it is waiting from the moment it opens until the first state names its
