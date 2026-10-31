@@ -130,7 +130,7 @@ class TestEveryControl:
         case = CASES[name]
         out = on_advisor(
             f"""
-            {case["setup"]}
+            {{ {case["setup"]} }}
             {case["invoke"]}
             await H.advance(60000);
             return H.surfaced();
@@ -152,9 +152,9 @@ class TestEveryControl:
         ok = {"status": 200, "json": {"status": "ok"}}
         out = on_advisor(
             f"""
-            {case["setup"]}
+            {{ {case["setup"]} }}
             {case["invoke"]}
-            {case["setup"]}
+            {{ {case["setup"]} }}
             {case["invoke"]}
             return 1;
             """,
