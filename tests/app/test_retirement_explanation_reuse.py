@@ -1087,21 +1087,25 @@ class TestEachProducerReusesOnlyItsOwnRows:
 
     @staticmethod
     def _producers(mp, builders):
-        """Both producers installed over fresh recommendations; ``produced[kind]`` collects every
-        recommendation dict a run completed, in run order."""
-        produced = {"review": [], "recommender": []}
+        """Both producers installed over fresh recommendations."""
         installed = {}
         for kind, build in builders.items():
             producer = RetirementProducer(kind)
-
-            def fresh(kind=kind, build=build):
-                rec = build()
-                produced[kind].append(rec)
-                return [rec]
-
-            producer.install(mp, fresh)
+            producer.install(mp, lambda build=build: [build()])
             installed[kind] = producer
-        return installed, produced
+        return installed
+
+    @staticmethod
+    def _stored_explanations() -> dict[str, list]:
+        """The explanation stored on each producer's rows, oldest first. The review stamps its rows
+        with ``review_run_id`` and the recommender with ``run_id``; the runs hand the producers copies
+        of the recommendations, so the stored rows are what a run finished."""
+        stored: dict[str, list] = {"review": [], "recommender": []}
+        for row in reversed(jb.rec_rows()):
+            raw = row["raw_response"]
+            kind = "review" if "review_run_id" in raw else "recommender"
+            stored[kind].append(raw.get("explanation"))
+        return stored
 
     def test_alternating_producers_explain_an_unchanged_pair_once_each(self, isolated_db):
         import advisors.retirement_explainer as explainer_module
@@ -1114,7 +1118,7 @@ class TestEachProducerReusesOnlyItsOwnRows:
             return f"explanation #{len(explained)}"
 
         with pytest.MonkeyPatch.context() as mp:
-            producers, produced = self._producers(
+            producers = self._producers(
                 mp, {"review": self._review_rec, "recommender": self._recommender_rec}
             )
             mp.setattr(explainer_module, "explain_recommendation", _explain)
@@ -1126,8 +1130,10 @@ class TestEachProducerReusesOnlyItsOwnRows:
             f"the explainer was called {len(explained)} times for two nights of an unchanged pair "
             f"from two producers; the bases were {explained}"
         )
-        first_review, second_review = (r["explanation"] for r in produced["review"])
-        first_recommender, second_recommender = (r["explanation"] for r in produced["recommender"])
+        stored = self._stored_explanations()
+        assert len(stored["review"]) == 2 and len(stored["recommender"]) == 2, stored
+        first_review, second_review = stored["review"]
+        first_recommender, second_recommender = stored["recommender"]
         assert second_review == first_review, "the review did not reuse its own text"
         assert second_recommender == first_recommender, "the recommender did not reuse its own text"
         assert first_review != first_recommender
@@ -1147,13 +1153,13 @@ class TestEachProducerReusesOnlyItsOwnRows:
         changed = {"correlation": 0.91}
         with pytest.MonkeyPatch.context() as mp:
             builders = {"review": self._review_rec, "recommender": self._recommender_rec}
-            producers, produced = self._producers(mp, builders)
+            producers = self._producers(mp, builders)
             mp.setattr(explainer_module, "explain_recommendation", _explain)
             producers["review"].run()
             producers["recommender"].run()
             before = len(explained)
             # The recommender's evidence moves; the review's does not.
-            producers_after, produced_after = self._producers(
+            producers_after = self._producers(
                 mp,
                 {
                     "review": self._review_rec,
@@ -1169,4 +1175,8 @@ class TestEachProducerReusesOnlyItsOwnRows:
             "a changed recommender figure must be explained again, and an unchanged review pair "
             f"must not be: {explained}"
         )
-        assert produced_after["review"][0]["explanation"] == produced["review"][0]["explanation"]
+        stored = self._stored_explanations()
+        first_review, second_review = stored["review"]
+        first_recommender, second_recommender = stored["recommender"]
+        assert second_review == first_review, "the unchanged review pair was explained again"
+        assert second_recommender != first_recommender, "the changed figure kept the old text"
