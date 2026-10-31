@@ -18,6 +18,11 @@
     // drill-down (renderDayDrilldown below) can read daily_exits without a
     // second fetch.
     var lastPayload = null;
+    // The day the operator drilled into by clicking its bar, or null for "Today's exits". A poll
+    // re-renders THIS day from the new payload; only the Today's exits button or a window click clears it.
+    var drilledDay = null;
+    // The data stamp of the last good load, kept for the connection-lost cue.
+    var lastDataStamp = null;
 
     function color(varName) {
         if (!cs) cs = getComputedStyle(document.documentElement);
@@ -385,7 +390,20 @@
     // Per-day drill-down (F-020)
     // ---------------------------------------------------------------------------
 
+    function setTodaysExitsButtonVisible(visible) {
+        var btn = document.querySelector('[data-testid="history-todays-exits-btn"]');
+        if (!btn) return;
+        if (visible) btn.removeAttribute('hidden'); else btn.setAttribute('hidden', '');
+    }
+
+    function clearDrilledDay() {
+        drilledDay = null;
+        setTodaysExitsButtonVisible(false);
+    }
+
     function renderDayDrilldown(dateStr) {
+        drilledDay = dateStr;
+        setTodaysExitsButtonVisible(true);
         var exits = (lastPayload && lastPayload.daily_exits && lastPayload.daily_exits[dateStr]) || [];
         // List the day's exits by trigger time (HH:MM, earliest first); an exit with
         // no time goes last. Exits that share a time, and the untimed ones, keep the
@@ -430,22 +448,60 @@
         return parseInt(val, 10) || 30;
     }
 
+    // The page's data age: the server's own "data as of" stamp for the newest exit it shows, or the
+    // connection-lost cue (with the last good stamp) after a poll that did not bring data. Set through
+    // textContent, so a stamp is never read as markup.
+    function writeDataStamp(connectionLost) {
+        var el = document.getElementById('history-data-as-of');
+        if (!el) return;
+        var asOf = lastDataStamp === null ? null : 'data as of ' + lastDataStamp;
+        if (connectionLost) {
+            el.textContent = asOf === null ? 'connection lost' : 'connection lost · ' + asOf;
+        } else {
+            el.textContent = asOf === null ? '' : asOf;
+        }
+    }
+
+    function isHistoryBody(payload) {
+        return !!payload && typeof payload === 'object' && !Array.isArray(payload) &&
+            payload.status !== 'error';
+    }
+
     window.loadHistory = function loadHistory(windowVal) {
         cs = null; // reset CSS var cache on each call (theme may have changed)
         var days = windowDays(windowVal);
-        fetch('/api/history/' + days)
-            .then(function (resp) { return resp.json(); })
-            .then(function (payload) {
+        // The newest request issued is the only one drawn: a window click is never overwritten by a
+        // poll that was already in flight.
+        var request = PSRequest.issue('history');
+        return PSRequest.getJson('/api/history/' + days).then(function (res) {
+            if (!PSRequest.isLatest('history', request)) return;
+            if (!res.ok) {
+                // A lapsed session goes to the login page; any other answer is not data, so the page
+                // keeps what it shows and says the connection was lost.
+                if (res.kind === 'unauthorized') { PSRequest.goLogin(); return; }
+                writeDataStamp(true);
+                return;
+            }
+            var payload = res.body;
+            if (!isHistoryBody(payload)) { writeDataStamp(true); return; }
+            try {
                 lastPayload = payload; // F-020: source for the day drill-down
                 renderHero(payload);
                 renderDailyChart(payload.daily_alpha || [], payload.daily_dates || []);
                 // V-28: canonicalize before rendering to enforce 4-card design spec.
                 renderReasonCards(payload.by_reason || {});
-                renderTriggers(payload);
-            })
-            .catch(function (err) {
-                console.error('history load failed', err);
-            });
+                // A drilled day stays drilled across polls and is drawn from the new payload; a day the
+                // window no longer holds falls back to today's exits.
+                if (drilledDay !== null && (payload.daily_dates || []).indexOf(drilledDay) === -1) {
+                    clearDrilledDay();
+                }
+                if (drilledDay !== null) renderDayDrilldown(drilledDay); else renderTriggers(payload);
+                lastDataStamp = typeof payload.data_as_of === 'string' ? payload.data_as_of : '--';
+                writeDataStamp(false);
+            } catch (err) {
+                console.error('history render failed', err);
+            }
+        });
     };
 
     var currentWindow = '30';
@@ -457,7 +513,14 @@
         }
         btn.classList.add('active');
         currentWindow = windowVal;
+        clearDrilledDay();
         loadHistory(windowVal);
+    };
+
+    // The way back from a drilled day to today's exits.
+    window.historyShowTodaysExits = function historyShowTodaysExits() {
+        clearDrilledDay();
+        if (lastPayload) renderTriggers(lastPayload);
     };
 
     document.addEventListener('DOMContentLoaded', function () {

@@ -1048,27 +1048,28 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
             "The background write is the mechanism that makes the dismiss durable."
         )
 
-    def test_dismiss_background_exception_is_logged_not_propagated(self, flask_client):
-        """If write_fleet_alert raises inside the background closure, the exception is logged and NOT re-raised.
+    def test_dismiss_background_exception_is_logged_and_answered_503(self, flask_client):
+        """If write_fleet_alert raises inside the background closure, the exception is logged and the
+        route answers 503 with a fixed message, never 200 and never the exception text.
 
-        The handler must return 200 regardless of whether the background write fails (DB locked,
-        disk full, etc.).  The closure wraps the write in a try/except that calls logging.error.
-        This test verifies that contract deterministically — no timing, no thread scheduling.
+        The route waits for its write and only answers ok once it has landed, so a failed write
+        (DB locked, disk full, etc.) reaches the request through the executor's future. The closure
+        is run inline, so the test has no timing and no thread scheduling.
         """
         import concurrent.futures as _cf
 
         import app as flask_app
 
-        submitted_callables: list = []
-
-        def _capture_only(fn, *args, **kwargs):
-            submitted_callables.append(fn)
+        def _run_inline(fn, *args, **kwargs):
             future = _cf.Future()
-            future.set_result(None)
+            try:
+                future.set_result(fn(*args, **kwargs))
+            except Exception as exc:
+                future.set_exception(exc)
             return future
 
         with (
-            patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_capture_only),
+            patch.object(flask_app._DISMISS_EXECUTOR, "submit", side_effect=_run_inline),
             patch("database.write_fleet_alert", side_effect=OSError("DB locked")),
             patch(
                 "database.read_fleet_alert",
@@ -1084,23 +1085,16 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
-            assert resp.status_code == 200, (
-                "Handler must return 200 even when the background write will fail. "
-                f"Got {resp.status_code}."
-            )
-            assert len(submitted_callables) == 1, (
-                "Handler must still submit the closure even when the write will fail."
-            )
-
-            # Run the closure while both write_fleet_alert (raising) and logging.error are
-            # still patched — the closure references `database` and `logging` from app's
-            # module namespace; patches must be active when the closure body executes.
-            submitted_callables[0]()
-
+        assert resp.status_code == 503, (
+            f"A dismissal whose write failed must not be answered ok. Got {resp.status_code}."
+        )
+        assert resp.get_json() == {"status": "error", "message": "Dismissal not saved"}
+        assert "DB locked" not in resp.get_data(as_text=True), (
+            "The exception text must not reach the page."
+        )
         assert mock_log_error.call_count >= 1, (
             "Background closure must call logging.error when write_fleet_alert raises. "
-            f"logging.error was called {mock_log_error.call_count} time(s). "
-            "Exceptions from background writes must be swallowed + logged — never propagated."
+            f"logging.error was called {mock_log_error.call_count} time(s)."
         )
 
     def test_dismiss_two_rapid_posts_dispatch_two_background_tasks(self, flask_client):
@@ -1187,7 +1181,7 @@ class TestDismissRouteWritesOnlyToFleetAlertState:
         assert "getLogger" not in fn_src, (
             "fleet_alert_dismiss must not use logging.getLogger() inside its body. "
             "If a named logger is introduced, update the patch target in "
-            "test_dismiss_background_exception_is_logged_not_propagated to match, "
+            "test_dismiss_background_exception_is_logged_and_answered_503 to match, "
             "then remove this assertion."
         )
 

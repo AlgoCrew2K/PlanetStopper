@@ -31,6 +31,7 @@ from unittest.mock import MagicMock, patch
 ROOT = Path(__file__).resolve().parents[2]
 INDEX_JS = ROOT / "static" / "index.js"
 CHROME_JS = ROOT / "static" / "chrome.js"
+REQUEST_GUARD_JS = ROOT / "static" / "request_guard.js"
 ACCOUNT_FIXTURE = (
     ROOT / "tests" / "fixtures" / "dashboard" / "account_filter" / "two_accounts_bot_state.json"
 )
@@ -641,6 +642,8 @@ const H = {
   }
 };
 
+// Page order (templates/_chrome.html): the token holder, then chrome.js, then index.js.
+vm.runInThisContext(fs.readFileSync(cfg.requestGuardJs, 'utf8'), { filename: 'request_guard.js' });
 vm.runInThisContext(fs.readFileSync(cfg.chromeJs, 'utf8'), { filename: 'chrome.js' });
 vm.runInThisContext(fs.readFileSync(cfg.indexJs, 'utf8'), { filename: 'index.js' });
 
@@ -687,6 +690,7 @@ def run_page(
         "collectUnhandled": collect_unhandled,
         "indexJs": str(INDEX_JS),
         "chromeJs": str(CHROME_JS),
+        "requestGuardJs": str(REQUEST_GUARD_JS),
         "scenarioPath": str(tmp_path / "scenario.js"),
     }
     (tmp_path / "cfg.json").write_text(json.dumps(cfg), encoding="utf-8")

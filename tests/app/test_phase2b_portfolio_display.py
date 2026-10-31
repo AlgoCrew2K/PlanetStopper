@@ -363,15 +363,15 @@ def test_index_js_risk_profile_renders_sharpe_row():
     js_path = PROJECT_ROOT / "static" / "index.js"
     content = js_path.read_text(encoding="utf-8")
 
-    # Extract openDetailPanel function body.
+    # The panel's own requests (started by openDetailPanel) hold the risk profile's fetch and rows.
     fn_match = re.search(
-        r"function\s+openDetailPanel\s*\([^)]*\)\s*\{(.+?)(?=\n\s{4}function\s|\Z)",
+        r"function\s+startDetailRequests\s*\([^)]*\)\s*\{(.+?)(?=\n\s{4}function\s|\Z)",
         content,
         re.DOTALL,
     )
     if fn_match is None:
         pytest.fail(
-            "openDetailPanel function not found in index.js — "
+            "startDetailRequests function not found in index.js — "
             "cannot verify risk profile rendering logic."
         )
 
@@ -381,7 +381,7 @@ def test_index_js_risk_profile_renders_sharpe_row():
     # profile fetch/render block. A missing reference means the risk profile
     # does not include Sharpe.
     assert "sharpe" in fn_body.lower(), (
-        "openDetailPanel() must render Sharpe in the risk profile section. "
+        "The detail panel must render Sharpe in the risk profile section. "
         "Source: ux-design-deliverable.md §Change 5 — rows array includes Sharpe."
     )
 
@@ -400,12 +400,12 @@ def test_index_js_risk_profile_renders_volatility_row():
     content = js_path.read_text(encoding="utf-8")
 
     fn_match = re.search(
-        r"function\s+openDetailPanel\s*\([^)]*\)\s*\{(.+?)(?=\n\s{4}function\s|\Z)",
+        r"function\s+startDetailRequests\s*\([^)]*\)\s*\{(.+?)(?=\n\s{4}function\s|\Z)",
         content,
         re.DOTALL,
     )
     if fn_match is None:
-        pytest.fail("openDetailPanel function not found in index.js")
+        pytest.fail("startDetailRequests function not found in index.js")
 
     fn_body = fn_match.group(1)
 
@@ -414,7 +414,7 @@ def test_index_js_risk_profile_renders_volatility_row():
         "volatility" in fn_body or "ann. vol" in fn_body.lower() or "ann.vol" in fn_body.lower()
     )
     assert has_volatility, (
-        "openDetailPanel() risk profile section must render Ann. volatility. "
+        "The detail panel risk profile section must render Ann. volatility. "
         "Source: ux-design-deliverable.md §Change 5."
     )
 

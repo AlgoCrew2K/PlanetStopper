@@ -37,6 +37,13 @@ A database file is never committed, including the launcher's copy of production 
 | `03-c6/` | dashboard-refresh, cycle 6 | none committed: derived exits and figures on one symphony's entry, detail answers; see `03-c6/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `03-c7/` | dashboard-refresh, cycle 7 | none committed: the stored value `static/tweaks.js` writes, its invalid-JSON variant; see `03-c7/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `05-c2/` | observability-transport, cycle 2 | none copied; the 503 and timeout cases are derived at test time from `tests/fixtures/composer/v3-audit/total_stats.json` | derived, PM-5 sign-off recorded in the plan; see `05-c2/PROVENANCE.md` |
+| `04-c1/` | pages-and-header, cycle 1 | `header_markup_at_base.json`: the header nav each page renders at the base | captured by `04-c1/capture_header_markup.py`; derived header bodies awaiting the PM's sign-off |
+| `04-c3/` | pages-and-header, cycle 3 | none committed: History bodies from the real route at a frozen clock | derived records awaiting the PM's sign-off |
+| `04-c4/` | pages-and-header, cycle 4 | `requests_per_tick_at_base.json`: the data requests of the 60-second tick | captured by `04-c4/capture_requests_per_tick.py`; one derived record awaiting sign-off |
+| `04-c6/` | pages-and-header, cycle 6 | none committed: the settings answers and the armed-symphonies state | derived records awaiting the PM's sign-off |
+| `04-c7/` | pages-and-header, cycle 7 | none committed: two symphonies for the modal | derived records awaiting the PM's sign-off |
+| `04-c8/` | pages-and-header, cycle 8 | none committed: the dashboard controls' answers | derived records awaiting the PM's sign-off |
+| `04-c9/` | pages-and-header, cycle 9 | `post_requests_at_base.json`: the request of every operator POST control at the base | captured by `04-c9/capture_post_requests.py` |
 
 Later cycles add their folder and a row here.
 

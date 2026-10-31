@@ -44,7 +44,7 @@ splice_candidate_into_symphony(
     reused as the already-compiled candidate instead of compiling ``candidate``
     fresh. Returns None on any structural failure (never raises).
 
-run_frontrunner_build(symphony_ids: list[str] | None = None) -> None
+run_frontrunner_build(symphony_ids: list[str] | None = None) -> dict
     D-1 never-raises entry point for the scheduler/route: detect -> generate
     -> splice -> INDEPENDENTLY re-backtest both incumbent and candidate ->
     gate (backtest_gate_engine.evaluate_candidate_batch, mandatory, never
@@ -1297,7 +1297,7 @@ def splice_candidate_into_symphony(
 
 
 @model_config.pin_run
-def run_frontrunner_build(symphony_ids: list[str] | None = None) -> None:
+def run_frontrunner_build(symphony_ids: list[str] | None = None) -> dict:
     """Run the frontrunner build over all (or the given) live symphonies.
 
     D-1 never-raises entry point for the weekly scheduler hook and the
@@ -1315,23 +1315,35 @@ def run_frontrunner_build(symphony_ids: list[str] | None = None) -> None:
 
     Never raises (D-1). A per-symphony failure is logged and skipped; it does
     not abort the batch.
+
+    Returns the run's outcome so the on-demand route can record it (the weekly
+    scheduler ignores it): ``{"symphonies": <roster size>, "failed": <symphonies
+    whose build raised>, "queued": <proposal rows inserted across the batch>,
+    "roster_error": <True when the live roster could not be read>}``. Counts and
+    a flag only, never an exception message.
     """
     try:
         roster = symphony_ids if symphony_ids is not None else _resolve_live_symphony_roster()
     except Exception as exc:
         logger.error("run_frontrunner_build: roster resolution failed (%s)", type(exc).__name__)
-        return
+        return {"symphonies": 0, "failed": 0, "queued": 0, "roster_error": True}
 
+    failed = 0
+    queued = 0
     for symphony_id in roster:
         try:
-            _run_build_for_symphony(symphony_id)
+            inserted = _run_build_for_symphony(symphony_id)
+            if isinstance(inserted, int) and not isinstance(inserted, bool):
+                queued += inserted
         except Exception as exc:
+            failed += 1
             logger.warning(
                 "run_frontrunner_build: symphony_id=%s failed (%s)",
                 symphony_id,
                 type(exc).__name__,
             )
             continue
+    return {"symphonies": len(roster), "failed": failed, "queued": queued, "roster_error": False}
 
 
 def _resolve_live_symphony_roster() -> list[str]:
@@ -1870,7 +1882,7 @@ def summarize_overlay(overlay_tree: dict | None) -> str:
         return _OVERLAY_SUMMARY_FALLBACK
 
 
-def _run_build_for_symphony(symphony_id: str) -> None:
+def _run_build_for_symphony(symphony_id: str) -> int:
     """Detect -> generate -> splice -> INDEPENDENTLY re-backtest BOTH incumbent
     and candidate -> gate (evaluate_candidate_batch, mandatory) -> Calmar
     accept -> queue for approval, for ONE symphony.
@@ -1888,9 +1900,13 @@ def _run_build_for_symphony(symphony_id: str) -> None:
 
     Never raises (D-1); any step's failure degrades to a logged skip for this
     symphony/candidate only — it never aborts the batch.
+
+    Returns how many proposal rows it inserted for this symphony (0 for every
+    skip), so the on-demand route can report the batch's outcome.
     """
     from advisors import frontrunner_detector  # noqa: PLC0415 - CC-2 lazy
 
+    inserted = 0
     try:
         import symphony_logic  # noqa: PLC0415 - CC-2 lazy
 
@@ -1901,13 +1917,13 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             symphony_id,
             type(exc).__name__,
         )
-        return
+        return inserted
 
     if not isinstance(tree, dict):
         logger.info(
             "_run_build_for_symphony: symphony_id=%s returned no tree — skipping", symphony_id
         )
-        return
+        return inserted
 
     detection = frontrunner_detector.detect_frontrunner_cascades(tree)
     if not detection.cascades:
@@ -1916,7 +1932,7 @@ def _run_build_for_symphony(symphony_id: str) -> None:
             symphony_id,
             detection.skip_reason,
         )
-        return
+        return inserted
 
     cascades = detection.cascades
     if len(cascades) > MAX_CASCADES_PER_SYMPHONY_RUN:
@@ -2106,6 +2122,7 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                 candidate_tree=spliced,
                 metrics_json=metrics,
             )
+            inserted += 1
             logger.info(
                 "_run_build_for_symphony: symphony_id=%s candidate queued for approval",
                 symphony_id,
@@ -2116,6 +2133,7 @@ def _run_build_for_symphony(symphony_id: str) -> None:
                 symphony_id,
                 type(exc).__name__,
             )
+    return inserted
 
 
 def _gate_and_accept_candidate(

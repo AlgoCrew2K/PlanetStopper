@@ -60,7 +60,7 @@ def _pick(window: str) -> str:
 
 
 def _run(client, routes, scenario):
-    return run_page(_page(client), ["history.js"], routes, scenario)
+    return run_page(_page(client), ["request_guard.js", "history.js"], routes, scenario)
 
 
 # ---------------------------------------------------------------------------
@@ -271,13 +271,14 @@ def test_history_opens_on_the_30_day_window_and_asks_for_it(client, pm_dir_facto
     pm_dir_factory({_ago(5): _stamped_day("2026-06-22")})
     payload = _history(client, 30)
 
+    # The token holder reads the CSRF token at load, so the first fetch is not always the data read.
     result = _run(
         client,
         [route("/api/history/30", payload), route("/api/history/90", payload)],
         """
         await H.boot();
         return { active: H.$$('#window-picker button.active').map(function (b) { return b.textContent.trim(); }),
-                 first: H.fetchLog[0] };
+                 first: H.fetchLog.find(function (u) { return u !== '/api/csrf-token'; }) };
         """,
     )
 

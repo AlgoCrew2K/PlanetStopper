@@ -210,8 +210,8 @@ def test_evaluate_swap_calls_render_results_unconditionally_on_parsed_json():
         "renderResults() runs — the route's populated error-path provenance would never "
         "reach the DOM. Call renderResults(body) unconditionally on a parsed JSON response."
     )
-    assert "renderResults(body)" in block, (
-        "AC-9 GAP: evaluateSwap() no longer calls renderResults(body) on the parsed "
+    assert "renderResults(res.body)" in block, (
+        "AC-9 GAP: evaluateSwap() no longer calls renderResults(res.body) on the parsed "
         "JSON response — the results/error rendering path is unreachable."
     )
 

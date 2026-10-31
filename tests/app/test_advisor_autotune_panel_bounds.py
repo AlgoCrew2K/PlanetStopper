@@ -263,9 +263,12 @@ class TestCardsAndOlderRuns:
             assert snapshot["older"]["summaryRecreated"] == 0
             assert snapshot["older"]["listRecreated"] == 0
 
-    def test_a_rejected_request_writes_the_failure_text_and_keeps_the_details_hidden(self):
+    def test_a_rejected_request_shows_the_refresh_notice_and_keeps_the_details_hidden(self):
         (loaded,) = drive([{"op": "load"}], {_ROUTE: {"__reject__": "network down"}})
-        assert "Failed to load runs: network down" in loaded["list"]
+        assert loaded["notice"] == "Could not refresh runs"
+        assert "network down" not in loaded["list"], (
+            "a transport error's text is never written into the page"
+        )
         assert loaded["older"]["displayed"] is False
 
 

@@ -220,12 +220,15 @@ class TestForceRunReportsTheRoutesAnswer:
         assert out["ran_timer_delays"], "the label must come back on a timer"
         assert all(1000 <= ms <= 10000 for ms in out["ran_timer_delays"]), out["ran_timer_delays"]
 
-    def test_a_403_html_refusal_shows_error(self):
-        """no CSRF token: the real 403 HTML page."""
+    def test_a_403_html_refusal_says_it_was_not_sent_and_to_click_again(self):
+        """no CSRF token: the real 403 HTML page. The request is not sent again; the next click is."""
         refused = answers.trigger_answer_csrf_refused()
         assert refused["status"] == 403 and "json" not in refused["content_type"], "premise"
         out = _force_run(refused)
-        assert out["snapshots"][-1]["force_text"] == "Error"
+        assert out["snapshots"][-1]["force_text"] == "Not sent: click again"
+        assert len(harness.calls_to(out, "/api/trigger")) == 1, (
+            "the refused request was sent a second time"
+        )
 
     def test_a_failed_network_shows_error(self):
         out = _force_run({"reject": "NetworkError when attempting to fetch resource."})
@@ -775,9 +778,9 @@ class TestProtectedSurfacesAreByteIdentical:
         """The fetch call that sends the liquidation request keeps its text."""
         source = (REPO / "static" / "chrome.js").read_text(encoding="utf-8")
         assert re.search(
-            r"fetch\('/api/sell_account', \{\s*"
+            r"PSRequest\.postAction\('/api/sell_account', \{\s*"
             r"method: 'POST',\s*"
-            r"headers: \{ 'Content-Type': 'application/json', 'X-CSRF-Token': _chromeCsrfToken \|\| '' \},\s*"
+            r"headers: \{ 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest\.csrfToken\(\) \|\| '' \},\s*"
             r"body: JSON\.stringify\(\{ account_id: accountId, confirm_account_id: accountId, "
             r"confirm_phrase: phrase \}\),\s*\}\)",
             source,

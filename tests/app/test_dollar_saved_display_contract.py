@@ -165,17 +165,27 @@ class TestPanelRefreshesOnCycleComplete:
         RED today: the cycle-complete listener calls only loadState().
         """
         source = _js()
-        # The listener CALLBACK body only — code after the registration (like the
-        # one-shot page-load fetch) must not satisfy this assertion.
-        callbacks = re.findall(
-            r"addEventListener\(\s*['\"]cycle-complete['\"]\s*,(.*?)\}\s*\)\s*;",
+        # The listener's handler only: the callback written inline, or the named function it
+        # registers. Code after the registration (like the one-shot page-load fetch) must not
+        # satisfy this assertion.
+        registered = re.findall(
+            r"addEventListener\(\s*['\"]cycle-complete['\"]\s*,\s*([A-Za-z_$][\w$]*)\s*\)",
+            source,
+        )
+        inline = re.findall(
+            r"addEventListener\(\s*['\"]cycle-complete['\"]\s*,\s*function(.*?)\}\s*\)\s*;",
             source,
             flags=re.DOTALL,
         )
-        assert callbacks, "index.js must register a cycle-complete listener"
-        assert any("fetchGuardAlphaSummary" in body for body in callbacks), (
-            "the SSE cycle-complete handler must re-fetch the guard-alpha summary — "
-            "today it calls only loadState(), so the panel never updates after page load"
+        assert registered or inline, "index.js must register a cycle-complete listener"
+        bodies = list(inline)
+        for name in registered:
+            # The function's own body: up to the next line that closes at the function's indent.
+            window = _js_block(source, f"function {name}(")
+            bodies.append(window.split("\n    }\n", 1)[0])
+        assert any("fetchGuardAlphaSummary" in body for body in bodies), (
+            "the SSE cycle-complete handler must re-fetch the guard-alpha summary: "
+            "a handler that calls only loadState() never updates the panel after page load"
         )
 
 

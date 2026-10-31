@@ -182,6 +182,7 @@
                 <span data-testid="history-caption" class="legend-as-of">
                     Rollup of post-mortem snapshots · how the bot's exits actually scored vs the if-held series
                 </span>
+                <span id="history-data-as-of" data-testid="history-data-as-of" class="legend-as-of" role="status"></span>
             </div>
 
             <!-- Hero stats -->
@@ -267,6 +268,8 @@
         <!-- Recent triggers -->
         <div data-testid="recent-triggers" class="hero-section">
             <div class="section-header" id="todays-exits-heading">Today's exits</div>
+            <button type="button" data-testid="history-todays-exits-btn" hidden
+                    onclick="historyShowTodaysExits()">Today's exits</button>
             <div style="overflow-x:auto;">
                 <table class="triggers-tbl">
                     <thead>

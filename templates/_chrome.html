@@ -1,5 +1,6 @@
+{# Scripts: /static/request_guard.js (window.PSRequest) loads just before /static/chrome.js, at the end of this file. #}
 {% include '_fonts.html' %}
-<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav" class="shell-nav" style="padding:14px clamp(16px,2vw,40px);border-bottom:1px solid var(--studio-rule);background:var(--studio-paper);font-family:var(--studio-sans,Manrope,sans-serif);width:100%;box-sizing:border-box;">
+<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav"{% if active_route != 'dashboard' %} data-header-poll="1"{% endif %} class="shell-nav" style="padding:14px clamp(16px,2vw,40px);border-bottom:1px solid var(--studio-rule);background:var(--studio-paper);font-family:var(--studio-sans,Manrope,sans-serif);width:100%;box-sizing:border-box;">
 
   <!-- Wordmark -->
   <div style="font-weight:700;font-size:18px;letter-spacing:-0.02em;color:var(--studio-ink);display:flex;align-items:baseline;gap:7px;">
@@ -251,4 +252,5 @@
     </div>
   </div>
 </div>
+<script src="/static/request_guard.js"></script>
 <script src="/static/chrome.js"></script>

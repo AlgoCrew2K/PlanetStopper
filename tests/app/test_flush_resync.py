@@ -359,3 +359,86 @@ def test_flush_resync_invalidates_analytics_cache(client, tmp_path, monkeypatch)
     assert analytics._HISTORY_CACHE == {"key": None, "data": None}, (
         "Analytics _HISTORY_CACHE must be reset to {key: None, data: None} after flush."
     )
+
+
+# ---------------------------------------------------------------------------
+# A failed flush never puts exception text in its answer (the `errors` entries
+# carry the exception TYPE NAME only; the log lines keep their text)
+# ---------------------------------------------------------------------------
+
+
+class _RunsNow:
+    """_DISMISS_EXECUTOR stand-in that runs the submitted write on the calling thread."""
+
+    def submit(self, fn, *args, **kwargs):
+        fn(*args, **kwargs)
+
+
+class _ThreadingWhoseThreadFails:
+    """The ``threading`` module as ``app`` sees it, except that making a Thread raises ``exc``."""
+
+    def __init__(self, exc):
+        self._exc = exc
+
+    def __getattr__(self, name):
+        return getattr(threading, name)
+
+    def Thread(self, *_args, **_kwargs):  # noqa: N802 - mirrors threading.Thread
+        raise self._exc
+
+
+def _flush(client, monkeypatch, tmp_path, *, db_state=None):
+    monkeypatch.setattr(analytics, "_POST_MORTEMS_DIR", str(tmp_path / "pm"))
+    monkeypatch.setattr(app_module, "_DISMISS_EXECUTOR", _RunsNow())
+    with (
+        patch.object(app_module, "database") as db_mock,
+        patch.object(app_module, "_refresh_account_totals"),
+    ):
+        db_mock.load_state.return_value = {} if db_state is None else db_state
+        if isinstance(db_state, BaseException):
+            db_mock.load_state.side_effect = db_state
+        response = client.post("/api/settings/flush-resync")
+    assert response.status_code == 200
+    return response.get_json()
+
+
+def test_a_resync_timeout_is_reported_by_type_name_only(client, tmp_path, monkeypatch):
+    import requests
+
+    url = app_module.COMPOSER_BASE_URL + "/portfolio/accounts/0123abcd-account/total-stats"
+    timeout = requests.exceptions.ReadTimeout(f"HTTPSConnectionPool: Read timed out on {url}")
+    monkeypatch.setattr(app_module, "threading", _ThreadingWhoseThreadFails(timeout))
+    body = _flush(client, monkeypatch, tmp_path)
+    assert body["errors"] == ["resync: ReadTimeout"], body["errors"]
+    assert body["status"] == "partial"
+    assert url not in json.dumps(body) and "Read timed out" not in json.dumps(body)
+
+
+def test_a_file_delete_failure_is_reported_by_type_name_only(client, tmp_path, monkeypatch):
+    pm_dir = str(tmp_path / "pm")
+    synthetic = "post_mortem_2020-01-01.json"
+    path = _make_pm_file(pm_dir, "2020-01-01")
+
+    def refuse(target, *_a, **_k):
+        raise PermissionError(13, "Permission denied", str(target))
+
+    with patch.object(app_module.os, "remove", refuse):
+        body = _flush(client, monkeypatch, tmp_path)
+    assert body["errors"] == [f"{synthetic}: PermissionError"], body["errors"]
+    assert path not in json.dumps(body) and "Permission denied" not in json.dumps(body)
+
+
+def test_a_state_read_failure_is_reported_by_type_name_only(client, tmp_path, monkeypatch):
+    body = _flush(
+        client,
+        monkeypatch,
+        tmp_path,
+        db_state=RuntimeError("cannot read /private/path/alphabot_state.db"),
+    )
+    assert body["errors"] == ["state_read: RuntimeError"], body["errors"]
+    assert "/private/path" not in json.dumps(body)
+
+
+def test_a_clean_flush_still_reports_ok_with_no_errors(client, tmp_path, monkeypatch):
+    body = _flush(client, monkeypatch, tmp_path)
+    assert body["errors"] == [] and body["status"] == "ok"

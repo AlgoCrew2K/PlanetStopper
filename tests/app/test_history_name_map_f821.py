@@ -50,8 +50,9 @@ Test strategy (per feedback_route_level_red_for_mocked_analytics_fns):
 from __future__ import annotations
 
 import json
-from datetime import date as _date
+from datetime import datetime
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -119,7 +120,7 @@ def test_history_route_populates_name_map_from_live_state(
     _name_map stays {} → symphony_name = 'sym-abc' (the raw ID, not the human name).
     This test FAILS on current code because symphony_name != 'My Symphony'.
     """
-    today_str = _date.today().isoformat()
+    today_str = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     today_post_mortem = {
         "triggers": [
             {
@@ -182,7 +183,7 @@ def test_history_route_name_map_fallback_to_id_when_state_empty(
     This is a separate invariant from AC-FM.2: the fallback path must also work
     after the fix.
     """
-    today_str = _date.today().isoformat()
+    today_str = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     today_post_mortem = {
         "triggers": [
             {

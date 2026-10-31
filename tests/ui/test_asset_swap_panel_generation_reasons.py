@@ -31,6 +31,7 @@ from tests import _asset_swap_llm_support as sup
 from tests._anthropic_http_fake import load_fixture
 
 _PANEL_JS = pathlib.Path(__file__).resolve().parents[2] / "static" / "ai_advisor_asset_swaps.js"
+_GUARD_JS = _PANEL_JS.with_name("request_guard.js")
 _ENV = "ADVISOR_SUGGESTION_MODEL"
 _UNSERVED_OVERRIDE = "operator-chosen-model"
 
@@ -44,6 +45,7 @@ const fs = require('fs');
 const vm = require('vm');
 const body = JSON.parse(fs.readFileSync(0, 'utf8'));
 const source = fs.readFileSync(process.argv[1], 'utf8');
+const guardSource = fs.readFileSync(process.argv[2], 'utf8');
 
 function element(id, props) {
   const handlers = {};
@@ -80,8 +82,12 @@ function fetch(url) {
 const sandbox = {
   document, fetch, console, setTimeout,
   window: {}, location: {}, sessionStorage: { setItem() {}, getItem() { return null; } },
+  performance: { now: () => Date.now() },
 };
 vm.createContext(sandbox);
+// The page loads the token holder before the panel script (templates/_chrome.html); its global is bare in a browser.
+vm.runInContext(guardSource, sandbox, { filename: 'request_guard.js' });
+sandbox.PSRequest = sandbox.window.PSRequest;
 vm.runInContext(source, sandbox);
 (documentHandlers.DOMContentLoaded || []).forEach((fn) => fn());
 (elements['swap-evaluate-btn'].handlers.click || []).forEach((fn) => fn());
@@ -95,7 +101,7 @@ def _render(body: dict) -> str:
     """The results area HTML after the real panel script rendered ``body``."""
     assert shutil.which("node") is not None, "node is required to run the panel script"
     done = subprocess.run(
-        ["node", "-e", _DRIVER, str(_PANEL_JS)],
+        ["node", "-e", _DRIVER, str(_PANEL_JS), str(_GUARD_JS)],
         input=json.dumps(body),
         capture_output=True,
         text=True,

@@ -561,6 +561,32 @@
         if (headlineStrip)  headlineStrip.style.display  = '';
     }
 
+    // The page's data age: the server's own "data as of" for the newest observation the response
+    // used. After a refresh that brought no data, the cue says so and the last good stamp stays.
+    // Written through textContent, so a stamp is never read as markup.
+    var _lastDataStamp = null;
+
+    function writeDataStamp(connectionLost) {
+        var el = document.getElementById('performance-data-as-of');
+        if (!el) return;
+        var asOf = _lastDataStamp === null ? null : 'data as of ' + _lastDataStamp;
+        if (connectionLost) {
+            el.textContent = asOf === null ? 'connection lost' : 'connection lost \u00b7 ' + asOf;
+        } else {
+            el.textContent = asOf === null ? '' : asOf;
+        }
+    }
+
+    // One panel's drawing never blocks another's: a renderer that throws (the chart library did not
+    // load, a series the chart cannot draw) is reported in the console and the rest still render.
+    function drawPanel(name, render, payload) {
+        try {
+            render(payload);
+        } catch (err) {
+            console.error('performance panel "' + name + '" could not draw', err);
+        }
+    }
+
     function refresh() {
         var params = currentParams();
         if (params.scope === 'symphony' && !params.symphony_id) {
@@ -568,21 +594,32 @@
             return;
         }
         hidePickSymphonyState();
-        fetch('/api/performance?' + params.qs)
-            .then(function (resp) {
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                return resp.json();
-            })
-            .then(function (payload) {
-                renderObsCount(payload);
-                renderHeadlineStats(payload);
-                renderBanner(payload);
-                renderChart(payload);
-                renderMetrics(payload);
-            })
-            .catch(function (err) {
-                console.error('performance refresh failed', err);
-            });
+        // The newest refresh issued is the only one drawn (a picker change is never overwritten by
+        // a tick that was already in flight).
+        var request = PSRequest.issue('performance');
+        PSRequest.getJson('/api/performance?' + params.qs).then(function (res) {
+            if (!PSRequest.isLatest('performance', request)) return;
+            if (!res.ok) {
+                // A lapsed session goes to the login page; any other answer is not data, so every
+                // panel keeps what it shows and the stamp says the connection was lost.
+                if (res.kind === 'unauthorized') { PSRequest.goLogin(); return; }
+                console.error('performance refresh failed: ' + res.kind);
+                writeDataStamp(true);
+                return;
+            }
+            var payload = res.body;
+            if (!payload || typeof payload !== 'object' || payload.status === 'error') {
+                writeDataStamp(true);
+                return;
+            }
+            drawPanel('observation count', renderObsCount, payload);
+            drawPanel('headline stats', renderHeadlineStats, payload);
+            drawPanel('banner', renderBanner, payload);
+            drawPanel('chart', renderChart, payload);
+            drawPanel('metrics', renderMetrics, payload);
+            _lastDataStamp = typeof payload.data_as_of === 'string' ? payload.data_as_of : '--';
+            writeDataStamp(false);
+        });
     }
 
     // Display names by Composer id, from /api/performance/symphonies. The panels below
@@ -851,6 +888,8 @@
         return tr;
     }
 
+    var EXIT_TURNOVER_LOST_TEXT = 'connection lost: showing the last rows received';
+
     function renderExitTurnover(entries) {
         var tbody = document.getElementById('exit-turnover-tbody');
         var emptyState = document.getElementById('exit-turnover-empty-state');
@@ -869,49 +908,76 @@
         });
     }
 
+    // The last good turnover body of each symphony, kept so a request that fails keeps its row, and
+    // the order the symphonies list gave them.
+    var _lastGoodTurnover = {};
+    var _turnoverOrder = [];
+
+    function setExitTurnoverNote(text) {
+        var panel = document.querySelector('[data-testid="exit-turnover-panel"]');
+        if (!panel) return;
+        var note = document.getElementById('exit-turnover-note');
+        if (!note) {
+            note = document.createElement('p');
+            note.id = 'exit-turnover-note';
+            note.setAttribute('data-testid', 'exit-turnover-note');
+            note.setAttribute('role', 'status');
+            note.className = 'metrics-caption';
+            panel.appendChild(note);
+        }
+        note.textContent = text;
+    }
+
+    function drawExitTurnoverFromLastGood() {
+        renderExitTurnover(_turnoverOrder
+            .filter(function (id) { return Object.prototype.hasOwnProperty.call(_lastGoodTurnover, id); })
+            .map(function (id) { return { symphony_id: id, turnover: _lastGoodTurnover[id] }; }));
+    }
+
     // AC-8 fetch chain: sources the symphony-id list from
     // /api/performance/symphonies (the same source loadSymphonies() uses for
-    // the picker), then fetches /api/exit-turnover per symphony. Explicit
-    // 401 handling (never a bare .ok check) so an unauthenticated poll
-    // degrades to the panel's empty-state instead of throwing on a non-JSON
-    // response body.
+    // the picker), then fetches /api/exit-turnover per symphony. A request
+    // that does not bring data never empties the panel: that symphony keeps
+    // its last good row, a session that lapsed goes to the login page, and
+    // when nothing arrived the panel says the connection was lost.
     function fetchExitTurnover() {
-        fetch('/api/performance/symphonies')
-            .then(function (response) {
-                if (response.status === 401) return null;
-                if (!response.ok) return null;
-                return response.json();
-            })
-            .then(function (body) {
-                var symphonies = (body && body.symphonies) || [];
-                rememberSymphonyNames(symphonies);
-                if (symphonies.length === 0) {
-                    renderExitTurnover([]);
-                    return;
-                }
-                return Promise.all(
-                    symphonies.map(function (sym) {
-                        return fetch('/api/exit-turnover?symphony_id=' + encodeURIComponent(sym.id))
-                            .then(function (response) {
-                                if (response.status === 401) return null;
-                                if (!response.ok) return null;
-                                return response.json();
-                            })
-                            .then(function (turnover) {
-                                return { symphony_id: sym.id, turnover: turnover };
-                            })
-                            .catch(function () {
-                                return { symphony_id: sym.id, turnover: null };
-                            });
-                    })
-                ).then(function (entries) {
-                    renderExitTurnover(entries.filter(function (e) { return e.turnover; }));
-                });
-            })
-            .catch(function (err) {
-                console.error('fetchExitTurnover failed', err);
+        var request = PSRequest.issue('exit-turnover');
+        return PSRequest.getJson('/api/performance/symphonies').then(function (listing) {
+            if (!PSRequest.isLatest('exit-turnover', request)) return;
+            if (!listing.ok) {
+                if (listing.kind === 'unauthorized') { PSRequest.goLogin(); return; }
+                setExitTurnoverNote(EXIT_TURNOVER_LOST_TEXT);
+                return;
+            }
+            var symphonies = (listing.body && listing.body.symphonies) || [];
+            rememberSymphonyNames(symphonies);
+            _turnoverOrder = symphonies.map(function (sym) { return sym.id; });
+            if (symphonies.length === 0) {
+                _lastGoodTurnover = {};
                 renderExitTurnover([]);
+                setExitTurnoverNote('');
+                return;
+            }
+            return Promise.all(symphonies.map(function (sym) {
+                return PSRequest.getJson('/api/exit-turnover?symphony_id=' + encodeURIComponent(sym.id))
+                    .then(function (res) {
+                        if (res.ok && res.body && typeof res.body === 'object') {
+                            _lastGoodTurnover[sym.id] = res.body;
+                            return 'ok';
+                        }
+                        return res.kind === 'unauthorized' ? 'unauthorized' : 'failed';
+                    });
+            })).then(function (outcomes) {
+                if (!PSRequest.isLatest('exit-turnover', request)) return;
+                if (outcomes.indexOf('unauthorized') !== -1) { PSRequest.goLogin(); return; }
+                drawExitTurnoverFromLastGood();
+                var failed = outcomes.filter(function (o) { return o !== 'ok'; }).length;
+                if (failed === 0) setExitTurnoverNote('');
+                else if (failed === outcomes.length) setExitTurnoverNote(EXIT_TURNOVER_LOST_TEXT);
+                else setExitTurnoverNote('Could not refresh ' + failed + ' of ' + outcomes.length +
+                    ' rows; they show their last values.');
             });
+        });
     }
 
     document.addEventListener('DOMContentLoaded', function () {
