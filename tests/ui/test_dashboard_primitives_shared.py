@@ -185,7 +185,9 @@ def _base_with_the_review_fix_changes(base: list) -> list:
     * the headline's descriptor is a block of its own and its mode word has a span, where it was
       a span followed by a line break;
     * the detail panel holds a loading line ahead of its stats row;
-    * the Guard stat's label holds the alpha glyph helper.
+    * the Guard stat's label holds the alpha glyph helper;
+    * the headline's label is followed by a hidden notice the window picker fills when the picked
+      window's strip could not be loaded.
 
     A card's alpha badge that has no figure to show loses its sign class; that one is judged by
     ``_without_a_sign_class`` and by the badge test below, since which badges that is depends on
@@ -199,6 +201,9 @@ def _base_with_the_review_fix_changes(base: list) -> list:
     out.insert(stats, ["div", ["math-row-hint"]])
     labels = [i for i in range(stats + 1, len(out)) if out[i] == ["div", ["detail-stat-label"]]]
     out.insert(labels[3] + 1, ["span", ["alpha-glyph"]])
+    label = out.index(["div", ["guard-alpha-label"]])
+    assert out[label + 1] == ["span", []], "the base's headline label does not hold the window span"
+    out.insert(label + 2, ["div", ["legend-as-of"]])
     return out
 
 
