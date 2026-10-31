@@ -385,7 +385,7 @@
         }
         .crisis-caveat-icon { font-size: 1rem; flex-shrink: 0; color: var(--studio-warn); }
         .crisis-caveat-text { margin: 0; }
-        .insufficient-data {
+        .correlations-state {
             padding: 2rem 1.5rem;
             text-align: center;
             background: var(--studio-surface);
@@ -393,15 +393,9 @@
             border-radius: 1rem;
             margin-bottom: 1rem;
         }
-        .insufficient-data-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
-        .insufficient-data-body { color: var(--studio-ink-dim); font-size: 0.875rem; }
-        .meta-strip {
-            display: flex; gap: 0.75rem; align-items: center;
-            font-size: 0.75rem; color: var(--studio-ink-dim);
-            margin-bottom: 1rem; flex-wrap: wrap;
-        }
-        .meta-strip-label { font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.625rem; }
-        .meta-strip-value { font-variant-numeric: tabular-nums; }
+        .correlations-state-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
+        .correlations-state-line { color: var(--studio-ink-dim); font-size: 0.875rem; margin: 0.25rem 0 0; }
+        .correlations-notes { margin-bottom: 0.75rem; }
         .refresh-link { color: var(--studio-accent); text-decoration: none; font-size: 0.75rem; }
         .refresh-link:hover { text-decoration: underline; }
         .matrix-card {
@@ -415,20 +409,42 @@
         .heatmap-table { border-collapse: collapse; min-width: 100%; font-size: 0.8125rem; }
         .heatmap-table th, .heatmap-table td { padding: 0.375rem 0.5rem; text-align: center; }
         .heatmap-table th { font-size: 0.6875rem; font-weight: 700; color: var(--studio-ink-dim); white-space: nowrap; }
-        .corr-cell { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; font-variant-numeric: tabular-nums; font-weight: 600; }
-        .corr-diagonal { background: var(--studio-chip-bg, rgba(0,0,0,0.04)); }
-        .corr-danger { color: var(--studio-neg); }
-        .corr-caution { color: var(--studio-warn); }
-        .corr-ok { color: var(--studio-pos); }
-        .n-indicator { font-size: 0.5625rem; color: var(--studio-ink-dim); font-weight: 400; }
-        .n-indicator--thin { color: var(--studio-warn); }
+        /* A row label wraps: the full display name is shown, never cut. */
+        .heatmap-table th.corr-row-label {
+            text-align: left; white-space: normal; max-width: 22rem; padding-right: 1rem;
+            font-size: 0.75rem; font-weight: 600; color: var(--studio-ink);
+        }
+        .heatmap-table th.corr-row-label:focus-visible,
+        .heatmap-table th.corr-col-label:focus-visible,
+        .corr-cell:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
+        /* The number stays in the ink token; the band shows as a fill behind it. */
+        .corr-cell { color: var(--studio-ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+        .corr-diagonal {
+            background-color: var(--studio-chip-bg); color: var(--studio-ink-dim);
+            font-variant-numeric: tabular-nums; font-weight: 600;
+        }
+        /* A filled band mixes its own signal token by the cell's inline --corr-fill-pct. */
+        .corr-band-danger { background-color: color-mix(in srgb, var(--studio-neg) var(--corr-fill-pct), transparent); }
+        .corr-band-warn { background-color: color-mix(in srgb, var(--studio-warn) var(--corr-fill-pct), transparent); }
+        .corr-band-diversifying { background-color: color-mix(in srgb, var(--studio-pos) var(--corr-fill-pct), transparent); }
+        .corr-band-neutral { background-color: transparent; }
+        .corr-band-undefined { background-color: transparent; font-style: italic; }
+        /* A thin pair is hatched with the faint ink token. background-image only: a background
+           shorthand would erase the band fill. The denser hatch is the stronger shortfall. */
+        .corr-thin-stress {
+            background-image: repeating-linear-gradient(135deg, var(--studio-ink-faint) 0, var(--studio-ink-faint) 1px, transparent 1px, transparent 6px);
+        }
+        .corr-thin-uncertainty {
+            background-image: repeating-linear-gradient(135deg, var(--studio-ink-faint) 0, var(--studio-ink-faint) 2px, transparent 2px, transparent 5px);
+        }
         .matrix-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.875rem; font-size: 0.6875rem; color: var(--studio-ink-dim); }
-        .legend-item { display: flex; align-items: center; gap: 0.375rem; }
-        .legend-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        .legend-dot--danger { background: var(--studio-neg); }
-        .legend-dot--caution { background: var(--studio-warn); }
-        .legend-dot--ok { background: var(--studio-pos); }
-        .thin-footnote { font-size: 0.625rem; color: var(--studio-warn); }
+        .corr-legend-item { display: flex; align-items: center; gap: 0.375rem; }
+        .corr-legend-swatch {
+            display: inline-block; width: 1.25rem; height: 0.875rem; flex-shrink: 0;
+            border: 1px solid var(--studio-border); border-radius: 0.1875rem;
+        }
+        .correlations-excluded { margin-top: 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); }
+        .correlations-excluded ul { margin: 0; padding-left: 1.25rem; }
 
         /* Asset-swaps + Logic-changes panels */
         .advise-only-banner, .fdr-warning-banner {
@@ -1926,38 +1942,29 @@
                 </p>
             </div>
 
-            {% if insufficient_data %}
+            {# The panel renders the stored retirement run: nothing is fetched or recomputed here. #}
+            {# Every value below is autoescaped and nothing is marked safe.                     #}
+            {% set _cm = correlation_matrix_view %}
 
-            <!-- Insufficient data state -->
-            <div class="insufficient-data" data-testid="insufficient-data-state">
-                <div class="insufficient-data-title">Insufficient Data</div>
-                <div class="insufficient-data-body">
-                    No return series are available yet. The diagnostic requires at least two
-                    symphonies with overlapping return history.
-                </div>
+            {% if _cm.state != 'matrix' %}
+
+            {# One state block, no matrix: no run yet, a run without pairs, a failed run, or an unreadable one. #}
+            <div class="correlations-state" data-testid="correlations-state" data-state="{{ _cm.state }}">
+                <div class="correlations-state-title">{{ _cm.title }}</div>
+                {% for _line in _cm.lines %}
+                <p class="correlations-state-line">{{ _line }}</p>
+                {% endfor %}
             </div>
 
             {% else %}
 
-            <!-- Metadata strip -->
-            <div class="meta-strip" data-testid="as-of-strip">
-                <span class="meta-strip-label">As of</span>
-                <span class="meta-strip-value" data-testid="as-of-timestamp">{{ as_of }}</span>
-                <span>&bull;</span>
-                <span class="meta-strip-value">{{ correlation_matrix | length }} pair{{ 's' if correlation_matrix | length != 1 else '' }}</span>
+            <div class="correlations-notes">
+                <div class="legend-as-of" data-testid="correlations-basis">Basis: {{ _cm.basis }}</div>
+                <div class="legend-as-of" data-testid="correlations-as-of">{{ _cm.as_of }}</div>
+                {% if _cm.earlier_run_note %}
+                <div class="legend-as-of" data-testid="correlations-earlier-run-note">{{ _cm.earlier_run_note }}</div>
+                {% endif %}
             </div>
-
-            <!-- Pairwise return correlation matrix -->
-            {%- set sym_names = [] -%}
-            {%- for pair in correlation_matrix -%}
-                {%- if pair.sym_a not in sym_names -%}{%- set _ = sym_names.append(pair.sym_a) -%}{%- endif -%}
-                {%- if pair.sym_b not in sym_names -%}{%- set _ = sym_names.append(pair.sym_b) -%}{%- endif -%}
-            {%- endfor -%}
-            {%- set pair_lookup = {} -%}
-            {%- for pair in correlation_matrix -%}
-                {%- set _ = pair_lookup.update({(pair.sym_a, pair.sym_b): pair}) -%}
-                {%- set _ = pair_lookup.update({(pair.sym_b, pair.sym_a): pair}) -%}
-            {%- endfor -%}
 
             <section class="matrix-card" data-testid="pairwise-matrix-card">
                 <div class="matrix-card-header">Pairwise Return Correlation</div>
@@ -1965,64 +1972,65 @@
                     <thead>
                         <tr>
                             <th></th>
-                            {%- for name in sym_names -%}
-                            <th title="{{ name | e }}">{{ name | truncate(12, True, '…') | e }}</th>
+                            {%- for _ax in _cm.axes -%}
+                            <th scope="col" class="corr-col-label" data-testid="corr-col-label" data-sym="{{ _ax.sym }}" tabindex="0" title="{{ _ax.col_title }}" aria-label="{{ _ax.col_aria }}">{{ _ax.number }}</th>
                             {%- endfor -%}
                         </tr>
                     </thead>
                     <tbody>
-                        {%- for row_name in sym_names -%}
+                        {%- for _ax in _cm.axes -%}
                         <tr>
-                            <td style="font-size:0.75rem;font-weight:600;color:var(--studio-ink);padding-right:1rem;white-space:nowrap;">
-                                {{ row_name | truncate(18, True, '…') | e }}
-                            </td>
-                            {%- for col_name in sym_names -%}
-                                {%- if row_name == col_name -%}
-                                <td class="corr-diagonal" data-testid="corr-cell-diagonal">
-                                    <span class="corr-cell">1.00</span>
-                                </td>
-                                {%- else -%}
-                                    {%- set pair = pair_lookup.get((row_name, col_name)) -%}
-                                    {%- if pair is not none -%}
-                                        {%- set corr_val = pair.correlation -%}
-                                        {%- set abs_corr = corr_val | abs if corr_val is not none else 0 -%}
-                                        {%- if abs_corr >= 0.70 -%}{%- set heat_class = "corr-danger" -%}
-                                        {%- elif abs_corr >= 0.40 -%}{%- set heat_class = "corr-caution" -%}
-                                        {%- else -%}{%- set heat_class = "corr-ok" -%}{%- endif -%}
-                                    <td data-testid="corr-cell"
-                                        data-sym-a="{{ pair.sym_a | e }}"
-                                        data-sym-b="{{ pair.sym_b | e }}"
-                                        data-n-obs="{{ pair.n_obs }}"
-                                        data-thin="{{ 'true' if pair.thin_data else 'false' }}">
-                                        <span class="corr-cell {{ heat_class }}">
-                                            {%- if corr_val is not none -%}{{ "%+.2f" | format(corr_val) }}{%- else -%}—{%- endif -%}
-                                            <span class="n-indicator {% if pair.thin_data %}n-indicator--thin{% endif %}"
-                                                  data-testid="n-indicator">
-                                                n={{ pair.n_obs }}{% if pair.thin_data %} thin{% endif %}
-                                            </span>
-                                        </span>
-                                    </td>
-                                    {%- else -%}
-                                    <td class="corr-diagonal" data-testid="corr-cell-no-data">
-                                        <span class="corr-cell" style="color:var(--studio-ink-faint);">—</span>
-                                    </td>
-                                    {%- endif -%}
-                                {%- endif -%}
+                            <th scope="row" class="corr-row-label" data-testid="corr-row-label" data-sym="{{ _ax.sym }}" tabindex="0" title="{{ _ax.row_title }}" aria-label="{{ _ax.row_aria }}">{{ _ax.number }} {{ _ax.name }}</th>
+                            {%- for _cell in _ax.cells -%}
+                            {%- if _cell.diagonal -%}
+                            <td class="corr-diagonal" data-testid="corr-cell-diagonal">1.00</td>
+                            {%- else -%}
+                            <td class="corr-cell corr-band-{{ _cell.band }}{% if _cell.thin != 'none' %} corr-thin-{{ _cell.thin }}{% endif %}"
+                                data-testid="corr-cell"
+                                data-sym-a="{{ _cell.sym_a }}"
+                                data-sym-b="{{ _cell.sym_b }}"
+                                data-n-obs="{{ _cell.n_obs }}"
+                                data-band="{{ _cell.band }}"
+                                data-thin="{{ _cell.thin }}"
+                                tabindex="0"
+                                title="{{ _cell.title }}"
+                                aria-label="{{ _cell.title }}"
+                                {%- if _cell.fill_pct %} style="--corr-fill-pct: {{ _cell.fill_pct }}%"{% endif %}>{{ _cell.text }}</td>
+                            {%- endif -%}
                             {%- endfor -%}
                         </tr>
                         {%- endfor -%}
                     </tbody>
                 </table>
-                <div class="matrix-legend" data-testid="matrix-legend">
-                    <span class="legend-item"><span class="legend-dot legend-dot--danger"></span>High (|r| &ge; 0.70)</span>
-                    <span class="legend-item"><span class="legend-dot legend-dot--caution"></span>Moderate</span>
-                    <span class="legend-item"><span class="legend-dot legend-dot--ok"></span>De-correlated</span>
-                    {%- set has_thin = correlation_matrix | selectattr('thin_data') | list -%}
-                    {%- if has_thin -%}<span class="thin-footnote" data-testid="thin-data-footnote">&dagger; thin data</span>{%- endif -%}
+
+                <div class="matrix-legend" data-testid="correlations-legend">
+                    {%- for _b in _cm.legend_bands -%}
+                    <span class="corr-legend-item" data-testid="corr-legend-band" data-band="{{ _b.band }}">
+                        <span class="corr-legend-swatch corr-band-{{ _b.band }}"{% if _b.fill_pct %} style="--corr-fill-pct: {{ _b.fill_pct }}%"{% endif %} aria-hidden="true"></span>
+                        {{ _b.text }}
+                    </span>
+                    {%- endfor -%}
+                    {%- for _t in _cm.legend_thin -%}
+                    <span class="corr-legend-item" data-testid="corr-legend-thin" data-level="{{ _t.level }}">
+                        <span class="corr-legend-swatch corr-thin-{{ _t.level }}" aria-hidden="true"></span>
+                        {{ _t.text }}
+                    </span>
+                    {%- endfor -%}
+                    <span class="corr-legend-item">The fill deepens as the correlation gets stronger.</span>
                 </div>
+
+                {% if _cm.excluded %}
+                <div class="correlations-excluded" data-testid="correlations-excluded">
+                    <ul>
+                        {%- for _ex in _cm.excluded -%}
+                        <li data-testid="correlations-excluded-item" title="{{ _ex.symphony_id }}">{{ _ex.text }}</li>
+                        {%- endfor -%}
+                    </ul>
+                </div>
+                {% endif %}
             </section>
 
-            {% endif %}{# insufficient_data #}
+            {% endif %}{# matrix state #}
 
         </div>{# /tab-panel-correlations #}
 
@@ -2296,6 +2304,9 @@
                         <div class="retirement-last-run-line" data-testid="retirement-last-run-basis">
                             Basis: {{ _lr.get('source') or 'unknown' }} &mdash; {{ _lr.get('basis_label') or 'basis not recorded' }}
                         </div>
+                        {% if retirement_series_through %}
+                        <div class="legend-as-of" data-testid="retirement-last-run-series-through">Series through {{ retirement_series_through }}</div>
+                        {% endif %}
                         {# Five tiles from _build_retirement_summary_tiles, in its order; the ids are the ones the lines carried. #}
                         {% set _tile_ids = ['retirement-last-run-symphonies', 'retirement-last-run-depth', 'retirement-last-run-pairs', 'retirement-last-run-blocked', 'retirement-last-run-recommendations'] %}
                         <div class="mini-stats retirement-tiles">

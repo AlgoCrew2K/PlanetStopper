@@ -925,3 +925,66 @@ class TestRunNowWiring:
 
     def test_js_disables_the_button_while_a_run_is_in_flight(self, js):
         assert ".disabled = true" in _function_body(js, "retirementRunNow")
+
+
+# ---------------------------------------------------------------------------
+# One run, two tabs: the Retirement tab and the Correlations tab agree
+# ---------------------------------------------------------------------------
+
+
+class TestTheRetirementTabAgreesWithTheCorrelationsTab:
+    """Both tabs render the same stored run, so the series date and the exclusion sentences they
+    show for it cannot differ. The run is the real recommender over the real captures."""
+
+    def _seed_real_run(self, monkeypatch, **run_kwargs) -> dict:
+        from tests.app._correlations_view_support import seed_run  # noqa: PLC0415
+
+        return seed_run(monkeypatch, **run_kwargs)
+
+    def test_the_retirement_tab_names_the_last_series_date_the_correlations_as_of_names(
+        self, client, isolated_db, monkeypatch
+    ):
+        summary = self._seed_real_run(monkeypatch)
+        through = max(w["window_last"] for w in summary["series_windows"].values())
+        body = _render(client)
+
+        line = _element_html(_block_html(body), "retirement-last-run-series-through")
+        assert f"Series through {through}" in _text(line)
+        as_of = _text(_element_html(body, "correlations-as-of"))
+        assert f"Series through {through}" in as_of
+
+    def test_the_series_through_line_follows_the_newest_run_and_never_invents_a_date(
+        self, client, isolated_db, monkeypatch
+    ):
+        from tests.advisors import _series_captures as captures  # noqa: PLC0415
+
+        captures.persist_summary(captures.load_captured_summary_row())
+        block = _block_html(_render(client))
+        if 'data-testid="retirement-last-run-series-through"' in block:
+            line = _text(_element_html(block, "retirement-last-run-series-through"))
+            assert not re.search(r"\d{4}-\d{2}-\d{2}", line), line
+
+        summary = self._seed_real_run(monkeypatch)
+        through = max(w["window_last"] for w in summary["series_windows"].values())
+        line = _element_html(_block_html(_render(client)), "retirement-last-run-series-through")
+        assert f"Series through {through}" in _text(line)
+
+    def test_each_excluded_symphony_reads_the_same_sentence_on_both_tabs(
+        self, client, isolated_db, monkeypatch
+    ):
+        from tests.advisors import _series_captures as captures  # noqa: PLC0415
+
+        no_account, failing = "5XjzXjdGnjh99MIsdM97", "8FAXAnQmYi1INDubazeC"
+        summary = self._seed_real_run(
+            monkeypatch, accounts={no_account: None}, errors={failing: "HTTP 503"}
+        )
+        body = _render(client)
+        correlations = _text(_element_html(body, "tab-panel-correlations"))
+        retirement = _sub_text(body, "retirement-last-run-excluded")
+
+        assert len(summary["symphonies_without_series"]) == 3
+        for entry in summary["symphonies_without_series"]:
+            name = " ".join(captures.capture_name(entry["symphony_id"]).split())
+            sentence = app_module._retirement_exclusion_reason_sentence(entry["reason"])
+            assert f"{name} — {sentence}" in retirement
+            assert f"Not in the matrix: {name}. {sentence}" in correlations
