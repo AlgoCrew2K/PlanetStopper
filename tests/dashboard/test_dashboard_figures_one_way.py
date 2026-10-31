@@ -38,14 +38,40 @@ def _norm(text: str | None) -> str:
     return " ".join((text or "").replace(" ", " ").split())
 
 
+# The poll's own (lifetime) Max DD in the derived poll body: two figures no window of any world
+# produces, so a row that shows the poll's figure under a picked window cannot pass by chance.
+# A named-field edit of a real body (portfolio_strip.max_drawdown), like the builders listed in
+# tests/fixtures/refresh_timing/03-c1/PROVENANCE.md.
+POLL_LIFETIME_MDD = {"dry_run": 9.99, "if_held": 7.77}
+
+
 def _bodies(world_name: str = WORLD) -> dict:
+    import copy
+
     world = hx.get_world(world_name)
     stamp = sup.render_stamp(world)
-    return {
-        "pollNew": sup.with_stamp(world["next"]["state"], sup.later_stamp(stamp))
-        if "next" in world
-        else sup.with_stamp(world["state"], sup.later_stamp(stamp)),
-    }
+    source = world["next"]["state"] if "next" in world else world["state"]
+    body = copy.deepcopy(sup.with_stamp(source, sup.later_stamp(stamp)))
+    body["portfolio_strip"]["max_drawdown"] = dict(POLL_LIFETIME_MDD)
+    return {"pollNew": body}
+
+
+def _tree(world_name: str = WORLD) -> dict:
+    return hx.parse_html(hx.get_world(world_name)["html"])
+
+
+def _ssr_text(world_name: str, testid: str) -> str | None:
+    """The text of the first element with this test id in the server render (first paint)."""
+    found = hx.find_all(_tree(world_name), lambda n: n["a"].get("data-testid") == testid)
+    return _norm(hx.tree_text(found[0])) if found else None
+
+
+def _contains_testid(node, testid: str) -> bool:
+    if isinstance(node, str):
+        return False
+    if node["a"].get("data-testid") == testid:
+        return True
+    return any(_contains_testid(c, testid) for c in node["c"])
 
 
 def _run(scenario: str, *, world: str = WORLD, extra: dict | None = None):
@@ -141,24 +167,27 @@ def _leg(prefix: str, value) -> str | None:
 
 
 def test_max_dd_prints_the_same_text_at_first_paint_and_after_a_refresh():
+    first = {
+        "bot": _ssr_text(WORLD, "comp-mdd-bot-text"),
+        "held": _ssr_text(WORLD, "comp-mdd-held-text"),
+    }
     r = _run(
         _MDD_READ
         + """
         await H.boot({ extras: true });
-        const first = mdd();
         H.route('/api/state', { body: H.bodies.pollNew });
         await H.runTimers(30000);
-        return { first: first, after: mdd() };
+        return { after: mdd() };
         """
     )
     for side in ("bot", "held"):
-        assert r["first"][side] == r["after"][side], (
-            f"Max DD {side}: first paint {r['first'][side]!r}, after a refresh {r['after'][side]!r}"
+        assert first[side] == r["after"][side], (
+            f"Max DD {side}: first paint {first[side]!r}, after a refresh {r['after'][side]!r}"
         )
-        assert "+" not in r["after"][side] and "+" not in r["first"][side], (
+        assert "+" not in r["after"][side] and "+" not in first[side], (
             "a drawdown is a magnitude and carries no plus sign"
         )
-        assert LEG_SHAPE.match(r["after"][side]) or not re.search(r"\d", r["after"][side])
+        assert LEG_SHAPE.match(first[side]) or not re.search(r"\d", first[side])
 
 
 @pytest.mark.parametrize("token", ["30d", "60d", "1y"])
@@ -182,6 +211,7 @@ def test_max_dd_follows_the_picked_window_and_matches_the_strip(token):
     )
     assert r["picked"]["held"] == _leg("Held", strip["if_held"])
     assert r["after"] == r["picked"], f"{token}: a refresh put another window's figure in the row"
+    assert "9.99" not in r["after"]["bot"], f"{token}: the poll's lifetime figure is in the row"
 
 
 def test_max_dd_says_so_when_the_window_cannot_supply_it():
@@ -192,21 +222,26 @@ def test_max_dd_says_so_when_the_window_cannot_supply_it():
         _MDD_READ
         + """
         await H.boot({ extras: true });
-        const first = mdd();
         H.route('/api/state', { body: H.bodies.pollNew });
         await H.runTimers(30000);
-        return { first: first, after: mdd() };
+        return { after: mdd() };
         """,
         world="onepoint",
     )
-    for state in ("first", "after"):
-        for side in ("bot", "held"):
-            assert not re.search(r"\d", r[state][side] or ""), (
-                f"{state}: the row shows {r[state][side]!r} although the window supplies no drawdown"
+    first = {
+        "bot": _ssr_text("onepoint", "comp-mdd-bot-text"),
+        "held": _ssr_text("onepoint", "comp-mdd-held-text"),
+    }
+    for side in ("bot", "held"):
+        for name, text in (("first paint", first[side]), ("after a refresh", r["after"][side])):
+            assert not re.search(r"\d", text or ""), (
+                f"{name}: the row shows {text!r} although the window supplies no drawdown"
             )
-        assert r[state]["insufficientShown"] is True, (
-            f"{state}: the row does not say it has no figure"
-        )
+    assert r["after"]["insufficientShown"] is True, "the row does not say it has no figure"
+    label = hx.find_all(
+        _tree("onepoint"), lambda n: n["a"].get("data-testid") == "mdd-insufficient-label"
+    )
+    assert label and "hidden" not in label[0]["a"], "first paint hides the row's own explanation"
 
 
 # ---------------------------------------------------------------------------
@@ -242,19 +277,24 @@ def test_the_vol_row_shows_the_picked_windows_figures_matching_performance():
 def test_the_vol_row_is_hidden_not_dashed_when_there_is_no_value():
     world = hx.get_world("onepoint")
     assert world["strips"]["30d"]["vol_bot"] is None
+    rows = hx.find_all(_tree("onepoint"), lambda n: n["a"].get("data-testid") == "vs-row")
+    vol_rows = [n for n in rows if _contains_testid(n, "comp-vol-bot-text")]
+    assert len(vol_rows) == 1
+    attrs = vol_rows[0]["a"]
+    assert "hidden" in attrs or "display:none" in (attrs.get("style") or "").replace(" ", ""), (
+        "first paint shows a dead vol row"
+    )
     r = _run(
         _VOL_ROW
         + """
         await H.boot({ extras: true });
-        const first = volRow();
         H.route('/api/state', { body: H.bodies.pollNew });
         await H.runTimers(30000);
-        return { first: first, after: volRow() };
+        return volRow();
         """,
         world="onepoint",
     )
-    assert r["first"]["found"] and r["first"]["hidden"] is True, "first paint shows a dead vol row"
-    assert r["after"]["hidden"] is True, "a refresh brought the dead vol row back"
+    assert r["found"] and r["hidden"] is True, "a refresh brought the dead vol row back"
 
 
 # ---------------------------------------------------------------------------
@@ -272,28 +312,45 @@ const card = function () {
 """.replace("__ID__", hx.STANDBY_NO_ROWS_ID)
 
 
+def _ssr_card(field: str) -> list[str]:
+    """Every element of the standby entry's server-rendered card carrying `data-field`."""
+    tree = _tree()
+    cards = hx.find_all(
+        tree,
+        lambda n: (
+            n["a"].get("data-sym-id") == hx.STANDBY_NO_ROWS_ID
+            and "sym-card" in (n["a"].get("class") or "").split()
+        ),
+    )
+    assert len(cards) == 1, "the standby entry must have one card"
+    return [
+        _norm(hx.tree_text(n))
+        for n in hx.find_all(cards[0], lambda n: n["a"].get("data-field") == field)
+    ]
+
+
 def test_a_card_with_no_bot_figure_shows_the_same_dash_alpha_at_first_paint_and_after_a_refresh():
+    first = {"bot": _ssr_card("tc-bot"), "alpha": _ssr_card("tc-alpha-badge")}
     r = _run(
         _STANDBY_READ
         + """
         await H.boot({ extras: true });
-        const first = card();
         H.route('/api/state', { body: H.bodies.pollNew });
         await H.runTimers(30000);
-        return { first: first, after: card() };
+        return { after: card() };
         """
     )
-    assert r["first"]["found"] and r["after"]["found"], "the standby entry must have a card"
-    assert r["first"]["bot"] and all(not re.search(r"\d", t) for t in r["first"]["bot"]), (
-        f"the world must give this card no Bot figure: {r['first']['bot']}"
+    assert r["after"]["found"], "the refreshed page lost the standby card"
+    assert first["bot"] and all(not re.search(r"\d", t) for t in first["bot"]), (
+        f"the world must give this card no Bot figure: {first['bot']}"
     )
-    assert r["first"]["alpha"] == r["after"]["alpha"], (
-        f"alpha at first paint {r['first']['alpha']} differs from after a refresh {r['after']['alpha']}"
+    assert first["alpha"] == r["after"]["alpha"], (
+        f"alpha at first paint {first['alpha']} differs from after a refresh {r['after']['alpha']}"
     )
-    assert all(not re.search(r"\d", t) for t in r["first"]["alpha"]), (
-        f"an alpha {r['first']['alpha']} was invented for a card that has no Bot figure"
+    assert all(not re.search(r"\d", t) for t in first["alpha"]), (
+        f"an alpha {first['alpha']} was invented for a card that has no Bot figure"
     )
-    assert r["first"]["bot"] == r["after"]["bot"], "the absent Bot marker changed between renders"
+    assert first["bot"] == r["after"]["bot"], "the absent Bot marker changed between renders"
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +380,9 @@ def test_the_first_paint_lock_badge_template_carries_the_label_too():
     html = (REPO / "templates" / "index.html").read_text(encoding="utf-8")
     start = html.index('data-testid="edit-vars-indicator"')
     span = html[start : html.index("</span>", start)]
-    assert "locked" in span, "the server-rendered badge still prints a bare count"
+    assert re.search(r"\{\{\s*vars_locked_count\s*\}\}[^<{]*locked", span), (
+        "the server-rendered badge still prints a bare count"
+    )
 
 
 def test_the_hero_chart_shows_a_tooltip_on_hover_like_performance():

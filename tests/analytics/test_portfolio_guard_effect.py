@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
@@ -73,7 +74,8 @@ def compounded_gap(series_by_symphony: dict[str, list[dict]], weights: dict[str,
 
 @pytest.fixture(scope="module")
 def basis_fixture() -> dict:
-    return json.loads(_FIXTURE.read_text(encoding="utf-8"))
+    with _FIXTURE.open(encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def _scenario_inputs(basis_fixture, tmp_path):
@@ -164,7 +166,7 @@ class TestHeadlineIsTheCompoundedGapOverEverySymphony:
         )
         assert strip["insufficient_history"] is True, "the fixture holds five days"
         assert strip["vol_bot"] is None and strip["max_drawdown"]["dry_run"] is None
-        assert strip["guard_alpha"] is not None
+        assert strip["guard_alpha"] == pytest.approx(compounded_gap(series, weights), abs=1e-6)
 
     def test_fewer_than_two_days_in_the_window_is_none_not_zero(self, tmp_path):
         """The route's day-1 fallback is gated on None; a fabricated 0.0 would hide it."""
@@ -187,8 +189,12 @@ class TestHeadlineIsTheCompoundedGapOverEverySymphony:
             f"one day of rows gave {strip['guard_alpha']!r}; the day-1 fallback needs None"
         )
 
-    def test_the_window_bounds_the_gap(self, tmp_path):
-        """Only the days inside the window are compounded; older days with a large gap are out."""
+    def test_the_window_bounds_the_gap_over_two_symphonies_of_different_weight(self, tmp_path):
+        """Only the days inside the window are compounded; older days with a large gap are out.
+
+        Two symphonies so that the old additive, per-symphony, ex-no-cost-basis average and the
+        compounded portfolio gap differ on the days that count.
+        """
         today = date.today()
         weekdays: list[date] = []
         d = today
@@ -198,11 +204,13 @@ class TestHeadlineIsTheCompoundedGapOverEverySymphony:
             d -= timedelta(days=1)
         recent = sorted(weekdays)
         old = [today - timedelta(days=90 + i) for i in range(0, 4)]
-        rows = []
-        for i, day in enumerate(old):
-            rows.append(("2oldSym", day, 9.0, 1.0))  # a large gap that must stay outside 30d
+        weights = {"winSymA": 3000.0, "winSymB": 1000.0}
+        rows = []  # (symphony, day, shadow, current)
+        for day in old:
+            rows += [("winSymA", day, 9.0, 1.0), ("winSymB", day, -9.0, 1.0)]  # outside 30d
         for i, day in enumerate(recent):
-            rows.append(("2oldSym", day, 0.5 + 0.1 * i, 0.4))
+            rows.append(("winSymA", day, 0.5 + 0.1 * i, 0.4))
+            rows.append(("winSymB", day, -0.8 + 0.3 * i, 0.2 * i))
         db_file = str(tmp_path / "windowed.db")
         conn = sqlite3.connect(db_file)
         conn.execute(
@@ -219,23 +227,25 @@ class TestHeadlineIsTheCompoundedGapOverEverySymphony:
         conn.commit()
         conn.close()
         database._shadow_cr_cache.clear()
-        state = {"2oldSym": {"name": "w", "current_value": 1000.0}}
-        in_window = [
-            {
-                "trading_day": day.isoformat(),
-                "ts_utc": f"{day.isoformat()}T20:00:00Z",
-                "shadow_return": shadow,
-                "current_return": current,
-            }
-            for sid, day, shadow, current in rows
-            if day >= today - timedelta(days=30)
-        ]
-        expected = compounded_gap({"2oldSym": in_window}, {"2oldSym": 1000.0})
+        state = {sid: {"name": sid, "current_value": w} for sid, w in weights.items()}
+        in_window: dict[str, list[dict]] = {sid: [] for sid in weights}
+        for sid, day, shadow, current in rows:
+            if day >= today - timedelta(days=30):
+                in_window[sid].append(
+                    {
+                        "trading_day": day.isoformat(),
+                        "ts_utc": f"{day.isoformat()}T20:00:00Z",
+                        "shadow_return": shadow,
+                        "current_return": current,
+                    }
+                )
+        expected = compounded_gap(in_window, weights)
+        symphonies = [_sym_dict(sid, 5.0, w) for sid, w in weights.items()]
         strip = analytics.compute_windowed_portfolio_strip(
-            [_sym_dict("2oldSym", 5.0, 1000.0)], state, window="30d", db_path=db_file, state=state
+            symphonies, state, window="30d", db_path=db_file, state=state
         )
         assert strip["guard_alpha"] == pytest.approx(expected, abs=1e-6)
-        assert not math.isclose(strip["guard_alpha"], 0.0, abs_tol=1e-9), "fixture has a real gap"
+        assert not math.isclose(expected, 0.0, abs_tol=1e-9), "fixture has a real gap"
 
 
 # ---------------------------------------------------------------------------
@@ -243,11 +253,9 @@ class TestHeadlineIsTheCompoundedGapOverEverySymphony:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def client():
+def _client_for_routes():
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
+    return app_module.app.test_client()
 
 
 def _recent_weekdays(count: int) -> list[date]:
@@ -261,8 +269,6 @@ def _recent_weekdays(count: int) -> list[date]:
 
 def _seed_three_symphonies(monkeypatch):
     """Three symphonies, one of them without a Composer cost basis, diverging on different days."""
-    import os
-
     from tests.ui.test_static_js_page_harness import seed_shadow_rows, shadow_row
 
     days = [d.isoformat() for d in _recent_weekdays(12)]
@@ -288,12 +294,14 @@ def _seed_three_symphonies(monkeypatch):
         for sid, value in ids.items()
     }
     database.save_state(state)
+    monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
     monkeypatch.setattr(app_module, "get_market_state", lambda *_a, **_k: "open")
     return days, ids, rows
 
 
-def test_dashboard_chart_and_performance_report_the_same_figure(client, monkeypatch):
+def test_dashboard_chart_and_performance_report_the_same_figure(monkeypatch):
     days, ids, rows = _seed_three_symphonies(monkeypatch)
+    client = _client_for_routes()
     strip = client.get("/api/strip/30d").get_json()
     chart = client.get("/api/hero-chart/30d").get_json()
     perf = client.get("/api/performance?days=30d").get_json()
@@ -316,16 +324,29 @@ def test_dashboard_chart_and_performance_report_the_same_figure(client, monkeypa
 
 
 def test_after_the_close_the_headline_still_equals_the_chart_gap(monkeypatch, tmp_path):
-    """The frozen branch computes the headline from the same cut as the chart."""
+    """The frozen branch computes the headline from the same cut as the chart, over every symphony.
+
+    One captured entry is made a no-cost-basis symphony (simple_return and net_deposits 0.0, the
+    condition the old headline left out), in the live state and in the close snapshot.
+    """
+    import database as database_module
+    from tests.app._refresh_timing_state_world import UNTRIGGERED_ID
     from tests.app.test_closed_market_numbers_never_move import (
         WEDNESDAY_TO_THURSDAY,
         build_session,
     )
 
     world, _composer = build_session(monkeypatch, tmp_path, WEDNESDAY_TO_THURSDAY)
+    state = database_module.load_state()
+    state[UNTRIGGERED_ID].update({"simple_return": 0.0, "net_deposits": 0.0})
+    for entries in state["last_market_close_snapshot"]["accounts_map"].values():
+        for entry in entries:
+            if entry["id"] == UNTRIGGERED_ID:
+                entry.update({"simple_return": 0.0, "net_deposits": 0.0})
+    database_module.save_state(state)
     strip = world.poll("/api/strip/30d")
     chart = world.poll("/api/hero-chart/30d")
     assert strip["guard_alpha"] is not None
     assert strip["guard_alpha"] == pytest.approx(
         chart["hist_bot"][-1] - chart["hist_held"][-1], abs=5e-4
-    ), "after the close the headline and the chart read different cuts"
+    ), "after the close the headline and the chart read different cuts or populations"

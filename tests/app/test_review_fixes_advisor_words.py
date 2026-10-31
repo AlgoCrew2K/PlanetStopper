@@ -28,8 +28,7 @@ def client():
     import app as app_module
 
     app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
+    yield app_module.app.test_client()
 
 
 @pytest.fixture()
@@ -90,7 +89,7 @@ def test_the_same_words_are_used_on_the_producer_line_and_in_the_history_rows(cl
     _seed_observations()
     section = _page(client).find("advisor-observations-section")
     line = {
-        n.parent.attrs["data-role"]: n.text()
+        n.ancestor("obs-producer").attrs["data-role"]: n.text()
         for n in section.walk()
         if n.testid == "obs-producer-verdict"
     }
@@ -196,7 +195,7 @@ def test_every_template_source_of_a_drawdown_prints_the_magnitude():
     assert unsigned == [], f"drawdown formatted without abs(): {unsigned}"
 
 
-@pytest.mark.parametrize("value", [-0.2707, 0.0])
+@pytest.mark.parametrize("value", [-27.07, 0.0])  # percent scale, as the tenure review stores it
 def test_tenure_evidence_prints_max_drawdown_as_a_magnitude(client, isolated_db, value):
     record = pb.full_record()
     entry = pb.entry_with_verdict(record, "watch")
@@ -214,7 +213,7 @@ def test_tenure_evidence_prints_max_drawdown_as_a_magnitude(client, isolated_db,
     assert not re.search(r"[-−]", lines[0]), (
         f"a signed drawdown in the tenure evidence: {lines[0]!r}"
     )
-    assert f"{abs(value) * 100:.2f}" in lines[0], lines[0]
+    assert f"{abs(value):.2f}" in lines[0], lines[0]
 
 
 # ---------------------------------------------------------------------------

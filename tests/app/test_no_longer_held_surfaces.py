@@ -148,12 +148,15 @@ def test_the_poll_strip_ignores_it(pair):
 def test_the_settings_roster_lists_it_apart_and_dimmed_data_is_served(pair):
     world, before, after = pair
     body = world.poll("/api/settings")
-    held_ids = [s["id"] for s in body["symphonies_list"]]
-    assert STALE_ID not in held_ids, "the active roster still lists it"
-    assert TRIGGERED_ID in held_ids and UNTRIGGERED_ID in held_ids
+    held_names = [s["name"] for s in body["symphonies_list"]]
+    assert STALE_NAME not in held_names, "the active roster still lists it"
+    assert len(held_names) == len(before["card_ids"])
     gone = body["symphonies_no_longer_held"]
-    assert [(s["id"], s["name"]) for s in gone] == [(STALE_ID, STALE_NAME)], (
+    assert [s["name"] for s in gone] == [STALE_NAME], (
         "Settings must list the entry under symphonies_no_longer_held so it can be shown dimmed"
+    )
+    assert gone[0]["id"] == database_module.normalize_name(STALE_NAME), (
+        "the entry has the same id shape as symphonies_list"
     )
 
 
@@ -170,13 +173,15 @@ def test_nothing_is_deleted_from_the_database(pair):
     assert n == len(STALE_SESSIONS), "its rows were deleted"
 
 
-def test_the_advisor_page_does_not_offer_it(pair):
+def test_the_advisor_symphony_list_does_not_offer_it(pair):
+    """The Advisor's select (and the Performance picker) are filled from this route."""
     world, before, after = pair
+    names = [s["name"] for s in world.poll("/api/performance/symphonies")["symphonies"]]
+    assert STALE_NAME not in names, "the symphony list still offers a symphony no longer held"
+    assert len(names) == len(before["card_ids"])
     response = world.client.get("/ai-advisor")
     assert response.status_code == 200
-    assert STALE_NAME not in response.get_data(as_text=True), (
-        "the Advisor symphony list still offers a symphony no longer held"
-    )
+    assert STALE_NAME not in response.get_data(as_text=True)
 
 
 def test_the_retirement_roster_excludes_it(pair, monkeypatch):
