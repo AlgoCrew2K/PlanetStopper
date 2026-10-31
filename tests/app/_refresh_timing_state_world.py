@@ -86,6 +86,11 @@ class Moment:
         return self.instant.strftime("%Y-%m-%d")
 
 
+# The close snapshot of the seeded closed worlds is stamped after the newest seeded shadow row
+# (16:04:01 ET), so every seeded row belongs to the close the snapshot describes. The record's
+# own 16:00:01 would put the whole seeded day after the capture.
+CLOSE_SNAPSHOT_CAPTURED_AT = "16:05:00 ET"
+
 # Cycle M's rows are committed and its state write is not, one minute after M-1 finished.
 MOMENTS = {
     "open": Moment("open", datetime(2026, 10, 21, 16, 4, 20, tzinfo=ET)),
@@ -288,14 +293,28 @@ class World:
 
     # -- state -------------------------------------------------------------
 
-    def commit_state(self, label: str, *, with_snapshot: bool = False) -> None:
-        """Save `bot_state` as the engine does at the end of cycle `label`."""
+    def commit_state(
+        self,
+        label: str,
+        *,
+        with_snapshot: bool = False,
+        snapshot_captured_at: str | None = None,
+    ) -> None:
+        """Save `bot_state` as the engine does at the end of cycle `label`.
+
+        `snapshot_captured_at` replaces the record's `captured_at_et` ("HH:MM:SS ET"): the
+        world seeds shadow rows stamped up to 16:04, so a snapshot stamped earlier would
+        leave every seeded row outside the close it describes.
+        """
         live = self._records["live"]
         state: dict = dict(live["reserved"])
         state.update(json.loads(json.dumps(live[label]["entries"])))
         state["last_successful_cycle_at"] = live[label]["last_successful_cycle_at"]
         if with_snapshot:
-            state["last_market_close_snapshot"] = json.loads(json.dumps(self._records["snapshot"]))
+            snapshot = json.loads(json.dumps(self._records["snapshot"]))
+            if snapshot_captured_at is not None:
+                snapshot["captured_at_et"] = snapshot_captured_at
+            state["last_market_close_snapshot"] = snapshot
         database_module.save_state(state)
 
     def stamp(self, label: str) -> str:
@@ -358,7 +377,11 @@ def seeded_world(monkeypatch, tmp_path, branch: str, *, cycle: str = "m") -> Wor
     world.seed_rows(world.previous_day_rows())
     world.seed_cycle("m_minus_1")
     world.seed_cycle("m")
-    world.commit_state(cycle, with_snapshot=branch != "open")
+    world.commit_state(
+        cycle,
+        with_snapshot=branch != "open",
+        snapshot_captured_at=CLOSE_SNAPSHOT_CAPTURED_AT,
+    )
     return world
 
 

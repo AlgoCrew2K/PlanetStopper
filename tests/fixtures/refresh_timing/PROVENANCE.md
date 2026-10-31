@@ -28,6 +28,9 @@ A database file is never committed, including the launcher's copy of production 
 | `01-c1/` | server-state-truth, cycle 1 | R1 `nested_bot_state_row.json.gz`; derived R2 `flat_bot_state_row.json.gz`, R3 `no_snapshot_bot_state_row.json.gz`, R4 `symphony_without_account_bot_state_row.json.gz`, R5 `dict_without_name_bot_state_row.json.gz`; golden `golden_ref_eod_snapshot.json` | R1 captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; R2 to R5 and the golden written by the cycle's RED, derived rows awaiting the PM's sign-off; see `01-c1/PROVENANCE.md` |
 | `01-c2/` | server-state-truth, cycle 2 | R6 `shadow_rows_two_cycles.json`, R7 `exit_trigger_row.json` | captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; see `01-c2/PROVENANCE.md` (R6 is 2026-10-21, R7 is exit id 509 of 2026-10-22) |
 
+| `01-c3/` | server-state-truth, cycle 3 | none committed: derived at test time from R6, R8 and the live-state record; see `01-c3/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `01-c4/` | server-state-truth, cycle 4 | none committed: derived at test time from the captured Composer total-stats body, R6 and R8; see `01-c4/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+
 Later cycles add their folder and a row here.
 
 ## Record row format (each folder's `PROVENANCE.md`)

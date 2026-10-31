@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+import analytics as analytics_module
 import app as app_module
 from tests.app._refresh_timing_state_world import (
     BRANCHES,
@@ -214,3 +215,37 @@ class TestServerRenderEqualsFirstPoll:
         assert all(rendered[key] is not None for key in ("today_bot", "today_held", "tracked")), (
             "the page must render the rows for this comparison to mean anything"
         )
+
+
+class TestAFailedComputationIsTheSameNullInBothPlaces:
+    """When the portfolio computation raises, the hero and the rows carry the same nulls.
+
+    The response must not show a 0.00% hero beside rows that read as missing: the hero's
+    figures are the rows' figures, absent included.
+    """
+
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_hero_and_rows_both_carry_null_figures(self, monkeypatch, tmp_path, branch):
+        world = seeded_world(monkeypatch, tmp_path, branch)
+
+        def failing(*_args, **_kwargs):
+            raise RuntimeError("analytics unavailable")
+
+        for name in ("get_portfolio_today_change", "get_portfolio_cumulative_return"):
+            monkeypatch.setattr(analytics_module, name, failing)
+
+        body = world.poll()
+
+        strip = body["portfolio_strip"]
+        meta = body["meta"]["portfolio"]
+        assert strip["today_change"] is None and strip["cumulative_return"] is None, (
+            f"{branch}: the failed computation must leave the rows null"
+        )
+        nulls = {
+            key: meta.get(key)
+            for key in ("tc", "tc_if_held", "cr", "cr_if_held", "mdd", "mdd_if_held")
+        }
+        assert all(value is None for value in nulls.values()), (
+            f"{branch}: the hero shows figures the rows do not: {nulls}"
+        )
+        assert meta["data_as_of"] == strip["data_as_of"], f"{branch}: the stamps disagree"
