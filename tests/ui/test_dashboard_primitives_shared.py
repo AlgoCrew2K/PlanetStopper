@@ -164,6 +164,19 @@ class TestBaselineCanFail:
 # ---------------------------------------------------------------------------
 
 
+def _base_with_the_request_guard_script(base: list) -> list:
+    """The base capture plus the one element added on purpose since it was taken.
+
+    The shared header now loads ``request_guard.js`` immediately before ``chrome.js``, so the
+    dashboard body gains a second ``<script>`` ahead of ``.page-wrap`` and nothing else. The
+    capture stays as it was written; the expectation says exactly what was added, so any other
+    change to the body still fails the comparison.
+    """
+    wrap = base.index(["div", ["page-wrap"]])
+    assert base[wrap - 1] == ["script", []], "the base has no chrome script ahead of .page-wrap"
+    return [*base[:wrap], ["script", []], *base[wrap:]]
+
+
 class TestDashboardIsUnchanged:
     def test_the_body_has_the_base_tag_and_class_sequence(self, dashboard_html):
         # The shared header is excluded: it changes by design (it wraps at narrow widths); the
@@ -171,7 +184,7 @@ class TestDashboardIsUnchanged:
         from tests.ui import _shell_capture as shell
 
         structure = shell.body_structure_outside_top_bar(dashboard_html)
-        base = SHELL_BASELINE["structure_outside_top_bar"]
+        base = _base_with_the_request_guard_script(SHELL_BASELINE["structure_outside_top_bar"])
         if structure != base:
             first = next(
                 (i for i, (a, b) in enumerate(zip(structure, base, strict=False)) if a != b),

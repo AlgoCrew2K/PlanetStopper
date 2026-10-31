@@ -113,6 +113,22 @@ class TestRunsList:
         assert "assign:/login" in out.result
 
 
+class TestAdvisorPageRendersItsControls:
+    @pytest.mark.parametrize(
+        "testid",
+        ["fr-run-btn", "sb-run-btn", "chat-input", "swap-evaluate-btn", "tweak-evaluate-btn"],
+    )
+    def test_the_controls_are_on_the_page_when_the_environment_holds_no_key(
+        self, monkeypatch, testid
+    ):
+        import alpha_bot_execution
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setattr(alpha_bot_execution, "COMPOSER_KEY_ID", "")
+        monkeypatch.setattr(alpha_bot_execution, "COMPOSER_SECRET", "")
+        assert f'data-testid="{testid}"' in render_page("/ai-advisor")
+
+
 class TestFrontrunnerBuildEnd:
     def start_page(self, *, built=(2, 1), older=True):
         """Routes for a started build: the 202, the older run's summary, then this run's."""
