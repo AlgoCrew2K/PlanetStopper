@@ -10,6 +10,12 @@ is wrong, so no single polluter is the cause and none can be fixed once for good
 ``FunctionLeakGuard`` records the real function of each guarded name once, before any test
 runs, and after each test puts it back if anything else is bound there, returning what it
 found so the caller can say which test left it.
+
+It also guards path values (``GUARDED_VALUES``): ``database.DB_FILE`` is read from DB_PATH when
+the module is imported or reloaded, and ``analytics._get_shadow_db_file`` returns it directly.
+A test that reloads ``database`` while DB_PATH names a temp file it then deletes would leave
+every later reader in the worker opening a file that is gone. A value is compared by equality
+and a reload is never an excuse: the changed path is the leak.
 """
 
 from __future__ import annotations
@@ -22,6 +28,15 @@ from dataclasses import dataclass
 GUARDED_FUNCTIONS: tuple[tuple[str, str], ...] = (
     ("database", "load_state"),
     ("app", "get_api_state_dict"),
+)
+
+# (module name, attribute): the path values a module computes from the environment when it is
+# imported or reloaded. A test that reloads the module while DB_PATH names a file it then
+# deletes leaves every later reader of the attribute pointing at a file that does not exist.
+GUARDED_VALUES: tuple[tuple[str, str], ...] = (
+    ("database", "DB_FILE"),
+    ("database", "_DB_FILE_DEFAULT"),
+    ("analytics", "DB_FILE"),
 )
 
 _MISSING = object()
@@ -49,9 +64,15 @@ def _same_definition(candidate: object, pristine: object) -> bool:
 
 
 class FunctionLeakGuard:
-    def __init__(self, guarded: tuple[tuple[str, str], ...] = GUARDED_FUNCTIONS) -> None:
+    def __init__(
+        self,
+        guarded: tuple[tuple[str, str], ...] = GUARDED_FUNCTIONS,
+        values: tuple[tuple[str, str], ...] = GUARDED_VALUES,
+    ) -> None:
         self._guarded = guarded
+        self._values = values
         self._pristine: dict[tuple[str, str], object] = {}
+        self._pristine_values: dict[tuple[str, str], object] = {}
 
     def snapshot(self, *, import_modules: bool = False) -> None:
         """Record each guarded function not yet recorded.
@@ -68,6 +89,15 @@ class FunctionLeakGuard:
             value = getattr(module, attribute, _MISSING)
             if value is not _MISSING:
                 self._pristine[(module_name, attribute)] = value
+        for module_name, attribute in self._values:
+            if (module_name, attribute) in self._pristine_values:
+                continue
+            module = sys.modules.get(module_name)
+            if module is None and import_modules:
+                module = importlib.import_module(module_name)
+            value = getattr(module, attribute, _MISSING)
+            if value is not _MISSING:
+                self._pristine_values[(module_name, attribute)] = value
 
     def restore(self) -> list[Leak]:
         """Rebind every guarded name that no longer holds the recorded function; return those."""
@@ -81,6 +111,15 @@ class FunctionLeakGuard:
                 continue
             if current is not _MISSING and _same_definition(current, pristine):
                 self._pristine[(module_name, attribute)] = current
+                continue
+            setattr(module, attribute, pristine)
+            leaks.append(Leak(module_name, attribute, current))
+        for (module_name, attribute), pristine in self._pristine_values.items():
+            module = sys.modules.get(module_name)
+            if module is None:
+                continue
+            current = getattr(module, attribute, _MISSING)
+            if current is not _MISSING and current == pristine:
                 continue
             setattr(module, attribute, pristine)
             leaks.append(Leak(module_name, attribute, current))
