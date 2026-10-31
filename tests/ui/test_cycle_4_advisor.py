@@ -118,6 +118,10 @@ def _patch_advisor():
             import ai_advisor as _ai
 
             fake_response = MagicMock()
+            # The route copies the serving model into every suggestion it returns, and
+            # ConfigSuggestionsResponse.serving_model is always a string; an auto-created
+            # MagicMock attribute here would reach jsonify.
+            fake_response.serving_model = "serving-model-double"
             fake_response.suggestions = [
                 _ai.ConfigSuggestion(
                     **{

@@ -63,14 +63,16 @@ def _analytics_shadow_db_seam(_isolate_db, monkeypatch):
     monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
 
 
-_REAL_LOAD_STATE = database.load_state
-
-
 @pytest.fixture(autouse=True)
-def _read_the_seeded_bot_state(_stub_database_load_state_for_advisor_routes, monkeypatch):
-    """tests/ui/conftest.py stubs database.load_state for the advisor routes; these tests
-    exercise routes over the captured bot_state they write with database.save_state."""
-    monkeypatch.setattr(database, "load_state", _REAL_LOAD_STATE)
+def _stub_database_load_state_for_advisor_routes():
+    """Replace tests/ui/conftest.py's load_state stub with nothing: these tests exercise
+    routes over the captured bot_state they write with database.save_state, so the real
+    accessor stays in place.
+
+    Overriding the fixture leaves nothing to restore. Re-patching the attribute from a
+    monkeypatch fixture instead is torn down after the conftest patch and puts the stub
+    back on the module for every later test in the same worker.
+    """
 
 
 @pytest.fixture

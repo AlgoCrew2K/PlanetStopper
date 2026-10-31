@@ -190,4 +190,6 @@ class TestFormatDollarSavedRoundsLikeTheBrowser:
 
         monkeypatch.setattr(analytics, "js_to_fixed", spy)
         analytics.format_dollar_saved(-12.5)
-        assert calls == [(12.5, 2)], "format_dollar_saved must call analytics.js_to_fixed(abs(value), 2)"
+        assert calls == [(12.5, 2)], (
+            "format_dollar_saved must call analytics.js_to_fixed(abs(value), 2)"
+        )

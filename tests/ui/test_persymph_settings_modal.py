@@ -1669,13 +1669,18 @@ _LOCK_KEY = "TAKE_PROFIT_MC_PCT"
 
 
 @pytest.fixture
-def captured_modal_state(monkeypatch):
-    """Two captured symphonies in bot_state, read by the real load_state."""
+def captured_modal_state(monkeypatch, _stub_database_load_state_for_advisor_routes):
+    """Two captured symphonies in bot_state, read by the real load_state.
+
+    The real accessor is put back by a context manager that depends on the conftest stub, so
+    it is undone before the stub is: a monkeypatch undo runs after the stub's and would leave
+    the stub on the module for every later test in the worker.
+    """
     fx = json.loads(_BOT_STATE_FX.read_text(encoding="utf-8"))
     database.save_state({_HASH_A: fx[_HASH_A], _HASH_B: fx[_HASH_B]})
-    monkeypatch.setattr(database, "load_state", _REAL_LOAD_STATE)
     _mock_env(monkeypatch)
-    return {"names": {_HASH_A: fx[_HASH_A]["name"], _HASH_B: fx[_HASH_B]["name"]}}
+    with patch.object(database, "load_state", _REAL_LOAD_STATE):
+        yield {"names": {_HASH_A: fx[_HASH_A]["name"], _HASH_B: fx[_HASH_B]["name"]}}
 
 
 def _modal_json(client, hash_id: str) -> dict:

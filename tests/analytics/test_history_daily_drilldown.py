@@ -361,7 +361,9 @@ def test_todays_exits_keep_their_shape_and_values(tmp_path):
         assert entry["detail"] == trigger["saved_pct_guard_alpha"]
 
 
-def test_an_exit_with_an_unrecognised_stamp_is_excluded_everywhere_and_the_rest_carry_names(tmp_path):
+def test_an_exit_with_an_unrecognised_stamp_is_excluded_everywhere_and_the_rest_carry_names(
+    tmp_path,
+):
     triggers = _captured_stamped("2026-06-22")
     excluded = {**triggers[0], "if_held_source": "unrecognised_source"}
     day = _d(3)

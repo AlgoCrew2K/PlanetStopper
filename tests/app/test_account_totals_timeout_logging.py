@@ -67,9 +67,12 @@ def test_read_timeout_logs_exactly_one_record(monkeypatch, caplog):
     )
     with caplog.at_level(logging.DEBUG, logger="alphabot"):
         app_module._refresh_account_totals()
-    assert len(caplog.records) == 1, (
-        f"a known Composer read-timeout must log exactly ONE compact line, got "
-        f"{len(caplog.records)}: {[r.getMessage() for r in caplog.records]!r}"
+    # The daemon logger owes one compact line. The Composer latency line the call also
+    # emits belongs to the timing logger and is asserted by the timing log tests.
+    daemon_records = [r for r in caplog.records if r.name == "alphabot"]
+    assert len(daemon_records) == 1, (
+        f"a known Composer read-timeout must log exactly ONE compact line on the daemon "
+        f"logger, got {len(daemon_records)}: {[r.getMessage() for r in daemon_records]!r}"
     )
 
 
