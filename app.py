@@ -20,6 +20,8 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, date, datetime
+from datetime import datetime as _DatetimeType
+from datetime import time as _TimeOfDayType
 from zoneinfo import ZoneInfo
 
 import dotenv as _dotenv_module
@@ -589,6 +591,11 @@ _account_totals_last_good: dict = {}
 # ET-format timestamp written on each successful _refresh_account_totals call.
 # Surfaced as portfolio_strip["account_basis_as_of"] when the Tier-1 fallback fires.
 _account_totals_last_success_at: str | None = None
+# The account totals latched for one close snapshot: {"key": (trading_day, captured_at_et),
+# "totals": dict, "as_of": str}. Set by _refresh_account_totals from the first successful
+# read that began at or after the snapshot's capture moment; the frozen strip reads it so
+# nothing shown after the close moves with later refreshes. A restart empties it.
+_frozen_account_totals: dict | None = None
 # Named constant for the Composer HTTP timeout; promotes the bare literal at line 769.
 _ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 30
 # F-010: cumulative count of known Composer read-timeouts hit by
@@ -848,6 +855,36 @@ def _run_trigger_retention():
         )
 
 
+def _close_totals_latch_key(started_at: datetime) -> tuple | None:
+    """The (trading_day, captured_at_et) key to latch a read that began at `started_at`.
+
+    None when nothing should latch: the market is open, the latch already holds the newest
+    finished session's snapshot (no stored state is read then), no snapshot is stored, the
+    read began before the snapshot's capture moment, or the lookup failed. A legacy
+    snapshot (no trading day) has no capture moment, so the first read the process sees
+    latches. Never raises.
+    """
+    try:
+        if get_market_state(started_at) == "open":
+            return None
+        held = _frozen_account_totals
+        latest = market_calendar.most_recent_completed_session(started_at)
+        if held is not None and latest is not None and held["key"][0] == latest.isoformat():
+            return None
+        snapshot = (database.load_state() or {}).get("last_market_close_snapshot")
+        if not isinstance(snapshot, dict):
+            return None
+        key = (snapshot.get("trading_day"), snapshot.get("captured_at_et"))
+        if held is not None and held["key"] == key:
+            return None
+        capture = _snapshot_capture_moment(snapshot)
+        if capture is not None and started_at < capture:
+            return None
+        return key
+    except Exception:
+        return None
+
+
 def _refresh_account_totals() -> None:
     """Fetch Composer account-level total-stats and populate _account_totals_cache.
 
@@ -859,8 +896,9 @@ def _refresh_account_totals() -> None:
     Auth pattern mirrors alpha_bot_execution.get_composer_headers().
     """
     global _account_totals_last_good, _account_totals_last_success_at, _account_totals_timeout_count
-    global _account_totals_last_success_mono
+    global _account_totals_last_success_mono, _frozen_account_totals
     try:
+        started_at = datetime.now(_ET)
         env_vars = dotenv_values(ENV_FILE_PATH)
         key_id = env_vars.get("COMPOSER_KEY_ID") or os.environ.get("COMPOSER_KEY_ID", "")
         secret = env_vars.get("COMPOSER_SECRET") or os.environ.get("COMPOSER_SECRET", "")
@@ -882,6 +920,7 @@ def _refresh_account_totals() -> None:
         resp = requests.get(url, headers=headers, timeout=_ACCOUNT_TOTALS_HTTP_TIMEOUT_S)
         if resp.status_code == 200:
             data = resp.json()
+            latch_key = _close_totals_latch_key(started_at)
             # Acquire the shared cache lock before writing multiple keys so that
             # concurrent readers never observe a partial-write sequence.
             # After all keys are written, clear the stale flag so reads see the
@@ -913,6 +952,12 @@ def _refresh_account_totals() -> None:
                 # Written only on genuine success (inside the lock, after refresh_written)
                 # so _account_totals_last_success_at reflects the last real Composer fetch.
                 _account_totals_last_good = dict(_account_totals_cache)
+                if latch_key is not None:
+                    _frozen_account_totals = {
+                        "key": latch_key,
+                        "totals": dict(_account_totals_last_good),
+                        "as_of": datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT),
+                    }
             # Advance the as-of timestamp only after all writes completed without error.
             _account_totals_last_success_at = datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT)
             _account_totals_last_success_mono = _monotonic()
@@ -1859,7 +1904,7 @@ def dashboard():
     market_state = get_market_state(datetime.now(_ET))
     # The page renders from the same single computation the poll serves: after the close
     # that is the close snapshot, not the live state that has moved past it.
-    shadow_conn = _committed_shadow_conn(live_state)
+    shadow_conn = _committed_shadow_conn(_view_cut_state(live_state, market_state))
     try:
         return _render_dashboard(api_state, live_state, market_state, shadow_conn)
     finally:
@@ -2045,7 +2090,12 @@ def _render_dashboard(
         accounts_map=accounts_map,
         cvar_diagnostic=cvar_diagnostic,
         session_close_display=session_close_display,
-        dashboard_initial_data=_dashboard_initial_data(meta, bot_state),
+        dashboard_initial_data=_dashboard_initial_data(
+            meta,
+            bot_state,
+            hero_conn=shadow_conn if view["branch"] == "frozen" else None,
+            hero_state=view["weights_state"] if view["branch"] == "frozen" else None,
+        ),
         fleet_alert=_fleet_alert,
         fleet_alert_text=_fleet_alert_sentence(_fleet_alert) if _fleet_alert else "",
         sleeves=_build_sleeves_panel_context(),
@@ -2073,7 +2123,13 @@ _HERO_POLL_DAY_CAP = _producer_day_cap(
 )
 
 
-def _dashboard_initial_data(meta: dict | None, bot_state: dict) -> dict:
+def _dashboard_initial_data(
+    meta: dict | None,
+    bot_state: dict,
+    *,
+    hero_conn: sqlite3.Connection | None = None,
+    hero_state: dict | None = None,
+) -> dict:
     """Chart data embedded in the dashboard render so the charts draw at first paint.
 
     ``hero`` is the default-window series (local shadow history only, no network);
@@ -2101,7 +2157,7 @@ def _dashboard_initial_data(meta: dict | None, bot_state: dict) -> dict:
         if isinstance(v, dict) and "name" in v
     }
     return {
-        "hero": _hero_chart_body(_DEFAULT_HERO_WINDOW),
+        "hero": _hero_chart_body(_DEFAULT_HERO_WINDOW, hero_conn, hero_state),
         "hero_poll_tail": tail,
         "hero_poll_cap": _HERO_POLL_DAY_CAP,
         "sparks": sparks,
@@ -2202,12 +2258,12 @@ def _build_meta(
     _mdd_n_obs = mdd_data.get("n_obs") or 0
     _insufficient_history = _mdd_n_obs < _MDD_MIN_OBS
     portfolio_meta = {
-        "tc": tc_data.get("dry_run", 0.0),
-        "tc_if_held": tc_data.get("if_held", 0.0),
-        "cr": cr_data.get("dry_run", 0.0),
-        "cr_if_held": cr_data.get("if_held", 0.0),
-        "mdd": mdd_data.get("dry_run", 0.0),
-        "mdd_if_held": mdd_data.get("if_held", 0.0),
+        "tc": tc_data.get("dry_run"),
+        "tc_if_held": tc_data.get("if_held"),
+        "cr": cr_data.get("dry_run"),
+        "cr_if_held": cr_data.get("if_held"),
+        "mdd": mdd_data.get("dry_run"),
+        "mdd_if_held": mdd_data.get("if_held"),
         # AC-2: the Composer lifetime scalar, kept as its OWN clearly-labelled
         # figure (see templates/index.html's "mdd-lifetime-scalar" render) --
         # never a leg of the mdd/mdd_if_held comparison above.
@@ -2412,6 +2468,80 @@ def _portfolio_hist_series(
     return hist_dates, hist_bot, hist_held, vol_bot
 
 
+_SNAPSHOT_CLOCK_FORMAT = "%H:%M:%S"  # captured_at_et is "<this> ET"
+
+
+def _snapshot_clock_text(snapshot: dict) -> str:
+    return str(snapshot.get("captured_at_et") or "").replace(" ET", "").strip()
+
+
+def _snapshot_capture_moment(snapshot: dict) -> datetime | None:
+    """The aware ET instant a close snapshot was captured, or None for a legacy snapshot
+    that stored no trading day (its capture time of day alone cannot be dated)."""
+    trading_day = snapshot.get("trading_day")
+    if not trading_day:
+        return None
+    try:
+        naive = _DatetimeType.strptime(
+            f"{trading_day} {_snapshot_clock_text(snapshot)}", f"%Y-%m-%d {_SNAPSHOT_CLOCK_FORMAT}"
+        )
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=_ET)
+
+
+def _snapshot_is_previous_session(snapshot: dict) -> bool:
+    """True when a newer session has finished than the one this snapshot closes."""
+    trading_day = snapshot.get("trading_day")
+    latest = market_calendar.most_recent_completed_session(datetime.now(_ET))
+    return bool(trading_day) and latest is not None and trading_day < latest.isoformat()
+
+
+def _snapshot_stamps(snapshot: dict) -> dict:
+    """The date fields a frozen response states for its snapshot: trading_day, the
+    previous-session marker, frozen_at and the one data_as_of stamp."""
+    capture = _snapshot_capture_moment(snapshot)
+    if capture is None:
+        try:
+            time_of_day = _DatetimeType.strptime(
+                _snapshot_clock_text(snapshot), _SNAPSHOT_CLOCK_FORMAT
+            ).time()
+        except ValueError:
+            time_of_day = None
+        return {
+            "trading_day": None,
+            "snapshot_is_previous_session": False,
+            "frozen_at": snapshot.get("captured_at_et"),
+            "data_as_of": _format_data_stamp(time_of_day),
+        }
+    previous = _snapshot_is_previous_session(snapshot)
+    return {
+        "trading_day": snapshot["trading_day"],
+        "snapshot_is_previous_session": previous,
+        "frozen_at": _format_data_stamp(capture, seconds=True),
+        "data_as_of": _format_data_stamp(capture, previous_session=previous),
+    }
+
+
+def _frozen_snapshot_of(state: dict | None, market_state: str) -> dict | None:
+    """The close snapshot a response is served from, or None while the live state is."""
+    snapshot = (state or {}).get("last_market_close_snapshot")
+    if market_state in ("closed_frozen", "pre_market") and snapshot:
+        return snapshot
+    return None
+
+
+def _view_cut_state(state: dict | None, market_state: str) -> dict | None:
+    """The state whose cycle stamp cuts the shadow rows a response reads.
+
+    After the close that is the snapshot's capture moment, so rows the engine writes
+    later (16:03 cycle, overnight) cannot move a shown number; otherwise the live state.
+    """
+    snapshot = _frozen_snapshot_of(state, market_state)
+    capture = None if snapshot is None else _snapshot_capture_moment(snapshot)
+    return state if capture is None else {"last_successful_cycle_at": capture.isoformat()}
+
+
 def _frozen_symphony_inputs(snapshot: dict) -> tuple[list[dict], dict]:
     """Analytics inputs (symphonies list, bot_state-shaped map) from a close snapshot."""
     trading_day = snapshot.get("trading_day")
@@ -2477,14 +2607,13 @@ def _normalize_frozen_symphonies(snapshot: dict) -> None:
                     sym.setdefault(field, default)
 
 
-def _compute_frozen_portfolio_strip(
-    snapshot: dict, conn: sqlite3.Connection | None, state: dict | None = None
-) -> dict:
+def _compute_frozen_portfolio_strip(snapshot: dict, conn: sqlite3.Connection | None) -> dict:
     """portfolio_strip for the market-close snapshot (authoritative, recomputed).
 
     Also attaches the per-symphony _tc/_cr/_mdd to the snapshot entries. Everything is
-    read for snapshot["trading_day"], never today's date. `state` supplies the value
-    weights of the hero series (the live bot_state the response was built from).
+    read for snapshot["trading_day"], never today's date, from the snapshot, the account
+    totals latched for it and the rows `conn` exposes (cut at the capture moment); the
+    live bot_state, later rows and later account refreshes cannot move a figure.
     """
     trading_day = snapshot.get("trading_day")
     for entries in (snapshot.get("accounts_map") or {}).values():
@@ -2512,42 +2641,29 @@ def _compute_frozen_portfolio_strip(
                     sym[key] = {"if_held": None, "dry_run": None}
 
     symphonies_list, snap_bot_state = _frozen_symphony_inputs(snapshot)
-    # Anchor to the snapshot's REAL capture time (captured_at_et is "%H:%M:%S ET") so the
-    # operator sees data age, not render time; legacy snapshots fall back to data_as_of.
-    try:
-        captured = (snapshot.get("captured_at_et") or "").replace(" ET", "").strip().split(":")
-        data_as_of = f"{captured[0]}:{captured[1]} ET"
-    except Exception:
-        data_as_of = snapshot.get("data_as_of")
+    data_as_of = _snapshot_stamps(snapshot)["data_as_of"]
+
+    # ONE source for every account figure: the totals latched for this snapshot, else the
+    # last good read (labelled stale). Never the live cache, which a later refresh moves.
+    held = _frozen_account_totals
+    if held is not None and held["key"] == (trading_day, snapshot.get("captured_at_et")):
+        totals, from_last_good = held["totals"], False
+    else:
+        totals, from_last_good = _account_totals_last_good, True
 
     try:
         symphony_value_sum = sum(s.get("value", 0.0) or 0.0 for s in symphonies_list)
 
-        # TC, CR and value resolve INDEPENDENTLY through cache then last-good, so a
-        # missing field never degrades a warm sibling. .get() avoids the TOCTOU with
-        # mark_stale().
-        account_tc = _account_totals_cache.get("portfolio_tc")
-        tc_stale = False
-        if account_tc is None and _account_totals_last_good:
-            account_tc = _account_totals_last_good.get("portfolio_tc")
-            tc_stale = account_tc is not None
-
-        account_cr = _account_totals_cache.get("portfolio_cr")
-        cr_stale = False
-        if account_cr is None and _account_totals_last_good:
-            account_cr = _account_totals_last_good.get("portfolio_cr")
-            cr_stale = account_cr is not None
-
-        cached_value = _account_totals_cache.get("portfolio_value")
-        if cached_value is None and _account_totals_last_good:
-            cached_value = _account_totals_last_good.get("portfolio_value")
+        # TC, CR and value resolve INDEPENDENTLY, so a missing field never degrades a
+        # warm sibling.
+        account_tc = totals.get("portfolio_tc")
+        tc_stale = from_last_good and account_tc is not None
+        account_cr = totals.get("portfolio_cr")
+        cr_stale = from_last_good and account_cr is not None
+        cached_value = totals.get("portfolio_value")
 
         basis_stale = tc_stale or cr_stale
-        basis_as_of = (
-            (_account_totals_last_success_at or datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT))
-            if basis_stale
-            else None
-        )
+        basis_as_of = (_account_totals_last_success_at or _NO_STAMP) if basis_stale else None
 
         # include_paired_guard_delta=True: the Tier-2 floor below re-derives dry_run from
         # the coverage-scaled guard_delta_vw (DE-HELD-BASIS-001 F5(a)/F6).
@@ -2580,7 +2696,11 @@ def _compute_frozen_portfolio_strip(
             "today_change": today_change,
             "cumulative_return": cumulative_return,
             "max_drawdown": analytics.get_portfolio_max_drawdown(
-                symphonies_list, snap_bot_state, trading_day=trading_day, conn=conn
+                symphonies_list,
+                snap_bot_state,
+                trading_day=trading_day,
+                conn=conn,
+                state=snap_bot_state,
             ),
             "account_value": (
                 cached_value
@@ -2601,15 +2721,18 @@ def _compute_frozen_portfolio_strip(
             strip["account_basis_stale"] = True
             strip["account_basis_as_of"] = basis_as_of
         # The Composer account-lifetime CR, the "Account · all-time" stat.
-        account_all_time_cr = _account_totals_cache.get("portfolio_cr")
-        if isinstance(account_all_time_cr, (int, float)):
-            strip["account_all_time_cr"] = account_all_time_cr
+        if isinstance(account_cr, (int, float)):
+            strip["account_all_time_cr"] = account_cr
 
         # Its own try: a failure here must not discard the figures computed above. The
         # windowed cumulative return is left out (no client reads it from this strip).
         try:
             default = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, snap_bot_state, window=_DEFAULT_HERO_WINDOW, conn=conn
+                symphonies_list,
+                snap_bot_state,
+                window=_DEFAULT_HERO_WINDOW,
+                conn=conn,
+                state=snap_bot_state,
             )
             if isinstance(default, dict):
                 guard_alpha = default.get("guard_alpha")
@@ -2622,7 +2745,7 @@ def _compute_frozen_portfolio_strip(
             _daemon_log.error("closed_frozen default-window strip failed", exc_info=True)
 
         try:
-            hist_dates, hist_bot, hist_held, vol_bot = _portfolio_hist_series(conn, state)
+            hist_dates, hist_bot, hist_held, vol_bot = _portfolio_hist_series(conn, snap_bot_state)
             strip.update(
                 {
                     "vol_bot": vol_bot,
@@ -2641,7 +2764,7 @@ def _compute_frozen_portfolio_strip(
             "today_change": None,
             "cumulative_return": None,
             "max_drawdown": None,
-            "account_value": _account_totals_cache.get("portfolio_value"),
+            "account_value": totals.get("portfolio_value"),
             "data_as_of": data_as_of,
         }
 
@@ -2660,12 +2783,75 @@ def _portfolio_view(state: dict, market_state: str, conn: sqlite3.Connection | N
             for sym in entries or []:
                 if isinstance(sym, dict) and "id" in sym:
                     served[sym["id"]] = sym
-        strip = _compute_frozen_portfolio_strip(snapshot, conn, state)
-        return {"branch": "frozen", "state": served, "snapshot": snapshot, "portfolio_strip": strip}
+        strip = _compute_frozen_portfolio_strip(snapshot, conn)
+        return {
+            "branch": "frozen",
+            "state": served,
+            "snapshot": snapshot,
+            "portfolio_strip": strip,
+            "weights_state": _frozen_symphony_inputs(snapshot)[1],
+        }
     branch = "live" if state else "waiting"
     trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
     strip = _compute_portfolio_strip(state or {}, trading_day=trading_day, conn=conn)
-    return {"branch": branch, "state": state, "snapshot": None, "portfolio_strip": strip}
+    return {
+        "branch": branch,
+        "state": state,
+        "snapshot": None,
+        "portfolio_strip": strip,
+        "weights_state": state,
+    }
+
+
+# Shown wherever a moment is unknown; never replaced by the request time.
+_NO_STAMP = "--"
+_PREVIOUS_SESSION_SUFFIX = " · previous session"
+
+
+def _format_data_stamp(
+    moment: object, *, seconds: bool = False, previous_session: bool = False
+) -> str:
+    """The one writer of a data-freshness stamp.
+
+    An aware datetime reads "YYYY-MM-DD HH:MM ET" in Eastern time (seconds when asked,
+    truncated never rounded); a bare time of day reads "HH:MM ET (date not recorded)".
+    Anything else, including a naive datetime whose zone would be a guess, reads "--".
+    Never reads the clock and never raises.
+    """
+    if isinstance(moment, _TimeOfDayType):
+        return f"{moment.hour:02d}:{moment.minute:02d} ET (date not recorded)"
+    if not isinstance(moment, _DatetimeType) or moment.tzinfo is None:
+        return _NO_STAMP
+    try:
+        eastern = moment.astimezone(_ET)
+        text = eastern.strftime("%Y-%m-%d %H:%M:%S ET" if seconds else "%Y-%m-%d %H:%M ET")
+    except (OverflowError, ValueError, OSError):
+        return _NO_STAMP
+    return text + _PREVIOUS_SESSION_SUFFIX if previous_session else text
+
+
+def _newest_observation_stamp(conn: sqlite3.Connection | None) -> str:
+    """Dated stamp of the newest shadow_history row `conn` exposes; "--" when there is none."""
+    own = None
+    moment = None
+    try:
+        if conn is None:
+            own = conn = sqlite3.connect(
+                f"file:{analytics._get_shadow_db_file()}?mode=ro", uri=True, timeout=10.0
+            )
+        row = conn.execute(
+            "SELECT ts_utc FROM shadow_history ORDER BY ts_utc DESC LIMIT 1"
+        ).fetchone()
+        if row and row[0]:
+            moment = _DatetimeType.fromisoformat(str(row[0]).replace("Z", "+00:00"))
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=UTC)
+    except Exception:
+        moment = None
+    finally:
+        if own is not None:
+            own.close()
+    return _format_data_stamp(moment)
 
 
 def _compute_portfolio_strip(
@@ -2886,26 +3072,9 @@ def _compute_portfolio_strip(
         # insufficient_history; without them every portfolio read as short history.
         hist_dates, hist_bot, hist_held, vol_bot = _portfolio_hist_series(conn, bot_state)
 
-        # Derive data_as_of from the actual data timestamp, not the server render clock.
-        # Falls back to datetime.now() if no cycle timestamp is available.
-        # The engine writes last_successful_cycle_at at the TOP LEVEL of bot_state
-        # (alpha_bot_execution.py:948/1092/1878) — read it directly, not via a per-sym loop.
-        _cycle_ts = bot_state.get("last_successful_cycle_at")
-        if _cycle_ts:
-            try:
-                _dt = datetime.fromisoformat(_cycle_ts.replace("Z", "+00:00"))
-                # The engine writes last_successful_cycle_at as a TZ-AWARE isoformat string
-                # (get_current_et() returns datetime.now(ZoneInfo("America/New_York")) —
-                # alpha_bot_execution.py:437-442).  The tzinfo-is-None branch below covers
-                # older DB rows written before the aware-datetime fix.
-                if _dt.tzinfo is None:
-                    _dt = _dt.replace(tzinfo=_ET)
-                _dt_et = _dt.astimezone(_ET)
-                _data_as_of = _dt_et.strftime("%H:%M ET")
-            except Exception:
-                _data_as_of = datetime.now(_ET).strftime("%H:%M ET")
-        else:
-            _data_as_of = datetime.now(_ET).strftime("%H:%M ET")
+        # The stamp names the newest observation of the completed cycle (the connection
+        # sees only completed cycles), never the cycle stamp and never the request time.
+        _data_as_of = _newest_observation_stamp(conn)
 
         _strip = {
             "today_change": today_change,
@@ -2943,9 +3112,7 @@ def _compute_portfolio_strip(
         # never set by a real refresh (mirrors the frozen path's fallback).
         if _live_basis_stale and _account_basis_past_grace():
             _strip["account_basis_stale"] = True
-            _strip["account_basis_as_of"] = _account_totals_last_success_at or datetime.now(
-                _ET
-            ).strftime(_ACCOUNT_BASIS_TS_FMT)
+            _strip["account_basis_as_of"] = _account_totals_last_success_at or _NO_STAMP
 
         # Option A: surface the Composer account-lifetime CR as its OWN non-windowed stat
         # ("Account · all-time"). It is the cash-inclusive simple_return scalar — there is
@@ -2998,7 +3165,7 @@ def _compute_portfolio_strip(
             "account_value": account_value,
             "vol_bot": None,
             "vol_held": None,
-            "data_as_of": datetime.now(_ET).strftime("%H:%M ET"),
+            "data_as_of": _NO_STAMP,
         }
 
 
@@ -3203,10 +3370,12 @@ def get_state():
         state_data = database.load_state()
         # ONE committed-cycle connection and ONE portfolio computation per response: the
         # hero (meta), the rows (portfolio_strip) and the cards all read from them.
-        _shadow_conn = _committed_shadow_conn(state_data)
+        _shadow_conn = _committed_shadow_conn(_view_cut_state(state_data, market_state))
         view = _portfolio_view(state_data, market_state, _shadow_conn)
         _portfolio_strip = view["portfolio_strip"]
-        _meta_strip = _strip_with_hist_fallback(_portfolio_strip, _shadow_conn, state_data)
+        _meta_strip = _strip_with_hist_fallback(
+            _portfolio_strip, _shadow_conn, view["weights_state"]
+        )
 
         # AC-DM.3.3: closed + snapshot → serve frozen snapshot.
         if view["branch"] == "frozen":
@@ -3313,6 +3482,7 @@ def get_state():
                     _account_labels_frozen[_acc_trad] = "Trad. IRA"
 
                 _normalize_frozen_symphonies(snapshot)
+                _frozen_stamps = _snapshot_stamps(snapshot)
 
                 try:
                     _frozen_html = render_template(
@@ -3321,7 +3491,7 @@ def get_state():
                         account_labels=_account_labels_frozen,
                         sort_col=_sort_col,
                         sort_dir=_sort_dir,
-                        data_as_of=snapshot.get("data_as_of"),
+                        data_as_of=_frozen_stamps["data_as_of"],
                     )
                 except Exception:
                     _frozen_html = "<table><tbody></tbody></table>"
@@ -3336,8 +3506,12 @@ def get_state():
                     {
                         "status": "active",
                         "market_state": market_state,
-                        "frozen_at": snapshot.get("captured_at_et"),
-                        "data_as_of": snapshot.get("data_as_of"),
+                        "frozen_at": _frozen_stamps["frozen_at"],
+                        "trading_day": _frozen_stamps["trading_day"],
+                        "snapshot_is_previous_session": _frozen_stamps[
+                            "snapshot_is_previous_session"
+                        ],
+                        "data_as_of": _frozen_stamps["data_as_of"],
                         "state": _state,
                         "bot_state": _state,
                         "live_mode": _frozen_live_mode,
@@ -3583,27 +3757,9 @@ def get_state():
                 if _cr_now is not None and _cr_prev is not None
                 else None
             )
-        # AC-7: top-level data_as_of is the JS fallback hero freshness signal
-        # (index.js: `portfolio.data_as_of || data.data_as_of`).  Derive it from
-        # last_successful_cycle_at in state_data — same pattern as
-        # _compute_portfolio_strip (app.py:1281-1303) — so the operator sees real
-        # data age, not the server render clock.  Falls back to datetime.now(_ET)
-        # when no cycle timestamp is available.  Also fixes the pre-existing naive
-        # datetime.now() (no timezone) bug — the original produced local-system time,
-        # not ET.
-        # The engine writes last_successful_cycle_at at the TOP LEVEL of state_data
-        # (alpha_bot_execution.py:948/1092/1878) — read it directly.
-        _tl_cycle_ts = state_data.get("last_successful_cycle_at")
-        if _tl_cycle_ts:
-            try:
-                _tl_dt = datetime.fromisoformat(_tl_cycle_ts.replace("Z", "+00:00"))
-                if _tl_dt.tzinfo is None:
-                    _tl_dt = _tl_dt.replace(tzinfo=_ET)
-                data_as_of = _tl_dt.astimezone(_ET).strftime("%H:%M ET")
-            except Exception:
-                data_as_of = datetime.now(_ET).strftime("%H:%M ET")
-        else:
-            data_as_of = datetime.now(_ET).strftime("%H:%M ET")
+        # The JS fallback hero freshness signal: the same stamp the strip carries, the newest
+        # observation of the completed cycle (never the request time).
+        data_as_of = _portfolio_strip.get("data_as_of", _NO_STAMP)
 
         try:
             rendered_html = render_template(
@@ -3782,10 +3938,15 @@ def _slice_series_by_window_cutoff(
     return [dates[i] for i in idx], [series_a[i] for i in idx], [series_b[i] for i in idx]
 
 
-def _hero_chart_body(window: str) -> dict[str, object]:
+def _hero_chart_body(
+    window: str, conn: sqlite3.Connection | None = None, state: dict | None = None
+) -> dict[str, object]:
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
     window values: 30d, 60d, 90d, 125d, ytd, 1y, all
+
+    conn / state: the connection and value weights a frozen response reads, so the chart
+    sees the same rows and weights as the poll; omitted, it reads live state and all rows.
 
     AC-5 (MAPERF-03): every window token resolves to the SAME calendar cutoff
     /api/strip already uses (analytics._window_cutoff_date) — the chart fetches
@@ -3815,7 +3976,8 @@ def _hero_chart_body(window: str) -> dict[str, object]:
         # AC-4b: use the REAL (bot, held) daily-return source so the dashed "If held"
         # line is a genuine second series, not a verbatim copy of Bot. bot = guarded
         # shadow path; held = un-guarded if-held path (diverges only after a trigger).
-        bh = analytics.get_portfolio_bot_and_held_daily_returns(days=None)
+        extra = {k: v for k, v in (("conn", conn), ("state", state)) if v is not None}
+        bh = analytics.get_portfolio_bot_and_held_daily_returns(days=None, **extra)
         sliced = _slice_series_by_window_cutoff(bh, window)
         if sliced is not None:
             dates, bot_daily, held_daily = sliced
@@ -3849,8 +4011,23 @@ def _hero_chart_body(window: str) -> dict[str, object]:
 
 @app.route("/api/hero-chart/<window>")
 def get_hero_chart(window):
-    """Return hist_dates/hist_bot/hist_held for the requested time window."""
-    return jsonify(_hero_chart_body(window))
+    """Return hist_dates/hist_bot/hist_held for the requested time window.
+
+    After the close the chart reads the snapshot's rows and weights, like the poll.
+    """
+    try:
+        live_state = database.load_state() or {}
+    except Exception:
+        live_state = {}
+    market_state = get_market_state(datetime.now(_ET))
+    snapshot = _frozen_snapshot_of(live_state, market_state)
+    if snapshot is None:
+        return jsonify(_hero_chart_body(window))
+    conn = _committed_shadow_conn(_view_cut_state(live_state, market_state))
+    try:
+        return jsonify(_hero_chart_body(window, conn, _frozen_symphony_inputs(snapshot)[1]))
+    finally:
+        conn.close()
 
 
 # Window tokens accepted by the picker + the windowed-strip route. Lowercase URL
@@ -3882,27 +4059,46 @@ def get_windowed_strip(window):
         bot_state = database.load_state() or {}
     except Exception:
         bot_state = {}
-    symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
-    symphonies_list = []
-    for k in symphony_keys:
-        s = bot_state[k]
-        symphonies_list.append(
-            {
-                "id": k,
-                "value": s.get("current_value") or 0.0,
-                "last_percent_change": (s.get("current_return") or 0.0) / 100.0,
-                "simple_return": s.get("simple_return"),
-                "net_deposits": s.get("net_deposits"),
-                "time_weighted_return": s.get("time_weighted_return"),
-                "max_drawdown": s.get("max_drawdown"),
-                "trading_day": trading_day,
-            }
-        )
+    market_state = get_market_state(datetime.now(_ET))
+    snapshot = _frozen_snapshot_of(bot_state, market_state)
+    frozen_conn = None
+    if snapshot is not None:
+        # After the close the window is computed from the snapshot and the rows up to its
+        # capture moment, exactly as the poll's default-window strip is.
+        frozen_conn = _committed_shadow_conn(_view_cut_state(bot_state, market_state))
+        symphonies_list, bot_state = _frozen_symphony_inputs(snapshot)
+        trading_day = snapshot.get("trading_day") or trading_day
+    else:
+        symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
+        symphonies_list = []
+        for k in symphony_keys:
+            s = bot_state[k]
+            symphonies_list.append(
+                {
+                    "id": k,
+                    "value": s.get("current_value") or 0.0,
+                    "last_percent_change": (s.get("current_return") or 0.0) / 100.0,
+                    "simple_return": s.get("simple_return"),
+                    "net_deposits": s.get("net_deposits"),
+                    "time_weighted_return": s.get("time_weighted_return"),
+                    "max_drawdown": s.get("max_drawdown"),
+                    "trading_day": trading_day,
+                }
+            )
 
     try:
-        strip = analytics.compute_windowed_portfolio_strip(symphonies_list, bot_state, window=token)
+        if frozen_conn is None:
+            strip = analytics.compute_windowed_portfolio_strip(
+                symphonies_list, bot_state, window=token
+            )
+        else:
+            strip = analytics.compute_windowed_portfolio_strip(
+                symphonies_list, bot_state, window=token, conn=frozen_conn, state=bot_state
+            )
     except Exception:
         _daemon_log.error("get_windowed_strip failed for window=%s", token, exc_info=True)
+        if frozen_conn is not None:
+            frozen_conn.close()
         return jsonify({"error": "An internal error occurred"}), 500
 
     # AC-4: when shadow_history has only 1 distinct trading_day the windowed
@@ -3921,11 +4117,15 @@ def get_windowed_strip(window):
     # real zero with this cross-day estimate.
     if strip.get("insufficient_history") and strip.get("guard_alpha") is None:
         try:
-            try:
-                _bot_state_dict = database.load_state()
-            except Exception:
-                _bot_state_dict = {}
-            _conn = database.get_connection()
+            if frozen_conn is None:
+                try:
+                    _bot_state_dict = database.load_state()
+                except Exception:
+                    _bot_state_dict = {}
+                _conn = database.get_connection()
+            else:
+                _bot_state_dict = bot_state
+                _conn = frozen_conn
             try:
                 # AC-8 (MAPERF-04): day-filtered to the CURRENT ET trading day —
                 # the query was previously unfiltered, pairing every exit_triggers
@@ -3956,7 +4156,8 @@ def get_windowed_strip(window):
                     ).fetchall()
 
             finally:
-                _conn.close()
+                if frozen_conn is None:
+                    _conn.close()
 
             _alpha_wsum = 0.0
             _weight_sum = 0.0
@@ -3981,6 +4182,8 @@ def get_windowed_strip(window):
         except Exception:
             _daemon_log.debug("strip intraday fallback failed", exc_info=True)
 
+    if frozen_conn is not None:
+        frozen_conn.close()
     return jsonify(strip)
 
 

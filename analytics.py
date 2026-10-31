@@ -1337,6 +1337,7 @@ def get_portfolio_max_drawdown(
     trading_day: str | None = None,
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
+    state: dict | None = None,
 ) -> dict:
     """
     Portfolio-level Max Drawdown (AC-1/AC-2/AC-3, DE-PERF-WINDOW-TRUTH-001
@@ -1386,7 +1387,7 @@ def get_portfolio_max_drawdown(
     )
     if_held_lifetime = _lifetime_agg.get("if_held")
 
-    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None, conn=conn)
+    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None, conn=conn, state=state)
     if_held: float | None = None
     dry_run: float | None = None
     n_obs = 0
@@ -2153,6 +2154,7 @@ def compute_windowed_portfolio_strip(
     trading_day: str | None = None,
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
+    state: dict | None = None,
 ) -> dict:
     """Recompute the hero comparison strip FOR a selectable window (AC-3).
 
@@ -2192,6 +2194,9 @@ def compute_windowed_portfolio_strip(
     per-symphony call below (the 3 portfolio helpers plus the windowed
     guard-alpha loop) so the whole windowed strip shares ONE connection
     instead of opening one per symphony per helper.
+
+    state: the value weights of the portfolio series (a frozen response passes its
+    snapshot's); omitted, the live bot_state is loaded.
     """
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
 
@@ -2251,7 +2256,7 @@ def compute_windowed_portfolio_strip(
     # Windowed portfolio daily series -> annualized vol + normalized MDD, both
     # gated by the same day-count floor (AC-3: max_drawdown is genuinely windowed,
     # not the lifetime get_portfolio_max_drawdown figure — see docstring above).
-    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None, conn=conn)
+    series = get_portfolio_bot_and_held_daily_returns(_db_file, days=None, conn=conn, state=state)
     vol_bot: float | None = None
     vol_held: float | None = None
     mdd_bot: float | None = None
