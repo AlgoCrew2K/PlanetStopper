@@ -278,7 +278,10 @@ var SECONDS_PER_MINUTE = 60;
 var DEGRADED_REASON_TEXT = {
   scheduler_stalled: 'Scheduler stalled: no engine spawn for 2 minutes or more.',
   engine_overrun: 'An engine run has lasted over 3 minutes; minutes are being skipped.',
-  engine_failing: 'The last 5 engine runs failed.'
+  engine_failing: 'The last 5 engine runs failed.',
+  engine_terminated: 'The last engine run did not finish and was ended; the next minute starts normally.',
+  no_cycle_since_open: 'The market is open, but the engine has committed no cycle since the open.',
+  close_snapshot_missing: 'The close snapshot was not stored; the figures shown are held at the close.'
 };
 var DEGRADED_UNKNOWN_TEXT = 'The daemon reports a degraded state.';
 var CONNECTION_LOST_TITLE = 'The last refresh failed. The values shown are from the last data received.';

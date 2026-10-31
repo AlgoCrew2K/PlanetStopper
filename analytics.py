@@ -38,12 +38,15 @@ Internal shape (DV1 binding contract):
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import glob
 import json
 import math
 import os
 import re
 import sqlite3
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
@@ -617,6 +620,41 @@ def _get_shadow_db_file() -> str:
     return _db.DB_FILE
 
 
+# The memo of one request's reads (see request_reads); None outside one.
+_REQUEST_READS: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "analytics_request_reads", default=None
+)
+
+
+@contextlib.contextmanager
+def request_reads() -> Iterator[None]:
+    """Within the block, a per-symphony shadow_history read made through a passed-in connection is
+    made once: every later caller of the same read on the same connection is answered from the
+    first. A page computes the same symphony's trajectory for its cards, its rows and its windowed
+    strip; the connection a request shares sees one fixed set of rows (it is cut at a committed
+    cycle), so the repeats can only return the same answer. A read made without a connection is
+    never remembered. The memo lives only for the block (and holds the connections it was keyed
+    by, so one is never mistaken for another)."""
+    token = _REQUEST_READS.set({})
+    try:
+        yield
+    finally:
+        _REQUEST_READS.reset(token)
+
+
+def _read_once(conn: sqlite3.Connection | None, key: tuple, read: Callable[[], object]) -> object:
+    """read(), made once per (connection, key) inside request_reads(), every time otherwise."""
+    reads = _REQUEST_READS.get()
+    if reads is None or conn is None:
+        return read()
+    full_key = (conn, *key)
+    if full_key in reads:
+        return reads[full_key]
+    value = read()
+    reads[full_key] = value
+    return value
+
+
 def _load_latest_shadow_row_for_analytics(
     symphony_id: str, trading_day: str, db_file: str, conn: sqlite3.Connection | None = None
 ) -> dict | None:
@@ -636,21 +674,26 @@ def _load_latest_shadow_row_for_analytics(
             if conn is not None
             else sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         )
-        _prior_row_factory = _conn.row_factory
-        try:
-            _conn.row_factory = sqlite3.Row
-            row = _conn.execute(
-                "SELECT * FROM shadow_history "
-                "WHERE symphony_id = ? AND trading_day = ? "
-                "ORDER BY ts_utc DESC LIMIT 1",
-                (symphony_id, trading_day),
-            ).fetchone()
-            result = dict(row) if row is not None else None
-        finally:
-            _conn.row_factory = _prior_row_factory
+
+        def read() -> dict | None:
+            _prior_row_factory = _conn.row_factory
+            try:
+                _conn.row_factory = sqlite3.Row
+                row = _conn.execute(
+                    "SELECT * FROM shadow_history "
+                    "WHERE symphony_id = ? AND trading_day = ? "
+                    "ORDER BY ts_utc DESC LIMIT 1",
+                    (symphony_id, trading_day),
+                ).fetchone()
+                return dict(row) if row is not None else None
+            finally:
+                _conn.row_factory = _prior_row_factory
+
+        result = _read_once(conn, ("latest_row", symphony_id, trading_day), read)
         if _owns_conn:
             _conn.close()
-        return result
+        # A copy: the first read's dict is the memo's, and a caller may keep or change its own.
+        return dict(result) if result is not None else None
     except Exception:
         return None
 
@@ -881,6 +924,7 @@ def _get_shadow_divergence_trajectory(
             if conn is not None
             else sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         )
+
         # Lifetime scope: NO position_epoch filter. The MAX(ts_utc) per
         # (symphony_id, trading_day) collapses each day to its EOD row; a trading_day
         # belongs to exactly one epoch, so the cross-epoch series is the ordered
@@ -888,23 +932,10 @@ def _get_shadow_divergence_trajectory(
         # the rows can be grouped into epoch frames for the additive formula. A
         # missing position_epoch column (pre-migration DB) raises OperationalError;
         # the fallback query treats the whole history as one legacy epoch.
-        try:
-            rows = _conn.execute(
-                "SELECT trading_day, shadow_return, current_return, position_epoch "
-                "FROM shadow_history "
-                "WHERE symphony_id = ? "
-                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-                "                WHERE s2.symphony_id = shadow_history.symphony_id "
-                "                  AND s2.trading_day = shadow_history.trading_day) "
-                "ORDER BY trading_day ASC",
-                (symphony_id,),
-            ).fetchall()
-        except sqlite3.OperationalError:
-            # Legacy schema with no position_epoch column — one implicit epoch.
-            rows = [
-                (r[0], r[1], r[2], None)
-                for r in _conn.execute(
-                    "SELECT trading_day, shadow_return, current_return "
+        def fetch_rows() -> list:
+            try:
+                return _conn.execute(
+                    "SELECT trading_day, shadow_return, current_return, position_epoch "
                     "FROM shadow_history "
                     "WHERE symphony_id = ? "
                     "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
@@ -913,7 +944,23 @@ def _get_shadow_divergence_trajectory(
                     "ORDER BY trading_day ASC",
                     (symphony_id,),
                 ).fetchall()
-            ]
+            except sqlite3.OperationalError:
+                # Legacy schema with no position_epoch column — one implicit epoch.
+                return [
+                    (r[0], r[1], r[2], None)
+                    for r in _conn.execute(
+                        "SELECT trading_day, shadow_return, current_return "
+                        "FROM shadow_history "
+                        "WHERE symphony_id = ? "
+                        "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                        "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                        "                  AND s2.trading_day = shadow_history.trading_day) "
+                        "ORDER BY trading_day ASC",
+                        (symphony_id,),
+                    ).fetchall()
+                ]
+
+        rows = _read_once(conn, ("lifetime_eod_rows", symphony_id), fetch_rows)
         if _owns_conn:
             _conn.close()
     except Exception:
@@ -1675,14 +1722,18 @@ def get_portfolio_daily_returns_from_shadow(
             if conn is not None
             else sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
         )
-        rows = _conn.execute(
-            "SELECT trading_day, symphony_id, shadow_return, current_return "
-            "FROM shadow_history "
-            "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-            "                WHERE s2.symphony_id = shadow_history.symphony_id "
-            "                  AND s2.trading_day = shadow_history.trading_day) "
-            "ORDER BY trading_day ASC, symphony_id ASC",
-        ).fetchall()
+        rows = _read_once(
+            conn,
+            ("portfolio_eod_rows",),
+            lambda: _conn.execute(
+                "SELECT trading_day, symphony_id, shadow_return, current_return "
+                "FROM shadow_history "
+                "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC, symphony_id ASC",
+            ).fetchall(),
+        )
         if _owns_conn:
             _conn.close()
     except Exception:
@@ -1788,14 +1839,18 @@ def get_portfolio_bot_and_held_daily_returns(
             if conn is not None
             else sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
         )
-        rows = _conn.execute(
-            "SELECT trading_day, symphony_id, shadow_return, current_return "
-            "FROM shadow_history "
-            "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-            "                WHERE s2.symphony_id = shadow_history.symphony_id "
-            "                  AND s2.trading_day = shadow_history.trading_day) "
-            "ORDER BY trading_day ASC, symphony_id ASC",
-        ).fetchall()
+        rows = _read_once(
+            conn,
+            ("portfolio_eod_rows",),
+            lambda: _conn.execute(
+                "SELECT trading_day, symphony_id, shadow_return, current_return "
+                "FROM shadow_history "
+                "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = shadow_history.symphony_id "
+                "                  AND s2.trading_day = shadow_history.trading_day) "
+                "ORDER BY trading_day ASC, symphony_id ASC",
+            ).fetchall(),
+        )
         if _owns_conn:
             _conn.close()
     except Exception:
@@ -1945,6 +2000,7 @@ def get_symphony_bot_and_held_daily_returns(
 
 def get_single_day_shadow_returns(
     db_file: str | None = None,
+    conn: sqlite3.Connection | None = None,
 ) -> tuple[list[str], list[float], list[float]] | None:
     """Return a single-day (dates, bot_returns, held_returns) tuple from shadow_history.
 
@@ -1956,13 +2012,21 @@ def get_single_day_shadow_returns(
 
     Returns (dates, bot_daily_returns_pct, held_daily_returns_pct) where each list
     has exactly 1 element, or None when shadow_history is empty or unreadable.
+
+    conn: an open read-only connection read instead of the database file (a closed market's
+    response passes the one cut at the close snapshot); never closed here.
     """
     import sqlite3
 
     _db_file = db_file if db_file is not None else _get_shadow_db_file()
     try:
-        conn = sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
-        rows = conn.execute(
+        _owns_conn = conn is None
+        _conn = (
+            conn
+            if conn is not None
+            else sqlite3.connect(f"file:{_db_file}?mode=ro", uri=True, timeout=10.0)
+        )
+        rows = _conn.execute(
             "SELECT trading_day, symphony_id, shadow_return, current_return "
             "FROM shadow_history "
             "WHERE ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
@@ -1970,7 +2034,8 @@ def get_single_day_shadow_returns(
             "                  AND s2.trading_day = shadow_history.trading_day) "
             "ORDER BY trading_day DESC, shadow_history.symphony_id ASC",
         ).fetchall()
-        conn.close()
+        if _owns_conn:
+            _conn.close()
     except Exception:
         return None
 
@@ -2033,35 +2098,52 @@ def _compounded_gap_pct(bot_pct: list[float], held_pct: list[float]) -> float:
     return (bot_level - held_level) * 100.0
 
 
-def _window_cutoff_date(window: object) -> date | None:
-    """Resolve a window token to a trading-day CUTOFF (inclusive lower bound), or None
-    for the lifetime ("all") window. Date-based (not positional) so a window excludes
+def window_cutoff(window: object, anchor: date) -> date | None:
+    """Resolve a window token to a CUTOFF (inclusive lower bound) counted back from *anchor*, or
+    None for the lifetime ("all") window. Date-based (not positional) so a window excludes
     rows older than its span regardless of how many rows exist (W1 slice-then-regroup).
+
+    *anchor* is the ET trading day of the session the figures belong to (app._SessionView):
+    while the market is closed it is the session that closed, so the cutoff never slides with
+    the wall clock; during a session it is today. The year-to-date window starts on 1 January of
+    the anchor's year. Pure: this function reads no clock.
 
     Accepts the lowercase route tokens 30d/60d/90d/125d/ytd/1y/all (case-insensitive)
     and a bare int day-count (trailing days). Unknown tokens resolve to None (lifetime)
     — the route validates tokens against its allowlist before calling, so this is a
     permissive fallback, not the gate.
     """
-    from datetime import datetime as _dt
-    from datetime import timedelta as _td
-
-    today = _dt.now(UTC).date()
     if isinstance(window, int):
-        return today - _td(days=window)
+        return anchor - timedelta(days=window)
     token = str(window).lower()
     if token == "all":
         return None
     if token == "ytd":
-        return date(today.year, 1, 1)
+        return date(anchor.year, 1, 1)
     n = _WINDOW_TRAILING_DAYS.get(token)
     if n is None:
         return None  # unknown token -> lifetime (route already allowlisted)
-    return today - _td(days=n)
+    return anchor - timedelta(days=n)
+
+
+def _window_cutoff_date(window: object) -> date | None:
+    """The cutoff of *window* counted back from today's UTC date.
+
+    The wall-clock default of a caller that states no anchor (window_cutoff). The dashboard's
+    routes never use it: each passes the anchor of the session its figures belong to, so a window
+    is not cut at a date the host's clock moves on at 20:00 EDT.
+    """
+    from datetime import datetime as _dt
+
+    return window_cutoff(window, _dt.now(UTC).date())
 
 
 def _get_windowed_divergence_trajectory(
-    symphony_id: str, db_file: str, window: object, conn: sqlite3.Connection | None = None
+    symphony_id: str,
+    db_file: str,
+    window: object,
+    conn: sqlite3.Connection | None = None,
+    anchor: date | None = None,
 ) -> list[list[tuple[float, float]]] | None:
     """Like ``_get_shadow_divergence_trajectory`` (lifetime, epoch-grouped) but filtered
     to the rows whose trading_day falls within ``window`` (W1 slice-then-regroup).
@@ -2076,8 +2158,10 @@ def _get_windowed_divergence_trajectory(
     conn: F-1 — optional pre-opened read-only connection; reused instead of
     opening a fresh connect() per call (see _load_latest_shadow_row_for_analytics
     for the shared-connection rationale).
+
+    anchor: the session day the window counts back from (window_cutoff); omitted, today's UTC date.
     """
-    cutoff = _window_cutoff_date(window)
+    cutoff = window_cutoff(window, anchor) if anchor is not None else _window_cutoff_date(window)
     try:
         _owns_conn = conn is None
         _conn = (
@@ -2085,16 +2169,20 @@ def _get_windowed_divergence_trajectory(
             if conn is not None
             else sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=10.0)
         )
-        rows = _conn.execute(
-            "SELECT trading_day, shadow_return, current_return, position_epoch "
-            "FROM shadow_history sh "
-            "WHERE symphony_id = ? "
-            "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
-            "                WHERE s2.symphony_id = sh.symphony_id "
-            "                  AND s2.trading_day = sh.trading_day) "
-            "ORDER BY trading_day ASC",
-            (symphony_id,),
-        ).fetchall()
+        rows = _read_once(
+            conn,
+            ("windowed_eod_rows", symphony_id),
+            lambda: _conn.execute(
+                "SELECT trading_day, shadow_return, current_return, position_epoch "
+                "FROM shadow_history sh "
+                "WHERE symphony_id = ? "
+                "  AND ts_utc = (SELECT MAX(ts_utc) FROM shadow_history s2 "
+                "                WHERE s2.symphony_id = sh.symphony_id "
+                "                  AND s2.trading_day = sh.trading_day) "
+                "ORDER BY trading_day ASC",
+                (symphony_id,),
+            ).fetchall(),
+        )
         if _owns_conn:
             _conn.close()
     except Exception:
@@ -2139,6 +2227,7 @@ def compute_windowed_symphony_guard_alpha(
     window: object,
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
+    anchor: date | None = None,
 ) -> float | None:
     """Per-symphony guard alpha (dry_run − if_held) over a SELECTABLE window (AC-3).
 
@@ -2156,12 +2245,16 @@ def compute_windowed_symphony_guard_alpha(
 
     conn: F-1 — optional pre-opened read-only connection (see
     _load_latest_shadow_row_for_analytics for the shared-connection rationale).
+
+    anchor: the session day the window counts back from (window_cutoff).
     """
     symphony_id = sym_dict.get("id")
     if not symphony_id:
         return None
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
-    trajectory = _get_windowed_divergence_trajectory(symphony_id, _db_file, window, conn=conn)
+    trajectory = _get_windowed_divergence_trajectory(
+        symphony_id, _db_file, window, conn=conn, anchor=anchor
+    )
     if trajectory is None:
         return None
     return _epoch_additive_divergence(trajectory)
@@ -2176,6 +2269,7 @@ def compute_windowed_portfolio_strip(
     db_path: str | None = None,
     conn: sqlite3.Connection | None = None,
     state: dict | None = None,
+    anchor: date | None = None,
 ) -> dict:
     """Recompute the hero comparison strip FOR a selectable window (AC-3).
 
@@ -2221,6 +2315,10 @@ def compute_windowed_portfolio_strip(
 
     state: the value weights of the portfolio series (a frozen response passes its
     snapshot's); omitted, the live bot_state is loaded.
+
+    anchor: the ET trading day of the session the figures belong to; the window counts back from
+    it (window_cutoff), so a closed market's window does not slide with the clock. Omitted, the
+    window counts back from today's UTC date.
 
     guard_alpha is the one portfolio guard number: the gap between the two lines the hero
     chart draws over this window, which is also the Performance tab's total-return gap. It
@@ -2269,7 +2367,7 @@ def compute_windowed_portfolio_strip(
             continue
         entry = bot_state.get(sym.get("id"))
         sym_alpha = compute_windowed_symphony_guard_alpha(
-            sym, entry, window=window, db_path=_db_file, conn=conn
+            sym, entry, window=window, db_path=_db_file, conn=conn, anchor=anchor
         )
         if sym_alpha is None:
             continue
@@ -2296,7 +2394,9 @@ def compute_windowed_portfolio_strip(
     guard_effect: float | None = None
     if series is not None:
         all_dates, bot_pct, held_pct = series
-        cutoff = _window_cutoff_date(window)
+        cutoff = (
+            window_cutoff(window, anchor) if anchor is not None else _window_cutoff_date(window)
+        )
         cutoff_iso = cutoff.isoformat() if cutoff is not None else None
         idx = [i for i, d in enumerate(all_dates) if cutoff_iso is None or str(d) >= cutoff_iso]
         window_day_count = len(idx)
@@ -2455,12 +2555,15 @@ def format_et_stamp(value: object, *, naive_is_utc: bool = True, date_only: bool
     return f"{day_text} {moment.hour:02d}:{moment.minute:02d}{ET_STAMP_SUFFIX}"
 
 
-def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
+def get_history_summary(days: int = 30, base_dir: str = ".", anchor: date | None = None) -> dict:
     """Aggregate guard-alpha history for the History tab.
 
     Returns the same envelope the /api/history/<days> route emits, derived
     from post_mortem_*.json files in base_dir. Exists so the route can delegate
     here and tests can mock this single function.
+
+    anchor: the ET trading day of the session the figures belong to; the window counts back from
+    it (window_cutoff). Omitted, it counts back from today's UTC date.
     """
     import glob as _glob
     import json as _json
@@ -2471,7 +2574,7 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
     # boundary-day asymmetry where the old `start_date <= file_date <= end_date`
     # compare (start_date carrying "now"'s time-of-day, file_date always
     # midnight) could wrongly exclude a file exactly at the N-days-ago cutoff.
-    cutoff = _window_cutoff_date(days)
+    cutoff = window_cutoff(days, anchor) if anchor is not None else _window_cutoff_date(days)
     cutoff_iso = cutoff.isoformat() if cutoff is not None else None
     files = _glob.glob(os.path.join(base_dir, "post_mortem_*.json"))
 

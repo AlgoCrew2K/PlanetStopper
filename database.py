@@ -2012,6 +2012,7 @@ _MIGRATION_FILES = [
     "036_sleeve_rule_fires.sql",
     "037_strategy_incubation.sql",
     "038_retirement_decisions.sql",
+    "039_close_account_totals.sql",
 ]
 
 
@@ -3686,7 +3687,75 @@ def load_latest_shadow_row(
         return None
 
 
-def get_latest_shadow_ts_utc(trading_day: str, symphony_id: "str | None" = None) -> "str | None":
+# The close totals latch: the account totals taken for one close snapshot, stored so that a daemon
+# restart while the market is closed finds them again (migration 039). One row per snapshot, named
+# by its (trading_day, captured_at_et); the daemon writes it once, the dashboard only reads it.
+_CLOSE_TOTALS_KEEP_DAYS = 10  # latched sessions kept; older rows are pruned on the next write
+
+
+def save_close_totals_latch(
+    trading_day: str, captured_at_et: str, totals: dict, as_of: "str | None"
+) -> bool:
+    """Store the account totals latched for the close snapshot (trading_day, captured_at_et).
+
+    Written once: an existing row for the snapshot is never replaced (INSERT OR IGNORE), so the
+    first read taken for a snapshot stays the one every restart finds. Returns True when this call
+    wrote the row. Rows of sessions older than the newest _CLOSE_TOTALS_KEEP_DAYS are pruned.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO close_account_totals "
+            "(trading_day, captured_at_et, totals_json, as_of) VALUES (?, ?, ?, ?)",
+            (trading_day, captured_at_et, json.dumps(totals), as_of),
+        )
+        written = cursor.rowcount > 0
+        conn.execute(
+            "DELETE FROM close_account_totals WHERE trading_day NOT IN ("
+            "SELECT DISTINCT trading_day FROM close_account_totals "
+            "ORDER BY trading_day DESC LIMIT ?)",
+            (_CLOSE_TOTALS_KEEP_DAYS,),
+        )
+        conn.commit()
+        return written
+    finally:
+        conn.close()
+
+
+def load_close_totals_latch(trading_day: str, captured_at_et: str) -> "dict | None":
+    """The account totals latched for the close snapshot (trading_day, captured_at_et), or None.
+
+    Returns {"totals": dict, "as_of": str | None}. Read-only (a ``mode=ro`` connection). Never
+    raises: a missing row, a database that predates migration 039 or an unreadable row all read
+    None, which the caller treats as "nothing latched yet".
+    """
+    conn = None
+    try:
+        conn = get_ro_connection()
+        row = conn.execute(
+            "SELECT totals_json, as_of FROM close_account_totals "
+            "WHERE trading_day = ? AND captured_at_et = ?",
+            (trading_day, captured_at_et),
+        ).fetchone()
+        if row is None:
+            return None
+        totals = json.loads(row[0])
+        return {"totals": totals, "as_of": row[1]} if isinstance(totals, dict) else None
+    except Exception as exc:
+        # Debug, not a warning: this is read on every closed-market poll until a latch exists, and
+        # a database that has not applied migration 039 yet would repeat it on each one.
+        logging.debug("load_close_totals_latch failed: %s", type(exc).__name__)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def get_latest_shadow_ts_utc(
+    trading_day: str,
+    symphony_id: "str | None" = None,
+    conn: "sqlite3.Connection | None" = None,
+) -> "str | None":
     """Newest stored ``ts_utc`` text among the shadow_history rows of ``trading_day``, or None.
 
     Across every symphony when ``symphony_id`` is None, for that symphony alone otherwise. Read-only
@@ -3694,10 +3763,15 @@ def get_latest_shadow_ts_utc(trading_day: str, symphony_id: "str | None" = None)
     or an unreadable database all read None, never an error. Backs the Performance page's
     "data as of" stamp. The ``idx_shadow_history_day`` / ``idx_shadow_history_sym_day`` indexes cover
     both lookups.
+
+    ``conn``: an open read-only connection read instead of a fresh one (a closed market's response
+    passes the connection cut at the close snapshot, so rows written after it cannot move the
+    stamp); never closed here.
     """
-    conn = None
+    owns_conn = conn is None
     try:
-        conn = get_ro_connection()
+        if conn is None:
+            conn = get_ro_connection()
         if symphony_id is None:
             row = conn.execute(
                 "SELECT MAX(ts_utc) FROM shadow_history WHERE trading_day = ?", (trading_day,)
@@ -3712,7 +3786,7 @@ def get_latest_shadow_ts_utc(trading_day: str, symphony_id: "str | None" = None)
         logging.warning("get_latest_shadow_ts_utc failed: %s", type(exc).__name__)
         return None
     finally:
-        if conn is not None:
+        if owns_conn and conn is not None:
             conn.close()
 
 

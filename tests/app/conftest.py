@@ -258,6 +258,7 @@ def _reset_scheduler_run_state(monkeypatch):
 
     for name in (
         "_engine_run",
+        "_engine_process",
         "_last_cycle_record",
         "_scheduler_last_tick_mono",
         "_scheduler_last_tick_at",
@@ -267,6 +268,10 @@ def _reset_scheduler_run_state(monkeypatch):
     monkeypatch.setattr(
         app_module, "_RECENT_RUN_OUTCOMES", collections.deque(maxlen=5), raising=False
     )
+    # The process start the stall verdict falls back on before the scheduler's first tick is the
+    # start of THIS test, not of the test process: a verdict read in a worker that has been up for
+    # two minutes would otherwise say "scheduler_stalled" for a test that never starts a scheduler.
+    monkeypatch.setattr(app_module, "_DAEMON_STARTED_MONO", app_module._monotonic())
     yield
     for thread in threading.enumerate():
         if thread.name == _ENGINE_THREAD_NAME and thread.is_alive():

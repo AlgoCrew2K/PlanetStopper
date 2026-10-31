@@ -2,6 +2,8 @@
 
 import atexit
 import concurrent.futures
+import contextvars
+import copy
 import functools
 import hmac
 import inspect
@@ -65,8 +67,8 @@ _PERFORMANCE_MIN_HISTORY_DAYS = 30
 _MDD_MIN_OBS = 30
 _PERFORMANCE_VALID_SCOPES = ("aggregate", "symphony")
 # Calendar-window tokens /api/performance accepts for `days`, in the order the page's
-# buttons show them; each resolves through analytics._window_cutoff_date, the same
-# cutoff the dashboard strip and hero chart use.
+# buttons show them; each resolves through analytics.window_cutoff (counted back from the
+# session the figures belong to), the same cutoff the dashboard strip and hero chart use.
 _PERFORMANCE_WINDOW_TOKENS = ("30d", "60d", "90d", "125d", "ytd", "1y", "5y")
 _PERFORMANCE_METRIC_KEYS = (
     "total_return",
@@ -482,7 +484,7 @@ def health():
         _state = {}
     return jsonify(
         {
-            **_health_status(),
+            **_health_view(_state, _now_et()),
             "daemon_started_at": _DAEMON_STARTED_AT,
             "last_successful_cycle_at": _state.get("last_successful_cycle_at"),
         }
@@ -507,7 +509,7 @@ def header_status():
         meta = _build_meta({}, next_run_seconds=next_run_seconds, market_state=market_state)
         return jsonify(
             {
-                **_health_status(),
+                **_health_view(state, now_et),
                 "daemon_started_at": _DAEMON_STARTED_AT,
                 "last_successful_cycle_at": last_cycle_at,
                 "market_state": market_state,
@@ -737,7 +739,9 @@ _account_totals_last_success_at: str | None = None
 # The account totals latched for one close snapshot: {"key": (trading_day, captured_at_et),
 # "totals": dict, "as_of": str}. Set by _refresh_account_totals from the first successful
 # read that began at or after the snapshot's capture moment; the frozen strip reads it so
-# nothing shown after the close moves with later refreshes. A restart empties it.
+# nothing shown after the close moves with later refreshes. This is the in-memory copy of the
+# latch: it is stored in the close_account_totals table when taken, and a restart, which empties
+# this copy, restores it from there (_close_totals_for).
 _frozen_account_totals: dict | None = None
 # Named constant for the Composer HTTP timeout; promotes the bare literal at line 769.
 _ACCOUNT_TOTALS_HTTP_TIMEOUT_S = 30
@@ -995,8 +999,13 @@ def _mint_cycle_id(started_at: datetime) -> str:
     return f"{second}#{n}"
 
 
-def _classify_outcome(started_at: datetime, exit_code: int | None) -> str:
-    """Name the engine's branch for a spawn at *started_at*, using its own comparisons."""
+def _classify_outcome(started_at: datetime, exit_code: int | None, terminated: bool = False) -> str:
+    """Name the engine's branch for a spawn at *started_at*, using its own comparisons.
+
+    A run the daemon ended (see _engine_run_overdue) is "terminated" whatever status it left.
+    """
+    if terminated:
+        return "terminated"
     if exit_code is None or exit_code != 0:
         return "failed"
     day = started_at.date()
@@ -1042,9 +1051,31 @@ _HEALTH_SCHEDULER_STALL_S = 120  # seconds without a scheduler tick (two missed 
 _HEALTH_ENGINE_OVERRUN_S = 180  # seconds one engine run may last before it reads as overrun
 _HEALTH_FAILING_RUNS = 5  # consecutive failed spawned runs that read as failing
 
+# The engine run bound. A run holds the single run slot for the whole engine process, so a run
+# that never exits would stop every later cycle until a person restarted the daemon (a wedged
+# Friday autotune would block Monday's open). The daemon therefore ends a run, and frees the slot:
+#   * a run begun before the close of a trading day (any hour of it) and alive over
+#     _ENGINE_SESSION_BOUND_S, unless it was forced;
+#   * a run begun on an earlier ET date, from _ENGINE_EARLIER_DATE_END_AT on a trading day, so the
+#     open is never blocked (the Friday autotune runs for hours and is left alone until then).
+# A run begun after the close, or on a day the market never opens, is bounded only by the second
+# rule. Ending a run is terminate, then kill _ENGINE_TERMINATE_GRACE_S later if it is still there.
+_ENGINE_SESSION_BOUND_S = 600
+_ENGINE_EARLIER_DATE_END_AT = dt_time(9, 25)
+_ENGINE_TERMINATE_GRACE_S = 10
+_ENGINE_REAP_AFTER_KILL_S = 30
+_ENGINE_WAIT_POLL_S = 1.0  # how often a run in flight is checked against the bound
+
+# How long a scheduler pass waits for a run whose process has already exited to finish its
+# bookkeeping (marker reads, the published record) before the minute's spawn is tried.
+_ENGINE_FINISH_WAIT_S = 2.0
+
 _DAEMON_STARTED_MONO: float = _monotonic()
 _ENGINE_RUN_LOCK = threading.Lock()
 _engine_run: "EngineRun | None" = None
+# (cycle_id, process handle, event set when the run's thread is done) of the run in flight, once
+# its process has started.
+_engine_process: "tuple[str, object, threading.Event] | None" = None
 _last_cycle_record: CycleRecord | None = None
 _RECENT_RUN_OUTCOMES: "_collections.deque[str]" = _collections.deque(maxlen=_HEALTH_FAILING_RUNS)
 _scheduler_last_tick_mono: float | None = None
@@ -1073,10 +1104,37 @@ def _begin_engine_run(started_at: datetime) -> "EngineRun | None":
 
 def _end_engine_run(cycle_id: str) -> None:
     """Free the slot only when it still belongs to *cycle_id*."""
-    global _engine_run
+    global _engine_run, _engine_process
     with _ENGINE_RUN_LOCK:
         if _engine_run is not None and _engine_run.cycle_id == cycle_id:
             _engine_run = None
+            _engine_process = None
+
+
+def _note_engine_process(cycle_id: str, proc, done: threading.Event) -> None:
+    """Record the process of the run holding the slot, so a scheduler pass can see it has exited."""
+    global _engine_process
+    with _ENGINE_RUN_LOCK:
+        if _engine_run is not None and _engine_run.cycle_id == cycle_id:
+            _engine_process = (cycle_id, proc, done)
+
+
+def _reap_exited_engine_run() -> None:
+    """Let a run whose process has already exited finish its bookkeeping before the minute spawns.
+
+    The run's thread frees the slot and publishes its record after its process exits, so for a
+    moment the slot is taken by a run that is over. A scheduler pass waits for that (at most
+    _ENGINE_FINISH_WAIT_S) so the minute's spawn finds the slot free instead of being counted as
+    skipped. A run whose process is still alive is never waited for. Never raises.
+    """
+    held = _engine_process
+    if held is None:
+        return
+    try:
+        if held[1].poll() is not None:
+            held[2].wait(_ENGINE_FINISH_WAIT_S)
+    except Exception as exc:
+        _daemon_log.warning("exited engine run not awaited: %s", type(exc).__name__)
 
 
 def _engine_run_state() -> "EngineRun | None":
@@ -1179,26 +1237,127 @@ def _notify_cycle_complete(record: CycleRecord) -> None:
             pass  # full or closed — skip, do not raise
 
 
+def _start_engine_process(cmd, env, log_fh):
+    """Start the engine as a child process and return its handle: the daemon's one engine spawn.
+
+    A handle (not `subprocess.run`) so a run that hangs can be ended; the engine writes its
+    output to the one daemon log through *log_fh*."""
+    return subprocess.Popen(cmd, env=env, stdout=log_fh, stderr=log_fh)
+
+
+def _engine_run_overdue(
+    started_at: datetime, started_mono: float, force: bool, now_et: datetime, now_mono: float
+) -> str | None:
+    """Why the engine run begun at *started_at* must now be ended, or None (pure, no clock read).
+
+    "earlier_date": a run begun on an earlier ET date, on a trading day from 09:25 ET. A run begun
+    after the close, or on a day the market never opens, is not reached by the session rule below,
+    so the open is the only thing that ends it.
+    "session_bound": a run begun before the close of a trading day, alive for _ENGINE_SESSION_BOUND_S
+    or more, unless it was forced. Never raises: a calendar fault ends nothing.
+    """
+    try:
+        today = now_et.date()
+        if (
+            started_at.date() < today
+            and market_calendar.is_trading_day(today)
+            and now_et.time().replace(tzinfo=None) >= _ENGINE_EARLIER_DATE_END_AT
+        ):
+            return "earlier_date"
+        began_day = started_at.date()
+        if (
+            not force
+            and market_calendar.is_trading_day(began_day)
+            and started_at.time().replace(tzinfo=None) < market_calendar.session_close(began_day)
+            and now_mono - started_mono >= _ENGINE_SESSION_BOUND_S
+        ):
+            return "session_bound"
+    except Exception as exc:
+        _daemon_log.warning("engine run bound not evaluated: %s", type(exc).__name__)
+    return None
+
+
+def _end_engine_process(proc, cycle_id: str, reason: str) -> int | None:
+    """Terminate the engine process, kill it if it is still there _ENGINE_TERMINATE_GRACE_S later.
+
+    Returns its exit status (None when it could not be reaped). The run slot is freed by the caller
+    only after this returns, so a replacement never starts beside a live engine."""
+    _daemon_log.warning("engine run %s terminated by the daemon: %s", cycle_id, reason)
+    try:
+        proc.terminate()
+    except OSError:
+        pass  # already gone
+    try:
+        return proc.wait(timeout=_ENGINE_TERMINATE_GRACE_S)
+    except subprocess.TimeoutExpired:
+        _daemon_log.warning(
+            "engine run %s ignored terminate for %s s: killed", cycle_id, _ENGINE_TERMINATE_GRACE_S
+        )
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        return proc.wait(timeout=_ENGINE_REAP_AFTER_KILL_S)
+    except subprocess.TimeoutExpired:
+        _daemon_log.error("engine run %s was not reaped after kill", cycle_id)
+        return None
+
+
+def _wait_for_engine(
+    proc, cycle_id: str, started_at: datetime, started_mono: float, force: bool
+) -> tuple[int | None, bool]:
+    """Wait for the engine process to exit, ending it when the run bound says so.
+
+    Returns (exit status, whether the daemon ended it). Polled every _ENGINE_WAIT_POLL_S on the
+    engine thread, never on the scheduler's."""
+    while True:
+        try:
+            return proc.wait(timeout=_ENGINE_WAIT_POLL_S), False
+        except subprocess.TimeoutExpired:
+            pass
+        reason = _engine_run_overdue(started_at, started_mono, force, _now_et(), _monotonic())
+        if reason is not None:
+            return _end_engine_process(proc, cycle_id, reason), True
+
+
 def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
     started_at = started_at if started_at is not None else _now_et()
     cycle_id = cycle_id if cycle_id is not None else _mint_cycle_id(started_at)
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
-    _cycle_started_mono[cycle_id] = _monotonic()
+    started_mono = _monotonic()
+    _cycle_started_mono[cycle_id] = started_mono
     exit_code = None
+    terminated = False
+    proc = None
+    done = threading.Event()
     before = _read_markers()
     sig_before = _post_mortem_signature(started_at)
     try:
+        # Inside the try: a fault on this line must not leak the run slot.
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Triggering Alpha Bot...")
         cmd = [sys.executable, "alpha_bot_execution.py"]
         if force:
             cmd.append("--force")
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         with open(LOG_FILE, "a", encoding="utf-8") as log_fh:
-            subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
-        exit_code = 0
-    except subprocess.CalledProcessError as e:
-        exit_code = e.returncode
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {e}")
+            proc = _start_engine_process(cmd, env, log_fh)
+            _note_engine_process(cycle_id, proc, done)
+            exit_code, terminated = _wait_for_engine(
+                proc, cycle_id, started_at, started_mono, force
+            )
+        if exit_code != 0 and not terminated:
+            failure = subprocess.CalledProcessError(exit_code, cmd)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Execution failed: {failure}")
+    except Exception as exc:
+        # The engine could not be started or watched: the record below reads failed and the slot
+        # frees, so a process this run left behind is ended first (the next minute starts clean).
+        _daemon_log.error("engine run %s did not complete: %s", cycle_id, type(exc).__name__)
+        try:
+            if proc is not None and proc.poll() is None:
+                _end_engine_process(proc, cycle_id, "run could not be watched")
+        except Exception as end_exc:
+            _daemon_log.error("engine run %s left behind: %s", cycle_id, type(end_exc).__name__)
     finally:
         try:
             _end_engine_run(cycle_id)
@@ -1212,14 +1371,15 @@ def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
                 before, after, sig_before, _post_mortem_signature(started_at)
             )
             try:
-                outcome = _classify_outcome(started_at, exit_code)
+                outcome = _classify_outcome(started_at, exit_code, terminated)
             except Exception as exc:
                 # A calendar fault must not stop the publish; the state is unknown, so
                 # the record claims a change and clients refetch.
                 logging.getLogger(__name__).warning(
                     "cycle outcome unclassified: %s", type(exc).__name__
                 )
-                outcome, changed = ("failed" if exit_code else "cycle"), True
+                outcome = "terminated" if terminated else ("failed" if exit_code else "cycle")
+                changed = True
             _publish_cycle(
                 CycleRecord(
                     cycle_id=cycle_id,
@@ -1234,6 +1394,8 @@ def trigger_alpha_bot(force=False, *, cycle_id=None, started_at=None):
             )
         except Exception as exc:
             logging.getLogger(__name__).warning("cycle publish failed: %s", type(exc).__name__)
+        finally:
+            done.set()
 
 
 def threaded_trigger():
@@ -1293,10 +1455,12 @@ def _guard(job, label: str):
 
 def _scheduler_tick() -> None:
     global _scheduler_last_tick_mono, _scheduler_last_tick_at
+    _reap_exited_engine_run()
     try:
         schedule.run_pending()
     except Exception as exc:
         _daemon_log.error("scheduler pass failed: %s", type(exc).__name__)
+    _poke_closed_warmup()
     _scheduler_last_tick_mono = _monotonic()
     _scheduler_last_tick_at = _now_et().isoformat()
 
@@ -1319,6 +1483,10 @@ def _health_degraded_reasons(now_mono: float) -> list[str]:
         o == "failed" for o in outcomes[-_HEALTH_FAILING_RUNS:]
     ):
         reasons.append("engine_failing")
+    # The newest finished run was one the daemon ended (see _engine_run_overdue): it reads until
+    # the next run finishes, so the operator sees that a run was cut and that the engine recovered.
+    if outcomes and outcomes[-1] == "terminated":
+        reasons.append("engine_terminated")
     return reasons
 
 
@@ -1343,14 +1511,86 @@ def _health_status() -> dict:
     }
 
 
-def _degraded_reasons() -> list[str]:
+def _state_degraded_reasons(state: dict | None, now_et: datetime) -> list[str]:
+    """Degraded reasons that rest on the stored state and the clock (pure given its arguments).
+
+    no_cycle_since_open: the market is open, its first five minutes (the header's Opening phase)
+    are over, and the last cycle the engine committed is older than the open. It clears with the
+    next commit and is never raised while the market is closed. A state that holds no stamp says
+    nothing (an engine that never committed has nothing to be older than the open).
+
+    close_snapshot_missing: a session has closed and, _CLOSE_SNAPSHOT_GRACE after its close, the
+    stored close snapshot is still an earlier session's although the engine committed cycles on
+    that day. The close is the day's own (13:00 on an early-close day). While it lasts the page
+    serves that session's last committed state (_session_view, "held"). A state with no dated
+    snapshot (a new install, or a snapshot with no trading day) has none to be missing, so it
+    never raises this.
+
+    Never raises: a calendar or parse fault reports no reason.
+    """
+    reasons: list[str] = []
+    try:
+        state = state or {}
+        stamp = _cycle_stamp_moment(state.get("last_successful_cycle_at"))
+        if get_market_state(now_et) == "open":
+            open_at = _DatetimeType.combine(
+                now_et.date(), market_calendar.session_open(now_et.date()), tzinfo=_ET
+            )
+            opening_over = open_at + timedelta(minutes=_OPENING_PHASE_MINUTES)
+            if stamp is not None and now_et >= opening_over and stamp < open_at:
+                reasons.append("no_cycle_since_open")
+            return reasons
+        latest = market_calendar.most_recent_completed_session(now_et)
+        if latest is None or stamp is None or stamp.date() < latest:
+            return reasons
+        snapshot = state.get("last_market_close_snapshot")
+        stored_day = snapshot.get("trading_day") if isinstance(snapshot, dict) else None
+        if (
+            stored_day
+            and str(stored_day) < latest.isoformat()
+            and now_et >= _session_close_moment(latest) + _CLOSE_SNAPSHOT_GRACE
+        ):
+            reasons.append("close_snapshot_missing")
+    except Exception as exc:
+        _daemon_log.warning("state degraded reasons unavailable: %s", type(exc).__name__)
+    return reasons
+
+
+def _health_view(state: dict | None, now_et: datetime) -> dict:
+    """_health_status() with the reasons that rest on the stored state merged in.
+
+    _health_status() itself reads no database; the routes that hold the stored state add what it
+    says (a missed morning start, a close snapshot that never arrived). Any reason makes the
+    status "degraded", so the status and the reasons always agree.
+    """
+    health_status = _health_status()
+    extra = [
+        reason
+        for reason in _state_degraded_reasons(state, now_et)
+        if reason not in health_status["degraded_reasons"]
+    ]
+    if not extra:
+        return health_status
+    return {
+        **health_status,
+        "status": "degraded",
+        "degraded_reasons": [*health_status["degraded_reasons"], *extra],
+    }
+
+
+def _degraded_reasons(state: dict | None = None, now_et: datetime | None = None) -> list[str]:
     """The health helper's degraded reasons for a ``/api/state`` body.
 
-    A failed read gives an empty list, so the header never claims "Degraded" on a read error; the
-    warning names the exception type only, never its text.
+    With the stored state the poll already read, it also carries the reasons that rest on it
+    (_state_degraded_reasons), so the header and /health say the same thing. A failed read gives an
+    empty list, so the header never claims "Degraded" on a read error; the warning names the
+    exception type only, never its text.
     """
     try:
-        reasons = _health_status()["degraded_reasons"]
+        if state is None or now_et is None:
+            reasons = _health_status()["degraded_reasons"]
+        else:
+            reasons = _health_view(state, now_et)["degraded_reasons"]
         return list(reasons)
     except Exception as exc:
         _daemon_log.warning("degraded_reasons unavailable: %s", type(exc).__name__)
@@ -1374,27 +1614,76 @@ def _run_trigger_retention():
         )
 
 
+# The capture part of the latch key of a built snapshot (_held_close_snapshot): it has no capture
+# time of its own that the stored snapshot of the session will share.
+_BUILT_SNAPSHOT_LATCH = "close-state"
+
+
+def _close_totals_key(snapshot: dict) -> tuple:
+    """The (trading_day, captured_at_et) key the totals of a close snapshot are latched under."""
+    day = snapshot.get("trading_day")
+    if snapshot.get("built"):
+        return (day, _BUILT_SNAPSHOT_LATCH)
+    return (day, snapshot.get("captured_at_et"))
+
+
+def _close_totals_for(snapshot: dict) -> dict | None:
+    """The account totals latched for a close snapshot, or None.
+
+    The in-memory latch when it is for this snapshot; otherwise the one stored in the
+    close_account_totals table, restored into memory (a restart empties memory, so the figures a
+    closed market shows are the ones it showed before the restart). A stored snapshot also takes
+    the totals latched for its session while its own was not stored yet (the built snapshot,
+    _held_close_snapshot), so the figures do not move when the real one arrives. A legacy snapshot
+    with no trading day or capture time has no stored latch. Never raises.
+    """
+    global _frozen_account_totals
+    keys = [_close_totals_key(snapshot)]
+    if not snapshot.get("built"):
+        keys.append((snapshot.get("trading_day"), _BUILT_SNAPSHOT_LATCH))
+    held = _frozen_account_totals
+    if held is not None and held["key"] in keys:
+        return held
+    for key in keys:
+        if not key[0] or not key[1]:
+            continue
+        stored = database.load_close_totals_latch(str(key[0]), str(key[1]))
+        if isinstance(stored, dict) and isinstance(stored.get("totals"), dict):
+            restored = {"key": key, "totals": stored["totals"], "as_of": stored.get("as_of")}
+            _frozen_account_totals = restored
+            return restored
+    return None
+
+
 def _close_totals_latch_key(started_at: datetime) -> tuple | None:
     """The (trading_day, captured_at_et) key to latch a read that began at `started_at`.
 
+    The snapshot is the one the market's session is served from (_session_view): the stored one,
+    or the one built from the last committed state while the session's own is not stored yet.
+
     None when nothing should latch: the market is open, the latch already holds the newest
-    finished session's snapshot (no stored state is read then), no snapshot is stored, the
-    read began before the snapshot's capture moment, or the lookup failed. A legacy
+    finished session's snapshot (no stored state is read then), the snapshot's latch is already
+    stored (the first read taken for a snapshot is the one every restart finds), no snapshot is
+    served, the read began before the snapshot's capture moment, or the lookup failed. A legacy
     snapshot (no trading day) has no capture moment, so the first read the process sees
     latches. Never raises.
     """
     try:
-        if get_market_state(started_at) == "open":
+        market_state = get_market_state(started_at)
+        if market_state == "open":
             return None
         held = _frozen_account_totals
         latest = market_calendar.most_recent_completed_session(started_at)
         if held is not None and latest is not None and held["key"][0] == latest.isoformat():
             return None
-        snapshot = (database.load_state() or {}).get("last_market_close_snapshot")
+        state = database.load_state() or {}
+        snapshot = _session_view(state, market_state, started_at).snapshot
         if not isinstance(snapshot, dict):
             return None
-        key = (snapshot.get("trading_day"), snapshot.get("captured_at_et"))
+        key = _close_totals_key(snapshot)
         if held is not None and held["key"] == key:
+            return None
+        if _close_totals_for(snapshot) is not None:
             return None
         capture = _snapshot_capture_moment(snapshot)
         if capture is not None and started_at < capture:
@@ -1457,6 +1746,7 @@ def _refresh_account_totals() -> None:
         if resp.status_code == 200:
             data = resp.json()
             latch_key = _close_totals_latch_key(started_at)
+            latched: dict | None = None
             # Acquire the shared cache lock before writing multiple keys so that
             # concurrent readers never observe a partial-write sequence.
             # After all keys are written, clear the stale flag so reads see the
@@ -1494,6 +1784,17 @@ def _refresh_account_totals() -> None:
                         "totals": dict(_account_totals_last_good),
                         "as_of": datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT),
                     }
+                    latched = _frozen_account_totals
+            # The latch is stored once taken, outside the cache lock: a restart finds it again.
+            if latch_key is not None and latch_key[0] and latch_key[1]:
+                try:
+                    database.save_close_totals_latch(
+                        str(latch_key[0]), str(latch_key[1]), latched["totals"], latched["as_of"]
+                    )
+                except Exception as store_exc:
+                    _daemon_log.warning(
+                        "close totals latch not stored: %s", type(store_exc).__name__
+                    )
             # Advance the as-of timestamp only after all writes completed without error.
             _account_totals_last_success_at = datetime.now(_ET).strftime(_ACCOUNT_BASIS_TS_FMT)
             _account_totals_last_success_mono = _monotonic()
@@ -2312,9 +2613,74 @@ def _run_retirement_recommender_tick() -> None:
             tenure_review.REVIEW_RUN_STATE.release(owner)
 
 
+# The results a closed market's polls are answered from are built ahead of the first poll, on a
+# background thread: when the daemon starts, and then every _CLOSED_WARMUP_EVERY_S while the market
+# is closed (a new snapshot, a newer close or newly taken account totals name a result not held yet;
+# a build that finds everything held reads the state and returns). Never on the scheduler's thread.
+_CLOSED_WARMUP_EVERY_S = 30
+_CLOSED_WARMUP_FLIGHT = threading.Lock()  # one build in flight at a time
+_closed_warmup_checked_mono: float | None = None
+# The picker's other windows, built after the default one (the one the page opens on).
+_WARMUP_OTHER_WINDOWS = ("60d", "90d", "125d", "ytd", "1y", "all")
+
+
+def _warm_closed_results() -> None:
+    """Build the held results of the market's closed session: the poll and the page, and every
+    window's strip and hero chart. Builds nothing while the market is open, or when no close
+    snapshot (stored or built from the last committed state) exists. Never raises."""
+    if not _CLOSED_WARMUP_FLIGHT.acquire(blocking=False):
+        return
+    try:
+        now_et = datetime.now(_ET)
+        market_state = get_market_state(now_et)
+        if market_state == "open":
+            return
+        state = database.load_state() or {}
+        trading_session = _session_view(state, market_state, now_et)
+        if trading_session.snapshot is None:
+            return
+        conn = _committed_shadow_conn(trading_session.cut_state)
+        token_of_conn = _WARMUP_CONN.set(conn)
+        try:
+            with analytics.request_reads():
+                _closed_poll_view(trading_session, state, now_et)
+                for token in (_DEFAULT_HERO_WINDOW, *_WARMUP_OTHER_WINDOWS):
+                    _windowed_strip(trading_session, token, state, now_et)
+                    _closed_hero_body(trading_session, token, now_et)
+        finally:
+            _WARMUP_CONN.reset(token_of_conn)
+            conn.close()
+    except Exception as exc:
+        _daemon_log.warning("closed-market warm-up failed: %s", type(exc).__name__)
+    finally:
+        _CLOSED_WARMUP_FLIGHT.release()
+
+
+def _start_closed_warmup() -> None:
+    """Run _warm_closed_results on a daemon thread; returns at once. Never raises."""
+    try:
+        threading.Thread(target=_warm_closed_results, daemon=True, name="closed-warmup").start()
+    except Exception as exc:
+        _daemon_log.warning("closed-market warm-up not started: %s", type(exc).__name__)
+
+
+def _poke_closed_warmup() -> None:
+    """Start the warm-up at most once per _CLOSED_WARMUP_EVERY_S; called by every scheduler pass."""
+    global _closed_warmup_checked_mono
+    now_mono = _monotonic()
+    last = _closed_warmup_checked_mono
+    if last is not None and now_mono - last < _CLOSED_WARMUP_EVERY_S:
+        return
+    _closed_warmup_checked_mono = now_mono
+    _start_closed_warmup()
+
+
 def run_scheduler():
-    global _scheduler_started_mono
+    global _scheduler_started_mono, _closed_warmup_checked_mono
     _scheduler_started_mono = _monotonic()
+    # The first poll after a daemon start is answered from a result built beforehand.
+    _closed_warmup_checked_mono = _scheduler_started_mono
+    _start_closed_warmup()
     _guard(schedule.every().minute.at(":00").do(threaded_trigger), ":00 engine spawn")
     # The refresh runs on its own thread so a held Composer call never delays the spawn.
     _guard(
@@ -2805,31 +3171,65 @@ def _fleet_alert_sentence(alert: dict) -> str:
     )
 
 
+def _shares_reads(view_function):
+    """Run a route under analytics.request_reads(): the per-symphony reads its figures repeat (the
+    cards, the rows and the windowed strip each ask for the same symphony's trajectory) are made
+    once per request."""
+
+    @functools.wraps(view_function)
+    def wrapper(*args, **kwargs):
+        with analytics.request_reads():
+            return view_function(*args, **kwargs)
+
+    return wrapper
+
+
 @app.route("/")
+@_shares_reads
 def dashboard():
     api_state = get_api_state_dict()
     live_state = api_state.get("bot_state") or database.load_state()
-    market_state = get_market_state(datetime.now(_ET))
+    now_et = datetime.now(_ET)
+    trading_session = _session_view(live_state, get_market_state(now_et), now_et)
     # The page renders from the same single computation the poll serves: after the close
-    # that is the close snapshot, not the live state that has moved past it.
-    shadow_conn = _committed_shadow_conn(_view_cut_state(live_state, market_state))
+    # that is the close snapshot (held per snapshot, so the page reads no rows), not the live
+    # state that has moved past it.
+    if trading_session.snapshot is not None:
+        return _render_dashboard(api_state, live_state, trading_session, now_et, None)
+    shadow_conn = _committed_shadow_conn(trading_session.cut_state)
     try:
-        return _render_dashboard(api_state, live_state, market_state, shadow_conn)
+        return _render_dashboard(api_state, live_state, trading_session, now_et, shadow_conn)
     finally:
         shadow_conn.close()
 
 
 def _render_dashboard(
-    api_state: dict, live_state: dict, market_state: str, shadow_conn: sqlite3.Connection
+    api_state: dict,
+    live_state: dict,
+    trading_session: "_SessionView",
+    now_et: datetime,
+    shadow_conn: sqlite3.Connection | None,
 ):
-    view = _portfolio_view(live_state, market_state, shadow_conn)
+    """Render the page for *session*; *shadow_conn* is None for a closed market's held view."""
+    market_state = trading_session.market_state
+    if shadow_conn is None:
+        view, portfolio_strip = _closed_poll_view(trading_session, live_state, now_et)
+    else:
+        view = _portfolio_view(live_state, trading_session, shadow_conn, now_et)
+        portfolio_strip = _strip_with_hist_fallback(
+            view["portfolio_strip"], shadow_conn, live_state
+        )
     bot_state = view["state"] or {}
     if view["branch"] == "frozen":
         # Before the defaults fill a missing current_return with 0.0.
         _inject_guard_alpha(bot_state)
         _normalize_frozen_symphonies(view["snapshot"])
-    portfolio_strip = _strip_with_hist_fallback(view["portfolio_strip"], shadow_conn, live_state)
-    meta = _build_meta(bot_state, market_state=market_state, portfolio_strip=portfolio_strip)
+    meta = _build_meta(
+        bot_state,
+        market_state=market_state,
+        portfolio_strip=portfolio_strip,
+        window_anchor=trading_session.anchor,
+    )
     portfolio_strip = view["portfolio_strip"]
 
     # The same read the state poll carries (``dashboard_panels``), so the render and the poll agree.
@@ -2851,7 +3251,7 @@ def _render_dashboard(
             _sym_val["id"] = _sym_key
 
     # FIX-23: Enrich each symphony with _cr/_tc/_mdd from analytics so cards render live returns.
-    _dash_today = datetime.now(_ET).strftime("%Y-%m-%d")
+    _dash_today = trading_session.anchor.isoformat()
     for _s in symphonies:
         if not isinstance(_s, dict):
             continue
@@ -2974,13 +3374,12 @@ def _render_dashboard(
     # when the read failed.
     cvar_diagnostic = panels["cvar"]["diagnostic"]
 
-    _today_close = market_calendar.session_close(datetime.now(_ET).date())
+    _today_close = market_calendar.session_close(now_et.date())
     session_close_display = _today_close.strftime("%H:%M ET")
 
-    _phase_now = datetime.now(_ET)
     engine_phase = _engine_phase(
-        _phase_now,
-        get_market_state(_phase_now),
+        now_et,
+        market_state,
         bot_state.get("last_successful_cycle_at"),
     )
 
@@ -3006,8 +3405,13 @@ def _render_dashboard(
         dashboard_initial_data=_dashboard_initial_data(
             meta,
             bot_state,
-            hero_conn=shadow_conn if view["branch"] == "frozen" else None,
             hero_state=view["weights_state"],
+            hero=(
+                _closed_hero_body(trading_session, _DEFAULT_HERO_WINDOW, now_et)
+                if shadow_conn is None
+                else None
+            ),
+            anchor=trading_session.cutoff_anchor,
         ),
         fleet_alert=_fleet_alert,
         fleet_alert_text=_fleet_alert_sentence(_fleet_alert) if _fleet_alert else "",
@@ -3043,10 +3447,14 @@ def _dashboard_initial_data(
     *,
     hero_conn: sqlite3.Connection | None = None,
     hero_state: dict | None = None,
+    hero: dict | None = None,
+    anchor: date | None = None,
 ) -> dict:
     """Chart data embedded in the dashboard render so the charts draw at first paint.
 
-    ``hero`` is the default-window series (local shadow history only, no network);
+    ``hero`` is the default-window series (local shadow history only, no network); a closed
+    market passes the held one it shares with ``/api/hero-chart``, otherwise it is read here,
+    counting its window back from *anchor*;
     ``hero_poll_tail`` describes the series the next ``/api/state`` poll will carry, so
     the page can tell a changed series from an unchanged one; ``sparks`` carries each
     card's exit-marker fields.
@@ -3071,7 +3479,11 @@ def _dashboard_initial_data(
         if isinstance(v, dict) and "name" in v
     }
     return {
-        "hero": _hero_chart_body(_DEFAULT_HERO_WINDOW, hero_conn, hero_state),
+        "hero": (
+            hero
+            if hero is not None
+            else _hero_chart_body(_DEFAULT_HERO_WINDOW, hero_conn, hero_state, anchor)
+        ),
         "hero_poll_tail": tail,
         "hero_poll_cap": _HERO_POLL_DAY_CAP,
         "sparks": sparks,
@@ -3116,8 +3528,13 @@ def _build_meta(
     next_run_seconds: int = 0,
     market_state=_MARKET_STATE_UNSET,
     portfolio_strip: dict | None = None,
+    window_anchor: date | None = None,
 ) -> dict:
-    """Build the meta object for /api/state responses (AC-C1 Foundation)."""
+    """Build the meta object for /api/state responses (AC-C1 Foundation).
+
+    window_anchor: the ET trading day the portfolio figures belong to (_SessionView.anchor); the
+    page cuts its own windows at it, never at the browser's clock.
+    """
     # Use module-qualified call so test patches on dotenv.dotenv_values take effect.
     env_vars = _dotenv_module.dotenv_values(ENV_FILE_PATH)
     live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
@@ -3221,6 +3638,7 @@ def _build_meta(
         "guard_alpha": ps.get("guard_alpha"),
         "window": ps.get("window"),
         "account_all_time_cr": ps.get("account_all_time_cr"),
+        "window_anchor": window_anchor.isoformat() if window_anchor is not None else None,
     }
 
     return {
@@ -3324,6 +3742,20 @@ def _is_symphony_in_account(value: object, account_filter: str | None) -> bool:
 _SHADOW_TS_ET_FORMAT = "%Y-%m-%dT%H:%M:%S"  # the form of shadow_history.ts_et
 
 
+def _cycle_stamp_moment(stamp: object) -> datetime | None:
+    """The aware ET instant of a stored ``last_successful_cycle_at`` stamp, or None when it is
+    absent or unparseable (a naive stamp is read as ET)."""
+    if not stamp:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_ET)
+    return moment.astimezone(_ET)
+
+
 def _committed_shadow_conn(state: dict | None) -> sqlite3.Connection:
     """Read-only shadow_history connection that sees only completed engine cycles.
 
@@ -3340,16 +3772,8 @@ def _committed_shadow_conn(state: dict | None) -> sqlite3.Connection:
         f"file:{analytics._get_shadow_db_file()}?mode=ro", uri=True, timeout=10.0
     )
     try:
-        stamp = (state or {}).get("last_successful_cycle_at")
-        cutoff = None
-        if stamp:
-            try:
-                moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
-                if moment.tzinfo is None:
-                    moment = moment.replace(tzinfo=_ET)
-                cutoff = moment.astimezone(_ET).strftime(_SHADOW_TS_ET_FORMAT)
-            except ValueError:
-                cutoff = None
+        moment = _cycle_stamp_moment((state or {}).get("last_successful_cycle_at"))
+        cutoff = moment.strftime(_SHADOW_TS_ET_FORMAT) if moment is not None else None
         if cutoff is not None:
             conn.execute("CREATE TEMP TABLE shadow_cutoff(ts_et TEXT)")
             conn.execute("INSERT INTO shadow_cutoff(ts_et) VALUES (?)", (cutoff,))
@@ -3530,23 +3954,325 @@ def _snapshot_stamps(snapshot: dict, now_et: datetime | None = None) -> dict:
     }
 
 
-def _frozen_snapshot_of(state: dict | None, market_state: str) -> dict | None:
-    """The close snapshot a response is served from, or None while the live state is."""
-    snapshot = (state or {}).get("last_market_close_snapshot")
-    if market_state in ("closed_frozen", "pre_market") and snapshot:
-        return snapshot
-    return None
+# ---------------------------------------------------------------------------
+# The session a response describes
+# ---------------------------------------------------------------------------
+# One response describes one session. While the market is open that is today's session. From the
+# close on it is the session that closed: its figures are served from its close snapshot, and every
+# window counts back from that session's day. Nothing a closed market shows therefore moves with the
+# wall clock (the host's clock is UTC, whose date turns over at 20:00 EDT, in the middle of a
+# closed evening), and it changes only when the next session starts.
+
+# Grace after the close within which the engine's close step stores the session's snapshot: the
+# post-mortem cutoff (market_calendar.POST_MORTEM_GRACE_MINUTES), plus a minute. A snapshot still
+# missing after it is reported (close_snapshot_missing).
+_CLOSE_SNAPSHOT_GRACE = timedelta(minutes=market_calendar.POST_MORTEM_GRACE_MINUTES + 1)
 
 
-def _view_cut_state(state: dict | None, market_state: str) -> dict | None:
-    """The state whose cycle stamp cuts the shadow rows a response reads.
+@dataclass(frozen=True)
+class _SessionView:
+    """Which session a response describes, and what it is read from.
 
-    After the close that is the snapshot's capture moment, so rows the engine writes
-    later (16:03 cycle, overnight) cannot move a shown number; otherwise the live state.
+    kind: "open" (the live state), "frozen" (a stored close snapshot), "held" (the session has
+    closed and its snapshot is not stored yet: the snapshot is built from the last committed state
+    of that session, cut at the close, so the page never falls back to the session before) or
+    "live" (the market is closed and no snapshot is stored: the live state).
+    anchor: the ET trading day the figures belong to: the session a snapshot closes, otherwise
+    today's ET date.
+    snapshot: the close snapshot served (stored or built); None for "open" and "live".
+    cut_state: the state whose cycle stamp cuts the shadow rows the response reads.
+    latest: the newest completed session at the request instant.
     """
-    snapshot = _frozen_snapshot_of(state, market_state)
-    capture = None if snapshot is None else _snapshot_capture_moment(snapshot)
-    return state if capture is None else {"last_successful_cycle_at": capture.isoformat()}
+
+    market_state: str
+    kind: str
+    anchor: date
+    snapshot: dict | None
+    cut_state: dict | None
+    latest: date | None
+
+    @property
+    def cutoff_anchor(self) -> date | None:
+        """The day every window of a closed market counts back from: the anchor of the session its
+        snapshot closes, so a window does not slide with the wall clock while nothing is trading.
+        None while a session is open (a window counts back from today, which is the anchor) or no
+        snapshot defines one: the windows then take their default, today's date."""
+        return self.anchor if self.snapshot is not None else None
+
+    @property
+    def anchor_kwargs(self) -> dict:
+        """{"anchor": day} for the analytics windows when cutoff_anchor names one, else {}."""
+        anchor = self.cutoff_anchor
+        return {} if anchor is None else {"anchor": anchor}
+
+
+def _session_close_moment(day: date) -> datetime:
+    """The aware ET instant the session of *day* closes (13:00 on an early-close day)."""
+    return _DatetimeType.combine(day, market_calendar.session_close(day), tzinfo=_ET)
+
+
+def _held_close_snapshot(state: dict, latest: date) -> dict | None:
+    """The close snapshot of session *latest*, built from the live state, or None.
+
+    Built only when the live state is of that session: the engine committed a cycle on or after
+    its day and the state holds symphonies. It is shaped like the engine's own snapshot (trading
+    day, capture time, symphony entries by account) and its capture moment is the last committed
+    cycle, never later than the close, so it cuts the shadow rows exactly where a stored snapshot
+    would.
+    """
+    stamp = _cycle_stamp_moment(state.get("last_successful_cycle_at"))
+    if stamp is None or stamp.date() < latest:
+        return None
+    entries = {key: value for key, value in state.items() if _is_symphony_state_entry(value)}
+    if not entries:
+        return None
+    captured = min(stamp, _session_close_moment(latest))
+    accounts_map: dict[str, list[dict]] = {}
+    for sym_id, entry in entries.items():
+        accounts_map.setdefault(entry.get("account", "Unknown"), []).append(
+            {"id": sym_id, **copy.deepcopy(entry)}
+        )
+    return {
+        "built": True,
+        "trading_day": latest.isoformat(),
+        "captured_at_et": captured.strftime("%H:%M:%S ET"),
+        "portfolio_strip": None,
+        "shadow_divergence": {"by_symphony": {}, "portfolio": None},
+        "accounts_map": accounts_map,
+    }
+
+
+def _session_view(state: dict | None, market_state: str, now_et: datetime) -> _SessionView:
+    """The session a response at *now_et* describes: the one place the window anchor is decided.
+
+    Open: today's session, read from the live state. Closed or pre-market with a stored snapshot:
+    the snapshot's own session, unless a newer session has closed without its snapshot being
+    stored yet and the live state is of that session, in which case that session's last committed
+    state is served ("held"), cut at its close. Closed with no snapshot at all: the live state.
+    """
+    state = state or {}
+    try:
+        latest = market_calendar.most_recent_completed_session(now_et)
+    except Exception:
+        latest = None
+    if market_state == "open":
+        return _SessionView(market_state, "open", now_et.date(), None, state, latest)
+    snapshot = state.get("last_market_close_snapshot")
+    if not snapshot:
+        return _SessionView(market_state, "live", now_et.date(), None, state, latest)
+    kind = "frozen"
+    stored_day = snapshot.get("trading_day")
+    if stored_day and latest is not None and str(stored_day) < latest.isoformat():
+        held = _held_close_snapshot(state, latest)
+        if held is not None:
+            snapshot, kind = held, "held"
+    try:
+        anchor = date.fromisoformat(str(snapshot.get("trading_day")))
+    except ValueError:
+        anchor = latest or now_et.date()
+    capture = _snapshot_capture_moment(snapshot)
+    cut_state = state if capture is None else {"last_successful_cycle_at": capture.isoformat()}
+    return _SessionView(market_state, kind, anchor, snapshot, cut_state, latest)
+
+
+def _window_cutoff_of(trading_session: _SessionView, window: object) -> date | None:
+    """The cutoff of *window* for a route that reads the session's figures: counted back from the
+    closed session's anchor, else from today (analytics.window_cutoff / _window_cutoff_date)."""
+    anchor = trading_session.cutoff_anchor
+    if anchor is None:
+        return analytics._window_cutoff_date(window)
+    return analytics.window_cutoff(window, anchor)
+
+
+def _current_session(now_et: datetime | None = None) -> tuple[_SessionView, dict]:
+    """(session, live state) at one request instant: for a route that reads no portfolio view of
+    its own but still states a window or cuts rows at the close. A state that cannot be read
+    reads as empty, so the route keeps answering from what it has."""
+    if now_et is None:
+        now_et = datetime.now(_ET)
+    try:
+        state = database.load_state() or {}
+    except Exception:
+        state = {}
+    return _session_view(state, get_market_state(now_et), now_et), state
+
+
+# ---------------------------------------------------------------------------
+# The results of a closed market, held
+# ---------------------------------------------------------------------------
+# The figures of a closed market cannot change, so a poll of one is a lookup, not a recomputation
+# (a recomputation reads a table of hundreds of thousands of rows dozens of times, and a poll is
+# abandoned at 20 s). A result is held per snapshot identity (and per window); a new snapshot, or
+# anything else the identity names, is a different key, so the old result is simply no longer asked
+# for. Held results are bounded in snapshots, safe to build from several request threads at once
+# (one build per key, the rest wait for it), and never handed out: a caller gets its own copy.
+
+_HOLD_MAX_IDENTITIES = 4  # snapshot identities kept: today's, plus the few before it
+_HOLD_MAX_RESULTS = 40  # results kept per identity: the poll, and two per window token
+_NOTHING = object()
+
+
+class _ClosedHold:
+    def __init__(self, max_identities: int, max_results: int) -> None:
+        self._max_identities = max_identities
+        self._max_results = max_results
+        self._lock = threading.Lock()  # guards the two dicts below, never held across a build
+        self._held: _collections.OrderedDict[tuple, dict[object, object]] = (
+            _collections.OrderedDict()
+        )
+        self._building: dict[tuple, threading.Lock] = {}
+
+    def _get(self, identity: tuple, name: object) -> object:
+        with self._lock:
+            results = self._held.get(identity)
+            if results is None or name not in results:
+                return _NOTHING
+            self._held.move_to_end(identity)
+            return results[name]
+
+    def _put(self, identity: tuple, name: object, value: object) -> None:
+        with self._lock:
+            results = self._held.setdefault(identity, {})
+            results[name] = value
+            while len(results) > self._max_results:
+                results.pop(next(iter(results)))
+            self._held.move_to_end(identity)
+            while len(self._held) > self._max_identities:
+                self._held.popitem(last=False)
+
+    def get_or_build(self, identity: tuple, name: object, build: Callable[[], object]) -> object:
+        """The held result, or the result of build() (held for the next caller). A copy either way."""
+        found = self._get(identity, name)
+        if found is not _NOTHING:
+            return copy.deepcopy(found)
+        key = (identity, name)
+        with self._lock:
+            build_lock = self._building.setdefault(key, threading.Lock())
+        try:
+            with build_lock:
+                found = self._get(identity, name)
+                if found is not _NOTHING:
+                    return copy.deepcopy(found)
+                value = build()
+                self._put(identity, name, copy.deepcopy(value))
+                return value
+        finally:
+            with self._lock:
+                self._building.pop(key, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._held.clear()
+
+
+_CLOSED_HOLD = _ClosedHold(_HOLD_MAX_IDENTITIES, _HOLD_MAX_RESULTS)
+
+# The connection the warm-up reads every one of its results through (see _warm_closed_results): set
+# only on the warm-up's own thread, so a request builds with a connection of its own.
+_WARMUP_CONN: contextvars.ContextVar[sqlite3.Connection | None] = contextvars.ContextVar(
+    "closed_warmup_conn", default=None
+)
+
+
+def _closed_conn(trading_session: _SessionView) -> tuple[sqlite3.Connection, bool]:
+    """(connection cut at the session's snapshot, whether the caller must close it).
+
+    The warm-up shares ONE connection across everything it builds, so a read one result makes
+    (a symphony's trajectory, the portfolio series) is not made again for the next; any other
+    caller opens its own.
+    """
+    shared = _WARMUP_CONN.get()
+    if shared is not None:
+        return shared, False
+    return _committed_shadow_conn(trading_session.cut_state), True
+
+
+# Window tokens a result is held for (the picker's); any other token is computed each time.
+_HELD_WINDOW_TOKENS = frozenset({"30d", "60d", "90d", "125d", "ytd", "1y", "all"})
+
+
+def _closed_identity(trading_session: _SessionView, now_et: datetime) -> tuple:
+    """The key a closed market's results are held under.
+
+    A stored snapshot is named by its day and capture time, and by the newest completed session
+    (a newer close changes which symphonies are no longer held). The built snapshot of a session
+    that is still waiting for its own is named by that session alone, so it holds until the real
+    one is stored. The account totals are not part of it: they are added to the held result on
+    each request (_compute_frozen_portfolio_strip), so a refresh never makes it stale.
+    """
+    snapshot = trading_session.snapshot
+    anchor = trading_session.anchor.isoformat()
+    if trading_session.kind == "held":
+        return ("held", anchor)
+    return (
+        "frozen",
+        snapshot.get("trading_day"),
+        snapshot.get("captured_at_et"),
+        anchor,
+        trading_session.latest.isoformat() if trading_session.latest is not None else None,
+    )
+
+
+def _held_closed(
+    trading_session: _SessionView, now_et: datetime, name: object, build: Callable[[], object]
+) -> object:
+    """build()'s result, held for a closed market's session (an open one computes every time)."""
+    if trading_session.snapshot is None:
+        return build()
+    return _CLOSED_HOLD.get_or_build(_closed_identity(trading_session, now_et), name, build)
+
+
+def _closed_poll_view(
+    trading_session: _SessionView, state: dict | None, now_et: datetime
+) -> tuple[dict, dict]:
+    """(portfolio view, hero/meta strip) of a closed market; the caller owns its copy.
+
+    What /api/state and the page share. The part that reads the shadow rows is held per snapshot
+    and computed once; the account totals are added to it on each request.
+    """
+
+    def build() -> dict:
+        conn, owned = _closed_conn(trading_session)
+        try:
+            parts = _frozen_view_parts(trading_session, conn, now_et)
+            rows = parts["rows"]
+            # The hero arrays come from a second source when the snapshot's own series is empty.
+            hist = rows.get("hist")
+            parts["hist_fallback"] = (
+                None
+                if rows.get("ok") and hist and hist[0]
+                else _hist_fallback(conn, parts["weights_state"])
+            )
+        finally:
+            if owned:
+                conn.close()
+        return parts
+
+    parts = _held_closed(trading_session, now_et, "poll", build)
+    view = _frozen_view(parts, now_et)
+    strip = view["portfolio_strip"]
+    fallback = parts["hist_fallback"]
+    return view, ({**fallback, **strip} if fallback is not None else strip)
+
+
+def _closed_hero_body(
+    trading_session: _SessionView, window: str, now_et: datetime
+) -> dict[str, object]:
+    """The hero chart of a closed market's window, read from the snapshot's rows and weights."""
+
+    def build() -> dict:
+        conn, owned = _closed_conn(trading_session)
+        try:
+            weights = _frozen_symphony_inputs(trading_session.snapshot)[1]
+            weights = _without_symphonies(weights, _no_longer_held_ids(weights, conn, now_et))
+            return _hero_chart_body(window, conn, weights, trading_session.anchor)
+        finally:
+            if owned:
+                conn.close()
+
+    if window not in _HELD_WINDOW_TOKENS:
+        return build()
+    return _held_closed(trading_session, now_et, ("hero", window), build)
 
 
 def _frozen_symphony_inputs(snapshot: dict) -> tuple[list[dict], dict]:
@@ -3639,15 +4365,26 @@ def _apply_default_window_legs(strip: dict, windowed: dict) -> None:
         strip["window_vol_held"] = windowed.get("vol_held")
 
 
-def _compute_frozen_portfolio_strip(
-    snapshot: dict, conn: sqlite3.Connection | None, now_et: datetime | None = None
-) -> dict:
-    """portfolio_strip for the market-close snapshot (authoritative, recomputed).
+def _day_anchor(trading_day: object) -> date | None:
+    """The window anchor a response's ``trading_day`` text names, or None when it names none."""
+    try:
+        return date.fromisoformat(str(trading_day))
+    except ValueError:
+        return None
 
-    Also attaches the per-symphony _tc/_cr/_mdd to the snapshot entries. Everything is
-    read for snapshot["trading_day"], never today's date, from the snapshot, the account
-    totals latched for it and the rows `conn` exposes (cut at the capture moment); the
-    live bot_state, later rows and later account refreshes cannot move a figure.
+
+def _frozen_strip_rows(snapshot: dict, conn: sqlite3.Connection | None) -> dict:
+    """The part of a close snapshot's strip that rests on shadow rows, not on account totals.
+
+    Also attaches the per-symphony _tc/_cr/_mdd to the snapshot entries. Everything is read for
+    snapshot["trading_day"], never today's date, from the snapshot and the rows `conn` exposes
+    (cut at the capture moment); the live bot_state and later rows cannot move a figure. This is
+    the expensive half of the strip (dozens of reads of a large table), so a closed market holds
+    it per snapshot; _compute_frozen_portfolio_strip adds the account totals to it on each request.
+
+    Returns {"ok": bool, "vw_tc", "vw_cr", "max_drawdown", "default" (the default window's
+    strip or None), "hist" (the hero series or None)}; "ok" is False when the portfolio figures
+    could not be computed.
     """
     trading_day = snapshot.get("trading_day")
     for entries in (snapshot.get("accounts_map") or {}).values():
@@ -3675,15 +4412,83 @@ def _compute_frozen_portfolio_strip(
                     sym[key] = {"if_held": None, "dry_run": None}
 
     symphonies_list, snap_bot_state = _frozen_symphony_inputs(snapshot)
+    rows: dict = {"ok": False, "default": None, "hist": None}
+    try:
+        # include_paired_guard_delta=True: the Tier-2 floor re-derives dry_run from the
+        # coverage-scaled guard_delta_vw (DE-HELD-BASIS-001 F5(a)/F6).
+        rows["vw_tc"] = analytics.get_portfolio_today_change(
+            symphonies_list,
+            snap_bot_state,
+            trading_day=trading_day,
+            conn=conn,
+            include_paired_guard_delta=True,
+        )
+        rows["vw_cr"] = analytics.get_portfolio_cumulative_return(
+            symphonies_list, snap_bot_state, trading_day=trading_day, conn=conn
+        )
+        rows["max_drawdown"] = analytics.get_portfolio_max_drawdown(
+            symphonies_list,
+            snap_bot_state,
+            trading_day=trading_day,
+            conn=conn,
+            state=snap_bot_state,
+        )
+    except Exception:
+        return rows
+    rows["ok"] = True
+
+    # Its own try: a failure here must not discard the figures computed above. The
+    # windowed cumulative return is left out (no client reads it from this strip).
+    try:
+        default = analytics.compute_windowed_portfolio_strip(
+            symphonies_list,
+            snap_bot_state,
+            window=_DEFAULT_HERO_WINDOW,
+            conn=conn,
+            state=snap_bot_state,
+            anchor=_day_anchor(trading_day),
+        )
+        if isinstance(default, dict):
+            rows["default"] = default
+    except Exception:
+        _daemon_log.error("closed_frozen default-window strip failed", exc_info=True)
+
+    try:
+        rows["hist"] = _portfolio_hist_series(conn, snap_bot_state)
+    except Exception:
+        _daemon_log.error("closed_frozen hero series failed", exc_info=True)
+    return rows
+
+
+def _compute_frozen_portfolio_strip(
+    snapshot: dict, rows: dict, now_et: datetime | None = None
+) -> dict:
+    """portfolio_strip for the market-close snapshot (authoritative).
+
+    `rows` is _frozen_strip_rows of the snapshot (held per snapshot). The strip is that, plus the
+    snapshot and the account totals latched for it: the live bot_state, later rows and later
+    account refreshes cannot move a figure.
+    """
+    symphonies_list, snap_bot_state = _frozen_symphony_inputs(snapshot)
     data_as_of = _snapshot_stamps(snapshot, now_et)["data_as_of"]
 
     # ONE source for every account figure: the totals latched for this snapshot, else the
     # last good read (labelled stale). Never the live cache, which a later refresh moves.
-    held = _frozen_account_totals
-    if held is not None and held["key"] == (trading_day, snapshot.get("captured_at_et")):
+    held = _close_totals_for(snapshot)
+    if held is not None:
         totals, from_last_good = held["totals"], False
     else:
         totals, from_last_good = _account_totals_last_good, True
+
+    degraded = {
+        "today_change": None,
+        "cumulative_return": None,
+        "max_drawdown": None,
+        "account_value": totals.get("portfolio_value"),
+        "data_as_of": data_as_of,
+    }
+    if not rows.get("ok"):
+        return degraded
 
     try:
         symphony_value_sum = sum(s.get("value", 0.0) or 0.0 for s in symphonies_list)
@@ -3699,18 +4504,8 @@ def _compute_frozen_portfolio_strip(
         basis_stale = tc_stale or cr_stale
         basis_as_of = (_account_totals_last_success_at or _NO_STAMP) if basis_stale else None
 
-        # include_paired_guard_delta=True: the Tier-2 floor below re-derives dry_run from
-        # the coverage-scaled guard_delta_vw (DE-HELD-BASIS-001 F5(a)/F6).
-        vw_tc = analytics.get_portfolio_today_change(
-            symphonies_list,
-            snap_bot_state,
-            trading_day=trading_day,
-            conn=conn,
-            include_paired_guard_delta=True,
-        )
-        vw_cr = analytics.get_portfolio_cumulative_return(
-            symphonies_list, snap_bot_state, trading_day=trading_day, conn=conn
-        )
+        vw_tc = rows["vw_tc"]
+        vw_cr = rows["vw_cr"]
 
         if account_tc is not None:
             today_change = analytics.get_portfolio_today_change_account_basis(
@@ -3729,13 +4524,7 @@ def _compute_frozen_portfolio_strip(
         strip: dict = {
             "today_change": today_change,
             "cumulative_return": cumulative_return,
-            "max_drawdown": analytics.get_portfolio_max_drawdown(
-                symphonies_list,
-                snap_bot_state,
-                trading_day=trading_day,
-                conn=conn,
-                state=snap_bot_state,
-            ),
+            "max_drawdown": rows["max_drawdown"],
             "account_value": (
                 cached_value
                 if cached_value is not None
@@ -3758,30 +4547,17 @@ def _compute_frozen_portfolio_strip(
         if isinstance(account_cr, (int, float)):
             strip["account_all_time_cr"] = account_cr
 
-        # Its own try: a failure here must not discard the figures computed above. The
-        # windowed cumulative return is left out (no client reads it from this strip).
-        default = None
-        try:
-            default = analytics.compute_windowed_portfolio_strip(
-                symphonies_list,
-                snap_bot_state,
-                window=_DEFAULT_HERO_WINDOW,
-                conn=conn,
-                state=snap_bot_state,
-            )
-            if isinstance(default, dict):
-                guard_alpha = default.get("guard_alpha")
-                strip["guard_alpha"] = (
-                    guard_alpha if isinstance(guard_alpha, (int, float)) else None
-                )
-                window = default.get("window", _DEFAULT_HERO_WINDOW)
-                strip["window"] = window if isinstance(window, str) else _DEFAULT_HERO_WINDOW
-                _apply_default_window_legs(strip, default)
-        except Exception:
-            _daemon_log.error("closed_frozen default-window strip failed", exc_info=True)
+        default = rows.get("default")
+        if isinstance(default, dict):
+            guard_alpha = default.get("guard_alpha")
+            strip["guard_alpha"] = guard_alpha if isinstance(guard_alpha, (int, float)) else None
+            window = default.get("window", _DEFAULT_HERO_WINDOW)
+            strip["window"] = window if isinstance(window, str) else _DEFAULT_HERO_WINDOW
+            _apply_default_window_legs(strip, default)
 
-        try:
-            hist_dates, hist_bot, hist_held, vol_bot = _portfolio_hist_series(conn, snap_bot_state)
+        hist = rows.get("hist")
+        if hist is not None:
+            hist_dates, hist_bot, hist_held, vol_bot = hist
             strip.update(
                 {
                     "vol_bot": vol_bot,
@@ -3795,29 +4571,65 @@ def _compute_frozen_portfolio_strip(
             if isinstance(default, dict):
                 # The update above wrote the lifetime vol; the window's figures stand.
                 _apply_default_window_legs(strip, default)
-        except Exception:
-            _daemon_log.error("closed_frozen hero series failed", exc_info=True)
         return strip
     except Exception:
-        return {
-            "today_change": None,
-            "cumulative_return": None,
-            "max_drawdown": None,
-            "account_value": totals.get("portfolio_value"),
-            "data_as_of": data_as_of,
-        }
+        return degraded
+
+
+def _frozen_view_parts(
+    trading_session: _SessionView, conn: sqlite3.Connection | None, now_et: datetime
+) -> dict:
+    """What a close snapshot's view rests on that needs the shadow rows (held per snapshot): the
+    state served to the cards, the snapshot (symphonies no longer held left out, per-symphony legs
+    attached), the strip's rows, the value weights and the symphonies left out. The entries of
+    "state" and of the snapshot are the same objects, as the page and the poll both rely on."""
+    snapshot = trading_session.snapshot
+    served: dict = {}
+    for entries in (snapshot.get("accounts_map") or {}).values():
+        for sym in entries or []:
+            if isinstance(sym, dict) and "id" in sym:
+                served[sym["id"]] = sym
+    # A symphony no longer held is left out of the snapshot's cards and portfolio figures,
+    # asked through the connection cut at the capture so the answer is fixed with them.
+    gone = _no_longer_held_ids(served, conn, now_et)
+    served = _without_symphonies(served, gone)
+    snapshot = _snapshot_without_symphonies(snapshot, gone)
+    rows = _frozen_strip_rows(snapshot, conn)
+    return {
+        "state": served,
+        "snapshot": snapshot,
+        "rows": rows,
+        "weights_state": _frozen_symphony_inputs(snapshot)[1],
+        "no_longer_held": gone,
+    }
+
+
+def _frozen_view(parts: dict, now_et: datetime) -> dict:
+    """The "frozen" view of a close snapshot: its parts plus the strip, with the account totals
+    latched for the snapshot added (a cheap step, taken on each request)."""
+    return {
+        "branch": "frozen",
+        "state": parts["state"],
+        "snapshot": parts["snapshot"],
+        "portfolio_strip": _compute_frozen_portfolio_strip(
+            parts["snapshot"], parts["rows"], now_et
+        ),
+        "weights_state": parts["weights_state"],
+        "no_longer_held": parts["no_longer_held"],
+    }
 
 
 def _portfolio_view(
     state: dict,
-    market_state: str,
+    trading_session: _SessionView,
     conn: sqlite3.Connection | None,
     now_et: datetime | None = None,
 ) -> dict:
     """The ONE portfolio computation of a request, shared by the poll and the page.
 
-    branch "frozen": after the close with a snapshot; the served state and the strip
-    both come from the snapshot. "waiting": no state yet. "live": everything else.
+    branch "frozen": after the close, from the session's close snapshot (stored, or built from
+    the last committed state while the session's own is not stored yet); the served state and
+    the strip both come from the snapshot. "waiting": no state yet. "live": everything else.
     Returns {"branch", "state" (the state served to cards), "snapshot", "portfolio_strip",
     "weights_state", "no_longer_held"}. The served state, the snapshot and every figure of the
     strip leave out the symphonies the shared rule finds no longer held ("no_longer_held" names
@@ -3826,29 +4638,10 @@ def _portfolio_view(
     """
     if now_et is None:
         now_et = datetime.now(_ET)
-    snapshot = (state or {}).get("last_market_close_snapshot")
-    if market_state in ("closed_frozen", "pre_market") and snapshot:
-        served: dict = {}
-        for entries in (snapshot.get("accounts_map") or {}).values():
-            for sym in entries or []:
-                if isinstance(sym, dict) and "id" in sym:
-                    served[sym["id"]] = sym
-        # A symphony no longer held is left out of the snapshot's cards and portfolio figures,
-        # asked through the connection cut at the capture so the answer is fixed with them.
-        gone = _no_longer_held_ids(served, conn, now_et)
-        served = _without_symphonies(served, gone)
-        snapshot = _snapshot_without_symphonies(snapshot, gone)
-        strip = _compute_frozen_portfolio_strip(snapshot, conn, now_et)
-        return {
-            "branch": "frozen",
-            "state": served,
-            "snapshot": snapshot,
-            "portfolio_strip": strip,
-            "weights_state": _frozen_symphony_inputs(snapshot)[1],
-            "no_longer_held": gone,
-        }
+    if trading_session.snapshot is not None:
+        return _frozen_view(_frozen_view_parts(trading_session, conn, now_et), now_et)
     branch = "live" if state else "waiting"
-    trading_day = now_et.strftime("%Y-%m-%d")
+    trading_day = trading_session.anchor.isoformat()
     gone = _no_longer_held_ids(state, conn, now_et) if state else frozenset()
     state = _without_symphonies(state, gone) if state else state
     strip = _compute_portfolio_strip(state or {}, trading_day=trading_day, conn=conn)
@@ -4360,6 +5153,15 @@ def _strip_with_hist_fallback(
     """
     if strip and strip.get("hist_dates"):
         return strip
+    fallback = _hist_fallback(conn, state)
+    if fallback is not None:
+        return {**fallback, **strip} if strip else fallback
+    return strip
+
+
+def _hist_fallback(conn: sqlite3.Connection | None, state: dict | None) -> dict | None:
+    """The hero arrays of the continuous daily source with the most days, or None when neither
+    shadow_history nor the post_mortem files has any (or the read fails). Never raises."""
     try:
         shadow_strip = None
         shadow = analytics.get_portfolio_daily_returns_from_shadow(conn=conn, state=state)
@@ -4417,15 +5219,14 @@ def _strip_with_hist_fallback(
             fallback = pm_strip
         else:
             fallback = shadow_strip
-        if fallback is not None:
-            return {**fallback, **strip} if strip else fallback
+        return fallback
     except Exception as hist_exc:
         _daemon_log.error(
             "get_state() hist-series build failed — hero chart will be empty: %s",
             hist_exc,
             exc_info=True,
         )
-    return strip
+    return None
 
 
 def _sym_status(s: dict) -> str:
@@ -4497,6 +5298,7 @@ def _symphony_card(sym_id: str, s: dict) -> dict:
 
 
 @app.route("/api/state")
+@_shares_reads
 def get_state():
     _shadow_conn = None
     try:
@@ -4526,19 +5328,24 @@ def get_state():
             (state_data or {}).get("last_successful_cycle_at"),
         )
         # One health reading per response, so the header label and the body agree.
-        _additive["degraded_reasons"] = _degraded_reasons()
+        _additive["degraded_reasons"] = _degraded_reasons(state_data, _req_now_et)
         # ONE committed-cycle connection and ONE portfolio computation per response: the
-        # hero (meta), the rows (portfolio_strip) and the cards all read from them.
-        _shadow_conn = _committed_shadow_conn(_view_cut_state(state_data, market_state))
-        view = _portfolio_view(state_data, market_state, _shadow_conn, now_et=_req_now_et)
+        # hero (meta), the rows (portfolio_strip) and the cards all read from them. A closed
+        # market's computation is held per snapshot (_closed_poll_view): its polls read no rows.
+        trading_session = _session_view(state_data, market_state, _req_now_et)
+        if trading_session.snapshot is not None:
+            view, _meta_strip = _closed_poll_view(trading_session, state_data, _req_now_et)
+        else:
+            _shadow_conn = _committed_shadow_conn(trading_session.cut_state)
+            view = _portfolio_view(state_data, trading_session, _shadow_conn, now_et=_req_now_et)
+            _meta_strip = _strip_with_hist_fallback(
+                view["portfolio_strip"], _shadow_conn, view["weights_state"]
+            )
         if view["branch"] == "live":
             # The cards, counts and panels below read the state without the symphonies the
             # view found no longer held, so every figure of this response names one roster.
             state_data = view["state"]
         _portfolio_strip = view["portfolio_strip"]
-        _meta_strip = _strip_with_hist_fallback(
-            _portfolio_strip, _shadow_conn, view["weights_state"]
-        )
         # The Sleeves and CVaR panels and the Edit Vars badge, read for the live symphonies (the
         # diagnostics and strategy rows are keyed by them, whichever state the cards show) from the
         # same state the page render uses, so the render and this poll print one thing. A builder
@@ -4706,6 +5513,7 @@ def get_state():
                             _state,
                             market_state=market_state,
                             portfolio_strip=_meta_strip,
+                            window_anchor=trading_session.anchor,
                         ),
                         **_additive,
                     }
@@ -4748,7 +5556,12 @@ def get_state():
             _waiting_body = {
                 **waiting_resp,
                 "bot_state": _api_state.get("bot_state", {}),
-                "meta": _build_meta({}, market_state=market_state, portfolio_strip=_wait_strip),
+                "meta": _build_meta(
+                    {},
+                    market_state=market_state,
+                    portfolio_strip=_wait_strip,
+                    window_anchor=trading_session.anchor,
+                ),
                 **_additive,
             }
             _waiting_body["portfolio_strip"] = _meta_strip
@@ -4868,6 +5681,9 @@ def get_state():
         # Fields derived: last_percent_change from current_return/100, value from current_value.
         # Composer CR/MDD fields use None default so missing data is distinguishable from 0.0.
         today_str, today_start = _et_trading_day_bounds(_req_now_et)
+        # The day the figures belong to: today while the market is open; the session that
+        # closed otherwise (a closed market's day does not turn over at midnight).
+        figures_day = trading_session.anchor.isoformat()
         symphonies_list = []
         for k in symphony_keys:
             s = state_data[k]
@@ -4882,7 +5698,7 @@ def get_state():
                     "net_deposits": s.get("net_deposits"),
                     "time_weighted_return": s.get("time_weighted_return"),
                     "max_drawdown": s.get("max_drawdown"),
-                    "trading_day": today_str,
+                    "trading_day": figures_day,
                 }
             )
             # DE-HELD-BASIS-001 F4 (PR #125 review): no current_return_is_reconstructed
@@ -4906,7 +5722,7 @@ def get_state():
             state_data[k]["last_trigger"] = last_trigger_by_sym.get(k)
 
         # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
-        _today_et = _req_now_et.strftime("%Y-%m-%d")
+        _today_et = figures_day
         for k in symphony_keys:
             s = state_data[k]
             sym_dict = next((d for d in symphonies_list if d["id"] == k), {})
@@ -5000,6 +5816,7 @@ def get_state():
                     next_run_seconds=next_run_seconds,
                     market_state=market_state,
                     portfolio_strip=_meta_strip,
+                    window_anchor=trading_session.anchor,
                 ),
                 **_additive,
             }
@@ -5031,13 +5848,14 @@ def api_symphony_logs(symphony_id):
 
 
 def _slice_series_by_window_cutoff(
-    series: tuple[list, list, list] | None, window: object
+    series: tuple[list, list, list] | None, window: object, anchor: date | None = None
 ) -> tuple[list, list, list] | None:
-    """Slice a (dates, a, b) series to the CALENDAR cutoff analytics._window_cutoff_date
-    resolves for `window` — the SAME cutoff function /api/strip's
-    compute_windowed_portfolio_strip already canonicalizes (AC-5 / MAPERF-03), so a
-    picker click covers the same calendar span on the hero chart, the strip, and
-    /api/performance's "ytd" token alike.
+    """Slice a (dates, a, b) series to the CALENDAR cutoff analytics.window_cutoff
+    resolves for `window` counted back from `anchor` (the session the figures belong to) — the
+    SAME cutoff function /api/strip's compute_windowed_portfolio_strip already canonicalizes
+    (AC-5 / MAPERF-03), so a picker click covers the same calendar span on the hero chart, the
+    strip, and /api/performance's "ytd" token alike. Without an anchor the cutoff counts back
+    from today's UTC date (analytics._window_cutoff_date), as before; every route passes one.
 
     `window="all"` (and any unrecognized token) resolves to a None cutoff — no
     filtering, the full series passes through — matching _window_cutoff_date's own
@@ -5053,7 +5871,11 @@ def _slice_series_by_window_cutoff(
         return None
     dates, series_a, series_b = series
     try:
-        cutoff = analytics._window_cutoff_date(window)
+        cutoff = (
+            analytics.window_cutoff(window, anchor)
+            if anchor is not None
+            else analytics._window_cutoff_date(window)
+        )
     except Exception:
         cutoff = None
     cutoff_iso = cutoff.isoformat() if isinstance(cutoff, date) else None
@@ -5062,7 +5884,10 @@ def _slice_series_by_window_cutoff(
 
 
 def _hero_chart_body(
-    window: str, conn: sqlite3.Connection | None = None, state: dict | None = None
+    window: str,
+    conn: sqlite3.Connection | None = None,
+    state: dict | None = None,
+    anchor: date | None = None,
 ) -> dict[str, object]:
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
@@ -5070,6 +5895,8 @@ def _hero_chart_body(
 
     conn / state: the connection and value weights a frozen response reads, so the chart
     sees the same rows and weights as the poll; omitted, it reads live state and all rows.
+
+    anchor: the ET trading day of the session the chart belongs to; the window counts back from it.
 
     AC-5 (MAPERF-03): every window token resolves to the SAME calendar cutoff
     /api/strip already uses (analytics._window_cutoff_date) — the chart fetches
@@ -5101,7 +5928,7 @@ def _hero_chart_body(
         # shadow path; held = un-guarded if-held path (diverges only after a trigger).
         extra = {k: v for k, v in (("conn", conn), ("state", state)) if v is not None}
         bh = analytics.get_portfolio_bot_and_held_daily_returns(days=None, **extra)
-        sliced = _slice_series_by_window_cutoff(bh, window)
+        sliced = _slice_series_by_window_cutoff(bh, window, anchor)
         if sliced is not None:
             dates, bot_daily, held_daily = sliced
             # Each series is compounded INDEPENDENTLY into its own cumulative curve.
@@ -5136,31 +5963,27 @@ def _hero_chart_body(
 def get_hero_chart(window):
     """Return hist_dates/hist_bot/hist_held for the requested time window.
 
-    After the close the chart reads the snapshot's rows and weights, like the poll.
+    After the close the chart reads the snapshot's rows and weights, like the poll, and its window
+    counts back from the session the snapshot closes; a closed market's chart is held per snapshot.
     """
     try:
         live_state = database.load_state() or {}
     except Exception:
         live_state = {}
     now_et = datetime.now(_ET)
-    market_state = get_market_state(now_et)
-    snapshot = _frozen_snapshot_of(live_state, market_state)
-    if snapshot is None:
-        # Weights come from the state without the symphonies no longer held; without any such
-        # symphony the chart reads the saved state itself, as it always has.
-        gone = _no_longer_held_ids(live_state, None, now_et)
-        return jsonify(
-            _hero_chart_body(window, None, _without_symphonies(live_state, gone))
-            if gone
-            else _hero_chart_body(window)
+    trading_session = _session_view(live_state, get_market_state(now_et), now_et)
+    if trading_session.snapshot is not None:
+        return jsonify(_closed_hero_body(trading_session, window, now_et))
+    # Weights come from the state without the symphonies no longer held; without any such
+    # symphony the chart reads the saved state itself, as it always has.
+    gone = _no_longer_held_ids(live_state, None, now_et)
+    return jsonify(
+        _hero_chart_body(
+            window, None, _without_symphonies(live_state, gone), trading_session.cutoff_anchor
         )
-    conn = _committed_shadow_conn(_view_cut_state(live_state, market_state))
-    try:
-        weights = _frozen_symphony_inputs(snapshot)[1]
-        weights = _without_symphonies(weights, _no_longer_held_ids(weights, conn, now_et))
-        return jsonify(_hero_chart_body(window, conn, weights))
-    finally:
-        conn.close()
+        if gone
+        else _hero_chart_body(window, anchor=trading_session.cutoff_anchor)
+    )
 
 
 # Window tokens accepted by the picker + the windowed-strip route. Lowercase URL
@@ -5169,7 +5992,170 @@ def get_hero_chart(window):
 _STRIP_WINDOW_TOKENS = {"30d", "60d", "90d", "125d", "ytd", "1y", "all"}
 
 
+def _build_windowed_strip(
+    token: str, trading_session: _SessionView, bot_state: dict, now_et: datetime
+) -> dict:
+    """The comparison strip of *token*'s window for *session*; raises when it cannot be computed.
+
+    A closed market's strip is computed from the close snapshot and the rows up to its capture
+    moment, exactly as the poll's default-window strip is; an open one from the live state. The
+    window counts back from the session's anchor in both.
+    """
+    trading_day = trading_session.anchor.isoformat()
+    frozen_conn = None
+    owns_frozen_conn = False
+    try:
+        if trading_session.snapshot is not None:
+            # After the close the window is computed from the snapshot and the rows up to its
+            # capture moment, exactly as the poll's default-window strip is.
+            frozen_conn, owns_frozen_conn = _closed_conn(trading_session)
+            symphonies_list, bot_state = _frozen_symphony_inputs(trading_session.snapshot)
+            gone = _no_longer_held_ids(bot_state, frozen_conn, now_et)
+            symphonies_list = [s for s in symphonies_list if s.get("id") not in gone]
+            bot_state = _without_symphonies(bot_state, gone)
+            trading_day = trading_session.snapshot.get("trading_day") or trading_day
+        else:
+            gone = _no_longer_held_ids(bot_state, None, now_et)
+            bot_state = _without_symphonies(bot_state, gone)
+            symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
+            symphonies_list = []
+            for k in symphony_keys:
+                s = bot_state[k]
+                symphonies_list.append(
+                    {
+                        "id": k,
+                        "value": s.get("current_value") or 0.0,
+                        "last_percent_change": (s.get("current_return") or 0.0) / 100.0,
+                        "simple_return": s.get("simple_return"),
+                        "net_deposits": s.get("net_deposits"),
+                        "time_weighted_return": s.get("time_weighted_return"),
+                        "max_drawdown": s.get("max_drawdown"),
+                        "trading_day": trading_day,
+                    }
+                )
+
+        if frozen_conn is None:
+            # The series reads the saved state for its value weights. It is handed this one only
+            # when a no-longer-held entry has to be left out of them; otherwise the call is the
+            # one the route has always made.
+            weights_state = {"state": bot_state} if gone else {}
+            strip = analytics.compute_windowed_portfolio_strip(
+                symphonies_list,
+                bot_state,
+                window=token,
+                **trading_session.anchor_kwargs,
+                **weights_state,
+            )
+        else:
+            strip = analytics.compute_windowed_portfolio_strip(
+                symphonies_list,
+                bot_state,
+                window=token,
+                conn=frozen_conn,
+                state=bot_state,
+                **trading_session.anchor_kwargs,
+            )
+
+        # AC-4: when shadow_history has only 1 distinct trading_day the windowed
+        # guard_alpha is None (zero weight) and insufficient_history=True.  Compute
+        # an intraday estimate from exit_triggers so the day-1 droplet shows a
+        # non-zero value.  The 15-second auto-refresh floor means this stays fresh.
+        #
+        # AC-4b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
+        # position_value column and no symphony_id column.  Mirror the AC-1b fix:
+        # use database.load_state() (isolated try/except → degrades to {}).
+        #
+        # AC-8 (MAPERF-04): explicit `is None` check — `not strip.get("guard_alpha")`
+        # was also True for a LEGITIMATE windowed 0.0 (an untriggered symphony yields
+        # a genuine 0.0 divergence on every window; analytics.py's
+        # compute_windowed_symphony_guard_alpha docstring), silently overwriting a
+        # real zero with this cross-day estimate.
+        if strip.get("insufficient_history") and strip.get("guard_alpha") is None:
+            try:
+                if frozen_conn is None:
+                    try:
+                        _bot_state_dict = database.load_state()
+                    except Exception:
+                        _bot_state_dict = {}
+                    _conn = database.get_connection()
+                else:
+                    _bot_state_dict = bot_state
+                    _conn = frozen_conn
+                try:
+                    # AC-8 (MAPERF-04): day-filtered to the session's trading day —
+                    # the query was previously unfiltered, pairing every exit_triggers
+                    # row EVER recorded (including stale, prior-day rows) against the
+                    # symphony's LATEST current_return, subtracting returns from two
+                    # different days' bases (cross-day incoherent). Mirrors the
+                    # /api/history intraday backfill's substr(ts_et,1,10) pattern.
+                    try:
+                        _rows = _conn.execute(
+                            "SELECT t.symphony_id, t.at_return, "
+                            "  (SELECT current_return FROM shadow_history "
+                            "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                            "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
+                            (trading_day,),
+                        ).fetchall()
+                    except Exception:
+                        # A minimal/legacy exit_triggers table without a ts_et column
+                        # cannot express "today" at all — degrade to the unfiltered
+                        # query (the pre-AC-8 behavior) rather than silently zeroing
+                        # out; a real (migrated) schema always carries ts_et, so this
+                        # path is schema-compatibility only. Same pattern as the
+                        # guard-alpha-summary fallback below.
+                        _rows = _conn.execute(
+                            "SELECT t.symphony_id, t.at_return, "
+                            "  (SELECT current_return FROM shadow_history "
+                            "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
+                            "FROM exit_triggers t"
+                        ).fetchall()
+
+                finally:
+                    if frozen_conn is None:
+                        _conn.close()
+
+                _alpha_wsum = 0.0
+                _weight_sum = 0.0
+                for _sym_id, _at_ret, _cur_ret in _rows:
+                    _pos_val = (_bot_state_dict.get(_sym_id) or {}).get("current_value")
+                    if _at_ret is None or _cur_ret is None or _pos_val is None:
+                        continue
+                    try:
+                        _w = float(_pos_val)
+                        if _w <= 0.0:
+                            continue
+                        # Guard alpha = at_return − current_return (locked in vs held)
+                        _alpha_wsum += (float(_at_ret) - float(_cur_ret)) * _w
+                        _weight_sum += _w
+                    except (TypeError, ValueError):
+                        continue
+
+                if _weight_sum > 0.0:
+                    strip = dict(strip)
+                    strip["guard_alpha"] = _alpha_wsum / _weight_sum
+                    strip["intraday_only"] = True
+            except Exception:
+                _daemon_log.debug("strip intraday fallback failed", exc_info=True)
+        return strip
+    finally:
+        if frozen_conn is not None and owns_frozen_conn:
+            frozen_conn.close()
+
+
+def _windowed_strip(
+    trading_session: _SessionView, token: str, bot_state: dict, now_et: datetime
+) -> dict:
+    """The strip of *token*'s window: held for a closed market, computed for an open one."""
+    return _held_closed(
+        trading_session,
+        now_et,
+        ("strip", token),
+        lambda: _build_windowed_strip(token, trading_session, bot_state, now_et),
+    )
+
+
 @app.route("/api/strip/<window>")
+@_shares_reads
 def get_windowed_strip(window):
     """Return the comparison strip (guard-alpha/CR/MDD/vol) recomputed FOR a window.
 
@@ -5181,6 +6167,9 @@ def get_windowed_strip(window):
     resolved window so the UI label always matches the value (kills the "30d" label
     on an all-time number — F1).
 
+    The window counts back from the session the figures belong to (_session_view), never the
+    wall clock; a closed market's strip is held per snapshot.
+
     Read-only: builds the symphony list from the state DB; never reruns the engine.
     """
     token = (window or "").lower()
@@ -5188,145 +6177,16 @@ def get_windowed_strip(window):
         return jsonify({"error": "unknown window token"}), 404
 
     now_et = datetime.now(_ET)
-    trading_day = now_et.strftime("%Y-%m-%d")
     try:
         bot_state = database.load_state() or {}
     except Exception:
         bot_state = {}
-    market_state = get_market_state(now_et)
-    snapshot = _frozen_snapshot_of(bot_state, market_state)
-    frozen_conn = None
-    if snapshot is not None:
-        # After the close the window is computed from the snapshot and the rows up to its
-        # capture moment, exactly as the poll's default-window strip is.
-        frozen_conn = _committed_shadow_conn(_view_cut_state(bot_state, market_state))
-        symphonies_list, bot_state = _frozen_symphony_inputs(snapshot)
-        gone = _no_longer_held_ids(bot_state, frozen_conn, now_et)
-        symphonies_list = [s for s in symphonies_list if s.get("id") not in gone]
-        bot_state = _without_symphonies(bot_state, gone)
-        trading_day = snapshot.get("trading_day") or trading_day
-    else:
-        gone = _no_longer_held_ids(bot_state, None, now_et)
-        bot_state = _without_symphonies(bot_state, gone)
-        symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
-        symphonies_list = []
-        for k in symphony_keys:
-            s = bot_state[k]
-            symphonies_list.append(
-                {
-                    "id": k,
-                    "value": s.get("current_value") or 0.0,
-                    "last_percent_change": (s.get("current_return") or 0.0) / 100.0,
-                    "simple_return": s.get("simple_return"),
-                    "net_deposits": s.get("net_deposits"),
-                    "time_weighted_return": s.get("time_weighted_return"),
-                    "max_drawdown": s.get("max_drawdown"),
-                    "trading_day": trading_day,
-                }
-            )
-
+    trading_session = _session_view(bot_state, get_market_state(now_et), now_et)
     try:
-        if frozen_conn is None:
-            # The series reads the saved state for its value weights. It is handed this one only
-            # when a no-longer-held entry has to be left out of them; otherwise the call is the
-            # one the route has always made.
-            weights_state = {"state": bot_state} if gone else {}
-            strip = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=token, **weights_state
-            )
-        else:
-            strip = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=token, conn=frozen_conn, state=bot_state
-            )
+        strip = _windowed_strip(trading_session, token, bot_state, now_et)
     except Exception:
         _daemon_log.error("get_windowed_strip failed for window=%s", token, exc_info=True)
-        if frozen_conn is not None:
-            frozen_conn.close()
         return jsonify({"error": "An internal error occurred"}), 500
-
-    # AC-4: when shadow_history has only 1 distinct trading_day the windowed
-    # guard_alpha is None (zero weight) and insufficient_history=True.  Compute
-    # an intraday estimate from exit_triggers so the day-1 droplet shows a
-    # non-zero value.  The 15-second auto-refresh floor means this stays fresh.
-    #
-    # AC-4b: bot_state is a SINGLE-ROW JSON BLOB (id, data TEXT) — there is no
-    # position_value column and no symphony_id column.  Mirror the AC-1b fix:
-    # use database.load_state() (isolated try/except → degrades to {}).
-    #
-    # AC-8 (MAPERF-04): explicit `is None` check — `not strip.get("guard_alpha")`
-    # was also True for a LEGITIMATE windowed 0.0 (an untriggered symphony yields
-    # a genuine 0.0 divergence on every window; analytics.py's
-    # compute_windowed_symphony_guard_alpha docstring), silently overwriting a
-    # real zero with this cross-day estimate.
-    if strip.get("insufficient_history") and strip.get("guard_alpha") is None:
-        try:
-            if frozen_conn is None:
-                try:
-                    _bot_state_dict = database.load_state()
-                except Exception:
-                    _bot_state_dict = {}
-                _conn = database.get_connection()
-            else:
-                _bot_state_dict = bot_state
-                _conn = frozen_conn
-            try:
-                # AC-8 (MAPERF-04): day-filtered to the CURRENT ET trading day —
-                # the query was previously unfiltered, pairing every exit_triggers
-                # row EVER recorded (including stale, prior-day rows) against the
-                # symphony's LATEST current_return, subtracting returns from two
-                # different days' bases (cross-day incoherent). Mirrors the
-                # /api/history intraday backfill's substr(ts_et,1,10) pattern.
-                try:
-                    _rows = _conn.execute(
-                        "SELECT t.symphony_id, t.at_return, "
-                        "  (SELECT current_return FROM shadow_history "
-                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
-                        "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
-                        (trading_day,),
-                    ).fetchall()
-                except Exception:
-                    # A minimal/legacy exit_triggers table without a ts_et column
-                    # cannot express "today" at all — degrade to the unfiltered
-                    # query (the pre-AC-8 behavior) rather than silently zeroing
-                    # out; a real (migrated) schema always carries ts_et, so this
-                    # path is schema-compatibility only. Same pattern as the
-                    # guard-alpha-summary fallback below.
-                    _rows = _conn.execute(
-                        "SELECT t.symphony_id, t.at_return, "
-                        "  (SELECT current_return FROM shadow_history "
-                        "   WHERE symphony_id = t.symphony_id ORDER BY ts_utc DESC LIMIT 1) "
-                        "FROM exit_triggers t"
-                    ).fetchall()
-
-            finally:
-                if frozen_conn is None:
-                    _conn.close()
-
-            _alpha_wsum = 0.0
-            _weight_sum = 0.0
-            for _sym_id, _at_ret, _cur_ret in _rows:
-                _pos_val = (_bot_state_dict.get(_sym_id) or {}).get("current_value")
-                if _at_ret is None or _cur_ret is None or _pos_val is None:
-                    continue
-                try:
-                    _w = float(_pos_val)
-                    if _w <= 0.0:
-                        continue
-                    # Guard alpha = at_return − current_return (locked in vs held)
-                    _alpha_wsum += (float(_at_ret) - float(_cur_ret)) * _w
-                    _weight_sum += _w
-                except (TypeError, ValueError):
-                    continue
-
-            if _weight_sum > 0.0:
-                strip = dict(strip)
-                strip["guard_alpha"] = _alpha_wsum / _weight_sum
-                strip["intraday_only"] = True
-        except Exception:
-            _daemon_log.debug("strip intraday fallback failed", exc_info=True)
-
-    if frozen_conn is not None:
-        frozen_conn.close()
     return jsonify(strip)
 
 
@@ -5548,7 +6408,9 @@ def guard_alpha_summary():
 
     raw_window = (request.args.get("window") or "").lower()
     resolved_window = raw_window if raw_window in _STRIP_WINDOW_TOKENS else "all"
-    _cutoff = analytics._window_cutoff_date(resolved_window)
+    # The window counts back from the session the figures belong to, never the wall clock.
+    trading_session = _current_session()[0]
+    _cutoff = _window_cutoff_of(trading_session, resolved_window)
     _cutoff_iso = _cutoff.isoformat() if _cutoff is not None else None
 
     pm_dir = analytics._POST_MORTEMS_DIR
@@ -5682,7 +6544,7 @@ def guard_alpha_summary():
                 # symphony's LATEST current_return is cross-day incoherent (returns
                 # from two different days' bases). guard_event_count above stays the
                 # true all-time COUNT(*) — only the money-math rows are day-scoped.
-                _today_et = datetime.now(_ET).date().isoformat()
+                _today_et = trading_session.anchor.isoformat()
                 try:
                     rows = conn.execute(
                         "SELECT t.symphony_id, t.at_return, "
@@ -7208,6 +8070,7 @@ def candidate_alert_mark_viewed():
 @app.route("/api/chart/<symphony_id>")
 def get_chart_data(symphony_id):
     _ro_conn = database.get_ro_connection()
+    _cut_conn = None
     try:
         chart_data = database.load_chart_history()
         symphony_data = chart_data.get("symphonies", {}).get(symphony_id, [])
@@ -7220,8 +8083,15 @@ def get_chart_data(symphony_id):
         stored_date = chart_data.get("date")
         session_date = stored_date if isinstance(stored_date, str) and stored_date else None
         today_str = session_date or et_date
+        # After the close the tape is cut at the close snapshot's capture moment, like every
+        # other read of a closed market, so rows the engine writes later cannot move a sparkline.
+        trading_session = _current_session()[0]
+        rows_conn = _ro_conn
+        if trading_session.snapshot is not None:
+            _cut_conn = _committed_shadow_conn(trading_session.cut_state)
+            rows_conn = _cut_conn
         try:
-            rows = _ro_conn.execute(
+            rows = rows_conn.execute(
                 "SELECT substr(ts_et, 12, 5) AS hhmm, shadow_return, current_return "
                 "FROM shadow_history "
                 "WHERE symphony_id = ? AND trading_day = ? "
@@ -7255,6 +8125,8 @@ def get_chart_data(symphony_id):
         return jsonify({"status": "error", "message": "An internal error occurred"}), 500
     finally:
         _ro_conn.close()
+        if _cut_conn is not None:
+            _cut_conn.close()
 
 
 @app.route("/api/triggers")
@@ -7438,7 +8310,12 @@ def resend_discord():
 def get_history(days):
     # `days` is a calendar-day count or the token "ytd" (1 January through today,
     # resolved by analytics._window_cutoff_date like every other window token).
-    stats = analytics.get_history_summary(days=days, base_dir=analytics._POST_MORTEMS_DIR)
+    # The window counts back from the session the figures belong to, never the wall clock.
+    stats = analytics.get_history_summary(
+        days=days,
+        base_dir=analytics._POST_MORTEMS_DIR,
+        **_current_session()[0].anchor_kwargs,
+    )
     stats["window_days"] = days
     # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
     # "requested window" meaning (not redefined) -- these three fields are
@@ -7654,170 +8531,201 @@ def api_performance():
     # A window token fetches the FULL series and slices it to the token's calendar
     # cutoff (both scopes); an integer fetches exactly `days` trailing trading days.
     _fetch_days = None if is_window_token else days
-
-    if scope == "aggregate":
-        # Finding 4: the aggregate series is the CANONICAL value-weighted portfolio
-        # series from shadow_history — the same series /api/hero-chart compounds —
-        # never the post-mortem trigger arrays (a selection-biased exit-snapshot
-        # event sample that dropped zero-trigger days and contradicted the Overview
-        # chart on the same screen).  Every shadow_history trading day appears.
-        dates, live_returns, shadow_returns = [], [], []
-        # The value weights leave out a symphony no longer held (the same rule every page asks).
-        _held_weights = _held_state_kwargs(datetime.now(_ET))
-        try:
-            _series = analytics.get_portfolio_bot_and_held_daily_returns(
-                days=_fetch_days, **_held_weights
+    # A closed market's reads are cut at the close snapshot's capture moment and its windows count
+    # back from the session it closed, like every other route: rows the engine writes after the
+    # close, and the wall clock, cannot move a number.
+    now_et = datetime.now(_ET)
+    trading_session = _current_session(now_et)[0]
+    closed_conn = None
+    closed_reads: dict = {}
+    try:
+        if trading_session.snapshot is not None:
+            closed_conn = _committed_shadow_conn(trading_session.cut_state)
+            closed_reads = {"conn": closed_conn}
+            closed_weights = _frozen_symphony_inputs(trading_session.snapshot)[1]
+            closed_weights = _without_symphonies(
+                closed_weights, _no_longer_held_ids(closed_weights, closed_conn, now_et)
             )
-            if is_window_token:
-                _series = _slice_series_by_window_cutoff(_series, days)
-            if _series is not None:
-                # Producer returns (dates, bot, held); the payload vocabulary is
-                # live_returns = if-held (held), shadow_returns = PS-exited (bot) —
-                # the mapping every performance.js label + the docstring agree on.
-                dates, shadow_returns, live_returns = _series
-        except Exception:
-            _daemon_log.debug("api_performance: canonical shadow series failed", exc_info=True)
-    else:
-        # AC-3 (MA-6/MAPERF-01): source the per-symphony series from shadow_history
-        # per-day rows — the per-symphony analogue of the aggregate's canonical
-        # continuous source (analytics.get_symphony_bot_and_held_daily_returns) —
-        # NEVER the post-mortem trigger arrays (a selection-biased exit-snapshot
-        # event sample that annualizes a handful of trigger days as if they were
-        # that many consecutive trading days).
-        dates, live_returns, shadow_returns = [], [], []
-        try:
-            _sym_series = analytics.get_symphony_bot_and_held_daily_returns(
-                symphony_id, days=_fetch_days
-            )
-            if is_window_token:
-                _sym_series = _slice_series_by_window_cutoff(_sym_series, days)
-            if _sym_series is not None:
-                dates, shadow_returns, live_returns = _sym_series
-        except Exception:
-            _daemon_log.debug("api_performance: per-symphony shadow series failed", exc_info=True)
+            series_reads = {"conn": closed_conn, "state": closed_weights}
+        else:
+            series_reads = None
 
-    # AC-2/AC-4 (MA-7/MAPERF-02): the day-1-droplet fallbacks below are
-    # AGGREGATE-ONLY. A scope=symphony request for a symphony with zero
-    # shadow_history rows must render an honest empty state — never the whole
-    # PORTFOLIO's non-empty series mislabeled under that symphony's name (both
-    # fallbacks were previously unconditional).
-
-    # AC-2: when the series is still empty (day-1 droplet), fall back to
-    # shadow_history for the series so the chart is non-empty from day one.
-    # The insufficient_history / quantstats-min-obs guard is unchanged.
-    #
-    # Both fallbacks read the UNWINDOWED shadow_history, so under a window token
-    # each is sliced to that token's calendar cutoff (the same slice the primary
-    # series gets): a row dated inside the window still charts, while rows older
-    # than the window drop out and leave the honest empty state instead of being
-    # returned under a window_start they predate.  An integer `days` is a row
-    # count with no cutoff and keeps the fallbacks untouched.
-    if not dates and scope == "aggregate":
-        try:
-            _fallback = analytics.get_portfolio_bot_and_held_daily_returns(**_held_weights)
-            if is_window_token:
-                _fallback = _slice_series_by_window_cutoff(_fallback, days)
-            if _fallback is not None:
-                # (dates, bot, held) -> held is live_returns (if-held), bot is
-                # shadow_returns. This fallback was the ORIGINAL inverted surface.
-                dates, shadow_returns, live_returns = _fallback
-        except Exception:
-            _daemon_log.debug("api_performance: shadow_history fallback failed", exc_info=True)
-
-    # AC-2b: get_portfolio_bot_and_held_daily_returns() returns None when fewer than
-    # 2 distinct trading days exist.  On a fresh droplet (day one), that guard fires
-    # and leaves dates empty.  Fall back to the single-day seam so the chart is
-    # non-empty even before the 2-day guard can pass.
-    if not dates and scope == "aggregate":
-        try:
-            _single = analytics.get_single_day_shadow_returns()
-            if is_window_token:
-                _single = _slice_series_by_window_cutoff(_single, days)
-            if _single is not None:
-                # Same (dates, bot, held) -> (shadow_returns, live_returns) mapping.
-                dates, shadow_returns, live_returns = _single
-        except Exception:
-            _daemon_log.debug(
-                "api_performance: single-day shadow_history fallback failed", exc_info=True
-            )
-
-    observation_count = len(dates)
-    insufficient_history = observation_count < _PERFORMANCE_MIN_HISTORY_DAYS
-
-    if observation_count == 0:
-        live_metrics = dict(_PERFORMANCE_NONE_METRICS)
-        shadow_metrics = dict(_PERFORMANCE_NONE_METRICS)
-    else:
-        live_metrics = analytics.compute_quantstats_metrics(live_returns)
-        shadow_metrics = analytics.compute_quantstats_metrics(shadow_returns)
-
-    # Defensive float-cast so JSON serialization never trips over numpy/Decimal
-    # types coming back from the aggregator.
-    live_returns_out = [float(r) for r in live_returns]
-    shadow_returns_out = [float(r) for r in shadow_returns]
-
-    # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
-    # "requested window" meaning (not redefined) -- these three fields are
-    # ADDITIVE honesty markers mirroring database.get_exit_turnover_stats'
-    # established `coverage_days = min(window, actual_days)` pattern
-    # (app.py:4329-4332's rationale). actual_days mirrors the already-computed
-    # observation_count (both are len(dates)) -- kept as its own key rather
-    # than aliasing so the AC-5 contract doesn't implicitly depend on
-    # observation_count's name never changing. "ytd" has no fixed numeric
-    # request to cap against, so coverage_days is the actual count in that case
-    # (never a TypeError from min()'ing a string against an int). The same holds
-    # for every window token: its span is calendar days, not a row count.
-    _coverage_days = observation_count if is_window_token else min(days, observation_count)
-    # window_start states the calendar cutoff a token window began at; an integer
-    # window is a row count and has none.
-    _window_start = None
-    if is_window_token:
-        _cutoff = analytics._window_cutoff_date(days)
-        _window_start = _cutoff.isoformat() if isinstance(_cutoff, date) else None
-    # The date and time of the newest shadow observation the response used: the last date's newest
-    # stored row, across all symphonies (aggregate) or for the one symphony. "--" when the response
-    # has no date or the date has no stored time.
-    _performance_stamp = _NO_STAMP
-    if len(dates):
-        try:
-            _latest_ts = database.get_latest_shadow_ts_utc(
-                str(dates[-1]), symphony_id if scope == "symphony" else None
-            )
-            if _latest_ts:
-                _performance_stamp = _format_data_stamp(
-                    _DatetimeType.fromisoformat(str(_latest_ts).replace("Z", "+00:00"))
+        if scope == "aggregate":
+            # Finding 4: the aggregate series is the CANONICAL value-weighted portfolio
+            # series from shadow_history — the same series /api/hero-chart compounds —
+            # never the post-mortem trigger arrays (a selection-biased exit-snapshot
+            # event sample that dropped zero-trigger days and contradicted the Overview
+            # chart on the same screen).  Every shadow_history trading day appears.
+            dates, live_returns, shadow_returns = [], [], []
+            # The value weights leave out a symphony no longer held (the same rule every page asks).
+            _held_weights = series_reads if series_reads is not None else _held_state_kwargs(now_et)
+            try:
+                _series = analytics.get_portfolio_bot_and_held_daily_returns(
+                    days=_fetch_days, **_held_weights
                 )
-        except Exception:
-            _daemon_log.debug("api_performance: data_as_of unavailable", exc_info=True)
-    response_body = {
-        "scope": scope,
-        "dates": list(dates),
-        "data_as_of": _performance_stamp,
-        "live_returns": live_returns_out,
-        "shadow_returns": shadow_returns_out,
-        "live_metrics": live_metrics,
-        "shadow_metrics": shadow_metrics,
-        "observation_count": observation_count,
-        "insufficient_history": insufficient_history,
-        "window_days": days,
-        "window_start": _window_start,
-        "actual_days": observation_count,
-        "coverage_days": _coverage_days,
-        "date_range": {
-            "start": dates[0] if len(dates) else None,
-            "end": dates[-1] if len(dates) else None,
-        },
-    }
-    if scope == "symphony":
-        # AC-4 (F-023 / DE-PERFVIEW-ID-MISMATCH): distinguishes a genuine
-        # no-data symphony (a real bot_state hash, just <threshold rows) from
-        # a totally unrecognized symphony_id (stale/typo'd picker value) —
-        # both produce observation_count == 0, but only the latter means the
-        # id itself is wrong. Scoped to scope=symphony only; never emitted on
-        # scope=aggregate responses.
-        response_body["symphony_id_recognized"] = symphony_id in database.load_state()
+                if is_window_token:
+                    _series = _slice_series_by_window_cutoff(
+                        _series, days, trading_session.cutoff_anchor
+                    )
+                if _series is not None:
+                    # Producer returns (dates, bot, held); the payload vocabulary is
+                    # live_returns = if-held (held), shadow_returns = PS-exited (bot) —
+                    # the mapping every performance.js label + the docstring agree on.
+                    dates, shadow_returns, live_returns = _series
+            except Exception:
+                _daemon_log.debug("api_performance: canonical shadow series failed", exc_info=True)
+        else:
+            # AC-3 (MA-6/MAPERF-01): source the per-symphony series from shadow_history
+            # per-day rows — the per-symphony analogue of the aggregate's canonical
+            # continuous source (analytics.get_symphony_bot_and_held_daily_returns) —
+            # NEVER the post-mortem trigger arrays (a selection-biased exit-snapshot
+            # event sample that annualizes a handful of trigger days as if they were
+            # that many consecutive trading days).
+            dates, live_returns, shadow_returns = [], [], []
+            try:
+                _sym_series = analytics.get_symphony_bot_and_held_daily_returns(
+                    symphony_id, days=_fetch_days, **closed_reads
+                )
+                if is_window_token:
+                    _sym_series = _slice_series_by_window_cutoff(
+                        _sym_series, days, trading_session.cutoff_anchor
+                    )
+                if _sym_series is not None:
+                    dates, shadow_returns, live_returns = _sym_series
+            except Exception:
+                _daemon_log.debug(
+                    "api_performance: per-symphony shadow series failed", exc_info=True
+                )
 
-    return jsonify(response_body)
+        # AC-2/AC-4 (MA-7/MAPERF-02): the day-1-droplet fallbacks below are
+        # AGGREGATE-ONLY. A scope=symphony request for a symphony with zero
+        # shadow_history rows must render an honest empty state — never the whole
+        # PORTFOLIO's non-empty series mislabeled under that symphony's name (both
+        # fallbacks were previously unconditional).
+
+        # AC-2: when the series is still empty (day-1 droplet), fall back to
+        # shadow_history for the series so the chart is non-empty from day one.
+        # The insufficient_history / quantstats-min-obs guard is unchanged.
+        #
+        # Both fallbacks read the UNWINDOWED shadow_history, so under a window token
+        # each is sliced to that token's calendar cutoff (the same slice the primary
+        # series gets): a row dated inside the window still charts, while rows older
+        # than the window drop out and leave the honest empty state instead of being
+        # returned under a window_start they predate.  An integer `days` is a row
+        # count with no cutoff and keeps the fallbacks untouched.
+        if not dates and scope == "aggregate":
+            try:
+                _fallback = analytics.get_portfolio_bot_and_held_daily_returns(**_held_weights)
+                if is_window_token:
+                    _fallback = _slice_series_by_window_cutoff(
+                        _fallback, days, trading_session.cutoff_anchor
+                    )
+                if _fallback is not None:
+                    # (dates, bot, held) -> held is live_returns (if-held), bot is
+                    # shadow_returns. This fallback was the ORIGINAL inverted surface.
+                    dates, shadow_returns, live_returns = _fallback
+            except Exception:
+                _daemon_log.debug("api_performance: shadow_history fallback failed", exc_info=True)
+
+        # AC-2b: get_portfolio_bot_and_held_daily_returns() returns None when fewer than
+        # 2 distinct trading days exist.  On a fresh droplet (day one), that guard fires
+        # and leaves dates empty.  Fall back to the single-day seam so the chart is
+        # non-empty even before the 2-day guard can pass.
+        if not dates and scope == "aggregate":
+            try:
+                _single = analytics.get_single_day_shadow_returns(**closed_reads)
+                if is_window_token:
+                    _single = _slice_series_by_window_cutoff(
+                        _single, days, trading_session.cutoff_anchor
+                    )
+                if _single is not None:
+                    # Same (dates, bot, held) -> (shadow_returns, live_returns) mapping.
+                    dates, shadow_returns, live_returns = _single
+            except Exception:
+                _daemon_log.debug(
+                    "api_performance: single-day shadow_history fallback failed", exc_info=True
+                )
+
+        observation_count = len(dates)
+        insufficient_history = observation_count < _PERFORMANCE_MIN_HISTORY_DAYS
+
+        if observation_count == 0:
+            live_metrics = dict(_PERFORMANCE_NONE_METRICS)
+            shadow_metrics = dict(_PERFORMANCE_NONE_METRICS)
+        else:
+            live_metrics = analytics.compute_quantstats_metrics(live_returns)
+            shadow_metrics = analytics.compute_quantstats_metrics(shadow_returns)
+
+        # Defensive float-cast so JSON serialization never trips over numpy/Decimal
+        # types coming back from the aggregator.
+        live_returns_out = [float(r) for r in live_returns]
+        shadow_returns_out = [float(r) for r in shadow_returns]
+
+        # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
+        # "requested window" meaning (not redefined) -- these three fields are
+        # ADDITIVE honesty markers mirroring database.get_exit_turnover_stats'
+        # established `coverage_days = min(window, actual_days)` pattern
+        # (app.py:4329-4332's rationale). actual_days mirrors the already-computed
+        # observation_count (both are len(dates)) -- kept as its own key rather
+        # than aliasing so the AC-5 contract doesn't implicitly depend on
+        # observation_count's name never changing. "ytd" has no fixed numeric
+        # request to cap against, so coverage_days is the actual count in that case
+        # (never a TypeError from min()'ing a string against an int). The same holds
+        # for every window token: its span is calendar days, not a row count.
+        _coverage_days = observation_count if is_window_token else min(days, observation_count)
+        # window_start states the calendar cutoff a token window began at; an integer
+        # window is a row count and has none.
+        _window_start = None
+        if is_window_token:
+            _cutoff = _window_cutoff_of(trading_session, days)
+            _window_start = _cutoff.isoformat() if isinstance(_cutoff, date) else None
+        # The date and time of the newest shadow observation the response used: the last date's newest
+        # stored row, across all symphonies (aggregate) or for the one symphony. "--" when the response
+        # has no date or the date has no stored time.
+        _performance_stamp = _NO_STAMP
+        if len(dates):
+            try:
+                _latest_ts = database.get_latest_shadow_ts_utc(
+                    str(dates[-1]), symphony_id if scope == "symphony" else None, **closed_reads
+                )
+                if _latest_ts:
+                    _performance_stamp = _format_data_stamp(
+                        _DatetimeType.fromisoformat(str(_latest_ts).replace("Z", "+00:00"))
+                    )
+            except Exception:
+                _daemon_log.debug("api_performance: data_as_of unavailable", exc_info=True)
+        response_body = {
+            "scope": scope,
+            "dates": list(dates),
+            "data_as_of": _performance_stamp,
+            "live_returns": live_returns_out,
+            "shadow_returns": shadow_returns_out,
+            "live_metrics": live_metrics,
+            "shadow_metrics": shadow_metrics,
+            "observation_count": observation_count,
+            "insufficient_history": insufficient_history,
+            "window_days": days,
+            "window_start": _window_start,
+            "actual_days": observation_count,
+            "coverage_days": _coverage_days,
+            "date_range": {
+                "start": dates[0] if len(dates) else None,
+                "end": dates[-1] if len(dates) else None,
+            },
+        }
+        if scope == "symphony":
+            # AC-4 (F-023 / DE-PERFVIEW-ID-MISMATCH): distinguishes a genuine
+            # no-data symphony (a real bot_state hash, just <threshold rows) from
+            # a totally unrecognized symphony_id (stale/typo'd picker value) —
+            # both produce observation_count == 0, but only the latter means the
+            # id itself is wrong. Scoped to scope=symphony only; never emitted on
+            # scope=aggregate responses.
+            response_body["symphony_id_recognized"] = symphony_id in database.load_state()
+
+        return jsonify(response_body)
+    finally:
+        if closed_conn is not None:
+            closed_conn.close()
 
 
 @app.route("/api/performance/symphonies")
