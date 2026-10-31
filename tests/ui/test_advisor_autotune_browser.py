@@ -82,6 +82,9 @@ def test_a_page_without_the_chart_library_hides_the_canvas_and_still_lists_the_c
     advisor_probe,
 ):
     _seed(2)
+    # The library is served from static/vendor/, so refusing it is a route here, not the shared
+    # outside-host refusal.
+    advisor_probe.page.route("**/static/vendor/chart.js*", lambda route: route.abort())
     open_advisor(advisor_probe)
     _wait_for_some_cards(advisor_probe)
     state = advisor_probe.page.evaluate(
