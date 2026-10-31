@@ -25,6 +25,7 @@ Confirmed by reading templates/ai_advisor.html directly before writing:
 
 from __future__ import annotations
 
+import re
 import sys
 from unittest.mock import MagicMock
 
@@ -108,8 +109,9 @@ def _get_rejected_card_text(client, monkeypatch, rejection_reason: str) -> str:
     resp = client.get("/ai-advisor")
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
-    marker = 'class="proposal-card proposal-card--rejected"'
-    start = html.find(marker)
+    # The card also carries the shared .sym-card class, so find it by its modifier token.
+    marker = re.search(r'class="[^"]*(?<![\w-])proposal-card--rejected(?![\w-])[^"]*"', html)
+    start = marker.start() if marker else -1
     assert start != -1, f"no rejected card rendered for rejection_reason={rejection_reason!r}"
     end = html.find("</div>\n                        {% set _art", start)
     # Fallback boundary if the Jinja-comment marker above doesn't survive

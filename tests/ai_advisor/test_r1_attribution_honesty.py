@@ -88,11 +88,10 @@ def test_ac1_page_global_claude_powered_subtitle_is_removed(client, monkeypatch)
     """MUST FAIL pre-fix: the stale universal-Claude-power claim is still
     rendered above all 6 tabs today."""
     html = _get_html(client, monkeypatch)
-    header = _extract_by_testid(html, "advisor-header", closing_tag="</header>")
-    assert "Claude-powered suggestion engine" not in header, (
+    assert 'data-testid="advisor-caption"' in html, "the description line is a caption"
+    assert "Claude-powered suggestion engine" not in html, (
         "AC-1 GAP: the page-global 'Claude-powered suggestion engine' subtitle "
-        "is still present in the advisor-header — it must be replaced by "
-        "per-tab attribution."
+        "is still present on the page — it must be replaced by per-tab attribution."
     )
 
 

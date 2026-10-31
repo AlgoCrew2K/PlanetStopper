@@ -1,0 +1,20 @@
+{
+ "base_sha": "f9cb367668872b16d22877e6b7490c0950a12cba",
+ "captured_at_utc": "2026-10-31T05:36:36Z",
+ "inputs": {
+  "csrf_token": "dd050f5c69ebeea5e79c9e19bd24e4546339845720f4ebd8fe58316401ea1bf6",
+  "account_id": "7c2607c5-4583-4c1b-ae55-e5a05bb49f0d",
+  "phrase": "LIQUIDATE"
+ },
+ "single_confirm_request": {
+  "url": "/api/sell_account",
+  "method": "POST",
+  "headers": {
+   "Content-Type": "application/json",
+   "X-CSRF-Token": "dd050f5c69ebeea5e79c9e19bd24e4546339845720f4ebd8fe58316401ea1bf6"
+  },
+  "body": "{\"account_id\":\"7c2607c5-4583-4c1b-ae55-e5a05bb49f0d\",\"confirm_account_id\":\"7c2607c5-4583-4c1b-ae55-e5a05bb49f0d\",\"confirm_phrase\":\"LIQUIDATE\"}"
+ },
+ "two_confirm_clicks_request_count": 2,
+ "confirm_gate_oninput": "document.getElementById('panic-confirm-btn').disabled=this.value!=='LIQUIDATE'"
+}

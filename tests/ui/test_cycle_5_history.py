@@ -222,15 +222,18 @@ def test_history_page_has_chrome(hist_client):
     assert b'data-testid="top-bar"' in resp.data
 
 
-def test_history_page_has_page_header(hist_client):
+def test_history_page_has_no_title_card(hist_client):
+    """The page opens on its first panel: no title header and no h1."""
     resp = hist_client.get("/history")
-    assert b'data-testid="history-header"' in resp.data
+    assert b'data-testid="history-header"' not in resp.data
+    assert b"<h1" not in resp.data
 
 
-def test_history_page_header_title(hist_client):
+def test_history_page_names_itself_in_the_nav_and_its_caption(hist_client):
     resp = hist_client.get("/history")
-    html = resp.data.decode("utf-8", errors="replace").lower()
-    assert "guard alpha" in html or "guard α" in html
+    html = resp.data.decode("utf-8", errors="replace")
+    assert 'data-testid="history-caption"' in html
+    assert 'aria-current="page"' in html
 
 
 def test_history_page_header_subtitle(hist_client):

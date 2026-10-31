@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1570,3 +1571,76 @@ class TestReviewPanelBehindTheGate:
         assert "tenure-review" not in resp.get_data(as_text=True)
         assert reads == [], "a refused page request must read nothing"
         assert pb.observation_count() == before
+
+
+# ---------------------------------------------------------------------------
+# App shell: the login page loads the app font and the stored theme
+# (the form, its CSRF token, the throttle and the redirect are unchanged: the
+# tests above keep pinning them)
+# ---------------------------------------------------------------------------
+
+_FONT_STYLESHEET_HREF = re.compile(
+    r'<link[^>]*href="(https://fonts\.googleapis\.com/css2\?[^"]+)"[^>]*rel="stylesheet"'
+    r'|<link[^>]*rel="stylesheet"[^>]*href="(https://fonts\.googleapis\.com/css2\?[^"]+)"'
+)
+
+
+def _font_stylesheet_href(page: str) -> str | None:
+    match = _FONT_STYLESHEET_HREF.search(page)
+    return (match.group(1) or match.group(2)) if match else None
+
+
+def _head_of(page: str) -> str:
+    match = re.search(r"<head\b[^>]*>(.*?)</head>", page, re.IGNORECASE | re.DOTALL)
+    assert match, "the page has no <head>"
+    return match.group(1)
+
+
+class TestLoginPageLoadsTheAppFontAndTheme:
+    def test_login_links_the_same_font_stylesheet_the_other_pages_link(
+        self, auth_client, monkeypatch
+    ):
+        """Head: one font source, so the login page cannot drift from the app's."""
+        login = auth_client.get("/login").get_data(as_text=True)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", False)
+        with app_module.app.test_client() as open_client:
+            history = open_client.get("/history").get_data(as_text=True)
+        history_href = _font_stylesheet_href(history)
+        assert history_href, "premise: the app's pages link the font stylesheet"
+        assert _font_stylesheet_href(_head_of(login)) == history_href
+
+    def test_login_keeps_the_two_preconnect_hints_in_its_head(self, auth_client):
+        head = _head_of(auth_client.get("/login").get_data(as_text=True))
+        assert 'rel="preconnect" href="https://fonts.googleapis.com"' in head
+        assert 'rel="preconnect" href="https://fonts.gstatic.com" crossorigin' in head
+
+    def test_login_loads_the_theme_script_as_the_first_child_of_its_body(self, auth_client):
+        """Head: the stored theme is applied before the card paints."""
+        page = auth_client.get("/login").get_data(as_text=True)
+        assert re.search(
+            r"<body[^>]*>\s*<script src=\"/static/tweaks\.js[^\"]*\"></script>", page
+        ), "tweaks.js must be the first child of <body>"
+
+    def test_the_font_stylesheet_swaps_so_a_failed_load_falls_back(self, auth_client):
+        """Head: display=swap, and the page's own stack ends in a generic family."""
+        page = auth_client.get("/login").get_data(as_text=True)
+        href = _font_stylesheet_href(_head_of(page))
+        assert href and "display=swap" in href
+        stack = re.search(r"font-family:\s*(var\(--studio-sans[^;]*\))\s*;", page)
+        assert stack, "the login body names its font through the --studio-sans token"
+        assert re.search(r"(sans-serif|system-ui|serif)\)\s*$", stack.group(1))
+
+    def test_the_form_its_token_and_its_action_are_unchanged(self, auth_client):
+        """nothing of the form moved."""
+        page = auth_client.get("/login").get_data(as_text=True)
+        assert '<form action="/login" method="post">' in page
+        assert re.search(r'<input type="hidden" name="csrf_token" value="[0-9a-f]{64}">', page)
+        assert 'id="password"' in page and 'type="password"' in page
+
+    def test_the_wrong_password_error_block_still_renders_the_generic_text(self, auth_client):
+        """Route half."""
+        token = re.search(
+            r'name="csrf_token" value="([^"]+)"', auth_client.get("/login").get_data(as_text=True)
+        ).group(1)
+        monkey_post = auth_client.post("/login", data={"password": "wrong", "csrf_token": token})
+        assert b'class="login-error"' in monkey_post.data and b'role="alert"' in monkey_post.data

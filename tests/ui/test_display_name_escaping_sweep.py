@@ -384,7 +384,7 @@ def test_frontrunner_card_title_shows_the_name_literally(probe, markup_symphony)
     assert_name_is_literal(
         probe,
         markup_symphony,
-        '[data-testid="frontrunner-proposal-card"] .card-candidate-id',
+        '[data-testid="frontrunner-proposal-card"] .card-name',
         title_expected=markup_symphony.key,
     )
 
