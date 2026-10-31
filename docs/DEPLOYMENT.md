@@ -114,6 +114,17 @@ Create `/etc/caddy/Caddyfile` (the tracked copy is `deploy/caddy/Caddyfile`):
 
 ```
 your-domain.example {
+    # Browser-facing security headers, at site level. No policy governing where scripts, styles,
+    # fonts or connections may come from: the pages use inline scripts and inline onclick handlers
+    # and load Chart.js from a CDN and fonts from Google Fonts. frame-ancestors only governs who
+    # may frame the page (the panic button is on it).
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        X-Frame-Options DENY
+        Content-Security-Policy "frame-ancestors 'none'"
+    }
     reverse_proxy localhost:8090
     # gzip first: Caddy picks the first configured encoding when a client weights them equally.
     # No text/* wildcard: a compressed text/event-stream may be buffered and stall events.

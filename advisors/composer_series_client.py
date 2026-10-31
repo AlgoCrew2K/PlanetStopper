@@ -300,7 +300,14 @@ def _fetch_with_retry(account_id: str, symphony_id: str) -> SeriesResult:
         delay = _default_backoff(attempt)
         started = timing_log.clock()
         try:
-            response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
+            # Redirects are refused: a followed redirect would carry the key-id header to
+            # whatever host answered (requests strips only Authorization cross-host).
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                allow_redirects=False,
+            )
         except Exception as exc:
             _log_attempt(started, error=type(exc).__name__)
             # Any transport failure is retried, then reported by exception TYPE only.

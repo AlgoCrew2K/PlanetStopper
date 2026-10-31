@@ -6,6 +6,18 @@
 # Verify:   cmp /etc/caddy/Caddyfile deploy/caddy/Caddyfile
 # Rollback: cp /etc/caddy/Caddyfile.bak /etc/caddy/Caddyfile && systemctl reload caddy
 104-248-7-101.sslip.io {
+    # Browser-facing security headers, set at site level (not inside reverse_proxy, where they would
+    # only be request headers to the app). The pages use inline scripts and inline onclick handlers
+    # and load Chart.js from a CDN and fonts from Google Fonts, so no policy that governs where
+    # scripts, styles, fonts or connections may come from is set here; the one policy directive is
+    # frame-ancestors, which governs only who may frame the page (the panic button is on it).
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        X-Frame-Options DENY
+        Content-Security-Policy "frame-ancestors 'none'"
+    }
     reverse_proxy localhost:8090
     # gzip first: Caddy picks the first configured encoding when a client weights them equally.
     # No text/* wildcard: a compressed text/event-stream may be buffered and stall events.
