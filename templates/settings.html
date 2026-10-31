@@ -22,30 +22,23 @@
       color: var(--studio-ink);
       min-height: 100vh;
       font-family: var(--studio-sans, Manrope, ui-sans-serif, system-ui, sans-serif);
-      display: flex;
-      flex-direction: column;
     }
 
     /* ── Page layout ──────────────────────────────────────────────────────── */
-    .settings-layout {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      min-height: 0;
-    }
+    /* The shared primitives (.hero-section, .section-header, .sym-card, .legend-as-of) live in
+       static/layout.css; the rules here add layout only, never a look. */
+    .hero-section > .section-header:first-child { margin-top: 0; }
 
-    .settings-page-header {
+    /* First panel: the caption on the left, Discard and Save on the right. It sits above the
+       body, outside the content, so the buttons are never inside a scroller. */
+    .settings-actions {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
       gap: 16px;
-      padding: 18px 28px 16px;
-      border-bottom: 1px solid var(--studio-rule);
-      background: var(--studio-paper);
     }
-
-    .settings-page-title { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--studio-ink); }
-    .settings-page-subtitle { font-size: 12px; color: var(--studio-ink-dim); margin-top: 3px; }
+    .settings-actions .legend-as-of { margin-left: 0; }
 
     .header-actions { display: flex; gap: 8px; }
 
@@ -83,18 +76,14 @@
     /* ── Body split ───────────────────────────────────────────────────────── */
     .settings-body {
       display: flex;
-      flex: 1;
-      min-height: 0;
-      overflow: hidden;
+      align-items: flex-start;
+      gap: 28px;
     }
 
     /* ── Side nav ─────────────────────────────────────────────────────────── */
     .settings-sidenav {
       width: 220px;
       flex-shrink: 0;
-      border-right: 1px solid var(--studio-rule);
-      background: var(--studio-paper);
-      padding: 20px 0;
       display: flex;
       flex-direction: column;
     }
@@ -104,7 +93,6 @@
       .settings-sidenav { width: 180px; }
       .sn-btn { padding: 10px 14px; font-size: 12px; }
       .sn-footnote { margin: 20px 14px 0; }
-      .settings-content { padding: 22px 20px; }
     }
 
     .sn-btn {
@@ -140,20 +128,13 @@
     /* ── Content area ─────────────────────────────────────────────────────── */
     .settings-content {
       flex: 1;
-      overflow: auto;
-      padding: 28px 32px;
+      min-width: 0;
     }
 
     .settings-section { display: block; }
 
     /* ── Section header ───────────────────────────────────────────────────── */
-    .sec-title {
-      font-size: 22px;
-      font-weight: 700;
-      color: var(--studio-ink);
-      letter-spacing: -0.02em;
-      line-height: 1.1;
-    }
+    /* The title is a .section-header (shared); only the line under it is local. */
     .sec-subtitle {
       margin-top: 6px;
       font-size: 12.5px;
@@ -165,12 +146,10 @@
 
     /* ── Master controls ──────────────────────────────────────────────────── */
     .live-card {
-      border: 1px solid var(--studio-rule);
-      padding: 22px;
       margin-bottom: 16px;
       max-width: 760px;
-      background: var(--studio-paper);
     }
+    .live-card.sym-card { cursor: default; }
     .live-card[data-live="true"] {
       background: var(--studio-neg-tint);
       border-color: var(--studio-neg-border);
@@ -828,25 +807,44 @@
       .maint-card,
       .maint-warn { max-width: 100%; }
     }
+
+    /* Narrow screens (the dashboard's own stacking breakpoint): the side nav stacks above the
+       content as a wrapping row of buttons, and every grid drops to one column so no label or
+       input is wider than the screen. Layout properties only. */
+    @media (max-width: 700px) {
+      .settings-body { flex-direction: column; align-items: stretch; gap: 16px; }
+      .settings-sidenav { width: 100%; flex-direction: row; flex-wrap: wrap; gap: 4px; }
+      .sn-btn { width: auto; }
+      .sn-footnote { flex-basis: 100%; margin: 8px 0 0; }
+      .settings-content { width: 100%; }
+      #algo-grid { grid-template-columns: minmax(0, 1fr); }
+      .cred-field-wrap { grid-template-columns: minmax(0, 1fr) auto; }
+      .cred-field-wrap .cred-name,
+      .cred-field-wrap .cred-status { grid-column: 1 / -1; text-align: left; }
+      .sym-split { grid-template-columns: minmax(0, 1fr); }
+      .override-grid { grid-template-columns: minmax(0, 1fr); }
+      .override-row { min-width: 0; }
+      .override-row-header { gap: 8px; }
+      .override-key { min-width: 0; overflow-wrap: anywhere; }
+      .sym-detail-header { flex-wrap: wrap; }
+      .live-card-inner { flex-wrap: wrap; }
+    }
   </style>
 </head>
 
 <body>
 {% include '_chrome.html' %}
 
-<div class="settings-layout">
+<div class="page-wrap" data-testid="settings-page">
 
-  <!-- Page header -->
-  <div class="settings-page-header">
-    <div>
-      <div class="settings-page-title">Settings</div>
-      <div class="settings-page-subtitle">.env globals + SQLite-isolated symphony strategies &middot; live edits, no restart</div>
-    </div>
+  <!-- First panel: the page's caption with Save and Discard. No title card; the nav marks the page. -->
+  <section class="hero-section settings-actions" data-testid="settings-actions">
+    <span class="legend-as-of" data-testid="settings-caption">.env globals + SQLite-isolated symphony strategies &middot; live edits, no restart</span>
     <div class="header-actions">
       <button type="button" id="btn-discard" class="btn-discard" disabled>Discard changes</button>
       <button type="button" id="btn-save" class="btn-save" disabled>Save changes</button>
     </div>
-  </div>
+  </section>
 
   <!-- Body -->
   <div class="settings-body">
@@ -868,11 +866,11 @@
     <main class="settings-content">
 
       <!-- ── Master controls ─────────────────────────────────────────────── -->
-      <section id="sec-master" class="settings-section">
-        <div class="sec-title">Master controls</div>
+      <section id="sec-master" class="settings-section hero-section">
+        <div class="section-header">Master controls</div>
         <div class="sec-subtitle">The two switches that govern real-money execution. Treat both with respect.</div>
 
-        <div class="live-card" id="live-card" data-live="false">
+        <div class="live-card sym-card" id="live-card" data-live="false">
           <div class="live-card-inner">
             <div class="live-card-body">
               <div class="live-heading-row">
@@ -908,15 +906,15 @@
       </section>
 
       <!-- ── Algorithm parameters ────────────────────────────────────────── -->
-      <section id="sec-algorithm" class="settings-section" hidden>
-        <div class="sec-title">Algorithm parameters</div>
+      <section id="sec-algorithm" class="settings-section hero-section" hidden>
+        <div class="section-header">Algorithm parameters</div>
         <div class="sec-subtitle">Global defaults applied to every symphony. Per-symphony overrides in the next section take precedence.</div>
         <div id="algo-grid"><!-- rendered by settings.js --></div>
       </section>
 
       <!-- ── Credentials ─────────────────────────────────────────────────── -->
-      <section id="sec-credentials" class="settings-section" hidden>
-        <div class="sec-title">Credentials</div>
+      <section id="sec-credentials" class="settings-section hero-section" hidden>
+        <div class="section-header">Credentials</div>
         <div class="sec-subtitle">Keys + account UUIDs + webhook URLs. Values are write-only — the server returns masked placeholders so secrets never round-trip through the browser.</div>
 
         <div class="cred-warn">
@@ -996,8 +994,8 @@
       </section>
 
       <!-- ── Symphony overrides ──────────────────────────────────────────── -->
-      <section id="sec-symphonies" class="settings-section" hidden>
-        <div class="sec-title">Per-symphony overrides</div>
+      <section id="sec-symphonies" class="settings-section hero-section" hidden>
+        <div class="section-header">Per-symphony overrides</div>
         <div class="sec-subtitle">Override globals or lock parameters against autotuner changes. Stored in alphabot_state.db, keyed on normalized symphony name.</div>
 
         <div class="sym-split">
@@ -1007,8 +1005,8 @@
       </section>
 
       <!-- ── Maintenance ───────────────────────────────────────────────────── -->
-      <section id="sec-maintenance" class="settings-section" hidden>
-        <div class="sec-title">Maintenance</div>
+      <section id="sec-maintenance" class="settings-section hero-section" hidden>
+        <div class="section-header">Maintenance</div>
         <div class="sec-subtitle">Destructive data operations. Each action is irreversible — use with care.</div>
 
         <div class="maint-warn">

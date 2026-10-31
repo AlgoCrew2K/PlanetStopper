@@ -740,7 +740,7 @@
                 'adoption streak: insufficient history (&lt;2 runs)</div>';
         }
         return (
-            '<div class="autotune-run-card" data-testid="autotune-run-row">' +
+            '<div class="sym-card autotune-run-card" data-testid="autotune-run-row">' +
             '<div class="autotune-run-top">' +
             '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
             '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
@@ -1229,7 +1229,7 @@
                         'Objective: ' + escHtml(objectiveLabel || cardLabels.not_recorded) +
                         ' &nbsp;&middot;&nbsp; ' +
                         'Source: ' + escHtml(sourceLabel || cardLabels.not_recorded) + '</div>';
-                    return '<div class="proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-candidate-id">' +
+                    return '<div class="sym-card proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-name">' +
                         titleHtml + '</span>' + stripHtml + extra + '</div>';
                 }
                 if (sv.length) {
