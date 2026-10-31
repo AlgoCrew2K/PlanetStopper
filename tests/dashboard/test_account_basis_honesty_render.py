@@ -320,18 +320,28 @@ class TestBackendComputationByteUnchanged:
             in _app_py()
         ), "AC-5 FAIL: the live account_basis_as_of assignment line was changed"
 
+    @staticmethod
+    def _frozen_strip_source() -> str:
+        """The frozen strip's own function body: the frozen-branch assignments live
+        there (one shared computation per response), so the pins read that body and
+        cannot be satisfied by the live branch's lines."""
+        src = _app_py()
+        start = src.index("def _compute_frozen_portfolio_strip(")
+        following = re.search(r"^def ", src[start + 1 :], re.MULTILINE)
+        return src[start : start + 1 + following.start()] if following else src[start:]
+
     def test_frozen_basis_assignment_line_present(self):
-        assert '_portfolio_strip["basis"] = "value_weighted"' in _app_py(), (
+        assert 'strip["basis"] = "value_weighted"' in self._frozen_strip_source(), (
             "AC-5 FAIL: the frozen-branch Tier-2 VW-floor assignment line was changed or removed"
         )
 
     def test_frozen_stale_assignment_line_present(self):
-        assert '_portfolio_strip["account_basis_stale"] = True' in _app_py(), (
+        assert 'strip["account_basis_stale"] = True' in self._frozen_strip_source(), (
             "AC-5 FAIL: the frozen-branch Tier-1 stale-stamp assignment line was changed or removed"
         )
 
     def test_frozen_as_of_assignment_line_present(self):
-        assert '_portfolio_strip["account_basis_as_of"] = _snap_basis_as_of' in _app_py(), (
+        assert 'strip["account_basis_as_of"] = basis_as_of' in self._frozen_strip_source(), (
             "AC-5 FAIL: the frozen-branch account_basis_as_of assignment line "
             "was changed or removed"
         )
