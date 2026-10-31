@@ -467,6 +467,19 @@ def format_figure(value) -> str | None:
     return None if value is None else f"{value:.2f}"
 
 
+def window_mdd_figures(strip: dict) -> dict:
+    """The Max DD row as the page prints it: the picked window's drawdown as two magnitudes.
+
+    `strip` is a `/api/strip/<window>` body. The row is the window's and never the poll's
+    lifetime figure, so a page that prints the poll's `max_drawdown` is wrong.
+    """
+    legs = strip.get("max_drawdown") or {}
+    return {
+        f"mdd_{side}": None if legs.get(key) is None else format_figure(abs(legs[key]))
+        for side, key in (("bot", "dry_run"), ("held", "if_held"))
+    }
+
+
 def rendered_page_figures(page: str) -> dict:
     """The values `GET /` renders for the rows, headline, counts and as-of."""
     figures: dict = {}

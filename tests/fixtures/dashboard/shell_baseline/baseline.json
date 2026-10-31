@@ -5628,6 +5628,10 @@
     "letter-spacing": "0.06em",
     "color": "var(--studio-ink-faint)"
    },
+   "@media (max-width: 700px)||.hero-section": {
+    "padding": "18px 16px 16px",
+    "margin-bottom": "16px"
+   },
    "||.section-header": {
     "font-size": "11px",
     "font-weight": "700",
@@ -5657,6 +5661,7 @@
    "||.status-pill": {
     "display": "inline-flex",
     "align-items": "center",
+    "white-space": "nowrap",
     "padding": "3px 9px",
     "border-radius": "20px",
     "font-size": "10px",
@@ -5805,5 +5810,11 @@
   "captured_at_utc": "2026-10-31T08:51:37Z",
   "elements_before": 965,
   "elements_after": 1014
+ },
+ "resolved_revision": {
+  "head_sha": "38b0cbe8007ec7442cfb127114a8ff58d79b2a24",
+  "captured_at_utc": "2026-10-31T16:19:23Z",
+  "selectors_before": 23,
+  "selectors_after": 24
  }
 }

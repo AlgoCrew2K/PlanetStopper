@@ -2013,6 +2013,25 @@ _WINDOW_TRAILING_DAYS = {"30d": 30, "60d": 60, "90d": 90, "125d": 125, "1y": 365
 # gate (F7): vol is meaningless on a handful of days, so it is suppressed below this.
 _WINDOWED_VOL_MIN_DAYS = _V1_BOOTSTRAP_MIN_DAYS
 
+# The portfolio guard effect is the gap between two compounded returns, so it needs two days of
+# the series in the window; the vol and drawdown legs need the longer floor above.
+_PORTFOLIO_GUARD_EFFECT_MIN_DAYS = 2
+
+
+def _compounded_gap_pct(bot_pct: list[float], held_pct: list[float]) -> float:
+    """Bot return minus If-held return, each compounded over the days given, in points.
+
+    The two daily-percent series are compounded independently (the same way the hero chart
+    and the Performance tab compound them), then subtracted: the gap between the chart's two
+    lines at its last point.
+    """
+    bot_level = 1.0
+    held_level = 1.0
+    for bot_day, held_day in zip(bot_pct, held_pct, strict=True):
+        bot_level *= 1.0 + bot_day / 100.0
+        held_level *= 1.0 + held_day / 100.0
+    return (bot_level - held_level) * 100.0
+
 
 def _window_cutoff_date(window: object) -> date | None:
     """Resolve a window token to a trading-day CUTOFF (inclusive lower bound), or None
@@ -2169,8 +2188,11 @@ def compute_windowed_portfolio_strip(
           "cumulative_return": {"dry_run", "if_held"},   # dry_run = if_held + windowed alpha
           "max_drawdown":      {"dry_run", "if_held"},
           "vol_bot", "vol_held":   annualized vol of the windowed portfolio series, or None,
-          "guard_alpha":           windowed portfolio guard alpha (VW of per-symphony),
+          "guard_alpha":           the portfolio guard effect: the Bot return minus the If-held
+                                   return, each compounded over the window, over every symphony
+                                   (None under two days),
           "insufficient_history":  True when the window has < _WINDOWED_VOL_MIN_DAYS days,
+          "window_day_count":      the days of the series inside the window,
           "window":                the echoed resolved window token,
         }
 
@@ -2199,6 +2221,13 @@ def compute_windowed_portfolio_strip(
 
     state: the value weights of the portfolio series (a frozen response passes its
     snapshot's); omitted, the live bot_state is loaded.
+
+    guard_alpha is the one portfolio guard number: the gap between the two lines the hero
+    chart draws over this window, which is also the Performance tab's total-return gap. It
+    covers every symphony in the series, including one with no Composer cost basis: only the
+    cumulative row's RETURN leaves that symphony out (its if-held anchor has no basis for it),
+    so cumulative_return keeps its own, narrower figure below. It needs two days of the
+    series, not the 30 that vol and drawdown need.
     """
     _db_file = db_path if db_path is not None else _get_shadow_db_file()
 
@@ -2264,15 +2293,18 @@ def compute_windowed_portfolio_strip(
     mdd_bot: float | None = None
     mdd_held: float | None = None
     window_day_count = 0
+    guard_effect: float | None = None
     if series is not None:
         all_dates, bot_pct, held_pct = series
         cutoff = _window_cutoff_date(window)
         cutoff_iso = cutoff.isoformat() if cutoff is not None else None
         idx = [i for i, d in enumerate(all_dates) if cutoff_iso is None or str(d) >= cutoff_iso]
         window_day_count = len(idx)
+        _windowed_bot = [bot_pct[i] for i in idx]
+        _windowed_held = [held_pct[i] for i in idx]
+        if window_day_count >= _PORTFOLIO_GUARD_EFFECT_MIN_DAYS:
+            guard_effect = _compounded_gap_pct(_windowed_bot, _windowed_held)
         if window_day_count >= _WINDOWED_VOL_MIN_DAYS:
-            _windowed_bot = [bot_pct[i] for i in idx]
-            _windowed_held = [held_pct[i] for i in idx]
             vol_bot = compute_portfolio_annualized_vol(_windowed_bot)
             vol_held = compute_portfolio_annualized_vol(_windowed_held)
             mdd_bot = _normalized_peak_to_trough_drawdown(_windowed_bot)
@@ -2286,8 +2318,11 @@ def compute_windowed_portfolio_strip(
         "max_drawdown": {"if_held": mdd_held, "dry_run": mdd_bot},
         "vol_bot": vol_bot,
         "vol_held": vol_held,
-        "guard_alpha": windowed_alpha,
+        "guard_alpha": guard_effect,
         "insufficient_history": insufficient_history,
+        # The days of the series inside the window: what the vol and drawdown legs were
+        # (or were not) computed over.
+        "window_day_count": window_day_count,
         "window": str(window).lower(),
     }
 
@@ -2617,3 +2652,97 @@ def compute_never_adopted_streak(rows: list[dict]) -> dict:
         streak_weeks += 1
 
     return {"status": "streak", "streak_weeks": streak_weeks}
+
+
+# A state entry whose newest shadow_history trading day is older than the second most recent
+# completed session is "no longer held": the engine keeps its row in bot_state, but Composer no
+# longer reports it and the engine writes it no rows. Two sessions (not one) so that a single
+# session an entry misses (a failed fetch, a restart) never drops it.
+_NO_LONGER_HELD_SESSIONS_BEHIND = 2
+
+# How many of an entry's newest trading days one query reads: the two completed sessions the
+# rule needs, plus the session in progress and one more that a clock skew could add.
+_NO_LONGER_HELD_DAYS_READ = _NO_LONGER_HELD_SESSIONS_BEHIND + 2
+
+
+def no_longer_held_symphony_ids(
+    state: dict | None,
+    *,
+    db_path: str | None = None,
+    conn: sqlite3.Connection | None = None,
+    now: datetime | None = None,
+) -> frozenset[str]:
+    """Ids of the state entries that are no longer held: the one rule every surface asks.
+
+    An entry is excluded when it has shadow_history rows and its newest trading day is older
+    than the second most recent COMPLETED session that holds rows for the state's symphonies.
+    A session is completed once its 16:00 ET close (the calendar's own close on a half day) has
+    passed, so rows of the session in progress never move the cut. With fewer than two
+    completed sessions of rows, nothing is excluded; an entry with no rows at all (new, not
+    gone) is never excluded; an excluded entry returns on its own once rows resume.
+
+    Reading the entry's own rows into the session list is equivalent to reading only the
+    other symphonies' rows: days above an entry's newest day hold none of its rows, and days
+    at or below it cannot make it older than the cut.
+
+    state: the bot_state mapping; only dict entries holding a name are symphonies.
+    conn: an open connection read instead of the database file (the closed-market branch
+        passes the connection cut at the close snapshot); never closed here.
+    db_path: the database file when no connection is given; the shadow database otherwise.
+    now: an aware ET instant (a naive one is read as ET); the clock is read without it.
+
+    Never raises: any failure to read leaves nothing excluded, so a page keeps showing what it
+    has rather than hiding a symphony on a read error.
+    """
+    import market_calendar  # noqa: PLC0415 -- heavy calendar import, only this rule needs it
+
+    symphony_ids = [
+        key for key, value in (state or {}).items() if isinstance(value, dict) and "name" in value
+    ]
+    if not symphony_ids:
+        return frozenset()
+
+    owns_conn = conn is None
+    try:
+        completed_through = market_calendar.most_recent_completed_session(
+            now if now is not None else datetime.now(_ET_STAMP_ZONE)
+        )
+        if completed_through is None:
+            return frozenset()
+        cut_day = completed_through.isoformat()
+
+        reader = (
+            conn
+            if conn is not None
+            else sqlite3.connect(
+                f"file:{db_path if db_path is not None else _get_shadow_db_file()}?mode=ro",
+                uri=True,
+                timeout=10.0,
+            )
+        )
+        try:
+            days_by_symphony: dict[str, list[str]] = {}
+            for symphony_id in symphony_ids:
+                rows = reader.execute(
+                    "SELECT trading_day FROM shadow_history WHERE symphony_id = ? "
+                    "GROUP BY trading_day ORDER BY trading_day DESC LIMIT ?",
+                    (symphony_id, _NO_LONGER_HELD_DAYS_READ),
+                ).fetchall()
+                if rows:
+                    days_by_symphony[symphony_id] = [str(row[0]) for row in rows]
+        finally:
+            if owns_conn:
+                reader.close()
+
+        completed_days = sorted(
+            {day for days in days_by_symphony.values() for day in days if day <= cut_day},
+            reverse=True,
+        )
+        if len(completed_days) < _NO_LONGER_HELD_SESSIONS_BEHIND:
+            return frozenset()
+        cut = completed_days[_NO_LONGER_HELD_SESSIONS_BEHIND - 1]
+        return frozenset(
+            symphony_id for symphony_id, days in days_by_symphony.items() if days[0] < cut
+        )
+    except Exception:
+        return frozenset()

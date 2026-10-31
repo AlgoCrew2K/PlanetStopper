@@ -309,7 +309,10 @@ def _page_max_width_caps(css: str) -> list[int]:
     `max-width: <N>px` literal on .page-wrap are inspected.
     """
     values = re.findall(r"--studio-page-max-width\s*:\s*(\d+)px", css)
-    values += re.findall(r"max-width\s*:\s*(\d+)px", css)
+    # Only the layout wrapper's own rules: a responsive breakpoint such as
+    # `@media (max-width: 700px)` is a viewport condition, not a cap on the page.
+    for block in re.findall(r"\.(?:page-wrap|dashboard-layout)\s*\{([^}]*)\}", css):
+        values += re.findall(r"max-width\s*:\s*(\d+)px", block)
     return [int(v) for v in values if int(v) <= 1600]
 
 

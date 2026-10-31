@@ -167,36 +167,32 @@ def test_ac8_fallback_estimate_excludes_stale_exit_trigger_rows(client):
     MUST FAIL at 98901abf: the fallback SELECT has no date filter
     (app.py:2617-2622 `FROM exit_triggers t` with no WHERE clause)."""
     symphony_id = "sym_stale_and_fresh"
-    dates = _recent_dates(10)  # < 30 trading days -> insufficient_history=True
+    dates = _recent_dates(10)
     latest_current_return = 2.0
-    # Seed the daily shadow rows individually so only the FINAL one carries
-    # latest_current_return (the subquery is ORDER BY ts_utc DESC LIMIT 1);
-    # earlier rows are irrelevant filler for the >=2-day trajectory guard.
-    for i, d in enumerate(dates):
-        cr = latest_current_return if d == dates[-1] else 1.0
-        database.record_shadow_observation(
-            symphony_id=symphony_id,
-            account_id="acct-1",
-            cycle_id=f"cyc-{i}",
-            ts_utc=f"{d}T20:00:00Z",
-            ts_et=f"{d}T16:00:00",
-            trading_day=d,
-            current_return=cr,
-            shadow_return=cr,
-            is_post_trigger=0,
-            trigger_id=None,
-        )
+    # One day of shadow rows: the headline is the gap between the hero lines and needs two
+    # days of series, so a single day leaves it None (the day-1 state this fallback exists
+    # for). The row carries latest_current_return for the subquery
+    # (ORDER BY ts_utc DESC LIMIT 1).
+    database.record_shadow_observation(
+        symphony_id=symphony_id,
+        account_id="acct-1",
+        cycle_id="cyc-0",
+        ts_utc=f"{dates[-1]}T20:00:00Z",
+        ts_et=f"{dates[-1]}T16:00:00",
+        trading_day=dates[-1],
+        current_return=latest_current_return,
+        shadow_return=latest_current_return,
+        is_post_trigger=0,
+        trigger_id=None,
+    )
     # bot_state carries a REAL current_value (needed for the exit_triggers
-    # fallback's own weight check) but DELIBERATELY omits "name" -- the strip
-    # route's own symphonies_list build (app.py:2578) requires `"name" in v`,
-    # so this symphony is excluded from the strip's OWN weight-sum loop
-    # (compute_windowed_portfolio_strip never sees it) and the portfolio
-    # windowed_alpha stays genuinely None (weight_sum==0.0). The exit_triggers
-    # fallback, however, reads bot_state directly via database.load_state()
-    # with no "name" requirement, so it DOES see this symphony's current_value
-    # -- exactly the split needed to prove guard_alpha is truly None (not the
-    # falsy-0.0 case RED-12 covers) while still giving the fallback something
-    # real to compute from.
+    # fallback's own weight check) but DELIBERATELY omits "name", so the strip
+    # route's symphonies_list (which requires `"name" in v`) leaves it out. The
+    # exit_triggers fallback reads bot_state directly via database.load_state()
+    # with no "name" requirement, so it DOES see this symphony's current_value.
+    # The headline is None because the series holds a single day, not because of
+    # the weights -- the genuine-None state (not the falsy-0.0 case RED-12
+    # covers) that gives the fallback something real to compute from.
     _seed_bot_state({symphony_id: {"current_value": 6000.0}})
 
     at_return_today = 5.0
@@ -222,23 +218,21 @@ def test_ac8_fallback_estimate_excludes_stale_exit_trigger_rows(client):
         ts_et=f"{stale_str}T11:54:00",
     )
 
-    # Fixture-integrity check (OFFLINE, pre-fallback): the strip route builds
-    # symphonies_list only from bot_state entries carrying a "name" key
-    # (app.py:2578); this symphony has none, so it's excluded from that list
-    # and compute_windowed_portfolio_strip's OWN weight-sum loop never sees
-    # it -- an empty symphonies_list yields a genuinely None guard_alpha
-    # (weight_sum stays 0.0), proving this is NOT the falsy-0.0 case RED-12
-    # covers. We can't observe this pre-fallback value through the route's
-    # single HTTP response (the fallback, if it fires, overwrites it
-    # server-side before the JSON is built) -- so we verify it directly.
+    # Fixture-integrity check (OFFLINE, pre-fallback): the headline is the gap
+    # between the two hero lines and is None under two days of series; the
+    # seeded world holds one, so the headline is genuinely None, not the
+    # falsy-0.0 case RED-12 covers. We can't observe this pre-fallback value
+    # through the route's single HTTP response (the fallback, if it fires,
+    # overwrites it server-side before the JSON is built) -- so we verify it
+    # directly.
     raw_strip = analytics.compute_windowed_portfolio_strip([], {}, window="all")
     assert raw_strip.get("guard_alpha") is None, (
-        "fixture integrity: an empty symphonies_list must yield guard_alpha=None "
-        f"(weight_sum==0.0); got {raw_strip.get('guard_alpha')!r} -- the day-filter "
+        "fixture integrity: a single day of series must yield guard_alpha=None; "
+        f"got {raw_strip.get('guard_alpha')!r} -- the day-filter "
         "assertion below is meaningless without a genuine None precondition"
     )
     assert raw_strip.get("insufficient_history") is True, (
-        "fixture integrity: an empty symphonies_list must report "
+        "fixture integrity: a single day of series must report "
         f"insufficient_history=True; got {raw_strip.get('insufficient_history')!r}"
     )
 

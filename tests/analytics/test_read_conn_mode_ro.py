@@ -123,7 +123,7 @@ class TestStaticSourceScan:
         )
 
     def test_expected_connect_site_count(self):
-        """There are exactly 9 sqlite3.connect call sites in analytics.py.
+        """There are exactly 10 sqlite3.connect call sites in analytics.py.
         If this count changes, update the test and the review.
         Count updated 6→7 to account for get_single_day_shadow_returns (AC-2b),
         which uses file:...?mode=ro (verified by test_all_connect_calls_use_mode_ro).
@@ -139,11 +139,14 @@ class TestStaticSourceScan:
         but selects current_return instead of shadow_return — also uses
         file:...?mode=ro (verified by the same test_all_connect_calls_use_mode_ro
         sibling).
+        Count updated 9→10 (the no-longer-held predicate): no_longer_held_symphony_ids reads
+        shadow_history through its own file:...?mode=ro connection when it is not handed
+        the closed-market cut's open one (same sibling).
         """
         source = self._source()
         count = source.count("sqlite3.connect(")
-        assert count == 9, (
-            f"Expected 9 sqlite3.connect sites in analytics.py, found {count}. "
+        assert count == 10, (
+            f"Expected 10 sqlite3.connect sites in analytics.py, found {count}. "
             "Update this test if sites were intentionally added or removed."
         )
 

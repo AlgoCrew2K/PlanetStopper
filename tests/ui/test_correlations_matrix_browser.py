@@ -133,7 +133,8 @@ def test_hovering_a_cell_offers_both_names_the_correlation_the_depth_and_the_win
     assert f"{stored['correlation']:+.2f}" in title
     assert f"{stored['n_obs']} aligned days" in title
     assert f"{stored['window_first']} to {stored['window_last']}" in title
-    assert (cell.inner_text() or "").strip() == f"{stored['correlation']:+.2f}"
+    # The page script prints the aligned days under the number, so the depth is read without a hover.
+    assert (cell.inner_text() or "").strip() == f"{stored['correlation']:+.2f}\nn={stored['n_obs']}"
     assert advisor_probe.page_errors == [], advisor_probe.page_errors
 
 

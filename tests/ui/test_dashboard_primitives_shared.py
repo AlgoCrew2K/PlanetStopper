@@ -177,6 +177,48 @@ def _base_with_the_request_guard_script(base: list) -> list:
     return [*base[:wrap], ["script", []], *base[wrap:]]
 
 
+def _base_with_the_review_fix_changes(base: list) -> list:
+    """The base plus the body changes the review fixes to the dashboard made on purpose.
+
+    Each is named, so any other change to the body still fails the comparison:
+
+    * the headline's descriptor is a block of its own and its mode word has a span, where it was
+      a span followed by a line break;
+    * the detail panel holds a loading line ahead of its stats row;
+    * the Guard stat's label holds the alpha glyph helper.
+
+    A card's alpha badge that has no figure to show loses its sign class; that one is judged by
+    ``_without_a_sign_class`` and by the badge test below, since which badges that is depends on
+    the state, not on the markup.
+    """
+    out = _base_with_the_request_guard_script(base)
+    at = out.index(["span", ["guard-alpha-descriptor"]])
+    assert out[at + 1] == ["br", []], "the base's descriptor is not followed by a line break"
+    out[at : at + 2] = [["div", ["guard-alpha-descriptor"]], ["span", []]]
+    stats = out.index(["div", ["detail-stats-row"]])
+    out.insert(stats, ["div", ["math-row-hint"]])
+    labels = [i for i in range(stats + 1, len(out)) if out[i] == ["div", ["detail-stat-label"]]]
+    out.insert(labels[3] + 1, ["span", ["alpha-glyph"]])
+    return out
+
+
+def _without_a_sign_class(base_element: list, element: list) -> bool:
+    """Whether ``element`` is the base's alpha badge minus its pos or neg class."""
+    return (
+        base_element[0] == element[0] == "span"
+        and base_element[1][:1] == element[1] == ["cfg-alpha-badge"]
+        and base_element[1][1:] in (["pos"], ["neg"])
+    )
+
+
+def _first_difference(structure: list, expected: list) -> int | None:
+    """Index of the first element that differs from the expectation, None when none does."""
+    for index, (now, want) in enumerate(zip(structure, expected, strict=False)):
+        if now != want and not _without_a_sign_class(want, now):
+            return index
+    return None if len(structure) == len(expected) else min(len(structure), len(expected))
+
+
 class TestDashboardIsUnchanged:
     def test_the_body_has_the_base_tag_and_class_sequence(self, dashboard_html):
         # The shared header is excluded: it changes by design (it wraps at narrow widths); the
@@ -184,17 +226,42 @@ class TestDashboardIsUnchanged:
         from tests.ui import _shell_capture as shell
 
         structure = shell.body_structure_outside_top_bar(dashboard_html)
-        base = _base_with_the_request_guard_script(SHELL_BASELINE["structure_outside_top_bar"])
-        if structure != base:
-            first = next(
-                (i for i, (a, b) in enumerate(zip(structure, base, strict=False)) if a != b),
-                min(len(structure), len(base)),
-            )
+        base = _base_with_the_review_fix_changes(SHELL_BASELINE["structure_outside_top_bar"])
+        first = _first_difference(structure, base)
+        if first is not None:
             pytest.fail(
                 f"GET / changed outside the header: {len(structure)} elements against the base's "
                 f"{len(base)}; first difference at index {first}: "
                 f"{structure[first : first + 1]} against {base[first : first + 1]}"
             )
+
+    def test_a_cards_alpha_badge_has_a_sign_class_exactly_when_it_shows_a_figure(
+        self, dashboard_html
+    ):
+        """The one body change that depends on the state: a badge with no figure reads the dash
+        and carries no sign class, and a badge with a figure carries the class of its sign."""
+        import html as html_module
+        import re
+
+        badges = re.findall(
+            r'<span data-field="(?:tc|cr|mdd)-alpha-badge" class="([^"]*)"[^>]*>(.*?)</span>',
+            dashboard_html,
+            flags=re.DOTALL,
+        )
+        assert badges, "the capture renders no alpha badge"
+        with_figure = 0
+        for classes, text in badges:
+            tokens = classes.split()
+            shown = html_module.unescape(text).strip()
+            figure = re.fullmatch(r"\u03b1 ([+-])\d+(?:\.\d+)?", shown)
+            if figure:
+                with_figure += 1
+                signs = [t for t in tokens if t in ("pos", "neg")]
+                assert signs == ["pos" if figure.group(1) == "+" else "neg"], (classes, shown)
+            else:
+                assert shown == "\u03b1 --", f"a badge with no figure reads {shown!r}"
+                assert not {"pos", "neg"} & set(tokens), f"a dash badge is coloured: {classes!r}"
+        assert with_figure, "no badge shows a figure, so the class of a figure is not exercised"
 
     def test_every_primitive_selector_resolves_to_its_base_declarations(self, dashboard_html):
         resolved = cap.resolved_primitive_rules(dashboard_html)

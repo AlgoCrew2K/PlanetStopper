@@ -165,7 +165,7 @@ class TestEditVarsIndicatorPresent:
         Pins that the count is correct, not just non-empty.  The fixture has 2 locked
         vars in scenario_populated (alpha-momentum: TRIGGER_THRESHOLD_PCT,
         TAKE_PROFIT_MC_PCT).  An implementation that always renders "1" or renders
-        sum(all_params) would fail this test.
+        sum(all_params) would fail this test. The count carries its label ("2 locked").
         """
         client, app_module = flask_client
         fx = _load_fixture()
@@ -186,8 +186,9 @@ class TestEditVarsIndicatorPresent:
         match = indicator_pattern.search(html)
         assert match is not None, "edit-vars-indicator element not found in HTML."
         content = match.group(1).strip()
-        assert content == str(expected_count), (
-            f"edit-vars-indicator badge must show {expected_count} (fixture expected_total_locked_count). "
+        assert content == f"{expected_count} locked", (
+            f"edit-vars-indicator badge must read '{expected_count} locked' (fixture "
+            "expected_total_locked_count, labelled so a bare number is never on screen). "
             f"Got {content!r}. "
             "Count must reflect only locked_vars entries, not params keys or any other measure."
         )

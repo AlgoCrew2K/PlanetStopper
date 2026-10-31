@@ -59,12 +59,15 @@
         if (reasonEl) reasonEl.style.display = isEmpty ? 'none' : '';
         if (isEmpty) return;
 
-        var totalAlpha = typeof payload.total_alpha === 'number' ? payload.total_alpha.toFixed(2) + '%' : '--';
+        var totalAlpha = typeof payload.total_alpha === 'number' ? alphaPointsText(payload.total_alpha) : '--';
         var totalSaved = dollarSavedText(payload.total_saved);
         var triggers = typeof payload.trigger_count === 'number' ? String(payload.trigger_count) : '--';
         var winRate = typeof payload.win_rate === 'number' ? payload.win_rate.toFixed(1) + '%' : '--';
 
         setId('val-total-alpha', totalAlpha);
+        // The tile states its basis: a sum of per-exit points, not a portfolio return.
+        setId('total-alpha-descriptor', 'Each exit\'s return minus its if-held return at 15:54 ET, added across '
+            + exitCountText(payload.trigger_count) + ' with no size weighting. Not a portfolio return.');
         setId('val-total-saved', totalSaved);
         // DE-GAS-COHERENCE-001: color by SIGN (payload.total_saved can be negative --
         // a losing window must not render green like a winning one), same idiom as
@@ -90,6 +93,16 @@
     function setId(id, text) {
         var el = document.getElementById(id);
         if (el) el.textContent = text;
+    }
+
+    // A sum of per-exit alpha is in points ("pts"), never a percent: signed, two decimals.
+    function alphaPointsText(value) {
+        return (value >= 0 ? '+' : '') + value.toFixed(2) + ' pts';
+    }
+
+    function exitCountText(count) {
+        if (typeof count !== 'number') return 'the window\'s exits';
+        return count + (count === 1 ? ' exit' : ' exits');
     }
 
     // The one place a dollar result becomes text (the hero tile and every reason card):
@@ -274,7 +287,7 @@
         var html = Object.keys(canonical).map(function (reason) {
             var s = canonical[reason];
             var alphaNum = typeof s.alpha === 'number' ? s.alpha : null;
-            var alphaStr = alphaNum !== null ? (alphaNum >= 0 ? '+' : '') + alphaNum.toFixed(2) + '%' : '--';
+            var alphaStr = alphaNum !== null ? alphaPointsText(alphaNum) : '--';
             var alphaColor = alphaNum !== null
                 ? (alphaNum >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg'))
                 : cssVar('--studio-ink');
@@ -284,7 +297,7 @@
             var winRateNum = s.count > 0 ? (s.wins / s.count) * 100 : 0;
             var descText = REASON_DESCRIPTIONS[reason] || reason;
             var avgAlpha = s.count > 0 && alphaNum !== null ? alphaNum / s.count : null;
-            var avgStr = avgAlpha !== null ? (avgAlpha >= 0 ? '+' : '') + avgAlpha.toFixed(3) + '%' : '--';
+            var avgStr = avgAlpha !== null ? (avgAlpha >= 0 ? '+' : '') + avgAlpha.toFixed(3) + ' pts' : '--';
 
             return (
                 // V-29: 4px colored top edge per design spec (position:absolute span, top 0).
@@ -301,7 +314,7 @@
                 '<div style="font-size:1.75rem;font-weight:800;color:' + alphaColor + ';line-height:1;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;">' +
                 escHtml(alphaStr) + '</div>' +
                 '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;margin-bottom:0.75rem;">' +
-                'cumulative α · ' + escHtml(dollarSavedText(s.dollars)) +
+                'Sum of exit alpha · ' + escHtml(dollarSavedText(s.dollars)) +
                 '</div>' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.375rem;padding-top:0.75rem;border-top:1px solid ' + cssVar('--studio-border') + ';">' +
                 '<div><div style="font-size:0.5625rem;color:' + cssVar('--studio-ink-dim') + ';text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Triggers</div>' +

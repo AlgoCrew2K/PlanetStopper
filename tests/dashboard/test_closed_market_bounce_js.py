@@ -60,10 +60,11 @@ _INDEX_JS = _STATIC_DIR / "index.js"
 
 _DISCRIMINATOR_RE = re.compile(r"data_as_of|\bbasis\b")
 
+# The rows updateComparisonRows writes from the poll's strip. The Max DD row is not one of them:
+# it is the picked window's own and updateMddRow writes it from a /api/strip/<window> answer only.
 _ROW_SOURCE_FIELDS = {
     "today": "ps.today_change",
     "cumulative": "ps.cumulative_return",
-    "mdd": "ps.max_drawdown",
 }
 
 
@@ -165,10 +166,11 @@ class TestComparisonRowsGuardedByRealStatePollDiscriminator:
     fallback still rewrites ALL THREE comparison rows from the windowed
     strip, not just 'cumulative' -- the identical bounce class on the two
     rows the first pass left unguarded. Generalizes the original single-row
-    test to all three row ids.
+    test to every row the poll writes (Today, Cumulative); the Max DD row is
+    the picked window's and is pinned in its own class below.
     """
 
-    @pytest.mark.parametrize("row_id", ["today", "cumulative", "mdd"])
+    @pytest.mark.parametrize("row_id", ["today", "cumulative"])
     def test_row_values_gated_by_a_real_state_poll_discriminator(self, row_id):
         """RED (today/mdd, this revise round) / regression guard (cumulative,
         already fixed the prior round): each comparison row entry must be
@@ -205,3 +207,42 @@ class TestComparisonRowsGuardedByRealStatePollDiscriminator:
             f"poll (DE-CLOSED-BOUNCE-001, revise round -- gate ALL 3 rows, not "
             f"just 'cumulative')."
         )
+
+
+class TestTheMaxDrawdownRowIsWrittenByTheWindowsStripAlone:
+    """The Max DD row cannot bounce between a poll's value and a windowed one: a poll never writes
+    it, so the closed-market guard has nothing to gate on that row. The row's own path is the
+    picked window's strip answer, which every market state serves the same way."""
+
+    def test_updateComparisonRows_does_not_source_or_write_the_max_drawdown_row(self):
+        source = _slice_function(_read_index_js(), "function updateComparisonRows(")
+        body = re.sub(r"/\*.*?\*/|//[^\n]*", "", source, flags=re.S)  # comments may name the row
+
+        assert "max_drawdown" not in body, (
+            "updateComparisonRows reads the poll's max_drawdown, the lifetime figure of a different "
+            "window than the row's label"
+        )
+        assert "updateMddRow" not in body
+        assert "comp-mdd" not in body and "id: 'mdd'" not in body
+
+    def test_updateMddRow_is_reached_only_from_the_windowed_strip_writer(self):
+        content = _read_index_js()
+
+        callers = []
+        for match in re.finditer(r"\bupdateMddRow\(", content):
+            if content[: match.start()].rstrip().endswith("function"):
+                continue
+            enclosing = re.findall(r"function\s+(\w+)\s*\(", content[: match.start()])
+            callers.append(enclosing[-1])
+        assert callers == ["applyWindowedStrip"], callers
+
+    def test_the_windowed_strip_writer_is_reached_only_from_a_strip_answer(self):
+        content = _read_index_js()
+
+        callers = []
+        for match in re.finditer(r"\bapplyWindowedStrip\(", content):
+            if content[: match.start()].rstrip().endswith("function"):
+                continue
+            enclosing = re.findall(r"function\s+(\w+)\s*\(", content[: match.start()])
+            callers.append(enclosing[-1])
+        assert callers == ["requestWindowedStrip"], callers

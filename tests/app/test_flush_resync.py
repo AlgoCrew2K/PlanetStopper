@@ -442,3 +442,82 @@ def test_a_state_read_failure_is_reported_by_type_name_only(client, tmp_path, mo
 def test_a_clean_flush_still_reports_ok_with_no_errors(client, tmp_path, monkeypatch):
     body = _flush(client, monkeypatch, tmp_path)
     assert body["errors"] == [] and body["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# The flush keeps the production history
+# ---------------------------------------------------------------------------
+#
+# ``_REAL_POST_MORTEM_DATES`` names the eleven real files that existed when the synthetic backfill was
+# cleaned up, and ends in May 2026. The engine has produced a post-mortem every trading day since the
+# production go-live on 2026-06-22, so a flush that deletes "every date not in the set" deletes the
+# production history. A file dated on or after the go-live date is production data and is kept; an older
+# file that is not in the set is the synthetic backfill and is still deleted.
+
+GO_LIVE_DAY = "2026-06-22"
+
+
+def _files_on_disk(pm_dir) -> set[str]:
+    return {name for name in os.listdir(pm_dir) if name.startswith("post_mortem_")}
+
+
+def test_a_flush_keeps_every_post_mortem_from_the_go_live_day_on(client, tmp_path, monkeypatch):
+    pm_dir = str(tmp_path / "pm")
+    production = [GO_LIVE_DAY, "2026-06-23", "2026-07-09", "2026-10-21", "2027-01-04"]
+    for day in production:
+        _make_pm_file(pm_dir, day)
+
+    body = _flush(client, monkeypatch, tmp_path)
+
+    assert _files_on_disk(pm_dir) == {f"post_mortem_{d}.json" for d in production}, (
+        "a flush deleted production post-mortems"
+    )
+    assert body["deleted"] == [] and body["deleted_count"] == 0
+    assert sorted(body["kept"]) == sorted(f"post_mortem_{d}.json" for d in production)
+    assert body["kept_count"] == len(production)
+
+
+def test_a_flush_still_deletes_the_synthetic_backfill_older_than_the_go_live_day(
+    client, tmp_path, monkeypatch
+):
+    pm_dir = str(tmp_path / "pm")
+    synthetic = ["2020-01-01", "2026-05-21", "2026-06-21"]  # the last is the day before go-live
+    real = sorted(app_module._REAL_POST_MORTEM_DATES)
+    production = [GO_LIVE_DAY, "2026-09-01"]
+    for day in synthetic + real + production:
+        _make_pm_file(pm_dir, day)
+
+    body = _flush(client, monkeypatch, tmp_path)
+
+    assert _files_on_disk(pm_dir) == {f"post_mortem_{d}.json" for d in real + production}
+    assert sorted(body["deleted"]) == sorted(f"post_mortem_{d}.json" for d in synthetic)
+    assert body["deleted_count"] == len(synthetic)
+    assert body["kept_count"] == len(real) + len(production)
+    assert set(body["kept"]).isdisjoint(body["deleted"])
+
+
+def test_the_response_counts_match_what_is_on_disk(client, tmp_path, monkeypatch):
+    pm_dir = str(tmp_path / "pm")
+    days = ["2024-02-02", "2026-03-03", "2026-06-21", GO_LIVE_DAY, "2026-08-14", "2026-10-30"]
+    for day in days:
+        _make_pm_file(pm_dir, day)
+
+    body = _flush(client, monkeypatch, tmp_path)
+
+    remaining = _files_on_disk(pm_dir)
+    assert set(body["kept"]) == remaining
+    assert body["kept_count"] == len(remaining)
+    assert body["deleted_count"] == len(days) - len(remaining)
+    assert len(body["deleted"]) == body["deleted_count"]
+
+
+def test_a_file_that_is_not_a_dated_post_mortem_is_never_touched(client, tmp_path, monkeypatch):
+    pm_dir = str(tmp_path / "pm")
+    _make_pm_file(pm_dir, "2020-01-01")
+    stranger = os.path.join(pm_dir, "notes.json")
+    with open(stranger, "w", encoding="utf-8") as fh:
+        fh.write("{}")
+
+    _flush(client, monkeypatch, tmp_path)
+
+    assert os.path.exists(stranger)

@@ -69,3 +69,17 @@ ux-*.png
 
 # TDD cycle handoff file (per-cycle, never committed — recreated by test-writer)
 .claude/tdd-handoff.md
+
+# Real database backups taken before a restart or a cleanup (alphabot_state.db.pre-*, optuna_studies.db.pre-*)
+# and their SQLite -shm / -wal companions; the repository is public, so one `git add -A` would publish them
+*.db.*
+*.db-*
+
+# Private keys, certificates, logs and credentials files
+*.key
+*.pem
+*.log
+credentials.json
+*credentials*.json
+# ...but captured-from-producer test fixtures are versioned (an invalid-credentials 401 answer is not a credential)
+!tests/fixtures/**/*credentials*.json

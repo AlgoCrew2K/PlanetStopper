@@ -140,6 +140,17 @@
         return (value >= 0 ? '+' : '') + value.toFixed(decimals) + '%';
     }
 
+    // A difference of two returns, in percentage points: signed, two decimals, then "pp". The
+    // compact number format applies as it does to every other figure (1234.5 reads "1.2k pp").
+    function fmtPp(value) {
+        if (value == null || isNaN(value)) return '--';
+        var numFormat = document.documentElement.dataset.numFormat || 'full';
+        if (numFormat === 'compact' && Math.abs(value) >= 1000) {
+            return (value / 1000).toFixed(1) + 'k pp';
+        }
+        return (value >= 0 ? '+' : '') + value.toFixed(2) + ' pp';
+    }
+
     // ---------------------------------------------------------------------------
     // Hero chart (bot vs held cumulative returns)
     // ---------------------------------------------------------------------------
@@ -225,7 +236,19 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                // The tooltip follows the pointer along the x axis, like the Performance tab's
+                // chart: it appears with the pointer anywhere over a day, not only on a point.
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function (c) {
+                                return c.dataset.label + ': ' + c.parsed.y.toFixed(2) + '%';
+                            }
+                        }
+                    }
+                },
                 // F-025: the y-axis (magnitude) must stay visible so this chart's
                 // day-by-day cumulative series (~-3% scale) can't be visually
                 // conflated with the adjacent VW-lifetime scalar headline (~+34%,
@@ -326,18 +349,19 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Guard alpha headline, window label and Ann. Vol row: the picked window's strip
+    // Guard effect headline, window label, Max DD row and Ann. Vol row: the picked window's strip
     // ---------------------------------------------------------------------------
-    // Three elements are written by one path, from one /api/strip/<window> answer:
-    // #guard-alpha-headline, #guard-alpha-window-label and the Ann. Vol row. A poll never
-    // writes them (its own figures are the default window's and lifetime's), so a refresh
-    // cannot put another window's value under the picked window's label. The label is
+    // These are written by one path, from one /api/strip/<window> answer:
+    // #guard-alpha-headline, #guard-alpha-window-label, the Max DD row and the Ann. Vol row.
+    // A poll never writes them (its own figures are the default window's and lifetime's), so a
+    // refresh cannot put another window's value under the picked window's label. The label is
     // written with the value it describes. Do NOT derive guard_alpha from
     // cumulative_return.dry_run - cumulative_return.if_held: those fields can be on
-    // different bases (windowed value-weighted bot against account-basis held).
+    // different bases (the cumulative row leaves out a symphony with no Composer cost basis).
 
     var _stripRequestSeq = 0;      // only the newest strip request may apply
     var _stripAnsweredToken = null; // the window whose strip request was last answered; null before the first
+    var _stripFiguresBlank = false; // a pick wrote dashes and no strip has answered for the picked window yet
 
     // Ann. Vol row. vol is inverted: lower is better for this capital-preservation system.
     // vol_bot/vol_held are fractions; a null on either side reads as dashes, never as a
@@ -352,6 +376,10 @@
         var volDelta    = document.querySelector('[data-testid="comp-vol-delta"]');
         var volBotBars  = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
         var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
+        // A window with no volatility figure hides the row: a row of dashes says nothing.
+        var volRow = volBotText && typeof volBotText.closest === 'function'
+            ? volBotText.closest('[data-testid="vs-row"]') : null;
+        if (volRow) volRow.hidden = !hasVol;
 
         if (hasVol) {
             var volBotPct  = rawVolBot  * 100;
@@ -388,26 +416,121 @@
         }
     }
 
-    // The one writer of the headline value, its window label and the Ann. Vol row.
-    // A null guard_alpha (no weight in the window, or no rows) reads '--' under the
-    // window's label, so the previous window's value never stays under the new label.
+    // Max DD row: the picked window's drawdown, Bot and Held, printed as magnitudes (a drawdown
+    // carries no plus sign). A leg the window cannot supply shows no digits, the row's own
+    // "insufficient history" label shows, and no side leads; the poll's lifetime figure is never
+    // written here or anywhere else on this row. A strip with no max_drawdown object changes nothing.
+    function updateMddRow(strip) {
+        var legs = strip && strip.max_drawdown;
+        if (!legs || typeof legs !== 'object') return;
+        var bot = typeof legs.dry_run === 'number' && isFinite(legs.dry_run) ? Math.abs(legs.dry_run) : null;
+        var held = typeof legs.if_held === 'number' && isFinite(legs.if_held) ? Math.abs(legs.if_held) : null;
+        var supplied = bot !== null && held !== null && strip.insufficient_history !== true;
+        var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
+        var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
+        if (botText) botText.textContent = bot !== null ? 'Bot ' + bot.toFixed(2) + '%' : '\u2014';
+        if (heldText) heldText.textContent = held !== null ? 'Held ' + held.toFixed(2) + '%' : '\u2014';
+        var maxAbs = Math.max(bot === null ? 0 : bot, held === null ? 0 : held, 0.01);
+        var botBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
+        var heldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
+        botBars.forEach(function (el) {
+            el.style.width = Math.min((bot === null ? 0 : bot) / maxAbs * 100, 100).toFixed(1) + '%';
+        });
+        heldBars.forEach(function (el) {
+            el.style.width = Math.min((held === null ? 0 : held) / maxAbs * 100, 100).toFixed(1) + '%';
+        });
+        // The smaller drawdown leads; with no figure for the window no side does.
+        applyBarClasses(botBars, heldBars, supplied ? bot <= held : null);
+        var deltaEl = document.querySelector('[data-testid="comp-mdd-delta"]');
+        if (deltaEl) {
+            deltaEl.hidden = !supplied;
+            if (supplied) {
+                // Held minus Bot, in percentage points (the unit of the headline beside it).
+                var saved = held - bot;
+                deltaEl.textContent = '\u03b1 ' + fmtPp(saved);
+                setPosNeg(deltaEl, saved);
+            }
+        }
+        var notice = document.querySelector('[data-testid="mdd-insufficient-label"]');
+        if (notice) notice.hidden = supplied;
+    }
+
+    // The window's figures are not known: the headline reads '--', the Max DD row and the Ann.
+    // Vol row show dashes (no digit, no bar, no leader) and no claim about the window's history
+    // is made. Written the moment a window is picked, so nothing of the previous window stays
+    // under the new label, and left in place when the strip cannot be loaded.
+    function blankWindowedFigures() {
+        var el = document.getElementById('guard-alpha-headline');
+        if (el) {
+            el.textContent = fmtPp(null);
+            el.style.color = cs('--studio-ink-dim');
+        }
+        var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
+        var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
+        if (botText) botText.textContent = '—';
+        if (heldText) heldText.textContent = '—';
+        var mddBotBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
+        var mddHeldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
+        mddBotBars.forEach(function (bar) { bar.style.width = '0%'; });
+        mddHeldBars.forEach(function (bar) { bar.style.width = '0%'; });
+        applyBarClasses(mddBotBars, mddHeldBars, null);
+        var mddDelta = document.querySelector('[data-testid="comp-mdd-delta"]');
+        if (mddDelta) mddDelta.hidden = true;
+        var mddNotice = document.querySelector('[data-testid="mdd-insufficient-label"]');
+        if (mddNotice) mddNotice.hidden = true;
+        // A pending Ann. Vol row is shown with dashes; only an answer with no volatility hides it.
+        var volBotText = document.querySelector('[data-testid="comp-vol-bot-text"]');
+        var volHeldText = document.querySelector('[data-testid="comp-vol-held-text"]');
+        var volDelta = document.querySelector('[data-testid="comp-vol-delta"]');
+        if (volBotText) volBotText.textContent = 'Bot —';
+        if (volHeldText) volHeldText.textContent = 'Held —';
+        if (volDelta) volDelta.textContent = 'α —';
+        var volBotBars = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
+        var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
+        volBotBars.forEach(function (bar) { bar.style.width = '0%'; });
+        volHeldBars.forEach(function (bar) { bar.style.width = '0%'; });
+        applyBarClasses(volBotBars, volHeldBars, null);
+    }
+
+    // The visible notice for a window whose strip could not be loaded; it names the window.
+    // Cleared by the next pick and by the next strip that answers.
+    function showStripNotice(token) {
+        var el = document.getElementById('guard-alpha-window-notice');
+        if (!el) return;
+        el.textContent = 'Could not load the ' + (WINDOW_LABELS[token] || token) + ' window';
+        el.hidden = false;
+    }
+
+    function clearStripNotice() {
+        var el = document.getElementById('guard-alpha-window-notice');
+        if (!el) return;
+        el.textContent = '';
+        el.hidden = true;
+    }
+
+    // The one writer of the headline value, its window label, the Max DD row and the Ann. Vol
+    // row. A null guard_alpha (fewer than two days in the window) reads '--' under the window's
+    // label, so the previous window's value never stays under the new label.
     function applyWindowedStrip(token, strip) {
         var guard_alpha = typeof strip.guard_alpha === 'number' ? strip.guard_alpha : null;
         var el = document.getElementById('guard-alpha-headline');
         if (el) {
-            el.textContent = fmtPct(guard_alpha);
+            el.textContent = fmtPp(guard_alpha);
             el.style.color = guard_alpha === null ? cs('--studio-ink-dim')
                 : (guard_alpha >= 0 ? cs('--studio-pos') : cs('--studio-neg'));
         }
         var labelEl = document.getElementById('guard-alpha-window-label');
         if (labelEl) labelEl.textContent = WINDOW_LABELS[token] || token;
+        updateMddRow(strip);
         updateVolRow(strip);
     }
 
-    // Asks for the picked window's strip. Newest request wins, and an answer applies only
-    // while its window is still the picked one; a refused, failed or malformed answer
-    // changes nothing (the last values stay). A failed request leaves the window unanswered,
-    // so the next refresh asks again.
+    // Asks for the picked window's strip. Newest request wins, and an answer or a failure applies
+    // only while its window is still the picked one. A refused, failed or malformed answer writes
+    // no figure: after a pick the figures stay the dashes the pick wrote and a notice names the
+    // window; a refresh of a window that already shows its own figures keeps them (they are that
+    // window's, one refresh old). A failed request leaves the window unanswered, so the next
+    // refresh asks again, and the next good answer clears the notice.
     function requestWindowedStrip(token) {
         var seq = ++_stripRequestSeq;
         return fetch('/api/strip/' + token)
@@ -417,11 +540,19 @@
             })
             .then(function (strip) {
                 if (seq !== _stripRequestSeq || token !== _heroWindow) return;
+                if (!strip || typeof strip !== 'object' || strip.error || !('guard_alpha' in strip)) {
+                    throw new Error('strip answer is not a strip');
+                }
                 _stripAnsweredToken = token;
-                if (!strip || typeof strip !== 'object' || strip.error || !('guard_alpha' in strip)) return;
+                _stripFiguresBlank = false;
+                clearStripNotice();
                 applyWindowedStrip(token, strip);
             })
-            .catch(function (err) { console.error('windowed strip load failed', err); });
+            .catch(function (err) {
+                console.error('windowed strip load failed', err);
+                if (seq !== _stripRequestSeq || token !== _heroWindow) return;
+                if (_stripFiguresBlank) showStripNotice(token);
+            });
     }
 
     // Per applied body: the strip is asked for when the body carries newer data than the last
@@ -1002,9 +1133,11 @@
     // The stats row and its sub-labels, from a state entry. Written at open and by every poll.
     function writeDetailFigures(sym) {
         // Live return: use triggered_at_return if triggered, else current_return
+        // A triggered entry's figure is its frozen exit return; the live return is a different
+        // quantity and never stands in for it. An unknown figure (absent, null, not finite, or the
+        // engine's not-set sentinel) is a dash, never +0.00%: 0.0 is a known value, "unknown" is not.
         var rawLive = sym.triggered ? sym.triggered_at_return : sym.current_return;
-        var liveRet = sentinelToNull(typeof rawLive === 'number' ? rawLive : null);
-        if (liveRet == null) liveRet = 0;
+        var liveRet = sentinelToNull(typeof rawLive === 'number' && isFinite(rawLive) ? rawLive : null);
         // sentinelToNull covers both -999 and +999 variants
         var stopLevel = sentinelToNull(typeof sym.stop_trigger === 'number' ? sym.stop_trigger : null);
         var shadowPeak = sentinelToNull(typeof sym.shadow_hwm === 'number' ? sym.shadow_hwm : null);
@@ -1015,8 +1148,9 @@
 
         var elLive = document.getElementById('dp-live-ret');
         if (elLive) {
-            elLive.textContent = fmtPct(liveRet);
-            elLive.style.color = liveRet >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+            elLive.textContent = liveRet === null ? '—' : fmtPct(liveRet);
+            elLive.style.color = liveRet === null ? cs('--studio-ink-dim')
+                : (liveRet >= 0 ? cs('--studio-pos') : cs('--studio-neg'));
         }
         var elLiveSub = document.getElementById('dp-live-ret-sub');
         if (elLiveSub) elLiveSub.textContent = sym.triggered ? 'frozen at exit' : 'real-time';
@@ -1043,9 +1177,30 @@
         return { stopLevel: stopLevel, shadowPeak: shadowPeak };
     }
 
-    function writeDetailTitle(sym) {
+    // The name the card carries, for a panel opened before any state named its symphony.
+    function cardNameFor(symId) {
+        if (!symId) return null;
+        var safeId = String(symId).replace(/["\\]/g, '');
+        var nameEl = document.querySelector('.sym-card[data-sym-id="' + safeId + '"] .card-name');
+        var text = nameEl ? nameEl.textContent.trim() : '';
+        return text || null;
+    }
+
+    function writeDetailTitle(sym, symId) {
         var titleEl = document.getElementById('detail-panel-title');
-        if (titleEl) titleEl.textContent = (sym && sym.name) || DETAIL_UNKNOWN_TITLE;
+        if (!titleEl) return;
+        // An entry that names no usable symphony keeps the default title; only a panel opened
+        // before any state named its symphony reads the name the card carries.
+        titleEl.textContent = sym
+            ? (sym.name || DETAIL_UNKNOWN_TITLE)
+            : (cardNameFor(symId) || DETAIL_UNKNOWN_TITLE);
+    }
+
+    // The panel says it is waiting from the moment it opens until the first state names its
+    // symphony (or says it is not in the view): never a panel of dashes with no explanation.
+    function setDetailLoading(waiting) {
+        var loadingEl = document.getElementById('detail-loading');
+        if (loadingEl) loadingEl.hidden = !waiting;
     }
 
     // The panel's own requests: the tape, the events, the variables and the risk profile. Each
@@ -1124,9 +1279,10 @@
         var rpEl = document.getElementById('detail-risk-profile');
         if (rpEl) rpEl.innerHTML = '';
 
-        writeDetailTitle(sym);
+        writeDetailTitle(sym, symId);
         // No poll has named this symphony yet: the first one fills the panel and asks for the rest.
         _detailNeedsFetch = !sym;
+        setDetailLoading(!sym);
         if (!sym) return;
 
         var kept = writeDetailFigures(sym);
@@ -1154,12 +1310,13 @@
     function refreshOpenDetailPanel(botState) {
         if (!_detailSymId || !detailPanelIsOpen()) return;
         var sym = botState ? botState[_detailSymId] : null;
+        setDetailLoading(false);
         if (!isSymphonyEntry(sym)) {
             var sub = document.getElementById('dp-live-ret-sub');
             if (sub) sub.textContent = DETAIL_NOT_IN_VIEW_TEXT;
             return;
         }
-        writeDetailTitle(sym);
+        writeDetailTitle(sym, _detailSymId);
         var kept = writeDetailFigures(sym);
         populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak, true);
         if (_detailNeedsFetch) {
@@ -1479,19 +1636,21 @@
             var ts = ev.timestamp || ev.time || '';
             var hhmm = ts.length >= 16 ? ts.slice(11, 16) : ts;
             var kind = (ev.event_type || ev.kind || 'info').toLowerCase();
-            var msg = ev.message || ev.msg || '';
+            var msg = String(ev.message || ev.msg || '');
             var color = kindColorMap[kind] || 'var(--studio-ink-dim)';
             var kindLabel = kind.toUpperCase();
             // Extract reason from message if present
             var reasonMatch = msg.match(/^([A-Z_]+(?:\s[A-Z_]+)*):\s*/);
             var reason = reasonMatch ? msg.slice(reasonMatch[0].length) : msg;
             var kindDisplay = kindLabel + (reasonMatch ? ' · ' + reasonMatch[1] : '');
+            // The message carries a symphony name (the engine logs "<name> ARMED (trail)") and a
+            // name is authored outside this app, so every field of the row is written as text.
             return '<div class="event-row">' +
-                '<span class="event-ts">' + hhmm + '</span>' +
+                '<span class="event-ts">' + escHtml(hhmm) + '</span>' +
                 '<div class="event-body">' +
                   '<span class="event-dot" style="background:' + color + ';"></span>' +
-                  '<div class="event-kind" style="color:' + color + ';">' + kindDisplay + '</div>' +
-                  '<div class="event-detail">' + reason + '</div>' +
+                  '<div class="event-kind" style="color:' + color + ';">' + escHtml(kindDisplay) + '</div>' +
+                  '<div class="event-detail">' + escHtml(reason) + '</div>' +
                 '</div>' +
                 '</div>';
         }).join('');
@@ -1525,9 +1684,10 @@
         container.innerHTML = Object.entries(params).map(function (pair) {
             var k = pair[0]; var v = pair[1];
             var lockBadge = locked.has(k) ? ' <span style="color:var(--studio-accent);font-size:9px;" title="Locked from autotuner">&#9670;</span>' : '';
+            // The name and a string value are written as text; the lock badge is this file's own markup.
             return '<div class="var-row">' +
-                '<span class="var-key">' + k + lockBadge + '</span>' +
-                '<span class="var-val">' + (typeof v === 'number' ? v.toFixed(v % 1 === 0 ? 0 : 3) : v) + '</span>' +
+                '<span class="var-key">' + escHtml(k) + lockBadge + '</span>' +
+                '<span class="var-val">' + (typeof v === 'number' ? v.toFixed(v % 1 === 0 ? 0 : 3) : escHtml(v)) + '</span>' +
                 '</div>';
         }).join('');
     }
@@ -1678,15 +1838,15 @@
         }
     }
 
-    // Max DD labels: the hero row and every card render both the "insufficient history" label and
-    // the alpha element, one hidden. They follow meta.portfolio.insufficient_history; a body that
-    // does not say leaves them as they are.
+    // Max DD labels on the cards: each card renders both the "insufficient history" label and the
+    // alpha element, one hidden. They follow meta.portfolio.insufficient_history; a body that does
+    // not say leaves them as they are. The hero row is not here: it follows the picked window's
+    // strip (updateMddRow), so a poll never decides what it says.
     function applyMddLabels(data) {
         var portfolio = (data && data.meta && data.meta.portfolio) || {};
         var insufficient = portfolio.insufficient_history;
         if (typeof insufficient !== 'boolean') return;
-        [['[data-testid="mdd-insufficient-label"]', '[data-testid="comp-mdd-delta"]'],
-         ['[data-testid="card-mdd-insufficient-label"]', '[data-field="mdd-alpha-badge"]']
+        [['[data-testid="card-mdd-insufficient-label"]', '[data-field="mdd-alpha-badge"]']
         ].forEach(function (pair) {
             document.querySelectorAll(pair[0]).forEach(function (el) { el.hidden = !insufficient; });
             document.querySelectorAll(pair[1]).forEach(function (el) { el.hidden = insufficient; });
@@ -1696,8 +1856,6 @@
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
         applyMddLabels(data);
-        var insufficientHistory = !!(data && data.meta && data.meta.portfolio
-            && data.meta.portfolio.insufficient_history === true);
         // The account-basis helpers run only on a genuine state-poll payload.
         // 'data_as_of' is unconditionally set by _compute_portfolio_strip on every
         // /api/state poll (app.py), so it discriminates a poll from any other payload
@@ -1711,20 +1869,18 @@
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
-        // ALL THREE rows are built only from a genuine /api/state poll payload (which
-        // always carries data_as_of): a payload without it is on a different basis
-        // and scope for every row (Today can be account-basis on a real poll vs
-        // always-VW on a windowed strip; MDD can be scoped to the snapshot's
-        // trading_day vs the picker's window), so leaving `rows` empty leaves each
-        // row's last-correct DOM value alone instead of bouncing it. The picked
-        // window never changes these rows; the Ann. Vol row is the strip's (see
-        // updateVolRow).
+        // Both rows are built only from a genuine /api/state poll payload (which always
+        // carries data_as_of): a payload without it is on a different basis and scope (Today
+        // can be account-basis on a real poll vs always-VW on a windowed strip), so leaving
+        // `rows` empty leaves each row's last-correct DOM value alone instead of bouncing it.
+        // The picked window never changes these two rows. The Max DD and Ann. Vol rows are
+        // the strip's, not the poll's (see updateMddRow and updateVolRow): the poll's own Max DD
+        // is a different window's figure and is never written under the row's label.
         var rows = [];
         if ('data_as_of' in ps) {
             rows = [
                 { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-                { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
-                { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
+                { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true }
             ];
         }
         rows.forEach(function (row) {
@@ -1745,12 +1901,8 @@
                 el.style.width = Math.min(Math.abs(held) / maxAbs * 100, 100).toFixed(1) + '%';
             });
             // The leader, by the rule the server render applies to the row (a missing leg reads
-            // as 0 there). Max DD: the smaller drawdown leads, and with too little history no
-            // side does.
-            var botWins;
-            if (row.higherIsBetter) botWins = (bot === null ? 0 : bot) >= (held === null ? 0 : held);
-            else if (insufficientHistory) botWins = null;
-            else botWins = Math.abs(bot === null ? 0 : bot) <= Math.abs(held === null ? 0 : held);
+            // as 0 there): the higher return leads.
+            var botWins = (bot === null ? 0 : bot) >= (held === null ? 0 : held);
             applyBarClasses(botBars, heldBars, botWins);
 
             var botText  = document.querySelector('[data-testid="comp-' + row.id + '-bot-text"]');
@@ -1760,31 +1912,28 @@
                 // F-016: guard setPosNeg -- its `value >= 0` check is TRUE for null in
                 // JS (null coerces to 0), which would mis-classify a missing value as
                 // positive/green if called unguarded.
-                if (bot !== null) setPosNeg(botText, row.higherIsBetter ? bot : -bot);
+                if (bot !== null) setPosNeg(botText, bot);
                 else botText.classList.remove('pos', 'neg');
             }
             if (heldText) {
                 heldText.textContent = 'Held ' + fmtPct(held);
-                if (held !== null) setPosNeg(heldText, row.higherIsBetter ? held : -held);
+                if (held !== null) setPosNeg(heldText, held);
                 else heldText.classList.remove('pos', 'neg');
             }
 
             // AC-4a: recompute + write the alpha (.vs-delta) span every poll so the
             // displayed alpha == displayed (Bot - Held) by construction. Without this
             // the delta stays frozen at its server-side-render value while Bot/Held
-            // tick live (the 2.17-vs-1.72 staleness symptom). For Max DD, alpha is the
-            // drawdown the guard SAVED: abs(held) - abs(bot) (less DD = better),
-            // matching the template's mdd_alpha and the per-card convention.
+            // tick live (the 2.17-vs-1.72 staleness symptom).
             var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
             if (deltaEl) {
                 if (bot !== null && held !== null) {
-                    var deltaAlpha = row.higherIsBetter
-                        ? (bot - held)
-                        : (Math.abs(held) - Math.abs(bot));
-                    deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
+                    // Bot minus Held, in percentage points (the unit of the headline above).
+                    var deltaAlpha = bot - held;
+                    deltaEl.textContent = 'α ' + fmtPp(deltaAlpha);
                     setPosNeg(deltaEl, deltaAlpha);
                 } else {
-                    deltaEl.textContent = 'α ' + fmtPct(null);
+                    deltaEl.textContent = 'α ' + fmtPp(null);
                     deltaEl.classList.remove('pos', 'neg');
                 }
             }
@@ -1801,7 +1950,8 @@
     // ---------------------------------------------------------------------------
 
     function _fmtSignedPct(val, decimals) {
-        if (val == null || isNaN(val)) return '--';
+        // A missing figure reads as the server render prints it: an em dash.
+        if (val == null || isNaN(val)) return '\u2014';
         decimals = decimals != null ? decimals : 1;
         return (val >= 0 ? '+' : '') + val.toFixed(decimals) + '%';
     }
@@ -2311,9 +2461,19 @@
         var badge = document.querySelector('[data-testid="edit-vars-indicator"]');
         if (!badge) return;
         var shown = count > 0;
-        setTextIfChanged(badge, shown ? String(count) : '');
+        setTextIfChanged(badge, shown ? count + ' locked' : '');
         badge.hidden = !shown;
         badge.style.display = shown ? 'inline-flex' : 'none';
+    }
+
+    // The headline's descriptor says "Simulated" while the engine's last cycle ran simulated. The
+    // live poll's bot_state carries the engine's flag (last_execution_mode); a body that does not
+    // (the after-close snapshot's state) leaves the server-rendered text as it is.
+    function renderExecutionDescriptor(data) {
+        var state = data && (data.bot_state || data.state);
+        if (!state || typeof state.last_execution_mode !== 'boolean') return;
+        setTextIfChanged(document.getElementById('guard-alpha-simulated'),
+            state.last_execution_mode === false ? 'Simulated ' : '');
     }
 
     function renderDashboardPanels(data) {
@@ -2400,6 +2560,8 @@
             function () { refreshOpenDetailPanel(botState); },
             // The Sleeves and CVaR panels and the Edit Vars badge.
             function () { renderDashboardPanels(data); },
+            // The headline descriptor's "Simulated" word.
+            function () { renderExecutionDescriptor(data); },
             // Without a stream the poll is the only thing that moves the $-saved panel.
             function () { refreshPanelWithoutStream(); },
             function () { renderAsOf(); }
@@ -2781,6 +2943,12 @@
                 // again together with the value it describes (F1).
                 var winLabel = document.getElementById('guard-alpha-window-label');
                 if (winLabel) winLabel.textContent = WINDOW_LABELS[token] || btn.textContent;
+                // The figures beside that label are the previous window's until the strip answers,
+                // so they read as dashes until then (and stay dashed if the strip cannot be loaded).
+                _stripAnsweredToken = null;
+                _stripFiguresBlank = true;
+                blankWindowedFigures();
+                clearStripNotice();
                 // The picker drives the chart lines (latest click wins) and the
                 // headline value, its window label and the Ann. Vol row (windowed
                 // strip) -- NOT the Today/Cumulative/Max DD rows, which stay on genuine

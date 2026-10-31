@@ -367,13 +367,13 @@
                       'color:' + cssVar('--studio-ink-dim') + ';border:none;border-radius:0.5rem;' +
                       'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:not-allowed;">' +
                       'Blocked by OOS gate</button>'
-                    : '<button onclick="acceptSuggestion(' + i + ',\'' + escHtml(symphonyId) + '\')" ' +
+                    : '<button class="suggestion-apply-btn" data-card-index="' + i + '" ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-pos') + ';' +
                       'color:' + cssVar('--studio-white') + ';border:none;border-radius:0.5rem;' +
                       'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
                       'Apply suggestion</button>'
                 ) +
-                '<button onclick="rejectSuggestion(' + i + ',\'' + escHtml(symphonyId) + '\')" ' +
+                '<button class="suggestion-dismiss-btn" data-card-index="' + i + '" ' +
                 'style="padding:0.375rem 1rem;background:' + cssVar('--studio-surface-raised') + ';' +
                 'color:' + cssVar('--studio-ink-dim') + ';border:1px solid ' + cssVar('--studio-border') + ';' +
                 'border-radius:0.5rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
@@ -430,6 +430,20 @@
         container._symphonyId = symphonyId;
         _activeSuggestions = suggestions;
         _activeSymphonyId = symphonyId;
+
+        // The buttons carry only the card's index; the symphony's name is read here from the
+        // container when a button is pressed. A name is authored outside this app and can hold an
+        // apostrophe, a quote or code, so it is never written into an inline handler string.
+        container.querySelectorAll('.suggestion-apply-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                window.acceptSuggestion(Number(btn.getAttribute('data-card-index')), container._symphonyId);
+            });
+        });
+        container.querySelectorAll('.suggestion-dismiss-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                window.rejectSuggestion(Number(btn.getAttribute('data-card-index')), container._symphonyId);
+            });
+        });
     }
 
     // ---------------------------------------------------------------------------
@@ -933,7 +947,26 @@
         }
 
         initTabSwitcher();
+        renderHeatmapDepth();
     });
+
+    // ---------------------------------------------------------------------------
+    // Heatmap depth. Each correlation cell carries the aligned days its number rests on
+    // (data-n-obs, from the stored run). They print under the number, so the depth is read
+    // without a hover. Text only: the value is read from an attribute and set as textContent.
+    // ---------------------------------------------------------------------------
+
+    function renderHeatmapDepth() {
+        document.querySelectorAll('td[data-testid="corr-cell"][data-n-obs]').forEach(function (cell) {
+            if (cell.querySelector('.corr-n')) { return; }
+            var days = cell.getAttribute('data-n-obs');
+            if (days === null || days === '') { return; }
+            var depth = document.createElement('span');
+            depth.className = 'corr-n';
+            depth.textContent = 'n=' + days;
+            cell.appendChild(depth);
+        });
+    }
 
     // ---------------------------------------------------------------------------
     // In-place tab switcher (AC2 — window-selector pattern) and the #<tab>
@@ -1049,26 +1082,53 @@
     // ---------------------------------------------------------------------------
 
     /**
-     * Open the Chat tab pre-loaded with a strategy-proposal artifact (Phase 4).
+     * The chat panel's own fields for a Strategy Builder card's artifact.
      *
-     * Stores the artifact in sessionStorage so the Chat tab picks it up on load,
-     * then navigates to /ai-advisor/chat with from_strategy_builder param.
+     * The artifact the card carries (the M6 strategy_proposal dict) is what the explain endpoint
+     * receives as the artifact context; the panel's title, breadcrumb, objective line, gate pill
+     * and key figure are different things, so they are made here from it. Nothing is invented: a
+     * figure the artifact lacks is left out of the key line.
+     */
+    function chatPanelDataFromArtifact(artifact) {
+        var source = artifact.template_id === 'atlas-suggested' ? 'Atlas-suggested'
+            : (artifact.template_id === 'built-new' ? 'Built from scratch' : 'Strategy proposal');
+        var figures = [];
+        if (typeof artifact.sharpe === 'number') { figures.push('Sharpe ' + artifact.sharpe.toFixed(2)); }
+        if (typeof artifact.cagr === 'number') { figures.push('CAGR ' + (artifact.cagr * 100).toFixed(1) + '%'); }
+        if (typeof artifact.calmar === 'number') { figures.push('Calmar ' + artifact.calmar.toFixed(2)); }
+        var tickers = Array.isArray(artifact.tickers) ? artifact.tickers.slice(0, 6).join(', ') : '';
+        return {
+            artifactId: artifact.artifact_id,
+            artifactType: artifact.artifact_type,
+            title: 'Discuss: ' + source + ' candidate',
+            contextLabel: 'Strategy Builder' + (tickers ? ' \u00b7 ' + tickers : ''),
+            objective: 'Why this candidate cleared the statistical gate',
+            gateDecision: artifact.gate_verdict,
+            keyStat: figures.join(' \u00b7 '),
+            artifactContext: artifact
+        };
+    }
+
+    /**
+     * Open the Chat tab on this page with a strategy-proposal artifact (Phase 4).
      *
-     * This is pure JS navigation — no form submission, no POST.
-     * The button calling this must be type="button" (never type="submit").
+     * The page does not navigate: the Chat tab is selected in place and the chat panel opens
+     * on the card's own context (title, objective, gate verdict and key figures), so the
+     * conversation is in view at once. No form submission, no POST. The button calling this
+     * must be type="button" (never type="submit").
      */
     function openChatWithArtifact(artifactJson) {
+        var artifact = null;
         try {
-            var artifact = JSON.parse(artifactJson);
-            sessionStorage.setItem('sb_pending_chat_artifact', JSON.stringify(artifact));
+            artifact = JSON.parse(artifactJson);
         } catch (e) {
-            // Ignore parse errors — navigate anyway.
+            artifact = null;
         }
-        var sym = document.getElementById('sb-symphony-select')
-            ? document.getElementById('sb-symphony-select').value : '';
-        var url = '/ai-advisor/chat';
-        if (sym) { url += '?from_strategy_builder=1&symphony_id=' + encodeURIComponent(sym); }
-        window.location.href = url;
+        activateTabByName('chat');
+        writeTabFragment('chat');
+        if (artifact && typeof window.openChatPanel === 'function') {
+            window.openChatPanel(chatPanelDataFromArtifact(artifact));
+        }
     }
 
     /**

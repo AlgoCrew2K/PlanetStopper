@@ -42,9 +42,6 @@
            live in static/layout.css; the rules here add layout only, never a look. */
         .hero-section > .section-header:first-child { margin-top: 0; }
 
-        /* The shared stat label is upper-case; the alpha keeps its lower-case glyph. */
-        .alpha-glyph { text-transform: none; }
-
         /* First panel: the controls on the left, the basis and observation captions on the right */
         .perf-panel-top {
             display: flex;
@@ -365,7 +362,8 @@
             <div data-testid="headline-strip" class="mini-stats">
                 <div data-testid="guard-alpha-stat" class="mini-stat">
                     <div class="mini-stat-value" id="guard-alpha-value">--</div>
-                    <div class="mini-stat-label">Cumulative guard <span class="alpha-glyph">&alpha;</span></div>
+                    <div class="mini-stat-label" id="guard-alpha-label">Guard effect on portfolio</div>
+                    <div class="mini-stat-note" id="guard-alpha-basis"></div>
                 </div>
                 <div data-testid="sharpe-delta-stat" class="mini-stat">
                     <div class="mini-stat-value" id="sharpe-delta-value">--</div>
@@ -418,7 +416,7 @@
                             <th>Metric</th>
                             <th style="text-align:right">If-held baseline</th>
                             <th style="text-align:right">Bot (Planet Stopper)</th>
-                            <th style="text-align:right">Delta (bot &minus; baseline)</th>
+                            <th style="text-align:right">Delta (bot &minus; baseline; drawdown and volatility in pp)</th>
                         </tr>
                     </thead>
                     <!-- Static rows are server-rendered placeholders; performance.js
@@ -476,7 +474,7 @@
                         <tr>
                             <th>Symphony</th>
                             <th>Sample</th>
-                            <th style="text-align:right">&rho;</th>
+                            <th style="text-align:right"><span class="alpha-glyph">&rho;</span></th>
                             <th style="text-align:right">95% CI</th>
                             <th style="text-align:right">Daily Sharpe</th>
                             <th style="text-align:right">N</th>
@@ -539,7 +537,7 @@
         </section>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', filename='vendor/chart.js-4.6.1.umd.js') }}"></script>
     <script src="{{ url_for('static', filename='performance.js') }}"></script>
 </body>
 

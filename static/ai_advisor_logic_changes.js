@@ -117,6 +117,15 @@
             const b = proposal.baseline_stats || {};
             const v = proposal.variant_stats || {};
 
+            // A drawdown is a magnitude: printed without a sign, and without a good/bad colour (a
+            // smaller drawdown is better, which a sign-based colour cannot say).
+            function _mddVal(val) {
+                if (val == null) return '<span class="stat-value">—</span>';
+                const n = parseFloat(val);
+                const shown = isNaN(n) ? String(val) : String(Math.abs(n));
+                return `<span class="stat-value">${_escapeHtml(shown)}</span>`;
+            }
+
             function _statVal(val, pos_good) {
                 if (val == null) return '<span class="stat-value">—</span>';
                 const n = parseFloat(val);
@@ -142,7 +151,7 @@
                 </div>
                 <div class="stat-row">
                   <span class="stat-label">Max DD</span>
-                  ${_statVal(b.max_drawdown, false)}
+                  ${_mddVal(b.max_drawdown)}
                 </div>
                 <div class="stat-row">
                   <span class="stat-label">Ann. return</span>
@@ -161,7 +170,7 @@
                 </div>
                 <div class="stat-row">
                   <span class="stat-label">Max DD</span>
-                  ${_statVal(v.max_drawdown, false)}
+                  ${_mddVal(v.max_drawdown)}
                 </div>
                 <div class="stat-row">
                   <span class="stat-label">Ann. return</span>

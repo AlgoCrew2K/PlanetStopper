@@ -190,7 +190,7 @@ class TestBasisLine:
         assert summary["basis_label"] in basis.text
         retirement = tree.find(testid="retirement-last-run-basis")
         assert retirement is not None
-        assert summary["basis_label"] in retirement.text
+        assert "Composer realized daily returns" in retirement.text
 
     def test_the_basis_line_and_the_as_of_use_the_shared_as_of_style(
         self, client, isolated_db, monkeypatch
@@ -669,10 +669,15 @@ class TestEmptyAndFailedStates:
         seed_state_only(real)
         panel, text = _only_state(client)
         assert _state_node(panel).attrs["data-state"] == "needs_newer_run"
-        assert NEVER_RUN_TEXT in text
+        assert "No realized series yet" not in text, (
+            "the run analysed series; the tab must not say there are none"
+        )
+        assert NEVER_RUN_TEXT not in text
         assert "newer run" in text.lower()
         assert analytics.format_et_stamp(real["run_at"]) in text
-        assert "03:45 UTC" in text
+        assert str(real["symphonies_with_series"]) in text, (
+            "the copy states what is true: how many symphonies the run analysed"
+        )
 
     @pytest.mark.parametrize(
         "row", ["summary_series_unavailable.json", "summary_insufficient_symphonies.json"]

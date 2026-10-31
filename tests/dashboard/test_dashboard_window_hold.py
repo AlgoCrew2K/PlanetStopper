@@ -50,7 +50,7 @@ def _strip(token: str) -> dict:
 
 
 def _headline(token: str, window_label: str) -> dict:
-    return {"headline": sup.fmt_pct(_strip(token)["guard_alpha"]), "label": window_label}
+    return {"headline": sup.fmt_pp(_strip(token)["guard_alpha"]), "label": window_label}
 
 
 PICK_1Y = "await H.click('[data-testid=\"window-1y\"]');"
@@ -65,8 +65,8 @@ class TestPickedWindowSurvivesEveryRefresh:
     def test_preconditions_the_windows_differ_on_the_headline_and_the_vol_row(self):
         """Without this the scenarios below could not tell the picked window from the default."""
         bodies = _bodies()
-        poll_text = sup.fmt_pct(bodies["pollNew"]["portfolio_strip"]["guard_alpha"])
-        assert poll_text != sup.fmt_pct(_strip("1y")["guard_alpha"]), "poll and 1y headline equal"
+        poll_text = sup.fmt_pp(bodies["pollNew"]["portfolio_strip"]["guard_alpha"])
+        assert poll_text != sup.fmt_pp(_strip("1y")["guard_alpha"]), "poll and 1y headline equal"
         assert sup.vol_texts(_strip("30d")) != sup.vol_texts(_strip("1y")), (
             "30d and 1y vol rows equal"
         )
@@ -348,7 +348,7 @@ def test_a_failed_1y_strip_request_keeps_the_last_1y_values(spec):
 # ---------------------------------------------------------------------------
 
 
-def test_the_comparison_rows_read_the_same_whatever_window_is_picked():
+def test_only_the_max_dd_row_follows_the_picked_window():
     def scenario(token: str) -> str:
         return (
             r"""
@@ -371,8 +371,22 @@ def test_the_comparison_rows_read_the_same_whatever_window_is_picked():
         ).replace("__TOKEN__", token)
 
     control, picked = _run(scenario("30d")), _run(scenario("1y"))
-    assert picked["rows"] == control["rows"], (
-        "the picked window changed a Today/Cumulative/Max DD row"
+    for row in ("today", "cumulative"):
+        assert picked["rows"][row] == control["rows"][row], (
+            f"the picked window changed the {row} row"
+        )
+    # The Max DD row is the picked window's own: the strip's figures, whatever the poll carries.
+    for result, token in ((control, "30d"), (picked, "1y")):
+        window = sup.mdd_texts(_strip(token))
+        bot, held, delta = result["rows"]["mdd"]
+        assert [bot, held] == [window["bot"], window["held"]], (
+            f"{token}: the Max DD row is not the picked window's"
+        )
+        assert abs(sup.pp_delta_value(delta) - window["delta_pp"]) <= 0.006, (
+            f"{token}: the Max DD delta {delta!r} is not the picked window's"
+        )
+    assert picked["rows"]["mdd"] != control["rows"]["mdd"], (
+        "the two windows must differ for this to tell the picked window from the default"
     )
     assert picked["hero"] == ["/api/hero-chart/1y"], picked["hero"]
     assert picked["saved"] == ["/api/guard-alpha-summary?window=1y"], picked["saved"]
@@ -394,7 +408,7 @@ def test_a_poll_after_picking_all_time_keeps_the_all_time_headline():
     """
     r = _run(scenario)
     want = _headline("all", "All Time")
-    assert sup.fmt_pct(_bodies()["pollNew"]["portfolio_strip"]["guard_alpha"]) != want["headline"]
+    assert sup.fmt_pp(_bodies()["pollNew"]["portfolio_strip"]["guard_alpha"]) != want["headline"]
     assert r["picked"] == want
     assert r["after"] == want, "the poll replaced the All Time headline"
     assert "/api/strip/all" in r["strips"]

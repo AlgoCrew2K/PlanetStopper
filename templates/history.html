@@ -38,9 +38,6 @@
            defined once in layout.css; the rules below add layout only, never a look. */
         .hero-section > .section-header:first-child { margin-top: 0; }
 
-        /* The shared stat label is upper-case; the alpha keeps its lower-case glyph. */
-        .alpha-glyph { text-transform: none; }
-
         .reason-grid .sym-card { cursor: default; overflow: hidden; }
 
         /* Controls bar */
@@ -192,7 +189,8 @@
             <div data-testid="history-hero" class="mini-stats">
                 <div data-testid="stat-total-alpha" class="mini-stat">
                     <div class="mini-stat-value" id="val-total-alpha">--</div>
-                    <div class="mini-stat-label">Total guard <span class="alpha-glyph">&alpha;</span></div>
+                    <div class="mini-stat-label">Sum of exit alpha</div>
+                    <div class="mini-stat-note" id="total-alpha-descriptor">Each exit's return minus its if-held return at 15:54 ET, added across the window's exits with no size weighting. Not a portfolio return.</div>
                 </div>
                 <div data-testid="stat-total-saved" class="mini-stat">
                     <div class="mini-stat-value" id="val-total-saved">--</div>
@@ -222,7 +220,7 @@
 
         <!-- Daily alpha strip chart -->
         <div data-testid="daily-strip" class="hero-section">
-            <div data-testid="daily-strip-header" class="section-header">Daily Guard &alpha;</div>
+            <div data-testid="daily-strip-header" class="section-header">Daily sum of exit alpha (pts, unweighted)</div>
             <div class="daily-chart-wrap">
                 <svg id="daily-chart-svg" width="100%" height="100" preserveAspectRatio="none"></svg>
             </div>

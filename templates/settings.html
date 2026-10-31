@@ -452,6 +452,23 @@
     .sym-has-override { color: var(--studio-accent); font-weight: 700; }
     .sym-locked-count { color: var(--studio-warn); }
     .sym-empty { padding: 16px; font-size: 12px; color: var(--studio-ink-dim); }
+    /* Symphonies still recorded but no longer held: listed apart and dimmed, with nothing to edit. */
+    .sym-gone-heading {
+      padding: 10px 14px 4px;
+      border-top: 1px solid var(--studio-rule);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--studio-ink-faint);
+    }
+    .sym-gone-row {
+      padding: 4px 14px 8px;
+      font-size: 12px;
+      color: var(--studio-ink-faint);
+      opacity: 0.75;
+      overflow-wrap: anywhere;
+    }
 
     #sym-detail {
       background: var(--studio-paper);

@@ -2755,27 +2755,34 @@ def test_index_js_has_named_updateComparisonRows_function():
     )
 
 
-def test_index_js_updateComparisonRows_reads_all_three_portfolio_strip_keys():
-    """updateComparisonRows must reference today_change, cumulative_return, and max_drawdown.
+def test_index_js_reads_all_three_portfolio_strip_keys():
+    """TODAY and CUMULATIVE read their legs from the polling response in updateComparisonRows;
+    the MAX DD row reads max_drawdown from the picked window's strip in updateMddRow.
 
-    All three comparison rows (TODAY / CUMULATIVE / MAX DD) require separate
-    data sources from portfolio_strip. The function body must reference all three
-    keys so each row gets the correct live value from the polling response.
+    The three comparison rows require separate data sources. The poll's own max_drawdown is the
+    lifetime figure, a different window than the row's label names, so updateComparisonRows must
+    not read it.
     """
     idx_js = _STATIC_DIR / "index.js"
     src = idx_js.read_text(encoding="utf-8")
 
-    match = re.search(r"function updateComparisonRows\b.*?(?=\nfunction |\nvar |\Z)", src, re.S)
-    assert match, "index.js must define updateComparisonRows"
-    fn_body = match.group(0)
-
-    for key in ("today_change", "cumulative_return", "max_drawdown"):
-        assert key in fn_body, (
-            f"updateComparisonRows must reference portfolio_strip.{key} to update "
-            f"the corresponding comparison row. All 3 rows need separate data: "
-            f"today_change → TODAY row, cumulative_return → CUMULATIVE row, "
-            f"max_drawdown → MAX DD row."
+    def body_of(name: str) -> str:
+        match = re.search(
+            rf"function {name}\b.*?(?=\n    function |\nfunction |\nvar |\Z)", src, re.S
         )
+        assert match, f"index.js must define {name}"
+        return match.group(0)
+
+    comparison = body_of("updateComparisonRows")
+    for key in ("today_change", "cumulative_return"):
+        assert key in comparison, (
+            f"updateComparisonRows must reference portfolio_strip.{key} to update "
+            f"the corresponding comparison row (today_change -> TODAY row, "
+            f"cumulative_return -> CUMULATIVE row)."
+        )
+    assert "max_drawdown" in body_of("updateMddRow"), (
+        "updateMddRow must read max_drawdown from the picked window's strip: MAX DD row."
+    )
 
 
 def test_rendered_dashboard_has_comp_bar_elements(monkeypatch):

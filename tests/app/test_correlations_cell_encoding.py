@@ -263,9 +263,11 @@ class TestCellsAreFocusableAndCarryTheirDetail:
             assert "0 aligned days" in cell.attrs["title"]
             assert not re.search(r"\d{4}-\d{2}-\d{2}", cell.attrs["title"])
 
-    def test_the_only_visible_text_in_a_cell_is_its_correlation(
+    def test_the_only_visible_text_in_a_served_cell_is_its_correlation(
         self, client, isolated_db, monkeypatch
     ):
+        """The served markup holds the correlation alone; the page script adds the aligned days
+        under it (data-n-obs carries the number), which the browser test reads."""
         summary, grid = _real_run_grid(client, monkeypatch)
         pairs = stored_pairs(summary)
         for cell in grid.off_diagonal():
@@ -646,16 +648,27 @@ class TestMatrixStyleContract:
             body = " ".join(_rules_for(f".corr-band-{band}"))
             assert not any(t in body for t in _TOKEN_FOR_BAND.values()), band
 
-    @pytest.mark.parametrize("level", _THIN_LEVELS)
-    def test_a_thin_marker_is_a_hatch_of_the_faint_ink_token_that_leaves_the_fill_alone(
-        self, level
+    @pytest.mark.parametrize(("level", "glyph"), [("uncertainty", "2020"), ("stress", "2021")])
+    def test_a_thin_marker_is_a_corner_mark_of_the_dim_ink_token_that_leaves_the_fill_alone(
+        self, level, glyph
     ):
+        """A thin pair keeps its band fill readable: the marker is a small mark in the cell's
+        corner (its own pseudo-element), not a pattern drawn behind the number."""
         bodies = _rules_for(f".corr-thin-{level}")
         assert bodies, f"no rule styles .corr-thin-{level}"
         body = " ".join(bodies)
-        assert "repeating-linear-gradient" in body and "var(--studio-ink-faint)" in body
-        assert "background-image" in body
-        assert not re.search(r"(?<![-\w])background\s*:", body), "a shorthand would erase the fill"
+        corner_selectors = [
+            sel
+            for sel, _ in _matrix_rules()
+            if re.search(rf"\.corr-thin-{level}(?![\w-])", sel) and "::after" in sel
+        ]
+        assert corner_selectors, f".corr-thin-{level} has no ::after corner mark"
+        assert re.search(rf'content\s*:\s*"\\{glyph}"', body), f"no \\{glyph} mark for {level}"
+        assert "var(--studio-ink-dim)" in body, "the mark is drawn in the dim ink token"
+        assert "gradient" not in body, "a pattern behind the number would not leave the fill alone"
+        assert not re.search(r"(?<![-\w])background[-\w]*\s*:", body), (
+            "the marker sets no background property, so the band fill is kept"
+        )
 
     def test_the_two_markers_are_drawn_differently(self):
         stress = " ".join(_rules_for(".corr-thin-stress"))
@@ -677,7 +690,7 @@ class TestMatrixStyleContract:
             "--studio-warn",
             "--studio-pos",
             "--studio-ink",
-            "--studio-ink-faint",
+            "--studio-ink-dim",
         ):
             assert re.search(rf"{re.escape(token)}\s*:", light), f"{token} missing in light"
             assert re.search(rf"{re.escape(token)}\s*:", dark), f"{token} missing in dark"
@@ -688,7 +701,7 @@ class TestMatrixStyleContract:
             "--studio-warn",
             "--studio-pos",
             "--studio-ink",
-            "--studio-ink-faint",
+            "--studio-ink-dim",
         }
         assert signal_and_ink <= referenced, "the matrix rules do not use the five tokens"
         for token in referenced:

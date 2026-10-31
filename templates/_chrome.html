@@ -128,6 +128,23 @@
        wraps inside the screen instead of widening the page. The button's own inline style
        says nowrap, so only !important can override it here. */
     [data-testid="force-run-btn"] { max-width:100%; white-space:normal !important; }
+
+    /* A compact header on a phone, so the page's first content is on the first screen: tighter
+       padding and gaps; the engine status, the alert bell and the mode pill share the wordmark's
+       row; the two action buttons share the next; the five links take one row with less padding
+       each. Every control stays on screen. The inline styles set these values, so !important. */
+    .shell-nav { padding:8px 12px !important; row-gap:6px; column-gap:8px; }
+    .shell-nav > div[style="flex:1;"] { display:none; }
+    .shell-nav > .shell-nav-status { order:1; }
+    .shell-nav > #candidate-alert-indicator { order:2; }
+    .shell-nav > [data-testid="mode-pill"] { order:3; }
+    .shell-nav > [data-testid="force-run-btn"] { order:4; flex:1 1 40%; padding:6px 10px !important; }
+    .shell-nav > #emergency-liquidate { order:5; flex:1 1 40%; padding:6px 10px !important; font-size:11px !important; }
+    .shell-nav > .shell-nav-links { order:6; flex:1 1 100%; margin-left:0; row-gap:4px; }
+    .shell-nav-links { gap:0; }
+    .shell-nav-links a { padding:6px 5px !important; font-size:12px !important; }
+    /* The current page's underline sits at the link's own foot instead of below the row. */
+    .shell-nav-links a > span { bottom:0 !important; left:6px !important; right:6px !important; }
   }
   /* display:flex must NOT appear as an inline style — it overrides [hidden].
      Gate display on the hidden attribute so setAttribute('hidden','') actually hides. */

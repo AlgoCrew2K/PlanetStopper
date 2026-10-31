@@ -52,7 +52,7 @@
         // --- risk-adjusted: primary (bold) ---
         ['sharpe',              'Sharpe',                    'num',      true],
         ['sortino',             'Sortino',                   'num',      false],
-        ['max_drawdown',        'Max DD',                    'pct_mag',  true],
+        ['max_drawdown',        'Max DD',                    'pct_mag',  true, true],  // lower is better
         ['max_drawdown_delta',  'Max DD reduction',          'pp',       false],  // derived
         ['calmar',              'Calmar',                    'num',      false],
         // --- volatility ---
@@ -77,14 +77,19 @@
         return value.toFixed(3);
     }
 
-    function fmtDelta(live, shadow, kind) {
+    function fmtDelta(live, shadow, kind, lowerIsBetter) {
         if (live === null || shadow === null || live === undefined || shadow === undefined) return '—';
         if (typeof live !== 'number' || typeof shadow !== 'number') return '—';
         if (!isFinite(live) || !isFinite(shadow)) return '—';
         if (Math.abs(live) > 1000 || Math.abs(shadow) > 1000) return '—';
-        var delta = shadow - live;
-        // The delta is the signed difference even where the legs show magnitudes.
-        var formatted = fmt(delta, kind === 'pct_mag' ? 'pct_frac' : kind);
+        // The lower-is-better rows (the drawdown and volatility legs) share one convention and
+        // one unit, stated in the column header: bot minus baseline, in percentage points, of
+        // the magnitudes the legs show. A negative delta is the bot drawing down or swinging less.
+        var tallied = kind === 'pct_mag' || lowerIsBetter;
+        var delta = tallied
+            ? (kind === 'pct_mag' ? Math.abs(shadow) - Math.abs(live) : shadow - live)
+            : shadow - live;
+        var formatted = fmt(delta, tallied ? 'pp' : kind);
         if (formatted === '—') return formatted;
         // One sign per delta: the 'pp' kind already carries its own '+', the others do not.
         if (delta > 0) return '↑ ' + (formatted.charAt(0) === '+' ? '' : '+') + formatted;
@@ -315,10 +320,16 @@
             // color decision flips.
             var dcHasBoth = typeof liveVal === 'number' && typeof shadowVal === 'number'
                             && isFinite(liveVal) && isFinite(shadowVal);
-            var dcDelta = dcHasBoth ? (shadowVal - liveVal) : null;
+            // The drawdown legs are magnitudes: the delta is the gap between the magnitudes.
+            var dcDelta = dcHasBoth
+                ? (kind === 'pct_mag' ? Math.abs(shadowVal) - Math.abs(liveVal) : shadowVal - liveVal)
+                : null;
             var dcGood = dcDelta === null ? null : (invert ? (dcDelta <= 0) : (dcDelta >= 0));
             var dc = dcDelta === null ? 'neutral' : (dcGood ? 'pos' : 'neg');
             var primaryAttr = isPrimary ? ' data-primary="true"' : '';
+            // A reduction is measured against nothing: the if-held cell of a derived row holds no
+            // value (a "0.00pp" there is a baseline that was never measured).
+            var derivedRow = /_delta$/.test(key);
             var deltaColor = dc === 'pos' ? 'var(--studio-pos)' : dc === 'neg' ? 'var(--studio-neg)' : 'inherit';
             var barFill = key === 'max_drawdown' ? 'var(--studio-neg)' : 'var(--studio-accent)';
 
@@ -335,10 +346,10 @@
             return (
                 '<tr data-testid="metric-row"' + primaryAttr + '>'
                 + '<td>' + label + '</td>'
-                + '<td style="text-align:right;color:' + signColor(liveVal, key)   + '">' + fmt(liveVal, kind)   + '</td>'
+                + '<td style="text-align:right;color:' + signColor(liveVal, key)   + '">' + (derivedRow ? '—' : fmt(liveVal, kind)) + '</td>'
                 + '<td style="text-align:right;color:' + signColor(shadowVal, key) + '">' + fmt(shadowVal, kind) + '</td>'
                 + '<td class="delta" style="text-align:right;color:' + deltaColor + '">'
-                +   metricBarSvg + fmtDelta(liveVal, shadowVal, kind)
+                +   metricBarSvg + fmtDelta(liveVal, shadowVal, kind, invert)
                 + '</td>'
                 + '</tr>'
             );
@@ -379,6 +390,27 @@
         el.style.color = good ? 'var(--studio-pos)' : 'var(--studio-neg)';
     }
 
+    // The tile names what its number is: the guard effect (Bot return minus If-held return,
+    // each compounded over the window) for the portfolio, or for the picked symphony, over
+    // the picked window; the two returns it is the gap between are stated beside it.
+    function renderGuardEffectCaption(liveTR, shadowTR) {
+        var scope = segValue('scope-toggle');
+        var windowToken = segValue('days-picker');
+        var windowName = /^\d+d$/.test(windowToken) ? windowToken : String(windowToken || '').toUpperCase();
+        var labelEl = document.getElementById('guard-alpha-label');
+        if (labelEl) {
+            labelEl.textContent = (scope === 'symphony' ? 'Guard effect on symphony' : 'Guard effect on portfolio')
+                + (windowName ? ' · ' + windowName : '');
+        }
+        var basisEl = document.getElementById('guard-alpha-basis');
+        if (basisEl) {
+            basisEl.textContent = liveTR !== null && shadowTR !== null
+                ? shadowTR.toFixed(2) + '% Bot vs ' + liveTR.toFixed(2) + '% If held, compounded.'
+                    + (scope === 'symphony' ? '' : ' Same figure as the Dashboard.')
+                : '';
+        }
+    }
+
     function renderHeadlineStats(payload) {
         var live   = payload.live_metrics   || {};
         var shadow = payload.shadow_metrics || {};
@@ -390,11 +422,12 @@
         var gaEl = document.getElementById('guard-alpha-value');
         if (gaEl) {
             gaEl.textContent = guardAlpha !== null
-                ? (guardAlpha >= 0 ? '+' : '') + guardAlpha.toFixed(2) + '%'
+                ? (guardAlpha >= 0 ? '+' : '') + guardAlpha.toFixed(2) + ' pp'
                 : '--';
             gaEl.style.color = guardAlpha !== null && guardAlpha >= 0
                 ? 'var(--studio-pos)' : 'var(--studio-neg)';
         }
+        renderGuardEffectCaption(liveTR, shadowTR);
 
         // Phase 2 risk-adjusted headline deltas (ux-design-deliverable.md §Change 1).
         // sharpeDelta / sortinoDelta: bot − held; higher is better.
@@ -785,7 +818,11 @@
         emptyState.style.display = 'none';
         ids.forEach(function (id) {
             var entry = symphonies[id];
-            if (entry.replay) tbody.appendChild(preconditionRowEl(id, 'Replay', entry.replay));
+            // A symphony without a replay sample has no Replay row; the panel note below says
+            // once how many lack one.
+            if (entry.replay && !_replayIsCold(entry)) {
+                tbody.appendChild(preconditionRowEl(id, 'Replay', entry.replay));
+            }
             if (entry.shadow) tbody.appendChild(preconditionRowEl(id, 'Shadow', entry.shadow));
         });
 

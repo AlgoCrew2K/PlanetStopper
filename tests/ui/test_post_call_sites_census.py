@@ -62,11 +62,49 @@ def sanitised(text: str) -> str:
             out.append("".join("\n" if ch == "\n" else " " for ch in text[i:end]))
             i = end
             continue
+        if c == "/" and _starts_regex_literal(out):
+            end = _regex_literal_end(text, i)
+            if end > i + 1:
+                out.append("/" + " " * (end - i - 2) + "/")
+                i = end
+                continue
         if c in "'\"`":
             quote = c
         out.append(c)
         i += 1
     return "".join(out)
+
+
+# A "/" after one of these (or at the start) begins a regular-expression literal, not a division.
+_REGEX_LEAD_CHARS = "(,=:[!&|?{};+-*%<>~^"
+
+
+def _starts_regex_literal(out: list[str]) -> bool:
+    for previous in reversed(out):
+        if previous.isspace():
+            continue
+        return previous in _REGEX_LEAD_CHARS
+    return True
+
+
+def _regex_literal_end(text: str, start: int) -> int:
+    """The index just past the closing ``/`` of the regex literal that opens at ``start``. A quote
+    character inside a literal (``/["\\]/``) is not the start of a string."""
+    i = start + 1
+    in_class = False
+    while i < len(text) and text[i] != chr(10):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            return i + 1
+        i += 1
+    return start + 1
 
 
 def enclosing_call_name(clean: str, index: int) -> str:

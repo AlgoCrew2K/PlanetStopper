@@ -170,6 +170,16 @@ def _with_portfolio_meta(state: dict, **fields) -> dict:
     return out
 
 
+def _strip_with_mdd(world: dict, bot, held, *, insufficient_history: bool = False) -> dict:
+    """The default window's strip answer, carrying chosen Max DD legs."""
+    strip = world["strips"]["30d"]
+    return sup.strip_with(
+        strip,
+        max_drawdown={**strip["max_drawdown"], "dry_run": bot, "if_held": held},
+        insufficient_history=insufficient_history,
+    )
+
+
 def _with_strip_legs(state: dict, row: str, bot, held) -> dict:
     out = copy.deepcopy(state)
     out["portfolio_strip"][row] = {**out["portfolio_strip"][row], "dry_run": bot, "if_held": held}
@@ -273,11 +283,14 @@ class TestTheModeFollowsThePoll:
 
 def _wins(row: str, bot, held) -> bool | None:
     """Whether the bot side wins a row by the rule the server render applies to it (a missing leg of
-    Today, Cumulative and Max DD reads as 0, as the template does); None when no side may win."""
-    if row == "vol":
-        return None if bot is None or held is None else bot <= held
+    Today and Cumulative reads as 0, as the template does); None when no side may win. Ann. Vol and
+    Max DD are the picked window's rows: they need both legs, and the smaller figure leads."""
+    if row in ("vol", MDD_ROW):
+        if bot is None or held is None:
+            return None
+        return bot <= held if row == "vol" else abs(bot) <= abs(held)
     b, h = (bot or 0.0), (held or 0.0)
-    return abs(b) <= abs(h) if row == MDD_ROW else b >= h
+    return b >= h
 
 
 def _expect_classes(bot_wins: bool | None) -> dict:
@@ -326,31 +339,60 @@ class TestTheComparisonBarsFollowThePoll:
         assert r["bars"][key] == _expect_classes(_wins(key, bot, held))
 
     @pytest.mark.parametrize(("bot", "held"), LEG_CASES)
-    def test_max_drawdown_follows_the_legs_when_the_history_is_long_enough(self, bot, held):
-        state = _with_strip_legs(_same_stamp(_world()), "max_drawdown", bot, held)
-        state = _with_portfolio_meta(state, insufficient_history=False)
+    def test_max_drawdown_follows_the_legs_of_the_windows_strip(self, bot, held):
+        """The hero Max DD row is the picked window's: its classes come from the strip answer."""
+        world = _world()
         r = _run(
             r"""
         await H.boot({ extras: true });
-        await poll(H.bodies.edited);
+        await poll(H.bodies.same);
         return { bars: bars() };
         """,
-            edited=state,
+            strips={**world["strips"], "30d": _strip_with_mdd(world, bot, held)},
+            same=_same_stamp(world),
         )
         assert r["bars"][MDD_ROW] == _expect_classes(_wins(MDD_ROW, bot, held))
 
     def test_with_too_little_history_neither_max_drawdown_bar_carries_a_class(self):
-        state = _with_strip_legs(_same_stamp(_world()), "max_drawdown", 0.5, 2.0)
-        state = _with_portfolio_meta(state, insufficient_history=True)
+        world = _world()
         r = _run(
             r"""
         await H.boot({ extras: true });
-        await poll(H.bodies.edited);
+        await poll(H.bodies.same);
         return { bars: bars() };
         """,
-            edited=state,
+            strips={
+                **world["strips"],
+                "30d": _strip_with_mdd(world, 0.5, 2.0, insufficient_history=True),
+            },
+            same=_same_stamp(world),
         )
         assert r["bars"][MDD_ROW] == _expect_classes(None)
+
+    def test_a_poll_leaves_the_max_drawdown_bars_and_text_the_windows_strip_wrote(self):
+        """A poll carries the lifetime drawdown, a figure no window has: it never reaches the row,
+        whatever its legs and its history flag say."""
+        world = _world()
+        lifetime = _with_strip_legs(_same_stamp(world), "max_drawdown", 0.5, 2.0)
+        lifetime = _with_portfolio_meta(lifetime, insufficient_history=True)
+        r = _run(
+            r"""
+        await H.boot({ extras: true });
+        const row = function () {
+          return { bars: bars().mdd, bot: H.text('[data-testid="comp-mdd-bot-text"]'),
+                   held: H.text('[data-testid="comp-mdd-held-text"]') };
+        };
+        const before = row();
+        await poll(H.bodies.lifetime);
+        return { before: before, after: row() };
+        """,
+            strips={**world["strips"], "30d": _strip_with_mdd(world, 2.0, 1.0)},
+            lifetime=lifetime,
+        )
+        assert r["before"]["bars"] == _expect_classes(_wins(MDD_ROW, 2.0, 1.0)), (
+            "premise: the strip answer decided the row"
+        )
+        assert r["after"] == r["before"]
 
     @pytest.mark.parametrize(
         ("bot", "held"),
@@ -417,33 +459,46 @@ class TestTheComparisonBarsFollowThePoll:
 
 
 class TestTheMaxDrawdownLabelsFollowThePoll:
-    def test_a_poll_with_too_little_history_shows_the_label_and_hides_the_alpha(self):
+    def test_a_poll_with_too_little_history_shows_the_card_label_and_hides_the_card_alpha(self):
+        """The cards' labels follow the poll; the hero row's follow the window's strip only."""
         world = _world()
         short = _with_portfolio_meta(_same_stamp(world), insufficient_history=True)
         long = _with_portfolio_meta(_same_stamp(world), insufficient_history=False)
         r = _run(
             r"""
         await H.boot({ extras: true });
+        const before = mddLabels();
         await poll(H.bodies.short);
         const short = mddLabels();
         await poll(H.bodies.long);
-        return { short: short, long: mddLabels() };
+        return { before: before, short: short, long: mddLabels() };
         """,
             short=short,
             long=long,
         )
-        assert r["short"] == {
-            "heroLabel": True,
-            "heroDelta": False,
-            "cardLabel": True,
-            "cardBadge": False,
-        }
-        assert r["long"] == {
-            "heroLabel": False,
-            "heroDelta": True,
-            "cardLabel": False,
-            "cardBadge": True,
-        }
+        assert (r["short"]["cardLabel"], r["short"]["cardBadge"]) == (True, False)
+        assert (r["long"]["cardLabel"], r["long"]["cardBadge"]) == (False, True)
+        hero = {k: r["before"][k] for k in ("heroLabel", "heroDelta")}
+        assert {k: r["short"][k] for k in hero} == hero, "a poll moved the hero row's label"
+        assert {k: r["long"][k] for k in hero} == hero, "a poll moved the hero row's label"
+
+    @pytest.mark.parametrize("insufficient_history", [True, False])
+    def test_the_hero_label_and_alpha_follow_the_windows_strip(self, insufficient_history):
+        world = _world()
+        r = _run(
+            r"""
+        await H.boot({ extras: true });
+        await poll(H.bodies.same);
+        return mddLabels();
+        """,
+            strips={
+                **world["strips"],
+                "30d": _strip_with_mdd(world, 0.5, 2.0, insufficient_history=insufficient_history),
+            },
+            same=_same_stamp(world),
+        )
+        assert r["heroLabel"] is insufficient_history
+        assert r["heroDelta"] is (not insufficient_history)
 
 
 class TestEachCardsLifetimeMaxDrawdownFollowsThePoll:
@@ -618,7 +673,7 @@ class TestThePanelsFollowThePoll:
             three=_with_panels(_same_stamp(world), vars_locked_count=3),
             zero=_with_panels(_same_stamp(world), vars_locked_count=0),
         )
-        assert r["three"] == {"hidden": False, "text": "3"}
+        assert r["three"] == {"hidden": False, "text": "3 locked"}
         assert r["zero"]["hidden"] is True and r["zero"]["text"] == "", (
             "a badge hidden at zero must also be empty (the server render's empty state)"
         )

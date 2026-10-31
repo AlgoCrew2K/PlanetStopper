@@ -906,16 +906,21 @@ _TENURE_RENDER_HELPER_FN_NAMES = [
 ]
 
 # The Retirement tab's render helpers: the summary tiles, the Overview pointer and the
-# exclusion-reason sentence. Each runs on every AI Advisor page load, is called from
-# ai_advisor_tab() (and, for the sentence, from the excluded-symphony resolver), and none may
+# exclusion-reason sentence, and the two text filters the tab and the observations section print
+# through (a stored verdict or subject as words; a run's basis line). Each runs on every AI
+# Advisor page load, is reached from ai_advisor_tab() or from the template alone, and none may
 # reach a trade, a draft or a live-execution primitive.
 _RETIREMENT_TILES_HELPER_FN_NAME = "_build_retirement_summary_tiles"
 _RETIREMENT_POINTER_HELPER_FN_NAME = "_build_retirement_pointer"
 _RETIREMENT_EXCLUSION_SENTENCE_FN_NAME = "_retirement_exclusion_reason_sentence"
+_ADVISOR_WORDS_FILTER_FN_NAME = "advisor_words"
+_RETIREMENT_BASIS_FILTER_FN_NAME = "retirement_basis"
 _RETIREMENT_TAB_HELPER_FN_NAMES = [
     _RETIREMENT_TILES_HELPER_FN_NAME,
     _RETIREMENT_POINTER_HELPER_FN_NAME,
     _RETIREMENT_EXCLUSION_SENTENCE_FN_NAME,
+    _ADVISOR_WORDS_FILTER_FN_NAME,
+    _RETIREMENT_BASIS_FILTER_FN_NAME,
 ]
 
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [

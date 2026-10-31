@@ -75,6 +75,32 @@ def rewrite_structure_only(structure: list, resolved: dict) -> None:
     )
 
 
+def rewrite_resolved_only(resolved: dict) -> None:
+    """Replace only ``dashboard.resolved``, for a primitive a later plan changed on purpose.
+
+    The structure, the header measurements and Save's request are kept as they are, and so is
+    ``base_sha``. The revision is recorded under ``resolved_revision`` (the head it was taken at,
+    the time, the selector counts before and after).
+    """
+    path = HERE / "baseline.json"
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    before = recorded["dashboard"]["resolved"]
+    recorded["dashboard"]["resolved"] = resolved
+    recorded["resolved_revision"] = {
+        "head_sha": subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip(),
+        "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "selectors_before": len(before),
+        "selectors_after": len(resolved),
+    }
+    path.write_text(json.dumps(recorded, indent=1) + "\n", encoding="utf-8")
+    print(f"rewrote dashboard.resolved: {len(before)} -> {len(resolved)} selectors")
+
+
 def main() -> None:
     dirty = subprocess.run(
         ["git", "-C", str(REPO), "status", "--porcelain", "--", *WATCHED],
@@ -108,6 +134,9 @@ def main() -> None:
 
     if "--structure-only" in sys.argv[1:]:
         rewrite_structure_only(structure, resolved)
+        return
+    if "--resolved-only" in sys.argv[1:]:
+        rewrite_resolved_only(resolved)
         return
 
     env_file = scratch / "shell.env"

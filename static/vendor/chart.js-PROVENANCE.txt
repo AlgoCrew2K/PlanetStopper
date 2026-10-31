@@ -1,0 +1,9 @@
+Chart.js 4.6.1 (MIT), served from this origin so no page runs a script from another host.
+
+Source:  https://cdn.jsdelivr.net/npm/chart.js@4.6.1 (the version the pages resolved to
+         from https://cdn.jsdelivr.net/npm/chart.js on 2026-10-31; the two URLs returned identical bytes)
+File:    chart.js-4.6.1.umd.js, byte-for-byte as served, 210082 bytes
+Digest:  sha384-Emf5ZVIUiarAdhkgtqK+5/Z5qIvM6QoVrS+qAVtfyZVuD5lIHrac0me485+Antp0
+
+To upgrade: fetch the new exact version, replace the file, update the name in the three templates
+(index, performance, ai_advisor) and this note.

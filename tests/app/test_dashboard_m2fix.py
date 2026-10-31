@@ -149,11 +149,17 @@ class TestContainerWidth:
 
         css_body = page_wrap_css_match.group(1)
         # A narrow literal cap on the rule itself, or on the --studio-page-max-width
-        # custom property the rule resolves, would re-introduce the 1280px cap bug.
+        # custom property the rule resolves, would re-introduce the 1280px cap bug. Only those
+        # two places are searched: a responsive breakpoint (@media (max-width: 700px)) elsewhere
+        # in the sheet is a condition on the viewport, not a cap on the page.
+        cap_scope = " ".join(
+            re.findall(r"\.page-wrap\s*\{([^}]*)\}", layout_css)
+            + re.findall(r"--studio-page-max-width\s*:[^;}]*", layout_css)
+        )
         narrow_cap = re.search(
             r"(?:max-width|--studio-page-max-width)\s*:\s*"
             r"(?:[0-9]{1,3}px|[0-9]{2,3}rem)",
-            layout_css,
+            cap_scope,
         )
         assert not narrow_cap, (
             f".page-wrap must not set a narrow max-width cap in static/layout.css; "

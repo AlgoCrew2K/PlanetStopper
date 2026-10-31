@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
     <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', filename='vendor/chart.js-4.6.1.umd.js') }}"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -157,6 +157,14 @@
             grid-column: 1 / -1;
         }
 
+        /* While the suggestions column holds only its one-line hint, the grid is one column: the hint
+           sits above the autotune block and the block takes the width, instead of sitting beside a
+           column of blank. The first suggestion card makes the column real again and the grid two columns. */
+        .adv-grid:has(> .suggestions-col > .suggestions-placeholder:only-child) {
+            grid-template-columns: 1fr;
+        }
+        .suggestions-col:has(> .suggestions-placeholder:only-child) { min-height: 0; }
+
         /* Autotune panel */
         .autotune-panel {
             min-width: 0;
@@ -253,11 +261,12 @@
             padding-bottom: 0;
         }
 
-        /* The eight tabs wrap onto more rows on a narrow screen instead of widening the page. */
+        /* On a narrow screen the tabs stay in ONE row that scrolls sideways, so the first content
+           starts on the first screen instead of under several rows of tabs. */
         @media (max-width: 700px) {
-            .cap-nav { flex-wrap: wrap; }
-            .cap-tab { max-width: 100%; }
-            .cap-tab-attribution { white-space: normal; }
+            .cap-nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
+            .cap-tab { flex: 0 0 auto; white-space: nowrap; bottom: 0; }
+            .cap-tab-attribution { white-space: nowrap; }
         }
 
         /* Tab buttons — not anchors; JS handles switching (AC2) */
@@ -350,16 +359,23 @@
         .heatmap-table { border-collapse: collapse; min-width: 100%; font-size: 0.8125rem; }
         .heatmap-table th, .heatmap-table td { padding: 0.375rem 0.5rem; text-align: center; }
         .heatmap-table th { font-size: 0.6875rem; font-weight: 700; color: var(--studio-ink-dim); white-space: nowrap; }
-        /* A row label wraps: the full display name is shown, never cut. */
+        /* A row label wraps: the full display name is shown, never cut. It stays at the left edge of
+           the box while the columns scroll under it, and is never wider than the box. */
         .heatmap-table th.corr-row-label {
-            text-align: left; white-space: normal; max-width: 22rem; padding-right: 1rem;
+            text-align: left; white-space: normal; max-width: min(22rem, 45vw); padding-right: 1rem;
             font-size: 0.75rem; font-weight: 600; color: var(--studio-ink);
+            position: sticky; left: 0; z-index: 1; background: var(--studio-paper);
         }
         .heatmap-table th.corr-row-label:focus-visible,
         .heatmap-table th.corr-col-label:focus-visible,
         .corr-cell:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
-        /* The number stays in the ink token; the band shows as a fill behind it. */
-        .corr-cell { color: var(--studio-ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+        /* The number stays in the ink token; the band shows as a fill behind it. The aligned days
+           (the depth the number rests on) print under it, so they are read without a hover. */
+        .corr-cell { color: var(--studio-ink); font-variant-numeric: tabular-nums; font-weight: 600; position: relative; }
+        .corr-n {
+            display: block; font-size: 0.5625rem; font-weight: 400; line-height: 1.2;
+            color: var(--studio-ink-dim);
+        }
         .corr-diagonal {
             background-color: var(--studio-chip-bg); color: var(--studio-ink-dim);
             font-variant-numeric: tabular-nums; font-weight: 600;
@@ -370,20 +386,24 @@
         .corr-band-diversifying { background-color: color-mix(in srgb, var(--studio-pos) var(--corr-fill-pct), transparent); }
         .corr-band-neutral { background-color: transparent; }
         .corr-band-undefined { background-color: transparent; font-style: italic; }
-        /* A thin pair is hatched with the faint ink token. background-image only: a background
-           shorthand would erase the band fill. The denser hatch is the stronger shortfall. */
-        .corr-thin-stress {
-            background-image: repeating-linear-gradient(135deg, var(--studio-ink-faint) 0, var(--studio-ink-faint) 1px, transparent 1px, transparent 6px);
+        /* A thin pair carries a small corner mark and keeps its band fill: nothing is drawn behind
+           the number, so it stays readable. One mark for a pair under the uncertainty gate's
+           minimum (the stronger shortfall), another for one under the stress gate's. */
+        .corr-thin-uncertainty::after,
+        .corr-thin-stress::after {
+            position: absolute; top: 1px; right: 3px;
+            font-size: 0.5625rem; font-weight: 700; line-height: 1; color: var(--studio-ink-dim);
         }
-        .corr-thin-uncertainty {
-            background-image: repeating-linear-gradient(135deg, var(--studio-ink-faint) 0, var(--studio-ink-faint) 2px, transparent 2px, transparent 5px);
-        }
+        .corr-thin-uncertainty::after { content: "\2020"; }
+        .corr-thin-stress::after { content: "\2021"; }
         .matrix-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.875rem; font-size: 0.6875rem; color: var(--studio-ink-dim); }
         .corr-legend-item { display: flex; align-items: center; gap: 0.375rem; }
         .corr-legend-swatch {
-            display: inline-block; width: 1.25rem; height: 0.875rem; flex-shrink: 0;
+            display: inline-block; width: 1.25rem; height: 0.875rem; flex-shrink: 0; position: relative;
             border: 1px solid var(--studio-border); border-radius: 0.1875rem;
         }
+        .correlations-series { margin-top: 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); }
+        .correlations-series ul { margin: 0.25rem 0 0; padding-left: 1.25rem; }
         .correlations-excluded { margin-top: 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); }
         .correlations-excluded ul { margin: 0; padding-left: 1.25rem; }
 
@@ -557,6 +577,21 @@
 
         /* Card anatomy */
         .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+
+        /* A proposal card is a column whose action row sits at its foot, so the Approve buttons of
+           cards side by side line up whatever the length of the text above them. */
+        .sym-card.proposal-card { display: flex; flex-direction: column; }
+        .sym-card.proposal-card .proposal-actions { margin-top: auto; }
+        .proposal-card .proposal-actions { padding-top: 0.75rem; }
+
+        /* One labelled line each: identity, what Approve does, what the overlay adds. */
+        .fr-line { font-size: 0.8125rem; margin: 0.25rem 0; line-height: 1.4; }
+        .fr-line-label {
+            display: inline-block; min-width: 5.5rem; margin-right: 0.5rem;
+            font-size: 0.5625rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+            color: var(--studio-ink-dim);
+        }
+        .fr-overlay-raw { margin: 0.375rem 0; font-size: 0.75rem; color: var(--studio-ink); }
 
         /* Strategy incubation gate status chip — mirrors .prism-sentiment-chip's
            shape exactly. Status is computed LIVE via a candidate_hash join at
@@ -880,6 +915,15 @@
             font-size: 0.8125rem;
         }
         .retirement-rec-card:last-child { margin-bottom: 0; }
+        /* The panel holds two sub-sections, each with its own heading and its own run button. */
+        .retirement-subsection + .retirement-subsection {
+            margin-top: 1.5rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--studio-border);
+        }
+        .retirement-subsection > .section-header { margin-top: 0; }
+        /* A verdict or gate label is one word group: it stays on one line. */
+        .tenure-verdict-chip, .gate-pill, .decision-pill { white-space: nowrap; }
         .retirement-rec-pair {
             margin-bottom: 0.375rem;
         }
@@ -958,7 +1002,12 @@
         .retirement-tiles { flex-wrap: wrap; margin-bottom: 0.5rem; }
         .retirement-tiles > * { min-width: 7.5rem; }
         .retirement-pointer-row { margin-bottom: 1rem; }
-        .retirement-pointer-row a { text-decoration: none; }
+        .retirement-pointer-row a {
+            text-decoration: underline;
+            text-underline-offset: 0.2em;
+            color: var(--studio-accent);
+        }
+        .retirement-pointer-row a > span { color: var(--studio-accent); }
         .retirement-last-run-state {
             color: var(--studio-ink);
             font-weight: 700;
@@ -1295,7 +1344,7 @@
 
         {# One line pointing at the Retirement tab. Its text comes from _build_retirement_pointer over context this page already reads, so it makes no request of its own. #}
         <div class="mini-stats retirement-pointer-row">
-            <a class="mini-stat" href="#retirement" data-testid="retirement-pointer"><span class="mini-stat-label">{{ retirement_pointer.text }}</span></a>
+            <a class="mini-stat" href="#retirement" data-testid="retirement-pointer"><span class="mini-stat-label">{{ retirement_pointer.text }} <span aria-hidden="true">&rarr;</span></span></a>
         </div>
 
 
@@ -1586,7 +1635,13 @@
         <!-- advisor-observations-section                                  -->
         <!-- ============================================================ -->
         <style>
-            .obs-section .obs-framing-note { margin: 0 0 0.75rem; }
+            /* The explanation sits at caption size, below the status lines it explains. */
+            .obs-section .obs-framing-note {
+                margin: 0 0 0.75rem;
+                font-size: 0.625rem;
+                line-height: 1.45;
+                color: var(--studio-ink-dim);
+            }
 
             /* One status line per producer; its history opens below the line. */
             .obs-producer {
@@ -1610,6 +1665,7 @@
                 font-variant-numeric: tabular-nums;
             }
             .obs-history { margin-top: 0.375rem; }
+            .obs-scroll { overflow-x: auto; max-width: 100%; }
             .obs-history > summary {
                 cursor: pointer;
                 font-size: 0.6875rem;
@@ -1735,13 +1791,15 @@
             <div class="obs-producer" data-testid="obs-producer" data-role="{{ group.role | e }}">
                 <div class="obs-producer-line">
                     <span class="section-header obs-producer-label" data-testid="obs-producer-label">{{ _ROLE_LABELS.get(group.role, group.role) | e }}</span>
-                    <span class="obs-producer-verdict {{ latest_class }}" data-testid="obs-producer-verdict">{{ latest_verdict | e }}</span>
+                    <span class="obs-producer-verdict {{ latest_class }}" data-testid="obs-producer-verdict">{{ (latest.verdict | advisor_words) if latest.verdict else _VERDICT_NOT_RECORDED }}</span>
                     <span class="obs-producer-time" data-testid="obs-producer-time">{{ latest.created_at | et_stamp }}</span>
                     <span class="obs-producer-total" data-testid="obs-producer-total">{{ group.total }} {{ "observation" if group.total == 1 else "observations" }}</span>
                     <span class="advisory-only-badge" title="Advisory only — never moves money">advisory only</span>
                 </div>
                 <details class="obs-history" data-testid="obs-producer-history">
                     <summary>History</summary>
+                    {# The table scrolls inside its box: an open history never widens the page. #}
+                    <div class="obs-scroll">
                     <table class="obs-table">
                         <thead>
                             <tr>
@@ -1767,8 +1825,8 @@
                                 {% else %}
                                 <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
                                 {% endif %}
-                                <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
-                                <td class="{{ verdict_class }}" data-testid="obs-verdict">{{ verdict | e }}</td>
+                                <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | advisor_words }}</span></td>
+                                <td class="{{ verdict_class }}" data-testid="obs-verdict">{{ (obs.verdict | advisor_words) if obs.verdict else _VERDICT_NOT_RECORDED }}</td>
                                 <td>
                                     <span class="advisory-only-badge" data-testid="advisory-only-badge"
                                           title="Advisory only — never moves money">
@@ -1786,6 +1844,7 @@
                         {% endfor %}
                         </tbody>
                     </table>
+                    </div>
                     {% if group.total > group.rows | length %}
                     <p class="obs-history-note" data-testid="obs-producer-history-note" title="The newest rows shown, of all this producer's rows">{{ group.rows | length }} of {{ group.total }}</p>
                     {% endif %}
@@ -1879,6 +1938,15 @@
                 </table>
                 </div>{# /matrix-scroll #}
 
+                <div class="correlations-series" data-testid="correlations-series">
+                    <div class="legend-as-of">Series held per symphony (first to last day)</div>
+                    <ul>
+                        {%- for _ax in _cm.axes -%}
+                        <li data-testid="correlations-series-item" title="{{ _ax.sym }}">{{ _ax.number }} {{ _ax.name }}: {{ _ax.series_first }} to {{ _ax.series_last }} ({{ _ax.series_points }} points)</li>
+                        {%- endfor -%}
+                    </ul>
+                </div>
+
                 <div class="matrix-legend" data-testid="correlations-legend">
                     {%- for _b in _cm.legend_bands -%}
                     <span class="corr-legend-item" data-testid="corr-legend-band" data-band="{{ _b.band }}">
@@ -1926,12 +1994,8 @@
         <!-- buttons and, once approved, the wind-down checklist.          -->
         <!-- ============================================================ -->
         {# One lifecycle block (explanation, status, Approve/Reject, checklist) shared by the legacy recommendation cards and the review entries. #}
-        {% macro retirement_lifecycle(candidate_id, explanation, written_on, status, checklist, allow_actions, show_explanation) %}
-                    {% if show_explanation %}
-                    <div class="retirement-rec-explanation" data-testid="retirement-rec-explanation">
-                        {%- if explanation is string and explanation.strip() %}{{ explanation }}{% if written_on is string %}{% if written_on.strip() %} (written {{ written_on }}){% endif %}{% elif written_on is not none %} (written not recorded){% endif %}{% elif explanation is none or explanation is string %}explanation unavailable{% else %}not recorded{% endif -%}
-                    </div>
-                    {% endif %}
+        {# The decision state as a pill. A recommendation card prints it in its header row; a tenure entry's lifecycle prints it with its actions. #}
+        {% macro retirement_status_pill(candidate_id, status) %}
                     {% if candidate_id %}
                     {# The pill class per decision state; static/ai_advisor.js swaps to the same three pairs. #}
                     {% set _pill_class = {'pending': 'standby', 'approved': 'armed', 'rejected': 'triggered'}.get(status or 'pending', 'standby') %}
@@ -1940,6 +2004,15 @@
                         {{- (status or 'pending') | capitalize -}}
                     </span>
                     {% endif %}
+        {% endmacro %}
+
+        {% macro retirement_lifecycle(candidate_id, explanation, written_on, status, checklist, allow_actions, show_explanation, show_pill=true) %}
+                    {% if show_explanation %}
+                    <div class="retirement-rec-explanation" data-testid="retirement-rec-explanation">
+                        {%- if explanation is string and explanation.strip() %}{{ explanation }}{% if written_on is string %}{% if written_on.strip() %} (written {{ written_on }}){% endif %}{% elif written_on is not none %} (written not recorded){% endif %}{% elif explanation is none or explanation is string %}explanation unavailable{% else %}not recorded{% endif -%}
+                    </div>
+                    {% endif %}
+                    {% if show_pill %}{{ retirement_status_pill(candidate_id, status) }}{% endif %}
                     {% if allow_actions and (status or 'pending') == 'pending' %}
                     <div class="retirement-rec-actions">
                         <button type="button"
@@ -1992,8 +2065,12 @@
                 {% set unit = fig.get('unit') %}
                 {% set value = fig.get('value') %}
                 {% if value is finite_number and (unit != 'days' or value is whole_number) %}
-                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% else %}{{ value | tenure_number }}{% endif %}
+                {#- A drawdown is a magnitude: no sign is printed, on any leg (max_drawdown, realized_, backtest_, with_, without_). The stored figures stay signed (a drawdown is at most zero) because the verdict compares them as stored. A gap between two legs reads in the same convention: the first leg's magnitude minus the second's (with both legs at most zero, the stored gap with its sign turned), printed as a size with the words that name which leg is the shallower or the deeper. -#}
+                {% set gap_legs = {'max_drawdown_gap': ('realized', 'backtest'), 'max_drawdown_difference': ('without', 'with')}.get(fig_name) -%}
+                {% set gap_shown = ((0 - value) | round(2)) if gap_legs else none -%}
+                <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% elif gap_legs %}{{ gap_shown | abs | tenure_number }}{% elif fig_name == 'max_drawdown' or fig_name.endswith('_max_drawdown') %}{{ value | abs | tenure_number }}{% else %}{{ value | tenure_number }}{% endif %}
                     {%- if unit == 'percent' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
+                    {%- if gap_legs %} ({% if gap_shown == 0 %}{{ gap_legs[0] }} and {{ gap_legs[1] }} are equally deep{% else %}{{ gap_legs[0] }} is {{ 'shallower' if gap_shown < 0 else 'deeper' }} than {{ gap_legs[1] }}{% endif %}){% endif %}
                     {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</div>
                 {% elif value is finite_number %}
                 <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: not computable, not recorded</div>
@@ -2073,12 +2150,165 @@
         <section class="hero-section matrix-card" data-testid="retirement-recommendations-panel">
             <div class="section-header matrix-card-header">Retirement Recommendations</div>
 
+            {# The recommender first: the card to act on is at the top, then the run it came from. #}
+            <section class="retirement-subsection" data-testid="retirement-recommender-section">
+                <div class="section-header">Correlated pairs</div>
+            {# Cycle 2e AC-5b: the cards below are scoped to the latest SUCCESSFUL #}
+            {# run, so when the most recent run (shown in the block above) was    #}
+            {# not that run -- it failed -- say which run the cards come from.    #}
+            {# Absent when nothing has run, when the latest run is the cards run  #}
+            {# (ok then ok, or an ok run that found nothing), and on the legacy   #}
+            {# calendar-date path (no cards run). Autoescaped, nothing is safe.   #}
+            {% if retirement_cards_run and retirement_last_run
+                  and retirement_cards_run.get('run_id') != retirement_last_run.get('run_id') %}
+            {% set _cr_at = retirement_cards_run.get('run_at') %}
+            <div class="retirement-cards-from-earlier-run" data-testid="retirement-cards-from-earlier-run">
+                The most recent run (above) was not successful; the results below are from the latest successful run
+                ({{ _cr_at | et_stamp(date_only=True) }}).
+            </div>
+            {% endif %}
+
+            {% if retirement_recommendations %}
+                {% for rec in retirement_recommendations %}
+                <div class="sym-card retirement-rec-card" data-testid="retirement-recommendation-card">
+                    {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
+                    {# A stored id, name or label that is not non-blank text reads "not recorded"; a card without a usable candidate id offers no decision. #}
+                    {% set _cid = rec.get('candidate_id') %}
+                    {% set _sid = rec.get('sibling_id') %}
+                    {% set _cid_ok = _cid is string and _cid.strip() %}
+                    {% set _sid_ok = _sid is string and _sid.strip() %}
+                    {% set _cname = rec.get('candidate_name') %}
+                    {% set _sname = rec.get('sibling_name') %}
+                    {% set _cand_display = (_cname if _cname is string and _cname.strip() else _cid) if _cid_ok else 'not recorded' %}
+                    {% set _sib_display = (_sname if _sname is string and _sname.strip() else _sid) if _sid_ok else 'not recorded' %}
+                    <div class="card-header-row">
+                        <div class="retirement-rec-pair card-name">
+                            <span class="retirement-rec-candidate" title="{{ (_cid if _cid_ok else 'not recorded') | e }}">{{ _cand_display | e }}</span>
+                            <span aria-hidden="true">&rarr;</span>
+                            <span class="retirement-rec-sibling" title="{{ (_sid if _sid_ok else 'not recorded') | e }}">kept: {{ _sib_display | e }}</span>
+                        </div>
+                        {{ retirement_status_pill(_cid if _cid_ok else '', rec.get('approval_status', 'pending')) }}
+                    </div>
+                    <div class="retirement-rec-meta">
+                        <span data-testid="retirement-rec-correlation">
+                            Correlation: {{ rec.get('correlation') | tenure_number if rec.get('correlation') is not none else '—' }}
+                        </span>
+                        <span>
+                            Composite gap:
+                            {%- if rec.get('sibling_composite') is not none and rec.get('candidate_composite') is not none %}
+                                {# 1e300 bounds the operands so their difference cannot overflow to infinity. #}{% set sc = rec.sibling_composite %}{% set cc = rec.candidate_composite %}
+                                {{ (sc - cc) | tenure_number if sc is finite_number and cc is finite_number and -1e300 < sc < 1e300 and -1e300 < cc < 1e300 else 'not recorded' }}
+                            {%- else %}
+                                —
+                            {%- endif %}
+                        </span>
+                    </div>
+                    <div class="retirement-rec-gates">
+                        <span>Uncertainty gate: {{ 'passed' if rec.get('uncertainty_gate_passed') else 'not met' }}</span>
+                        <span>Structural-redundancy gate: {{ 'passed' if rec.get('structural_redundancy_gate_passed') else 'not met' }}</span>
+                    </div>
+                    {% set _lbl = rec.get('basis_label') %}
+                    <div class="retirement-rec-basis">{{ (_lbl if _lbl is string and _lbl.strip() else 'not recorded') | e }}</div>
+                    {{ retirement_lifecycle(_cid if _cid_ok else '', rec.get('explanation'), rec.get('explanation_written_on'), rec.get('approval_status', 'pending'), rec.get('_checklist'), _cid_ok, true, false) }}
+                </div>
+                {% endfor %}
+            {% endif %}
+            {# Cycle 2e (retirement-visibility AC-6): the "last run" block is #}
+            {# ALWAYS present, above the cards, so a run that recommended     #}
+            {# nothing is still visibly distinct from "never ran". All values #}
+            {# come from the persisted RETIREMENT_RUN_SUMMARY row (the        #}
+            {# thresholds/minimums are read from it, never re-declared here), #}
+            {# are autoescaped, and nothing is marked safe.                   #}
+            <div class="retirement-last-run" data-testid="retirement-last-run">
+                {% if retirement_last_run %}
+                    {% set _lr = retirement_last_run %}
+                    {% set _st = _lr.get('status') %}
+                    <div class="legend-as-of" data-testid="retirement-last-run-time">Last run {{ _lr.get('run_at') | et_stamp }}</div>
+
+                    {% if _st == 'ok' %}
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-basis">
+                            Basis: {{ _lr | retirement_basis }}
+                        </div>
+                        {% if retirement_series_through %}
+                        <div class="legend-as-of" data-testid="retirement-last-run-series-through">Series through {{ retirement_series_through }}</div>
+                        {% endif %}
+                        {# Five tiles from _build_retirement_summary_tiles, in its order; the ids are the ones the lines carried. #}
+                        {% set _tile_ids = ['retirement-last-run-symphonies', 'retirement-last-run-depth', 'retirement-last-run-pairs', 'retirement-last-run-blocked', 'retirement-last-run-recommendations'] %}
+                        <div class="mini-stats retirement-tiles">
+                            {% for _tile in retirement_summary_tiles %}
+                            <div class="mini-stat" data-testid="{{ _tile_ids[loop.index0] }}">
+                                <div class="mini-stat-value">{{ _tile.value }}</div>
+                                <div class="mini-stat-label">{{ _tile.label }}</div>
+                                {% if _tile.detail %}<div class="legend-as-of">{{ _tile.detail }}</div>{% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    {% elif _st == 'series_unavailable' %}
+                        <div class="retirement-last-run-state">
+                            Composer series unavailable &mdash; no symphony had a usable daily return series, so nothing was compared.
+                        </div>
+                        {% set _n_with = _lr.get('symphonies_with_series') %}
+                        {% set _n_roster = _lr.get('roster_size') %}
+                        <div class="retirement-last-run-line" data-testid="retirement-last-run-symphonies">
+                            Symphonies analysed: {{ _n_with if _n_with is not none else '—' }} of {{ _n_roster if _n_roster is not none else '—' }}
+                        </div>
+                    {% elif _st == 'insufficient_symphonies' %}
+                        <div class="retirement-last-run-state">
+                            Insufficient symphonies &mdash; a comparison needs at least two live symphonies; this run found {{ _lr.get('roster_size') if _lr.get('roster_size') is not none else '—' }}.
+                        </div>
+                    {% elif _st == 'internal_error' %}
+                        <div class="retirement-last-run-state retirement-last-run-state--internal_error">
+                            Internal error ({{ _lr.get('error_type') or 'unknown error' }}) &mdash; this run did not complete, so no recommendations were produced.
+                        </div>
+                    {% else %}
+                        <div class="retirement-last-run-state">
+                            Last run status: {{ _st if _st else 'unknown' }}
+                        </div>
+                    {% endif %}
+
+                    {% if retirement_last_run_excluded %}
+                    <div class="retirement-last-run-excluded" data-testid="retirement-last-run-excluded">
+                        Excluded from this run:
+                        <ul>
+                            {% for _ex in retirement_last_run_excluded %}
+                            <li title="{{ _ex.symphony_id }}">{{ _ex.name }} &mdash; {{ _ex.reason_text }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    {% endif %}
+                {% else %}
+                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45 UTC, or use Run now.</div>
+                {% endif %}
+            </div>
+            <div class="retirement-run-now-row">
+                <button type="button"
+                        class="run-btn"
+                        data-testid="retirement-run-now-btn"
+                        title="Runs the same analysis as the nightly 03:45 UTC job; takes a minute or two."
+                        onclick="retirementRunNow(this)">Run recommender</button>
+                <span class="retirement-run-now-status"
+                      data-testid="retirement-run-now-status"
+                      role="status"
+                      aria-live="polite"></span>
+            </div>
+            {# Cycle 2e AC-7b: static hint (rendered in every state, whatever the #}
+            {# market state at render time) -- Run now is refused while the       #}
+            {# market is open because Composer's rate limit is shared with the    #}
+            {# live engine.                                                       #}
+            <div class="retirement-run-now-hint" data-testid="retirement-run-now-hint">
+                Run now is available outside market hours only &mdash; the Composer API is shared with the live engine.
+            </div>
+
+            </section>
+
+            <section class="retirement-subsection" data-testid="tenure-review-section">
+                <div class="section-header">Symphony tenure review</div>
             {# Symphony tenure review: header, run state, then one entry per live symphony. #}
             <div class="tenure-review-header">
                 <button type="button"
                         class="run-trigger-btn"
                         data-testid="tenure-review-run-btn"
-                        onclick="retRunReview(this)">Run review now</button>
+                        onclick="retRunReview(this)">Run tenure review</button>
                 <span class="tenure-review-run-message" data-testid="tenure-review-run-message"
                       role="status" aria-live="polite"></span>
             </div>
@@ -2164,149 +2394,7 @@
             {% endif %}
             {% endif %}
 
-            {# Cycle 2e (retirement-visibility AC-6): the "last run" block is #}
-            {# ALWAYS present, above the cards, so a run that recommended     #}
-            {# nothing is still visibly distinct from "never ran". All values #}
-            {# come from the persisted RETIREMENT_RUN_SUMMARY row (the        #}
-            {# thresholds/minimums are read from it, never re-declared here), #}
-            {# are autoescaped, and nothing is marked safe.                   #}
-            <div class="retirement-last-run" data-testid="retirement-last-run">
-                {% if retirement_last_run %}
-                    {% set _lr = retirement_last_run %}
-                    {% set _st = _lr.get('status') %}
-                    <div class="legend-as-of" data-testid="retirement-last-run-time">Last run {{ _lr.get('run_at') | et_stamp }}</div>
-
-                    {% if _st == 'ok' %}
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-basis">
-                            Basis: {{ _lr.get('source') or 'unknown' }} &mdash; {{ _lr.get('basis_label') or 'basis not recorded' }}
-                        </div>
-                        {% if retirement_series_through %}
-                        <div class="legend-as-of" data-testid="retirement-last-run-series-through">Series through {{ retirement_series_through }}</div>
-                        {% endif %}
-                        {# Five tiles from _build_retirement_summary_tiles, in its order; the ids are the ones the lines carried. #}
-                        {% set _tile_ids = ['retirement-last-run-symphonies', 'retirement-last-run-depth', 'retirement-last-run-pairs', 'retirement-last-run-blocked', 'retirement-last-run-recommendations'] %}
-                        <div class="mini-stats retirement-tiles">
-                            {% for _tile in retirement_summary_tiles %}
-                            <div class="mini-stat" data-testid="{{ _tile_ids[loop.index0] }}">
-                                <div class="mini-stat-value">{{ _tile.value }}</div>
-                                <div class="mini-stat-label">{{ _tile.label }}</div>
-                                {% if _tile.detail %}<div class="legend-as-of">{{ _tile.detail }}</div>{% endif %}
-                            </div>
-                            {% endfor %}
-                        </div>
-                    {% elif _st == 'series_unavailable' %}
-                        <div class="retirement-last-run-state">
-                            Composer series unavailable &mdash; no symphony had a usable daily return series, so nothing was compared.
-                        </div>
-                        {% set _n_with = _lr.get('symphonies_with_series') %}
-                        {% set _n_roster = _lr.get('roster_size') %}
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-symphonies">
-                            Symphonies analysed: {{ _n_with if _n_with is not none else '—' }} of {{ _n_roster if _n_roster is not none else '—' }}
-                        </div>
-                    {% elif _st == 'insufficient_symphonies' %}
-                        <div class="retirement-last-run-state">
-                            Insufficient symphonies &mdash; a comparison needs at least two live symphonies; this run found {{ _lr.get('roster_size') if _lr.get('roster_size') is not none else '—' }}.
-                        </div>
-                    {% elif _st == 'internal_error' %}
-                        <div class="retirement-last-run-state retirement-last-run-state--internal_error">
-                            Internal error ({{ _lr.get('error_type') or 'unknown error' }}) &mdash; this run did not complete, so no recommendations were produced.
-                        </div>
-                    {% else %}
-                        <div class="retirement-last-run-state">
-                            Last run status: {{ _st if _st else 'unknown' }}
-                        </div>
-                    {% endif %}
-
-                    {% if retirement_last_run_excluded %}
-                    <div class="retirement-last-run-excluded" data-testid="retirement-last-run-excluded">
-                        Excluded from this run:
-                        <ul>
-                            {% for _ex in retirement_last_run_excluded %}
-                            <li title="{{ _ex.symphony_id }}">{{ _ex.name }} &mdash; {{ _ex.reason_text }}</li>
-                            {% endfor %}
-                        </ul>
-                    </div>
-                    {% endif %}
-                {% else %}
-                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45 UTC, or use Run now.</div>
-                {% endif %}
-            </div>
-            <div class="retirement-run-now-row">
-                <button type="button"
-                        class="run-btn"
-                        data-testid="retirement-run-now-btn"
-                        title="Runs the same analysis as the nightly 03:45 UTC job; takes a minute or two."
-                        onclick="retirementRunNow(this)">Run now</button>
-                <span class="retirement-run-now-status"
-                      data-testid="retirement-run-now-status"
-                      role="status"
-                      aria-live="polite"></span>
-            </div>
-            {# Cycle 2e AC-7b: static hint (rendered in every state, whatever the #}
-            {# market state at render time) -- Run now is refused while the       #}
-            {# market is open because Composer's rate limit is shared with the    #}
-            {# live engine.                                                       #}
-            <div class="retirement-run-now-hint" data-testid="retirement-run-now-hint">
-                Run now is available outside market hours only &mdash; the Composer API is shared with the live engine.
-            </div>
-
-            {# Cycle 2e AC-5b: the cards below are scoped to the latest SUCCESSFUL #}
-            {# run, so when the most recent run (shown in the block above) was    #}
-            {# not that run -- it failed -- say which run the cards come from.    #}
-            {# Absent when nothing has run, when the latest run is the cards run  #}
-            {# (ok then ok, or an ok run that found nothing), and on the legacy   #}
-            {# calendar-date path (no cards run). Autoescaped, nothing is safe.   #}
-            {% if retirement_cards_run and retirement_last_run
-                  and retirement_cards_run.get('run_id') != retirement_last_run.get('run_id') %}
-            {% set _cr_at = retirement_cards_run.get('run_at') %}
-            <div class="retirement-cards-from-earlier-run" data-testid="retirement-cards-from-earlier-run">
-                The most recent run (above) was not successful; the results below are from the latest successful run
-                ({{ _cr_at | et_stamp(date_only=True) }}).
-            </div>
-            {% endif %}
-
-            {% if retirement_recommendations %}
-                {% for rec in retirement_recommendations %}
-                <div class="sym-card retirement-rec-card" data-testid="retirement-recommendation-card">
-                    {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
-                    {# A stored id, name or label that is not non-blank text reads "not recorded"; a card without a usable candidate id offers no decision. #}
-                    {% set _cid = rec.get('candidate_id') %}
-                    {% set _sid = rec.get('sibling_id') %}
-                    {% set _cid_ok = _cid is string and _cid.strip() %}
-                    {% set _sid_ok = _sid is string and _sid.strip() %}
-                    {% set _cname = rec.get('candidate_name') %}
-                    {% set _sname = rec.get('sibling_name') %}
-                    {% set _cand_display = (_cname if _cname is string and _cname.strip() else _cid) if _cid_ok else 'not recorded' %}
-                    {% set _sib_display = (_sname if _sname is string and _sname.strip() else _sid) if _sid_ok else 'not recorded' %}
-                    <div class="retirement-rec-pair card-name">
-                        <span class="retirement-rec-candidate" title="{{ (_cid if _cid_ok else 'not recorded') | e }}">{{ _cand_display | e }}</span>
-                        <span aria-hidden="true">&rarr;</span>
-                        <span class="retirement-rec-sibling" title="{{ (_sid if _sid_ok else 'not recorded') | e }}">kept: {{ _sib_display | e }}</span>
-                    </div>
-                    <div class="retirement-rec-meta">
-                        <span data-testid="retirement-rec-correlation">
-                            Correlation: {{ rec.get('correlation') | tenure_number if rec.get('correlation') is not none else '—' }}
-                        </span>
-                        <span>
-                            Composite gap:
-                            {%- if rec.get('sibling_composite') is not none and rec.get('candidate_composite') is not none %}
-                                {# 1e300 bounds the operands so their difference cannot overflow to infinity. #}{% set sc = rec.sibling_composite %}{% set cc = rec.candidate_composite %}
-                                {{ (sc - cc) | tenure_number if sc is finite_number and cc is finite_number and -1e300 < sc < 1e300 and -1e300 < cc < 1e300 else 'not recorded' }}
-                            {%- else %}
-                                —
-                            {%- endif %}
-                        </span>
-                    </div>
-                    <div class="retirement-rec-gates">
-                        <span>Uncertainty gate: {{ 'passed' if rec.get('uncertainty_gate_passed') else 'not met' }}</span>
-                        <span>Structural-redundancy gate: {{ 'passed' if rec.get('structural_redundancy_gate_passed') else 'not met' }}</span>
-                    </div>
-                    {% set _lbl = rec.get('basis_label') %}
-                    <div class="retirement-rec-basis">{{ (_lbl if _lbl is string and _lbl.strip() else 'not recorded') | e }}</div>
-                    {{ retirement_lifecycle(_cid if _cid_ok else '', rec.get('explanation'), rec.get('explanation_written_on'), rec.get('approval_status', 'pending'), rec.get('_checklist'), _cid_ok, true) }}
-                </div>
-                {% endfor %}
-            {% endif %}
+            </section>
         </section>{# /retirement-recommendations-panel #}
 
         </div>{# /tab-panel-retirement #}
@@ -2771,23 +2859,27 @@
                                 {% endif %}
                             </tr>
                             {% set sortino = metrics.get('sortino_ratio') %}
+                            {# A Sortino row with no value is left out, not shown as a row of dashes. #}
+                            {% if sortino is not none %}
                             <tr>
                                 <td>Sortino</td>
-                                <td class="{% if sortino is not none %}{% if sortino >= 0 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
-                                    {% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}
+                                <td class="{% if sortino >= 0 %}stat-pos{% else %}stat-neg{% endif %}">
+                                    {{ "%.3f" | format(sortino) }}
                                 </td>
                                 {% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}
                             </tr>
+                            {% endif %}
                             {% set mdd = rr.get('max_drawdown') if rr.get('max_drawdown') is not none else metrics.get('max_drawdown') %}
+                            {# A drawdown is a magnitude: it prints without a sign. #}
                             <tr>
-                                <td>Max Drawdown</td>
+                                <td>Max DD</td>
                                 <td class="{% if mdd is not none %}{% if (mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}">
-                                    {% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}
+                                    {% if mdd is not none %}{{ "%.2f%%" | format((mdd | abs) * 100) }}{% else %}—{% endif %}
                                 </td>
                                 {% if live_baseline %}
                                 {% set bl_mdd = live_baseline.get('max_drawdown') %}
                                 <td class="{% if bl_mdd is not none %}{% if (bl_mdd | abs) <= 0.20 %}stat-pos{% else %}stat-neg{% endif %}{% else %}stat-nil{% endif %}" data-testid="baseline-max-drawdown">
-                                    {% if bl_mdd is not none %}{{ "%.2f%%" | format(bl_mdd * 100) }}{% else %}—{% endif %}
+                                    {% if bl_mdd is not none %}{{ "%.2f%%" | format((bl_mdd | abs) * 100) }}{% else %}—{% endif %}
                                 </td>
                                 {% endif %}
                             </tr>
@@ -2897,9 +2989,9 @@
                                     {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}
                                     <tr><td>Sharpe</td><td class="stat-nil">{% if sharpe is not none %}{{ "%.3f" | format(sharpe) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-sharpe">—</td>{% endif %}</tr>
                                     {% set sortino = metrics.get('sortino_ratio') %}
-                                    <tr><td>Sortino</td><td class="stat-nil">{% if sortino is not none %}{{ "%.3f" | format(sortino) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}</tr>
+                                    {% if sortino is not none %}<tr><td>Sortino</td><td class="stat-nil">{{ "%.3f" | format(sortino) }}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-sortino">—</td>{% endif %}</tr>{% endif %}
                                     {% set mdd = rr.get('max_drawdown') if rr.get('max_drawdown') is not none else metrics.get('max_drawdown') %}
-                                    <tr><td>Max Drawdown</td><td class="stat-nil">{% if mdd is not none %}{{ "%.2f%%" | format(mdd * 100) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-max-drawdown">—</td>{% endif %}</tr>
+                                    <tr><td>Max DD</td><td class="stat-nil">{% if mdd is not none %}{{ "%.2f%%" | format((mdd | abs) * 100) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-max-drawdown">—</td>{% endif %}</tr>
                                     {% set ann_ret = rr.get('cagr') if rr.get('cagr') is not none else metrics.get('annualized_return') %}
                                     <tr><td>Annual Return</td><td class="stat-nil">{% if ann_ret is not none %}{{ "%.2f%%" | format(ann_ret * 100) }}{% else %}—{% endif %}</td>{% if live_baseline %}<td class="stat-nil" data-testid="baseline-cagr">—</td>{% endif %}</tr>
                                 </tbody>
@@ -3075,28 +3167,24 @@
                                 <td data-testid="fr-candidate-cagr">{% if _cand_cagr is defined and _cand_cagr is not none %}{{ "%.2f%%" | format(_cand_cagr * 100) }}{% else %}—{% endif %}</td>
                             </tr>
                             <tr>
-                                <td>Max Drawdown</td>
+                                <td>Max DD</td>
                                 {% if is_fr %}
-                                <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is defined and m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format(m.incumbent_max_drawdown * 100) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-incumbent-mdd">{% if m.incumbent_max_drawdown is defined and m.incumbent_max_drawdown is not none %}{{ "%.2f%%" | format((m.incumbent_max_drawdown | abs) * 100) }}{% else %}—{% endif %}</td>
                                 {% endif %}
                                 {% set _cand_mdd = m.candidate_max_drawdown if is_fr else m.max_drawdown %}
-                                <td data-testid="fr-candidate-mdd">{% if _cand_mdd is defined and _cand_mdd is not none %}{{ "%.2f%%" | format(_cand_mdd * 100) }}{% else %}—{% endif %}</td>
+                                <td data-testid="fr-candidate-mdd">{% if _cand_mdd is defined and _cand_mdd is not none %}{{ "%.2f%%" | format((_cand_mdd | abs) * 100) }}{% else %}—{% endif %}</td>
                             </tr>
                         </tbody>
                     </table>
                     {% if is_fr %}
                     <div class="objective-strip" data-testid="fr-node-count-delta">
-                        Node count &Delta;: {{ m.node_count_delta if m.node_count_delta is defined and m.node_count_delta is not none else '—' }}
+                        Node count change vs the incumbent: {{ m.node_count_delta if m.node_count_delta is defined and m.node_count_delta is not none else '—' }}
                     </div>
-                    <div class="fr-identity-line" data-testid="fr-incumbent-name">
-                        Full standalone copy of {{ p._incumbent_display_name | e }} with one new frontrunner overlay
-                    </div>
-                    <p class="fr-explainer-line">
-                        Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.
-                    </p>
-                    <div class="fr-overlay-summary-line" data-testid="fr-overlay-summary">
-                        {% if m.overlay_summary %}{{ m.overlay_summary | e }}{% else %}{{ overlay_not_recorded_text | e }}{% endif %}
-                    </div>
+                    <div class="fr-line fr-identity-line" data-testid="fr-incumbent-name"><span class="fr-line-label">Identity</span>Full standalone copy of {{ p._incumbent_display_name | e }} with one new frontrunner overlay</div>
+                    <div class="fr-line fr-explainer-line" data-testid="fr-explainer-line"><span class="fr-line-label">On approval</span>Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.</div>
+                    <div class="fr-line fr-overlay-summary-line" data-testid="fr-overlay-summary"><span class="fr-line-label">Overlay</span>{% if m.overlay_summary %}one new condition, below{% else %}{{ overlay_not_recorded_text | e }}{% endif %}</div>
+                    {#- The overlay line says what the overlay is for; the overlay itself is read under its preview, directly below. -#}
+                    <details class="rules-collapsible" data-testid="fr-overlay-preview"><summary>View overlay delta</summary>{% if m.overlay_summary %}<p class="fr-overlay-raw">{{ m.overlay_summary | e }}</p>{% endif %}<pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre></details>
                     {% else %}
                     <p class="fr-retrofit-identity-line">
                         From-scratch symphony proposed by Strategy Builder &mdash; does not contain the incumbent's logic.
@@ -3109,13 +3197,7 @@
                         <summary>{% if is_fr %}Full spliced symphony (preview){% else %}Proposed symphony (preview){% endif %}</summary>
                         <pre>{{ p.candidate_tree_preview or '(unavailable)' }}</pre>
                     </details>
-                    {% if is_fr %}
-                    <details class="rules-collapsible" data-testid="fr-overlay-preview">
-                        <summary>View overlay delta</summary>
-                        <pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre>
-                    </details>
-                    {% endif %}
-                    <div class="proposal-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.75rem;">
+                    <div class="proposal-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;">
                         <button type="button"
                                 class="run-trigger-btn"
                                 data-testid="fr-approve-btn"

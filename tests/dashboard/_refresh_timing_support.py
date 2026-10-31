@@ -247,6 +247,14 @@ def fmt_pct(value, decimals: int = 2) -> str:
     return ("+" if value >= 0 else "") + f"{value:.{decimals}f}%"
 
 
+def fmt_pp(value, decimals: int = 2) -> str:
+    """The headline's format: a difference of two returns, signed, fixed decimals, then ``pp``
+    (percentage points); ``--`` for a missing value."""
+    if value is None:
+        return "--"
+    return ("+" if value >= 0 else "") + f"{value:.{decimals}f} pp"
+
+
 def vol_texts(strip: dict) -> dict:
     """The Ann. Vol row text for a strip, formatted as the client formats it (dashes when either side is null)."""
     bot, held = strip.get("vol_bot"), strip.get("vol_held")
@@ -258,6 +266,30 @@ def vol_texts(strip: dict) -> dict:
         "held": f"Held {held * 100:.1f}%",
         "delta": f"α {'+' if pp >= 0 else ''}{pp:.1f}pp",
     }
+
+
+def mdd_texts(strip: dict) -> dict:
+    """The Max DD row text for a strip whose window supplies both legs, as the client writes it:
+    two magnitudes (a drawdown carries no plus sign). ``delta_pp`` is the saved difference, Held
+    minus Bot, in percentage points: the row's delta prints it in ``pp`` (read it with
+    ``pp_delta_value``), the unit of the headline beside it."""
+    legs = strip["max_drawdown"]
+    bot, held = abs(legs["dry_run"]), abs(legs["if_held"])
+    return {
+        "bot": f"Bot {bot:.2f}%",
+        "held": f"Held {held:.2f}%",
+        "delta_pp": held - bot,
+    }
+
+
+_PP_DELTA = re.compile(r"^α\s*([+\-−]?\d+(?:\.\d+)?)\s*pp$")
+
+
+def pp_delta_value(text: str) -> float:
+    """The number in a row delta printed as ``α <signed number> pp`` (no ``%``); fails otherwise."""
+    match = _PP_DELTA.match(text or "")
+    assert match, f"a row delta must read 'α <signed number> pp', not {text!r}"
+    return float(match.group(1).replace("−", "-"))
 
 
 def summary_with(summary: dict, *, saved: float, events: int, coverage: tuple[int, int]) -> dict:

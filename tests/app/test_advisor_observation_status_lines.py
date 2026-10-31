@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 import pytest
 
 import analytics
+import app as app_module
 import database
 from advisors.prism_render import humanize_obs_preview
 from tests._advisor_observation_records import FIRST_MOMENT, case_row, store
@@ -43,6 +44,11 @@ _HISTORY_LIMIT = 50
 _OC = "OVERFITTING_CONSCIENCE"
 _SC = "SPEC_CRITIC"
 _ROLE_ORDER = (_OC, _SC)
+
+
+def _words(case: str) -> str:
+    """A case's stored verdict as the page prints it: through the one mapping, never raw."""
+    return app_module.advisor_words(case_row(case)["verdict"])
 
 
 @pytest.fixture()
@@ -127,8 +133,8 @@ class TestStatusLines:
         producers = _producers(root)
         assert list(producers) == list(_ROLE_ORDER)
         expectations = {
-            _OC: ("Overfitting Conscience", case_row("guardrail_clear")["verdict"], oc),
-            _SC: ("Spec Critic", case_row("guardrail_watch")["verdict"], sc),
+            _OC: ("Overfitting Conscience", _words("guardrail_clear"), oc),
+            _SC: ("Spec Critic", _words("guardrail_watch"), sc),
         }
         for role, (label, verdict, rows) in expectations.items():
             line = producers[role]
@@ -138,6 +144,13 @@ class TestStatusLines:
             assert _text(line, "obs-producer-verdict") == verdict
             assert _text(line, "obs-producer-time") == analytics.format_et_stamp(rows[-1][1])
             assert _digits(_text(line, "obs-producer-total")) == [str(len(rows))]
+
+    def test_a_stored_verdict_reads_as_a_word_never_as_its_stored_token(self, seeded):
+        client, _, _ = seeded
+        _, root = _page(client)
+        producers = _producers(root)
+        assert _text(producers[_OC], "obs-producer-verdict") == "Clear"
+        assert _text(producers[_SC], "obs-producer-verdict") == "Watch"
 
     def test_no_observation_row_sits_outside_an_expander(self, seeded):
         client, oc, sc = seeded
@@ -227,7 +240,7 @@ class TestStatusLines:
         store("markup_verdict", times=1)
         html, root = _page(client)
         line = _line(root, _SC)
-        assert _text(line, "obs-producer-verdict") == case_row("markup_verdict")["verdict"]
+        assert _text(line, "obs-producer-verdict") == _words("markup_verdict")
         assert "<script>alert(1)</script>" not in html
 
 
@@ -253,7 +266,7 @@ class TestExpanders:
             )
             assert key not in symphony.text() or key == names[key]
             assert row.find("obs-time").text() == analytics.format_et_stamp(created_at)
-            assert row.find("obs-verdict").text() == case_row("guardrail_clear")["verdict"]
+            assert row.find("obs-verdict").text() == _words("guardrail_clear")
             assert row.find("obs-summary").text() == humanize_obs_preview(raw)
 
     def test_the_overfitting_expander_holds_fifty_rows_and_states_fifty_of_the_total(self, seeded):
@@ -275,7 +288,7 @@ class TestExpanders:
         line = _line(root, _OC)
         assert _digits(_text(line, "obs-producer-total")) == ["5"]
         assert len(line.find_all("obs-row")) == 5
-        assert _text(line, "obs-producer-verdict") == case_row("guardrail_clear")["verdict"]
+        assert _text(line, "obs-producer-verdict") == _words("guardrail_clear")
 
     def test_a_role_with_only_stubs_has_no_line(self, isolated_db, client):
         w.seed_roster()

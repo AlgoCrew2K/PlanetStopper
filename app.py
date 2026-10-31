@@ -104,6 +104,64 @@ app.jinja_env.auto_reload = True
 # {{ v | et_stamp(date_only=True) }}, {{ v | et_stamp(naive_is_utc=False) }}.
 app.add_template_filter(analytics.format_et_stamp, name="et_stamp")
 
+# Raw stored enums (verdicts, observation subjects) read as words through ONE mapping. A value
+# with no entry reads as its own words (underscores to spaces, sentence case), so a value no
+# producer has written yet is never printed raw.
+_ADVISOR_WORDS = {
+    "CLEAR": "Clear",
+    "WATCH": "Watch",
+    "BREACH": "Breach",
+    "ADOPT_CANDIDATE": "Adopt candidate",
+    "KEEP_INCUMBENT": "Keep incumbent",
+    "REJECT_VETO_FAILED": "Rejected: failed the overfitting check",
+    "REJECT_FDR_FAILED": "Rejected: not significant after correction",
+    "REJECT_NOT_A_WINNER": "Rejected: not the strongest candidate",
+}
+
+
+def advisor_words(value):
+    """A stored verdict or subject as words: the mapped phrase, else the value's own words.
+
+    A non-text value is returned as it is (the template's autoescape prints it).
+    """
+    if not isinstance(value, str):
+        return value
+    mapped = _ADVISOR_WORDS.get(value)
+    if mapped is not None:
+        return mapped
+    text = " ".join(value.replace("_", " ").split()).lower()
+    return text[:1].upper() + text[1:]
+
+
+app.add_template_filter(advisor_words, name="advisor_words")
+
+
+_BASIS_SOURCE_PARENTHETICAL = re.compile(r"(.*?) \(Composer, (.*)\)")
+
+
+def retirement_basis(last_run):
+    """The basis line of a retirement run in words, for the Retirement tab's last-run block.
+
+    The run's own stored label is the text. For a Composer run the source is named first in
+    words: the stored "realized daily returns (Composer, deposit-adjusted)" reads "Composer
+    realized daily returns (deposit-adjusted)", and a label of another shape reads
+    "Composer: <label>". Any other source prints the stored label as it is, and a run that
+    stored none says so. The source token itself (``composer``) is never printed.
+    """
+    run = last_run if isinstance(last_run, dict) else {}
+    label = run.get("basis_label")
+    if not (isinstance(label, str) and label.strip()):
+        return "basis not recorded"
+    if run.get("source") != "composer":
+        return label
+    folded = _BASIS_SOURCE_PARENTHETICAL.fullmatch(label)
+    if folded is not None:
+        return f"Composer {folded.group(1)} ({folded.group(2)})"
+    return f"Composer: {label}"
+
+
+app.add_template_filter(retirement_basis, name="retirement_basis")
+
 # ---------------------------------------------------------------------------
 # Session cookie hardening (AC-10)
 # ---------------------------------------------------------------------------
@@ -358,38 +416,60 @@ _csrf_check_enabled: bool = True
 _CSRF_TOKEN: str = secrets.token_hex(32)
 
 
+# Values of the Sec-Fetch-Site request header that name a page of another origin.  "same-site"
+# is a page on a sibling host of the same registrable domain: the deployed host sits under a
+# domain that strangers share, so such a page is same-site with the dashboard and its form POSTs
+# carry the session cookie.  "same-origin", "none" (typed or bookmarked) and an absent header
+# (script clients, older browsers) are not refused by this rule.
+_REFUSED_FETCH_SITES = frozenset({"same-site", "cross-site"})
+
+
 def _validate_csrf() -> None:
     """Reject POST requests that lack the correct CSRF token.
 
-    Two acceptance channels (both must be same-origin):
+    Two acceptance channels:
     - X-CSRF-Token request header — used by fetch()/XHR callers (JSON POSTs
-      from the dashboard JS).  Browsers block cross-site scripts from setting
-      arbitrary request headers, so the header itself acts as the synchronizer
-      token for those callers.
-    - csrf_token form field — used by the native browser form POST on the login
-      page, which cannot set custom headers.  The form embeds the server-minted
-      token in a hidden input; same-origin enforcement is provided by the
-      synchronizer-token pattern (token is not guessable by a cross-site page).
-      The form-field channel is ONLY activated for form-encoded content types
+      from the dashboard JS) on every route.  Browsers block cross-site scripts
+      from setting arbitrary request headers, so the header itself acts as the
+      synchronizer token for those callers.
+    - csrf_token form field — the LOGIN endpoint only: the native browser form
+      POST on the login page cannot set custom headers.  The token is public
+      (GET /api/csrf-token serves it, as does the login page), so on any other
+      route a form field would let a form posted from a sibling-host page
+      through for every route that reads no JSON body.
+      The field is read only for form-encoded content types
       (application/x-www-form-urlencoded, multipart/form-data).  Accessing
       request.form on a JSON POST triggers Werkzeug body parsing, which enforces
       MAX_CONTENT_LENGTH before this CSRF check can fire — breaking the
       CSRF-before-body-size guard ordering invariant.
 
+    A POST whose Sec-Fetch-Site is same-site or cross-site is refused whatever
+    the token.  The token is compared as bytes: compare_digest raises on a
+    str that is not ASCII, which would answer 500 instead of 403.
+
     No new pip dependencies required.
     """
     if not _csrf_check_enabled:
         return
+    fetch_site = request.headers.get("Sec-Fetch-Site", "").strip().lower()
+    if fetch_site in _REFUSED_FETCH_SITES:
+        _daemon_log.warning(
+            "CSRF check refused %s %s (Sec-Fetch-Site: %s)",
+            request.method,
+            request.path,
+            fetch_site,
+        )
+        abort(403, description="Cross-site request refused")
     # Header channel: fetch()/XHR callers set X-CSRF-Token.
     token = request.headers.get("X-CSRF-Token", "")
-    # Form-field channel: native browser form POST (login page).  Gate on
+    # Form-field channel: the login page's native form POST only.  Gate on
     # content-type so we never touch request.form on JSON requests — that
     # would trigger body parsing and fire 413 before we can return 403.
-    if not token:
+    if not token and request.endpoint == "login":
         ct = request.content_type or ""
         if "application/x-www-form-urlencoded" in ct or "multipart/form-data" in ct:
             token = request.form.get("csrf_token", "")
-    if not secrets.compare_digest(token, _CSRF_TOKEN):
+    if not secrets.compare_digest(token.encode("utf-8", "replace"), _CSRF_TOKEN.encode("utf-8")):
         _daemon_log.warning(
             "CSRF check failed on %s %s (token absent or incorrect)",
             request.method,
@@ -1638,8 +1718,27 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
 
 
+def _retirement_row_producer(raw: object) -> str | None:
+    """Which job wrote a recommendation: "review" (the tenure review, stamped with
+    review_run_id), "recommender" (the recommender run, stamped with run_id), or None for a
+    record that carries neither stamp (a row written before the stamps existed, or a record
+    that has not been stamped yet).
+
+    The two jobs write the same role for a pair they both flag, with evidence that is not the
+    same record (a different basis label, and window fields only the review carries), so a row
+    of one never equals a row of the other and only the same job's rows can be reused.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if "review_run_id" in raw:
+        return "review"
+    if "run_id" in raw:
+        return "recommender"
+    return None
+
+
 def _build_retirement_prior_row_map(rows: list[dict]) -> dict[tuple, dict]:
-    """Build a {(candidate_id, sibling_id): newest_matching_raw_response}
+    """Build a {(candidate_id, sibling_id, producer): newest_matching_raw_response}
     map from a newest-first advisor_observations row list.
 
     PR#140 /code-review finding 2 (Cycle 2c, AC-4 efficiency): hoists the
@@ -1647,20 +1746,35 @@ def _build_retirement_prior_row_map(rows: list[dict]) -> dict[tuple, dict]:
     per rec -- _retirement_recommender_tick_worker builds this map once from
     a single database.get_advisor_observations_for_role() call, then every
     rec's reuse decision is an O(1) dict lookup against it. Only the FIRST
-    (i.e. newest, since `rows` is newest-first by id DESC) row per pair is
-    kept -- matches the pre-existing "most recent prior row governs"
-    contract. Malformed rows (non-dict raw_response) are skipped, never
-    raised.
+    (i.e. newest, since `rows` is newest-first by id DESC) row per pair AND
+    producer is kept -- matches the pre-existing "most recent prior row governs"
+    contract, per job (_retirement_row_producer). Malformed rows (non-dict
+    raw_response) are skipped, never raised.
     """
     prior_map: dict[tuple, dict] = {}
     for row in rows:
         raw = row.get("raw_response")
         if not isinstance(raw, dict):
             continue
-        key = (raw.get("candidate_id"), raw.get("sibling_id"))
+        key = (raw.get("candidate_id"), raw.get("sibling_id"), _retirement_row_producer(raw))
         if key not in prior_map:
             prior_map[key] = raw
     return prior_map
+
+
+def _retirement_prior_raw_for(rec: dict, prior_map: dict) -> dict | None:
+    """The newest stored row of the same pair written by the same job as `rec`.
+
+    A row from the other job is never returned. A row that carries neither job's stamp is the
+    fallback: it is nobody's in particular (it predates the stamps), and each job then replaces
+    it with a row of its own.
+    """
+    pair = (rec.get("candidate_id"), rec.get("sibling_id"))
+    producer = _retirement_row_producer(rec)
+    prior_raw = prior_map.get((*pair, producer))
+    if prior_raw is None and producer is not None:
+        prior_raw = prior_map.get((*pair, None))
+    return prior_raw
 
 
 def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> str | None:
@@ -1668,9 +1782,11 @@ def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> s
     fresh explain_recommendation call (Cycle 2c, AC-4: nightly-explain spend
     control).
 
-    `prior_map` is a {(candidate_id, sibling_id): newest_matching_raw_response}
+    `prior_map` is a {(candidate_id, sibling_id, producer): newest_matching_raw_response}
     map pre-built ONCE per tick via _build_retirement_prior_row_map (PR#140
     review finding 2) -- an O(1) lookup here, no DB access, no per-rec query.
+    The row compared is the newest one written by the SAME job as `rec`
+    (_retirement_prior_raw_for), never the other job's.
 
     Reuse-eligible iff the prior row's explanation is truthy AND
     _canonical_evidence_snapshot(rec) == _canonical_evidence_snapshot(prior_raw)
@@ -1680,8 +1796,7 @@ def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> s
     identically to the "no prior history" case. Never propagates.
     """
     try:
-        key = (rec.get("candidate_id"), rec.get("sibling_id"))
-        prior_raw = prior_map.get(key)
+        prior_raw = _retirement_prior_raw_for(rec, prior_map)
         if prior_raw is None:
             return None
 
@@ -1844,7 +1959,7 @@ def _prepare_retirement_recs_for_persist(recs: list[dict], *, written_on: str) -
 
         reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
         if reused_explanation is not None:
-            prior_raw = _prior_map.get((rec.get("candidate_id"), rec.get("sibling_id"))) or {}
+            prior_raw = _retirement_prior_raw_for(rec, _prior_map) or {}
             rec["explanation"] = reused_explanation
             rec["explanation_written_on"] = prior_raw.get("explanation_written_on")
             continue
@@ -2776,7 +2891,9 @@ def _render_dashboard(
 
     # The same read the state poll carries (``dashboard_panels``), so the render and the poll agree.
     try:
-        panels = _dashboard_panels_payload(live_state)
+        panels = _dashboard_panels_payload(
+            _without_symphonies(live_state, view.get("no_longer_held", frozenset()))
+        )
     except Exception:
         panels = _panels_unreadable()
     vars_locked_count = panels["vars_locked_count"] or 0
@@ -2927,6 +3044,9 @@ def _render_dashboard(
     return render_template(
         "index.html",
         engine_phase=engine_phase,
+        # The headline's descriptor says "Simulated" while the engine's last cycle placed no real
+        # orders; the poll's bot_state carries the same flag (last_execution_mode).
+        execution_simulated=_execution_is_simulated(live_state),
         # The figure is the exit return minus the card's current return: live while the
         # market is open, fixed at the capture after the close.
         verdict_basis_label="vs held now" if market_state == "open" else "at close",
@@ -2944,7 +3064,7 @@ def _render_dashboard(
             meta,
             bot_state,
             hero_conn=shadow_conn if view["branch"] == "frozen" else None,
-            hero_state=view["weights_state"] if view["branch"] == "frozen" else None,
+            hero_state=view["weights_state"],
         ),
         fleet_alert=_fleet_alert,
         fleet_alert_text=_fleet_alert_sentence(_fleet_alert) if _fleet_alert else "",
@@ -3019,6 +3139,23 @@ def _dashboard_initial_data(
 
 
 _MARKET_STATE_UNSET = object()
+
+
+def _hero_mdd_row(window_legs: object, lifetime_legs: dict, lifetime_insufficient: bool) -> dict:
+    """The hero Max DD row's ``{bot, held, insufficient}``: the default window's legs when the
+    strip carries them, else the lifetime pair the strip always had (an older strip)."""
+    if isinstance(window_legs, dict):
+        n_obs = window_legs.get("n_obs")
+        return {
+            "bot": window_legs.get("dry_run"),
+            "held": window_legs.get("if_held"),
+            "insufficient": not (isinstance(n_obs, int) and n_obs >= _MDD_MIN_OBS),
+        }
+    return {
+        "bot": lifetime_legs.get("dry_run"),
+        "held": lifetime_legs.get("if_held"),
+        "insufficient": lifetime_insufficient,
+    }
 
 
 def _seconds_to_next_minute(now: datetime) -> int:
@@ -3129,6 +3266,12 @@ def _build_meta(
         # hero Ann. Vol vs-row. None-safe: stays None when no shadow history.
         "vol_bot": ps.get("vol_bot"),
         "vol_held": ps.get("vol_held"),
+        # The default window's volatility, which the hero's Ann. Vol row opens on.
+        "window_vol_bot": ps.get("window_vol_bot", ps.get("vol_bot")),
+        "window_vol_held": ps.get("window_vol_held", ps.get("vol_held")),
+        # The hero's Max DD row opens on the default window's legs and states for itself
+        # whether that window held enough days (the cards keep the lifetime pair above).
+        "mdd_row": _hero_mdd_row(ps.get("window_max_drawdown"), mdd_data, _insufficient_history),
         # Option A: the WINDOWED guard alpha (default window) + its window echo feed the
         # SSR hero headline so first paint matches the picker; account_all_time_cr is the
         # SEPARATE, non-windowed "Account · all-time" reference.
@@ -3275,6 +3418,74 @@ def _committed_shadow_conn(state: dict | None) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def _execution_is_simulated(state: dict | None) -> bool:
+    """True when the engine's last cycle ran simulated (``last_execution_mode`` saved False).
+
+    A state that does not say reads as not simulated: the page then makes no "Simulated" claim.
+    """
+    return (state or {}).get("last_execution_mode") is False
+
+
+def _no_longer_held_ids(
+    state: dict | None,
+    conn: sqlite3.Connection | None = None,
+    now_et: datetime | None = None,
+) -> frozenset[str]:
+    """The ids of the state's symphonies that are no longer held, from the ONE shared rule.
+
+    Every surface that lists, counts or weights symphonies asks ``analytics
+    .no_longer_held_symphony_ids`` through here, so no page decides for itself. ``conn`` is the
+    request's own connection (the closed-market branch passes its cut); without one the rule
+    opens a single read-only connection. A read that fails answers "none": a page keeps showing
+    what it has rather than hiding a symphony on an error.
+    """
+    try:
+        ids = analytics.no_longer_held_symphony_ids(state, conn=conn, now=now_et)
+    except Exception:
+        _daemon_log.debug("no-longer-held read failed", exc_info=True)
+        return frozenset()
+    return frozenset(ids) if isinstance(ids, (set, frozenset, list, tuple)) else frozenset()
+
+
+def _without_symphonies(state: dict, gone: frozenset[str]) -> dict:
+    """``state`` without the entries named in ``gone``; the same object when none are named."""
+    if not gone:
+        return state
+    return {key: value for key, value in state.items() if key not in gone}
+
+
+def _snapshot_without_symphonies(snapshot: dict, gone: frozenset[str]) -> dict:
+    """A close snapshot whose accounts_map lacks the entries named in ``gone``.
+
+    The entries kept are the snapshot's own dicts, so what is computed onto them still lands
+    where the page and the poll read it; the snapshot itself is never changed.
+    """
+    if not gone:
+        return snapshot
+    accounts_map = {
+        account: [
+            entry
+            for entry in entries or []
+            if not (isinstance(entry, dict) and entry.get("id") in gone)
+        ]
+        for account, entries in (snapshot.get("accounts_map") or {}).items()
+    }
+    return {**snapshot, "accounts_map": accounts_map}
+
+
+def _held_state_kwargs(now_et: datetime | None = None) -> dict:
+    """``{"state": <the saved bot_state without its no-longer-held entries>}`` for a route that
+    reads a portfolio series without a request connection, so the value weights leave those
+    entries out; ``{}`` when every saved symphony is held (the reader then loads the state
+    itself, as it always has)."""
+    try:
+        state = database.load_state() or {}
+    except Exception:
+        return {}
+    gone = _no_longer_held_ids(state, None, now_et)
+    return {"state": _without_symphonies(state, gone)} if gone else {}
 
 
 def _portfolio_hist_series(
@@ -3460,6 +3671,31 @@ def _normalize_frozen_symphonies(snapshot: dict) -> None:
                     sym.setdefault(field, default)
 
 
+def _apply_default_window_legs(strip: dict, windowed: dict) -> None:
+    """Put the default window's Max DD legs and volatility on a portfolio strip, under their own keys.
+
+    The hero's Max DD and Ann. Vol rows follow the picked window, and the dashboard opens on the
+    default one, so the first paint prints that window's figures: the first paint, the window's own
+    strip (``/api/strip/<window>``) and the row after a refresh then say one thing. They are kept
+    apart from the strip's lifetime figures (``max_drawdown``, ``vol_bot``/``vol_held``), which
+    stay exactly as they were: the cards and the lifetime line read those. ``n_obs`` is the days
+    the window held, which decides whether the row has a figure to show. A window that supplies
+    no figure leaves its legs None (the row then says so), never the lifetime figure under the
+    window's name.
+    """
+    legs = windowed.get("max_drawdown")
+    if isinstance(legs, dict):
+        day_count = windowed.get("window_day_count")
+        strip["window_max_drawdown"] = {
+            "dry_run": legs.get("dry_run"),
+            "if_held": legs.get("if_held"),
+            "n_obs": day_count if isinstance(day_count, int) else 0,
+        }
+    if "vol_bot" in windowed or "vol_held" in windowed:
+        strip["window_vol_bot"] = windowed.get("vol_bot")
+        strip["window_vol_held"] = windowed.get("vol_held")
+
+
 def _compute_frozen_portfolio_strip(
     snapshot: dict, conn: sqlite3.Connection | None, now_et: datetime | None = None
 ) -> dict:
@@ -3581,6 +3817,7 @@ def _compute_frozen_portfolio_strip(
 
         # Its own try: a failure here must not discard the figures computed above. The
         # windowed cumulative return is left out (no client reads it from this strip).
+        default = None
         try:
             default = analytics.compute_windowed_portfolio_strip(
                 symphonies_list,
@@ -3596,6 +3833,7 @@ def _compute_frozen_portfolio_strip(
                 )
                 window = default.get("window", _DEFAULT_HERO_WINDOW)
                 strip["window"] = window if isinstance(window, str) else _DEFAULT_HERO_WINDOW
+                _apply_default_window_legs(strip, default)
         except Exception:
             _daemon_log.error("closed_frozen default-window strip failed", exc_info=True)
 
@@ -3611,6 +3849,9 @@ def _compute_frozen_portfolio_strip(
                     "hist_source": "shadow_history",
                 }
             )
+            if isinstance(default, dict):
+                # The update above wrote the lifetime vol; the window's figures stand.
+                _apply_default_window_legs(strip, default)
         except Exception:
             _daemon_log.error("closed_frozen hero series failed", exc_info=True)
         return strip
@@ -3634,7 +3875,10 @@ def _portfolio_view(
 
     branch "frozen": after the close with a snapshot; the served state and the strip
     both come from the snapshot. "waiting": no state yet. "live": everything else.
-    Returns {"branch", "state" (the state served to cards), "snapshot", "portfolio_strip"}.
+    Returns {"branch", "state" (the state served to cards), "snapshot", "portfolio_strip",
+    "weights_state", "no_longer_held"}. The served state, the snapshot and every figure of the
+    strip leave out the symphonies the shared rule finds no longer held ("no_longer_held" names
+    them); the frozen branch asks it through the connection cut at the capture.
     now_et is the request's one clock reading; without it the clock is read here.
     """
     if now_et is None:
@@ -3646,6 +3890,11 @@ def _portfolio_view(
             for sym in entries or []:
                 if isinstance(sym, dict) and "id" in sym:
                     served[sym["id"]] = sym
+        # A symphony no longer held is left out of the snapshot's cards and portfolio figures,
+        # asked through the connection cut at the capture so the answer is fixed with them.
+        gone = _no_longer_held_ids(served, conn, now_et)
+        served = _without_symphonies(served, gone)
+        snapshot = _snapshot_without_symphonies(snapshot, gone)
         strip = _compute_frozen_portfolio_strip(snapshot, conn, now_et)
         return {
             "branch": "frozen",
@@ -3653,9 +3902,12 @@ def _portfolio_view(
             "snapshot": snapshot,
             "portfolio_strip": strip,
             "weights_state": _frozen_symphony_inputs(snapshot)[1],
+            "no_longer_held": gone,
         }
     branch = "live" if state else "waiting"
     trading_day = now_et.strftime("%Y-%m-%d")
+    gone = _no_longer_held_ids(state, conn, now_et) if state else frozenset()
+    state = _without_symphonies(state, gone) if state else state
     strip = _compute_portfolio_strip(state or {}, trading_day=trading_day, conn=conn)
     return {
         "branch": branch,
@@ -3663,6 +3915,7 @@ def _portfolio_view(
         "snapshot": None,
         "portfolio_strip": strip,
         "weights_state": state,
+        "no_longer_held": gone,
     }
 
 
@@ -3933,7 +4186,7 @@ def _compute_portfolio_strip(
         # NEGATIVE, app.py:272); analytics.get_portfolio_max_drawdown's own
         # if_held_lifetime is already positive magnitude.
         max_drawdown: dict = analytics.get_portfolio_max_drawdown(
-            symphonies_list, bot_state, trading_day=trading_day, conn=conn
+            symphonies_list, bot_state, trading_day=trading_day, conn=conn, state=bot_state
         )
         _cached_mdd = _account_totals_cache.get("portfolio_mdd")
         if _cached_mdd is not None:
@@ -4016,12 +4269,14 @@ def _compute_portfolio_strip(
                 window=_DEFAULT_HERO_WINDOW,
                 trading_day=trading_day,
                 conn=conn,
+                state=bot_state,
             )
             if isinstance(_default, dict):
                 _ga = _default.get("guard_alpha")
                 _strip["guard_alpha"] = _ga if isinstance(_ga, (int, float)) else None
                 _win = _default.get("window", _DEFAULT_HERO_WINDOW)
                 _strip["window"] = _win if isinstance(_win, str) else _DEFAULT_HERO_WINDOW
+                _apply_default_window_legs(_strip, _default)
                 # DE-CLOSED-BOUNCE-001 (revise round): windowed_cumulative_return is
                 # NOT currently consumed client-side — F-014 removed updateComparison
                 # Rows' only read of it, and the revise round's rows-array gate
@@ -4333,6 +4588,10 @@ def get_state():
         # hero (meta), the rows (portfolio_strip) and the cards all read from them.
         _shadow_conn = _committed_shadow_conn(_view_cut_state(state_data, market_state))
         view = _portfolio_view(state_data, market_state, _shadow_conn, now_et=_req_now_et)
+        if view["branch"] == "live":
+            # The cards, counts and panels below read the state without the symphonies the
+            # view found no longer held, so every figure of this response names one roster.
+            state_data = view["state"]
         _portfolio_strip = view["portfolio_strip"]
         _meta_strip = _strip_with_hist_fallback(
             _portfolio_strip, _shadow_conn, view["weights_state"]
@@ -4343,7 +4602,9 @@ def get_state():
         # that fails must not take the response down: every part then reads as "could not read"
         # and the page keeps its own.
         try:
-            _additive["dashboard_panels"] = _dashboard_panels_payload(state_data or {})
+            _additive["dashboard_panels"] = _dashboard_panels_payload(
+                _without_symphonies(state_data or {}, view.get("no_longer_held", frozenset()))
+            )
         except Exception as panels_exc:
             _daemon_log.warning("dashboard panels read failed: %s", type(panels_exc).__name__)
             _additive["dashboard_panels"] = _panels_unreadable()
@@ -4938,13 +5199,23 @@ def get_hero_chart(window):
         live_state = database.load_state() or {}
     except Exception:
         live_state = {}
-    market_state = get_market_state(datetime.now(_ET))
+    now_et = datetime.now(_ET)
+    market_state = get_market_state(now_et)
     snapshot = _frozen_snapshot_of(live_state, market_state)
     if snapshot is None:
-        return jsonify(_hero_chart_body(window))
+        # Weights come from the state without the symphonies no longer held; without any such
+        # symphony the chart reads the saved state itself, as it always has.
+        gone = _no_longer_held_ids(live_state, None, now_et)
+        return jsonify(
+            _hero_chart_body(window, None, _without_symphonies(live_state, gone))
+            if gone
+            else _hero_chart_body(window)
+        )
     conn = _committed_shadow_conn(_view_cut_state(live_state, market_state))
     try:
-        return jsonify(_hero_chart_body(window, conn, _frozen_symphony_inputs(snapshot)[1]))
+        weights = _frozen_symphony_inputs(snapshot)[1]
+        weights = _without_symphonies(weights, _no_longer_held_ids(weights, conn, now_et))
+        return jsonify(_hero_chart_body(window, conn, weights))
     finally:
         conn.close()
 
@@ -4973,12 +5244,13 @@ def get_windowed_strip(window):
     if token not in _STRIP_WINDOW_TOKENS:
         return jsonify({"error": "unknown window token"}), 404
 
-    trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
+    now_et = datetime.now(_ET)
+    trading_day = now_et.strftime("%Y-%m-%d")
     try:
         bot_state = database.load_state() or {}
     except Exception:
         bot_state = {}
-    market_state = get_market_state(datetime.now(_ET))
+    market_state = get_market_state(now_et)
     snapshot = _frozen_snapshot_of(bot_state, market_state)
     frozen_conn = None
     if snapshot is not None:
@@ -4986,8 +5258,13 @@ def get_windowed_strip(window):
         # capture moment, exactly as the poll's default-window strip is.
         frozen_conn = _committed_shadow_conn(_view_cut_state(bot_state, market_state))
         symphonies_list, bot_state = _frozen_symphony_inputs(snapshot)
+        gone = _no_longer_held_ids(bot_state, frozen_conn, now_et)
+        symphonies_list = [s for s in symphonies_list if s.get("id") not in gone]
+        bot_state = _without_symphonies(bot_state, gone)
         trading_day = snapshot.get("trading_day") or trading_day
     else:
+        gone = _no_longer_held_ids(bot_state, None, now_et)
+        bot_state = _without_symphonies(bot_state, gone)
         symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
         symphonies_list = []
         for k in symphony_keys:
@@ -5007,8 +5284,12 @@ def get_windowed_strip(window):
 
     try:
         if frozen_conn is None:
+            # The series reads the saved state for its value weights. It is handed this one only
+            # when a no-longer-held entry has to be left out of them; otherwise the call is the
+            # one the route has always made.
+            weights_state = {"state": bot_state} if gone else {}
             strip = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=token
+                symphonies_list, bot_state, window=token, **weights_state
             )
         else:
             strip = analytics.compute_windowed_portfolio_strip(
@@ -5129,7 +5410,8 @@ def guard_alpha_preconditions():
     """Per-symphony Kaminski & Lo (2014) stop-justification preconditions.
 
     Contract (feature-plans/guard-alpha-preconditions.md AC-6, AC-7, AC-8): for
-    every symphony in database.load_state(), returns a "replay" sample
+    every symphony in database.load_state() that is still held (the shared
+    no-longer-held rule leaves the others out), returns a "replay" sample
     (simulated if-held daily series from the last autotune/replay run) and a
     "shadow" sample (live if-held daily series since the current position was
     opened) -- {rho, rho_ci, sharpe_daily, n_obs, verdict, sample_source}.
@@ -5208,9 +5490,12 @@ def guard_alpha_preconditions():
 
     db_file = analytics._get_shadow_db_file()
     symphonies_out: dict = {}
+    # A symphony no longer held has no entry: every other surface leaves it out through this one
+    # shared rule, and the page's "replay samples unavailable N of M" counts the ids returned here.
+    no_longer_held = _no_longer_held_ids(bot_state_dict, None, datetime.now(_ET))
 
     for sym_id, sym_data in bot_state_dict.items():
-        if not _is_symphony_state_entry(sym_data):
+        if not _is_symphony_state_entry(sym_data) or sym_id in no_longer_held:
             continue
         try:
             try:
@@ -6307,6 +6592,9 @@ def _retirement_correlation_matrix_state(
                 "row_title": f"{aria} {row_sym}",
                 "col_aria": f"{row_name} (column {number})",
                 "col_title": f"{row_name} ({row_sym})" if row_name != row_sym else row_name,
+                "series_first": w["series_first"],
+                "series_last": w["series_last"],
+                "series_points": w["series_points"],
                 "cells": cells,
             }
         )
@@ -6414,13 +6702,19 @@ def _retirement_correlation_matrix_view(
             return _retirement_correlation_no_matrix_view(last_run)
         if not isinstance(cards_run.get("pairs"), list):
             stamp = _retirement_correlation_run_stamp(cards_run) or "time not recorded"
+            analysed = cards_run.get("symphonies_with_series")
+            if isinstance(analysed, int) and not isinstance(analysed, bool) and analysed >= 0:
+                count_text = f"{analysed} {'symphony' if analysed == 1 else 'symphonies'}"
+            else:
+                count_text = "its symphonies"
+            # The run did analyse series; what it lacks is the stored pairs a matrix is drawn from.
             return _retirement_correlation_state_view(
                 "needs_newer_run",
                 "A newer run is needed",
                 [
-                    _CORRELATION_NEVER_RUN_TEXT,
-                    f"The latest successful run ({stamp}) holds no stored pairs, so it "
-                    "cannot draw a matrix; a newer run will.",
+                    f"The latest successful run ({stamp}) analysed {count_text} but stored no "
+                    "pairs, so it cannot draw a matrix.",
+                    f"A newer run will ({_CORRELATION_NEXT_RUN_TEXT}).",
                 ],
             )
         return _retirement_correlation_matrix_state(last_run, cards_run, bot_state_getter)
@@ -7429,8 +7723,12 @@ def api_performance():
         # event sample that dropped zero-trigger days and contradicted the Overview
         # chart on the same screen).  Every shadow_history trading day appears.
         dates, live_returns, shadow_returns = [], [], []
+        # The value weights leave out a symphony no longer held (the same rule every page asks).
+        _held_weights = _held_state_kwargs(datetime.now(_ET))
         try:
-            _series = analytics.get_portfolio_bot_and_held_daily_returns(days=_fetch_days)
+            _series = analytics.get_portfolio_bot_and_held_daily_returns(
+                days=_fetch_days, **_held_weights
+            )
             if is_window_token:
                 _series = _slice_series_by_window_cutoff(_series, days)
             if _series is not None:
@@ -7477,7 +7775,7 @@ def api_performance():
     # count with no cutoff and keeps the fallbacks untouched.
     if not dates and scope == "aggregate":
         try:
-            _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
+            _fallback = analytics.get_portfolio_bot_and_held_daily_returns(**_held_weights)
             if is_window_token:
                 _fallback = _slice_series_by_window_cutoff(_fallback, days)
             if _fallback is not None:
@@ -7597,6 +7895,9 @@ def api_performance_symphonies():
     into GET /api/performance?scope=symphony&symphony_id=.
     """
     state = database.load_state()
+    # A symphony no longer held is not offered: the picker and the Advisor's select are filled
+    # from here, and neither can read a series for it that means anything.
+    state = _without_symphonies(state, _no_longer_held_ids(state, None, datetime.now(_ET)))
     symphonies = [
         {"id": sym_id, "name": data["name"]}
         for sym_id, data in state.items()
@@ -8289,13 +8590,22 @@ def get_settings():
 
     # Fetch unique symphony names from the current bot_state
     state_data = database.load_state()
+    # A symphony no longer held is listed apart, so Settings can show it dimmed: it is known,
+    # but it has no override to edit and is not part of the active roster.
+    no_longer_held_ids = _no_longer_held_ids(state_data, None, datetime.now(_ET))
     symphony_names = set()
     raw_names = {}  # normalized_name -> display name
-    for data in state_data.values():
+    gone_names: dict[str, str] = {}  # normalized_name -> display name, no longer held
+    for sym_id, data in state_data.items():
         if isinstance(data, dict) and "name" in data:
             norm = database.normalize_name(data["name"])
+            if sym_id in no_longer_held_ids:
+                gone_names[norm] = data["name"]
+                continue
             symphony_names.add(norm)
             raw_names[norm] = data["name"]
+    # The same normalized name held under another id keeps the entry active.
+    gone_names = {norm: name for norm, name in gone_names.items() if norm not in symphony_names}
 
     symphonies_data = {}
     for name in symphony_names:
@@ -8315,6 +8625,9 @@ def get_settings():
             "symphonies": symphonies_data,
             "symphony_overrides": symphonies_data,
             "symphonies_list": symphonies_list,
+            "symphonies_no_longer_held": [
+                {"id": norm, "name": gone_names[norm]} for norm in sorted(gone_names)
+            ],
             "param_meta": _ALGO_PARAM_META,
         }
     )
@@ -8334,13 +8647,59 @@ _SETTINGS_WRITE_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+# EXECUTION_START_TIME is read by the engine as "HH:MM" (alpha_bot_execution.py splits it on ":"
+# and converts both halves to int).  fullmatch, never match with "$": "$" also matches before a
+# trailing newline, which is how a second line reaches the file.
+_SETTINGS_START_TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
+# The two values engine/exit_authority.py recognizes; anything else degrades the badge.
+_SETTINGS_EXIT_AUTHORITIES = frozenset({"per_symphony", "port_level"})
+
+
+def _settings_number(value) -> float | None:
+    """The finite float a settings value stands for, or None when it is not a plain finite number.
+
+    A string must be ASCII with nothing around the number: float() itself strips whitespace, and
+    a newline that float() forgives would still be written to the file as a second line.  bool is
+    refused (float(True) is 1.0), as are nan, inf and anything that overflows to inf.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        if not value.isascii() or value != value.strip():
+            return None
+    elif not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _settings_global_value_is_valid(key: str, value) -> bool:
+    """Whether `value` may be written to .env for the allowlisted global `key`.
+
+    python-dotenv writes KEY='value' and escapes only the quote character, so a value ending in a
+    backslash lets the next quote in the file close it and a following value can carry a whole
+    line of its own (LIVE_EXECUTION=True, which the key allowlist keeps out).  Each key therefore
+    takes only its own plain shape.
+    """
+    if key == "EXECUTION_START_TIME":
+        return isinstance(value, str) and _SETTINGS_START_TIME.fullmatch(value) is not None
+    if key == "EXIT_AUTHORITY":
+        return isinstance(value, str) and value in _SETTINGS_EXIT_AUTHORITIES
+    return _settings_number(value) is not None
+
+
 @app.route("/api/settings", methods=["POST"])
 def save_settings():
     """Saves allowlisted globals to .env and symphony strategies to SQLite.
 
     Rejects any key not in _SETTINGS_WRITE_ALLOWLIST (including LIVE_EXECUTION
     and all credential keys) with a 400 so the client gets an actionable error
-    rather than a silent no-op.
+    rather than a silent no-op.  Every value is validated before the first write
+    (all or nothing): a bad value anywhere in the payload is a 400 that leaves
+    .env and the strategies as they were.
     """
     payload = request.json
 
@@ -8356,6 +8715,33 @@ def save_settings():
                 }
             ), 400
 
+        # Validate everything first.  The message names allowlisted keys only, never a value.
+        bad_globals = sorted(
+            key
+            for key, val in globals_payload.items()
+            if not _settings_global_value_is_valid(key, val)
+        )
+        strategies: list[tuple[str, dict[str, float], list]] = []
+        symphony_param_is_bad = False
+        for sym_name, strategy_data in payload.get("symphonies", {}).items():
+            params: dict[str, float] = {}
+            for param_key, param_val in strategy_data.get("params", {}).items():
+                number = _settings_number(param_val)
+                if number is None:
+                    symphony_param_is_bad = True
+                else:
+                    params[param_key] = number
+            strategies.append((sym_name, params, strategy_data.get("locked_vars", [])))
+        if bad_globals or symphony_param_is_bad:
+            problems = []
+            if bad_globals:
+                problems.append(f"invalid values for settings {bad_globals}")
+            if symphony_param_is_bad:
+                problems.append("a symphony parameter is not a finite number")
+            return jsonify(
+                {"status": "error", "message": "Nothing was saved: " + "; ".join(problems)}
+            ), 400
+
         for key, val in globals_payload.items():
             set_key(ENV_FILE_PATH, key, str(val))
 
@@ -8366,9 +8752,7 @@ def save_settings():
             set_key(ENV_FILE_PATH, "_exit_authority_changed_at", _changed_at)
 
         # Save Symphony Strategies
-        for sym_name, strategy_data in payload.get("symphonies", {}).items():
-            params = {k: float(v) for k, v in strategy_data.get("params", {}).items()}
-            locked = strategy_data.get("locked_vars", [])
+        for sym_name, params, locked in strategies:
             database.save_symphony_strategy(sym_name, params, locked)
 
         return jsonify({"status": "success", "message": "Variables updated successfully!"})
@@ -8518,6 +8902,12 @@ _REAL_POST_MORTEM_DATES = frozenset(
     }
 )
 
+# The production go-live day (the first day the live engine ran against real accounts).  The engine
+# writes a post-mortem every trading day from here on, so a file dated on or after this day is
+# production history and the flush never deletes it, however recent: the set above names only the
+# real files that existed when the synthetic backfill was cleaned up.  ISO dates compare as text.
+_PRODUCTION_GO_LIVE_DAY = "2026-06-22"
+
 
 # The arming flags the flush confirm lists, in the order shown: bot_state field -> label.
 _ARMED_SYMPHONY_FLAGS = (
@@ -8556,7 +8946,8 @@ def flush_resync():
     """Delete synthetic post_mortem backfill files, reset per-symphony bot_state, resync Composer.
 
     Phase 1 — File purge: scans analytics._POST_MORTEMS_DIR, removes files whose dates are
-      NOT in _REAL_POST_MORTEM_DATES, keeps real ones.  Invalidates the analytics cache.
+      NOT in _REAL_POST_MORTEM_DATES and fall before _PRODUCTION_GO_LIVE_DAY, keeps real ones
+      and every file from the go-live day on.  Invalidates the analytics cache.
     Phase 2 — Symphony state reset (background): loads bot_state, enumerates per-symphony
       entries (isinstance(v, dict) and "name" in v), strips runtime tracking fields (stop
       levels, returns, trigger flags), preserves "name" and "account".  Read happens on the
@@ -8584,7 +8975,7 @@ def flush_resync():
             continue
         date_str = m.group(1)
         fpath = os.path.join(pm_dir, fname)
-        if date_str in _REAL_POST_MORTEM_DATES:
+        if date_str in _REAL_POST_MORTEM_DATES or date_str >= _PRODUCTION_GO_LIVE_DAY:
             kept.append(fname)
         else:
             try:
@@ -9517,6 +9908,31 @@ def ai_advisor_tab():
             )
     except Exception:
         pass  # Empty-state rendered by template on [].
+
+    # The swap and logic forms list the symphonies the post-mortems name. One that is no longer
+    # held (the shared rule) is not offered. The state is read only when there is a list to trim,
+    # so a page with no history still costs no state read.
+    if symphonies:
+        try:
+            _roster_state = _ensure_ai_advisor_bot_state()
+            _roster_gone = _no_longer_held_ids(_roster_state, None, datetime.now(_ET))
+            if _roster_gone:
+                _gone_names = {
+                    database.normalize_name(entry["name"])
+                    for key, entry in _roster_state.items()
+                    if key in _roster_gone and isinstance(entry, dict) and "name" in entry
+                }
+                _held_names = {
+                    database.normalize_name(entry["name"])
+                    for key, entry in _roster_state.items()
+                    if key not in _roster_gone and _is_symphony_state_entry(entry)
+                }
+                _offered_not = _gone_names - _held_names
+                symphonies = [
+                    n for n in symphonies if database.normalize_name(n) not in _offered_not
+                ]
+        except Exception:
+            pass  # The list then stays as the post-mortems named it.
 
     # Badges read the cached resolution only; the render never lists models,
     # so it can never wait on the Models API (the startup warm-up fills it).
@@ -11249,9 +11665,10 @@ def ai_advisor_reject():
 def ai_advisor_chat():
     """Redirect to the unified /ai-advisor page (in-place tabs migration).
 
-    Chat is now an always-in-DOM slide panel on /ai-advisor, not a separate page.
+    Chat is now an always-in-DOM slide panel on /ai-advisor, not a separate page. The redirect
+    names the Chat tab (#chat) so the page opens on it.
     """
-    return redirect(url_for("ai_advisor_tab"), code=302)
+    return redirect(url_for("ai_advisor_tab") + "#chat", code=302)
 
 
 @app.route("/ai-advisor/chat/send", methods=["POST"])

@@ -29,12 +29,49 @@ body {
   padding: 0;
 }
 
+/* Native controls take the app font: the browser's own default for buttons, selects and
+   inputs is a system font, which put a second typeface on every page. */
+button,
+select,
+input,
+textarea {
+  font-family: inherit;
+}
+
 .page-wrap {
   box-sizing: border-box;
   max-width: var(--studio-page-max-width);
   margin: 0 auto;
   padding: 24px var(--studio-page-inset) 48px;
 }
+
+/* On a phone the page uses its width: a smaller inset at the page edge and in each panel. The
+   top inset follows the base rule above, whose padding shorthand would otherwise override it. */
+@media (max-width: 700px) {
+  :root {
+    --studio-page-inset: 14px;
+  }
+
+  .page-wrap {
+    padding-top: 12px;
+  }
+}
+
+/* Rules beside the shared primitives, kept above them: the primitives below stay the sheet's
+   closing run. */
+
+/* A stat tile's one-line statement of what the number is (basis, window, unit). */
+.mini-stat-note {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--studio-ink-faint);
+  margin-top: 4px;
+}
+
+/* The shared stat labels, section headers and chips are upper-case. A Greek alpha or rho in
+   one would turn into the Latin A or P and read as another word, so the glyph carries this
+   class: lower-case, whatever its parent does. The one rule for every page. */
+.alpha-glyph { text-transform: none; }
 
 /* ---- Shared dashboard primitives (SC-5) ----
    Moved byte-for-byte, in order, from the inline style block of
@@ -84,6 +121,13 @@ body {
   color: var(--studio-ink-faint);
 }
 
+@media (max-width: 700px) {
+  .hero-section {
+    padding: 18px 16px 16px;
+    margin-bottom: 16px;
+  }
+}
+
 .section-header {
   font-size: 11px;
   font-weight: 700;
@@ -119,6 +163,7 @@ body {
 .status-pill {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   padding: 3px 9px;
   border-radius: 20px;
   font-size: 10px;

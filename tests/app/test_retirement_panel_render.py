@@ -313,6 +313,34 @@ def _two_decimal_forms(value: float) -> list[str]:
     return [text, text.replace("-", _MINUS)]
 
 
+# A gap between two drawdown legs: (the first leg, the second leg). The stored gap is the first
+# leg's signed drawdown minus the second's.
+_DRAWDOWN_GAPS = {
+    "max_drawdown_gap": ("realized", "backtest"),
+    "max_drawdown_difference": ("without", "with"),
+}
+
+
+def _is_drawdown_leg(name: str) -> bool:
+    return name == "max_drawdown" or name.endswith("_max_drawdown")
+
+
+def _printed_figure(name: str, value: float) -> float:
+    """A stored figure as the panel prints it: a drawdown leg is a magnitude, and so is the size of a
+    gap between two legs; any other figure keeps its sign."""
+    return abs(value) if _is_drawdown_leg(name) or name in _DRAWDOWN_GAPS else value
+
+
+def _gap_words(name: str, value: float) -> str:
+    """The words that follow a gap's size: which leg is the shallower, in magnitudes (the first leg's
+    magnitude minus the second's is the stored gap with its sign turned, both legs being at most zero)."""
+    first, second = _DRAWDOWN_GAPS[name]
+    shown = round(-value, 2)
+    if shown == 0:
+        return f"{first} and {second} are equally deep"
+    return f"{first} is {'shallower' if shown < 0 else 'deeper'} than {second}"
+
+
 def _shows(node: pb.Node, value: float) -> bool:
     haystack = node.everything()
     return any(form in haystack for form in _two_decimal_forms(value))
@@ -645,7 +673,13 @@ class TestEvidenceItems:
                     assert str(window["days"]) in text, where
                 for fig_name, fig in item["figures"].items():
                     if fig["value"] is not None:
-                        assert _shows(shown, fig["value"]), f"{where} / {fig_name}"
+                        assert _shows(shown, _printed_figure(fig_name, fig["value"])), (
+                            f"{where} / {fig_name}"
+                        )
+                        if fig_name in _DRAWDOWN_GAPS:
+                            assert _gap_words(fig_name, fig["value"]) in text, (
+                                f"{where} / {fig_name}: the gap does not say which leg is shallower"
+                            )
                 checked += 1
         assert checked >= 10, "the roster must exercise many available items"
 
@@ -982,7 +1016,7 @@ class TestRunButton:
         assert button.attrs.get("type") == "button"
         assert button.attrs.get("onclick") == "retRunReview(this)"
         assert "run-trigger-btn" in button.classes()
-        assert "Run review now" in button.text()
+        assert "Run tenure review" in button.text()
         assert "disabled" not in button.attrs
         message = panel.find("tenure-review-run-message")
         assert message is not None
@@ -5334,9 +5368,15 @@ class TestAPercentFigureCarriesThePercentSign:
                         text = lines[0].text()
                         assert any(
                             re.search(rf"{re.escape(form)}%(?![\w%])", text)
-                            for form in _two_decimal_forms(fig["value"])
+                            for form in _two_decimal_forms(_printed_figure(fig_name, fig["value"]))
                         ), (where, text)
                         assert not re.search(r"\bpercent\b", text.lower()), (where, text)
+                        if _is_drawdown_leg(fig_name) and fig["value"] < 0:
+                            magnitude = _two_decimal_forms(abs(fig["value"]))[0]
+                            assert not re.search(rf"[-{_MINUS}]{re.escape(magnitude)}", text), (
+                                f"{where}: a drawdown prints its magnitude, no minus sign",
+                                text,
+                            )
                         checked += 1
         assert checked >= 20, f"the records must hold many percent figures, got {checked}"
 
@@ -5428,8 +5468,8 @@ class TestAFigureWithNoValueReadsNotComputable:
 _ZERO_ROUNDING_TARGETS = [
     pytest.param(
         "performance",
-        "max drawdown",
-        "evidence.performance.figures.max_drawdown.value",
+        "total return",
+        "evidence.performance.figures.total_return.value",
         id="a percent figure",
     ),
     pytest.param(
@@ -5502,6 +5542,13 @@ class TestAValueThatRoundsToZeroPrintsZero:
         lines = _figure_lines(block, label)
         assert len(lines) == 1
         text = lines[0].text()
+        gap_name = label.replace(" ", "_")
+        if gap_name in _DRAWDOWN_GAPS:
+            # A gap between drawdown legs prints its size, with the words that carry the direction.
+            size = f"{abs(round(-value, 2)):.2f}"
+            assert re.match(rf"{re.escape(label)}:\s*{re.escape(size)}(?!\d)", text), text
+            assert _gap_words(gap_name, value) in text, text
+            return
         assert any(
             re.match(rf"{re.escape(label)}:\s*{re.escape(form)}(?!\d)", text)
             for form in _signed_forms(expected)

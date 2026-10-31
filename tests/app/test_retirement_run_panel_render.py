@@ -283,8 +283,8 @@ class TestOkRunRendersEveryFact:
 
     def test_basis_shows_the_source_and_the_basis_label(self, body):
         text = _sub_text(body, "retirement-last-run-basis")
-        assert "realized daily returns (Composer, deposit-adjusted)" in text
-        assert "composer" in text.lower()
+        assert "Composer realized daily returns" in text, text
+        assert not re.search(r"composer", text), "the internal source word is still shown"
 
     def test_symphonies_shows_analysed_versus_roster(self, body):
         text = _sub_text(body, "retirement-last-run-symphonies")
@@ -695,14 +695,15 @@ class TestPanelFollowsTheLatestRun:
         assert 'data-testid="retirement-recommendations-empty"' in panel
         assert "2026-10-21" in _block_text(body)
 
-    def test_cards_of_the_latest_run_render_below_the_last_run_block(self, client, isolated_db):
+    def test_cards_of_the_latest_run_render_above_the_last_run_block(self, client, isolated_db):
+        """The card to act on comes first; the run it came from follows it."""
         _seed_roster({"cand-render": "Render Candidate", "sib-render": "Render Sibling"})
         _seed_rec("run-now", "cand-render", "sib-render")
         _seed_summary(run_id="run-now", recommendations=1)
 
         panel = _panel(_render(client))
-        assert panel.index('data-testid="retirement-last-run"') < panel.index(
-            'data-testid="retirement-recommendation-card"'
+        assert panel.index('data-testid="retirement-recommendation-card"') < panel.index(
+            'data-testid="retirement-last-run"'
         )
 
     def test_a_last_run_read_failure_degrades_to_the_never_run_block_without_a_500(
@@ -816,8 +817,12 @@ class TestRunNowMarketHoursHint:
         _seed_summary(run_id="run-now", recommendations=1)
         panel = _panel(_render(client))
         assert 'data-testid="retirement-run-now-hint"' in panel
-        assert panel.index('data-testid="retirement-run-now-hint"') < panel.index(
-            'data-testid="retirement-recommendation-card"'
+        # The hint belongs to the run control, which follows the card to act on.
+        assert panel.index('data-testid="retirement-recommendation-card"') < panel.index(
+            'data-testid="retirement-run-now-hint"'
+        )
+        assert 'data-testid="retirement-run-now-hint"' not in _element_html(
+            panel, "retirement-recommendation-card"
         )
 
     def test_the_hint_text_is_autoescaped_markup_free(self, client, isolated_db):

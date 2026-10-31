@@ -336,7 +336,7 @@ class TestTheServerRenderCarriesTheHooksThePollWrites:
         badge = re.search(
             r"<span[^>]*data-testid=\"edit-vars-indicator\"[^>]*>([^<]*)</span>", shown
         )
-        assert badge and badge.group(1).strip() == "1"
+        assert badge and badge.group(1).strip() == "1 locked"
 
     def test_the_hero_legend_names_its_mode_word_in_an_element_of_its_own(
         self, monkeypatch, tmp_path

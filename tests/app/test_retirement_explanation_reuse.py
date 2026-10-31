@@ -1057,3 +1057,126 @@ class TestThePreparationStepCanBeCalledOnItsOwn:
         assert recs[0]["correlation"] == 0.80
         assert recs[0]["explanation"] == "prepared text"
         assert recs[0]["explanation_written_on"] == "2026-10-20"
+
+
+# ===========================================================================
+# Two producers write the same role: each reuses its own rows
+# ===========================================================================
+
+
+class TestEachProducerReusesOnlyItsOwnRows:
+    """The tenure review and the recommender both write RETIREMENT_RECOMMENDATION rows for a pair they
+    both flag, with evidence that is not the same record (a different basis label, and window fields only
+    the review carries). Reuse compares a row to the newest row of the SAME producer; compared with the
+    other producer's row it could never match, and each night both would call the explainer again for
+    an unchanged pair."""
+
+    @staticmethod
+    def _recommender_rec(**overrides):
+        from tests.app._retirement_run_summary_stub import (
+            COMPOSER_BASIS_LABEL as RECOMMENDER_BASIS_LABEL,
+        )
+
+        return _sample_raw_response(basis_label=RECOMMENDER_BASIS_LABEL, **overrides)
+
+    @staticmethod
+    def _review_rec(**overrides):
+        import advisors.tenure_review as tenure_review_module
+
+        return _review_rec(basis_label=tenure_review_module.COMPOSER_BASIS_LABEL, **overrides)
+
+    @staticmethod
+    def _producers(mp, builders):
+        """Both producers installed over fresh recommendations."""
+        installed = {}
+        for kind, build in builders.items():
+            producer = RetirementProducer(kind)
+            producer.install(mp, lambda build=build: [build()])
+            installed[kind] = producer
+        return installed
+
+    @staticmethod
+    def _stored_explanations() -> dict[str, list]:
+        """The explanation stored on each producer's rows, oldest first. The review stamps its rows
+        with ``review_run_id`` and the recommender with ``run_id``; the runs hand the producers copies
+        of the recommendations, so the stored rows are what a run finished."""
+        stored: dict[str, list] = {"review": [], "recommender": []}
+        for row in reversed(jb.rec_rows()):
+            raw = row["raw_response"]
+            kind = "review" if "review_run_id" in raw else "recommender"
+            stored[kind].append(raw.get("explanation"))
+        return stored
+
+    def test_alternating_producers_explain_an_unchanged_pair_once_each(self, isolated_db):
+        import advisors.retirement_explainer as explainer_module
+
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
+        explained: list[str] = []
+
+        def _explain(rec):
+            explained.append(rec.get("basis_label"))
+            return f"explanation #{len(explained)}"
+
+        with pytest.MonkeyPatch.context() as mp:
+            producers = self._producers(
+                mp, {"review": self._review_rec, "recommender": self._recommender_rec}
+            )
+            mp.setattr(explainer_module, "explain_recommendation", _explain)
+            for _night in range(2):
+                producers["review"].run()
+                producers["recommender"].run()
+
+        assert len(explained) == 2, (
+            f"the explainer was called {len(explained)} times for two nights of an unchanged pair "
+            f"from two producers; the bases were {explained}"
+        )
+        stored = self._stored_explanations()
+        assert len(stored["review"]) == 2 and len(stored["recommender"]) == 2, stored
+        first_review, second_review = stored["review"]
+        first_recommender, second_recommender = stored["recommender"]
+        assert second_review == first_review, "the review did not reuse its own text"
+        assert second_recommender == first_recommender, "the recommender did not reuse its own text"
+        assert first_review != first_recommender
+
+    def test_reuse_is_not_blind_a_changed_figure_is_explained_again_by_its_own_producer_only(
+        self, isolated_db
+    ):
+        import advisors.retirement_explainer as explainer_module
+
+        _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
+        explained: list[str] = []
+
+        def _explain(rec):
+            explained.append(rec.get("basis_label"))
+            return f"explanation #{len(explained)}"
+
+        changed = {"correlation": 0.91}
+        with pytest.MonkeyPatch.context() as mp:
+            builders = {"review": self._review_rec, "recommender": self._recommender_rec}
+            producers = self._producers(mp, builders)
+            mp.setattr(explainer_module, "explain_recommendation", _explain)
+            producers["review"].run()
+            producers["recommender"].run()
+            before = len(explained)
+            # The recommender's evidence moves; the review's does not.
+            producers_after = self._producers(
+                mp,
+                {
+                    "review": self._review_rec,
+                    "recommender": lambda: self._recommender_rec(**changed),
+                },
+            )
+            mp.setattr(explainer_module, "explain_recommendation", _explain)
+            producers_after["recommender"].run()
+            producers_after["review"].run()
+
+        assert before == 2
+        assert len(explained) == 3, (
+            "a changed recommender figure must be explained again, and an unchanged review pair "
+            f"must not be: {explained}"
+        )
+        stored = self._stored_explanations()
+        first_review, second_review = stored["review"]
+        first_recommender, second_recommender = stored["recommender"]
+        assert second_review == first_review, "the unchanged review pair was explained again"
+        assert second_recommender != first_recommender, "the changed figure kept the old text"
