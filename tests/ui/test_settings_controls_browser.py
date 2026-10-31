@@ -560,11 +560,15 @@ def test_save_is_refused_by_the_server_without_a_token_and_the_page_reports_the_
     probe, monkeypatch, action
 ):
     monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
-    probe.page.route("**/api/csrf-token", lambda route: route.abort())
+    # The page holds no token: its load-time token request fails. The route works again before the
+    # save, so the refusal's token refresh succeeds and the page reports the server's refusal.
+    refuse_token = lambda route: route.abort()  # noqa: E731
+    probe.page.route("**/api/csrf-token", refuse_token)
     key, record = _captured(NAME_PARENS_PLUS)
     _seed([(key, record)], {NAME_PARENS_PLUS: (_overridden_params(), list(STORED_LOCKS))})
     before_row = _stored(NAME_PARENS_PLUS)
     open_settings(probe, 1)
+    probe.page.unroute("**/api/csrf-token", refuse_token)
     norm = _norm(NAME_PARENS_PLUS)
     select_symphony(probe, norm)
     if action == "reset":
@@ -580,11 +584,11 @@ def test_save_is_refused_by_the_server_without_a_token_and_the_page_reports_the_
     assert response.status == 403
     message = _wait_dialog(probe, "the refused save")
     lowered = message.lower()
-    assert "save failed" in lowered
-    assert "network error" not in lowered, (
-        "a 403 is a refusal, not a network error; the alert must say so"
+    assert "not saved" in lowered and "click save again" in lowered, message
+    assert "network error" not in lowered and "connection failed" not in lowered, (
+        "a 403 with a working token route is a refusal, not a lost connection; the alert must say so"
     )
-    assert "403" in lowered or "refus" in lowered or "forbidden" in lowered, message
+    assert "refus" in lowered, message
     assert _stored(NAME_PARENS_PLUS) == before_row, (
         "nothing may be written when the save is refused"
     )

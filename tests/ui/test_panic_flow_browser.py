@@ -23,7 +23,8 @@ captured by ``page.route`` and fulfilled in the browser where the module only ne
 nothing is written anywhere.
 
 The refusal rows run with the auth and CSRF hooks on and sign in through the page's own form, as
-the launcher's second mode does: the CSRF 403 is provoked with a blank page token, the 401 by
+the launcher's second mode does: the CSRF 403 is provoked with a stale page token (the token route
+answers a wrong value once, to the page's token holder), the 401 by
 dropping the session cookie, the empty-account 400 with no account configured.
 """
 
@@ -295,12 +296,30 @@ def test_with_an_account_chosen_the_missing_credentials_400_is_shown_verbatim(
         assert probe.page_errors == [], probe.page_errors
 
 
+def _make_the_page_token_stale(probe) -> None:
+    """The token the page holds (in request_guard.js, out of reach of page scripts) becomes one the
+    server has never issued: the token route answers a wrong value to one refresh, then answers the
+    real one again, as it does after a daemon restart."""
+
+    def stale(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"csrf_token": "stale-token-from-before-a-restart"}),
+        )
+
+    probe.page.route("**/api/csrf-token", stale)
+    arrived = probe.page.evaluate("() => window.PSRequest.refreshCsrf()")
+    probe.page.unroute("**/api/csrf-token", stale)
+    assert arrived is True, "the stale token never reached the page's token holder"
+
+
 def test_a_blank_page_token_is_answered_with_the_session_check_statement(firefox, secure_server):
     """Live half: the CSRF hook's 403 HTML; the operator is told, nothing is raised."""
     with open_probe(firefox, secure_server, width=NARROW[0], height=NARROW[1]) as probe:
         _sign_in(probe)
         open_page(probe, "/history")
-        probe.page.evaluate("() => { window._chromeCsrfToken = ''; }")
+        _make_the_page_token_stale(probe)
         message = _confirm_and_read_alert(probe)
         lowered = message.lower()
         assert "session" in lowered and "refused" in lowered
@@ -346,7 +365,7 @@ def test_after_a_refusal_the_modal_reopens_and_one_new_request_is_sent(firefox, 
         open_page(probe, "/history")
         first = _confirm_and_read_alert(probe)
         assert first == "Missing credentials or account ID."
-        probe.page.evaluate("() => { window._chromeCsrfToken = ''; }")
+        _make_the_page_token_stale(probe)
         probe.dialogs.clear()
         second = _confirm_and_read_alert(probe)
         assert "session" in second.lower() and NOTHING_LIQUIDATED in second.lower()
