@@ -26,9 +26,6 @@
 
     var _inFlight = false;
 
-    /** CSRF token fetched from GET /api/csrf-token on DOMContentLoaded (AC-1). */
-    var _csrfToken = null;
-
     // -------------------------------------------------------------------------
     // DOM refs (resolved lazily so this module works when the panel is not
     // present on page-load, e.g. when landing on a different advisor tab)
@@ -45,8 +42,8 @@
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+            .replace(/\x22/g, '&quot;')
+            .replace(/\x27/g, '&#39;');
     }
 
     // -------------------------------------------------------------------------
@@ -160,7 +157,7 @@
         _syncSendBtn();
 
         // Append operator bubble
-        _appendBubble('operator', message);
+        var operatorBubble = _appendBubble('operator', message);
         input.value = '';
 
         // Record in history before the request
@@ -170,11 +167,11 @@
         var thinkingId = 'chat-thinking-' + Date.now();
         _appendBubbleWithId('ai', 'Thinking…', thinkingId, true);
 
-        fetch('/ai-advisor/chat/send', {
+        PSRequest.postAction('/ai-advisor/chat/send', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': _csrfToken || '',
+                'X-CSRF-Token': PSRequest.csrfToken() || '',
             },
             body: JSON.stringify({
                 artifact_id:   _currentArtifact.artifactId,
@@ -185,12 +182,30 @@
                 message:       message,
             }),
         })
-            .then(function (resp) { return resp.json(); })
-            .then(function (body) {
+            .then(function (res) {
                 // Remove thinking indicator
                 var thinkingEl = document.getElementById(thinkingId);
                 if (thinkingEl) thinkingEl.remove();
 
+                if (res.networkError) {
+                    _appendBubble('ai', 'Request failed: network error');
+                    _history.pop();  // remove the user message that errored
+                    return;
+                }
+                if (res.refused === 'csrf') {
+                    // Nothing was sent and nothing is sent again. The message goes back into the input
+                    // (and out of the history), and its bubble says so with a Send again button.
+                    _history.pop();
+                    input.value = message;
+                    _markNotSent(operatorBubble, res);
+                    return;
+                }
+                var body = res.body;
+                if (!body) {
+                    _appendBubble('ai', 'Request failed: the answer could not be read (HTTP ' + res.status + ')');
+                    _history.pop();
+                    return;
+                }
                 if (body.error) {
                     _appendBubble('ai', 'Error: ' + body.error);
                     // Do not record error as AI turn — let the operator retry.
@@ -213,17 +228,36 @@
             });
     };
 
+    // The operator's bubble for a message the session check refused: it says the message was not sent
+    // and offers Send again, which removes this bubble and sends the same text once more with the new token.
+    function _markNotSent(bubble, res) {
+        if (!bubble) return;
+        var note = document.createElement('div');
+        note.className = 'chat-bubble-label';
+        note.setAttribute('role', 'status');
+        note.textContent = PSRequest.notSentText(res, 'Click Send again.');
+        var again = document.createElement('button');
+        again.type = 'button';
+        again.textContent = 'Send again';
+        again.addEventListener('click', function () {
+            bubble.remove();
+            window.sendChatMessage();
+        });
+        bubble.appendChild(note);
+        bubble.appendChild(again);
+    }
+
     // -------------------------------------------------------------------------
     // Bubble rendering helpers
     // -------------------------------------------------------------------------
 
     function _appendBubble(role, content) {
-        _appendBubbleWithId(role, content, null, false);
+        return _appendBubbleWithId(role, content, null, false);
     }
 
     function _appendBubbleWithId(role, content, id, isThinking) {
         var thread = el('chat-thread');
-        if (!thread) return;
+        if (!thread) return null;
 
         var wrapper = document.createElement('div');
         if (id) wrapper.id = id;
@@ -242,6 +276,7 @@
         thread.appendChild(wrapper);
         // Scroll to bottom
         thread.scrollTop = thread.scrollHeight;
+        return wrapper;
     }
 
     // -------------------------------------------------------------------------
@@ -262,14 +297,6 @@
     // -------------------------------------------------------------------------
 
     document.addEventListener('DOMContentLoaded', function () {
-        // Fetch the process-lifetime CSRF token so chat POSTs can attach it
-        // as X-CSRF-Token (AC-1).  Failure is soft — the POST will 403 but
-        // the UI will surface the error through normal error handling.
-        fetch('/api/csrf-token')
-            .then(function (resp) { return resp.json(); })
-            .then(function (body) { _csrfToken = body.csrf_token || null; })
-            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-
         var input = el('chat-input');
         if (!input) return;
 

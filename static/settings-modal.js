@@ -13,7 +13,11 @@
  *   - Autotuner parameters section: read-only spans/divs ONLY — no input elements.
  *   - AI advisor section: display-only cards, no action controls.
  *   - Live toggle OFF→ON requires ConfirmGoLive dialog; a bare click never persists live.
- *   - CSRF token fetched from /api/csrf-token on load (same pattern as ai_advisor.js).
+ *   - The CSRF token and the save's answer come from window.PSRequest (static/request_guard.js);
+ *     a save the session check refuses is never sent again, the operator's next click sends it.
+ *   - A response is applied only while it belongs to the open the modal is on: opening another
+ *     symphony, or closing the modal, discards a late answer; Save posts only to the symphony whose
+ *     values the modal loaded.
  *
  * Auto-refresh floor: the modal fetches fresh state only when opened, never on a
  * timer shorter than the engine's 1-minute cadence (arch constraint 1).
@@ -21,15 +25,6 @@
 
 (function () {
     'use strict';
-
-    // ── CSRF token (same fetch pattern as static/ai_advisor.js) ───────────────
-    var _csrfToken = null;
-    document.addEventListener('DOMContentLoaded', function () {
-        fetch('/api/csrf-token')
-            .then(function (r) { return r.json(); })
-            .then(function (b) { _csrfToken = b.csrf_token || null; })
-            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-    });
 
     // ── Tuning parameter order + units (mirrors real DB schema keys) ──────────
     // These are the SCREAMING_SNAKE_CASE keys that autotuner writes via
@@ -62,6 +57,10 @@
     // symphony without one (or a failed load) never shows the previous symphony's name.
     var _currentDisplayName = null;
     var _modalData = null;         // last-fetched API response
+    // The symphony _modalData was loaded for: Save posts only when it is the symphony the modal is on.
+    var _modalSymphonyId = null;
+    // One number per open (and per close): a response that is not for the newest one is discarded.
+    var _openSeq = 0;
     var _pendingLockedVars = null; // local edits before Save
     // Track pending toggle state independently from _modalData.live_mode so
     // the toggle click has immediate visual effect without persisting (AC-3).
@@ -70,16 +69,27 @@
     // ── Entry point: called by gear icon onclick ───────────────────────────────
     window.openSymphonySettings = function (evt, symphonyId) {
         if (evt) { evt.stopPropagation(); }
+        var seq = ++_openSeq;
         _currentSymphonyId = symphonyId;
         _currentDisplayName = null;
+        // The previous symphony's values are gone the moment another is opened, so no Save can
+        // post them under the new one.
+        _modalData = null;
+        _modalSymphonyId = null;
         _pendingLockedVars = null;
         _pendingLiveMode = undefined;
         _renderLoadingModal();
         _showModal();
         fetch('/api/symphony-settings/' + encodeURIComponent(symphonyId))
-            .then(function (r) { return r.json(); })
+            .then(function (r) {
+                if (!r.ok) { throw new Error('HTTP ' + r.status); }
+                return r.json();
+            })
             .then(function (data) {
+                // A newer open, or a close, makes this answer someone else's: draw nothing.
+                if (seq !== _openSeq) { return; }
                 _modalData = data;
+                _modalSymphonyId = symphonyId;
                 _currentDisplayName = (typeof data.display_name === 'string' && data.display_name)
                     ? data.display_name : null;
                 _pendingLockedVars = (data.locked_vars || []).slice();
@@ -87,6 +97,7 @@
                 _renderModal(false);
             })
             .catch(function () {
+                if (seq !== _openSeq) { return; }
                 _renderErrorModal('Failed to load settings. Please try again.');
             });
     };
@@ -132,6 +143,8 @@
     }
 
     function _closeModal() {
+        // Closing ends this open: an answer still in flight for it is discarded when it lands.
+        _openSeq += 1;
         var el = document.getElementById('sym-settings-modal');
         if (el) { el.style.display = 'none'; }
         _pendingLiveMode = undefined;
@@ -202,6 +215,8 @@
 
     // ── Main render ───────────────────────────────────────────────────────────
 
+    // `saveError`: false for none, true for the locked-state message, or a string to show as is
+    // (a save that was not sent).
     function _renderModal(saveError) {
         if (!_modalData) { return; }
         var data = _modalData;
@@ -338,15 +353,19 @@
         }
 
         // Save-error state (AC-12)
+        var saveErrorText = typeof saveError === 'string'
+            ? saveError
+            : "Couldn't save — symphony state is locked by a running EOD cycle. Retry in a moment.";
         var footerExtra = saveError
-            ? '<div style="display:flex;align-items:center;gap:8px;font-size:12px;' +
+            ? '<div role="alert" style="display:flex;align-items:center;gap:8px;font-size:12px;' +
               'color:var(--studio-neg);font-weight:600;margin-bottom:6px;">' +
               '<span style="font-size:13px;">✕</span>' +
-              "Couldn't save — symphony state is locked by a running EOD cycle. Retry in a moment." +
+              _esc(saveErrorText) +
               '</div>'
             : '';
-        var saveLabel = saveError ? 'Retry save' : 'Save settings';
-        var saveBg = saveError ? 'var(--studio-neg)' : 'var(--studio-accent)';
+        // A save that was not sent is clicked again as it was; only a failed one is a retry.
+        var saveLabel = saveError === true ? 'Retry save' : 'Save settings';
+        var saveBg = saveError === true ? 'var(--studio-neg)' : 'var(--studio-accent)';
 
         var footer = footerExtra +
             '<div style="display:flex;justify-content:flex-end;gap:10px;">' +
@@ -487,7 +506,8 @@
     }
 
     function _doSave(confirmed) {
-        if (!_currentSymphonyId) { return; }
+        // Post only the values this modal loaded for the symphony it is open on.
+        if (!_currentSymphonyId || !_modalData || _modalSymphonyId !== _currentSymphonyId) { return; }
 
         // Close confirm dialog if present.
         var d = document.getElementById('sym-settings-confirm');
@@ -510,30 +530,36 @@
             btn.disabled = true;
         }
 
-        fetch('/api/symphony-settings/' + encodeURIComponent(_currentSymphonyId), {
+        var seqAtSend = _openSeq;
+        PSRequest.postAction('/api/symphony-settings/' + encodeURIComponent(_currentSymphonyId), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-CSRF-Token': _csrfToken || '',
+                'X-CSRF-Token': PSRequest.csrfToken() || '',
             },
             body: JSON.stringify(payload),
-        })
-            .then(function (r) {
-                if (!r.ok) { throw new Error('HTTP ' + r.status); }
-                return r.json();
-            })
-            .then(function (body) {
-                if (body && body.status === 'error') {
-                    throw new Error(body.message || 'Save failed');
-                }
-                // Reflect persisted state and reset pending flags.
-                _modalData.live_mode = newLive;
-                _pendingLiveMode = undefined;
-                _renderModal(false);
-            })
-            .catch(function () {
+        }).then(function (res) {
+            // The modal was closed or reopened on another symphony while the save was in flight:
+            // its answer is not for what is on screen now.
+            if (seqAtSend !== _openSeq) { return; }
+            if (res.refused === 'csrf') {
+                // Nothing was saved and nothing is sent again. The edits stay (including a live flag
+                // turned on), and the next Save asks the go-live confirmation again before it sends.
+                _renderModal(res.tokenRefreshed
+                    ? 'Not sent: the session check refused the save after a restart. Click Save settings again.'
+                    : 'Not sent: the connection failed, so the session could not be refreshed. Click Save settings again.');
+                return;
+            }
+            var body = res.body;
+            if (res.networkError || !res.ok || body === null || (body && body.status === 'error')) {
                 _renderModal(true /* saveError */);
-            });
+                return;
+            }
+            // Reflect persisted state and reset pending flags.
+            _modalData.live_mode = newLive;
+            _pendingLiveMode = undefined;
+            _renderModal(false);
+        });
     }
 
     // ── Wire-up helpers ────────────────────────────────────────────────────────

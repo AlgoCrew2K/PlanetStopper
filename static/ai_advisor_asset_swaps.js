@@ -12,15 +12,6 @@
 (function () {
     'use strict';
 
-    /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
-    var _csrfToken = null;
-    document.addEventListener('DOMContentLoaded', function () {
-        fetch('/api/csrf-token')
-            .then(function (r) { return r.json(); })
-            .then(function (b) { _csrfToken = b.csrf_token || null; })
-            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-    });
-
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
@@ -446,33 +437,38 @@
         evalBtn.disabled = true;
         evalBtn.textContent = 'Evaluating…';
 
-        fetch('/ai-advisor/asset-swaps/evaluate', {
+        PSRequest.postAction('/ai-advisor/asset-swaps/evaluate', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
             body: JSON.stringify({
                 symphony_id: symphonyId,
                 from_ticker: fromTicker,
                 to_ticker: toTicker,
             }),
         })
-            .then(function (resp) {
-                // AC-9a: guard before JSON parse — a non-JSON error (e.g. 413 HTML
-                // from nginx) must surface a clean message, not throw SyntaxError.
-                if (!resp.ok) {
-                    return resp.text().then(function (body) {
-                        throw new Error("backtest unavailable (HTTP " + resp.status + ")");
-                    });
+            .then(function (res) {
+                if (res.networkError) { throw new Error('network error'); }
+                if (res.refused === 'csrf') {
+                    // Nothing was evaluated and nothing is sent again: the next click sends one request.
+                    if (resultsArea) { resultsArea.innerHTML = ''; }
+                    if (errorEl) {
+                        errorEl.textContent = PSRequest.notSentText(res, 'Click Evaluate swap again.');
+                        errorEl.style.display = 'block';
+                    }
+                    return;
                 }
-                return resp.json();
-            })
-            .then(function (body) {
+                // AC-9a: guard before reading the body — a non-JSON error (e.g. 413 HTML
+                // from nginx) must surface a clean message, not throw SyntaxError.
+                if (!res.ok || res.body === null) {
+                    throw new Error("backtest unavailable (HTTP " + res.status + ")");
+                }
                 // R2-3: in-band body.error (200, valid JSON) is now handled
                 // INSIDE renderResults() itself, alongside the provenance the
                 // route always populates on that path (AC-8/AC-9) — mirrors
                 // static/ai_advisor_logic_changes.js's _renderResults(). Only
                 // a genuine transport failure (thrown Error, no JSON body)
                 // reaches renderError(), via .catch() below.
-                renderResults(body);
+                renderResults(res.body);
             })
             .catch(function (err) {
                 renderError('Request failed: ' + err.message);

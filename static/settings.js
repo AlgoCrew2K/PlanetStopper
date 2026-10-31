@@ -26,6 +26,9 @@
   let _pendingGlobals = {};
   let _pendingOverrides = {};  // { sym_id: { params: {}, locked_vars: [] } }
   let _selectedSym = null;
+  // Counts edits; a save remembers the count when it is sent, so an edit made while it was in
+  // flight is told apart from the ones it carried.
+  let _editSeq = 0;
 
   // ── Number reading and override counting ───────────────────────────────────
   // parseFloat reads "1abc" as 1 and "0x10" as 0, and Number("") is 0, so neither
@@ -65,14 +68,17 @@
     return Object.keys(stored).filter(key => overridesGlobal(stored[key], base, key)).length;
   }
 
-  /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
-  let _csrfToken = null;
-  document.addEventListener('DOMContentLoaded', function () {
-    fetch('/api/csrf-token')
-      .then(function (r) { return r.json(); })
-      .then(function (b) { _csrfToken = b.csrf_token || null; })
-      .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-  });
+  // The CSRF token and each POST's answer come from window.PSRequest (static/request_guard.js).
+  // A POST the session check refuses is reported as refused after the token is read again; this
+  // page never sends it a second time: the operator's next click does.
+  const SAVE_NOT_SENT_TEXT =
+    'Not saved: the session check refused it after a restart. Click Save again.';
+  const SAVE_NOT_SENT_OFFLINE_TEXT =
+    'Not sent: the connection failed, so the session could not be refreshed. Nothing was saved. Click Save again.';
+  const FLUSH_NOT_SENT_TEXT =
+    'Not sent: the session check refused the flush after a restart. Click Sync & Flush, then confirm again.';
+  const FLUSH_NOT_SENT_OFFLINE_TEXT =
+    'Not sent: the connection failed, so the session could not be refreshed. Click Sync & Flush, then confirm again.';
 
   // ── Section nav ────────────────────────────────────────────────────────────
   function activateSection(id) {
@@ -88,6 +94,7 @@
   // ── Dirty tracking ─────────────────────────────────────────────────────────
   function markDirty() {
     _dirty = true;
+    _editSeq += 1;
     document.getElementById('btn-save').disabled = false;
     document.getElementById('btn-discard').disabled = false;
   }
@@ -101,25 +108,44 @@
   }
 
   // ── Load settings ──────────────────────────────────────────────────────────
+  function isSettingsBody(data) {
+    return !!data && typeof data === 'object' && !!data.globals && typeof data.globals === 'object';
+  }
+
+  function showLoadError(visible) {
+    const box = document.getElementById('settings-load-error');
+    if (box) box.hidden = !visible;
+  }
+
   function load(retryOnce) {
-    fetch('/api/settings')
-      .then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
-      .then(data => {
-        _state = data;
-        // Pending edits are dropped before rendering: the detail pane reads them, so
-        // clearing afterwards would leave a discarded edit on screen.
-        clearDirty();
-        renderAll(data);
-      })
-      .catch(() => {
-        if (retryOnce !== false) {
-          // Single silent retry after 400 ms — handles transient startup race.
-          setTimeout(() => load(false), 400);
+    const request = PSRequest.issue('settings-load');
+    return PSRequest.getJson('/api/settings').then(res => {
+      if (!PSRequest.isLatest('settings-load', request)) return;
+      if (res.ok && isSettingsBody(res.body)) {
+        try {
+          _state = res.body;
+          // Pending edits are dropped before rendering: the detail pane reads them, so
+          // clearing afterwards would leave a discarded edit on screen.
+          clearDirty();
+          renderAll(res.body);
+          showLoadError(false);
+          return;
+        } catch (err) {
+          console.error('settings render failed', err);
         }
-      });
+      } else if (!res.ok && res.kind === 'unauthorized') {
+        // A lapsed session goes to the login page, not into the retry.
+        PSRequest.goLogin();
+        return;
+      }
+      if (retryOnce !== false) {
+        // Single silent retry after 400 ms — handles transient startup race.
+        setTimeout(() => load(false), 400);
+      } else {
+        // The retry failed too: say so, with a button, and bind nothing to empty data.
+        showLoadError(true);
+      }
+    });
   }
 
   // ── Render master controls ─────────────────────────────────────────────────
@@ -245,38 +271,24 @@
       resultEl.hidden = true;
     }
 
-    // Extract armed symphony names from /api/state bot_state.
-    // Armed = any of armed / tp_armed / para_armed / triggered truthy.
-    function extractArmed(apiState) {
-      var bs = apiState.bot_state || {};
-      var armed = [];
-      Object.keys(bs).forEach(function (k) {
-        var s = bs[k];
-        if (!s || typeof s !== 'object') return;
-        var flags = [];
-        if (s.armed)      flags.push('ARMED');
-        if (s.tp_armed)   flags.push('TP');
-        if (s.para_armed) flags.push('PARA');
-        if (s.triggered)  flags.push('TRIGGERED');
-        if (flags.length) {
-          armed.push({ name: s.name || k, flags: flags });
-        }
-      });
-      return armed;
-    }
-
-    function renderConfirmPanel(armedSymphonies) {
+    // Render the confirm panel from the armed-symphonies route's entries, {name, flags, state}:
+    // each is listed with the flags it carries and its state ("live"). unreadable = the read failed.
+    function renderConfirmPanel(armedSymphonies, unreadable) {
       // Clear and rebuild the armed list
       armedList.innerHTML = '';
-      if (armedSymphonies.length) {
+      if (unreadable) {
+        armedHeading.textContent = 'Could not read which symphonies are armed. The flush resets them regardless.';
+        armedCallout.hidden = false;
+      } else if (armedSymphonies.length) {
         armedHeading.textContent = '⚠ ' + armedSymphonies.length +
           ' ' + (armedSymphonies.length === 1 ? 'symphony is' : 'symphonies are') +
           ' currently armed — flushing will reset their guard state.';
         armedSymphonies.forEach(function (sym) {
           var li = document.createElement('li');
           li.className = 'flush-armed-item';
+          var flags = (Array.isArray(sym.flags) ? sym.flags : []).concat([sym.state || 'live']);
           li.innerHTML = escHtml(sym.name) +
-            ' <span class="flush-armed-flags">' + escHtml(sym.flags.join(' · ')) + '</span>';
+            ' <span class="flush-armed-flags">' + escHtml(flags.join(' · ')) + '</span>';
           armedList.appendChild(li);
         });
         armedCallout.hidden = false;
@@ -326,7 +338,7 @@
       } else {
         resultEl.dataset.state = 'error';
         resultEl.innerHTML =
-          '<div class="flush-result-title">Flush failed</div>' +
+          '<div class="flush-result-title">' + escHtml(resp.title || 'Flush failed') + '</div>' +
           '<div class="flush-result-msg">' + escHtml(resp.message || 'Unknown error') + '</div>';
       }
       resultEl.hidden = false;
@@ -334,18 +346,31 @@
 
     function runFlush() {
       setRunning();
-      fetch('/api/settings/flush-resync', { method: 'POST', headers: { 'X-CSRF-Token': _csrfToken || '' } })
-        .then(function (r) {
-          if (!r.ok) return { status: 'error', message: 'Server error: HTTP ' + r.status };
-          return r.json();
-        })
-        .then(showResult)
-        .catch(function (err) {
-          showResult({ status: 'error', message: 'Network error: ' + err.message });
-        });
+      PSRequest.postAction('/api/settings/flush-resync', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': PSRequest.csrfToken() || '' }
+      }).then(function (res) {
+        if (res.networkError) {
+          showResult({ status: 'error', message: 'Network error: the request could not be completed.' });
+        } else if (res.refused === 'csrf') {
+          // Nothing was flushed and nothing is sent again: the next Confirm click sends one request.
+          showResult({
+            status: 'error',
+            title: 'Flush not sent',
+            message: res.tokenRefreshed ? FLUSH_NOT_SENT_TEXT : FLUSH_NOT_SENT_OFFLINE_TEXT
+          });
+        } else if (!res.ok) {
+          showResult({ status: 'error', message: 'Server error: HTTP ' + res.status });
+        } else if (res.body === null) {
+          showResult({ status: 'error', message: 'The answer could not be read.' });
+        } else {
+          showResult(res.body);
+        }
+      });
     }
 
-    // First click: fetch /api/state to check for armed symphonies, then show panel
+    // First click: read the armed symphonies from the small armed-symphonies route (never the whole
+    // state), then show the confirm panel.
     btnTrigger.addEventListener('click', function () {
       resultEl.hidden = true;
       btnTrigger.disabled = true;
@@ -354,15 +379,15 @@
       confirmBody.hidden = true;
       confirmPanel.hidden = false;
 
-      fetch('/api/state')
-        .then(function (r) { return r.ok ? r.json() : {}; })
-        .then(function (apiState) {
-          renderConfirmPanel(extractArmed(apiState));
-        })
-        .catch(function () {
-          // State fetch failed — show confirm panel without armed list
-          renderConfirmPanel([]);
-        });
+      PSRequest.getJson('/api/armed-symphonies').then(function (res) {
+        if (res.ok && res.body && Array.isArray(res.body.armed)) {
+          renderConfirmPanel(res.body.armed);
+          return;
+        }
+        if (res.kind === 'unauthorized') { PSRequest.goLogin(); return; }
+        // The read failed: show the confirm panel without an armed list, and say so.
+        renderConfirmPanel([], true);
+      });
     });
 
     btnConfirm.addEventListener('click', runFlush);
@@ -622,34 +647,34 @@
       globals: _pendingGlobals,
       symphonies: built.symphonies,
     };
+    const sentEditSeq = _editSeq;
 
-    fetch('/api/settings', {
+    PSRequest.postAction('/api/settings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
       body: JSON.stringify(payload),
-    })
-      // Read the body as text first: a refusal from the CSRF or auth hook is an HTML
-      // page, and parsing it as JSON would be reported as a network error.
-      .then(r => r.text().then(text => ({ status: r.status, ok: r.ok, text: text })))
-      .then(res => {
-        let resp = null;
-        try { resp = JSON.parse(res.text); } catch (e) { resp = null; }
-        if (res.ok && resp && resp.status === 'success') {
-          load();
-          return;
-        }
-        let reason = 'HTTP ' + res.status;
-        if (resp && resp.message) {
-          reason = resp.message;
-        } else if (res.status === 403) {
-          reason = 'the server refused the request (HTTP 403). Nothing was saved.';
-        }
-        alert('Save failed: ' + reason);
-      })
-      .catch(err => {
-        console.error('save error', err);
+    }).then(res => {
+      if (res.networkError) {
         alert('Save failed: network error');
-      });
+        return;
+      }
+      if (res.refused === 'csrf') {
+        // Nothing was saved and nothing is sent again: the edits stay, Save stays enabled, and the
+        // next click sends one request with the token just read.
+        alert(res.tokenRefreshed ? SAVE_NOT_SENT_TEXT : SAVE_NOT_SENT_OFFLINE_TEXT);
+        return;
+      }
+      const resp = res.body;
+      if (res.ok && resp && resp.status === 'success') {
+        // Reload to show what was saved, unless something was typed after the request was sent:
+        // a reload would discard it, so the typed value and an enabled Save stay.
+        if (_editSeq === sentEditSeq) load();
+        return;
+      }
+      let reason = 'HTTP ' + res.status;
+      if (resp && resp.message) reason = resp.message;
+      alert('Save failed: ' + reason);
+    });
   }
 
   // ── Discard ────────────────────────────────────────────────────────────────
@@ -679,6 +704,8 @@
     document.getElementById('btn-discard').addEventListener('click', () => {
       if (_dirty) discard();
     });
+    const retryBtn = document.getElementById('btn-settings-retry');
+    if (retryBtn) retryBtn.addEventListener('click', () => { load(); });
 
     initMasterControls();
     initCredentialToggles();

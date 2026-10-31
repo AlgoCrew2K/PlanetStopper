@@ -14,15 +14,6 @@
 (function () {
     "use strict";
 
-    /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
-    var _csrfToken = null;
-    document.addEventListener("DOMContentLoaded", function () {
-        fetch("/api/csrf-token")
-            .then(function (r) { return r.json(); })
-            .then(function (b) { _csrfToken = b.csrf_token || null; })
-            .catch(function () { /* csrf token unavailable — POSTs will 403 */ });
-    });
-
     // ---------------------------------------------------------------------------
     // DOM references
     // ---------------------------------------------------------------------------
@@ -80,8 +71,8 @@
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#39;");
+            .replace(/\x22/g, "&quot;")
+            .replace(/\x27/g, "&#39;");
     }
 
     /**
@@ -407,27 +398,30 @@
         resultsArea.innerHTML = '<div class="loading-state" data-testid="loading-state">Evaluating logic change&hellip; (this may take a moment)</div>';
         evaluateBtn.disabled = true;
 
-        fetch("/ai-advisor/logic-changes/evaluate", {
+        PSRequest.postAction("/ai-advisor/logic-changes/evaluate", {
             method: "POST",
-            headers: { "Content-Type": "application/json", "X-CSRF-Token": _csrfToken || "" },
+            headers: { "Content-Type": "application/json", "X-CSRF-Token": PSRequest.csrfToken() || "" },
             body: JSON.stringify({
                 symphony_id: symphonyId,
                 objective_type: objectiveType,
                 change_description: changeDescription,
             }),
         })
-            .then(function (resp) {
-                // AC-9a: guard before JSON parse — a non-JSON error (e.g. 413 HTML
-                // from nginx) must surface a clean message, not throw SyntaxError.
-                if (!resp.ok) {
-                    return resp.text().then(function (body) {
-                        throw new Error("backtest unavailable (HTTP " + resp.status + ")");
-                    });
+            .then(function (res) {
+                if (res.networkError) { throw new Error("network error"); }
+                if (res.refused === "csrf") {
+                    // Nothing was evaluated and nothing is sent again: the next click sends one request.
+                    resultsArea.innerHTML = "";
+                    errorDiv.textContent = PSRequest.notSentText(res, "Click Evaluate logic change again.");
+                    errorDiv.style.display = "";
+                    return;
                 }
-                return resp.json();
-            })
-            .then(function (data) {
-                resultsArea.innerHTML = _renderResults(data);
+                // AC-9a: guard before reading the body — a non-JSON error (e.g. 413 HTML
+                // from nginx) must surface a clean message, not throw SyntaxError.
+                if (!res.ok || res.body === null) {
+                    throw new Error("backtest unavailable (HTTP " + res.status + ")");
+                }
+                resultsArea.innerHTML = _renderResults(res.body);
             })
             .catch(function (err) {
                 resultsArea.innerHTML = "";

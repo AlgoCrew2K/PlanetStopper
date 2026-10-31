@@ -33,6 +33,7 @@ import requests
 import schedule
 from dotenv import dotenv_values, load_dotenv, set_key
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.exceptions import Forbidden
 from werkzeug.security import check_password_hash
 
 import ai_advisor
@@ -430,6 +431,40 @@ def health():
     )
 
 
+@app.route("/api/header-status")
+def header_status():
+    """The header's light status read for every page but ``/`` (under 10 KB, one state read).
+
+    Same field names as ``/api/state`` so the header functions read either body unchanged. Read-only:
+    the state read opens no write connection. The Eastern clock is read once, through ``_now_et``, so
+    the market state, the phase and the countdown agree. Behind the auth gate, so a lapsed session
+    answers 401 JSON, which sends the page to the login form.
+    """
+    try:
+        now_et = _now_et()
+        market_state = get_market_state(now_et)
+        state = database.load_state() or {}
+        last_cycle_at = state.get("last_successful_cycle_at")
+        next_run_seconds = _seconds_to_next_minute(now_et)
+        meta = _build_meta({}, next_run_seconds=next_run_seconds, market_state=market_state)
+        return jsonify(
+            {
+                **_health_status(),
+                "daemon_started_at": _DAEMON_STARTED_AT,
+                "last_successful_cycle_at": last_cycle_at,
+                "market_state": market_state,
+                "engine_phase": _engine_phase(now_et, market_state, last_cycle_at),
+                "next_run_seconds": next_run_seconds,
+                "meta": {
+                    key: meta[key] for key in ("mode", "system_online", "account", "next_run")
+                },
+            }
+        )
+    except Exception as exc:
+        _daemon_log.error("header status failed: %s", type(exc).__name__)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
+
+
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 # werkzeug's own request log stays off; the middleware writes the one access line per request.
@@ -522,11 +557,29 @@ for _run_path_logger_name in (
     _run_path_logger.addHandler(_run_path_stderr)
 
 
+# The line a login form shows when it was rendered by an earlier process: the token it holds
+# belongs to a daemon that has since restarted.
+_LOGIN_FORM_EXPIRED_LINE = "This form expired after a restart; sign in again"
+
+
 @app.before_request
-def _csrf_before_request() -> None:
-    """Enforce CSRF token on every mutating (POST) request (A-3)."""
+def _csrf_before_request():
+    """Enforce CSRF token on every mutating (POST) request (A-3).
+
+    A refused login form is answered with the login page itself (status 403, the current process
+    token, an expired-form line) instead of Werkzeug's raw 403 page. The credential is not read, so
+    the throttle does not count it and nothing is signed in. Every other endpoint keeps the raw 403.
+    """
     if request.method == "POST":
-        _validate_csrf()
+        try:
+            _validate_csrf()
+        except Forbidden:
+            if request.endpoint == "login":
+                return render_template(
+                    "login.html", csrf_token=_CSRF_TOKEN, error=_LOGIN_FORM_EXPIRED_LINE
+                ), 403
+            raise
+    return None
 
 
 COMPOSER_BASE_URL = "https://api.composer.trade/api/v0.1"
@@ -2968,6 +3021,16 @@ def _dashboard_initial_data(
 _MARKET_STATE_UNSET = object()
 
 
+def _seconds_to_next_minute(now: datetime) -> int:
+    """Seconds until the next engine cycle: the minute scheduler fires at :00 of every minute.
+
+    The one source of the countdown for ``/api/state`` and ``/api/header-status``: 60 at second 0,
+    otherwise ``int(60 - seconds into the minute)``, never below 0.
+    """
+    seconds_into_minute = now.second + now.microsecond / 1_000_000
+    return max(0, int(60 - seconds_into_minute))
+
+
 def _build_meta(
     state_data: dict,
     next_run_seconds: int = 0,
@@ -3628,6 +3691,26 @@ def _format_data_stamp(
     except (OverflowError, ValueError, OSError):
         return _NO_STAMP
     return text + _PREVIOUS_SESSION_SUFFIX if previous_session else text
+
+
+def _et_instant_of(day_text: object, clock_text: object) -> _DatetimeType | None:
+    """An Eastern-aware instant from a stored date and a stored time of day, or None.
+
+    ``clock_text`` is a bare time ("HH:MM" or "HH:MM:SS", read as Eastern, as the post-mortem
+    producer writes ``time_triggered``) or a full ISO instant (a naive one is Eastern too). A missing
+    or unreadable time is None: a date alone is not an instant, so it never becomes a stamp.
+    """
+    if not isinstance(clock_text, str) or not clock_text.strip():
+        return None
+    text = clock_text.strip()
+    candidates = [f"{day_text}T{text}", text] if isinstance(day_text, str) else [text]
+    for candidate in candidates:
+        try:
+            moment = _DatetimeType.fromisoformat(candidate)
+        except ValueError:
+            continue
+        return moment.replace(tzinfo=_ET) if moment.tzinfo is None else moment
+    return None
 
 
 def _newest_observation_stamp(conn: sqlite3.Connection | None) -> str:
@@ -4482,9 +4565,7 @@ def get_state():
         # :00 of every minute, so the wait is always wall-clock time to the
         # next minute boundary. Computed directly here — the prior
         # schedule.get_jobs() introspection returned a stale 0 on a live daemon.
-        _now = datetime.now()
-        _secs_into = _now.second + _now.microsecond / 1_000_000
-        next_run_seconds = max(0, int(60 - _secs_into))
+        next_run_seconds = _seconds_to_next_minute(datetime.now())
 
         # Render HTML for UI
         # AC-4d: name-guard so phantom non-symphony top-level dicts (e.g.
@@ -6969,11 +7050,18 @@ def api_triggers():
         _ro_conn.close()
 
 
+# How long the dismiss route waits for its write before it answers 503. The state database's
+# connect timeout is 10 s (database.py), so a lock wait SQLite itself would survive is not reported as
+# a failure: 10 s plus 2 s. Requests run on their own threads, so the wait never touches the engine
+# process or the minute scheduler.
+_FLEET_DISMISS_WRITE_WAIT_S: float = 12.0
+
+
 @app.route("/api/fleet-alert/dismiss", methods=["POST"])
 def fleet_alert_dismiss():
-    # Side-effect ban: write_fleet_alert must not block the request thread.
-    # Submit to the module-level executor so the handler returns immediately
-    # while the dismissed_at_et write still lands durably in fleet_alert_state.
+    # Side-effect ban: write_fleet_alert must not run on the request thread. The write is
+    # submitted to the module-level executor and the route waits for it for a bounded time,
+    # so "ok" is only ever answered after the dismissed_at_et write has landed.
     def _dismiss_async():
         try:
             row = database.read_fleet_alert()
@@ -6983,8 +7071,17 @@ def fleet_alert_dismiss():
                 database.write_fleet_alert(row)
         except Exception:
             logging.error("fleet_alert_dismiss: background write failed", exc_info=True)
+            raise
 
-    _DISMISS_EXECUTOR.submit(_dismiss_async)
+    future = _DISMISS_EXECUTOR.submit(_dismiss_async)
+    try:
+        future.result(timeout=_FLEET_DISMISS_WRITE_WAIT_S)
+    except Exception as exc:
+        # A write that raised, or that did not land within the wait: never "ok", and a fixed
+        # message so no exception text reaches the page.
+        future.cancel()
+        _daemon_log.warning("fleet_alert_dismiss not saved: %s", type(exc).__name__)
+        return jsonify({"status": "error", "message": "Dismissal not saved"}), 503
     return jsonify({"status": "ok"})
 
 
@@ -7137,6 +7234,12 @@ def get_history(days):
     # emits).  A zero-exit day stays honestly empty, and the windowed trigger_count
     # is never overwritten by the feed length (total_saved/win_rate derive from the
     # same windowed post-mortem entries).
+    _data_instants: list = []
+    for _day_text, _day_exits in (stats.get("daily_exits") or {}).items():
+        for _day_exit in _day_exits or []:
+            _instant = _et_instant_of(_day_text, _day_exit.get("time_triggered"))
+            if _instant is not None:
+                _data_instants.append(_instant)
     if not stats.get("todays_exits"):
         try:
             _today_et = datetime.now(_ET).date().isoformat()
@@ -7176,6 +7279,10 @@ def get_history(days):
                     ]
             finally:
                 _conn.close()
+            for _row in _rows:
+                _instant = _et_instant_of(None, _row[1])
+                if _instant is not None:
+                    _data_instants.append(_instant)
             if _rows:
                 try:
                     _name_map = {
@@ -7206,6 +7313,10 @@ def get_history(days):
                 ]
         except Exception:
             _daemon_log.debug("get_history: exit_triggers fallback failed", exc_info=True)
+
+    # The date and time of the newest exit this response shows (a post-mortem entry or a backfilled
+    # exit), in the dated form every page stamp uses; "--" when no exit carries a time.
+    stats["data_as_of"] = _format_data_stamp(max(_data_instants)) if _data_instants else _NO_STAMP
 
     return jsonify(stats)
 
@@ -7426,9 +7537,25 @@ def api_performance():
     if is_window_token:
         _cutoff = analytics._window_cutoff_date(days)
         _window_start = _cutoff.isoformat() if isinstance(_cutoff, date) else None
+    # The date and time of the newest shadow observation the response used: the last date's newest
+    # stored row, across all symphonies (aggregate) or for the one symphony. "--" when the response
+    # has no date or the date has no stored time.
+    _performance_stamp = _NO_STAMP
+    if len(dates):
+        try:
+            _latest_ts = database.get_latest_shadow_ts_utc(
+                str(dates[-1]), symphony_id if scope == "symphony" else None
+            )
+            if _latest_ts:
+                _performance_stamp = _format_data_stamp(
+                    _DatetimeType.fromisoformat(str(_latest_ts).replace("Z", "+00:00"))
+                )
+        except Exception:
+            _daemon_log.debug("api_performance: data_as_of unavailable", exc_info=True)
     response_body = {
         "scope": scope,
         "dates": list(dates),
+        "data_as_of": _performance_stamp,
         "live_returns": live_returns_out,
         "shadow_returns": shadow_returns_out,
         "live_metrics": live_metrics,
@@ -8392,6 +8519,38 @@ _REAL_POST_MORTEM_DATES = frozenset(
 )
 
 
+# The arming flags the flush confirm lists, in the order shown: bot_state field -> label.
+_ARMED_SYMPHONY_FLAGS = (
+    ("armed", "ARMED"),
+    ("tp_armed", "TP"),
+    ("para_armed", "PARA"),
+    ("triggered", "TRIGGERED"),
+)
+
+
+@app.route("/api/armed-symphonies", methods=["GET"])
+def armed_symphonies():
+    """The live symphonies that carry an arming flag: what the settings flush would reset.
+
+    A small read (a few hundred bytes) for the flush confirm, in place of the whole ``/api/state``
+    body. Sourced from the LIVE ``bot_state`` (never the frozen close snapshot) and filtered by the
+    structural symphony-entry check, so the metadata keys are never listed. Every entry is labelled
+    ``live``. Read-only; behind the auth gate.
+    """
+    try:
+        armed = []
+        for key, value in (database.load_state(read_only=True) or {}).items():
+            if not _is_symphony_state_entry(value):
+                continue
+            flags = [label for field, label in _ARMED_SYMPHONY_FLAGS if value.get(field)]
+            if flags:
+                armed.append({"name": value.get("name") or key, "flags": flags, "state": "live"})
+        return jsonify({"armed": armed})
+    except Exception as exc:
+        _daemon_log.error("armed symphonies read failed: %s", type(exc).__name__)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
+
+
 @app.route("/api/settings/flush-resync", methods=["POST"])
 def flush_resync():
     """Delete synthetic post_mortem backfill files, reset per-symphony bot_state, resync Composer.
@@ -8432,7 +8591,9 @@ def flush_resync():
                 os.remove(fpath)
                 deleted.append(fname)
             except OSError as exc:
-                errors.append(f"{fname}: {exc}")
+                # The answer carries the exception TYPE only (never its text, which can hold a
+                # path); the log line keeps the detail.
+                errors.append(f"{fname}: {type(exc).__name__}")
                 _daemon_log.error("flush_resync: failed to delete %s: %s", fpath, exc)
 
     # Invalidate the analytics post_mortem cache so the next request reloads from real files.
@@ -8456,7 +8617,7 @@ def flush_resync():
         )
     except Exception as exc:
         _daemon_log.error("flush_resync: symphony state read failed: %s", exc)
-        errors.append(f"state_read: {exc}")
+        errors.append(f"state_read: {type(exc).__name__}")
 
     def _flush_state_async():
         try:
@@ -8494,7 +8655,7 @@ def flush_resync():
     except Exception as exc:
         _daemon_log.error("flush_resync: Composer resync failed: %s", type(exc).__name__)
         _daemon_log.debug("flush_resync: Composer resync detail: %s", exc, exc_info=True)
-        errors.append(f"resync: {exc}")
+        errors.append(f"resync: {type(exc).__name__}")
 
     _daemon_log.info(
         "flush_resync: deleted %d synthetic files, kept %d real, reset %d symphonies, resync_ok=%s, errors=%d",  # noqa: E501  # un-wrappable long line
@@ -10420,20 +10581,31 @@ def ai_advisor_frontrunner_builder_run():
     # module-scope import graph / the live 1-minute execution path.
     from advisors.frontrunner_builder import run_frontrunner_build  # noqa: PLC0415
 
+    run_id = str(uuid.uuid4())
+
     def _run_frontrunner_build_background(*, symphony_ids=None):
+        summary = _frontrunner_build_failed_summary(run_id, "unknown")
         try:
-            run_frontrunner_build(symphony_ids=symphony_ids)
+            outcome = run_frontrunner_build(symphony_ids=symphony_ids)
+            summary = _frontrunner_build_summary(run_id, outcome)
         except Exception as exc:
             # Log-and-swallow (mirrors _dismiss_async, app.py:2831): this is
             # a defense-in-depth net for a D-1 contract violation, not a
             # normal path — server-side log only, never surfaced to a
             # response (the 202 was already sent before this can fire).
+            # The summary row names the exception's TYPE only, never its text.
+            summary = _frontrunner_build_failed_summary(run_id, type(exc).__name__)
             _daemon_log.error(
                 "ai_advisor_frontrunner_builder_run: background run failed: %s: %s",
                 type(exc).__name__,
                 exc,
                 exc_info=True,
             )
+        finally:
+            # Exactly one append-only row per on-demand run, written after the build ended,
+            # so the page that polls for it learns the build is over (the weekly scheduler's
+            # call does not come through here and writes none).
+            _persist_frontrunner_build_summary(summary)
 
     try:
         _FRONTRUNNER_BUILD_EXECUTOR.submit(
@@ -10447,7 +10619,80 @@ def ai_advisor_frontrunner_builder_run():
         # ai_advisor_strategy_builder_run's own outer except above.
         return jsonify({"error": type(exc).__name__}), 200
 
-    return jsonify({"status": "started"}), 202
+    return jsonify({"status": "started", "run_id": run_id}), 202
+
+
+# The advisor_observations role that records how an on-demand Frontrunner build ended. Deliberately
+# NOT in _ADVISOR_ROLES (like RETIREMENT_RUN_SUMMARY): it is a run record, not an advisor opinion.
+_FRONTRUNNER_BUILD_SUMMARY_ROLE = "FRONTRUNNER_BUILD_SUMMARY"
+
+
+def _frontrunner_build_failed_summary(run_id: str, error_code: str) -> dict:
+    """The summary row body of a build that failed, with a fixed code (never exception text)."""
+    return {
+        "run_id": run_id,
+        "status": "failed",
+        "proposals": 0,
+        "symphonies": 0,
+        "failed_symphonies": 0,
+        "error_code": error_code,
+    }
+
+
+def _frontrunner_build_summary(run_id: str, outcome: object) -> dict:
+    """The summary row body for a build that returned, from ``run_frontrunner_build``'s outcome.
+
+    ``roster_unavailable`` when the live roster could not be read, ``all_symphonies_failed`` when
+    every symphony's build raised, otherwise ``completed`` with the number of proposal rows inserted
+    (0 included: a build that found nothing worth queueing is a completed build).
+    """
+    if not isinstance(outcome, dict):
+        return _frontrunner_build_failed_summary(run_id, "outcome_unavailable")
+    symphonies = int(outcome.get("symphonies") or 0)
+    failed = int(outcome.get("failed") or 0)
+    summary = {
+        "run_id": run_id,
+        "status": "completed",
+        "proposals": int(outcome.get("queued") or 0),
+        "symphonies": symphonies,
+        "failed_symphonies": failed,
+        "error_code": None,
+    }
+    if outcome.get("roster_error"):
+        summary.update(status="failed", error_code="roster_unavailable")
+    elif symphonies > 0 and failed >= symphonies:
+        summary.update(status="failed", error_code="all_symphonies_failed")
+    return summary
+
+
+def _persist_frontrunner_build_summary(summary: dict) -> None:
+    """Append ONE FRONTRUNNER_BUILD_SUMMARY row. Never raises (D-1: type name logged only)."""
+    try:
+        database.insert_advisor_observation(
+            advisor_role=_FRONTRUNNER_BUILD_SUMMARY_ROLE,
+            subject_type="fleet",
+            subject_id="frontrunner_build",
+            verdict=summary.get("status"),
+            raw_response=summary,
+        )
+    except Exception as exc:
+        _daemon_log.error("Frontrunner build summary persist failed: %s", type(exc).__name__)
+
+
+@app.route("/api/frontrunner-build/last-run", methods=["GET"])
+def frontrunner_build_last_run():
+    """The newest on-demand Frontrunner build's summary (``raw_response``), or ``{"last_run": null}``.
+
+    Read-only (a read-only connection through the role accessor) and behind the auth gate; the page
+    polls it after starting a build and shows the build's end when the run id it was given appears.
+    """
+    try:
+        rows = database.get_advisor_observations_for_role(_FRONTRUNNER_BUILD_SUMMARY_ROLE, limit=1)
+    except Exception as exc:
+        _daemon_log.error("Frontrunner build last-run read failed: %s", type(exc).__name__)
+        return jsonify({"status": "error", "message": "An internal error occurred"}), 500
+    raw = rows[0].get("raw_response") if rows else None
+    return jsonify({"last_run": raw if isinstance(raw, dict) else None})
 
 
 @app.route("/ai-advisor/proposal/approve", methods=["POST"])

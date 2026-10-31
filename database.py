@@ -320,8 +320,11 @@ def release_lock():
 
 
 # --- State Management ---
-def load_state():
-    conn = get_connection()
+def load_state(*, read_only: bool = False):
+    """The live bot_state blob. ``read_only=True`` opens the driver-level read-only connection the
+    dashboard's read routes use; the default keeps the connection every other caller (the engine
+    included) has always had."""
+    conn = get_ro_connection() if read_only else get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT data FROM bot_state WHERE id = 1")
     row = cursor.fetchone()
@@ -3681,6 +3684,36 @@ def load_latest_shadow_row(
     except Exception as exc:
         logging.error("load_latest_shadow_row failed for %s %s: %s", symphony_id, trading_day, exc)
         return None
+
+
+def get_latest_shadow_ts_utc(trading_day: str, symphony_id: "str | None" = None) -> "str | None":
+    """Newest stored ``ts_utc`` text among the shadow_history rows of ``trading_day``, or None.
+
+    Across every symphony when ``symphony_id`` is None, for that symphony alone otherwise. Read-only
+    (a ``mode=ro`` connection, never the read-write one); an unknown day or symphony, an empty table
+    or an unreadable database all read None, never an error. Backs the Performance page's
+    "data as of" stamp. The ``idx_shadow_history_day`` / ``idx_shadow_history_sym_day`` indexes cover
+    both lookups.
+    """
+    conn = None
+    try:
+        conn = get_ro_connection()
+        if symphony_id is None:
+            row = conn.execute(
+                "SELECT MAX(ts_utc) FROM shadow_history WHERE trading_day = ?", (trading_day,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT MAX(ts_utc) FROM shadow_history WHERE trading_day = ? AND symphony_id = ?",
+                (trading_day, symphony_id),
+            ).fetchone()
+        return row[0] if row and row[0] else None
+    except Exception as exc:
+        logging.warning("get_latest_shadow_ts_utc failed: %s", type(exc).__name__)
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def load_earliest_shadow_row(symphony_id: str, trading_day: str) -> "dict | None":
