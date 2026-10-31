@@ -93,11 +93,12 @@
      * (plain text, never a button, AC-X1 / AC-3.4).
      */
     function _renderProposalCard(proposal, isSurvivor) {
-        const cardClass = isSurvivor
-            ? "proposal-card proposal-card--survivor"
+        // The card is the shared .sym-card; only its state modifier is chosen here.
+        const cardModifier = isSurvivor
+            ? "proposal-card--survivor"
             : proposal.backtest_error
-                ? "proposal-card proposal-card--error"
-                : "proposal-card proposal-card--rejected";
+                ? "proposal-card--error"
+                : "proposal-card--rejected";
 
         // Tweak heading: param_key old → new
         const paramKey = _escapeHtml(proposal.tweak_param_key || "");
@@ -106,7 +107,7 @@
 
         const heading = paramKey
             ? `<div class="proposal-card-heading">
-                 <span class="proposal-param-name">${paramKey}</span>
+                 <span class="proposal-param-name card-name">${paramKey}</span>
                  <span class="proposal-value--old">${oldVal}</span>
                  <span class="proposal-change-arrow">&#x2192;</span>
                  <span class="proposal-value--new">${newVal}</span>
@@ -293,7 +294,7 @@
         </div>`;
 
         return `
-        <div class="${cardClass}" data-testid="proposal-card">
+        <div class="sym-card proposal-card ${cardModifier}" data-testid="proposal-card">
             ${objLine}
             ${heading}
             ${statsHtml}

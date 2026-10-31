@@ -32,14 +32,54 @@ from tests.ui import _dashboard_primitives_capture as cap
 
 REPO = cap.REPO
 BASELINE = json.loads((cap.PRIMITIVES_BASELINE_DIR / "baseline.json").read_text(encoding="utf-8"))
+SHELL_BASELINE = json.loads(
+    (cap.REPO / "tests" / "fixtures" / "dashboard" / "shell_baseline" / "baseline.json").read_text(
+        encoding="utf-8"
+    )
+)["dashboard"]
 
 _TEMPLATES = REPO / "templates"
 _STATIC = REPO / "static"
-
-# The one page-local copy that outlives the move, until the pages are brought onto the shared
-# rules: the Advisor page's own .section-header.
 _ADVISOR_TEMPLATE = "ai_advisor.html"
-_ADVISOR_KEEPS_SELECTOR = ".section-header"
+
+# What a page may write beside a primitive: layout properties only. Anything that gives the
+# primitive a radius, border, padding, font, colour or shadow of the page's own would be a second
+# definition. `cursor` is allowed on `.sym-card` alone: it is a button-like card on the dashboard
+# and a plain card elsewhere.
+_PAGE_LAYOUT_PROPERTIES = (
+    "display",
+    "flex",
+    "gap",
+    "grid",
+    "margin",
+    "min-",
+    "max-",
+    "width",
+    "height",
+    "overflow",
+    "align-",
+    "justify-",
+    "position",
+    "top",
+    "left",
+    "right",
+    "bottom",
+    "z-index",
+    "white-space",
+    "text-align",
+    "text-overflow",
+    "word-break",
+    "overflow-wrap",
+    "box-sizing",
+    "order",
+    "vertical-align",
+)
+
+
+def _is_layout_property(selector: str, prop: str) -> bool:
+    if prop == "cursor":
+        return cap.names_primitive(selector) and ".sym-card" in selector
+    return prop.startswith(_PAGE_LAYOUT_PROPERTIES)
 
 
 def _inline_css(template_name: str) -> str:
@@ -126,16 +166,20 @@ class TestBaselineCanFail:
 
 class TestDashboardIsUnchanged:
     def test_the_body_has_the_base_tag_and_class_sequence(self, dashboard_html):
-        structure = cap.body_structure(dashboard_html)
-        base = BASELINE["structure"]
+        # The shared header is excluded: it changes by design (it wraps at narrow widths); the
+        # base is the capture taken before the shell work began.
+        from tests.ui import _shell_capture as shell
+
+        structure = shell.body_structure_outside_top_bar(dashboard_html)
+        base = SHELL_BASELINE["structure_outside_top_bar"]
         if structure != base:
             first = next(
                 (i for i, (a, b) in enumerate(zip(structure, base, strict=False)) if a != b),
                 min(len(structure), len(base)),
             )
             pytest.fail(
-                f"GET / changed its element structure: {len(structure)} elements against the "
-                f"base's {len(base)}; first difference at index {first}: "
+                f"GET / changed outside the header: {len(structure)} elements against the base's "
+                f"{len(base)}; first difference at index {first}: "
                 f"{structure[first : first + 1]} against {base[first : first + 1]}"
             )
 
@@ -203,6 +247,7 @@ class TestOneDefinition:
         assert cap.ordered_primitive_rules(_inline_css("index.html")) == []
 
     def test_no_other_stylesheet_or_template_defines_one(self):
+        """A page rule that names a primitive sets layout properties only."""
         offenders: list[str] = []
         for path in sorted(_STATIC.glob("*.css")):
             if path.name == "layout.css":
@@ -216,40 +261,54 @@ class TestOneDefinition:
                 for selector in rule["selectors"]:
                     if not cap.names_primitive(selector):
                         continue
-                    if path.name == _ADVISOR_TEMPLATE and selector == _ADVISOR_KEEPS_SELECTOR:
-                        continue
-                    offenders.append(f"templates/{path.name}: {selector}")
+                    bad = [
+                        prop
+                        for prop, _value in rule["declarations"]
+                        if not _is_layout_property(selector, prop)
+                    ]
+                    if bad:
+                        offenders.append(f"templates/{path.name}: {selector} sets {bad}")
         assert offenders == []
 
-    def test_the_advisor_pages_own_section_header_keeps_winning_on_every_property(self):
-        # Until the Advisor page's copy is deleted, the shared rule must not add a property
-        # the page-local one does not set, or the shared rule would leak into that page.
-        shared = dict(
-            next(
-                r["declarations"]
-                for r in BASELINE["ordered"]
-                if r["selectors"] == [".section-header"]
-            )
-        )
-        local_rules = [
-            dict(r["declarations"])
+    def test_the_advisor_page_defines_no_section_header_of_its_own(self):
+        """The Advisor's own `.section-header` is deleted; the shared one serves it."""
+        rules = [
+            r
             for r in cap.ordered_primitive_rules(_inline_css(_ADVISOR_TEMPLATE))
-            if r["selectors"] == [_ADVISOR_KEEPS_SELECTOR]
+            if ".section-header" in r["selectors"]
         ]
-        assert len(local_rules) == 1, "the Advisor page keeps exactly one .section-header rule"
-        local = local_rules[0]
-        leaked = set(shared) - set(local)
-        if leaked == {"margin"}:
-            # The shared rule writes the margin as a shorthand and the page-local one writes the
-            # top and bottom longhands. The sides the shorthand adds must equal the universal
-            # reset the page already has (0), or the Advisor page's headers move.
-            parts = shared["margin"].split()
-            sides = {1: (0, 0), 2: (1, 1), 3: (1, 1), 4: (1, 3)}[len(parts)]
-            assert {parts[i] for i in sides} == {"0"}, shared["margin"]
-            assert {"margin-top", "margin-bottom"} <= set(local)
-        else:
-            assert leaked == set(), sorted(leaked)
+        assert rules == []
 
     def test_the_advisor_page_still_links_the_shared_sheet(self):
         html = (_TEMPLATES / _ADVISOR_TEMPLATE).read_text(encoding="utf-8")
         assert "layout.css" in html
+
+
+# ---------------------------------------------------------------------------
+# App shell: the dashboard outside the shared header is what the plan's base rendered
+# ---------------------------------------------------------------------------
+
+
+class TestShellBaseCanFail:
+    def test_the_shell_base_capture_holds_a_structure_without_the_header_and_every_primitive(self):
+        from tests.ui import _shell_capture as shell
+
+        structure = SHELL_BASELINE["structure_outside_top_bar"]
+        assert structure, "the base capture holds no dashboard markup"
+        for name in cap.PRIMITIVE_CLASSES:
+            assert cap.tags_with_class(structure, name) > 0, name
+        header_markup = '<div data-testid="top-bar"><nav data-testid="studio-nav"><a class="x">'
+        page = (
+            f"<html><body>{header_markup}</a></nav></div><main class='kept'></main></body></html>"
+        )
+        assert shell.body_structure_outside_top_bar(page) == [["main", ["kept"]]]
+
+
+class TestDashboardOutsideTheHeaderIsUnchanged:
+    def test_every_primitive_resolves_on_the_dashboard_as_at_the_plan_base(self, dashboard_html):
+        """The dashboard uses the same shared definitions, unchanged."""
+        resolved = cap.resolved_primitive_rules(dashboard_html)
+        base = SHELL_BASELINE["resolved"]
+        assert sorted(resolved) == sorted(base)
+        changed = {k: {"base": base[k], "now": resolved[k]} for k in base if base[k] != resolved[k]}
+        assert not changed, f"selectors whose resolved declarations changed: {changed}"

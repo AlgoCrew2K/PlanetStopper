@@ -112,7 +112,7 @@
     function renderSwapCard(result) {
         var isSurvivor = result.gate_decision === 'ADOPT_CANDIDATE';
         var isError = !!result.backtest_error;
-        var cardClass = 'swap-card' +
+        var cardClass = 'sym-card swap-card' +
             (isSurvivor ? ' swap-card--survivor' : '') +
             (isError ? ' swap-card--error' : '') +
             (!isSurvivor && !isError ? ' swap-card--rejected' : '');
@@ -131,7 +131,7 @@
         // replace from_ticker/to_ticker (the per-candidate dict shape now also
         // covers LLM-proposed pairs, not only the operator's explicit pair).
         var heading =
-            '<div class="swap-card-heading">' +
+            '<div class="swap-card-heading card-name">' +
             '<span class="swap-ticker">' + escHtml(result.incumbent_asset || '') + '</span>' +
             '<span class="swap-arrow">&rarr;</span>' +
             '<span class="swap-ticker swap-ticker--new">' + escHtml(result.candidate_asset || '') + '</span>' +

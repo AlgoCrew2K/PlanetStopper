@@ -503,7 +503,9 @@
         if (!emptyState) {
             emptyState = document.createElement('div');
             emptyState.id = 'pick-symphony-state';
-            emptyState.style.cssText = 'padding:3rem 1.5rem;text-align:center;color:var(--studio-ink-dim);font-size:0.9375rem;';
+            // A panel like every other block on the page; layout.css owns its box.
+            emptyState.className = 'hero-section';
+            emptyState.style.cssText = 'text-align:center;color:var(--studio-ink-dim);font-size:0.9375rem;';
             emptyState.innerHTML = '<div style="font-size:2rem;margin-bottom:0.75rem;">&#9835;</div>'
                 + '<strong>Pick a symphony</strong>'
                 + '<p style="margin-top:0.5rem;font-size:0.8125rem;">Select a symphony from the dropdown above to view per-symphony performance.</p>';
