@@ -969,11 +969,40 @@ def test_api_chart_response_includes_overlay_fields(client, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_chrome_html_has_google_fonts_preconnect():
-    """templates/_chrome.html must include Google Fonts preconnect + stylesheet link.
+def _page_with_includes_resolved(name: str) -> str:
+    """A template's text with its ``{% include '_x.html' %}`` lines replaced by the partial's text, nested includes too."""
+    src = (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    return re.sub(
+        r"\{%-?\s*include\s+'(_[\w]+\.html)'\s*-?%\}",
+        lambda m: _page_with_includes_resolved(m.group(1)),
+        src,
+    )
 
-    Current state: _chrome.html has NO font loading tags. --studio-sans resolves
-    to 'Manrope' but the font is not loaded, falling back to Segoe UI on Windows.
+
+_FULL_PAGES = (
+    "index.html",
+    "history.html",
+    "performance.html",
+    "ai_advisor.html",
+    "settings.html",
+    "login.html",
+)
+
+
+@pytest.mark.parametrize("page", _FULL_PAGES)
+def test_every_full_page_loads_the_app_fonts(page):
+    """The font links live in the ``_fonts.html`` partial; every page reaches it directly or through the chrome."""
+    src = _page_with_includes_resolved(page)
+    assert "fonts.googleapis.com/css2" in src and "fonts.gstatic.com" in src, (
+        f"templates/{page} does not load the app fonts (neither includes _fonts.html nor _chrome.html)"
+    )
+
+
+def test_chrome_html_has_google_fonts_preconnect():
+    """templates/_chrome.html must load Google Fonts (preconnect + stylesheet), through the shared partial.
+
+    The links sit in ``_fonts.html`` so the login page, which has no chrome, loads the same
+    families; the chrome includes that partial, so its resolved text carries the links.
 
     Design source (.design-handoff/project/index.html L7-11) requires:
       - <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -984,7 +1013,10 @@ def test_chrome_html_has_google_fonts_preconnect():
     """
     chrome_path = _TEMPLATES_DIR / "_chrome.html"
     assert chrome_path.exists(), "templates/_chrome.html must exist"
-    src = chrome_path.read_text(encoding="utf-8")
+    assert "{% include '_fonts.html' %}" in chrome_path.read_text(encoding="utf-8"), (
+        "_chrome.html must include the _fonts.html partial"
+    )
+    src = _page_with_includes_resolved("_chrome.html")
 
     assert "fonts.googleapis.com" in src, (
         "templates/_chrome.html must load Google Fonts. "
