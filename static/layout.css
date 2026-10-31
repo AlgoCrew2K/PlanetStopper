@@ -29,6 +29,26 @@ body {
   padding: 0;
 }
 
+/* Native controls take the app font: the browser's own default for buttons, selects and
+   inputs is a system font, which put a second typeface on every page. */
+button,
+select,
+input,
+textarea {
+  font-family: inherit;
+}
+
+/* On a phone the page uses its width: a smaller inset at the page edge and in each panel. */
+@media (max-width: 700px) {
+  :root {
+    --studio-page-inset: 14px;
+  }
+
+  .page-wrap {
+    padding-top: 12px;
+  }
+}
+
 .page-wrap {
   box-sizing: border-box;
   max-width: var(--studio-page-max-width);
@@ -97,6 +117,13 @@ body {
    class: lower-case, whatever its parent does. The one rule for every page. */
 .alpha-glyph { text-transform: none; }
 
+@media (max-width: 700px) {
+  .hero-section {
+    padding: 18px 16px 16px;
+    margin-bottom: 16px;
+  }
+}
+
 .section-header {
   font-size: 11px;
   font-weight: 700;
@@ -132,6 +159,7 @@ body {
 .status-pill {
   display: inline-flex;
   align-items: center;
+  white-space: nowrap;
   padding: 3px 9px;
   border-radius: 20px;
   font-size: 10px;

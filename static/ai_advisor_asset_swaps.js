@@ -43,6 +43,12 @@
         return Number(val).toFixed(4);
     }
 
+    // A drawdown is a magnitude: it prints without a sign.
+    function fmtMagnitude(val) {
+        if (val === null || val === undefined || isNaN(Number(val))) return '—';
+        return Math.abs(Number(val)).toFixed(4);
+    }
+
     function fmtPct(val) {
         if (val === null || val === undefined || isNaN(Number(val))) return '—';
         return (Number(val) >= 0 ? '+' : '') + Number(val).toFixed(2) + '%';
@@ -169,7 +175,7 @@
             '</div>' +
             '<div class="stat-row">' +
             '<span class="stat-label">Max DD</span>' +
-            '<span class="stat-value">' + escHtml(fmtStat(baseStats.max_drawdown)) + '</span>' +
+            '<span class="stat-value">' + escHtml(fmtMagnitude(baseStats.max_drawdown)) + '</span>' +
             '</div>' +
             '</div>' +
 
@@ -185,7 +191,7 @@
             '</div>' +
             '<div class="stat-row">' +
             '<span class="stat-label">Max DD</span>' +
-            '<span class="stat-value">' + escHtml(fmtStat(varStats.max_drawdown)) + '</span>' +
+            '<span class="stat-value">' + escHtml(fmtMagnitude(varStats.max_drawdown)) + '</span>' +
             '</div>' +
             '</div>' +
 

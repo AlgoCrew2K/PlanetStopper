@@ -391,8 +391,13 @@
     list.innerHTML = '';
 
     const symphonies = data.symphonies_list || [];
+    const noLongerHeld = Array.isArray(data.symphonies_no_longer_held) ? data.symphonies_no_longer_held : [];
     if (!symphonies.length) {
-      list.innerHTML = '<div class="sym-empty">No symphonies tracked yet.</div>';
+      if (!noLongerHeld.length) {
+        list.innerHTML = '<div class="sym-empty">No symphonies tracked yet.</div>';
+      } else {
+        renderNoLongerHeld(list, noLongerHeld);
+      }
       return;
     }
 
@@ -416,7 +421,28 @@
       list.appendChild(btn);
     });
 
+    renderNoLongerHeld(list, noLongerHeld);
     renderSymphonyDetail(data, _selectedSym);
+  }
+
+  /**
+   * The symphonies the engine still has a record of but no longer holds, dimmed under their
+   * own heading: known, so the operator can see why they are not in the list above, with no
+   * override to edit. Text only (textContent); nothing here is deleted or changed.
+   */
+  function renderNoLongerHeld(list, entries) {
+    if (!entries.length) return;
+    const heading = document.createElement('div');
+    heading.className = 'sym-gone-heading';
+    heading.textContent = 'No longer held';
+    list.appendChild(heading);
+    entries.forEach(sym => {
+      const row = document.createElement('div');
+      row.className = 'sym-gone-row';
+      row.textContent = sym.name;
+      row.title = 'Still recorded, but Composer no longer reports it and the engine writes it no rows. It returns here by itself if its rows resume.';
+      list.appendChild(row);
+    });
   }
 
   /**

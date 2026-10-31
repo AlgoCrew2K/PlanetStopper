@@ -2781,7 +2781,9 @@ def _render_dashboard(
 
     # The same read the state poll carries (``dashboard_panels``), so the render and the poll agree.
     try:
-        panels = _dashboard_panels_payload(_without_symphonies(live_state, view["no_longer_held"]))
+        panels = _dashboard_panels_payload(
+            _without_symphonies(live_state, view.get("no_longer_held", frozenset()))
+        )
     except Exception:
         panels = _panels_unreadable()
     vars_locked_count = panels["vars_locked_count"] or 0
@@ -2933,7 +2935,7 @@ def _render_dashboard(
         "index.html",
         engine_phase=engine_phase,
         # The headline's descriptor says "Simulated" while the engine's last cycle placed no real
-        # orders; the state poll carries the same flag (execution_simulated).
+        # orders; the poll's bot_state carries the same flag (last_execution_mode).
         execution_simulated=_execution_is_simulated(live_state),
         # The figure is the exit return minus the card's current return: live while the
         # market is open, fixed at the capture after the close.
@@ -3027,6 +3029,23 @@ def _dashboard_initial_data(
 
 
 _MARKET_STATE_UNSET = object()
+
+
+def _hero_mdd_row(window_legs: object, lifetime_legs: dict, lifetime_insufficient: bool) -> dict:
+    """The hero Max DD row's ``{bot, held, insufficient}``: the default window's legs when the
+    strip carries them, else the lifetime pair the strip always had (an older strip)."""
+    if isinstance(window_legs, dict):
+        n_obs = window_legs.get("n_obs")
+        return {
+            "bot": window_legs.get("dry_run"),
+            "held": window_legs.get("if_held"),
+            "insufficient": not (isinstance(n_obs, int) and n_obs >= _MDD_MIN_OBS),
+        }
+    return {
+        "bot": lifetime_legs.get("dry_run"),
+        "held": lifetime_legs.get("if_held"),
+        "insufficient": lifetime_insufficient,
+    }
 
 
 def _build_meta(
@@ -3130,6 +3149,9 @@ def _build_meta(
         # The default window's volatility, which the hero's Ann. Vol row opens on.
         "window_vol_bot": ps.get("window_vol_bot", ps.get("vol_bot")),
         "window_vol_held": ps.get("window_vol_held", ps.get("vol_held")),
+        # The hero's Max DD row opens on the default window's legs and states for itself
+        # whether that window held enough days (the cards keep the lifetime pair above).
+        "mdd_row": _hero_mdd_row(ps.get("window_max_drawdown"), mdd_data, _insufficient_history),
         # Option A: the WINDOWED guard alpha (default window) + its window echo feed the
         # SSR hero headline so first paint matches the picker; account_all_time_cr is the
         # SEPARATE, non-windowed "Account · all-time" reference.
@@ -3530,28 +3552,26 @@ def _normalize_frozen_symphonies(snapshot: dict) -> None:
 
 
 def _apply_default_window_legs(strip: dict, windowed: dict) -> None:
-    """Put the default window's Max DD legs and volatility on a portfolio strip.
+    """Put the default window's Max DD legs and volatility on a portfolio strip, under their own keys.
 
-    The hero's Max DD and Ann. Vol rows follow the picked window and the dashboard opens on the
-    default one, so the strip the page renders from and the poll carries holds that window's
-    figures: the first paint, the poll and the window's own strip then say one thing. The
-    Max DD legs replace the lifetime pair (the Composer lifetime scalar stays as it was);
-    ``n_obs`` is the days the window held, which decides whether the row has a figure to show.
-    A window that supplies no figure leaves its legs None (the row then says so), never the
-    lifetime figure under the window's name. The volatility goes to its own keys.
+    The hero's Max DD and Ann. Vol rows follow the picked window, and the dashboard opens on the
+    default one, so the first paint prints that window's figures: the first paint, the window's own
+    strip (``/api/strip/<window>``) and the row after a refresh then say one thing. They are kept
+    apart from the strip's lifetime figures (``max_drawdown``, ``vol_bot``/``vol_held``), which
+    stay exactly as they were: the cards and the lifetime line read those. ``n_obs`` is the days
+    the window held, which decides whether the row has a figure to show. A window that supplies
+    no figure leaves its legs None (the row then says so), never the lifetime figure under the
+    window's name.
     """
     legs = windowed.get("max_drawdown")
     if isinstance(legs, dict):
         day_count = windowed.get("window_day_count")
-        strip["max_drawdown"] = {
-            **(strip.get("max_drawdown") or {}),
+        strip["window_max_drawdown"] = {
             "dry_run": legs.get("dry_run"),
             "if_held": legs.get("if_held"),
             "n_obs": day_count if isinstance(day_count, int) else 0,
         }
     if "vol_bot" in windowed or "vol_held" in windowed:
-        # Kept apart from the lifetime volatility the strip already holds: the Ann. Vol row's
-        # first paint reads these, and the row is hidden when the window has no figure.
         strip["window_vol_bot"] = windowed.get("vol_bot")
         strip["window_vol_held"] = windowed.get("vol_held")
 
@@ -4417,7 +4437,6 @@ def get_state():
             "live_mode": _additive_live_mode,
         }
         state_data = database.load_state()
-        _additive["execution_simulated"] = _execution_is_simulated(state_data)
         _additive["engine_phase"] = _engine_phase(
             _req_now_et,
             market_state,
@@ -4444,7 +4463,7 @@ def get_state():
         # and the page keeps its own.
         try:
             _additive["dashboard_panels"] = _dashboard_panels_payload(
-                _without_symphonies(state_data or {}, view["no_longer_held"])
+                _without_symphonies(state_data or {}, view.get("no_longer_held", frozenset()))
             )
         except Exception as panels_exc:
             _daemon_log.warning("dashboard panels read failed: %s", type(panels_exc).__name__)
@@ -9584,6 +9603,31 @@ def ai_advisor_tab():
             )
     except Exception:
         pass  # Empty-state rendered by template on [].
+
+    # The swap and logic forms list the symphonies the post-mortems name. One that is no longer
+    # held (the shared rule) is not offered. The state is read only when there is a list to trim,
+    # so a page with no history still costs no state read.
+    if symphonies:
+        try:
+            _roster_state = _ensure_ai_advisor_bot_state()
+            _roster_gone = _no_longer_held_ids(_roster_state, None, datetime.now(_ET))
+            if _roster_gone:
+                _gone_names = {
+                    database.normalize_name(entry["name"])
+                    for key, entry in _roster_state.items()
+                    if key in _roster_gone and isinstance(entry, dict) and "name" in entry
+                }
+                _held_names = {
+                    database.normalize_name(entry["name"])
+                    for key, entry in _roster_state.items()
+                    if key not in _roster_gone and _is_symphony_state_entry(entry)
+                }
+                _offered_not = _gone_names - _held_names
+                symphonies = [
+                    n for n in symphonies if database.normalize_name(n) not in _offered_not
+                ]
+        except Exception:
+            pass  # The list then stays as the post-mortems named it.
 
     # Badges read the cached resolution only; the render never lists models,
     # so it can never wait on the Models API (the startup warm-up fills it).

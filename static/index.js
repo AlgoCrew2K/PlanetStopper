@@ -2358,12 +2358,14 @@
         badge.style.display = shown ? 'inline-flex' : 'none';
     }
 
-    // The headline's descriptor says "Simulated" while the engine's last cycle ran simulated; the
-    // poll carries the flag (execution_simulated). A body that does not carry it leaves the text.
+    // The headline's descriptor says "Simulated" while the engine's last cycle ran simulated. The
+    // live poll's bot_state carries the engine's flag (last_execution_mode); a body that does not
+    // (the after-close snapshot's state) leaves the server-rendered text as it is.
     function renderExecutionDescriptor(data) {
-        if (!data || typeof data.execution_simulated !== 'boolean') return;
+        var state = data && (data.bot_state || data.state);
+        if (!state || typeof state.last_execution_mode !== 'boolean') return;
         setTextIfChanged(document.getElementById('guard-alpha-simulated'),
-            data.execution_simulated ? 'Simulated ' : '');
+            state.last_execution_mode === false ? 'Simulated ' : '');
     }
 
     function renderDashboardPanels(data) {

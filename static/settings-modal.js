@@ -296,9 +296,10 @@
                 'display:flex;align-items:center;justify-content:center;' +
                 boxBg + ';' + boxBorder + ';color:#fff;font-size:11px;font-weight:800;">' +
                 (isLocked ? '✓' : '') + '</span>' +
-                '<span style="flex:1;font-size:12px;font-weight:500;color:var(--studio-ink);' +
-                'font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;' +
-                'white-space:nowrap;">' + _esc(key) + '</span>' +
+                '<span style="flex:1;min-width:0;font-size:12px;font-weight:500;color:var(--studio-ink);' +
+                'font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere;">' +
+                // A name breaks after an underscore when it must wrap; it is never cut.
+                _esc(key).replace(/_/g, '_<wbr>') + '</span>' +
                 lockedTag +
                 '</button>';
         }).join('');
@@ -376,13 +377,16 @@
             '</div>' +
 
             _sectionHeader('Locked tuning variables', 'Checked vars the autotuner may NOT change.') +
-            '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;' +
+            // Columns of at least 13rem: on a phone the controls stack one to a row, each with room
+            // for its full name. flex-shrink:0 keeps every block of the body at its own height (the
+            // body scrolls), so a block with overflow hidden is never squashed to its first line.
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:8px;flex-shrink:0;' +
             'background:var(--studio-bg);border:1px solid var(--studio-rule);border-radius:10px;padding:12px;">' +
             lockedVarsRows + '</div>' +
 
             _sectionHeader('Autotuner parameters', 'Read-only, autotuner-owned.') +
             '<div style="background:var(--studio-bg);border:1px solid var(--studio-rule);' +
-            'border-radius:10px;overflow:hidden;">' +
+            'border-radius:10px;overflow:hidden;flex-shrink:0;">' +
             paramsRows + '</div>' +
 
             _sectionHeader(
@@ -603,7 +607,7 @@
             'letter-spacing:0.14em;text-transform:uppercase;margin-bottom:4px;">Settings</div>' +
             '<div style="font-size:16px;font-weight:700;color:var(--studio-ink);' +
             'letter-spacing:-0.01em;line-height:1.25;' +
-            'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"' +
+            'white-space:normal;overflow-wrap:anywhere;"' +
             (showIdentity
                 ? ' title="' + _esc(_currentSymphonyId || '') + '">' +
                   _esc(_currentDisplayName || _currentSymphonyId || '')
@@ -771,8 +775,8 @@
               _esc(oos) + '</div>'
             : '';
 
-        return '<div style="background:var(--studio-bg);border:1px solid var(--studio-rule);' +
-            'border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;">' +
+        return '<div data-testid="sym-settings-advisor-card" style="background:var(--studio-bg);border:1px solid var(--studio-rule);' +
+            'border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;flex-shrink:0;">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;' +
             'gap:10px;flex-wrap:wrap;">' +
             '<span style="font-size:13px;font-weight:700;color:var(--studio-ink);' +

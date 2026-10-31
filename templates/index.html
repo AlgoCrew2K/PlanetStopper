@@ -32,14 +32,33 @@
     }
 
     /* F-4: stack hero columns on narrow viewports. Floor is 700px — the card
-       grid is already responsive via auto-fill minmax; only the hero needs this. */
+       grid is already responsive via auto-fill minmax; only the hero needs this.
+       The headline and the window picker stack too: side by side, the picker was squeezed into a
+       thin column. The picker takes the row and its buttons wrap as a row, the chart legend
+       wraps, and the headline sentence gets the full width. */
     @media (max-width: 700px) {
       .hero-grid {
         grid-template-columns: 1fr;
       }
 
+      .hero-top {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+
       .window-selector {
         flex-wrap: wrap;
+        align-self: stretch;
+      }
+
+      .chart-legend {
+        flex-wrap: wrap;
+        gap: 6px 16px;
+      }
+
+      .guard-alpha-headline {
+        font-size: 44px;
       }
     }
 
@@ -601,7 +620,7 @@
     /* Card footer grid */
     .card-footer-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
       flex: 1;
       padding-left: 10px;
@@ -627,17 +646,30 @@
       align-items: baseline;
     }
 
+    /* The label above is upper-case; the alpha sign in the badge keeps its lower-case glyph. */
     .cfg-alpha-badge {
       font-size: 9.5px;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
+      text-transform: none;
     }
 
+    /* A tag and its figure that do not fit side by side wrap onto two lines instead of overlapping. */
     .cfg-dual-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
+      flex-wrap: wrap;
+      column-gap: 6px;
       margin-top: 1px;
+    }
+
+    /* On a phone the three stat cells need room for their figures: they take the width they need and
+       wrap onto further rows rather than squeezing into thirds of a narrow card. */
+    @media (max-width: 700px) {
+      .card-footer-grid {
+        grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+      }
     }
 
     .cfg-tag {
@@ -731,7 +763,7 @@
                   {% if alpha >= 0 %}+{% endif %}{{ "%.2f"|format(alpha) }} pp
                 </div>
               </div>
-              {# "Simulated" is bound to the engine's flag (execution_simulated, also on the poll). #}
+              {# "Simulated" is bound to the engine's flag (last_execution_mode False; the poll's bot_state carries it). #}
               <div class="guard-alpha-descriptor" data-testid="guard-alpha-descriptor"><span id="guard-alpha-simulated">{% if execution_simulated %}Simulated {% endif %}</span>Bot return minus If-held return over this window: the gap between the chart's two lines. All symphonies at today's values, before exit friction.</div>
               {# Option A: the account-lifetime CR is a SEPARATE, fixed "Account · all-time"
                  reference — NOT windowed, carries no window label. Distinct from the windowed
@@ -803,8 +835,11 @@
              the raw value (via the same safe `.get()` + `is mapping` access
              already established for the lifetime scalar above) so the
              render spans below can render an honest em-dash instead. #}
-          {% set _mdd_bot_raw = (meta.portfolio.get('mdd') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
-          {% set _mdd_held_raw = (meta.portfolio.get('mdd_if_held') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
+          {# The row opens on the default window's legs (meta.portfolio.mdd_row), which the picker and
+             /api/strip/<window> then keep current; a meta without it falls back to the lifetime pair. #}
+          {% set _mdd_row = (meta.portfolio.get('mdd_row') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
+          {% set _mdd_bot_raw = (_mdd_row.get('bot') if _mdd_row is mapping else (meta.portfolio.get('mdd') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none)) %}
+          {% set _mdd_held_raw = (_mdd_row.get('held') if _mdd_row is mapping else (meta.portfolio.get('mdd_if_held') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none)) %}
           {% set mdd_bot = _mdd_bot_raw if _mdd_bot_raw is not none else 0 %}
           {% set mdd_held = _mdd_held_raw if _mdd_held_raw is not none else 0 %}
           {# [Updated, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] The original F-2
@@ -825,7 +860,7 @@
              legitimate Bailey/de-Prado (2014) statistical-stability concern (a
              real but DIFFERENT question: "is this window long enough for a
              stable peak-to-trough figure?"). #}
-          {% set mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
+          {% set mdd_insufficient = (_mdd_row.get('insufficient') if _mdd_row is mapping else (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true)) %}
 
           {# --- Winner-encoded bar rows ---
              Bot wins Today/Cum if tc_bot > tc_held (higher return = better).
@@ -1395,7 +1430,7 @@
           <div class="detail-stat-sub">HWM today</div>
         </div>
         <div class="detail-stat">
-          <div class="detail-stat-label">Guard &alpha;</div>
+          <div class="detail-stat-label">Guard <span class="alpha-glyph">&alpha;</span></div>
           <div class="detail-stat-value" id="dp-alpha">--</div>
           <div class="detail-stat-sub" id="dp-alpha-sub"></div>
         </div>
