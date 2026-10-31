@@ -141,3 +141,72 @@ def test_the_functions_the_ui_suite_stubs_are_guarded():
     from tests._function_leak_guard import GUARDED_FUNCTIONS
 
     assert {("database", "load_state"), ("app", "get_api_state_dict")} <= set(GUARDED_FUNCTIONS)
+
+
+# ---------------------------------------------------------------------------
+# Module values (paths): a reload re-reads the environment, so a reload inside one test can
+# leave a module attribute naming a file that test then deleted. Unlike a function, a changed
+# value after a reload is the leak, never the module's new truth.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def value_module():
+    module = types.ModuleType(_MODULE_NAME)
+    module.PATH = "/session/state.db"
+    module.OPTIONAL = None
+    sys.modules[_MODULE_NAME] = module
+    try:
+        yield module
+    finally:
+        sys.modules.pop(_MODULE_NAME, None)
+
+
+@pytest.fixture()
+def value_guard(value_module):
+    recorded = FunctionLeakGuard((), values=((_MODULE_NAME, "PATH"), (_MODULE_NAME, "OPTIONAL")))
+    recorded.snapshot()
+    return recorded
+
+
+def test_a_path_left_pointing_elsewhere_is_put_back_and_reported(value_module, value_guard):
+    value_module.PATH = "/tmp/deleted-by-the-polluting-test.db"
+
+    leaks = value_guard.restore()
+
+    assert value_module.PATH == "/session/state.db"
+    assert [(leak.module, leak.attribute, leak.leaked) for leak in leaks] == [
+        (_MODULE_NAME, "PATH", "/tmp/deleted-by-the-polluting-test.db")
+    ]
+
+
+def test_a_value_equal_to_the_recorded_one_is_not_reported(value_module, value_guard):
+    value_module.PATH = "".join(["/session/", "state.db"])
+
+    assert value_guard.restore() == []
+
+
+def test_a_recorded_none_is_restored_after_it_was_set(value_module, value_guard):
+    value_module.OPTIONAL = "/tmp/other.db"
+
+    leaks = value_guard.restore()
+
+    assert value_module.OPTIONAL is None
+    assert [leak.attribute for leak in leaks] == ["OPTIONAL"]
+
+
+def test_a_second_value_restore_after_a_clean_test_reports_nothing(value_module, value_guard):
+    value_module.PATH = "/tmp/other.db"
+    value_guard.restore()
+
+    assert value_guard.restore() == []
+
+
+def test_the_database_paths_a_reload_re_reads_are_guarded():
+    from tests._function_leak_guard import GUARDED_VALUES
+
+    assert {
+        ("database", "DB_FILE"),
+        ("database", "_DB_FILE_DEFAULT"),
+        ("analytics", "DB_FILE"),
+    } <= set(GUARDED_VALUES)
