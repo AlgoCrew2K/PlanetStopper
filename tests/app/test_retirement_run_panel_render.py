@@ -397,7 +397,7 @@ class TestWorkerFallbackSummaryRendersHonestly:
         panel = _panel(body)
         assert 'data-testid="retirement-recommendation-card"' in panel
         assert 'data-testid="retirement-recommendations-empty"' not in panel
-        assert "2026-10-18" in _text(_element_html(panel, "retirement-cards-from-earlier-run"))
+        assert _OK_RUN_ET_DATE in _text(_element_html(panel, "retirement-cards-from-earlier-run"))
         assert "internal error" in _block_text(body).lower()
 
     def test_a_fallback_row_with_no_successful_run_falls_back_to_the_legacy_cards(
@@ -446,6 +446,10 @@ _FAILED_STATUS_MARKERS = {
 _NOTE_TESTID = "retirement-cards-from-earlier-run"
 _OK_RUN_AT = "2026-10-18T03:45:00Z"
 _FAILED_RUN_AT = "2026-10-21T03:45:00Z"
+# 03:45 UTC is 23:45 the evening before in New York (summer time, UTC-4), so the operator's
+# date for each run is the day before its stored UTC date.
+_OK_RUN_ET_DATE = "2026-10-17"
+_FAILED_RUN_ET_DATE = "2026-10-20"
 
 
 def _seed_failed_night(status: str) -> None:
@@ -485,8 +489,9 @@ class TestCardsFromEarlierRunNote:
         assert 'data-testid="retirement-recommendation-card"' in panel
         assert 'data-testid="retirement-recommendations-empty"' not in panel
         note = _text(_element_html(panel, _NOTE_TESTID))
-        assert "2026-10-18" in note, "the note names the successful run's run_at"
-        assert "UTC" in note
+        assert _OK_RUN_ET_DATE in note, "the note names the successful run's run_at (ET date)"
+        assert "2026-10-18" not in note, "the UTC date of the run is not the operator's date"
+        assert _FAILED_RUN_ET_DATE not in note, "it must not name the failed night"
         assert "2026-10-21" not in note, "it must not name the failed night"
         assert panel.index(f'data-testid="{_NOTE_TESTID}"') < panel.index(
             'data-testid="retirement-recommendation-card"'

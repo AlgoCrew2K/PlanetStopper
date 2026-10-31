@@ -45,6 +45,16 @@ def isolated_db(tmp_path, monkeypatch):
     return database.DB_FILE
 
 
+def _one_parse(html: str) -> pb.Node:
+    """The page parsed once. ``is_inside`` walks parent links by object identity, so two nodes
+    from two parses are never inside one another and ``not is_inside`` would hold for any
+    markup; a containment test takes every node it compares from this one tree."""
+    root = pb.parse_html(html)
+    for panel in ("tab-panel-retirement", "tab-panel-overview"):
+        assert root.find(panel) is not None, f"the page has no {panel}"
+    return root
+
+
 def _block(html: str) -> pb.Node:
     block = w.retirement_section(html).find("retirement-last-run")
     assert block is not None, "the Retirement section has no last-run block"
@@ -133,10 +143,11 @@ class TestTabAndPanel:
     def test_the_section_is_inside_the_retirement_panel_and_not_the_overview(
         self, client, isolated_db
     ):
-        html = w.get_page(client)
-        section = w.retirement_section(html)
-        assert section.is_inside(w.tab_panel(html, "retirement"))
-        assert not section.is_inside(w.tab_panel(html, "overview"))
+        root = _one_parse(w.get_page(client))
+        section = root.find("retirement-recommendations-panel")
+        assert section is not None, "the page has no retirement-recommendations-panel"
+        assert section.is_inside(root.find("tab-panel-retirement"))
+        assert not section.is_inside(root.find("tab-panel-overview"))
 
     @pytest.mark.parametrize(
         "testid",
@@ -149,11 +160,11 @@ class TestTabAndPanel:
         ],
     )
     def test_the_controls_moved_with_the_section(self, client, isolated_db, testid):
-        html = w.get_page(client)
-        node = pb.parse_html(html).find(testid)
+        root = _one_parse(w.get_page(client))
+        node = root.find(testid)
         assert node is not None, testid
-        assert node.is_inside(w.tab_panel(html, "retirement"))
-        assert not node.is_inside(w.tab_panel(html, "overview"))
+        assert node.is_inside(root.find("tab-panel-retirement"))
+        assert not node.is_inside(root.find("tab-panel-overview"))
 
     def test_the_old_overview_wrapper_text_is_gone_from_the_overview(self, client, isolated_db):
         html = w.get_page(client)
@@ -426,13 +437,15 @@ class TestCardsAndControls:
     def test_an_approved_card_shows_an_armed_pill_and_the_checklist_in_the_tab(self, cards_page):
         client, ids = cards_page
         assert w.decide(client, "approve", ids[0]).get("success") is True
-        html = w.get_page(client)
-        section = w.retirement_section(html)
+        root = _one_parse(w.get_page(client))
+        section = root.find("retirement-recommendations-panel")
+        assert section is not None, "the page has no retirement-recommendations-panel"
         pills = {p.text(): p for p in section.find_all("retirement-rec-status")}
         assert {"status-pill", "armed"} <= set(pills["Approved"].classes())
         assert {"status-pill", "standby"} <= set(pills["Pending"].classes())
         checklist = section.find("retirement-checklist")
-        assert checklist is not None and checklist.is_inside(w.tab_panel(html, "retirement"))
+        assert checklist is not None and checklist.is_inside(root.find("tab-panel-retirement"))
+        assert not checklist.is_inside(root.find("tab-panel-overview"))
 
     def test_a_rejected_card_shows_a_triggered_pill(self, cards_page):
         client, ids = cards_page
