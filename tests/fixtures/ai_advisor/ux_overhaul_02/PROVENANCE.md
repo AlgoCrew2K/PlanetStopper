@@ -104,3 +104,81 @@ Scenario rows that use one stay as tests.
 | D-4 | captured summary | `symphonies_without_series[0].reason` -> "unexpected <b>reason</b> & more" | a reason the mapping lacks, with markup | S-7.3 |
 | D-5 | captured summary | `symphonies_without_series[0].reason` -> "", null, 5 or a list | an empty or non-text reason | S-7.4 |
 - Sign-off: D-1, D-2, D-3, D-4 and D-5 signed off by the PM (coordinator ruling, 2026-10-30).
+
+
+# Autotune panel rows
+
+Used by `tests/app/test_advisor_autotune_panel_bounds.py` and `tests/ui/test_advisor_autotune_browser.py`.
+No file of data is stored: each row is written at test time by the real writer
+`database.save_autotune_run` and read back through the real route `GET /api/autotune-runs`; the
+tests assert against that route's own rows (the partition is recomputed from them).
+
+- Symphony keys: `database.normalize_name` of the display names in
+  `tests/fixtures/prod_droplet/bot_state_positions.json` (11 captured symphonies; case: up to 11 symphonies
+  with a live name). Beyond 11, the plain keys `extra-symphony-<n>` that no live state holds (case: 12 to 15
+  symphonies, a card that prints the stored key). These are keys of a TEXT column, not captured values.
+- Scores (`naive_sharpe`, `selection_tstat`) are labelled constructions that give each run its own value; no
+  assertion copies one.
+- Decisions: the writer's own literals `Reverted to Fallback` (never adopted; yields the streak line) and
+  `Applied`.
+- Time with a fraction: `autotune_run_timestamp` of `time_values.json` above (case: the writer's six-digit
+  fraction and Z), the same record the formatter tests recompute from its producer expression.
+- Edits: none. Derived records: none. Sign-off: not needed.
+
+# Observation cases
+
+Used by `tests/app/test_advisor_observation_status_lines.py`,
+`tests/database/test_017_advisor_observations.py` and `tests/ui/test_advisor_observations_browser.py`,
+through `tests/_advisor_observation_records.py` and `observations.json` (cases by name, each a source record
+and the fields changed). A row is written by the real writer `database.insert_advisor_observation`, which is
+the runtime validator of its shape. The writer stamps `created_at` with the database clock, so the helper
+sets it afterwards with one `UPDATE` to a stated increasing sequence from 2026-10-20 14:00:00 (the only
+post-writer change; a chosen clock, never an expected value copied from a run).
+
+## Records used verbatim
+
+- `guardrail_clear` (case: an Overfitting Conscience row, verdict CLEAR): `example_rows[0]` of
+  `tests/fixtures/ai_advisor/advisor_observations_shape.json` (schema-derived from
+  `migrations/017_advisor_observations.sql`; values are sentinels, per that file).
+- `guardrail_watch` (case: a Spec Critic row, verdict WATCH): `example_rows[1]` of the same file.
+- `feature_off_stub` (case: the Divergence Explainer's feature-off stub): the output of the real producer
+  `advisors.divergence_explainer.compute_divergence_explainer_observation({'id': 7}, None,
+  second_window_enabled=False)`, called at test time.
+
+## Derived records (one source record, named fields changed) - signed off by the PM
+
+The PM signed these off in the brief for the round that added them (2026-10-30).
+
+| Case | Source | Changed field(s) | Why | Serves |
+|---|---|---|---|---|
+| `feature_off_stub_under_a_shown_role` | `feature_off_stub` | `advisor_role` -> `OVERFITTING_CONSCIENCE` | the Divergence Explainer role is not on the page; the stub rule is role-blind, so the stub must sit under a shown role to prove it is left out of the line and the list | stub in neither total nor rows |
+| `empty_verdict`, `null_verdict` | `guardrail_watch` | `verdict` -> `""`, `null` | a producer row whose verdict is empty or NULL (no captured row of either kind) | "verdict not recorded" |
+| `markup_verdict` | `guardrail_watch` | `verdict` -> `<script>alert(1)</script>` | markup in the one new place a verdict is printed | escaping |
+| `add_candidate_role`, `market_prism_role` | `guardrail_clear` | `advisor_role` -> `ADD_CANDIDATE`, `MARKET_PRISM` | the two roles the label table lacks | role labels |
+| `non_json_raw_response` | `guardrail_clear` | `raw_response` -> `not json at all` | the writer accepts a pre-serialised string as is | count keeps it |
+| `json_array_raw_response` | `guardrail_clear` | `raw_response` -> `[1, 2]` | valid JSON that is not an object | count keeps it |
+| `feature_flag_on_stub` | `feature_off_stub` | `raw_response` -> `{"feature_flag": "on"}` | NOT_APPLICABLE with the flag not off | count keeps it |
+| `stub_without_flag` | `feature_off_stub` | `raw_response` -> `{}` | NOT_APPLICABLE without the flag | count keeps it |
+| `real_verdict_with_flag_off` | `guardrail_clear` | `raw_response` -> `{"feature_flag": "off"}` | the flag with a real verdict | count keeps it |
+| `null_verdict_with_flag_off` | `guardrail_watch` | `verdict` -> `null`, `raw_response` -> `{"feature_flag": "off"}` | a NULL verdict must not drop under the stub rule | count keeps it |
+
+# Prism block records
+
+Used by `tests/app/test_advisor_overview_order.py` and `tests/ui/test_advisor_overview_order_browser.py`
+through `tests/_advisor_overview_prism.py`.
+
+### prism_block_source_baseline.txt (case: the Market Prism block as it stood before it moved)
+- Source: `templates/ai_advisor.html`, from the line holding `data-testid="market-prism-block"` to the closing
+  `{# /market-prism-block #}` line, each line stripped, empty lines dropped.
+- Capture: `python tests/fixtures/ai_advisor/ux_overhaul_02/capture_prism_block_source.py`, run on the
+  unmodified template at lane/ux-02 commit 9f0cc091f109f0b9cb17410f1654663c5af71e55 (the commit before this
+  round's RED; its template is that of e854c73c). Time of record: 2026-10-30. Nothing edited.
+
+### MARKET_PRISM row (case: a stored nightly read the block renders)
+- Source: `rf1_lens_pipeline_row77.json` (captured read-only from the production state database,
+  `advisor_observations` id 77) for `per_lens_digest` and the time; `overall_sentiment` and
+  `sentiment_rationale` are the answer of the real producer function
+  `advisors.lens_pipeline._synthesize_via_claude({}, digest, 0)` (its no-available-lens branch), called at test
+  time; the other keys follow the producer's `raw_response` schema (`run_ts`, `run_id`, counts, `sources`).
+- Derived: the captured row77 holds only the digest; the keys above were added around it. Signed off by the PM
+  in the brief for this round (2026-10-30). Written through `database.insert_advisor_observation`.
