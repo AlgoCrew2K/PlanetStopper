@@ -157,16 +157,29 @@ def test_the_window_picker_wraps_as_a_row_and_the_hero_text_reads_normally(
         assert facts["docWidth"] <= facts["vw"], "the dashboard scrolls sideways"
 
 
-def test_settings_does_not_scroll_sideways_at_320(firefox, advisor_server, tmp_path, monkeypatch):
+def test_settings_does_not_scroll_sideways_at_320_in_any_section(
+    firefox, advisor_server, tmp_path, monkeypatch
+):
     seed_every_page(tmp_path, monkeypatch.setattr)
     with open_probe(firefox, advisor_server, width=VERY_NARROW[0], height=VERY_NARROW[1]) as probe:
         open_page(probe, "/settings")
-        probe.page.click('.sn-btn[data-section="symphonies"]')
-        probe.page.locator(".sym-list-btn").first.click()
-        probe.page.wait_for_selector(".override-grid .override-input", state="attached")
-        probe.page.wait_for_timeout(300)
+        wide = []
         scroll, viewport = document_scroll_width(probe)
-        assert scroll == viewport, f"/settings at 320 px is {scroll} px wide"
+        if scroll != viewport:
+            wide.append(("initial view", scroll))
+        sections = probe.page.locator(".sn-btn[data-section]")
+        for index in range(sections.count()):
+            button = sections.nth(index)
+            name = button.get_attribute("data-section")
+            button.click()
+            if name == "symphonies":
+                probe.page.locator(".sym-list-btn").first.click()
+                probe.page.wait_for_selector(".override-grid .override-input", state="attached")
+            probe.page.wait_for_timeout(250)
+            scroll, viewport = document_scroll_width(probe)
+            if scroll != viewport:
+                wide.append((name, scroll))
+        assert wide == [], f"/settings at 320 px is wider than the screen in: {wide}"
 
 
 def test_an_open_observation_history_does_not_widen_the_page_at_375(
