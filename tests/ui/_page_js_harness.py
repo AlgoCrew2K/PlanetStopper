@@ -37,6 +37,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import patch
@@ -341,14 +342,39 @@ def page_scripts(html: str) -> list[str]:
     return names
 
 
+# The advisor page draws its run buttons only when Composer credentials are configured
+# (``no_api_key``) and its chat input only when ``ANTHROPIC_API_KEY`` is (``chat_available``). A
+# developer's .env puts both in the process when ``app`` is imported; CI has neither, so the page
+# the scenarios drive states them instead of inheriting them.
+ADVISOR_PAGE_API_KEY = "placeholder-not-used"
+ADVISOR_PAGE_COMPOSER_CREDENTIAL = "placeholder-not-used"
+
+
 def render_page(path: str) -> str:
-    """The HTML ``GET <path>`` returns, rendered by the real app with the developer .env unread."""
+    """The HTML ``GET <path>`` returns, rendered by the real app with the developer .env unread.
+
+    ``/ai-advisor`` is rendered with its keys set, so its controls are on the page whatever the
+    environment holds.
+    """
+    import alpha_bot_execution
     import app as app_module
 
-    with (
-        patch.object(app_module, "ENV_FILE_PATH", str(Path(tempfile.gettempdir()) / "no-such.env")),
-        app_module.app.test_client() as client,
-    ):
+    advisor = path.startswith("/ai-advisor")
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch.object(
+                app_module, "ENV_FILE_PATH", str(Path(tempfile.gettempdir()) / "no-such.env")
+            )
+        )
+        if advisor:
+            stack.enter_context(
+                patch.dict("os.environ", {"ANTHROPIC_API_KEY": ADVISOR_PAGE_API_KEY})
+            )
+            for name in ("COMPOSER_KEY_ID", "COMPOSER_SECRET"):
+                stack.enter_context(
+                    patch.object(alpha_bot_execution, name, ADVISOR_PAGE_COMPOSER_CREDENTIAL)
+                )
+        client = stack.enter_context(app_module.app.test_client())
         response = client.get(path)
         assert response.status_code == 200, f"GET {path} answered {response.status_code}"
         return response.get_data(as_text=True)
