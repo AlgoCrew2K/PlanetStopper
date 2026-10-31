@@ -45,7 +45,6 @@ import app as app_module
 import database as database_module
 import market_calendar
 from tests.app.test_held_basis_route_convergence import _frozen_datetime_class
-from tests.dashboard.test_account_basis_honesty_render import _extract_function_with_signature
 
 _ET = ZoneInfo("America/New_York")
 _REPO = Path(__file__).resolve().parents[2]
@@ -441,36 +440,54 @@ class TestServerRenderedHeader:
 
 
 def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
-    """Run the real updateEngineStatus under node, one fresh DOM stub per named sequence,
-    one call per payload. A payload's `__ageMs` becomes `last_successful_cycle_at` that many
-    milliseconds before the harness's own `Date.now()`. Returns, per sequence, the state
-    after each call."""
-    assert shutil.which("node") is not None, "node is required to run updateEngineStatus"
-    source = _extract_function_with_signature(
-        _CHROME_JS.read_text(encoding="utf-8"), "updateEngineStatus"
-    )
+    """Run the real static/chrome.js under node, one fresh DOM stub per named sequence, one
+    ``updateChromeTicker(body, receipt)`` call per payload. A payload's `__ageMs` becomes
+    `last_successful_cycle_at` that many milliseconds before the server time the receipt carries
+    (the label judges the cycle's age on the server's clock, never the browser's). Returns, per
+    sequence, the state after each call."""
+    assert shutil.which("node") is not None, "node is required to run static/chrome.js"
+    source = json.dumps(_CHROME_JS.read_text(encoding="utf-8"))
     harness = f"""
-    var __els = {{}};
-    var document = {{ getElementById: function (id) {{ return __els[id] || null; }} }};
-    {source}
-    var __out = {{}};
+    var vm = require('vm');
     var __sequences = {json.dumps(sequences)};
+    var __out = {{}};
     Object.keys(__sequences).forEach(function (name) {{
-        var dot = {{ style: {{}} }};
-        var label = {{ style: {{}}, textContent: '' }};
+        var els = {{}};
+        function el(extra) {{ return Object.assign({{ style: {{}}, textContent: '', title: '' }}, extra || {{}}); }}
+        var label = el();
         Object.defineProperty(label, 'innerHTML', {{
             set: function () {{ throw new Error('innerHTML must not be used'); }}
         }});
-        var wrap = {{ title: '' }};
-        __els = {{ 'engine-status-dot': dot, 'engine-status-label': label, 'engine-status': wrap }};
+        var dot = el(), wrap = el(), countdown = el();
+        els['engine-status-dot'] = dot; els['engine-status-label'] = label;
+        els['engine-status'] = wrap; els['next-run-countdown'] = countdown;
+        var serverNow = Date.now();
+        var perf = 5000;
+        var sandbox = {{
+            document: {{
+                getElementById: function (id) {{ return els[id] || null; }},
+                querySelector: function () {{ return null; }},
+                querySelectorAll: function () {{ return []; }},
+                addEventListener: function () {{}}
+            }},
+            setInterval: function () {{ return 1; }}, setTimeout: function () {{ return 1; }},
+            clearTimeout: function () {{}}, clearInterval: function () {{}},
+            fetch: function () {{ return new Promise(function () {{}}); }},
+            performance: {{ now: function () {{ return perf; }} }},
+            navigator: {{}}, console: console, Date: Date
+        }};
+        sandbox.window = sandbox;
+        var ctx = vm.createContext(sandbox);
+        vm.runInContext({source}, ctx, {{ filename: 'static/chrome.js' }});
         __out[name] = [];
         __sequences[name].forEach(function (payload) {{
             var data = JSON.parse(JSON.stringify(payload));
             if (data.__ageMs !== undefined) {{
-                data.last_successful_cycle_at = new Date(Date.now() - data.__ageMs).toISOString();
+                data.last_successful_cycle_at = new Date(serverNow - data.__ageMs).toISOString();
                 delete data.__ageMs;
             }}
-            updateEngineStatus(data);
+            var timing = {{ sentAtMono: perf, receivedAtMono: perf, serverNowMs: serverNow }};
+            sandbox.window.updateChromeTicker(data, timing);
             __out[name].push({{
                 text: label.textContent, title: wrap.title,
                 dot: dot.style.background, color: label.style.color
@@ -480,7 +497,7 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
     console.log(JSON.stringify(__out));
     """
     result = subprocess.run(["node", "-e", harness], capture_output=True, text=True, timeout=20)
-    assert result.returncode == 0, f"updateEngineStatus harness crashed:\n{result.stderr}"
+    assert result.returncode == 0, f"static/chrome.js harness crashed:\n{result.stderr}"
     return json.loads(result.stdout.strip())
 
 

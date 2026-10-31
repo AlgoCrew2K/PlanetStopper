@@ -57,6 +57,18 @@ def _html() -> str:
     return _HTML_PATH.read_text(encoding="utf-8")
 
 
+def _headline_writers(js: str) -> list[tuple[str, str]]:
+    """(name, body) of every IIFE-scope function that writes #guard-alpha-headline."""
+    positions = [(m.start(), m.group(1)) for m in re.finditer(r"\n    function (\w+)\(", js)]
+    out = []
+    for n, (start, name) in enumerate(positions):
+        end = positions[n + 1][0] if n + 1 < len(positions) else len(js)
+        body = js[start:end]
+        if "guard-alpha-headline" in body:
+            out.append((name, body))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Invariant 1 — renderGuardAlpha reads guard_alpha directly
 # ---------------------------------------------------------------------------
@@ -90,14 +102,12 @@ class TestRenderGuardAlphaReadsGuardAlphaField:
         js = _js()
 
         # Locate the renderGuardAlpha function body.
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, (
-            "RENDER-BASIS FAIL: renderGuardAlpha not found in static/index.js. "
+        writers = _headline_writers(js)
+        assert writers, (
+            "RENDER-BASIS FAIL: no function in static/index.js writes #guard-alpha-headline. "
             "The function that paints the guard-alpha headline must exist."
         )
-        # Slice up to the next top-level function declaration.
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
+        body = "\n".join(b for _n, b in writers)
 
         # The function must read guard_alpha from the payload — either from
         # portfolio_strip.guard_alpha or meta.portfolio.guard_alpha.
@@ -119,10 +129,9 @@ class TestRenderGuardAlphaReadsGuardAlphaField:
         """
         js = _js()
 
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, "renderGuardAlpha function must exist"
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
+        writers = _headline_writers(js)
+        assert writers, "some function must write #guard-alpha-headline"
+        body = "\n".join(b for _n, b in writers)
 
         # The buggy arithmetic: cr - crHeld.
         # Accept any of the common re-derivation patterns.
@@ -142,70 +151,10 @@ class TestRenderGuardAlphaReadsGuardAlphaField:
 
 
 # ---------------------------------------------------------------------------
-# Invariant 2 — windowed strip fetch also feeds guard_alpha directly
+# Invariant 2 (the windowed strip wrapped as a poll payload and fed to renderGuardAlpha) pinned a
+# wrapper the refresh-timing dashboard plan removed; the strip now has one writer, covered under
+# node in tests/dashboard/test_dashboard_window_hold.py.
 # ---------------------------------------------------------------------------
-
-
-class TestWindowedStripFetchFeedsGuardAlphaField:
-    """After a picker click, fetchWindowedStrip wraps the strip response and calls
-    renderGuardAlpha(wrapped). The wrapped object must preserve the strip's guard_alpha
-    field so renderGuardAlpha can read it — the wrapper must not strip it out.
-
-    Current code at line 1247-1251:
-        var wrapped = {
-            portfolio_strip: strip,          <-- strip = full /api/strip/<window> response
-            meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
-        };
-        renderGuardAlpha(wrapped);
-
-    If strip carries guard_alpha, wrapped.portfolio_strip.guard_alpha is accessible to
-    renderGuardAlpha. This test pins that the wrapper pattern includes the full strip
-    as portfolio_strip (not a subset that drops guard_alpha).
-    """
-
-    def test_windowed_strip_wrapped_as_portfolio_strip_field(self):
-        """fetchWindowedStrip must wrap the full strip response as wrapped.portfolio_strip
-        so renderGuardAlpha can access wrapped.portfolio_strip.guard_alpha.
-        """
-        js = _js()
-
-        # Locate the fetchWindowedStrip function body.
-        start = js.find("function fetchWindowedStrip")
-        assert start != -1, (
-            "RENDER-BASIS FAIL: fetchWindowedStrip not found in static/index.js. "
-            "The function that wraps windowed strip data and calls renderGuardAlpha must exist."
-        )
-        end_marker = js.find("\n        function ", start + 1)
-        if end_marker == -1:
-            end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
-
-        # The wrapper must assign the full strip to portfolio_strip.
-        assert "portfolio_strip: strip" in body or "portfolio_strip:strip" in body, (
-            "RENDER-BASIS FAIL: fetchWindowedStrip does not wrap the strip as "
-            "`portfolio_strip: strip`. If the wrapper drops guard_alpha from the strip, "
-            "renderGuardAlpha cannot read it, and the windowed headline stays broken "
-            "after a picker click.\nbody:\n" + body[:400]
-        )
-
-    def test_windowed_strip_fetch_calls_render_guard_alpha(self):
-        """After fetching the windowed strip, renderGuardAlpha must be called with
-        the wrapped payload so the headline re-renders for the selected window.
-        """
-        js = _js()
-
-        start = js.find("function fetchWindowedStrip")
-        assert start != -1, "fetchWindowedStrip function must exist"
-        end_marker = js.find("\n        function ", start + 1)
-        if end_marker == -1:
-            end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
-
-        assert "renderGuardAlpha" in body, (
-            "RENDER-BASIS FAIL: fetchWindowedStrip does not call renderGuardAlpha. "
-            "The windowed headline must re-render after every picker fetch — "
-            "fetching but not rendering leaves the headline stale.\nbody:\n" + body[:400]
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -297,10 +246,9 @@ class TestAccountAllTimeCrNotWrittenByJs:
         """renderGuardAlpha must not address account-all-time-cr."""
         js = _js()
 
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, "renderGuardAlpha function must exist"
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
+        writers = _headline_writers(js)
+        assert writers, "some function must write #guard-alpha-headline"
+        body = "\n".join(b for _n, b in writers)
 
         assert "account-all-time" not in body and "account_all_time" not in body, (
             "RENDER-BASIS FAIL: renderGuardAlpha references account-all-time-cr. "
@@ -349,10 +297,7 @@ class TestAccountAllTimeCrNotWrittenByJs:
         js = _js()
 
         # Check renderGuardAlpha body.
-        rga_start = js.find("function renderGuardAlpha")
-        if rga_start != -1:
-            rga_end = js.find("\n    function ", rga_start + 1)
-            rga_body = js[rga_start:rga_end] if rga_end != -1 else js[rga_start : rga_start + 800]
+        for _name, rga_body in _headline_writers(js):
             assert "account-all-time-cr" not in rga_body, (
                 "RENDER-BASIS FAIL: renderGuardAlpha references 'account-all-time-cr'. "
                 "The windowed guard-alpha renderer must not touch the account stat."
@@ -441,10 +386,9 @@ class TestZeroOracleInRenderGuardAlpha:
         """
         js = _js()
 
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, "renderGuardAlpha must exist"
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
+        writers = _headline_writers(js)
+        assert writers, "some function must write #guard-alpha-headline"
+        body = "\n".join(b for _n, b in writers)
 
         # The function must contain the direct guard_alpha read (from Invariant 1).
         # When guard_alpha == 0, fmtPct(0) == "+0.00%" — correct.
@@ -465,10 +409,9 @@ class TestZeroOracleInRenderGuardAlpha:
         """
         js = _js()
 
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, "renderGuardAlpha must exist"
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
+        writers = _headline_writers(js)
+        assert writers, "some function must write #guard-alpha-headline"
+        body = "\n".join(b for _n, b in writers)
 
         # The function must NOT coerce a missing guard_alpha to 0 via `|| 0` or `|| 0.0`
         # on the guard_alpha read itself (the cumulative_return path did this and fabricated
@@ -657,409 +600,15 @@ class TestUpdateComparisonRowsSourcesLifetimeCumulativeReturn:
 
 
 # ---------------------------------------------------------------------------
-# Invariant 9 — closed_frozen fallback: JS fetches /api/strip when guard_alpha absent
-#
-# UX-expert live gate finding (2026-06-04):
-#   When market is closed_frozen, /api/state portfolio_strip has NO guard_alpha field.
-#   The fix's renderGuardAlpha reads `ps.guard_alpha` which is undefined → null → '--'.
-#   The headline shows '--' instead of the correct windowed value (+0.90%).
-#
-#   Root cause: the frozen path in app.py (_compute_portfolio_strip is not called for
-#   the frozen /api/state response; the _portfolio_strip dict built at line 1262 never
-#   invokes compute_windowed_portfolio_strip so guard_alpha is absent).
-#
-#   Required fix: when renderGuardAlpha receives a null guard_alpha on the first poll,
-#   the JS must immediately fetch /api/strip/<default-window> and re-render the headline
-#   with the strip's guard_alpha. /api/strip/<window> DOES return guard_alpha correctly
-#   in all market states (confirmed by ux-expert).
-#
-#   Additionally: the frozen portfolio_strip.cumulative_return carries account-basis
-#   if_held (~63.95%); windowed_cumulative_return is absent. The cumulative row therefore
-#   falls back to account-basis. The same strip fetch must trigger updateComparisonRows
-#   with the windowed strip so the cumulative row also corrects.
+# Invariants 9 to 12 (the 30d fallback, the frozen-path pin, the function's scope and the
+# recursion guard) pinned the old design: the poll wrote the headline and, when its guard alpha
+# was null, asked /api/strip/30d from a function named fetchWindowedStrip. The refresh-timing
+# dashboard plan replaced it: the poll never writes the headline, a null guard alpha asks for the
+# PICKED window's strip, and a strip with a null guard alpha cannot loop because nothing re-requests
+# from the answer. Those behaviours are run under node in tests/dashboard/test_dashboard_window_hold.py
+# (first poll, null guard alpha, picked window, failed and superseded answers), which replaces the
+# source-text pins of function names and call sites.
 # ---------------------------------------------------------------------------
-
-
-class TestClosedFrozenFallbackFetchesStrip:
-    """When portfolio_strip.guard_alpha is absent (closed_frozen market state),
-    renderGuardAlpha must trigger a fallback fetch of /api/strip/<default-window>
-    to populate the headline. Without this, the headline shows '--' on market close.
-
-    These are source-text assertions against index.js. The PM live gate on :8090
-    (or :8095 with worktree code) is the definitive verification surface.
-    """
-
-    def test_render_guard_alpha_triggers_strip_fallback_when_guard_alpha_null(self):
-        """When portfolio_strip.guard_alpha is absent (null), renderGuardAlpha or its
-        caller must trigger fetchWindowedStrip so the headline does not stay '--'.
-
-        Source contract: renderGuardAlpha must call fetchWindowedStrip when guard_alpha
-        is null, OR updateDashboard/loadState must call fetchWindowedStrip after a null
-        guard_alpha is detected. Either way: fetchWindowedStrip must be called from the
-        renderGuardAlpha body OR from updateDashboard (which calls renderGuardAlpha).
-
-        Current code: renderGuardAlpha body has `guard_alpha != null` only for the color
-        guard — it does NOT call fetchWindowedStrip when guard_alpha is null. That is the
-        bug: null guard_alpha → renders '--', never triggers fallback.
-        """
-        js = _js()
-
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, "renderGuardAlpha must exist"
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
-
-        # renderGuardAlpha must call fetchWindowedStrip when guard_alpha is null.
-        # The fallback can be inline: `if (guard_alpha == null) { fetchWindowedStrip('30d'); return; }`
-        assert "fetchWindowedStrip" in body, (
-            "FROZEN-PATH FAIL: renderGuardAlpha does not call fetchWindowedStrip. "
-            "When portfolio_strip.guard_alpha is null (closed_frozen market state), "
-            "the function renders '--' and the headline never corrects. "
-            "The fix: inside renderGuardAlpha, when guard_alpha is null, call "
-            "fetchWindowedStrip('30d') to populate the headline from the strip API."
-        )
-
-    def test_update_dashboard_calls_strip_fallback_when_guard_alpha_absent(self):
-        """fetchWindowedStrip must be called on the INITIAL LOAD path, not only on
-        picker click. The picker click is already wired (1 call site). A second call
-        site is needed for the closed_frozen fallback.
-
-        Source contract: fetchWindowedStrip must appear as a CALL (not just a definition)
-        at least twice in index.js — once in the picker click handler (existing) and once
-        on a path reachable without user interaction (new — for initial load fallback).
-
-        Note: the function DEFINITION (`function fetchWindowedStrip(token) {`) is NOT a
-        call site. We count only `fetchWindowedStrip(` occurrences that are NOT the
-        function declaration line.
-        """
-        js = _js()
-
-        # Count call sites (exclude the function declaration itself).
-        # The declaration is: `function fetchWindowedStrip(token) {`
-        # A call site is: `fetchWindowedStrip(` NOT preceded by `function `.
-        # Strategy: find all matches of fetchWindowedStrip( and exclude the declaration.
-        all_matches = [(m.start(), m.end()) for m in re.finditer(r"fetchWindowedStrip\s*\(", js)]
-        call_sites = [
-            pos
-            for pos, end in all_matches
-            if not js[max(0, pos - 10) : pos].rstrip().endswith("function")
-        ]
-
-        assert len(call_sites) >= 2, (
-            f"FROZEN-PATH FAIL: fetchWindowedStrip is called only {len(call_sites)} time(s) "
-            "(excluding the function declaration). For the closed_frozen path, it must be "
-            "called at least twice: once in the picker-click handler (existing) and once on "
-            "the initial-load fallback path (new — fires when guard_alpha is absent). "
-            f"Call site positions found: {call_sites}"
-        )
-
-    def test_strip_fallback_uses_default_window_token(self):
-        """The fallback strip fetch must use the default window token ('30d') to match
-        the active picker button and window label on page load. Using a hardcoded '30d'
-        token or the _DEFAULT_HERO_WINDOW constant is acceptable — using 'all' or any
-        non-default token would mismatch the label and produce a confusing headline value.
-        """
-        js = _js()
-
-        # Locate fetchWindowedStrip call sites and check that at least one is called
-        # with '30d' as the token (the default window that matches the active picker button).
-        # This pins the default-window invariant: the fallback headline must match
-        # what the picker shows as active on load.
-        has_default_token_call = (
-            "fetchWindowedStrip('30d')" in js
-            or 'fetchWindowedStrip("30d")' in js
-            or re.search(r"fetchWindowedStrip\s*\(\s*_DEFAULT_HERO_WINDOW\s*\)", js) is not None
-            or re.search(r"fetchWindowedStrip\s*\(\s*['\"]30d['\"]", js) is not None
-        )
-        assert has_default_token_call, (
-            "FROZEN-PATH FAIL: no fetchWindowedStrip('30d') call found in index.js. "
-            "The closed_frozen fallback must use the default window token ('30d') so the "
-            "headline value matches the active picker button label on initial load. "
-            "Acceptable forms: fetchWindowedStrip('30d') or fetchWindowedStrip(_DEFAULT_HERO_WINDOW)."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Invariant 10 — frozen portfolio_strip must expose guard_alpha (server-side fix)
-#   OR the JS fallback must fire — both paths are acceptable; these tests pin
-#   whichever the implementer chooses. If the server is fixed, Invariant 9 is
-#   redundant (tests still pass — the fallback just never fires). If only the
-#   JS is fixed, the frozen _portfolio_strip dict stays as-is and the JS fallback
-#   handles it.
-# ---------------------------------------------------------------------------
-
-
-class TestFrozenPortfolioStripGuardAlpha:
-    """The frozen /api/state portfolio_strip either carries guard_alpha directly
-    (server-side fix) OR the JS fetches /api/strip/<window> as a fallback (JS fix).
-    These tests pin the server-side contract; if the implementer adds guard_alpha to
-    the frozen strip instead of fixing the JS, these tests confirm it.
-
-    These tests are complementary to Invariant 9 — at least one of the two paths
-    must be correct for the headline to work on closed_frozen.
-    """
-
-    def test_frozen_portfolio_strip_dict_in_app_py_exposes_guard_alpha_or_js_fallback_exists(self):
-        """Either (a) the frozen _portfolio_strip in app.py includes guard_alpha
-        from compute_windowed_portfolio_strip, OR (b) fetchWindowedStrip is called
-        on the initial-load path in index.js (Invariant 9).
-
-        This test passes if EITHER path is wired. It fails only if NEITHER is present,
-        which would leave the headline showing '--' on closed_frozen permanently.
-        """
-        app_py = (pathlib.Path(__file__).parent.parent.parent / "app.py").read_text(
-            encoding="utf-8"
-        )
-        js = _js()
-
-        # Path A: server adds guard_alpha to the frozen strip.
-        # The frozen _portfolio_strip is built at ~line 1262; check if guard_alpha
-        # is set anywhere in the frozen path block (between the frozen snapshot path
-        # and the return jsonify at ~line 1304).
-        frozen_block_start = app_py.find("# On-the-fly portfolio_strip recompute")
-        frozen_block_end = (
-            app_py.find("return jsonify", frozen_block_start) if frozen_block_start != -1 else -1
-        )
-        server_has_frozen_guard_alpha = (
-            frozen_block_start != -1
-            and frozen_block_end != -1
-            and "guard_alpha" in app_py[frozen_block_start:frozen_block_end]
-        )
-
-        # Path B: JS fetches strip on initial load when guard_alpha is absent.
-        # Count CALL sites only (exclude function declaration).
-        all_fws = [(m.start(), m.end()) for m in re.finditer(r"fetchWindowedStrip\s*\(", js)]
-        fws_calls = [
-            pos
-            for pos, end in all_fws
-            if not js[max(0, pos - 10) : pos].rstrip().endswith("function")
-        ]
-        js_has_initial_strip_fallback = len(fws_calls) >= 2
-
-        assert server_has_frozen_guard_alpha or js_has_initial_strip_fallback, (
-            "FROZEN-PATH FAIL: neither fix path is wired. "
-            "The frozen /api/state portfolio_strip has no guard_alpha, AND "
-            "fetchWindowedStrip is not called on the initial-load path. "
-            "The headline will show '--' on closed_frozen permanently. "
-            "Fix: either add guard_alpha to the frozen _portfolio_strip in app.py "
-            "OR add a fetchWindowedStrip('30d') call that fires when guard_alpha is "
-            "absent from the first poll response."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Invariant 11 — fetchWindowedStrip must be at IIFE scope, not inside DOMContentLoaded
-#
-# quant-code-reviewer BLOCK (cycle-2, 5d3d5cd):
-#   fetchWindowedStrip is defined at static/index.js:1260 INSIDE the DOMContentLoaded
-#   callback. renderGuardAlpha is at line 131 in IIFE scope. When renderGuardAlpha
-#   calls fetchWindowedStrip('30d'), it executes in IIFE scope where fetchWindowedStrip
-#   is NOT defined — ReferenceError in strict mode, silently swallowed by updateDashboard
-#   try/catch. The fallback never fires; headline stays '--' on closed_frozen.
-#
-#   Required fix: hoist fetchWindowedStrip to IIFE scope (above DOMContentLoaded).
-# ---------------------------------------------------------------------------
-
-
-class TestFetchWindowedStripAtIifeScope:
-    """fetchWindowedStrip must be defined at IIFE scope so renderGuardAlpha can call
-    it. A definition inside DOMContentLoaded is not visible from IIFE-scope functions.
-    """
-
-    def test_fetch_windowed_strip_defined_before_dom_content_loaded(self):
-        """fetchWindowedStrip must be defined BEFORE the main DOMContentLoaded callback.
-        If it is defined only inside DOMContentLoaded, renderGuardAlpha (IIFE scope)
-        will throw ReferenceError when it calls it.
-
-        Note: this file has two DOMContentLoaded listeners — a tiny CSRF-token fetch
-        at line 15 and the main picker/chart setup at line 1234. fetchWindowedStrip
-        must be defined before the MAIN (last/largest) DOMContentLoaded callback.
-
-        Source contract: the `function fetchWindowedStrip` declaration must appear
-        before the last `document.addEventListener('DOMContentLoaded'` in the file.
-        """
-        js = _js()
-
-        decl_pos = js.find("function fetchWindowedStrip")
-        assert decl_pos != -1, "fetchWindowedStrip function declaration must exist"
-
-        # Find the LAST (main) DOMContentLoaded listener — this is the one that
-        # currently contains fetchWindowedStrip and is the source of the scoping bug.
-        pattern = "document.addEventListener('DOMContentLoaded'"
-        pattern2 = 'document.addEventListener("DOMContentLoaded"'
-        all_dom = [m.start() for m in re.finditer(re.escape(pattern), js)]
-        all_dom += [m.start() for m in re.finditer(re.escape(pattern2), js)]
-        assert all_dom, "DOMContentLoaded listener not found — cannot verify scoping"
-        main_dom_pos = max(all_dom)
-
-        assert decl_pos < main_dom_pos, (
-            "SCOPING FAIL: fetchWindowedStrip is defined INSIDE the main DOMContentLoaded "
-            f"callback (declaration at char {decl_pos}, main DOMContentLoaded starts at "
-            f"char {main_dom_pos}). "
-            "renderGuardAlpha lives at IIFE scope (char ~4692) and calls "
-            "fetchWindowedStrip('30d') on the frozen-path fallback. With the function "
-            "nested inside DOMContentLoaded it is invisible from IIFE scope — a "
-            "ReferenceError is silently swallowed by updateDashboard's try/catch and the "
-            "fallback never fires. "
-            "Fix: move `function fetchWindowedStrip(token) {...}` to IIFE scope, BEFORE "
-            "the main DOMContentLoaded listener so renderGuardAlpha can reach it."
-        )
-
-    def test_render_guard_alpha_and_fetch_windowed_strip_share_scope(self):
-        """Both renderGuardAlpha and fetchWindowedStrip must be reachable from the
-        same scope. renderGuardAlpha is at IIFE scope (between the two DOMContentLoaded
-        callbacks). fetchWindowedStrip must also be at IIFE scope — not inside the
-        main DOMContentLoaded (the second/last one, which contains the picker + chart
-        setup). The CSRF DOMContentLoaded at line 15 is a tiny 4-line callback; the
-        main DOMContentLoaded is the last one in the file and contains fetchWindowedStrip.
-
-        Source contract: fetchWindowedStrip must appear BEFORE the LAST/MAIN
-        DOMContentLoaded callback starts. `renderGuardAlpha` is already at IIFE scope.
-        """
-        js = _js()
-
-        render_pos = js.find("function renderGuardAlpha")
-        fetch_pos = js.find("function fetchWindowedStrip")
-
-        assert render_pos != -1, "renderGuardAlpha must exist"
-        assert fetch_pos != -1, "fetchWindowedStrip must exist"
-
-        # Find the LAST DOMContentLoaded listener — this is the main callback that
-        # contains fetchWindowedStrip in the broken implementation. After the fix,
-        # fetchWindowedStrip must be BEFORE it.
-        pattern = "document.addEventListener('DOMContentLoaded'"
-        pattern2 = 'document.addEventListener("DOMContentLoaded"'
-        all_dom = [m.start() for m in re.finditer(re.escape(pattern), js)]
-        all_dom += [m.start() for m in re.finditer(re.escape(pattern2), js)]
-        assert all_dom, "At least one DOMContentLoaded listener must exist"
-        main_dom_pos = max(all_dom)  # The last (main) DOMContentLoaded
-
-        assert fetch_pos < main_dom_pos, (
-            "SCOPING FAIL: fetchWindowedStrip is defined INSIDE the main DOMContentLoaded "
-            f"callback (declaration at char {fetch_pos}, main DOMContentLoaded at char "
-            f"{main_dom_pos}). renderGuardAlpha is at IIFE scope (char {render_pos}) and "
-            "cannot reach into the DOMContentLoaded closure. "
-            "Fix: hoist `function fetchWindowedStrip(token) {...}` to IIFE scope, "
-            "above the main DOMContentLoaded listener."
-        )
-
-
-# ---------------------------------------------------------------------------
-# Invariant 12 — renderGuardAlpha must not infinitely recurse via fetchWindowedStrip
-#
-# quant-code-reviewer BLOCK (cycle-2, 5d3d5cd):
-#   compute_windowed_portfolio_strip returns guard_alpha: null when weight_sum == 0
-#   (no symphonies or all zero-weight). In that case the strip fetch response also
-#   has guard_alpha: null. renderGuardAlpha(wrapped) is called from fetchWindowedStrip
-#   with a null guard_alpha → triggers fetchWindowedStrip('30d') again → infinite loop.
-#
-#   Required fix: guard the fallback call so it cannot fire when already called from
-#   a strip fetch. Simplest pattern: `_fromStrip` parameter.
-# ---------------------------------------------------------------------------
-
-
-class TestRenderGuardAlphaNoInfiniteLoop:
-    """renderGuardAlpha must not infinitely recurse via fetchWindowedStrip when the
-    strip response itself returns guard_alpha: null (zero-weight portfolio edge case).
-    """
-
-    def test_render_guard_alpha_fallback_is_guarded_against_recursion(self):
-        """renderGuardAlpha must accept a parameter or use a flag that prevents the
-        fetchWindowedStrip fallback from firing when renderGuardAlpha was itself
-        called FROM fetchWindowedStrip (i.e. the strip response had null guard_alpha).
-
-        Source contract: renderGuardAlpha's function signature must accept a second
-        argument (e.g. `_fromStrip`) AND the fetchWindowedStrip fallback must be
-        guarded by that argument, e.g.:
-
-            if (guard_alpha === null) {
-                if (!_fromStrip) fetchWindowedStrip('30d');
-                return;
-            }
-
-        AND the call inside fetchWindowedStrip must pass the truthy flag:
-
-            renderGuardAlpha(wrapped, true);
-
-        Either the `_fromStrip` name or any structurally equivalent guard is acceptable.
-        The test checks for the structural presence of a recursion guard.
-        """
-        js = _js()
-
-        # Check 1: renderGuardAlpha function signature takes >=2 params OR uses a closure
-        # variable as a recursion guard.
-        start = js.find("function renderGuardAlpha")
-        assert start != -1, "renderGuardAlpha must exist"
-        sig_end = js.find(")", start)
-        sig = js[start : sig_end + 1]
-
-        # The signature must have a second parameter (anything after the first comma).
-        has_second_param = sig.count(",") >= 1
-
-        # Check 2: the fetchWindowedStrip call inside renderGuardAlpha is conditional,
-        # not unconditional. Must not be bare `fetchWindowedStrip('30d');` without a guard.
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
-
-        # The fetchWindowedStrip call must be inside an `if` that checks something —
-        # a bare call with no condition is the infinite-loop pattern.
-        fws_pos = body.find("fetchWindowedStrip")
-        has_guarded_call = False
-        if fws_pos != -1:
-            # Look back up to 80 chars for an `if` keyword guarding this call.
-            pre = body[max(0, fws_pos - 80) : fws_pos]
-            has_guarded_call = "if (" in pre or "if(" in pre
-
-        assert has_second_param or has_guarded_call, (
-            "INFINITE-LOOP FAIL: renderGuardAlpha calls fetchWindowedStrip without a "
-            "recursion guard. When the strip response returns guard_alpha: null "
-            "(zero-weight portfolio), renderGuardAlpha will call fetchWindowedStrip again, "
-            "which calls renderGuardAlpha again — infinite loop. "
-            "Fix: add a `_fromStrip` parameter (or equivalent flag) and guard the call: "
-            "  `if (guard_alpha === null) { if (!_fromStrip) fetchWindowedStrip('30d'); return; }` "
-            "AND pass `true` as the second arg from inside fetchWindowedStrip: "
-            "  `renderGuardAlpha(wrapped, true);` "
-            f"Current signature: `{sig}`. "
-            f"fetchWindowedStrip call context: `{body[max(0, fws_pos - 80) : fws_pos + 30]}`"
-        )
-
-    def test_fetch_windowed_strip_passes_from_strip_flag_to_render_guard_alpha(self):
-        """Inside fetchWindowedStrip, the call to renderGuardAlpha must pass a truthy
-        second argument (the `_fromStrip` flag) so the recursion guard inside
-        renderGuardAlpha can detect it came from a strip fetch.
-
-        Source contract: within the fetchWindowedStrip function body, the call to
-        renderGuardAlpha must have at least 2 arguments.
-        """
-        js = _js()
-
-        start = js.find("function fetchWindowedStrip")
-        assert start != -1, "fetchWindowedStrip must exist"
-        # fetchWindowedStrip can be anywhere now (IIFE scope after hoisting fix)
-        end_marker = js.find("\nfunction ", start + 1)
-        if end_marker == -1:
-            end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 600]
-
-        # Find `renderGuardAlpha(` inside the body and check it has a second argument.
-        rga_pos = body.find("renderGuardAlpha(")
-        assert rga_pos != -1, (
-            "fetchWindowedStrip must call renderGuardAlpha — function body does not "
-            "contain `renderGuardAlpha(`."
-        )
-
-        # Extract the call up to the closing paren.
-        call_snippet = body[rga_pos : rga_pos + 60]
-        has_second_arg = "," in call_snippet.split(")")[0]
-
-        assert has_second_arg, (
-            "INFINITE-LOOP FAIL: fetchWindowedStrip calls renderGuardAlpha without a "
-            "second argument. The recursion guard (`_fromStrip` or equivalent) in "
-            "renderGuardAlpha will never be truthy, so a null guard_alpha in the strip "
-            "response will trigger fetchWindowedStrip again, looping infinitely. "
-            "Fix: pass `true` as the second argument: `renderGuardAlpha(wrapped, true);` "
-            f"Found call: `{call_snippet}`"
-        )
 
 
 # ---------------------------------------------------------------------------

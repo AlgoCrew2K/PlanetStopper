@@ -2435,39 +2435,24 @@ def test_history_js_render_reason_cards_emits_avg_per_exit():
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_js_render_guard_alpha_reads_portfolio_strip_cumulative_return():
-    """index.js renderGuardAlpha must read from data.portfolio_strip.cumulative_return.
+def test_dashboard_js_headline_writer_does_not_read_the_zero_valued_meta_portfolio_cr():
+    """The guard-alpha headline writer must not read ``meta.portfolio.cr``.
 
-    Parity re-audit (2026-05-19) BLOCK-1: renderGuardAlpha reads
-    `meta.portfolio.cr` and `meta.portfolio.cr_if_held` (both 0 in practice)
-    instead of `portfolio_strip.cumulative_return.dry_run` /
-    `portfolio_strip.cumulative_return.if_held` (live values: 1.41 / 68.6).
-
-    The fix: update renderGuardAlpha to destructure
-    `data.portfolio_strip.cumulative_return` for its input values.
-
-    This test asserts the JS source references portfolio_strip and
-    cumulative_return (not just portfolio.cr) so the fix is verifiable at
-    source level.
+    Parity re-audit (2026-05-19) BLOCK-1: the headline read ``meta.portfolio.cr`` and
+    ``meta.portfolio.cr_if_held`` (both 0 in practice) instead of server-computed values. The
+    headline now comes from ``/api/strip/<window>``'s ``guard_alpha`` through a writer found here by
+    what it writes (#guard-alpha-headline); its behaviour is run under node in
+    tests/dashboard/test_dashboard_window_hold.py.
     """
-    idx_js = _STATIC_DIR / "index.js"
-    src = idx_js.read_text(encoding="utf-8")
+    from tests.dashboard.test_render_basis_fix import _headline_writers
 
-    match = re.search(r"function renderGuardAlpha\b.*?(?=\nfunction |\nvar |\Z)", src, re.S)
-    assert match, "index.js must define a renderGuardAlpha function"
-    fn_body = match.group(0)
-
-    assert re.search(r"portfolio_strip", fn_body), (
-        "renderGuardAlpha must read from portfolio_strip, not meta.portfolio. "
-        "Parity confirmed portfolio_strip.cumulative_return.dry_run = 1.41 while "
-        "meta.portfolio.cr = 0. Fix: change function signature to accept `data` "
-        "and read `(data.portfolio_strip || {}).cumulative_return || {}`."
-    )
-    assert re.search(r"cumulative_return", fn_body), (
-        "renderGuardAlpha must reference cumulative_return from portfolio_strip. "
-        "Expected: var cr_obj = (data.portfolio_strip || {}).cumulative_return || {}; "
-        "var cr = cr_obj.dry_run || 0; var crHeld = cr_obj.if_held || 0;"
-    )
+    src = (_STATIC_DIR / "index.js").read_text(encoding="utf-8")
+    writers = _headline_writers(src)
+    assert writers, "index.js must define a function that writes #guard-alpha-headline"
+    for name, body in writers:
+        assert "portfolio.cr" not in body and "cr_if_held" not in body, (
+            f"{name} reads the zero-valued meta.portfolio.cr / cr_if_held for the headline"
+        )
 
 
 def test_api_state_meta_portfolio_cr_non_zero_when_portfolio_strip_has_data(monkeypatch):

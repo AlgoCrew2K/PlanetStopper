@@ -85,13 +85,13 @@ class TestPickerJsReWindowsValue:
         )
 
     def test_js_picker_rerenders_headline_value_after_strip_fetch(self):
-        """The windowed-strip fetch must feed renderGuardAlpha so the headline value
-        actually changes — fetching the route but not re-rendering would still be F1."""
+        """The windowed-strip fetch must write the headline value so it actually changes —
+        fetching the route but not re-rendering would still be F1. The writer is named by what
+        it writes (#guard-alpha-headline), not by function name; the behaviour itself is run under
+        node in test_dashboard_window_hold.py."""
         js = _js()
-        # The strip fetch and a renderGuardAlpha re-render must both be present; pin that
-        # the strip handler path references renderGuardAlpha (the headline renderer).
-        assert "/api/strip/" in js and "renderGuardAlpha" in js, (
-            "AC-3 FAIL: the /api/strip fetch must re-render the headline via renderGuardAlpha "
+        assert "/api/strip/" in js and "guard-alpha-headline" in js, (
+            "AC-3 FAIL: the /api/strip fetch must re-render the headline "
             "so the displayed guard-alpha VALUE re-windows on picker click."
         )
 

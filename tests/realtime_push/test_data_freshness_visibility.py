@@ -38,6 +38,7 @@ import app as app_module
 
 _STATIC_DIR = pathlib.Path(__file__).parent.parent.parent / "static"
 _INDEX_JS = _STATIC_DIR / "index.js"
+_CHROME_JS_PATH = _STATIC_DIR / "chrome.js"
 _TEMPLATES_DIR = pathlib.Path(__file__).parent.parent.parent / "templates"
 _CHROME_HTML = _TEMPLATES_DIR / "_chrome.html"
 _INDEX_HTML = _TEMPLATES_DIR / "index.html"
@@ -399,7 +400,7 @@ class TestVisibleStalenessCueOnFetchFailure:
 
         # Extract the loadState function body (up to the next top-level function definition)
         # by finding the closing brace pattern. We take a generous window.
-        window = index_js_source[loadstate_idx : loadstate_idx + 600]
+        window = index_js_source[loadstate_idx : loadstate_idx + 6000]
 
         # Assert the catch block does MORE than just console.error.
         # Acceptable patterns: a DOM write, a badge update call, a variable assignment,
@@ -484,8 +485,11 @@ class TestVisibleStalenessCueOnFetchFailure:
             "lastFetch",
             "_lastOk",
             "lastOkAt",
+            "noteDataReceived",
+            "receivedAtMono",
         ]
-        found = any(p in index_js_source for p in tracker_patterns)
+        chrome_js_source = (_CHROME_JS_PATH).read_text(encoding="utf-8")
+        found = any(p in index_js_source or p in chrome_js_source for p in tracker_patterns)
         assert found, (
             "static/index.js must track the last-successful-update timestamp independently "
             "of the poll (e.g. `var lastSuccessfulPollAt = 0;` + `lastSuccessfulPollAt = Date.now()` "
@@ -494,130 +498,39 @@ class TestVisibleStalenessCueOnFetchFailure:
             "rt-impl: add this tracker so the badge can go Stale even when every poll errors."
         )
 
-    def test_show_connection_lost_targets_real_dom_ids(self, index_js_source: str):
-        """showConnectionLost() in static/index.js must reference element ids that
-        actually exist in the rendered templates — bidirectional JS↔template contract.
+    def test_the_failure_cue_targets_ids_that_exist_in_the_templates(self, index_js_source: str):
+        """The scripts that draw the connection-lost cue must address element ids that exist in the
+        rendered templates, in both directions: every id the scripts name is in a template, and the
+        wrong ids an earlier version used are gone.
 
-        This test enforces BOTH directions of the contract:
-
-        Direction 1 (JS → template): the ids used by showConnectionLost() must match
-        the ids present in templates/_chrome.html and templates/index.html.
-
-        Direction 2 (template → JS): the ids present in the templates must be
-        referenced by showConnectionLost() so a template rename is caught immediately.
-
-        DEFECT (index.js:1299-1310):
-          - getElementById('engine-status-badge')  →  no such id exists
-              Real ids in _chrome.html:51-53: 'engine-status', 'engine-status-dot',
-              'engine-status-label'
-          - querySelector('[data-testid="data-as-of"]') || querySelector('.data-as-of')
-              →  no element with that testid or class exists
-              Real element in templates/index.html:846: id='hero-data-as-of'
-
-        After rt-impl fixes showConnectionLost() to use the real selectors, this test
-        passes. A future template rename that breaks the contract will also be caught here.
-
-        Fails until rt-impl changes index.js:1300/1305-1306 to target real ids.
+        The cue is split by the refresh-timing plan: static/chrome.js writes the header label and dot
+        (one function, whichever page the poll runs on) and static/index.js writes the as-of text. The
+        behaviour itself (label, colour tokens, as-of text) is run under node in
+        test_dashboard_poll_errors.py; this keeps the cheap contract that a template rename is caught.
         """
-        # --- Extract showConnectionLost function body from index.js ---
-        fn_start = index_js_source.find("function showConnectionLost(")
-        assert fn_start >= 0, (
-            "static/index.js must contain `function showConnectionLost(` — it is the "
-            "AC-8 visible-staleness function."
-        )
-        # Take a generous window covering the function body (up to ~500 chars).
-        fn_body = index_js_source[fn_start : fn_start + 500]
-
-        # --- Read template source files (fail fast if missing) ---
-        assert _CHROME_HTML.exists(), (
-            f"templates/_chrome.html not found at {_CHROME_HTML}. "
-            "Required for JS↔template contract check."
-        )
-        assert _INDEX_HTML.exists(), (
-            f"templates/index.html not found at {_INDEX_HTML}. "
-            "Required for JS↔template contract check."
-        )
+        chrome_js = _CHROME_JS_PATH.read_text(encoding="utf-8")
         chrome_src = _CHROME_HTML.read_text(encoding="utf-8")
         index_html_src = _INDEX_HTML.read_text(encoding="utf-8")
 
-        # --- Contract check: badge element ids ---
-        # The badge cluster in _chrome.html uses three ids.  showConnectionLost must
-        # reference at least one of them — and that id must actually exist in the template.
-        # The WRONG id ('engine-status-badge') must NOT be the only badge reference.
-        badge_ids_in_template = []
-        for bid in ("engine-status-dot", "engine-status-label", "engine-status"):
-            if f'id="{bid}"' in chrome_src or f"id='{bid}'" in chrome_src:
-                badge_ids_in_template.append(bid)
-
-        assert badge_ids_in_template, (
-            "templates/_chrome.html contains none of the expected badge element ids "
-            "('engine-status-dot', 'engine-status-label', 'engine-status'). "
-            "This test expects those ids to exist in the template. "
-            "If _chrome.html was refactored, update this test and showConnectionLost together."
-        )
-
-        js_refs_a_real_badge_id = any(bid in fn_body for bid in badge_ids_in_template)
-        wrong_badge_id = "engine-status-badge"
-        js_only_has_wrong_id = (wrong_badge_id in fn_body) and not js_refs_a_real_badge_id
-
-        assert js_refs_a_real_badge_id, (
-            f"showConnectionLost() does not reference any real badge element id. "
-            f"Real ids in templates/_chrome.html: {badge_ids_in_template}. "
-            + (
-                f"Found wrong id '{wrong_badge_id}' instead — this id does not exist in the template. "
-                if js_only_has_wrong_id
-                else ""
+        for badge_id in ("engine-status-dot", "engine-status-label", "engine-status"):
+            assert f'id="{badge_id}"' in chrome_src, f"templates/_chrome.html lost id={badge_id!r}"
+            assert badge_id in chrome_js, (
+                f"static/chrome.js no longer addresses #{badge_id}, which the header template renders"
             )
-            + "rt-impl: change index.js showConnectionLost() to target "
-            "getElementById('engine-status-dot') and/or getElementById('engine-status-label') "
-            "(matching _chrome.html:51-53)."
+        assert 'id="hero-data-as-of"' in index_html_src, (
+            "templates/index.html lost #hero-data-as-of"
+        )
+        assert "hero-data-as-of" in index_js_source, (
+            "static/index.js no longer addresses #hero-data-as-of, which the dashboard renders"
         )
 
-        # --- Contract check: data-as-of element id ---
-        # templates/index.html:846 uses id='hero-data-as-of'.  showConnectionLost must
-        # reference that id.  The WRONG selectors ('[data-testid="data-as-of"]' and
-        # '.data-as-of') must not be the only data-as-of references.
-        dao_id = "hero-data-as-of"
-        dao_id_in_template = (
-            f'id="{dao_id}"' in index_html_src or f"id='{dao_id}'" in index_html_src
-        )
-
-        assert dao_id_in_template, (
-            f"templates/index.html does not contain id='{dao_id}'. "
-            "This test expects that id to exist (templates/index.html:846 in the audit). "
-            "If index.html was refactored, update this test and showConnectionLost together."
-        )
-
-        js_refs_dao_id = dao_id in fn_body
-        wrong_dao_patterns = ['data-testid="data-as-of"', "data-testid='data-as-of'", ".data-as-of"]
-        js_only_has_wrong_dao = any(p in fn_body for p in wrong_dao_patterns) and not js_refs_dao_id
-
-        assert js_refs_dao_id, (
-            f"showConnectionLost() does not reference the real data-as-of element id "
-            f"('{dao_id}'). "
-            + (
-                "Found wrong selectors ('[data-testid=\"data-as-of\"]' / '.data-as-of') instead — "
-                "no element with that testid or class exists in the template. "
-                if js_only_has_wrong_dao
-                else ""
+        wrong_ids = ("engine-status-badge", 'data-testid="data-as-of"', ".data-as-of")
+        for wrong in wrong_ids:
+            assert wrong not in index_js_source and wrong not in chrome_js, (
+                f"a script addresses {wrong!r}, which no template renders"
             )
-            + "rt-impl: change index.js showConnectionLost() to target "
-            f"getElementById('{dao_id}') (matching templates/index.html:846)."
-        )
-
-        # --- Contract check: label element gets a color change ---
-        # showConnectionLost sets label.textContent='Connection Lost' but must ALSO
-        # set label.style.color so the text visually signals the error state.
-        # Without label.style.color, the label text stays the prior Live color (green)
-        # next to a red dot — misleading to the operator.
-        # Assert that the function body sets label.style.color (any value is acceptable;
-        # the test only requires it is set).
-        assert "label.style.color" in fn_body, (
-            "showConnectionLost() sets label.textContent but does NOT set label.style.color. "
-            "The label text keeps the prior (Live/green) color next to a red dot — "
-            "misleading to the operator. "
-            "rt-impl: add `label.style.color = 'var(--studio-neg, #e33)';` "
-            "inside the `if (label)` block in showConnectionLost() (index.js:1304)."
+        assert "#e33" not in index_js_source and "#e33" not in chrome_js, (
+            "the cue must use design tokens, not a raw colour"
         )
 
 

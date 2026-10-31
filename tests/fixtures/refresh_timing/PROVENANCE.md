@@ -29,6 +29,9 @@ A database file is never committed, including the launcher's copy of production 
 | `01-c2/` | server-state-truth, cycle 2 | R6 `shadow_rows_two_cycles.json`, R7 `exit_trigger_row.json` | captured 2026-10-23T00:55Z at deployed SHA `37c8e983`, committed; see `01-c2/PROVENANCE.md` (R6 is 2026-10-21, R7 is exit id 509 of 2026-10-22) |
 | `01-c3/` | server-state-truth, cycle 3 | none committed: derived at test time from R6, R8 and the live-state record; see `01-c3/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `01-c4/` | server-state-truth, cycle 4 | none committed: derived at test time from the captured Composer total-stats body, R6 and R8; see `01-c4/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c1/` | dashboard-refresh, cycle 1 | none committed: producer worlds and derived stamps, guard alpha, vol and strips built at test time; see `03-c1/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c2/` | dashboard-refresh, cycle 2 | none committed: the app's own error responses and re-stamped $-saved summaries; see `03-c2/PROVENANCE.md` | derived records awaiting the PM's sign-off |
+| `03-c3/` | dashboard-refresh, cycle 3 | none committed: poll bodies with chosen phase, cycle age, countdown and degraded reasons; see `03-c3/PROVENANCE.md` | derived records awaiting the PM's sign-off |
 | `05-c2/` | observability-transport, cycle 2 | none copied; the 503 and timeout cases are derived at test time from `tests/fixtures/composer/v3-audit/total_stats.json` | derived, PM-5 sign-off recorded in the plan; see `05-c2/PROVENANCE.md` |
 
 Later cycles add their folder and a row here.

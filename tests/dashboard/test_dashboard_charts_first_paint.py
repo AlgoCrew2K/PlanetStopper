@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from tests.dashboard import _index_js_harness as hx
+from tests.dashboard import _refresh_timing_support as sup
 
 EMPTY_HERO_TEXT = "No portfolio history to chart yet"
 NO_INTRADAY_TEXT = "No intraday data yet"
@@ -218,7 +219,9 @@ class TestFirstPaintDoesNotWaitForTheStatePoll:
         world, result = _drawn("default", reject=True)
         r = result["result"]
         _assert_hero_and_sparks_drawn(world, result)
-        assert r["asOf"]["text"] == "connection lost"
+        assert r["asOf"]["text"] == (
+            "connection lost \u00b7 data as of " + sup.render_stamp(world)
+        ), "the cue keeps the last known stamp (the one the server rendered) beside it"
         assert r["attrs"]["ready"] == "1"
         assert r["attrs"]["refreshCount"] == "1", (
             "a failed refresh still counts, so a capture never hangs"

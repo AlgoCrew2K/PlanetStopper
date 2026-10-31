@@ -27,6 +27,13 @@ a canvas that still holds a live chart throws.
 dataset label at construction, so a test can show that nothing depends on label text.
 ``H.useTokenEpoch(label)`` makes every colour token read as ``<name>@<label>``.
 
+Time is virtual and moves only when a scenario says so: ``H.runTimers(ms)`` advances the
+page's ``Date`` and ``performance.now()`` together and runs every timer that falls due, in
+order; ``H.sleepFor(ms, {perf})`` jumps the clocks with no timer running (a closed laptop; with
+``perf: false`` only ``Date`` jumps, as on a platform whose monotonic clock stops in sleep) and
+``H.wakeUp()`` then runs each overdue timer once. Neither claims a browser's real timer
+throttling; they model the two clocks a page can read.
+
 ``animation.onComplete`` and plugin ``afterRender`` hooks fire only when a
 scenario says so (``H.completeAnimations``, ``H.fireAfterRender``);
 ``Chart.animator.running(chart)`` answers from ``H.animating``, which holds
@@ -272,6 +279,12 @@ def _world_specs() -> dict[str, dict]:
             "intraday": False,
             "frozen_today": _dt_mod.date(2027, 1, 2),
         },
+        # 1 January: the year-to-date window holds no row yet (explicit dates end 31 December).
+        "ytd-jan1": {
+            "explicit_dates": ["2026-12-29", "2026-12-30", "2026-12-31"],
+            "intraday": False,
+            "frozen_today": _dt_mod.date(2027, 1, 1),
+        },
         # a stored exit reason that would break out of a script element.
         "hostile": {"history_offsets": [3, 2, 1], "intraday": False, "hostile_reason": True},
     }
@@ -414,6 +427,20 @@ def _capture(client, frozen_today) -> dict:
             f"/api/state -> {state.status_code}: {state.get_data(as_text=True)[:600]}"
         )
         out["state"] = state.get_json()
+
+        strips: dict = {}
+        summaries: dict = {}
+        for token in HERO_TOKENS:
+            strip = client.get(f"/api/strip/{token}")
+            assert strip.status_code == 200, f"/api/strip/{token} -> {strip.status_code}"
+            strips[token] = strip.get_json()
+            summary = client.get(f"/api/guard-alpha-summary?window={token}")
+            assert summary.status_code == 200, (
+                f"/api/guard-alpha-summary?window={token} -> {summary.status_code}"
+            )
+            summaries[token] = summary.get_json()
+        out["strips"] = strips
+        out["summaries"] = summaries
     return out
 
 
@@ -535,29 +562,39 @@ def run_scenario(
     extra_bodies: dict | None = None,
     now_iso: str | None = None,
     timeout: int = 120,
+    scripts: tuple[str, ...] = ("static/index.js",),
 ) -> dict:
     """Run ``scenario`` (the body of an async JS function taking ``H``) against
     the world's page and return its JSON result.
 
+    ``scripts`` names the files loaded into the one page context, in page order
+    (``("static/chrome.js", "static/index.js")`` is how ``/`` loads them); the
+    default keeps every existing scenario on ``static/index.js`` alone.
+
     ``H.bodies`` carries ``hero`` (token -> /api/hero-chart body), ``charts``
-    (id -> /api/chart body), ``state`` (the /api/state body), their ``*Next``
-    captures when the world has them, and anything in ``extra_bodies``.
+    (id -> /api/chart body), ``state`` (the /api/state body), ``strips`` (token ->
+    /api/strip body), ``summaries`` (token -> /api/guard-alpha-summary body), their
+    ``*Next`` captures when the world has them, and anything in ``extra_bodies``.
     """
     bodies = {
         "hero": world["hero"],
         "charts": world["charts"],
         "state": world["state"],
+        "strips": world["strips"],
+        "summaries": world["summaries"],
     }
     if "next" in world:
         bodies["heroNext"] = world["next"]["hero"]
         bodies["chartsNext"] = world["next"]["charts"]
         bodies["stateNext"] = world["next"]["state"]
+        bodies["stripsNext"] = world["next"]["strips"]
+        bodies["summariesNext"] = world["next"]["summaries"]
     bodies.update(extra_bodies or {})
     payload = {
         "tree": parse_html(world["html"]),
         "bodies": bodies,
         "tokens": load_tokens(),
-        "indexJs": str(INDEX_JS),
+        "scripts": [str(_REPO / name) for name in scripts],
         "scenario": scenario,
         "now": now_iso,
     }
@@ -654,8 +691,9 @@ const H = {
   eventSources: [], charts: [], animating: new Set(), globalPlugins: [],
   console: { errors: [], logs: [] }, unhandled: [],
   tokens: Object.assign({}, world.tokens.light), accentOverride: null, theme: 'light',
-  reloads: 0
+  reloads: 0, navigations: [], streamAutoOpen: true, failNewStreams: false
 };
+let timerSeq = 0;
 process.on('unhandledRejection', function (e) { H.unhandled.push(String((e && e.message) || e)); });
 
 function clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
@@ -890,7 +928,7 @@ const documentObj = new Emitter();
 Object.assign(documentObj, {
   documentElement: root,
   body: queryAll(root, 'body')[0],
-  readyState: 'loading',
+  readyState: 'loading', visibilityState: 'visible', hidden: false,
   getElementById: function (id) { return queryAll(root, '#' + id)[0] || null; },
   querySelector: function (sel) { return queryAll(root, sel)[0] || null; },
   querySelectorAll: function (sel) { return queryAll(root, sel); },
@@ -901,13 +939,22 @@ Object.assign(documentObj, {
 // ------------------------------------------------------------------ Date
 const RealDate = Date;
 let fixedNow = world.now ? RealDate.parse(world.now) : null;
+let dateOffset = 0;      // moves Date when no instant is pinned
+let perfNow = 1000;      // the page's performance.now(), in ms
+function nowMs() { return fixedNow !== null ? fixedNow : RealDate.now() + dateOffset; }
 class FakeDate extends RealDate {
   constructor() {
-    if (arguments.length === 0 && fixedNow !== null) super(fixedNow); else super(...arguments);
+    if (arguments.length === 0) super(nowMs()); else super(...arguments);
   }
-  static now() { return fixedNow !== null ? fixedNow : RealDate.now(); }
+  static now() { return nowMs(); }
 }
 H.setNow = function (iso) { fixedNow = RealDate.parse(iso); };
+H.nowIso = function () { return new RealDate(nowMs()).toISOString(); };
+H.perfNow = function () { return perfNow; };
+function advanceClocks(ms, perfToo) {
+  if (fixedNow !== null) fixedNow += ms; else dateOffset += ms;
+  if (perfToo !== false) perfNow += ms;
+}
 
 // ------------------------------------------------------------------ Chart
 function statFor(canvas) {
@@ -1028,26 +1075,46 @@ function findRoute(url, opts) {
   }
   return null;
 }
+// A response carries the headers a real one does: `Date` is the page clock when the response is
+// made (a server on the same clock) unless the spec names headers of its own.
 function makeResponse(spec) {
   const status = spec.status === undefined ? 200 : spec.status;
+  const headers = Object.assign({ 'date': new RealDate(nowMs()).toUTCString() }, lowerKeys(spec.headers || {}));
+  if (spec.noDate) delete headers['date'];
+  const isText = spec.text !== undefined;
   return {
-    ok: status >= 200 && status < 300, status: status,
-    json: function () { return spec.badJson ? Promise.reject(new SyntaxError('Unexpected token')) : Promise.resolve(clone(spec.body === undefined ? {} : spec.body)); },
-    text: function () { return Promise.resolve(JSON.stringify(spec.body === undefined ? {} : spec.body)); }
+    ok: status >= 200 && status < 300, status: status, statusText: '',
+    headers: { get: function (n) { const v = headers[String(n).toLowerCase()]; return v === undefined ? null : v; } },
+    json: function () {
+      if (spec.badJson || isText) return Promise.reject(new SyntaxError('Unexpected token < in JSON'));
+      return Promise.resolve(clone(spec.body === undefined ? {} : spec.body));
+    },
+    text: function () { return Promise.resolve(isText ? spec.text : JSON.stringify(spec.body === undefined ? {} : spec.body)); }
   };
 }
+function lowerKeys(o) { const out = {}; Object.keys(o).forEach(function (k) { out[k.toLowerCase()] = o[k]; }); return out; }
+function abortError() { const e = new Error('The operation was aborted.'); e.name = 'AbortError'; return e; }
 function fetchStub(url, opts) {
   opts = opts || {};
-  const entry = { url: String(url), method: String(opts.method || 'GET').toUpperCase(), headers: opts.headers || {}, body: opts.body, n: H.fetchLog.length };
+  const signal = opts.signal || null;
+  const entry = { url: String(url), method: String(opts.method || 'GET').toUpperCase(), headers: opts.headers || {}, body: opts.body, n: H.fetchLog.length, hasSignal: !!signal, aborted: false };
   H.fetchLog.push(entry);
+  if (signal && signal.aborted) { entry.aborted = true; return Promise.reject(abortError()); }
   let spec = findRoute(entry.url, opts);
   if (!spec) { H.unrouted.push(entry.url); spec = { status: 200, body: {} }; }
   if (spec.pending) {
     return new Promise(function (resolve, reject) {
-      H.pending.push({
-        url: entry.url,
-        settle: function (s) { if (s.reject) reject(new TypeError('Failed to fetch')); else resolve(makeResponse(s)); }
-      });
+      const item = {
+        url: entry.url, entry: entry,
+        settle: function (s) { if (item.done) return; item.done = true; if (s.reject) reject(new TypeError('Failed to fetch')); else resolve(makeResponse(s)); }
+      };
+      H.pending.push(item);
+      if (signal) {
+        signal.addEventListener('abort', function () {
+          if (item.done) return;
+          item.done = true; entry.aborted = true; reject(abortError());
+        });
+      }
     });
   }
   if (spec.reject) return Promise.reject(new TypeError('Failed to fetch'));
@@ -1056,10 +1123,19 @@ function fetchStub(url, opts) {
 H.requests = function (re) { return H.fetchLog.filter(function (e) { return re.test(e.url); }).map(function (e) { return e.url; }); };
 H.releasePending = async function (url, spec) {
   const hits = H.pending.filter(function (p) { return p.url === url && !p.done; });
-  hits.forEach(function (p) { p.done = true; p.settle(spec); });
+  hits.forEach(function (p) { p.settle(spec); });
   await H.settle();
   return hits.length;
 };
+// Releases the pending request at `index` among those still waiting for `url` (0 = the oldest).
+H.releaseNth = async function (url, index, spec) {
+  const hits = H.pending.filter(function (p) { return p.url === url && !p.done; });
+  if (!hits[index]) return 0;
+  hits[index].settle(spec);
+  await H.settle();
+  return 1;
+};
+H.waiting = function (url) { return H.pending.filter(function (p) { return p.url === url && !p.done; }).length; };
 H.routeCommon = function (opts) {
   opts = opts || {};
   const b = H.bodies;
@@ -1070,9 +1146,19 @@ H.routeCommon = function (opts) {
   H.route(/^\/api\/chart\/(.+)$/, function (url, o, m) { return { body: (opts.charts || b.charts)[m[1]] }; });
   H.route('/api/state', { body: opts.state || b.state });
 };
+// The window strips, the $-saved summaries, the header's alert poll and the event-stream probe:
+// the producer output captured with the world, so a scenario that polls does not hit a bare 200.
+H.routeExtras = function () {
+  const b = H.bodies;
+  H.route('/api/candidate-alert', { body: { new_valid_count: 0, last_run: null } });
+  H.route(/^\/api\/strip\/([a-z0-9]+)$/, function (url, o, m) { return { body: b.strips[m[1]] }; });
+  H.route(/^\/api\/guard-alpha-summary\?window=([a-z0-9]+)$/, function (url, o, m) { return { body: b.summaries[m[1]] }; });
+  H.route('/api/events', { status: 200, body: {} });
+};
 H.boot = async function (opts) {
   opts = opts || {};
   H.routeCommon(opts);
+  if (opts.extras) H.routeExtras();
   (opts.overrides || []).forEach(function (o) { H.route(o[0], o[1]); });
   if (opts.statePending) H.route('/api/state', { pending: true });
   if (opts.stateReject) H.route('/api/state', { reject: true });
@@ -1087,10 +1173,102 @@ H.tick = async function () {
   H.intervals.slice().forEach(function (iv) { try { iv.fn(); } catch (e) { H.console.errors.push('interval threw: ' + (e && e.stack || e)); } });
   await H.settle();
 };
-H.sse = async function (type) {
-  H.eventSources.forEach(function (es) { (es.listeners[type] || []).slice().forEach(function (f) { try { f({ type: type }); } catch (e) { H.console.errors.push('sse threw: ' + (e && e.stack || e)); } }); });
+// Delivers a named event to every open stream. `data` (an object or text) becomes the event's JSON `data`.
+H.sse = async function (type, data) {
+  const evt = { type: type };
+  if (data !== undefined) evt.data = typeof data === 'string' ? data : JSON.stringify(data);
+  H.eventSources.forEach(function (es) {
+    if (es.readyState !== 1) return;
+    (es.listeners[type] || []).slice().forEach(function (f) { try { f(evt); } catch (e) { H.console.errors.push('sse threw: ' + (e && e.stack || e)); } });
+  });
   await H.settle();
 };
+H.liveStreams = function () { return H.eventSources.filter(function (es) { return es.readyState !== 2; }).length; };
+// The stream at `index` reports an error: closed for good (a refused reconnect), or still
+// CONNECTING (a transport drop the browser reconnects by itself).
+H.streamError = async function (index, closed) {
+  const es = H.eventSources[index];
+  es.readyState = closed ? 2 : 0;
+  const evt = { type: 'error' };
+  if (typeof es.onerror === 'function') es.onerror(evt);
+  (es.listeners['error'] || []).slice().forEach(function (f) { f(evt); });
+  await H.settle();
+};
+H.streamOpen = async function (index) {
+  const es = H.eventSources[index];
+  es.readyState = 1;
+  const evt = { type: 'open' };
+  if (typeof es.onopen === 'function') es.onopen(evt);
+  (es.listeners['open'] || []).slice().forEach(function (f) { f(evt); });
+  await H.settle();
+};
+
+// ---- virtual time: timers fall due on the page's performance.now() and never fire by themselves.
+function allTimers() { return H.intervals.concat(H.timeouts); }
+function fireTimer(t) {
+  if (t.kind === 'timeout') H.timeouts = H.timeouts.filter(function (x) { return x !== t; });
+  else t.due += t.ms > 0 ? t.ms : 1;
+  try { t.fn.apply(null, t.args || []); } catch (e) { H.console.errors.push('timer threw: ' + (e && e.stack || e)); }
+}
+// Advances time by `ms`, running each timer when it falls due (a due interval runs, then falls due
+// again one period later). With `skipBelow`, intervals shorter than that many ms are not run during
+// the span and each runs once at its end, so a span of hours stays cheap (the page's one-second ticks
+// are skipped with `skipBelow: 5000`; everything, polls included, with `skipBelow: 600000`).
+H.runTimers = async function (ms, opts) {
+  opts = opts || {};
+  const skipBelow = opts.skipBelow || 0;
+  const end = perfNow + ms;
+  for (;;) {
+    const due = allTimers().filter(function (t) {
+      if (skipBelow && t.kind === 'interval' && t.ms < skipBelow) return false;
+      return t.due <= end;
+    });
+    if (!due.length) break;
+    due.sort(function (a, b) { return a.due - b.due || a.id - b.id; });
+    const t = due[0];
+    if (t.due > perfNow) advanceClocks(t.due - perfNow);
+    fireTimer(t);
+    if (t.kind === 'timeout' || t.ms >= 5000) await H.settle(); else await Promise.resolve();
+  }
+  if (end > perfNow) advanceClocks(end - perfNow);
+  if (skipBelow) {
+    H.intervals.filter(function (t) { return t.ms < skipBelow; }).forEach(function (t) { fireTimer(t); t.due = perfNow + t.ms; });
+  }
+  await H.settle();
+};
+// The clocks jump with no timer running. `perf: false` moves Date alone.
+H.sleepFor = function (ms, opts) {
+  opts = opts || {};
+  advanceClocks(ms, opts.perf !== false);
+};
+// Waking runs each overdue timer once; an interval falls due again one period after the wake.
+H.wakeUp = async function () {
+  const overdue = allTimers().filter(function (t) { return t.due <= perfNow; });
+  overdue.sort(function (a, b) { return a.due - b.due || a.id - b.id; });
+  overdue.forEach(function (t) { fireTimer(t); if (t.kind === 'interval') t.due = perfNow + (t.ms > 0 ? t.ms : 1); });
+  await H.settle();
+};
+H.setVisibility = async function (state) {
+  documentObj.visibilityState = state; documentObj.hidden = state === 'hidden';
+  documentObj.dispatchEvent({ type: 'visibilitychange' });
+  await H.settle();
+};
+H.fireWindow = async function (type, props) {
+  if (type === 'online') sandbox.navigator.onLine = true;
+  if (type === 'offline') sandbox.navigator.onLine = false;
+  winEmitter.dispatchEvent(Object.assign({ type: type }, props || {}));
+  await H.settle();
+};
+H.guardAlpha = function () { return { headline: H.text('#guard-alpha-headline'), label: H.text('#guard-alpha-window-label') }; };
+H.vol = function () {
+  return {
+    bot: H.text('[data-testid="comp-vol-bot-text"]'),
+    held: H.text('[data-testid="comp-vol-held-text"]'),
+    delta: H.text('[data-testid="comp-vol-delta"]')
+  };
+};
+H.text = function (sel) { const e = queryAll(root, sel)[0]; return e ? e.textContent.trim() : null; };
+H.requestsTo = function (re, method) { return H.fetchLog.filter(function (e) { return re.test(e.url) && (!method || e.method === method); }); };
 H.domReady = async function () {
   documentObj.readyState = 'interactive';
   const list = ((documentObj._listeners || {}).DOMContentLoaded || []).slice();
@@ -1129,10 +1307,49 @@ H.tweak = async function () {
 };
 
 // ------------------------------------------------------------------ sandbox
+// readyState follows the HTML specification: CONNECTING 0, OPEN 1, CLOSED 2. A stream opens at once
+// unless `H.streamAutoOpen` is false, and a new stream fails (closed, error event) when
+// `H.failNewStreams` is true, as a reconnect answered 502 does.
 class EventSourceStub {
-  constructor(url) { this.url = url; this.listeners = {}; H.eventSources.push(this); }
+  constructor(url) {
+    this.url = url; this.listeners = {}; this.onopen = null; this.onerror = null;
+    this.index = H.eventSources.length; this.readyState = 0;
+    this.createdAt = perfNow;
+    this.liveWhenCreated = H.eventSources.filter(function (es) { return es.readyState !== 2; }).length;
+    H.eventSources.push(this);
+    const self = this;
+    setImmediate(function () {
+      if (self.readyState !== 0) return;
+      if (H.failNewStreams) {
+        self.readyState = 2;
+        const evt = { type: 'error' };
+        if (typeof self.onerror === 'function') self.onerror(evt);
+        (self.listeners['error'] || []).slice().forEach(function (f) { f(evt); });
+      } else if (H.streamAutoOpen) {
+        self.readyState = 1;
+        if (typeof self.onopen === 'function') self.onopen({ type: 'open' });
+      }
+    });
+  }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
-  close() {}
+  close() { this.readyState = 2; this.closedByPage = true; }
+}
+EventSourceStub.CONNECTING = 0; EventSourceStub.OPEN = 1; EventSourceStub.CLOSED = 2;
+EventSourceStub.prototype.CONNECTING = 0; EventSourceStub.prototype.OPEN = 1; EventSourceStub.prototype.CLOSED = 2;
+
+class AbortSignalStub extends Emitter {
+  constructor() { super(); this.aborted = false; this.reason = undefined; this.onabort = null; }
+  throwIfAborted() { if (this.aborted) throw this.reason; }
+}
+class AbortControllerStub {
+  constructor() { this.signal = new AbortSignalStub(); }
+  abort(reason) {
+    if (this.signal.aborted) return;
+    this.signal.aborted = true; this.signal.reason = reason || abortError();
+    const evt = { type: 'abort', target: this.signal };
+    if (typeof this.signal.onabort === 'function') this.signal.onabort(evt);
+    this.signal.dispatchEvent(evt);
+  }
 }
 const pageConsole = {
   log: function () { H.console.logs.push(Array.prototype.join.call(arguments, ' ')); },
@@ -1141,10 +1358,12 @@ const pageConsole = {
 };
 const sandbox = {
   console: pageConsole, document: documentObj, fetch: fetchStub, Chart: Chart, EventSource: EventSourceStub,
-  setInterval: function (fn, ms) { const id = H.intervals.length + 1; H.intervals.push({ id: id, fn: fn, ms: ms }); return id; },
+  setInterval: function (fn, ms) { const id = ++timerSeq; const period = Number(ms) || 0; H.intervals.push({ id: id, kind: 'interval', fn: fn, ms: period, due: perfNow + (period > 0 ? period : 1) }); return id; },
   clearInterval: function (id) { H.intervals = H.intervals.filter(function (i) { return i.id !== id; }); },
-  setTimeout: function (fn, ms) { const id = H.timeouts.length + 1; H.timeouts.push({ id: id, fn: fn, ms: ms }); return id; },
-  clearTimeout: function () {},
+  setTimeout: function (fn, ms) { const id = ++timerSeq; const delay = Number(ms) || 0; H.timeouts.push({ id: id, kind: 'timeout', fn: fn, ms: delay, due: perfNow + delay, args: Array.prototype.slice.call(arguments, 2) }); return id; },
+  clearTimeout: function (id) { H.timeouts = H.timeouts.filter(function (t) { return t.id !== id; }); },
+  AbortController: AbortControllerStub,
+  performance: { now: function () { return perfNow; } },
   getComputedStyle: function () { return { getPropertyValue: function (n) { return H.tokens[n] === undefined ? '' : String(H.tokens[n]); } }; },
   Date: FakeDate, CustomEvent: CustomEventStub, Event: CustomEventStub,
   location: { reload: function () { H.reloads++; }, search: '', href: 'http://localhost/' },
@@ -1162,7 +1381,9 @@ H.sandbox = sandbox;
 (async function main() {
   let result; let error = null;
   try {
-    vm.runInContext(fs.readFileSync(world.indexJs, 'utf8'), ctx, { filename: 'static/index.js' });
+    world.scripts.forEach(function (file) {
+      vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, { filename: file });
+    });
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const scenario = new AsyncFunction('H', world.scenario);
     result = await scenario(H);
