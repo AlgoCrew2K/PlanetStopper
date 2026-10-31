@@ -36,6 +36,7 @@ CYCLE_MOVE_PCT = 0.35
 # One decimal-place-safe rounding for the derived percent-scale values.
 _ROUND_DP = 2
 
+
 def load_r1() -> dict:
     return json.loads(gzip.open(R1_PATH).read().decode("utf-8"))
 
