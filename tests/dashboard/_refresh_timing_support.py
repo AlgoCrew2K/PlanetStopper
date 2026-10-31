@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import re
 from email.utils import formatdate
+from unittest.mock import patch
 
 from tests.dashboard import _index_js_harness as hx
 
@@ -317,8 +318,10 @@ def error_response(kind: str, monkeypatch) -> dict:
         def _boom(*_args, **_kwargs):
             raise RuntimeError("seam failure")
 
-        monkeypatch.setattr(app_module, "get_api_state_dict", _boom)
-        response = client.get("/api/state")
+        # A context manager, undone before the suite's own stub is: monkeypatch would save that
+        # stub as the value to restore and could write it back after the suite's undo.
+        with patch.object(app_module, "get_api_state_dict", _boom):
+            response = client.get("/api/state")
     elif kind in ("401", "503"):
         monkeypatch.setattr(app_module, "_auth_check_enabled", True)
         monkeypatch.setenv("DASHBOARD_PASSWORD", "refresh-timing-password")

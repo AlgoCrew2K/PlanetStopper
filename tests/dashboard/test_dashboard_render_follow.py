@@ -740,7 +740,7 @@ class TestThePanelsFollowThePoll:
         await H.boot({ extras: true });
         await poll(H.bodies.stateNext);
         H.route(/^\/api\/sleeves\//, { body: {} });
-        const rule = D.querySelector('[data-testid="sleeve-rule-row"][data-rule-id="__R4__"]');
+        const rule = D.querySelector('[data-testid="sleeve-rule-row"][data-rule-id="__R5__"]');
         const card = D.querySelector('[data-testid="sleeve-card"][data-sleeve-id="__S3__"]');
         const arm = rule.querySelector('[data-testid="sleeve-arm-control"]');
         const disarm = card.querySelector('[data-testid="sleeve-disarm-control"]');
@@ -754,13 +754,13 @@ class TestThePanelsFollowThePoll:
         const afterDelete = posts().slice(n0 + afterArm.length).map(function (e) { return { url: e.url }; });
         return { hasArm: !!arm, disarmDisabled: disarm.hasAttribute('disabled'), afterArm: afterArm,
                  reloadsAfterArm: reloadsAfterArm, afterDelete: afterDelete };
-        """.replace("__R4__", str(ids["r4"])).replace("__S3__", str(ids["s3"])),
+        """.replace("__R5__", str(ids["r5"])).replace("__S3__", str(ids["s3"])),
             world=world,
         )
         assert r["hasArm"], "a SHADOW rule's row has no Arm Paper button"
         assert r["disarmDisabled"], "a SHADOW sleeve's Disarm button must be disabled, as rendered"
         assert [a["url"] for a in r["afterArm"]] == [
-            f"/api/sleeves/{ids['s3']}/rules/{ids['r4']}/arm"
+            f"/api/sleeves/{ids['s3']}/rules/{ids['r5']}/arm"
         ]
         assert r["afterArm"][0]["body"] == '{"target_mode":"PAPER"}'
         assert r["afterArm"][0]["csrf"], (
@@ -840,14 +840,18 @@ class TestTheSleevesButtonsBehaveAsTheyDid:
         r = _run(
             r"""
         await H.boot({ extras: true });
-        const buttons = Array.prototype.slice.call(D.querySelectorAll('[data-testid="sleeve-card"][data-sleeve-id="__S1__"] button'));
+        const removedRule = '__R2__';
+        const ofSurvivingRow = function (b) { const row = b.closest('[data-testid="sleeve-rule-row"]'); return !row || row.getAttribute('data-rule-id') !== removedRule; };
+        const buttons = Array.prototype.slice.call(D.querySelectorAll('[data-testid="sleeve-card"][data-sleeve-id="__S1__"] button')).filter(ofSurvivingRow);
         const attrs = buttons.map(function (b) { return b.getAttribute('onclick'); });
         buttons.forEach(function (b) { b.__kept = true; });
         await poll(H.bodies.stateNext);
         const after = Array.prototype.slice.call(D.querySelectorAll('[data-testid="sleeve-card"][data-sleeve-id="__S1__"] button'));
         return { attrs: attrs, afterAttrs: after.filter(function (b) { return b.__kept; }).map(function (b) { return b.getAttribute('onclick'); }),
                  kept: after.filter(function (b) { return b.__kept; }).length, count: buttons.length };
-        """.replace("__S1__", str(world["panel_ids"]["s1"])),
+        """.replace("__S1__", str(world["panel_ids"]["s1"])).replace(
+                "__R2__", str(world["panel_ids"]["r2"])
+            ),
             world=world,
         )
         assert r["kept"] == r["count"] > 0, "a poll rebuilt a button the server rendered"

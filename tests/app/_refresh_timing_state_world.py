@@ -356,7 +356,11 @@ def build_world(monkeypatch, tmp_path, branch: str) -> World:
     monkeypatch.setattr(
         analytics_module, "_window_cutoff_date", _pinned_window_cutoff(moment.instant.date())
     )
-    monkeypatch.setattr(app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
+    # Bound directly, never through `monkeypatch`: monkeypatch would save the suite's stand-in as
+    # the value to restore, and when its undo runs after the conftest patch's own exit the stand-in
+    # is written back and stays on the module. The conftest patch saved the real function at its
+    # entry and puts it back at its exit, so a direct binding is undone whatever the order is.
+    app_module.get_api_state_dict = _REAL_GET_API_STATE_DICT
 
     # The developer .env holds real credentials: nothing here may read it.
     for var in ("LIVE_EXECUTION", "EXIT_AUTHORITY", "EXECUTION_START_TIME"):

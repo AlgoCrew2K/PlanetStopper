@@ -21,6 +21,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -401,6 +402,15 @@ class TestEntryAnimationAndReadiness:
         assert hx.run_scenario(world, scenario)["result"]["seen"] == ["1"] * 4
 
 
+def _later_state(world: dict, count: int = 1) -> dict:
+    """The world's poll body with a data stamp ``count`` minutes after the one its render printed.
+
+    A refresh asks for the sparkline tapes only when its stamp is new, so a scenario about the
+    requests a refresh waits on hands the poll a body of its own.
+    """
+    return sup.with_stamp(world["state"], sup.later_stamp(sup.render_stamp(world), minutes=count))
+
+
 class TestRefreshCount:
     def test_refresh_count_is_absent_until_the_first_refresh_settles_then_reads_one(self):
         world = hx.get_world("default")
@@ -428,18 +438,35 @@ class TestRefreshCount:
         """
         assert hx.run_scenario(world, scenario)["result"]["seen"] == ["1", "2", "3", "4"]
 
+    def test_each_settled_refresh_adds_one_whether_or_not_its_stamp_is_new(self):
+        world = hx.get_world("default")
+        scenario = r"""
+        await H.boot({});
+        const seen = [H.attrs().refreshCount];
+        H.route('/api/state', { body: H.bodies.later1 });
+        await H.tick(); seen.push(H.attrs().refreshCount);
+        await H.tick(); seen.push(H.attrs().refreshCount);
+        H.route('/api/state', { body: H.bodies.later2 });
+        await H.tick(); seen.push(H.attrs().refreshCount);
+        return { seen: seen };
+        """
+        extra = {"later1": _later_state(world, 1), "later2": _later_state(world, 2)}
+        r = hx.run_scenario(world, scenario, extra_bodies=extra)["result"]
+        assert r["seen"] == ["1", "2", "3", "4"]
+
     def test_a_refresh_is_not_settled_while_its_sparkline_requests_are_in_flight(self):
         world = hx.get_world("default")
         scenario = r"""
         await H.boot({});
         const url = '/api/chart/%s';
         H.route(url, { pending: true });
+        H.route('/api/state', { body: H.bodies.later1 });
         await H.tick();
         const held = H.attrs().refreshCount;
         await H.releasePending(url, { body: H.bodies.charts['%s'] });
         return { held: held, released: H.attrs().refreshCount };
         """ % (hx.UNTRIGGERED_ID, hx.UNTRIGGERED_ID)
-        r = hx.run_scenario(world, scenario)["result"]
+        r = hx.run_scenario(world, scenario, extra_bodies={"later1": _later_state(world)})["result"]
         assert r["held"] == "1", "the second refresh must wait for its /api/chart responses"
         assert r["released"] == "2"
 
@@ -451,13 +478,18 @@ class TestRefreshCount:
         const first = H.attrs().refreshCount;
         const before = H.summary()['spark:%s'];
         H.route('/api/chart/%s', { body: H.bodies.late });
+        H.route('/api/state', { body: H.bodies.later1 });
         await H.tick();
         const during = H.attrs().refreshCount;
         const built = H.summary()['spark:%s'];
         await H.completeAnimations();
         return { first: first, before: before, during: during, built: built, after: H.attrs().refreshCount };
         """ % (hx.UNTRIGGERED_ID, hx.UNTRIGGERED_ID, hx.UNTRIGGERED_ID)
-        r = hx.run_scenario(mixed, scenario, extra_bodies={"late": data_for_empty_canvas})["result"]
+        r = hx.run_scenario(
+            mixed,
+            scenario,
+            extra_bodies={"late": data_for_empty_canvas, "later1": _later_state(mixed)},
+        )["result"]
         assert r["first"] == "1"
         assert not r["before"]["live"] and r["before"]["status"] == NO_INTRADAY_TEXT
         assert r["built"]["live"], "a canvas first seen during a refresh gets its chart"
@@ -538,15 +570,17 @@ class TestHeroSeriesFailureLogging:
 
 class TestHarnessProducerLookup:
     @pytest.mark.parametrize("kind", ["def", "lambda"])
-    def test_a_plain_function_stub_is_replaced_by_the_modules_own_function(self, kind, monkeypatch):
+    def test_a_plain_function_stub_is_replaced_by_the_modules_own_function(self, kind):
         import app as app_module
 
         def stub_def(*args, **kwargs):
             return "stub"
 
         stub = stub_def if kind == "def" else (lambda *args, **kwargs: "stub")
-        monkeypatch.setattr(app_module, "get_api_state_dict", stub)
-        real = hx._real_function(app_module, "get_api_state_dict")
+        # A context manager, undone here, before the suite's own stub is: monkeypatch would save
+        # that stub as the value to restore and could write it back after the suite's undo.
+        with patch.object(app_module, "get_api_state_dict", stub):
+            real = hx._real_function(app_module, "get_api_state_dict")
         assert real is not stub, "a stub written as a plain function was taken for the producer"
         assert real.__code__.co_filename == app_module.__file__
 

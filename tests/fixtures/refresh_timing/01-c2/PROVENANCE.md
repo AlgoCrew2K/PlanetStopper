@@ -62,6 +62,16 @@ Produced by `produce_golden_ref.py` (a pytest module not collected in this tree)
 
 | File | Case it covers | Source | Scenarios | sha256 | PM sign-off |
 |---|---|---|---|---|---|
-| `golden_ref_api_state_open.json` | reference `/api/state`, market open | 37c8e983 producer | S-2.6, S-7.4, S-6.6, S-8.4 | `3e23b8c248af5183f7e889a990ed9ad8b0aa21dfed1f571657c3d70bab4a612b` | n/a (producer output) |
+| `golden_ref_api_state_open.json` | reference `/api/state`, market open | 37c8e983 producer, plus `mdd_lifetime` on each card (see "Revision: mdd_lifetime" below) | S-2.6, S-7.4, S-6.6, S-8.4 | `b82b8a24bc1df40114f723047d60b03196a056a62e69a271f0e1a074744cff69` | n/a (producer output) |
 | `golden_ref_api_state_closed_frozen.json` | reference `/api/state`, after the close | 37c8e983 producer | S-2.6, S-8.4 | `2092c9eaa901b086fe04642417e1a24ed2103fdfc9a47c48dd0c99f8bb172e9d` | n/a (producer output) |
 | `golden_ref_api_state_pre_market.json` | reference `/api/state`, pre-market | 37c8e983 producer | S-2.6, S-8.4 | `8b7eba3f3733b3e6771e64f2575f68cb050c2a640b5e6578b9ec06418a1f6fa9` | n/a (producer output) |
+
+### Revision: mdd_lifetime
+
+Refresh-timing 03 adds `mdd_lifetime` (Composer's lifetime max-drawdown scalar, `_mdd.if_held_lifetime`) to every card of `/api/state` `symphonies`. 37c8e983 serves no such field, so `golden_ref_api_state_open.json` carries it added. The steps, so the change can be checked:
+
+1. The golden was regenerated at 37c8e983 as described above (the tree extracted with `git archive 37c8e983`, this folder's `01-c1` and `01-c2` records and `tests/app/_refresh_timing_state_world.py` copied in, `produce_golden_ref.py` run). Every value equals the committed golden except `daemon_started_at`, the process start time, which no test compares.
+2. `produce_golden_ref.py` was run again in this tree at the refresh-timing 03 head. For the two cards of the open world, compared with step 1's: the only key added is `mdd_lifetime` (`5XjzXjdGnjh99MIsdM97` 27.18, `nOyb55RMGVCKPiYXv7TI` 27.07), plus `account`, which the tests drop before comparing; no value of any other key differs.
+3. The committed golden is the 37c8e983 body with those two `mdd_lifetime` values added, written with `json.dumps(indent=2, sort_keys=True)` and a trailing newline. Nothing else in the file changed (two inserted lines).
+
+The `mdd_lifetime` values are therefore this tree's producer output, not the reference commit's; the tests that read them (`test_api_state_frozen_cards.py`, `test_api_state_one_cycle.py`) check that the live branch changed no other figure. The `mdd_lifetime` figure itself is not independently pinned by a reference value: `test_dashboard_panels_payload.py` checks that every card carries it and its shape.

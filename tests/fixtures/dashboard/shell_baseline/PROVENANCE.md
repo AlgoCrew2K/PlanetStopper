@@ -40,3 +40,14 @@ Used by `tests/ui/test_dashboard_primitives_shared.py`, `tests/ui/test_shell_hea
     producing one needs live Composer calls). It only decides whether the Frontrunner card renders. Sign-off:
     pending, the PM signs off.
 - Sign-off: pending for the synthetic metrics stand-in; not needed for the rest.
+
+## Revision: `dashboard.structure_outside_top_bar` re-captured for the render-follow templates
+
+The dashboard grew from 965 to 1014 elements outside the header when the refresh-timing 03 templates landed (`e972b179`), so the structure pin was re-captured; `base_sha`, `pages_1440` (the header heights, the table scroll boxes, Save's request) and `dashboard.resolved` are the shell work's base and are untouched.
+
+- Producer call: `python tests/fixtures/dashboard/shell_baseline/capture_shell_baseline.py --structure-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `cdcba823020f44e4ba10026a6b9f40611680f6f8` (templates, static and `app.py` clean). The flag runs the script's own render and reading code (twice, as always, and stops if the two renders differ), replaces only the structure list, and records `structure_revision` (head, time, element counts) in the file. It stops without writing when the resolved primitive rules differ from the recorded ones: they do not (23 selectors, unchanged).
+- Net change, 965 to 1014: 50 elements added, 1 removed.
+- Removed (1): the `<script src="tweaks.js">` that stood first in the body, outside the header. `e972b179` moved it to the page head so the stored theme is applied before the first paint and again on every poll.
+- Added, always rendered where the page used to render one of two alternatives, so a poll can show one and hide the other (`hidden`): the Max DD row's insufficient-history label (`span`) and alpha delta (`span` `vs-delta`); one `cfg-alpha-badge` span on each of the 11 symphony cards (the card's insufficient-history label and badge are both in the markup now); the hero chart's `hero-window-no-data` span (`legend-as-of`).
+- Added, the Sleeves panel's markup: the two inert `<template>` elements `sleeve-card-template` and `sleeve-rule-row-template` with their contents (a card and a rule row rendered from empty values, so the poll's new rows come from the same markup as the page's), and 11 elements (6 `span`, 4 `div`, 1 `section`) in the CVaR diagnostic and Sleeves panels after the standby grid (the record holds tag and class tokens only, so the diff cannot say which element of the two panels each one is). One more added entry, a `cards-grid` `div`, is an alignment shift of the existing grid, not a new grid. The label above is a bare `span`, which the position-based diff aligns near the hero legend.
+- Each added element carries no class that any primitive selector resolves differently: the resolved-rule record is unchanged.

@@ -327,10 +327,20 @@ def _run_fetch_guard_alpha_summary(fake_data: dict) -> dict:
         pytest.skip("node not installed -- skipping fetchGuardAlphaSummary execution check")
 
     fn_src = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
+    # The function's own request-sequence state, declared beside it in the real file, is
+    # taken from the source as well (never rewritten here) so the newest-request-wins guard runs.
+    state_decls = "\n".join(
+        re.findall(r"^[ \t]*var\s+_summary\w+\s*=[^;\n]*;", _js(), re.MULTILINE)
+    )
+    assert "_summaryRequestSeq" in state_decls, "the request-sequence declaration was not found"
     el_ids_js = json.dumps(_PANEL_ELEMENT_IDS)
 
     harness = f"""
     function cs(varName) {{ return varName === '--studio-pos' ? 'POS' : 'NEG'; }}
+    // The picked window, defined elsewhere in the page script: the answer applies only while
+    // the window it was asked for is still the picked one.
+    var _heroWindow = 'all';
+    {state_decls}
 
     var __els = {{}};
     {el_ids_js}.forEach(function (id) {{

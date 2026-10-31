@@ -430,7 +430,7 @@ class TestAPreviousSessionsTapeCarriesItsDate:
         assert r["shown"] is not None and hostile in r["shown"]["text"], (
             "markup in a date shows literally"
         )
-        assert r["htmlWrites"] == []
+        assert r["htmlWrites"] == 0, "no markup write lands inside a symphony card"
 
 
 # ---------------------------------------------------------------------------
