@@ -40,6 +40,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 import database as db_module
+from tests.advisors import _series_captures as captures
 from tests.advisors._retirement_recommender_reference import seed_state_db, trading_days
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -69,6 +70,9 @@ _REQUIRED_SUMMARY_KEYS = {
     "recommendations",
     "screen_threshold",
     "stress_gate_min_aligned_days",
+    "pairs",
+    "series_windows",
+    "uncertainty_min_aligned_days",
 }
 _BLOCKED_KEYS = (
     "blocked_uncertainty",
@@ -855,3 +859,32 @@ class TestShadowSourceUnchanged:
         rr.build_recommendations(db_file=db_file, days=None)
         assert calls == []
         assert clock.sleeps == [], "no Composer fetches -> no rate-limit spacing sleeps"
+
+
+# ===========================================================================
+# A failed fetch over the real captures
+# ===========================================================================
+
+
+class TestFetchErrorOverTheRealCaptures:
+    def test_the_run_completes_and_the_failed_symphony_is_excluded_with_its_reason(
+        self, rr, isolated_db, monkeypatch
+    ):
+        failed = "q7WQHwLzt49cMgFBzHsX"
+        _recs, summary = captures.run_over_captures(monkeypatch, errors={failed: "HTTP 503"})
+
+        assert summary["status"] == "ok"
+        reasons = {e["symphony_id"]: e["reason"] for e in summary["symphonies_without_series"]}
+        assert reasons[failed] == "fetch_error: HTTP 503"
+        assert failed not in summary["series_windows"]
+        assert all(failed not in (p["sym_a"], p["sym_b"]) for p in summary["pairs"])
+
+    def test_the_other_symphonies_are_still_paired_among_themselves(
+        self, rr, isolated_db, monkeypatch
+    ):
+        failed = "q7WQHwLzt49cMgFBzHsX"
+        _recs, summary = captures.run_over_captures(monkeypatch, errors={failed: "HTTP 503"})
+        kept = len(summary["series_windows"])
+        assert kept >= 2
+        assert summary["symphonies_with_series"] == kept
+        assert len(summary["pairs"]) == summary["pairs_evaluated"] == kept * (kept - 1) // 2

@@ -1073,3 +1073,91 @@ class TestApiCardsRun:
         assert parsed["cards_run"]["run_id"] == "run-ok"
         assert parsed["cards_run"]["screen_threshold"] is None
         assert parsed["cards_run"]["symphonies_without_series"][0]["ratio"] is None
+
+
+# ---------------------------------------------------------------------------
+# Stored pairs and series windows reach the readers unchanged
+# ---------------------------------------------------------------------------
+
+_PAIR_BEARING_KEYS = ("pairs", "series_windows", "uncertainty_min_aligned_days")
+
+
+class TestStoredPairsReachTheReaders:
+    """The run summary now carries every evaluated pair, each series' window and the uncertainty
+    gate's minimum. The run is the REAL recommender over the PM's real captures."""
+
+    def _real_run(self, monkeypatch) -> dict:
+        from tests.app._correlations_view_support import seed_run  # noqa: PLC0415
+
+        return seed_run(monkeypatch)
+
+    def test_the_fallback_summary_of_a_failed_run_carries_the_three_keys_as_null(self):
+        fallback = app_module._retirement_internal_error_summary("RuntimeError")
+        for key in _PAIR_BEARING_KEYS:
+            assert key in fallback, key
+            assert fallback[key] is None, f"{key}: an unknown value is null, never an empty claim"
+
+    def test_a_summary_with_pairs_round_trips_through_the_persist_helper_unchanged(
+        self, isolated_db, monkeypatch
+    ):
+        from tests.advisors import _series_captures as captures  # noqa: PLC0415
+
+        _recs, summary = captures.run_over_captures(monkeypatch)
+        app_module._persist_retirement_run_summary(summary, persisted_count=0)
+
+        stored = app_module._fetch_retirement_cards_run()
+        assert stored is not None
+        for key in _PAIR_BEARING_KEYS:
+            assert stored[key] == json.loads(json.dumps(summary[key])), key
+        assert stored["pairs"], "premise: the run stored its pairs"
+
+    def test_the_api_carries_the_stored_pairs_on_both_run_objects(
+        self, client, isolated_db, monkeypatch
+    ):
+        summary = self._real_run(monkeypatch)
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        data = json.loads(
+            resp.get_data(as_text=True),
+            parse_constant=lambda token: pytest.fail(f"non-strict JSON constant {token}"),
+        )
+
+        assert set(data) >= {"recommendations", "last_run", "cards_run"}
+        for run in (data["last_run"], data["cards_run"]):
+            assert run["pairs"] == summary["pairs"]
+            assert run["series_windows"] == summary["series_windows"]
+            assert run["uncertainty_min_aligned_days"] == summary["uncertainty_min_aligned_days"]
+
+    def test_an_undefined_pair_reaches_the_api_as_null(self, client, isolated_db, monkeypatch):
+        from datetime import datetime  # noqa: PLC0415
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+        from tests.app._correlations_view_support import seed_run  # noqa: PLC0415
+
+        early = datetime(2026, 3, 1, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+        summary = seed_run(monkeypatch, per_symphony_now_et={"hvPiGP1O7AHfutHE3Fjy": early})
+        assert any(p["correlation"] is None for p in summary["pairs"]), "premise"
+        data = client.get("/api/retirement-recommendations").get_json()
+        assert [p["correlation"] for p in data["cards_run"]["pairs"]] == [
+            p["correlation"] for p in summary["pairs"]
+        ]
+
+    def test_the_cells_the_tab_renders_equal_the_pairs_the_api_returns(
+        self, client, isolated_db, monkeypatch
+    ):
+        from tests._ux_truth_support import parse_html  # noqa: PLC0415
+
+        self._real_run(monkeypatch)
+        api_pairs = {
+            (p["sym_a"], p["sym_b"]): p
+            for p in client.get("/api/retirement-recommendations").get_json()["cards_run"]["pairs"]
+        }
+        tree = parse_html(client.get("/ai-advisor").get_data(as_text=True))
+        cells = tree.find(testid="correlation-matrix-table").find_all(testid="corr-cell")
+        assert cells
+        for cell in cells:
+            pair = api_pairs[(cell.attrs["data-sym-a"], cell.attrs["data-sym-b"])]
+            assert cell.attrs["data-n-obs"] == str(pair["n_obs"])
+            assert cell.text == (
+                "undefined" if pair["correlation"] is None else f"{pair['correlation']:+.2f}"
+            )
