@@ -23,7 +23,7 @@ from urllib.parse import unquote
 import pytest
 
 import timing_log
-from tests._timing_capture import parse_line
+from tests._timing_capture import capture_root_records, parse_line, restore_handlers
 
 
 def _one(items):
@@ -41,12 +41,12 @@ class TestLoggerPlacement:
     def test_the_logger_emits_info(self):
         assert timing_log.timing_logger.getEffectiveLevel() == logging.INFO
 
-    def test_a_line_never_reaches_the_root_handlers(self, timing_records, caplog):
-        with caplog.at_level(logging.DEBUG):
+    def test_a_line_never_reaches_the_root_handlers(self, timing_records):
+        with capture_root_records() as root_records:
             timing_log.emit("probe", "ok", n=1)
 
         assert timing_records.lines == ["probe ok n=1"]
-        assert [r for r in caplog.records if r.name.startswith("planetstopper")] == []
+        assert [r for r in root_records if r.name.startswith("planetstopper")] == []
 
 
 class TestRendering:
@@ -138,7 +138,7 @@ class TestStreamHandler:
         logger = timing_log.timing_logger
         saved = list(logger.handlers)
         yield logger
-        logger.handlers = saved
+        restore_handlers(logger, saved)
 
     def test_attaching_the_same_stream_twice_writes_each_line_once(self, logger_state):
         stream = io.StringIO()

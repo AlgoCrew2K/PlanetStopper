@@ -5,9 +5,12 @@ Pytest configuration and shared fixtures for Planet Stopper test suite.
 import os
 import pathlib
 import tempfile
+import warnings
 from unittest.mock import patch
 
 import pytest
+
+from tests._function_leak_guard import FunctionLeakGuard
 
 # ---------------------------------------------------------------------------
 # Session-level DB_PATH guard — must fire BEFORE any module is imported.
@@ -205,6 +208,51 @@ def _session_db_guard():
         "initialise the session temp DB.  Check conftest.py."
     )
     yield
+
+
+# ---------------------------------------------------------------------------
+# Stand-in functions never outlive the test that left them.
+#
+# A suite conftest stubs a module function for every test under it (tests/ui/conftest.py:
+# database.load_state, app.get_api_state_dict), and a test that patches the same name with
+# monkeypatch saves the stub as the value to restore. Whether the stub survives depends on
+# which of the two undos runs last, so one test can leave it on the module for every later
+# test in the worker, and the victims are unrelated files. A protocol wrapper runs after
+# every fixture of the test is finalized, whatever order they were created in, so it sees
+# the final binding. It puts the real function back and reports the test that left the
+# stand-in as a pytest warning (forwarded to the run's warning summary under xdist), because
+# a silent restore would hide the bug class.
+# ---------------------------------------------------------------------------
+
+_FUNCTION_LEAK_GUARD = FunctionLeakGuard()
+
+
+def pytest_collection_finish(session):
+    # No test has run yet, so nothing recorded here can be a stand-in. Modules a test would
+    # import lazily are imported now, or its first import could already hold one.
+    _FUNCTION_LEAK_GUARD.snapshot(import_modules=True)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    _FUNCTION_LEAK_GUARD.snapshot()
+    yield
+    for leak in _FUNCTION_LEAK_GUARD.restore():
+        message = (
+            f"{item.nodeid} left a stand-in on the module: {leak.describe()}. "
+            "The real function was put back; patch it with a context manager that is "
+            "undone before the suite's own stub, or request the stub fixture so it is."
+        )
+        item.config.hook.pytest_warning_recorded.call_historic(
+            kwargs={
+                "warning_message": warnings.WarningMessage(
+                    UserWarning(message), UserWarning, __file__, 0
+                ),
+                "nodeid": item.nodeid,
+                "when": "runtest",
+                "location": None,
+            }
+        )
 
 
 @pytest.fixture

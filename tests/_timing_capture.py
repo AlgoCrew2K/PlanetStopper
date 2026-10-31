@@ -71,18 +71,55 @@ class TimingCapture:
         return [parse_line(m) for m in self.lines if m.split(" ", 1)[0] == event]
 
 
+def _is_pytest_capture(handler: logging.Handler) -> bool:
+    return type(handler).__module__.startswith("_pytest")
+
+
+def restore_handlers(logger: logging.Logger, saved: list[logging.Handler]) -> None:
+    """Put back the handlers *saved* from before a block, except pytest's own capture handlers.
+
+    From pytest 9 the log capture attaches a handler to every logger that does not propagate,
+    for the length of each phase (setup, call, teardown), and removes it when the phase ends.
+    A list copied earlier holds the handler of a phase that has since ended, so putting it back
+    leaves that phase's handler on the logger for the rest of the run and every later line is
+    stored again. The handlers pytest holds now stay as they are; pytest removes them itself.
+    """
+    live_capture = [h for h in logger.handlers if _is_pytest_capture(h)]
+    logger.handlers = [h for h in saved if not _is_pytest_capture(h)] + live_capture
+
+
 @contextmanager
 def capture_timing_records():
     logger = logging.getLogger(TIMING_LOGGER_NAME)
     saved_handlers, saved_level = list(logger.handlers), logger.level
     handler = _ListHandler()
-    logger.handlers = [handler]
+    logger.handlers = [handler, *(h for h in saved_handlers if _is_pytest_capture(h))]
     logger.setLevel(logging.INFO)
     try:
         yield TimingCapture(handler)
     finally:
-        logger.handlers = saved_handlers
+        restore_handlers(logger, saved_handlers)
         logger.setLevel(saved_level)
+
+
+@contextmanager
+def capture_root_records():
+    """Every record that reaches a handler on the root logger inside the block.
+
+    ``caplog`` cannot answer "did this line reach the root handlers": from pytest 9 its handler
+    is also attached to every non-propagating logger, so it sees lines that never propagate.
+    This handler sits on the root logger only, which is what a propagating line would reach.
+    """
+    root = logging.getLogger()
+    saved_level = root.level
+    handler = _ListHandler()
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        yield handler.records
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(saved_level)
 
 
 class FakeClock:
