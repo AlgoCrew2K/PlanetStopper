@@ -1074,3 +1074,31 @@ def test_advisor_js_run_button_label():
     assert "Run Claude advisor" in stripped, (
         "getSuggestions finally block must restore button text to 'Run Claude advisor'"
     )
+
+
+# ===========================================================================
+# Summary chips wait for a run; every label names a control on the page
+# ===========================================================================
+
+
+def _tag_with_testid(html: str, testid: str) -> str:
+    match = re.search(rf'<[a-zA-Z][^>]*data-testid="{re.escape(testid)}"[^>]*>', html)
+    assert match, f"no element with data-testid={testid!r}"
+    return match.group(0)
+
+
+def test_advisor_summary_strip_is_hidden_until_a_run_returns(adv_client):
+    """No '0 suggestions', '0 OOS passed' or '0 OOS rejected' chip shows before a run."""
+    html = adv_client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    strip = _tag_with_testid(html, "advisor-summary-strip")
+    assert " hidden" in strip, f"the summary strip must render hidden: {strip}"
+
+
+def test_every_label_for_names_an_id_on_the_page(adv_client):
+    """A label whose 'for' names no id on the page is a dead link between label and control."""
+    html = adv_client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    ids = set(re.findall(r'\bid="([^"]+)"', html))
+    labels = re.findall(r'<label\b[^>]*\bfor="([^"]*)"', html)
+    assert labels, "the page has at least one label with a for attribute"
+    dangling = sorted({name for name in labels if name not in ids})
+    assert dangling == [], f"labels naming an id that is not on the page: {dangling}"

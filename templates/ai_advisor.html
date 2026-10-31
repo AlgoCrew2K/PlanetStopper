@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -145,6 +146,9 @@
             flex-wrap: wrap;
         }
 
+        /* display:flex above would override the UA [hidden] rule; the strip waits for a run. */
+        .summary-strip[hidden] { display: none; }
+
         .summary-chip {
             background: var(--studio-surface);
             border: 1px solid var(--studio-border);
@@ -220,6 +224,15 @@
         }
 
         .autotune-run-card:last-child { border-bottom: none; }
+
+        /* Older runs: a closed details under the cards. No display rule here: the
+           hidden attribute must keep hiding it while it has no rows. */
+        .autotune-older { margin-top: 0.75rem; }
+        .autotune-older-summary {
+            cursor: pointer;
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+        }
 
         .autotune-run-top {
             display: flex;
@@ -724,6 +737,9 @@
             margin-bottom: 1.25rem;
         }
 
+        /* The block sits under the suggestions/autotune grid: the same gap above as below. */
+        .adv-grid + .prism-block { margin-top: 1.25rem; }
+
         .prism-block-header {
             display: flex;
             justify-content: space-between;
@@ -945,21 +961,16 @@
         }
 
         /* ------------------------------------------------------------------ */
-        /* Retirement Recommendations panel -- Cycle 2a's card layout, plus   */
-        /* Cycle 2b's explanation/status/approve-reject/checklist additions   */
-        /* further down this stylesheet.                                     */
+        /* Retirement tab. The cards are .sym-card (static/layout.css), the   */
+        /* name is .card-name and the decision state is .status-pill; these   */
+        /* rules add only what the shared rules do not set.                   */
         /* ------------------------------------------------------------------ */
         .retirement-rec-card {
-            border: 1px solid var(--studio-border);
-            border-radius: 0.75rem;
-            padding: 0.75rem 1rem;
             margin-bottom: 0.75rem;
             font-size: 0.8125rem;
         }
         .retirement-rec-card:last-child { margin-bottom: 0; }
         .retirement-rec-pair {
-            font-weight: 700;
-            color: var(--studio-ink);
             margin-bottom: 0.375rem;
         }
         .retirement-rec-meta, .retirement-rec-gates {
@@ -985,34 +996,6 @@
             font-size: 0.8125rem;
             margin: 0.5rem 0;
             line-height: 1.4;
-        }
-
-        /* Mirrors .incubation-status-chip's shape exactly (3 modifiers
-           instead of 4 -- pending/approved/rejected). */
-        .retirement-status-chip {
-            display: inline-block;
-            padding: 0.2rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.6875rem;
-            font-weight: 700;
-            border: 1px solid var(--studio-border);
-            margin-top: var(--studio-space-xs);
-        }
-        .retirement-status-chip--pending {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
-        }
-        .retirement-status-chip--approved {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-            background: rgba(31, 122, 77, 0.12);
-            font-weight: 800;
-        }
-        .retirement-status-chip--rejected {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
         }
 
         .retirement-rec-actions {
@@ -1062,6 +1045,10 @@
             color: var(--studio-ink-dim);
         }
         .retirement-last-run-line { margin-bottom: 0.25rem; }
+        .retirement-tiles { flex-wrap: wrap; margin-bottom: 0.5rem; }
+        .retirement-tiles > * { min-width: 7.5rem; }
+        .retirement-pointer-row { margin-bottom: 1rem; }
+        .retirement-pointer-row a { text-decoration: none; }
         .retirement-last-run-state {
             color: var(--studio-ink);
             font-weight: 700;
@@ -1075,8 +1062,6 @@
             gap: 0.75rem;
             margin-bottom: 0.75rem;
         }
-        .retirement-run-now-row .discuss-btn { margin-top: 0; }
-        .retirement-run-now-row .discuss-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .retirement-run-now-status {
             font-size: 0.75rem;
             color: var(--studio-ink-dim);
@@ -1136,9 +1121,6 @@
             margin-bottom: 0.75rem;
         }
         .tenure-review-entry {
-            border: 1px solid var(--studio-border);
-            border-radius: 0.75rem;
-            padding: 0.75rem 1rem;
             margin-bottom: 0.75rem;
             font-size: 0.8125rem;
         }
@@ -1147,10 +1129,6 @@
             align-items: center;
             gap: 0.75rem;
             margin-bottom: 0.375rem;
-        }
-        .tenure-review-name {
-            font-weight: 700;
-            color: var(--studio-ink);
         }
         .tenure-review-line {
             color: var(--studio-ink-dim);
@@ -1343,6 +1321,14 @@
             </button>
             <button role="tab"
                     aria-selected="false"
+                    aria-controls="tab-panel-retirement"
+                    class="cap-tab"
+                    data-testid="tab-retirement"
+                    data-tab="retirement">
+                Retirement
+            </button>
+            <button role="tab"
+                    aria-selected="false"
                     aria-controls="tab-panel-asset-swaps"
                     class="cap-tab"
                     data-testid="tab-asset-swaps"
@@ -1401,6 +1387,77 @@
              data-tab="overview"
              class="tab-panel tab-panel--active">
 
+        {# One line pointing at the Retirement tab. Its text comes from _build_retirement_pointer over context this page already reads, so it makes no request of its own. #}
+        <div class="mini-stats retirement-pointer-row">
+            <a class="mini-stat" href="#retirement" data-testid="retirement-pointer"><span class="mini-stat-label">{{ retirement_pointer.text }}</span></a>
+        </div>
+
+
+        <!-- Controls bar -->
+        <div data-testid="advisor-controls" class="adv-controls">
+            <div class="ctrl-group">
+                <label class="ctrl-label" for="symphony-id-input">Symphony</label>
+                <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
+                    <option value="">Select symphony…</option>
+                </select>
+            </div>
+            <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
+                    onclick="getSuggestions()" disabled>
+                Run Claude advisor
+            </button>
+            <div id="advisor-error" class="adv-error"></div>
+        </div>
+
+        <!-- Summary strip -->
+        <div id="advisor-summary-strip" data-testid="advisor-summary-strip" class="summary-strip" hidden>
+            <div data-testid="chip-total-suggestions" class="summary-chip"
+                 id="chip-total">0 suggestions</div>
+            <div data-testid="chip-oos-passed" class="summary-chip"
+                 id="chip-passed">0 OOS passed</div>
+            <div data-testid="chip-oos-rejected" class="summary-chip"
+                 id="chip-rejected">0 OOS rejected</div>
+        </div>
+
+        <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
+             Uses textContent only; never innerHTML (XSS guard). -->
+        <div id="advisor-lens-as-of"
+             data-testid="advisor-lens-as-of"
+             class="prism-as-of"
+             style="display:none;padding:0.25rem 0;"></div>
+
+        <!-- Two-column grid -->
+        <div data-testid="advisor-grid" class="adv-grid">
+
+            <!-- Left: suggestions -->
+            <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
+                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
+                    Select a symphony and click Run Claude advisor to get suggestions.
+                </div>
+            </div>
+
+            <!-- Right: autotune panel -->
+            <aside data-testid="autotune-panel" class="autotune-panel">
+                <div data-testid="autotune-panel-header" class="autotune-header">
+                    Recent Autotune Runs
+                </div>
+                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
+                <div id="autotune-runs-list" data-testid="autotune-runs-list">
+                    <div class="autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
+                        Loading…
+                    </div>
+                </div>
+                {# The runs beyond one card per symphony. Static, so a 15 s poll only rewrites the
+                   rows and the summary text and never closes a details the operator opened;
+                   hidden while it has no rows (no display rule on .autotune-older, so the
+                   hidden attribute is what governs it). #}
+                <details id="autotune-older-runs" data-testid="autotune-older-runs" class="autotune-older" hidden>
+                    <summary id="autotune-older-summary" data-testid="autotune-older-summary" class="autotune-older-summary"></summary>
+                    <div id="autotune-older-list" data-testid="autotune-older-list"></div>
+                </details>
+            </aside>
+
+        </div>
+
         <!-- ============================================================ -->
         <!-- Market Prism block — always-on overnight market summary      -->
         <!-- Reads from get_latest_market_prism_summary() prefetched in   -->
@@ -1421,7 +1478,7 @@
                 <span class="prism-block-title">Market Prism</span>
                 <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
                 {% if market_prism_summary %}
-                    <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created }}</span>
+                    <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
                 {% endif %}
             </div>
 
@@ -1504,7 +1561,7 @@
                                                    rel="noopener noreferrer">
                                                     <span>{{ _art.get('title', 'Untitled') | e }}</span>
                                                     {% if _art.get('published') %}
-                                                        <span class="prism-source-meta">{{ _art.get('published') | e }}</span>
+                                                        <span class="prism-source-meta">{{ _art.get('published') | et_stamp(naive_is_utc=False) }}</span>
                                                     {% endif %}
                                                 </a>
                                             {% else %}
@@ -1616,68 +1673,373 @@
 
         </div>{# /market-prism-block #}
 
-        <!-- Controls bar -->
-        <div data-testid="advisor-controls" class="adv-controls">
-            <div class="ctrl-group">
-                <label class="ctrl-label" for="symphony-id-select">Symphony</label>
-                <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
-                    <option value="">Select symphony…</option>
-                </select>
-            </div>
-            <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
-                    onclick="getSuggestions()" disabled>
-                Run Claude advisor
-            </button>
-            <div id="advisor-error" class="adv-error"></div>
-        </div>
-
-        <!-- Summary strip -->
-        <div data-testid="advisor-summary-strip" class="summary-strip">
-            <div data-testid="chip-total-suggestions" class="summary-chip"
-                 id="chip-total">0 suggestions</div>
-            <div data-testid="chip-oos-passed" class="summary-chip"
-                 id="chip-passed">0 OOS passed</div>
-            <div data-testid="chip-oos-rejected" class="summary-chip"
-                 id="chip-rejected">0 OOS rejected</div>
-        </div>
-
-        <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
-             Uses textContent only; never innerHTML (XSS guard). -->
-        <div id="advisor-lens-as-of"
-             data-testid="advisor-lens-as-of"
-             class="prism-as-of"
-             style="display:none;padding:0.25rem 0;"></div>
-
-        <!-- Two-column grid -->
-        <div data-testid="advisor-grid" class="adv-grid">
-
-            <!-- Left: suggestions -->
-            <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
-                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
-                    Select a symphony and click Run Claude advisor to get suggestions.
-                </div>
-            </div>
-
-            <!-- Right: autotune panel -->
-            <aside data-testid="autotune-panel" class="autotune-panel">
-                <div data-testid="autotune-panel-header" class="autotune-header">
-                    Recent Autotune Runs
-                </div>
-                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
-                <div id="autotune-runs-list" data-testid="autotune-runs-list">
-                    <div class="autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
-                        Loading…
-                    </div>
-                </div>
-            </aside>
-
-        </div>
         <!-- ============================================================ -->
-        <!-- Retirement Recommendations panel. Cycle 2a shipped the        -->
-        <!-- read-only recommendation cards; Cycle 2b (AC-7) added the     -->
-        <!-- operator lifecycle affordance itself -- the explanation,      -->
-        <!-- live status chip, Approve/Reject buttons, and the             -->
-        <!-- deterministic wind-down checklist on approved cards.          -->
+        <!-- Advisor observations — one status line per producer, its      -->
+        <!-- history behind a closed expander. Read-only display of        -->
+        <!-- advisor_observations rows. data-testid used by tests:         -->
+        <!-- advisor-observations-section                                  -->
+        <!-- ============================================================ -->
+        <style>
+            .obs-section {
+                margin-top: 1.5rem;
+                background: var(--studio-surface);
+                border: 1px solid var(--studio-border);
+                border-radius: 1rem;
+                padding: 1.25rem 1.5rem;
+            }
+            .obs-section-header {
+                font-size: 0.6875rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                color: var(--studio-ink-dim);
+                margin-bottom: 1rem;
+            }
+
+            .obs-section .obs-framing-note { margin: 0 0 0.75rem; }
+
+            /* One status line per producer; its history opens below the line. */
+            .obs-producer {
+                border-top: 1px solid var(--studio-border);
+                padding: 0.625rem 0;
+            }
+            .obs-producer-line {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                gap: 0.25rem 1rem;
+                font-size: 0.8125rem;
+            }
+            .obs-producer .obs-producer-label {
+                margin: 0;
+                min-width: 11rem;
+            }
+            .obs-producer-time,
+            .obs-producer-total {
+                color: var(--studio-ink-dim);
+                font-variant-numeric: tabular-nums;
+            }
+            .obs-history { margin-top: 0.375rem; }
+            .obs-history > summary {
+                cursor: pointer;
+                font-size: 0.6875rem;
+                color: var(--studio-ink-dim);
+            }
+            .obs-history-note {
+                margin: 0.375rem 0 0;
+                font-size: 0.6875rem;
+                color: var(--studio-ink-dim);
+            }
+
+            .obs-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.8125rem;
+            }
+            .obs-table th {
+                text-align: left;
+                font-size: 0.625rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: var(--studio-ink-muted);
+                padding: 0.375rem 0.625rem;
+                border-bottom: 1px solid var(--studio-border);
+            }
+            .obs-table td {
+                padding: 0.5rem 0.625rem;
+                border-bottom: 1px solid var(--studio-border);
+                vertical-align: top;
+            }
+            .obs-table tr:last-child td { border-bottom: none; }
+            .obs-table .obs-time { white-space: nowrap; }
+
+            /* Verdict classes — color via design-system tokens, never raw hex. */
+            .verdict-clear { color: var(--studio-pos); font-weight: 700; }
+            .verdict-watch { color: var(--studio-warn); font-weight: 700; }
+            .verdict-breach { color: var(--studio-neg); font-weight: 700; }
+            .verdict-unknown { color: var(--studio-ink-dim); font-weight: 700; }
+
+            /* Advisory-only badge */
+            .advisory-only-badge {
+                display: inline-block;
+                padding: 0.1rem 0.4rem;
+                border-radius: 999px;
+                font-size: 0.5rem;
+                font-weight: 700;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                border: 1px solid var(--studio-border);
+                color: var(--studio-ink-dim);
+                white-space: nowrap;
+            }
+
+            .obs-empty {
+                color: var(--studio-ink-dim);
+                font-size: 0.875rem;
+                text-align: center;
+                padding: 1.5rem 0;
+            }
+
+            .obs-raw-preview {
+                font-size: 0.6875rem;
+                color: var(--studio-ink-dim);
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                width: 100%;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+        </style>
+
+        {# Role label mapping — human-friendly names for operator display #}
+        {%- set _ROLE_LABELS = {
+            "OVERFITTING_CONSCIENCE": "Overfitting Conscience",
+            "SPEC_CRITIC": "Spec Critic",
+            "DIVERGENCE_EXPLAINER": "Divergence Explainer",
+            "NARRATOR": "Narrator",
+            "MARKET_PRISM": "Market Prism",
+            "ADD_CANDIDATE": "Add Candidate",
+            "ASSET_SWAP": "Asset Swap",
+            "LOGIC_CHANGE": "Logic Change",
+        } -%}
+
+        {# Verdict CSS class mapping #}
+        {%- set _VERDICT_CLASS = {
+            "CLEAR": "verdict-clear",
+            "WATCH": "verdict-watch",
+            "BREACH": "verdict-breach",
+        } -%}
+
+        {# What a line and a row read when the stored verdict is NULL or empty. #}
+        {%- set _VERDICT_NOT_RECORDED = "verdict not recorded" -%}
+
+        <section data-testid="advisor-observations-section" class="obs-section">
+            <div class="obs-section-header">Advisor Observations</div>
+            {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
+               NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
+               bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
+               Overfitting Conscience checks exactly one narrow DoF source (BACKTEST_SELECTION)
+               and a CLEAR there does not imply general overfitting protection; Divergence
+               Explainer is disabled by default (SECOND_WINDOW_CVAR_ENABLED) and its rows are
+               informational-only.  Named individually below so an operator can't over-read a
+               uniform "all clear" across three producers with different actual scope. #}
+            <p data-testid="guardrail-uniform-note" class="obs-framing-note">
+                Spec Critic is an active guardrail checking the shared, frozen THEORY spec
+                structure — a CLEAR verdict means the spec was evaluated and passed.
+                Overfitting Conscience checks one narrow overfitting-risk source
+                (backtest-selection degrees of freedom) — a CLEAR here does not mean
+                'no overfitting risk exists,' only that this one source is clean.
+                Divergence Explainer is disabled by default and its rows are
+                informational-only, not currently monitoring anything active.
+                Per-symphony recommendations come from
+                the <strong>Run Claude advisor</strong> button.
+            </p>
+            {% if observations_unavailable %}
+            <div class="obs-empty" data-testid="observations-unavailable">Observations could not be loaded.</div>
+            {% elif observation_groups %}
+            {% for group in observation_groups %}
+            {% set latest = group.rows[0] %}
+            {% set latest_verdict = latest.verdict or _VERDICT_NOT_RECORDED %}
+            {% set latest_class = _VERDICT_CLASS.get(latest.verdict, "verdict-unknown") %}
+            <div class="obs-producer" data-testid="obs-producer" data-role="{{ group.role | e }}">
+                <div class="obs-producer-line">
+                    <span class="section-header obs-producer-label" data-testid="obs-producer-label">{{ _ROLE_LABELS.get(group.role, group.role) | e }}</span>
+                    <span class="obs-producer-verdict {{ latest_class }}" data-testid="obs-producer-verdict">{{ latest_verdict | e }}</span>
+                    <span class="obs-producer-time" data-testid="obs-producer-time">{{ latest.created_at | et_stamp }}</span>
+                    <span class="obs-producer-total" data-testid="obs-producer-total">{{ group.total }} {{ "observation" if group.total == 1 else "observations" }}</span>
+                    <span class="advisory-only-badge" title="Advisory only — never moves money">advisory only</span>
+                </div>
+                <details class="obs-history" data-testid="obs-producer-history">
+                    <summary>History</summary>
+                    <table class="obs-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symphony</th>
+                                <th>Subject</th>
+                                <th>Verdict</th>
+                                <th>Badge</th>
+                                <th>Summary</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for obs in group.rows %}
+                            {% set verdict = obs.verdict or _VERDICT_NOT_RECORDED %}
+                            {% set verdict_class = _VERDICT_CLASS.get(obs.verdict, "verdict-unknown") %}
+                            <tr data-testid="obs-row" data-obs-id="{{ obs.id }}">
+                                <td class="obs-time" data-testid="obs-time">{{ obs.created_at | et_stamp }}</td>
+                                {# Display name from the live state (stamped in ai_advisor_tab());
+                                   the stored key stays only in the title. No live match, or an
+                                   empty key: the stored key, or the dash. #}
+                                {% if obs._symphony_name %}
+                                <td class="obs-symphony" data-testid="obs-symphony" title="{{ obs.symphony_id | e }}">{{ obs._symphony_name | e }}</td>
+                                {% else %}
+                                <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
+                                {% endif %}
+                                <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
+                                <td class="{{ verdict_class }}" data-testid="obs-verdict">{{ verdict | e }}</td>
+                                <td>
+                                    <span class="advisory-only-badge" data-testid="advisory-only-badge"
+                                          title="Advisory only — never moves money">
+                                        advisory only
+                                    </span>
+                                </td>
+                                <td class="obs-raw-preview" data-testid="obs-summary">
+                                    {%- if obs.advisor_role == 'MARKET_PRISM' -%}
+                                        {{ obs.verdict | e }}
+                                    {%- else -%}
+                                        {{ obs.get('_preview_text', '') | e }}
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if group.total > group.rows | length %}
+                    <p class="obs-history-note" data-testid="obs-producer-history-note" title="The newest rows shown, of all this producer's rows">{{ group.rows | length }} of {{ group.total }}</p>
+                    {% endif %}
+                </details>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="obs-empty" data-testid="obs-empty">No observations from advisors at this time.</div>
+            {% endif %}
+        </section>
+
+        </div>{# /tab-panel-overview #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Correlations                                        -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-correlations"
+             role="tabpanel"
+             data-testid="tab-panel-correlations"
+             data-tab="correlations"
+             class="tab-panel">
+
+            <!-- Crisis caveat banner — always on (AC-1.4) -->
+            <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
+                <span class="crisis-caveat-icon" aria-hidden="true">&#x26A0;</span>
+                <p class="crisis-caveat-text">
+                    {{ crisis_caveat }}
+                </p>
+            </div>
+
+            {% if insufficient_data %}
+
+            <!-- Insufficient data state -->
+            <div class="insufficient-data" data-testid="insufficient-data-state">
+                <div class="insufficient-data-title">Insufficient Data</div>
+                <div class="insufficient-data-body">
+                    No return series are available yet. The diagnostic requires at least two
+                    symphonies with overlapping return history.
+                </div>
+            </div>
+
+            {% else %}
+
+            <!-- Metadata strip -->
+            <div class="meta-strip" data-testid="as-of-strip">
+                <span class="meta-strip-label">As of</span>
+                <span class="meta-strip-value" data-testid="as-of-timestamp">{{ as_of }}</span>
+                <span>&bull;</span>
+                <span class="meta-strip-value">{{ correlation_matrix | length }} pair{{ 's' if correlation_matrix | length != 1 else '' }}</span>
+            </div>
+
+            <!-- Pairwise return correlation matrix -->
+            {%- set sym_names = [] -%}
+            {%- for pair in correlation_matrix -%}
+                {%- if pair.sym_a not in sym_names -%}{%- set _ = sym_names.append(pair.sym_a) -%}{%- endif -%}
+                {%- if pair.sym_b not in sym_names -%}{%- set _ = sym_names.append(pair.sym_b) -%}{%- endif -%}
+            {%- endfor -%}
+            {%- set pair_lookup = {} -%}
+            {%- for pair in correlation_matrix -%}
+                {%- set _ = pair_lookup.update({(pair.sym_a, pair.sym_b): pair}) -%}
+                {%- set _ = pair_lookup.update({(pair.sym_b, pair.sym_a): pair}) -%}
+            {%- endfor -%}
+
+            <section class="matrix-card" data-testid="pairwise-matrix-card">
+                <div class="matrix-card-header">Pairwise Return Correlation</div>
+                <table class="heatmap-table" data-testid="correlation-matrix-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            {%- for name in sym_names -%}
+                            <th title="{{ name | e }}">{{ name | truncate(12, True, '…') | e }}</th>
+                            {%- endfor -%}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {%- for row_name in sym_names -%}
+                        <tr>
+                            <td style="font-size:0.75rem;font-weight:600;color:var(--studio-ink);padding-right:1rem;white-space:nowrap;">
+                                {{ row_name | truncate(18, True, '…') | e }}
+                            </td>
+                            {%- for col_name in sym_names -%}
+                                {%- if row_name == col_name -%}
+                                <td class="corr-diagonal" data-testid="corr-cell-diagonal">
+                                    <span class="corr-cell">1.00</span>
+                                </td>
+                                {%- else -%}
+                                    {%- set pair = pair_lookup.get((row_name, col_name)) -%}
+                                    {%- if pair is not none -%}
+                                        {%- set corr_val = pair.correlation -%}
+                                        {%- set abs_corr = corr_val | abs if corr_val is not none else 0 -%}
+                                        {%- if abs_corr >= 0.70 -%}{%- set heat_class = "corr-danger" -%}
+                                        {%- elif abs_corr >= 0.40 -%}{%- set heat_class = "corr-caution" -%}
+                                        {%- else -%}{%- set heat_class = "corr-ok" -%}{%- endif -%}
+                                    <td data-testid="corr-cell"
+                                        data-sym-a="{{ pair.sym_a | e }}"
+                                        data-sym-b="{{ pair.sym_b | e }}"
+                                        data-n-obs="{{ pair.n_obs }}"
+                                        data-thin="{{ 'true' if pair.thin_data else 'false' }}">
+                                        <span class="corr-cell {{ heat_class }}">
+                                            {%- if corr_val is not none -%}{{ "%+.2f" | format(corr_val) }}{%- else -%}—{%- endif -%}
+                                            <span class="n-indicator {% if pair.thin_data %}n-indicator--thin{% endif %}"
+                                                  data-testid="n-indicator">
+                                                n={{ pair.n_obs }}{% if pair.thin_data %} thin{% endif %}
+                                            </span>
+                                        </span>
+                                    </td>
+                                    {%- else -%}
+                                    <td class="corr-diagonal" data-testid="corr-cell-no-data">
+                                        <span class="corr-cell" style="color:var(--studio-ink-faint);">—</span>
+                                    </td>
+                                    {%- endif -%}
+                                {%- endif -%}
+                            {%- endfor -%}
+                        </tr>
+                        {%- endfor -%}
+                    </tbody>
+                </table>
+                <div class="matrix-legend" data-testid="matrix-legend">
+                    <span class="legend-item"><span class="legend-dot legend-dot--danger"></span>High (|r| &ge; 0.70)</span>
+                    <span class="legend-item"><span class="legend-dot legend-dot--caution"></span>Moderate</span>
+                    <span class="legend-item"><span class="legend-dot legend-dot--ok"></span>De-correlated</span>
+                    {%- set has_thin = correlation_matrix | selectattr('thin_data') | list -%}
+                    {%- if has_thin -%}<span class="thin-footnote" data-testid="thin-data-footnote">&dagger; thin data</span>{%- endif -%}
+                </div>
+            </section>
+
+            {% endif %}{# insufficient_data #}
+
+        </div>{# /tab-panel-correlations #}
+
+        <!-- ============================================================ -->
+        <!-- TAB PANEL: Retirement                                          -->
+        <!-- ============================================================ -->
+        <div id="tab-panel-retirement"
+             role="tabpanel"
+             data-testid="tab-panel-retirement"
+             data-tab="retirement"
+             class="tab-panel">
+
+        <!-- ============================================================ -->
+        <!-- Retirement Recommendations: the symphony tenure review, the   -->
+        <!-- last-run block, Run now, and the recommendation cards. Each   -->
+        <!-- card carries its explanation, decision pill, Approve/Reject   -->
+        <!-- buttons and, once approved, the wind-down checklist.          -->
         <!-- ============================================================ -->
         {# One lifecycle block (explanation, status, Approve/Reject, checklist) shared by the legacy recommendation cards and the review entries. #}
         {% macro retirement_lifecycle(candidate_id, explanation, written_on, status, checklist, allow_actions, show_explanation) %}
@@ -1687,7 +2049,9 @@
                     </div>
                     {% endif %}
                     {% if candidate_id %}
-                    <span class="retirement-status-chip retirement-status-chip--{{ status or 'pending' }}"
+                    {# The pill class per decision state; static/ai_advisor.js swaps to the same three pairs. #}
+                    {% set _pill_class = {'pending': 'standby', 'approved': 'armed', 'rejected': 'triggered'}.get(status or 'pending', 'standby') %}
+                    <span class="status-pill {{ _pill_class }}"
                           data-testid="retirement-rec-status">
                         {{- (status or 'pending') | capitalize -}}
                     </span>
@@ -1867,9 +2231,9 @@
             {% set status = e.get('approval_status') %}
             {% set vtext = e.get('verdict_text') %}
             {% set chip_mod = verdict_mod if vtext is string and vtext.strip() else 'none' %}
-            <div class="tenure-review-entry retirement-rec-card" data-testid="tenure-review-entry" data-symphony-id="{{ sid }}">
+            <div class="sym-card tenure-review-entry retirement-rec-card" data-testid="tenure-review-entry" data-symphony-id="{{ sid }}">
                 <div class="tenure-review-entry-head retirement-rec-pair">
-                    <span class="tenure-review-name" data-testid="tenure-review-name" title="{{ sid }}">{% set dn = e.get('display_name') %}{{ dn if dn is string and dn.strip() else (sid if sid.strip() else 'not recorded') }}</span>
+                    <span class="tenure-review-name card-name" data-testid="tenure-review-name" title="{{ sid }}">{% set dn = e.get('display_name') %}{{ dn if dn is string and dn.strip() else (sid if sid.strip() else 'not recorded') }}</span>
                     <span class="tenure-verdict-chip tenure-verdict-chip--{{ chip_mod }}" data-testid="tenure-review-verdict-chip">{{ e.get('verdict_text') | tenure_text }}</span>
                 </div>
                 {% if 'tenure_trading_days' in e %}
@@ -1926,47 +2290,22 @@
                 {% if retirement_last_run %}
                     {% set _lr = retirement_last_run %}
                     {% set _st = _lr.get('status') %}
-                    {% set _ra = _lr.get('run_at') %}
-                    <div class="retirement-last-run-line" data-testid="retirement-last-run-time">
-                        Last run:
-                        {%- if _ra is string and _ra | length >= 16 %} {{ _ra[:10] }} {{ _ra[11:16] }} UTC
-                        {%- else %} {{ _ra if _ra else 'time unknown' }}
-                        {%- endif %}
-                    </div>
+                    <div class="legend-as-of" data-testid="retirement-last-run-time">Last run {{ _lr.get('run_at') | et_stamp }}</div>
 
                     {% if _st == 'ok' %}
-                        {% set _n_with = _lr.get('symphonies_with_series') %}
-                        {% set _n_roster = _lr.get('roster_size') %}
-                        {% set _d_min = _lr.get('series_days_min') %}
-                        {% set _d_max = _lr.get('series_days_max') %}
-                        {% set _p_scr = _lr.get('pairs_screened') %}
-                        {% set _p_all = _lr.get('pairs_evaluated') %}
-                        {% set _b_unc = _lr.get('blocked_uncertainty') %}
-                        {% set _b_thin = _lr.get('blocked_stress_too_thin') %}
-                        {% set _b_low = _lr.get('blocked_stress_below_threshold') %}
-                        {% set _b_none = _lr.get('blocked_no_candidate') %}
-                        {% set _n_recs = _lr.get('recommendations') %}
                         <div class="retirement-last-run-line" data-testid="retirement-last-run-basis">
                             Basis: {{ _lr.get('source') or 'unknown' }} &mdash; {{ _lr.get('basis_label') or 'basis not recorded' }}
                         </div>
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-symphonies">
-                            Symphonies analysed: {{ _n_with if _n_with is not none else '—' }} of {{ _n_roster if _n_roster is not none else '—' }}
-                        </div>
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-depth">
-                            Return history per symphony (days): {{ _d_min if _d_min is not none else '—' }}{% if _d_max is not none and _d_max != _d_min %}&ndash;{{ _d_max }}{% endif %}
-                        </div>
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-pairs">
-                            Pairs clearing the correlation screen (&ge; {{ _lr.get('screen_threshold') if _lr.get('screen_threshold') is not none else '—' }}): {{ _p_scr if _p_scr is not none else '—' }} of {{ _p_all if _p_all is not none else '—' }}
-                        </div>
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-blocked">
-                            Blocked by a gate &mdash; uncertainty: {{ _b_unc if _b_unc is not none else '—' }};
-                            stress window too thin: {{ _b_thin if _b_thin is not none else '—' }}
-                            {%- if _b_thin and _b_thin > 0 %} (needs &ge; {{ _lr.get('stress_gate_min_aligned_days') if _lr.get('stress_gate_min_aligned_days') is not none else '—' }} aligned days){% endif %};
-                            stress below threshold: {{ _b_low if _b_low is not none else '—' }};
-                            no candidate selected: {{ _b_none if _b_none is not none else '—' }}
-                        </div>
-                        <div class="retirement-last-run-line" data-testid="retirement-last-run-recommendations">
-                            Recommendations from this run: {{ _n_recs if _n_recs is not none else '—' }}
+                        {# Five tiles from _build_retirement_summary_tiles, in its order; the ids are the ones the lines carried. #}
+                        {% set _tile_ids = ['retirement-last-run-symphonies', 'retirement-last-run-depth', 'retirement-last-run-pairs', 'retirement-last-run-blocked', 'retirement-last-run-recommendations'] %}
+                        <div class="mini-stats retirement-tiles">
+                            {% for _tile in retirement_summary_tiles %}
+                            <div class="mini-stat" data-testid="{{ _tile_ids[loop.index0] }}">
+                                <div class="mini-stat-value">{{ _tile.value }}</div>
+                                <div class="mini-stat-label">{{ _tile.label }}</div>
+                                {% if _tile.detail %}<div class="legend-as-of">{{ _tile.detail }}</div>{% endif %}
+                            </div>
+                            {% endfor %}
                         </div>
                     {% elif _st == 'series_unavailable' %}
                         <div class="retirement-last-run-state">
@@ -1996,20 +2335,20 @@
                         Excluded from this run:
                         <ul>
                             {% for _ex in retirement_last_run_excluded %}
-                            <li title="{{ _ex.symphony_id }}">{{ _ex.name }}{% if _ex.reason %} &mdash; {{ _ex.reason }}{% endif %}</li>
+                            <li title="{{ _ex.symphony_id }}">{{ _ex.name }} &mdash; {{ _ex.reason_text }}</li>
                             {% endfor %}
                         </ul>
                     </div>
                     {% endif %}
                 {% else %}
-                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45, or use Run now.</div>
+                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45 UTC, or use Run now.</div>
                 {% endif %}
             </div>
             <div class="retirement-run-now-row">
                 <button type="button"
-                        class="discuss-btn"
+                        class="run-btn"
                         data-testid="retirement-run-now-btn"
-                        title="Runs the same analysis as the nightly 03:45 job; takes a minute or two."
+                        title="Runs the same analysis as the nightly 03:45 UTC job; takes a minute or two."
                         onclick="retirementRunNow(this)">Run now</button>
                 <span class="retirement-run-now-status"
                       data-testid="retirement-run-now-status"
@@ -2035,13 +2374,13 @@
             {% set _cr_at = retirement_cards_run.get('run_at') %}
             <div class="retirement-cards-from-earlier-run" data-testid="retirement-cards-from-earlier-run">
                 The most recent run (above) was not successful; the results below are from the latest successful run
-                ({{ _cr_at[:10] if _cr_at is string and _cr_at | length >= 10 else 'date unknown' }} UTC).
+                ({{ _cr_at | et_stamp(date_only=True) }}).
             </div>
             {% endif %}
 
             {% if retirement_recommendations %}
                 {% for rec in retirement_recommendations %}
-                <div class="retirement-rec-card" data-testid="retirement-recommendation-card">
+                <div class="sym-card retirement-rec-card" data-testid="retirement-recommendation-card">
                     {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
                     {# A stored id, name or label that is not non-blank text reads "not recorded"; a card without a usable candidate id offers no decision. #}
                     {% set _cid = rec.get('candidate_id') %}
@@ -2052,7 +2391,7 @@
                     {% set _sname = rec.get('sibling_name') %}
                     {% set _cand_display = (_cname if _cname is string and _cname.strip() else _cid) if _cid_ok else 'not recorded' %}
                     {% set _sib_display = (_sname if _sname is string and _sname.strip() else _sid) if _sid_ok else 'not recorded' %}
-                    <div class="retirement-rec-pair">
+                    <div class="retirement-rec-pair card-name">
                         <span class="retirement-rec-candidate" title="{{ (_cid if _cid_ok else 'not recorded') | e }}">{{ _cand_display | e }}</span>
                         <span aria-hidden="true">&rarr;</span>
                         <span class="retirement-rec-sibling" title="{{ (_sid if _sid_ok else 'not recorded') | e }}">kept: {{ _sib_display | e }}</span>
@@ -2083,124 +2422,7 @@
             {% endif %}
         </section>{# /retirement-recommendations-panel #}
 
-        </div>{# /tab-panel-overview #}
-
-        <!-- ============================================================ -->
-        <!-- TAB PANEL: Correlations                                        -->
-        <!-- ============================================================ -->
-        <div id="tab-panel-correlations"
-             role="tabpanel"
-             data-testid="tab-panel-correlations"
-             data-tab="correlations"
-             class="tab-panel">
-
-            <!-- Crisis caveat banner — always on (AC-1.4) -->
-            <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
-                <span class="crisis-caveat-icon" aria-hidden="true">&#x26A0;</span>
-                <p class="crisis-caveat-text">
-                    {{ crisis_caveat }}
-                </p>
-            </div>
-
-            {% if insufficient_data %}
-
-            <!-- Insufficient data state -->
-            <div class="insufficient-data" data-testid="insufficient-data-state">
-                <div class="insufficient-data-title">Insufficient Data</div>
-                <div class="insufficient-data-body">
-                    No return series are available yet. The diagnostic requires at least two
-                    symphonies with overlapping return history.
-                </div>
-            </div>
-
-            {% else %}
-
-            <!-- Metadata strip -->
-            <div class="meta-strip" data-testid="as-of-strip">
-                <span class="meta-strip-label">As of</span>
-                <span class="meta-strip-value" data-testid="as-of-timestamp">{{ as_of }}</span>
-                <span>&bull;</span>
-                <span class="meta-strip-value">{{ correlation_matrix | length }} pair{{ 's' if correlation_matrix | length != 1 else '' }}</span>
-            </div>
-
-            <!-- Pairwise return correlation matrix -->
-            {%- set sym_names = [] -%}
-            {%- for pair in correlation_matrix -%}
-                {%- if pair.sym_a not in sym_names -%}{%- set _ = sym_names.append(pair.sym_a) -%}{%- endif -%}
-                {%- if pair.sym_b not in sym_names -%}{%- set _ = sym_names.append(pair.sym_b) -%}{%- endif -%}
-            {%- endfor -%}
-            {%- set pair_lookup = {} -%}
-            {%- for pair in correlation_matrix -%}
-                {%- set _ = pair_lookup.update({(pair.sym_a, pair.sym_b): pair}) -%}
-                {%- set _ = pair_lookup.update({(pair.sym_b, pair.sym_a): pair}) -%}
-            {%- endfor -%}
-
-            <section class="matrix-card" data-testid="pairwise-matrix-card">
-                <div class="matrix-card-header">Pairwise Return Correlation</div>
-                <table class="heatmap-table" data-testid="correlation-matrix-table">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            {%- for name in sym_names -%}
-                            <th title="{{ name | e }}">{{ name | truncate(12, True, '…') | e }}</th>
-                            {%- endfor -%}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {%- for row_name in sym_names -%}
-                        <tr>
-                            <td style="font-size:0.75rem;font-weight:600;color:var(--studio-ink);padding-right:1rem;white-space:nowrap;">
-                                {{ row_name | truncate(18, True, '…') | e }}
-                            </td>
-                            {%- for col_name in sym_names -%}
-                                {%- if row_name == col_name -%}
-                                <td class="corr-diagonal" data-testid="corr-cell-diagonal">
-                                    <span class="corr-cell">1.00</span>
-                                </td>
-                                {%- else -%}
-                                    {%- set pair = pair_lookup.get((row_name, col_name)) -%}
-                                    {%- if pair is not none -%}
-                                        {%- set corr_val = pair.correlation -%}
-                                        {%- set abs_corr = corr_val | abs if corr_val is not none else 0 -%}
-                                        {%- if abs_corr >= 0.70 -%}{%- set heat_class = "corr-danger" -%}
-                                        {%- elif abs_corr >= 0.40 -%}{%- set heat_class = "corr-caution" -%}
-                                        {%- else -%}{%- set heat_class = "corr-ok" -%}{%- endif -%}
-                                    <td data-testid="corr-cell"
-                                        data-sym-a="{{ pair.sym_a | e }}"
-                                        data-sym-b="{{ pair.sym_b | e }}"
-                                        data-n-obs="{{ pair.n_obs }}"
-                                        data-thin="{{ 'true' if pair.thin_data else 'false' }}">
-                                        <span class="corr-cell {{ heat_class }}">
-                                            {%- if corr_val is not none -%}{{ "%+.2f" | format(corr_val) }}{%- else -%}—{%- endif -%}
-                                            <span class="n-indicator {% if pair.thin_data %}n-indicator--thin{% endif %}"
-                                                  data-testid="n-indicator">
-                                                n={{ pair.n_obs }}{% if pair.thin_data %} thin{% endif %}
-                                            </span>
-                                        </span>
-                                    </td>
-                                    {%- else -%}
-                                    <td class="corr-diagonal" data-testid="corr-cell-no-data">
-                                        <span class="corr-cell" style="color:var(--studio-ink-faint);">—</span>
-                                    </td>
-                                    {%- endif -%}
-                                {%- endif -%}
-                            {%- endfor -%}
-                        </tr>
-                        {%- endfor -%}
-                    </tbody>
-                </table>
-                <div class="matrix-legend" data-testid="matrix-legend">
-                    <span class="legend-item"><span class="legend-dot legend-dot--danger"></span>High (|r| &ge; 0.70)</span>
-                    <span class="legend-item"><span class="legend-dot legend-dot--caution"></span>Moderate</span>
-                    <span class="legend-item"><span class="legend-dot legend-dot--ok"></span>De-correlated</span>
-                    {%- set has_thin = correlation_matrix | selectattr('thin_data') | list -%}
-                    {%- if has_thin -%}<span class="thin-footnote" data-testid="thin-data-footnote">&dagger; thin data</span>{%- endif -%}
-                </div>
-            </section>
-
-            {% endif %}{# insufficient_data #}
-
-        </div>{# /tab-panel-correlations #}
+        </div>{# /tab-panel-retirement #}
 
         <!-- ============================================================ -->
         <!-- TAB PANEL: Asset Swaps                                         -->
@@ -2367,7 +2589,7 @@
                 </p>
                 <ul class="chat-example-prompts" aria-label="Example questions">
                     <li>"Why did the gate reject this swap?"</li>
-                    <li>"What does this correlation mean for my portfolio?"</li>
+                    <li>"Why did this Strategy Builder proposal pass the gate?"</li>
                     <li>"Why is this logic change considered high overfitting risk?"</li>
                 </ul>
             </div>
@@ -3107,174 +3329,6 @@
         window._chatAvailable = {{ 'true' if chat_available else 'false' }};
     </script>
 
-    <!-- Advisor Observations — read-only display of advisor_observations rows. -->
-    <!-- data-testid used by tests: advisor-observations-section                 -->
-    <style>
-        .obs-section {
-            margin-top: 1.5rem;
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 1.25rem 1.5rem;
-        }
-        .obs-section-header {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 1rem;
-        }
-        .obs-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8125rem;
-        }
-        .obs-table th {
-            text-align: left;
-            font-size: 0.625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--studio-ink-muted);
-            padding: 0.375rem 0.625rem;
-            border-bottom: 1px solid var(--studio-border);
-        }
-        .obs-table td {
-            padding: 0.5rem 0.625rem;
-            border-bottom: 1px solid var(--studio-border);
-            vertical-align: top;
-        }
-        .obs-table tr:last-child td { border-bottom: none; }
-
-        /* Verdict cell classes — color via design-system tokens, never raw hex. */
-        .verdict-clear { color: var(--studio-pos); font-weight: 700; }
-        .verdict-watch { color: var(--studio-warn); font-weight: 700; }
-        .verdict-breach { color: var(--studio-neg); font-weight: 700; }
-        .verdict-unknown { color: var(--studio-ink-dim); font-weight: 700; }
-
-        /* Advisory-only badge */
-        .advisory-only-badge {
-            display: inline-block;
-            padding: 0.1rem 0.4rem;
-            border-radius: 999px;
-            font-size: 0.5rem;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            border: 1px solid var(--studio-border);
-            color: var(--studio-ink-dim);
-            white-space: nowrap;
-        }
-
-        .obs-empty {
-            color: var(--studio-ink-dim);
-            font-size: 0.875rem;
-            text-align: center;
-            padding: 1.5rem 0;
-        }
-
-        .obs-raw-preview {
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-    </style>
-
-    {# Role label mapping — human-friendly names for operator display #}
-    {%- set _ROLE_LABELS = {
-        "OVERFITTING_CONSCIENCE": "Overfitting Conscience",
-        "SPEC_CRITIC": "Spec Critic",
-        "DIVERGENCE_EXPLAINER": "Divergence Explainer",
-        "NARRATOR": "Narrator",
-        "ASSET_SWAP": "Asset Swap",
-        "LOGIC_CHANGE": "Logic Change",
-    } -%}
-
-    {# Verdict CSS class mapping #}
-    {%- set _VERDICT_CLASS = {
-        "CLEAR": "verdict-clear",
-        "WATCH": "verdict-watch",
-        "BREACH": "verdict-breach",
-    } -%}
-
-    <section data-testid="advisor-observations-section" class="obs-section">
-        <div class="obs-section-header">Advisor Observations</div>
-        {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
-           NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
-           bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
-           Overfitting Conscience checks exactly one narrow DoF source (BACKTEST_SELECTION)
-           and a CLEAR there does not imply general overfitting protection; Divergence
-           Explainer is disabled by default (SECOND_WINDOW_CVAR_ENABLED) and its rows are
-           informational-only.  Named individually below so an operator can't over-read a
-           uniform "all clear" across three producers with different actual scope. #}
-        <p data-testid="guardrail-uniform-note" class="obs-framing-note">
-            Spec Critic is an active guardrail checking the shared, frozen THEORY spec
-            structure — a CLEAR verdict means the spec was evaluated and passed.
-            Overfitting Conscience checks one narrow overfitting-risk source
-            (backtest-selection degrees of freedom) — a CLEAR here does not mean
-            'no overfitting risk exists,' only that this one source is clean.
-            Divergence Explainer is disabled by default and its rows are
-            informational-only, not currently monitoring anything active.
-            Per-symphony recommendations come from
-            the <strong>Run Claude advisor</strong> button.
-        </p>
-        {% if observations %}
-        <table class="obs-table">
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Symphony</th>
-                    <th>Advisor</th>
-                    <th>Subject</th>
-                    <th>Verdict</th>
-                    <th>Badge</th>
-                    <th>Summary</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for obs in observations %}
-                {% set verdict = obs.verdict or "" %}
-                {% set role_label = _ROLE_LABELS.get(obs.advisor_role, obs.advisor_role) %}
-                {% set verdict_class = _VERDICT_CLASS.get(verdict, "verdict-unknown") %}
-                <tr data-obs-id="{{ obs.id }}">
-                    <td>{{ obs.created_at | e }}</td>
-                    {# Display name from the live state (stamped in ai_advisor_tab());
-                       the stored key stays only in the title. No live match, or an
-                       empty key: the stored key, or the dash. #}
-                    {% if obs._symphony_name %}
-                    <td class="obs-symphony" data-testid="obs-symphony" title="{{ obs.symphony_id | e }}">{{ obs._symphony_name | e }}</td>
-                    {% else %}
-                    <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
-                    {% endif %}
-                    <td>{{ role_label | e }}</td>
-                    <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
-                    <td class="{{ verdict_class }}">{{ verdict | e }}</td>
-                    <td>
-                        <span class="advisory-only-badge" data-testid="advisory-only-badge"
-                              title="Advisory only — never moves money">
-                            advisory only
-                        </span>
-                    </td>
-                    <td class="obs-raw-preview">
-                        {%- if obs.advisor_role == 'MARKET_PRISM' -%}
-                            {{ obs.verdict | e }}
-                        {%- else -%}
-                            {{ obs.get('_preview_text', '') | e }}
-                        {%- endif -%}
-                    </td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="obs-empty">No observations from advisors at this time.</div>
-        {% endif %}
-    </section>
 
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>
     <script src="{{ url_for('static', filename='ai_advisor_asset_swaps.js') }}"></script>

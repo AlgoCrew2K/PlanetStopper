@@ -1,0 +1,129 @@
+"""Shared plumbing for the AI Advisor browser modules (the ``browser`` marker).
+
+TEST-ONLY. Playwright is imported inside fixtures, never at module level, so collection works
+on a host without it; a selected test with Playwright or Firefox missing fails with a message
+naming it (``firefox`` comes from the dashboard browser module).
+
+The server is the app in this process (``tests/ui/_browser_server.py``) on the per-test
+database. Every request the page makes to anything but that server is aborted, so the chart
+library's CDN request never completes and no outside host is contacted. The developer
+``.env`` is never read: ``app.ENV_FILE_PATH`` points at an empty temporary file and every
+credential variable is removed from the environment.
+
+A module imports these names and lists them (``# noqa: F401``): the two autouse overrides
+(this directory's conftest stubs ``database.load_state`` and the state dict, which the page
+needs real), ``advisor_server`` and ``advisor_probe``.
+"""
+
+from __future__ import annotations
+
+import re
+from types import SimpleNamespace
+
+import pytest
+
+import app as app_module
+from tests.ui._browser_server import running_server
+from tests.ui.test_dashboard_charts_browser import firefox  # noqa: F401  (module-scoped fixture)
+
+# Console errors a refused request causes; any other error is the page's own.
+_REFUSED_REQUEST_NOISE = re.compile(r"Failed to load resource|NetworkError|NS_ERROR|net::")
+
+PAGE_TIMEOUT_MS = 10_000
+WAIT_MS = 8_000
+
+_CREDENTIAL_VARIABLES = (
+    "LIVE_EXECUTION",
+    "EXIT_AUTHORITY",
+    "EXECUTION_START_TIME",
+    "COMPOSER_KEY_ID",
+    "COMPOSER_SECRET",
+    "ALPACA_KEY",
+    "ALPACA_SECRET",
+    "DISCORD_WEBHOOK_URL",
+    "ANTHROPIC_API_KEY",
+    "ACCOUNT_INDIVIDUAL",
+    "ACCOUNT_ROTH",
+    "ACCOUNT_TRAD",
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_get_api_state_dict():
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_database_load_state_for_advisor_routes():
+    yield
+
+
+@pytest.fixture
+def advisor_server(tmp_path, monkeypatch):
+    for name in _CREDENTIAL_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / "advisor_page.env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))
+    with running_server() as running:
+        yield running
+
+
+@pytest.fixture
+def advisor_probe(firefox, advisor_server):  # noqa: F811  (the imported module-scoped fixture)
+    """A fresh browser context per test (no cached chart library), 1440x900, outbound refused."""
+    context = firefox.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    page.set_default_timeout(PAGE_TIMEOUT_MS)
+    state = SimpleNamespace(
+        page=page,
+        server=advisor_server,
+        context=context,
+        console_errors=[],
+        page_errors=[],
+        refused=[],
+    )
+
+    def refuse_outbound(route):
+        if route.request.url.startswith(advisor_server.base_url):
+            route.continue_()
+        else:
+            state.refused.append(route.request.url)
+            route.abort()
+
+    def on_console(message):
+        if message.type == "error" and not _REFUSED_REQUEST_NOISE.search(message.text):
+            state.console_errors.append(message.text)
+
+    page.route("**/*", refuse_outbound)
+    page.on("console", on_console)
+    page.on("pageerror", lambda exc: state.page_errors.append(str(exc)))
+    try:
+        yield state
+    finally:
+        context.close()
+
+
+def fail(probe, message: str):
+    raise AssertionError(
+        f"{message} (page errors: {probe.page_errors}; console errors: {probe.console_errors})"
+    )
+
+
+def wait_until(probe, expression: str, message: str, arg=None, timeout_ms: int = WAIT_MS):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    try:
+        probe.page.wait_for_function(expression, arg=arg, timeout=timeout_ms)
+    except PlaywrightTimeout:
+        fail(probe, message)
+
+
+def open_advisor(probe, fragment: str = ""):
+    """Load the Advisor page and wait for its script to have run (the tab bar is wired)."""
+    probe.page.goto(probe.server.base_url + "/ai-advisor" + fragment)
+    wait_until(
+        probe,
+        "() => document.querySelector('[data-testid=\"tab-panel-overview\"]') !== null",
+        "the Advisor page never rendered its Overview panel",
+    )

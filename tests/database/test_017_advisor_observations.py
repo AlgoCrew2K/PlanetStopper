@@ -1230,3 +1230,108 @@ def test_get_advisor_observations_for_role_default_limit_is_50():
         f"got {limit_param.default!r}. "
         "The spec (spec-017) specifies limit: int = 50."
     )
+
+
+# ---------------------------------------------------------------------------
+# 15. count_advisor_observations_by_role
+#
+# The Advisor page states how many rows a producer has next to the rows it lists, so the
+# count must follow the same rule as the list: a feature-off stub (verdict NOT_APPLICABLE and
+# raw_response {"feature_flag": "off"}) is in neither. A row the list rule cannot parse (a
+# pre-serialised raw_response the writer accepts as is) or one whose verdict is NULL is still
+# a row. Cases: tests/fixtures/ai_advisor/ux_overhaul_02/observations.json.
+# ---------------------------------------------------------------------------
+
+_COUNT_ROLES = ["OVERFITTING_CONSCIENCE", "SPEC_CRITIC", "NARRATOR", "DIVERGENCE_EXPLAINER"]
+
+
+def _store_cases(case: str, times: int = 1, **overrides) -> None:
+    from tests._advisor_observation_records import store  # noqa: PLC0415
+
+    store(case, times=times, **overrides)
+
+
+def _counts(roles=None) -> dict:
+    return db_module.count_advisor_observations_by_role(_COUNT_ROLES if roles is None else roles)
+
+
+def test_count_by_role_equals_the_rows_inserted_for_each_requested_role():
+    _store_cases("guardrail_clear", 4)
+    _store_cases("guardrail_watch", 2)
+    counts = _counts()
+    assert isinstance(counts, dict)
+    assert counts.get("OVERFITTING_CONSCIENCE", 0) == 4
+    assert counts.get("SPEC_CRITIC", 0) == 2
+    assert counts.get("NARRATOR", 0) == 0
+    assert all(isinstance(v, int) for v in counts.values()), counts
+    assert set(counts) <= set(_COUNT_ROLES)
+
+
+def test_count_by_role_counts_only_the_roles_asked_for():
+    _store_cases("guardrail_clear", 3)
+    _store_cases("guardrail_watch", 2)
+    assert _counts(["SPEC_CRITIC"]).get("SPEC_CRITIC", 0) == 2
+    assert "OVERFITTING_CONSCIENCE" not in _counts(["SPEC_CRITIC"])
+    assert _counts([]) == {}
+
+
+def test_count_by_role_excludes_a_feature_off_stub_in_every_role():
+    _store_cases("feature_off_stub", 2)
+    _store_cases("feature_off_stub_under_a_shown_role", 2)
+    _store_cases("guardrail_clear", 3)
+    counts = _counts()
+    assert counts.get("DIVERGENCE_EXPLAINER", 0) == 0
+    assert counts.get("OVERFITTING_CONSCIENCE", 0) == 3
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "feature_flag_on_stub",
+        "stub_without_flag",
+        "real_verdict_with_flag_off",
+        "null_verdict_with_flag_off",
+        "null_verdict",
+        "empty_verdict",
+        "non_json_raw_response",
+        "json_array_raw_response",
+    ],
+)
+def test_count_by_role_keeps_every_row_the_stub_rule_does_not_name(case):
+    """Each is a row near the stub rule that is not a stub: a flag that is not "off", a
+    NOT_APPLICABLE row without the flag, a real verdict with the flag, a NULL or empty
+    verdict (also with the flag, since a NULL verdict is not NOT_APPLICABLE), and a
+    raw_response that is not a JSON object."""
+    from tests._advisor_observation_records import case_row  # noqa: PLC0415
+
+    role = case_row(case)["advisor_role"]
+    _store_cases(case, 2)
+    assert _counts([role]).get(role, 0) == 2, case
+
+
+def test_count_by_role_follows_the_same_rule_as_the_listed_rows():
+    """On a mix of real rows and stubs the count is the number of rows the list keeps."""
+    _store_cases("guardrail_clear", 6)
+    _store_cases("feature_off_stub_under_a_shown_role", 3)
+    _store_cases("null_verdict_with_flag_off", 1)
+    _store_cases("feature_flag_on_stub", 1)
+
+    def is_stub(row: dict) -> bool:
+        raw = row.get("raw_response")
+        return (
+            row.get("verdict") == "NOT_APPLICABLE"
+            and isinstance(raw, dict)
+            and raw.get("feature_flag") == "off"
+        )
+
+    for role in ("OVERFITTING_CONSCIENCE", "SPEC_CRITIC"):
+        listed = [
+            r
+            for r in db_module.get_advisor_observations_for_role(role, limit=10_000)
+            if not is_stub(r)
+        ]
+        assert _counts([role]).get(role, 0) == len(listed), role
+
+
+def test_count_by_role_does_not_raise_on_an_empty_table():
+    assert _counts() == {} or all(v == 0 for v in _counts().values())

@@ -1295,11 +1295,21 @@ def _parse_advisor_observation_row(row: tuple, columns: list[str]) -> dict:
     raw_response is a JSON blob column and is deserialised to a Python dict so
     callers receive the original object rather than a raw JSON string — consistent
     with the llm_suggestions precedent (database.py:653-676).
+
+    The writer accepts a pre-serialised raw_response string as is, so a stored value
+    may not be JSON. Such a row is still a row: it comes back with an empty
+    raw_response dict and ``raw_response_unreadable`` True, instead of raising and
+    taking every other row of the same read down with it. A readable row carries no
+    ``raw_response_unreadable`` key.
     """
     result = {}
     for col, val in zip(columns, row):
         if col == "raw_response" and val is not None:
-            result[col] = json.loads(val)
+            try:
+                result[col] = json.loads(val)
+            except (TypeError, ValueError):
+                result[col] = {}
+                result["raw_response_unreadable"] = True
         else:
             result[col] = val
     return result
@@ -1406,6 +1416,53 @@ def get_advisor_observations_for_role(
     rows = cursor.fetchall()
     conn.close()
     return [_parse_advisor_observation_row(row, _ADVISOR_OBSERVATION_COLUMNS) for row in rows]
+
+
+# A feature-off stub: verdict NOT_APPLICABLE and a raw_response that is a JSON object whose
+# ``feature_flag`` is "off". The AI Advisor page leaves these rows out of its lists, so the
+# count below leaves them out too. Every other row counts: a NULL or empty verdict (also
+# with the flag off), a raw_response that is not JSON (the writer accepts a pre-serialised
+# string), and valid JSON that is not an object (``json_extract`` of a path on an array or a
+# scalar is NULL, not "off"). ``json_extract`` raises on text that is not JSON, so it sits
+# behind ``json_valid`` in nested CASEs, which evaluate only the branch they take (so it
+# also never runs on a row whose verdict is not NOT_APPLICABLE); COALESCE turns the NULL of a
+# missing flag into "not a stub".
+_ADVISOR_FEATURE_OFF_STUB_SQL = (
+    "COALESCE("
+    "CASE WHEN verdict = 'NOT_APPLICABLE' THEN "
+    "CASE WHEN json_valid(raw_response) "
+    "THEN json_extract(raw_response, '$.feature_flag') = 'off' ELSE 0 END "
+    "ELSE 0 END, 0)"
+)
+
+
+def count_advisor_observations_by_role(roles: "list[str] | tuple[str, ...]") -> dict[str, int]:
+    """Return ``{role: row count}`` over the requested roles, feature-off stubs excluded.
+
+    One read-only ``GROUP BY advisor_role`` query. A requested role with no rows may be
+    absent from the result; ``[]`` gives ``{}``. The rows counted are exactly the rows the
+    AI Advisor page keeps in its per-role lists (see ``_ADVISOR_FEATURE_OFF_STUB_SQL``), so a
+    count stated next to a list never includes a row the list leaves out.
+
+    Uses get_ro_connection() — read-only at the driver level (architecture constraint 5).
+    """
+    wanted = list(roles)
+    if not wanted:
+        return {}
+    placeholders = ",".join("?" for _ in wanted)
+    conn = get_ro_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT advisor_role, COUNT(*) FROM advisor_observations "
+            f"WHERE advisor_role IN ({placeholders}) "
+            f"AND {_ADVISOR_FEATURE_OFF_STUB_SQL} = 0 "
+            "GROUP BY advisor_role",
+            wanted,
+        )
+        return {role: int(count) for role, count in cursor.fetchall()}
+    finally:
+        conn.close()
 
 
 def get_advisor_observations_for_symphony(symphony_id: str) -> list[dict]:

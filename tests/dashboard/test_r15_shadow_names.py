@@ -41,6 +41,8 @@ import app as app_module
 
 _WORKTREE = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _WORKTREE / "templates" / "index.html"
+# The dashboard primitives (.card-name, .sym-card, ...) are defined once, in the shared sheet.
+_LAYOUT_CSS = _WORKTREE / "static" / "layout.css"
 _TABLE_PARTIAL = _WORKTREE / "templates" / "table_partial.html"
 _FIXTURE = (
     pathlib.Path(__file__).parent.parent
@@ -346,9 +348,10 @@ class TestShadowPerfPillRendering:
         """
         html = self._html()
 
-        card_name_css = re.search(r"\.card-name\s*\{([^}]+)\}", html, re.DOTALL)
+        layout_css = _LAYOUT_CSS.read_text(encoding="utf-8")
+        card_name_css = re.search(r"\.card-name\s*\{([^}]+)\}", layout_css, re.DOTALL)
         assert card_name_css, (
-            ".card-name CSS must be defined in index.html for symphony name display; "
+            ".card-name CSS must be defined in static/layout.css for symphony name display; "
             "the Studio card-name element replaced the old Shadow Perf pill label"
         )
 
@@ -380,8 +383,9 @@ class TestHoverHighlightJs:
         """
         html = self._html()
 
-        has_card_hover_css = re.search(r"\.sym-card\s*:hover\s*\{|sym-card.*:hover", html)
-        has_card_transition = re.search(r"\.sym-card\s*\{[^}]*transition", html, re.DOTALL)
+        layout_css = _LAYOUT_CSS.read_text(encoding="utf-8")
+        has_card_hover_css = re.search(r"\.sym-card\s*:hover\s*\{|sym-card.*:hover", layout_css)
+        has_card_transition = re.search(r"\.sym-card\s*\{[^}]*transition", layout_css, re.DOTALL)
 
         assert has_card_hover_css or has_card_transition, (
             "index.html must define hover state for .sym-card — either a :hover CSS rule "
@@ -458,7 +462,9 @@ class TestCrossHighlightedCss:
         """
         html = self._html()
 
-        sym_card_css = re.search(r"\.sym-card\s*\{([^}]+)\}", html, re.DOTALL)
+        sym_card_css = re.search(
+            r"\.sym-card\s*\{([^}]+)\}", _LAYOUT_CSS.read_text(encoding="utf-8"), re.DOTALL
+        )
         assert sym_card_css, (
             ".sym-card CSS class must be defined in index.html; "
             "the Studio design uses .sym-card for symphony tile cards"
@@ -471,7 +477,9 @@ class TestCrossHighlightedCss:
         """
         html = self._html()
 
-        sym_card_css = re.search(r"\.sym-card\s*\{([^}]+)\}", html, re.DOTALL)
+        sym_card_css = re.search(
+            r"\.sym-card\s*\{([^}]+)\}", _LAYOUT_CSS.read_text(encoding="utf-8"), re.DOTALL
+        )
         assert sym_card_css, ".sym-card CSS not found"
 
         css_body = sym_card_css.group(1)

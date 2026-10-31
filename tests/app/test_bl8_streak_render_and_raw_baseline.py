@@ -226,6 +226,8 @@ _LEGACY_NULLS = (
     / "autotune_run_legacy_nulls.json"
 )
 _ROUTE_URL = "/api/autotune-runs"
+# The most cards the list draws (AUTOTUNE_CARD_LIMIT in static/ai_advisor.js).
+_CARD_LIMIT = 12
 _UNREADABLE_BUNDLE_HASH = "f" * 64
 _DECISION_LABEL = {"apply": "Apply", "reject": "Reject", "fallback": "Fallback"}
 
@@ -250,8 +252,16 @@ def _card_for(rows: list[dict], run_id: int):
     """Render the real list once under node and return the card for ``run_id``."""
     row = _row(rows, run_id)
     cards = _cards(render_autotune_list({_ROUTE_URL: rows})[0])
-    assert len(cards) == len(rows), "one card per route row"
-    return cards[rows.index(row)]
+    # A symphony's card shows its newest row; its other rows are older runs, not cards.
+    carded: list[dict] = []
+    seen: set[str] = set()
+    for candidate in rows:
+        if str(candidate["symphony_id"]) not in seen:
+            seen.add(str(candidate["symphony_id"]))
+            carded.append(candidate)
+    assert len(cards) == len(carded) <= _CARD_LIMIT, "one card per symphony"
+    assert row in carded, "the run asked for is its symphony's newest, so it has a card"
+    return cards[carded.index(row)]
 
 
 def _ancestors_within(node, ceiling):

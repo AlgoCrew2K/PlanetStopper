@@ -905,6 +905,19 @@ _TENURE_RENDER_HELPER_FN_NAMES = [
     "_is_whole_number",
 ]
 
+# The Retirement tab's render helpers: the summary tiles, the Overview pointer and the
+# exclusion-reason sentence. Each runs on every AI Advisor page load, is called from
+# ai_advisor_tab() (and, for the sentence, from the excluded-symphony resolver), and none may
+# reach a trade, a draft or a live-execution primitive.
+_RETIREMENT_TILES_HELPER_FN_NAME = "_build_retirement_summary_tiles"
+_RETIREMENT_POINTER_HELPER_FN_NAME = "_build_retirement_pointer"
+_RETIREMENT_EXCLUSION_SENTENCE_FN_NAME = "_retirement_exclusion_reason_sentence"
+_RETIREMENT_TAB_HELPER_FN_NAMES = [
+    _RETIREMENT_TILES_HELPER_FN_NAME,
+    _RETIREMENT_POINTER_HELPER_FN_NAME,
+    _RETIREMENT_EXCLUSION_SENTENCE_FN_NAME,
+]
+
 _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     _RETIREMENT_TICK_WORKER_FN_NAME,
     _RETIREMENT_REUSE_HELPER_FN_NAME,
@@ -913,6 +926,8 @@ _CYCLE_2C_ENTRY_POINT_FN_NAMES = [
     # Cycle 2e:
     _RETIREMENT_RUN_ROUTE_FN_NAME,
     _RETIREMENT_LAST_RUN_FETCH_FN_NAME,
+    # The Retirement tab:
+    *_RETIREMENT_TAB_HELPER_FN_NAMES,
     # Symphony tenure review:
     _TENURE_REVIEW_FETCH_FN_NAME,
     _RETIREMENT_API_ROUTE_FN_NAME,
@@ -2218,13 +2233,26 @@ def _runtime_unlisted_template_helpers(env, baseline_env, app_module) -> list[st
 def _is_the_listed_function(value, app_module) -> bool:
     """True when ``value`` IS the module-level function of app.py that the scan lists under its
     name (the object the static scan reads), not a nested function, a copy or a
-    ``functools.wraps`` look-alike that carries the same name and module."""
+    ``functools.wraps`` look-alike that carries the same name and module.
+
+    One function outside app.py is accepted, by identity: the shared pure formatter
+    ``analytics.format_et_stamp`` (a string in, a string out, no I/O), which the app registers
+    as the ``et_stamp`` filter directly with no wrapper of its own. Any other object, a wrapper
+    of it included, is still reported."""
+    if value is _shared_pure_template_formatter():
+        return True
     return (
         callable(value)
         and getattr(value, "__module__", None) == app_module.__name__
         and getattr(value, "__name__", None) in _CYCLE_2C_ENTRY_POINT_FN_NAMES
         and value is getattr(app_module, value.__name__, None)
     )
+
+
+def _shared_pure_template_formatter():
+    import analytics  # noqa: PLC0415
+
+    return analytics.format_et_stamp
 
 
 def _fresh_flask_app():
@@ -2436,6 +2464,71 @@ class TestEveryTemplateHelperOfTheRunningAppIsAnEntryPointOfTheScan:
         assert sorted(item.split(" ")[0] for item in unlisted) == sorted(
             f"filters:{name}" for name in planted
         ), unlisted
+
+    def test_the_shared_time_formatter_is_registered_as_the_function_itself(self, running_app):
+        """Premise of the identity exception: the app hands the template analytics' own
+        function, not a wrapper in app.py, so the exception names exactly one object."""
+        import analytics  # noqa: PLC0415
+
+        app_module, _ = running_app
+        assert app_module.app.jinja_env.filters["et_stamp"] is analytics.format_et_stamp
+
+    def test_the_shared_time_formatter_under_another_name_is_not_reported(self, running_app):
+        import analytics  # noqa: PLC0415
+
+        app_module, baseline = running_app
+        env = app_module.app.jinja_env
+        env.filters["et_stamp_again"] = analytics.format_et_stamp
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
+        finally:
+            del env.filters["et_stamp_again"]
+        assert unlisted == []
+
+    def test_a_wrapper_of_the_shared_time_formatter_is_reported(self, running_app):
+        """A wrapper wears the formatter's name and module through ``functools.wraps`` and can
+        do anything; only the formatter itself is accepted."""
+        import functools  # noqa: PLC0415
+
+        import analytics  # noqa: PLC0415
+
+        app_module, baseline = running_app
+
+        @functools.wraps(analytics.format_et_stamp)
+        def wrapper(value, **kwargs):
+            return value
+
+        env = app_module.app.jinja_env
+        env.filters["planted_formatter_wrapper"] = wrapper
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
+        finally:
+            del env.filters["planted_formatter_wrapper"]
+        assert len(unlisted) == 1 and unlisted[0].startswith("filters:planted_formatter_wrapper"), (
+            unlisted
+        )
+
+    @pytest.mark.parametrize(
+        "table, name",
+        [(table, "planted_analytics_helper") for table in sorted(_TEMPLATE_REGISTRATION_TABLES)],
+    )
+    def test_any_other_function_of_analytics_is_reported_in_every_table(
+        self, running_app, table, name
+    ):
+        """The exception is one object, not the module: a different analytics function
+        (here its dollar formatter) added to any table is reported like any other helper."""
+        import analytics  # noqa: PLC0415
+
+        app_module, baseline = running_app
+        env = app_module.app.jinja_env
+        other = analytics.format_dollar_saved
+        assert other is not analytics.format_et_stamp, "premise: a different function"
+        getattr(env, table)[name] = other
+        try:
+            unlisted = _runtime_unlisted_template_helpers(env, baseline, app_module)
+        finally:
+            del getattr(env, table)[name]
+        assert len(unlisted) == 1 and unlisted[0].startswith(f"{table}:{name}"), unlisted
 
 
 class TestEveryContextProcessorOfTheRunningAppIsAnEntryPointOfTheScan:
