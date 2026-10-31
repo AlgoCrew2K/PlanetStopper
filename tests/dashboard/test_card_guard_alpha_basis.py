@@ -1,7 +1,7 @@
 """
 RED/regression tests — AC-2 / AC-5 per-card guard-alpha basis consistency (S-1).
 
-DATA-CORRECTNESS-AUDIT S-1: the per-card "saved +X%alpha at exit" verdict reads
+DATA-CORRECTNESS-AUDIT S-1: the per-card "saved +X%alpha" verdict reads
 ``database.get_guard_alpha_by_symphony`` (exit_triggers.at_return - current_return) — a
 THIRD basis unrelated to the hero divergence basis. On the same screen a card could show a
 non-zero guard alpha while the hero shows 0.00%, so "nothing self-reconciles" (the user's
@@ -12,10 +12,12 @@ THE CONTRACT (AC-2/AC-5 — ONE reconciling basis per metric, exit-snapshot disa
     cr_bot/cr_held are the SAME divergence-basis values the hero uses
     (analytics.get_symphony_cumulative_return). So the card cumulative alpha reconciles with
     the hero per-symphony alpha — no third basis for the cumulative number.
-  - The exit-time snapshot (database.get_guard_alpha_by_symphony) is a DIFFERENT, legitimate
-    metric (CR at the exit moment vs the shadow baseline). It must be clearly LABELED
-    "at exit" (data-testid="guard-alpha-at-exit") so it is not read as the cumulative guard
-    alpha — disambiguation, not a third unlabeled number.
+  - The verdict figure (database.get_guard_alpha_by_symphony) is a DIFFERENT, legitimate
+    metric: the latest exit's return minus the symphony's current return. The current return
+    moves every cycle while the market is open, so the figure is NOT fixed at the exit. It must
+    carry a label (data-testid="guard-alpha-basis") that says what it is measured against and
+    never "at exit": "vs held now" while the market is open, "at close" once the close is
+    frozen: disambiguation, not a third unlabeled number.
 
 These assert at the /api/state payload + template-source level (the established dashboard-test
 pattern). The PM owns the LIVE card-vs-hero reconciliation gate.
@@ -155,17 +157,22 @@ class TestCardCumulativeAlphaUsesDivergenceBasis:
 # ---------------------------------------------------------------------------
 
 
-class TestExitSnapshotIsLabeled:
-    def test_template_labels_exit_snapshot_at_exit(self):
-        """The exit-time guard_alpha (from exit_triggers.at_return — a different metric than
-        the cumulative divergence) must carry the 'at exit' disambiguation testid so it is
-        not read as the cumulative guard alpha that the hero shows."""
+class TestVerdictFigureIsLabeled:
+    def test_template_labels_the_verdict_figure_with_its_basis(self):
+        """The verdict guard_alpha (exit_triggers.at_return minus the current return, a
+        different metric than the cumulative divergence) must carry the basis testid so it is
+        not read as the cumulative guard alpha that the hero shows, and never be labelled as
+        fixed at the exit when it moves every cycle."""
         html = _html()
-        assert 'data-testid="guard-alpha-at-exit"' in html, (
-            "AC-2 FAIL: the per-card exit-time guard-alpha verdict has no 'at exit' label "
-            "(data-testid=guard-alpha-at-exit). An unlabeled exit-snapshot alpha sitting next "
+        assert 'data-testid="guard-alpha-basis"' in html, (
+            "AC-2 FAIL: the per-card verdict has no basis label "
+            "(data-testid=guard-alpha-basis). An unlabeled alpha sitting next "
             "to the cumulative cr-alpha-badge reproduces the S-1 'three guard-alpha numbers "
             "that don't reconcile' confusion."
+        )
+        assert "guard-alpha-at-exit" not in html, (
+            "the verdict figure moves with the live held return; labelling it as fixed at "
+            "the exit is untrue"
         )
 
     def test_template_card_has_cr_alpha_badge_field(self):

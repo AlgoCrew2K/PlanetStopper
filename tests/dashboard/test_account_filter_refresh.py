@@ -432,10 +432,11 @@ class TestHeroAndStripCoverEveryAccount:
         with harness.state_api(monkeypatch, fx["bot_state"]) as client:
             everything = _state_body(client)
             picked = _state_body(client, account=first)
-        for key in ("tracked", "armed", "triggered", "portfolio", "triggers_today", "market_state"):
+        for key in ("tracked", "armed", "triggered", "portfolio", "market_state"):
             assert picked["meta"][key] == everything["meta"][key], (
                 f"meta.{key} feeds the hero and must cover all accounts"
             )
+        assert "triggers_today" not in everything["meta"], "no client reads it"
         assert everything["meta"]["tracked"] == len(harness.symphony_entries(fx["bot_state"]))
 
     def test_without_an_account_the_strip_covers_every_symphony(self, fx, monkeypatch):

@@ -156,7 +156,10 @@ class TestPollAfterTheEngineExits:
 
         body = world.poll()
 
-        assert body["symphonies"] == golden["symphonies"]
+        # Every card now also names its account (the frozen cards need it for the account
+        # narrowing); every figure the reference served is unchanged.
+        served = [{k: v for k, v in card.items() if k != "account"} for card in body["symphonies"]]
+        assert served == golden["symphonies"]
         changed = {
             key: (expected, body["portfolio_strip"].get(key))
             for key, expected in golden["portfolio_strip"].items()

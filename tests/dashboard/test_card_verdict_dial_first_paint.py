@@ -33,6 +33,11 @@ from tests.dashboard._first_paint_dom import js_eval, js_to_fixed, run_page
 _DROPLET = pathlib.Path(__file__).parent.parent / "fixtures" / "prod_droplet"
 
 _DASH = "—"
+# The label beside the figure says what the figure is measured against: the exit return minus
+# the symphony's live held return moves every cycle while the market is open; after the close
+# it is fixed on the snapshot.
+_LABEL_OPEN = "vs held now"
+_LABEL_CLOSED = "at close"
 _INVENTED_ACCOUNT = "7e5b2c1a-4d3f-4a86-9b0e-2f6c8d1a3e57"
 
 # Guard-alpha values the server and client must round identically.  The exact binary
@@ -163,11 +168,12 @@ def _page_world(monkeypatch, tmp_path) -> dict:
         _seed_exit_row(sid, at_return=1.0 + ga)
 
     client = _client()
+    # The page is judged in the state its label depends on, not the host's time of day.
+    _market(monkeypatch, "open")
     first = client.get("/")
     assert first.status_code == 200
     html = first.data.decode("utf-8")
 
-    _market(monkeypatch, "open")
     open_resp = client.get("/api/state")
     assert open_resp.status_code == 200
     open_payload = open_resp.get_json()
@@ -222,9 +228,9 @@ def _mags() -> dict:
     return _CACHE["mags"]
 
 
-def _expected_verdict(ga: float) -> str:
+def _expected_verdict(ga: float, label: str = _LABEL_OPEN) -> str:
     lead = "Good call · saved +" if ga > 0 else "Early exit · gave up "
-    return f"{lead}{_mags()[abs(ga)]}%α at exit"
+    return f"{lead}{_mags()[abs(ga)]}%α {label}"
 
 
 def _snapshots(world: dict) -> dict:
@@ -237,6 +243,14 @@ def _snapshots(world: dict) -> dict:
     }
 
 
+_LABEL_AT = {
+    "first paint": _LABEL_OPEN,
+    "open poll": _LABEL_OPEN,
+    "closed poll": _LABEL_CLOSED,
+    "reopened poll": _LABEL_OPEN,
+}
+
+
 def _written(dial: dict) -> dict:
     """The part of a dial both writers own: arc offset and label.  The arc colour a
     refresh writes is the chart cycle's concern; only the server's first-paint colour
@@ -245,9 +259,10 @@ def _written(dial: dict) -> dict:
 
 
 def _assert_qualifier_hidden(card: dict, where: str) -> None:
-    """With no value to qualify, the 'at exit' span exists and is hidden."""
-    assert card["atExit"] is not None, f"{where}: the 'at exit' qualifier element is missing"
-    assert card["atExit"]["hidden"] is True, f"{where}: 'at exit' shown beside no value"
+    """With no value to qualify, the basis label exists and is hidden."""
+    assert card["basis"] is not None, f"{where}: the basis label element is missing"
+    assert card["basis"]["hidden"] is True, f"{where}: a basis label is shown beside no value"
+    assert card["atExit"] is None, f"{where}: the figure is still labelled as at exit"
 
 
 def _expected_dial(mc) -> dict:
@@ -287,7 +302,7 @@ def test_page_load_asks_for_state_so_the_first_paint_comparison_is_meaningful(wo
 
 
 @pytest.mark.parametrize("guard_alpha", _GUARD_ALPHA_FAMILY, ids=lambda g: f"ga{g}")
-def test_first_paint_verdict_follows_the_browsers_rounding_with_the_at_exit_qualifier(
+def test_first_paint_verdict_follows_the_browsers_rounding_with_the_held_now_label(
     world, guard_alpha
 ):
     sid = world["ids"]["guard"][guard_alpha]
@@ -310,7 +325,7 @@ def test_every_triggered_card_marks_its_verdict_text_for_the_client_to_rewrite(w
         verdict = world["polled"]["initial"]["cards"][sid]["verdict"]
         assert verdict["hasVerdictTextEl"] is True, (
             "the verdict text needs its own element so the client rewrites the text "
-            "and leaves the 'at exit' qualifier in place"
+            "and leaves the basis label in place"
         )
 
 
@@ -328,22 +343,25 @@ def test_refreshed_verdict_text_is_identical_to_first_paint_text(world, guard_al
     assert after["text"] == first == _expected_verdict(guard_alpha)
 
 
-def test_verdict_text_never_changes_across_open_closed_and_open_polls(world):
-    """The closed-market body carries no guard alpha; the verdict must survive it."""
-    for entry in (
-        world["closed_payload"].get("bot_state", world["closed_payload"].get("state", {})).values()
-    ):
-        if isinstance(entry, dict) and "name" in entry:
-            assert "guard_alpha" not in entry, (
-                "premise changed: the closed body now carries guard alpha, so this "
-                "test no longer exercises the missing-value poll"
-            )
+def test_closed_body_carries_the_same_guard_alpha_as_the_open_body(world):
+    """The closed-market body states the guard alpha of each triggered card, computed from the
+    snapshot's entry by the rule the open body uses, so a poll after the close has a figure
+    to write and the open and closed figures agree for the same entry."""
+    closed = world["closed_payload"]["bot_state"]
+    for ga, sid in world["ids"]["guard"].items():
+        assert closed[sid].get("guard_alpha") == pytest.approx(ga, abs=1e-9), (sid, ga)
+        assert world["open_payload"]["bot_state"][sid]["guard_alpha"] == pytest.approx(ga, abs=1e-9)
+
+
+def test_verdict_figure_never_changes_across_open_closed_and_open_polls(world):
+    """Only the basis label differs between the open and the closed polls."""
     for ga, sid in world["ids"]["guard"].items():
         texts = {
             label: snap["cards"][sid]["verdict"]["text"]
             for label, snap in _snapshots(world).items()
         }
-        assert set(texts.values()) == {_expected_verdict(ga)}, texts
+        expected = {label: _expected_verdict(ga, _LABEL_AT[label]) for label in texts}
+        assert texts == expected, texts
 
 
 def test_verdict_is_never_replaced_by_the_empty_glyph_by_any_poll(world):
@@ -373,7 +391,7 @@ def test_failed_state_request_leaves_the_server_rendered_dials_in_place(world):
 # ---------------------------------------------------------------------------
 
 
-def test_triggered_card_without_an_exit_row_shows_the_empty_glyph_without_the_qualifier(world):
+def test_triggered_card_without_an_exit_row_shows_the_empty_glyph_without_the_label(world):
     sid = world["ids"]["no_exit_row"]
     for label, snap in _snapshots(world).items():
         card = snap["cards"][sid]
@@ -481,6 +499,7 @@ def test_engine_sentinel_mc_reading_shows_the_dash_on_first_paint(world, label):
 
 def _single_triggered_page(monkeypatch, tmp_path) -> str:
     _network_refused(monkeypatch)
+    _market(monkeypatch, "open")
     monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(tmp_path / "absent.env"))
     sid = _invented_id(1)
     database.save_state({sid: _triggered_state(1)})
@@ -519,18 +538,19 @@ def test_first_paint_reads_the_real_exit_row_without_any_state_poll(monkeypatch,
     assert run["initial"]["cards"][sid]["verdict"]["text"] == _expected_verdict_for(1.25 - 1.0)
 
 
-def _expected_verdict_for(ga: float) -> str:
+def _expected_verdict_for(ga: float, label: str = _LABEL_OPEN) -> str:
     mag = js_to_fixed([abs(ga)], 1)[0]
     lead = "Good call · saved +" if ga > 0 else "Early exit · gave up "
-    return f"{lead}{mag}%α at exit"
+    return f"{lead}{mag}%α {label}"
 
 
-def test_card_that_exits_after_first_paint_shows_its_verdict_and_qualifier_on_the_next_poll(
+def test_card_that_exits_after_first_paint_shows_its_verdict_and_label_on_the_next_poll(
     monkeypatch, tmp_path
 ):
-    """A card painted untriggered (verdict hidden, dash, qualifier hidden) that exits
-    before the next poll gets its verdict text and its 'at exit' qualifier from the poll."""
+    """A card painted untriggered (verdict hidden, dash, label hidden) that exits
+    before the next poll gets its verdict text and its basis label from the poll."""
     _network_refused(monkeypatch)
+    _market(monkeypatch, "open")
     monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(tmp_path / "absent.env"))
     sid = _invented_id(1)
     database.save_state({sid: _untriggered_state(1, 27.5)})
@@ -553,7 +573,8 @@ def test_card_that_exits_after_first_paint_shows_its_verdict_and_qualifier_on_th
     assert before["verdict"]["hidden"] is True
     assert after["verdict"]["hidden"] is False
     assert after["verdict"]["text"] == _expected_verdict_for(0.25)
-    assert after["atExit"]["hidden"] is False
+    assert after["basis"]["hidden"] is False
+    assert after["basis"]["text"] == _LABEL_OPEN
 
 
 # Finite magnitudes far outside the range the browser prints in positional form (below

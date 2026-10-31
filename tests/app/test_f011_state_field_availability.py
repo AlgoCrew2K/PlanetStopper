@@ -1,40 +1,30 @@
 """
-RED/ground-truth tests -- F-011: /api/state's `symphonies` field is genuinely
-absent on the closed/frozen branch, while `state`/`bot_state` are present on
-BOTH branches.
+F-011: /api/state carries `state`/`bot_state` and the `symphonies` card list on every
+branch, and the fields no client reads are not computed.
 
-This is the ROUTE-LEVEL proof the JS fix (static/index.js's updateSectionMeta,
-covered in tests/dashboard/test_display_truth_cluster_js.py) depends on --
-"already works is not evidence" precedent (tests/app/
-test_f7_ac2_poll_path_null_passthrough.py): a source-text pin on the JS alone
-does not prove the field it switches to is actually safe to read on every
-branch. These tests exercise the REAL route, not template logic in isolation.
+History: the closed/frozen branch once emitted `state`/`bot_state` but no `symphonies`, so
+static/index.js's updateSectionMeta read `data.state`/`data.bot_state` (present on both
+branches) instead of `data.symphonies`. These tests exercise the REAL route, not template
+logic in isolation ("already works is not evidence", tests/app/
+test_f7_ac2_poll_path_null_passthrough.py).
 
-Root cause: app.py's closed/frozen branch (~2033-2054) emits
-`"state": _state, "bot_state": _state` but NO `"symphonies"` key at all --
-confirmed against the OPEN-market branch (~2410-2426), which DOES emit
-`"symphonies": _symphonies_for_cards` alongside the same `state`/`bot_state`
-keys. static/index.js's updateSectionMeta currently reads `data.symphonies`
-(absent on the closed branch) instead of `data.state`/`data.bot_state`
-(present on both) -- the section-count badges deterministically read 0
-whenever the market is closed.
-
-BOTH TESTS PASS TODAY (expected -- these are GROUND-TRUTH/precondition pins,
-not RED tests against a bug in app.py). app.py's server-side field shape is
-already correct on both branches; the BUG is entirely client-side (index.js
-reading the wrong field), covered separately and confirmed RED in
-tests/dashboard/test_display_truth_cluster_js.py
-(TestF011SectionBadgesReadRealField). Per the F7 "already works is not
-evidence" precedent (tests/app/test_f7_ac2_poll_path_null_passthrough.py):
-the JS fix's target field must be PROVEN safe via a real route test, not just
-asserted from the audit -- these tests are that proof.
+The closed/frozen branch now also lists its cards (`symphonies`), built from the snapshot's
+entries, so the control case below reverses: `symphonies` is present on every branch and each
+frozen card carries the legs the branch computed for its entry. The same file pins that
+`meta.triggers_today`, which no script reads, is no longer computed, and that every other
+`meta` and top-level field the reference served is still served.
 """
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import patch
 
+import pytest
+
 import app as app_module
+import database as database_module
+from tests.app._refresh_timing_state_world import BRANCHES, load_record, seeded_world
 
 
 class TestOpenMarketStateFieldAvailability:
@@ -88,12 +78,10 @@ class TestOpenMarketStateFieldAvailability:
 
 
 class TestClosedFrozenMarketStateFieldAvailability:
-    """The critical ground-truth pin: on the closed/frozen branch, `symphonies`
-    is genuinely ABSENT while `state`/`bot_state` are present -- proving
-    static/index.js's updateSectionMeta MUST read data.state/data.bot_state,
-    never data.symphonies, to render correctly on both branches."""
+    """On the closed/frozen branch `state`/`bot_state` and the `symphonies` card list are
+    all present, so a reader of either field renders correctly on both branches."""
 
-    def test_closed_frozen_symphonies_key_is_absent(self):
+    def test_closed_frozen_symphonies_list_carries_the_snapshot_entries(self):
         app_module.app.config["TESTING"] = True
         with patch.object(app_module, "database") as db_mock:
             db_mock.load_state.return_value = {
@@ -144,12 +132,20 @@ class TestClosedFrozenMarketStateFieldAvailability:
 
         assert resp.status_code == 200, f"/api/state returned {resp.status_code}"
         body = resp.get_json()
-        assert "symphonies" not in body, (
-            "ground-truth sanity FAIL: 'symphonies' is present on the "
-            "closed/frozen branch in this test's fixture -- either app.py's "
-            "closed-branch response shape changed (update this test), or this "
-            "fixture does not actually exercise the closed/frozen branch."
+        assert body.get("market_state") == "closed_frozen", "fixture must hit the frozen branch"
+        assert isinstance(body.get("symphonies"), list), (
+            "the closed/frozen branch must list its cards: each snapshot entry's status "
+            "and its Today, Cumulative and Max DD legs"
         )
+        assert [card["id"] for card in body["symphonies"]] == ["sym-closed"]
+        card = body["symphonies"][0]
+        leg_keys = ("tc_bot", "tc_held", "cr_bot", "cr_held", "mdd_bot", "mdd_held")
+        assert all(key in card for key in leg_keys), sorted(card)
+        entry = body["bot_state"]["sym-closed"]
+        assert card["status"] == "armed"
+        assert card["tc_bot"] == entry["_tc"]["dry_run"], "the card reads the entry's legs"
+        assert card["cr_held"] == entry["_cr"]["if_held"]
+        assert card["mdd_bot"] == entry["_mdd"]["dry_run"]
         assert "state" in body and "bot_state" in body, (
             "F-011 FAIL (ground truth): 'state'/'bot_state' are missing on the "
             "closed/frozen branch -- static/index.js's updateSectionMeta cannot "
@@ -161,3 +157,91 @@ class TestClosedFrozenMarketStateFieldAvailability:
             "dict (keyed by symphony id) -- the shape updateSectionMeta's "
             "armed/tp_armed/para_armed/triggered filter needs."
         )
+
+
+# ---------------------------------------------------------------------------
+# The fields no client reads are not computed; every other field is still served
+# ---------------------------------------------------------------------------
+
+
+class TestTriggersTodayIsNotComputed:
+    """`meta.triggers_today` fed only a status strip no template contains. It is gone, and the
+    exit-trigger query that built it is not run for it on any branch."""
+
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_meta_has_no_triggers_today_and_the_meta_query_is_not_run(
+        self, monkeypatch, tmp_path, branch
+    ):
+        world = seeded_world(monkeypatch, tmp_path, branch)
+        callers = _spy_on_trigger_reads(monkeypatch)
+
+        body = world.poll()
+
+        assert "triggers_today" not in body["meta"]
+        assert "_build_meta" not in callers, (
+            "the exit-trigger read for the removed field still runs in _build_meta"
+        )
+
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_the_page_render_does_not_run_the_query_either(self, monkeypatch, tmp_path, branch):
+        world = seeded_world(monkeypatch, tmp_path, branch)
+        callers = _spy_on_trigger_reads(monkeypatch)
+
+        world.page()
+
+        assert "_build_meta" not in callers
+
+
+class TestEveryOtherFieldIsStillServed:
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_reference_top_level_and_meta_fields_are_all_present(
+        self, monkeypatch, tmp_path, branch
+    ):
+        golden = load_record(f"golden_ref_api_state_{branch}.json")
+        world = seeded_world(monkeypatch, tmp_path, branch)
+
+        body = world.poll()
+
+        assert set(golden) - set(body) == set(), "a top-level field the reference served is gone"
+        assert set(golden["meta"]) - {"triggers_today"} <= set(body["meta"]), (
+            "a meta field other than triggers_today is gone"
+        )
+
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_documented_fields_no_script_reads_are_still_served(
+        self, monkeypatch, tmp_path, branch
+    ):
+        world = seeded_world(monkeypatch, tmp_path, branch)
+
+        body = world.poll()
+
+        assert isinstance(body.get("html"), str) or branch != "open", "html"
+        for key in ("shadow_divergence", "port_state", "exit_authority"):
+            assert key in body, key
+        if branch == "open":
+            assert "execution_start_time" in body
+        else:
+            assert "accounts_map" in body
+
+    @pytest.mark.parametrize("branch", BRANCHES)
+    def test_stable_meta_values_equal_the_reference(self, monkeypatch, tmp_path, branch):
+        golden = load_record(f"golden_ref_api_state_{branch}.json")["meta"]
+        world = seeded_world(monkeypatch, tmp_path, branch)
+
+        body = world.poll()
+
+        for key in ("tracked", "armed", "triggered", "market_state", "market_state_label", "mode"):
+            assert body["meta"][key] == golden[key], key
+
+
+def _spy_on_trigger_reads(monkeypatch) -> list[str]:
+    """Record the function that calls `database.get_triggers` (the real read still runs)."""
+    callers: list[str] = []
+    real = database_module.get_triggers
+
+    def spy(*args, **kwargs):
+        callers.append(sys._getframe(1).f_code.co_name)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(database_module, "get_triggers", spy)
+    return callers

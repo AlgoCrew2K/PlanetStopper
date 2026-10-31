@@ -457,6 +457,7 @@ function observe() {
     const id = card.getAttribute('data-sym-id');
     const v = card.querySelector('[data-testid="triggered-verdict"]');
     const ae = card.querySelector('[data-testid="guard-alpha-at-exit"]');
+    const be = card.querySelector('[data-testid="guard-alpha-basis"]');
     const dial = card.querySelector('[data-testid="mc-dial"]');
     const arc = dial && dial.querySelector('.mc-arc');
     const txt = dial && dial.querySelector('.mc-text');
@@ -467,6 +468,7 @@ function observe() {
         hasVerdictTextEl: !!v.querySelector('[data-field="verdict-text"]'),
       },
       atExit: ae && { hidden: isHidden(ae), text: norm(ae.textContent) },
+      basis: be && { hidden: isHidden(be), text: norm(be.textContent) },
       dial: dial && {
         offset: arc ? arc.getAttribute('stroke-dashoffset') : null,
         stroke: arc ? arc.style.stroke.replace(/\s+/g, '') : null,
