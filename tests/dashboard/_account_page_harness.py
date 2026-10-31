@@ -566,9 +566,9 @@ globalThis.fetch = function (url, opts) {
       const entry = {
         url: u,
         settled: false,
-        release: function (override) {
+        release: function (override, status) {
           settle();
-          resolve(respond(override !== undefined ? override : route, 200));
+          resolve(respond(override !== undefined ? override : route, status || 200));
         },
         fail: function () { settle(); reject(new TypeError('network failure')); }
       };
@@ -621,9 +621,9 @@ const H = {
   },
   deferState: function (on) { deferring = !!on; },
   deferredUrls: function () { return deferred.map(function (d) { return d.url; }); },
-  release: function (index, body) {
+  release: function (index, body, status) {
     if (!deferred[index]) throw new Error('no deferred state request #' + index);
-    deferred[index].release(body);
+    deferred[index].release(body, status);
   },
   fail: function (index) {
     if (!deferred[index]) throw new Error('no deferred state request #' + index);
