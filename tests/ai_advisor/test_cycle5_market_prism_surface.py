@@ -39,7 +39,9 @@ Adversarial RED intent:
 
 from __future__ import annotations
 
+import json
 import pathlib
+import re
 import subprocess
 import sys
 from unittest.mock import MagicMock
@@ -229,10 +231,11 @@ def test_market_prism_block_present_when_summary_available(client, monkeypatch):
         "Template must render raw_response['sentiment_rationale']."
     )
 
-    # created_at (as-of) must appear somewhere in the block.
-    assert "2026-06-13" in html, (
-        "created_at timestamp must appear in the Market Prism block as the as-of date. "
-        "The route must pass created_at to the template."
+    # created_at (as-of) must appear in the block, read as a UTC stamp and shown in ET:
+    # 2026-06-13T03:17:00 UTC is 2026-06-12 23:17 in New York (summer time, UTC-4).
+    assert "As of 2026-06-12 23:17 ET" in html, (
+        "created_at must appear in the Market Prism block as the as-of time in ET. "
+        "The route must pass created_at to the template and the template must format it."
     )
 
 
@@ -708,3 +711,78 @@ def test_market_prism_block_marked_advisory_only(client, monkeypatch):
         "e.g., data-testid='market-prism-block' or class='market-prism-*'. "
         "This enables the ux-expert visual gate to locate the block."
     )
+
+
+# ===========================================================================
+# The as-of stamp names its zone (a stored zone-less UTC stamp shows in ET)
+# ===========================================================================
+
+_TIME_VALUES = json.loads(
+    (
+        _WORKTREE / "tests" / "fixtures" / "ai_advisor" / "ux_overhaul_02" / "time_values.json"
+    ).read_text(encoding="utf-8")
+)
+_DASH = "\u2014"  # the missing-value character the page prints
+
+
+def _prism_with_created_at(created_at):
+    summary = json.loads(json.dumps(_FULL_PRISM_SUMMARY))
+    summary["created_at"] = created_at
+    return summary
+
+
+def _as_of_text(html: str) -> str:
+    match = re.search(r'data-testid="prism-as-of"[^>]*>(.*?)</span>', html, re.DOTALL)
+    assert match, "the Market Prism block shows no as-of stamp"
+    return " ".join(match.group(1).split())
+
+
+def test_the_prism_as_of_reads_the_stored_utc_stamp_in_et(client, monkeypatch):
+    # prism_created_at is a stored SQLite datetime('now') text with no zone marker, read as UTC:
+    # 2026-06-18 09:03:18 UTC is 05:03 in New York (summer time, UTC-4).
+    _mock_advisory_side_effects(
+        monkeypatch, _prism_with_created_at(_TIME_VALUES["prism_created_at"])
+    )
+    html = client.get("/ai-advisor").get_data(as_text=True)
+    assert _as_of_text(html) == "As of 2026-06-18 05:03 ET"
+    assert "09:03:18" not in html.split('data-testid="prism-as-of"', 1)[1].split("</span>", 1)[0]
+
+
+def test_the_prism_as_of_shows_no_fraction_for_a_fractional_stamp(client, monkeypatch):
+    _mock_advisory_side_effects(
+        monkeypatch, _prism_with_created_at(_TIME_VALUES["autotune_run_timestamp"])
+    )
+    html = client.get("/ai-advisor").get_data(as_text=True)
+    assert _as_of_text(html) == "As of 2026-10-16 21:08 ET"
+
+
+@pytest.mark.parametrize("created_at", [None, "", "yesterday afternoon", "2026-13-45 99:99:99"])
+def test_the_prism_as_of_shows_the_dash_for_a_missing_or_unreadable_stamp(
+    client, monkeypatch, created_at
+):
+    _mock_advisory_side_effects(monkeypatch, _prism_with_created_at(created_at))
+    html = client.get("/ai-advisor").get_data(as_text=True)
+    text = _as_of_text(html)
+    assert _DASH in text
+    if created_at:
+        assert created_at not in text
+
+
+def test_rendering_the_page_leaves_the_stored_prism_row_unchanged(client):
+    import database
+
+    database.insert_advisor_observation(
+        advisor_role="MARKET_PRISM",
+        subject_type="fleet",
+        subject_id="market",
+        verdict="neutral",
+        raw_response=_FULL_PRISM_SUMMARY["raw_response"],
+    )
+    before = database.get_latest_market_prism_summary()
+    assert before is not None
+    resp = client.get("/ai-advisor")
+    assert resp.status_code == 200
+    after = database.get_latest_market_prism_summary()
+    assert after == before, "formatting the stamp for display must not change what is stored"
+    assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", after["created_at"])
+    assert "ET" not in after["created_at"]

@@ -1004,3 +1004,80 @@ def test_null_url_in_article_corpus_does_not_crash_and_renders_citation_card(cli
         "url=None entry must render as prism-source-card--citation "
         "(non-clickable fallback), not as an anchor card."
     )
+
+
+# ===========================================================================
+# Source publish times name their zone (or print their date only)
+#
+# A source card prints the time its feed supplied. A feed time with no zone marker is read as
+# a date only; a time with a zone shows its date and time in ET; an unreadable time shows the
+# missing-value character, never the raw text. Values are the producers' own output:
+# tests/fixtures/ai_advisor/ux_overhaul_02/PROVENANCE.md.
+# ===========================================================================
+
+
+def _publish_values() -> dict:
+    import json
+
+    return json.loads(
+        (
+            _WORKTREE / "tests" / "fixtures" / "ai_advisor" / "ux_overhaul_02" / "time_values.json"
+        ).read_text(encoding="utf-8")
+    )
+
+
+def _summary_with_published(published_values: list) -> dict:
+    articles = [
+        {"url": f"https://example.com/article-{i}", "title": f"Title {i}", "published": value}
+        for i, value in enumerate(published_values)
+    ]
+    summary = dict(_SUMMARY_WITH_CORPUS)
+    raw = dict(summary["raw_response"])
+    digest = {k: dict(v) for k, v in raw["per_lens_digest"].items()}
+    digest["technicals"]["article_corpus"] = articles
+    raw["per_lens_digest"] = digest
+    summary["raw_response"] = raw
+    return summary
+
+
+def _card_meta(html: str) -> list[str]:
+    cards = re.findall(
+        r'<a class="prism-source-card"[^>]*>(.*?)</a>',
+        html,
+        flags=re.DOTALL,
+    )
+    metas = []
+    for card in cards:
+        match = re.search(r'class="prism-source-meta">(.*?)</span>', card, flags=re.DOTALL)
+        metas.append(" ".join(match.group(1).split()) if match else "")
+    return metas
+
+
+def test_a_feed_time_without_a_zone_shows_its_date_only(client, monkeypatch):
+    values = _publish_values()
+    _mock_route_helpers(monkeypatch, _summary_with_published([values["rss_published"]]))
+    html = client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    assert _card_meta(html) == [values["rss_published"][:10]]
+
+
+def test_a_feed_time_with_a_zone_shows_date_and_time_in_et(client, monkeypatch):
+    values = _publish_values()
+    # GDELT's seendate is 2026-06-18 12:00:00 UTC, which is 08:00 in New York (summer time, UTC-4).
+    _mock_route_helpers(monkeypatch, _summary_with_published([values["gdelt_seendate"]]))
+    html = client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    assert _card_meta(html) == ["2026-06-18 08:00 ET"]
+    assert values["gdelt_seendate"] not in html.split("prism-sources-carousel", 1)[1]
+
+
+def test_a_calendar_date_is_printed_as_stored(client, monkeypatch):
+    _mock_route_helpers(monkeypatch, _summary_with_published(["2026-06-28"]))
+    html = client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    assert _card_meta(html) == ["2026-06-28"]
+
+
+@pytest.mark.parametrize("raw", ["sometime last week", "2026-13-45T99:99:99Z"])
+def test_an_unreadable_feed_time_shows_the_dash_never_the_raw_text(client, monkeypatch, raw):
+    _mock_route_helpers(monkeypatch, _summary_with_published([raw]))
+    html = client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    assert _card_meta(html) == ["\u2014"]
+    assert raw not in html

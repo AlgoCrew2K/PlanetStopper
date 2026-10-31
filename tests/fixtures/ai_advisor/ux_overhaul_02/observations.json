@@ -1,0 +1,120 @@
+{
+  "_what": "Cases of advisor_observations rows the Advisor page's observation status lines distinguish. Each case names its source record and the fields changed; tests/_advisor_observation_records.py builds the row and writes it through database.insert_advisor_observation. No row is typed here: see PROVENANCE.md (Observation cases).",
+  "guardrail_clear": {
+    "source": {
+      "file": "tests/fixtures/ai_advisor/advisor_observations_shape.json",
+      "example_row_index": 0
+    },
+    "changes": {}
+  },
+  "guardrail_watch": {
+    "source": {
+      "file": "tests/fixtures/ai_advisor/advisor_observations_shape.json",
+      "example_row_index": 1
+    },
+    "changes": {}
+  },
+  "feature_off_stub_under_a_shown_role": {
+    "source": {
+      "producer": "advisors.divergence_explainer.compute_divergence_explainer_observation",
+      "inputs": "({'id': 7}, None, second_window_enabled=False)"
+    },
+    "changes": {
+      "advisor_role": "OVERFITTING_CONSCIENCE"
+    }
+  },
+  "empty_verdict": {
+    "source": {
+      "case": "guardrail_watch"
+    },
+    "changes": {
+      "verdict": ""
+    }
+  },
+  "null_verdict": {
+    "source": {
+      "case": "guardrail_watch"
+    },
+    "changes": {
+      "verdict": null
+    }
+  },
+  "markup_verdict": {
+    "source": {
+      "case": "guardrail_watch"
+    },
+    "changes": {
+      "verdict": "<script>alert(1)</script>"
+    }
+  },
+  "add_candidate_role": {
+    "source": {
+      "case": "guardrail_clear"
+    },
+    "changes": {
+      "advisor_role": "ADD_CANDIDATE"
+    }
+  },
+  "feature_off_stub": {
+    "source": {
+      "producer": "advisors.divergence_explainer.compute_divergence_explainer_observation",
+      "inputs": "({'id': 7}, None, second_window_enabled=False)"
+    },
+    "changes": {}
+  },
+  "non_json_raw_response": {
+    "source": {
+      "case": "guardrail_clear"
+    },
+    "changes": {
+      "raw_response": "not json at all"
+    }
+  },
+  "json_array_raw_response": {
+    "source": {
+      "case": "guardrail_clear"
+    },
+    "changes": {
+      "raw_response": "[1, 2]"
+    }
+  },
+  "feature_flag_on_stub": {
+    "source": {
+      "case": "feature_off_stub"
+    },
+    "changes": {
+      "raw_response": {
+        "feature_flag": "on"
+      }
+    }
+  },
+  "stub_without_flag": {
+    "source": {
+      "case": "feature_off_stub"
+    },
+    "changes": {
+      "raw_response": {}
+    }
+  },
+  "real_verdict_with_flag_off": {
+    "source": {
+      "case": "guardrail_clear"
+    },
+    "changes": {
+      "raw_response": {
+        "feature_flag": "off"
+      }
+    }
+  },
+  "null_verdict_with_flag_off": {
+    "source": {
+      "case": "guardrail_watch"
+    },
+    "changes": {
+      "verdict": null,
+      "raw_response": {
+        "feature_flag": "off"
+      }
+    }
+  }
+}

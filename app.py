@@ -97,6 +97,11 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
+# The one operator-facing time form, 'YYYY-MM-DD HH:MM ET': templates print a stored
+# time through this filter, never by slicing its text. {{ v | et_stamp }},
+# {{ v | et_stamp(date_only=True) }}, {{ v | et_stamp(naive_is_utc=False) }}.
+app.add_template_filter(analytics.format_et_stamp, name="et_stamp")
+
 # ---------------------------------------------------------------------------
 # Session cookie hardening (AC-10)
 # ---------------------------------------------------------------------------
@@ -5377,18 +5382,186 @@ def _fetch_retirement_last_run() -> dict | None:
     return raw if isinstance(raw, dict) else None
 
 
+# What the Retirement tab prints for a value its summary does not carry: never 0.
+_RETIREMENT_MISSING_TEXT = "—"
+
+
+def _retirement_exclusion_reason_sentence(reason: object) -> str:
+    """The sentence the Retirement tab prints for why a symphony was left out of a run.
+
+    `reason` is the literal advisors.retirement_recommender stored in the run summary;
+    its literals are read from that module (a lazy import) so there is one spelling of
+    each. A reason the mapping does not know reads "Excluded: <reason>" (the text is
+    autoescaped where it is rendered); an empty or non-text reason reads "Reason not
+    recorded." Never raises.
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        return "Reason not recorded."
+    try:
+        from advisors import retirement_recommender as _rr  # noqa: PLC0415 -- CC-2 lazy
+
+        fetch_prefix = _rr._REASON_FETCH_ERROR_PREFIX
+        if reason == _rr._REASON_NO_ACCOUNT:
+            return "No Composer account is recorded for this symphony."
+        if reason == _rr._REASON_SERIES_TOO_SHORT:
+            return "Its Composer series has fewer than 2 daily returns."
+        if reason == _rr._REASON_SHADOW_UNAVAILABLE:
+            return "No shadow history is available for it."
+        if reason.startswith(fetch_prefix):
+            code = reason[len(fetch_prefix) :].strip()
+            if code:
+                return f"Its Composer series could not be fetched ({code})."
+            return "Its Composer series could not be fetched."
+    except Exception:
+        pass
+    return f"Excluded: {reason}"
+
+
+def _retirement_summary_count(value: object) -> int | None:
+    """A stored count as an int, or None when it is absent or not a whole number."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _retirement_summary_count_text(value: object) -> str:
+    count = _retirement_summary_count(value)
+    return str(count) if count is not None else _RETIREMENT_MISSING_TEXT
+
+
+def _build_retirement_summary_tiles(last_run: object) -> list[dict]:
+    """The five stat tiles of a status "ok" run summary, in display order.
+
+    Each tile is {"label", "value", "detail"} (all text; detail None when there is none).
+    Every value is derived from the summary's own keys, the screen threshold and the
+    stress-gate minimum included; a key that is absent or null makes its tile's value
+    the dash, never 0, and the Blocked total is the dash when any of its four gate
+    counts is missing. Any other status (or no summary) has no tiles. Pure: reads
+    `last_run`, changes nothing.
+    """
+    if not isinstance(last_run, dict) or last_run.get("status") != "ok":
+        return []
+    missing = _RETIREMENT_MISSING_TEXT
+
+    def pair_text(first_key: str, second_key: str, template: str) -> str:
+        first = _retirement_summary_count(last_run.get(first_key))
+        second = _retirement_summary_count(last_run.get(second_key))
+        if first is None or second is None:
+            return missing
+        return template.format(first, second)
+
+    threshold = last_run.get("screen_threshold")
+    threshold_ok = isinstance(threshold, (int, float)) and not isinstance(threshold, bool)
+    threshold_ok = threshold_ok and math.isfinite(threshold)
+    pairs_label = f"Pairs screened at {threshold} or above" if threshold_ok else "Pairs screened"
+
+    gate_keys = (
+        ("uncertainty", "blocked_uncertainty"),
+        ("too thin", "blocked_stress_too_thin"),
+        ("below threshold", "blocked_stress_below_threshold"),
+        ("no candidate", "blocked_no_candidate"),
+    )
+    gates = [_retirement_summary_count(last_run.get(key)) for _words, key in gate_keys]
+    blocked_total = missing if any(g is None for g in gates) else str(sum(gates))
+    blocked_detail = ", ".join(
+        f"{words} {_retirement_summary_count_text(last_run.get(key))}" for words, key in gate_keys
+    )
+    too_thin = _retirement_summary_count(last_run.get("blocked_stress_too_thin"))
+    if too_thin is not None and too_thin > 0:
+        blocked_detail += (
+            ". Stress window needs at least "
+            f"{_retirement_summary_count_text(last_run.get('stress_gate_min_aligned_days'))}"
+            " aligned days."
+        )
+
+    return [
+        {
+            "label": "Analysed",
+            "value": pair_text("symphonies_with_series", "roster_size", "{} of {}"),
+            "detail": None,
+        },
+        {
+            "label": "History",
+            "value": pair_text("series_days_min", "series_days_max", "{} to {} days"),
+            "detail": None,
+        },
+        {
+            "label": pairs_label,
+            "value": pair_text("pairs_screened", "pairs_evaluated", "{} of {}"),
+            "detail": None,
+        },
+        {"label": "Blocked", "value": blocked_total, "detail": blocked_detail},
+        {
+            "label": "Recommendations",
+            "value": _retirement_summary_count_text(last_run.get("recommendations")),
+            "detail": None,
+        },
+    ]
+
+
+def _build_retirement_pointer(
+    last_run: object, recommendations: object, review_entries: object = ()
+) -> dict:
+    """The one line on the Overview that points at the Retirement tab: {"text": ...}.
+
+    Never run: "Retirement: not run yet". A good run: its Eastern time, its recommendation
+    count and how many decisions are still pending. A run that did not finish names its
+    state (the status, underscores as spaces) and its time. Pending counts every decision
+    that waits: recommender cards whose approval_status is "pending" plus the tenure
+    review's retire candidates with no decision yet or a pending one; an approved or
+    rejected item, and a review entry that is not a retire candidate, do not count. Pure:
+    reads only what the page already holds, issues no request.
+    """
+    if not isinstance(last_run, dict):
+        return {"text": "Retirement: not run yet"}
+    stamp = analytics.format_et_stamp(last_run.get("run_at"))
+    status = last_run.get("status")
+    if status != "ok":
+        state = (
+            status.replace("_", " ") if isinstance(status, str) and status.strip() else "unknown"
+        )
+        return {"text": f"Retirement: last run {state}, {stamp}"}
+    pending = sum(
+        1
+        for rec in (recommendations if isinstance(recommendations, (list, tuple)) else ())
+        if isinstance(rec, dict) and rec.get("approval_status") == "pending"
+    )
+    pending += sum(
+        1
+        for entry in (review_entries if isinstance(review_entries, (list, tuple)) else ())
+        if isinstance(entry, dict)
+        and entry.get("verdict") == "retire_candidate"
+        and entry.get("approval_status") in (None, "pending")
+    )
+    count = _retirement_summary_count(last_run.get("recommendations"))
+    noun = "recommendation" if count == 1 else "recommendations"
+    return {
+        "text": (
+            f"Retirement: last run {stamp}, "
+            f"{_retirement_summary_count_text(last_run.get('recommendations'))} {noun}, "
+            f"{pending} pending"
+        )
+    }
+
+
 def _retirement_resolve_excluded_symphonies(
     last_run: dict | None, bot_state_getter: Callable[[], dict]
 ) -> list[dict]:
-    """Return [{"symphony_id", "name", "reason"}, ...] for the "excluded from
-    this run" list of the panel's last-run block (Cycle 2e, AC-6).
+    """Return [{"symphony_id", "name", "reason", "reason_text"}, ...] for the
+    "excluded from this run" list of the panel's last-run block (Cycle 2e, AC-6).
 
     `last_run["symphonies_without_series"]` carries Composer hashes; the panel
     shows the operator's display name with the hash as the honest fallback for
     a symphony no longer in bot_state, resolved through the same shared
     advisors.frontrunner_builder.resolve_incumbent_display_name helper the
-    recommendation cards use. `reason` is passed through verbatim (the template
-    autoescapes it). bot_state is read through `bot_state_getter` only when
+    recommendation cards use. `reason` is passed through verbatim and
+    `reason_text` is the sentence for it (_retirement_exclusion_reason_sentence);
+    the template prints `reason_text` and autoescapes it. The stored summary is
+    never changed. bot_state is read through `bot_state_getter` only when
     there is something to resolve, so a run that excluded nothing costs no
     load_state(). Malformed entries are skipped; never raises (any failure
     degrades to []).
@@ -5417,11 +5590,13 @@ def _retirement_resolve_excluded_symphonies(
                 if isinstance(resolved, str) and resolved:
                     name = resolved
             reason = entry.get("reason")
+            reason = reason if isinstance(reason, str) else ""
             excluded.append(
                 {
                     "symphony_id": symphony_id,
                     "name": name,
-                    "reason": reason if isinstance(reason, str) else "",
+                    "reason": reason,
+                    "reason_text": _retirement_exclusion_reason_sentence(reason),
                 }
             )
         return excluded
@@ -5617,17 +5792,12 @@ def _fetch_retirement_recommendations(
 
 def _format_eastern_run_time(completed_at: object) -> str | None:
     """Return completed_at as "YYYY-MM-DD HH:MM" US Eastern, or None when it is not a
-    readable ISO timestamp. A stamp without an offset is read as UTC, the zone the
+    readable instant. Read through analytics.format_et_stamp, the one conversion of a
+    stored time to Eastern; a stamp without an offset is read as UTC, the zone the
     review stores. Never raises."""
-    if not isinstance(completed_at, str):
-        return None
-    try:
-        moment = datetime.fromisoformat(completed_at)
-        if moment.tzinfo is None:
-            moment = moment.replace(tzinfo=UTC)
-        return _eastern_stamp(moment)
-    except (ValueError, OverflowError):
-        return None
+    stamp = analytics.format_et_stamp(completed_at)
+    suffix = analytics.ET_STAMP_SUFFIX
+    return stamp[: -len(suffix)] if stamp.endswith(suffix) else None
 
 
 _NOT_RECORDED_TEXT = "not recorded"
@@ -7853,7 +8023,10 @@ def ai_advisor_tab():
     server-side render.  Tab switching is handled in-place by JS (no navigation).
 
     Template context:
-      observations       — advisor_observations rows for the Overview panel
+      observation_groups — per-producer status lines for the Overview panel, each
+                           {role, total, rows}: the newest kept rows (at most 50,
+                           newest first) and the producer's whole kept-row count
+      observations_unavailable — True when the observation read failed
       correlation_matrix — PairResult list for the Correlations panel
       as_of              — ISO timestamp for the matrix
       crisis_caveat      — instability warning string
@@ -7865,40 +8038,21 @@ def ai_advisor_tab():
     # ------------------------------------------------------------------ #
     # Overview panel: advisor observations                                  #
     # ------------------------------------------------------------------ #
-    observations: list[dict] = []
-    for role in _ADVISOR_ROLES:
-        observations.extend(
-            database.get_advisor_observations_for_role(role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT)
-        )
-    seen: set = set()
-    deduped_obs: list[dict] = []
-    for obs in observations:
-        if obs["id"] not in seen:
-            seen.add(obs["id"])
-            deduped_obs.append(obs)
-    # Suppress pure feature-off stubs (NOT_APPLICABLE / feature_flag=off).
-    deduped_obs = [
-        obs
-        for obs in deduped_obs
-        if not (
-            obs.get("verdict") == "NOT_APPLICABLE"
-            and isinstance(obs.get("raw_response"), dict)
-            and obs["raw_response"].get("feature_flag") == "off"
-        )
-    ]
-    observations = deduped_obs[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
-
-    # Stamp _preview_text onto each non-MARKET_PRISM observation so the template
-    # can render a concise human-readable cell without dumping raw JSON.
-    # MARKET_PRISM rows are handled separately (show verdict only).
+    # One status line per producer with its history behind a closed expander. A
+    # failed read shows the unavailable text in place of the lines; it never takes
+    # the rest of the page down and never reads as an empty history.
+    observation_groups: list[dict] = []
+    observations_unavailable = False
     try:
-        from advisors.prism_render import humanize_obs_preview as _humanize_obs  # noqa: PLC0415
-
-        for _obs in observations:
-            if _obs.get("advisor_role") != "MARKET_PRISM":
-                _obs["_preview_text"] = _humanize_obs(_obs.get("raw_response"))
-    except Exception:
-        pass  # Humanization failure must never crash the route.
+        observation_groups = _build_advisor_observation_groups()
+    except Exception as exc:
+        observation_groups = []
+        observations_unavailable = True
+        logging.getLogger(__name__).warning(
+            "advisor observations unavailable: %s", type(exc).__name__
+        )
+    # Every listed row, flat, for the display-name stamp below.
+    observations: list[dict] = [row for group in observation_groups for row in group["rows"]]
 
     # ------------------------------------------------------------------ #
     # Correlations panel: pairwise return matrix                           #
@@ -8362,6 +8516,14 @@ def ai_advisor_tab():
             except Exception:
                 _target["_checklist"] = None
 
+    # The Retirement tab's stat tiles (an "ok" run only) and the Overview's one-line
+    # pointer. Both are built from the run, cards and review entries read above, so the
+    # page makes no read of its own for them.
+    retirement_summary_tiles = _build_retirement_summary_tiles(retirement_last_run)
+    retirement_pointer = _build_retirement_pointer(
+        retirement_last_run, retirement_recommendations, tenure_review_entries
+    )
+
     # ------------------------------------------------------------------ #
     # Frontrunner Builder panel: prefetch pending frontrunner_proposals    #
     # rows (AC-9-route). Shared by both proposal_source values             #
@@ -8454,7 +8616,8 @@ def ai_advisor_tab():
         "ai_advisor.html",
         active_route="advisor",
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        observations=observations,
+        observation_groups=observation_groups,
+        observations_unavailable=observations_unavailable,
         correlation_matrix=correlation_matrix,
         as_of=datetime.now(_ET).isoformat(),
         crisis_caveat=crisis_caveat,
@@ -8473,6 +8636,8 @@ def ai_advisor_tab():
         retirement_last_run=retirement_last_run,
         retirement_cards_run=retirement_cards_run,
         retirement_last_run_excluded=retirement_last_run_excluded,
+        retirement_summary_tiles=retirement_summary_tiles,
+        retirement_pointer=retirement_pointer,
         tenure_review=tenure_review_run,
         tenure_review_entries=tenure_review_entries,
         tenure_review_status=tenure_review_status,
@@ -10206,6 +10371,81 @@ _ADVISOR_ROLES = [
 
 # Hard limit on observations returned per request — prevents unbounded UI renders.
 _ADVISOR_OBSERVATIONS_PAGE_LIMIT = 50
+
+
+def _is_feature_off_stub(obs: dict) -> bool:
+    """Whether an advisor_observations row is a pure feature-off stub.
+
+    The rule the AI Advisor page leaves such rows out by, and the rule
+    ``database.count_advisor_observations_by_role`` counts by: verdict
+    NOT_APPLICABLE and a raw_response that is a dict with ``feature_flag`` "off".
+    """
+    raw = obs.get("raw_response")
+    return (
+        obs.get("verdict") == "NOT_APPLICABLE"
+        and isinstance(raw, dict)
+        and raw.get("feature_flag") == "off"
+    )
+
+
+# The preview text of a row whose stored raw_response is not JSON (see
+# database._parse_advisor_observation_row): the row is listed, and says so.
+_OBSERVATION_UNREADABLE_TEXT = "Stored record could not be read."
+
+
+def _build_advisor_observation_groups() -> list[dict]:
+    """Per-producer observation groups for the AI Advisor Overview.
+
+    One group per role in ``_ADVISOR_ROLES`` that has at least one kept row, in that
+    order: ``{"role", "total", "rows"}``. ``rows`` are the role's newest
+    ``_ADVISOR_OBSERVATIONS_PAGE_LIMIT`` rows, newest first, feature-off stubs left out
+    (a row listed under an earlier role is not listed again). ``total`` is the role's
+    whole kept-row count from ``database.count_advisor_observations_by_role``, never
+    lower than the rows listed. Each row not from MARKET_PRISM gains ``_preview_text``
+    (the humanised raw_response, or the unreadable text for a row whose stored
+    raw_response is not JSON).
+
+    Raises whatever the database reads raise; the caller shows the unavailable text.
+    """
+    per_role = [
+        (
+            role,
+            database.get_advisor_observations_for_role(
+                role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+            ),
+        )
+        for role in _ADVISOR_ROLES
+    ]
+    counts = database.count_advisor_observations_by_role(_ADVISOR_ROLES)
+
+    try:
+        from advisors.prism_render import humanize_obs_preview as _humanize_obs  # noqa: PLC0415
+    except Exception:
+        _humanize_obs = None  # Humanization failure must never crash the route.
+
+    seen: set = set()
+    groups: list[dict] = []
+    for role, role_rows in per_role:
+        kept: list[dict] = []
+        for obs in role_rows:
+            if obs["id"] in seen or _is_feature_off_stub(obs):
+                continue
+            seen.add(obs["id"])
+            kept.append(obs)
+        if not kept:
+            continue
+        for obs in kept:
+            if obs.get("advisor_role") == "MARKET_PRISM":
+                continue
+            if obs.get("raw_response_unreadable"):
+                obs["_preview_text"] = _OBSERVATION_UNREADABLE_TEXT
+            elif _humanize_obs is not None:
+                try:
+                    obs["_preview_text"] = _humanize_obs(obs.get("raw_response"))
+                except Exception:
+                    pass  # The cell then reads blank; the row still renders.
+        groups.append({"role": role, "total": max(counts.get(role, 0), len(kept)), "rows": kept})
+    return groups
 
 
 @app.route("/api/advisor-observations", methods=["GET"])

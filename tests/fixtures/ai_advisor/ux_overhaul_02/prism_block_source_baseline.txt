@@ -1,0 +1,193 @@
+<div data-testid="market-prism-block" class="prism-block">
+{# Determine the sentiment value and CSS modifier once for the block #}
+{% if market_prism_summary %}
+{% set _raw = market_prism_summary.get('raw_response', {}) %}
+{% set _sentiment = _raw.get('overall_sentiment', 'limited-inputs') %}
+{% set _rationale = _raw.get('sentiment_rationale', '') %}
+{% set _per_lens  = _raw.get('per_lens_digest', {}) %}
+{% set _created = market_prism_summary.get('created_at', '') %}
+{% endif %}
+<div class="prism-block-header">
+<span class="prism-block-title">Market Prism</span>
+<span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+{% if market_prism_summary %}
+<span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
+{% endif %}
+</div>
+{% if market_prism_summary %}
+{# Sentiment chip — maps overall_sentiment to semantic CSS modifier.
+Both canonical (risk-on/risk-off) and synonym (bullish/bearish) forms
+are emitted by the lens_pipeline synthesizer; both sets must map. #}
+{% set _chip_class = {
+'bullish':        'prism-sentiment-chip--risk-on',
+'risk-on':        'prism-sentiment-chip--risk-on',
+'bearish':        'prism-sentiment-chip--risk-off',
+'risk-off':       'prism-sentiment-chip--risk-off',
+'neutral':        'prism-sentiment-chip--neutral',
+'limited-inputs': 'prism-sentiment-chip--limited-inputs',
+}.get(_sentiment, 'prism-sentiment-chip--neutral') %}
+<span class="prism-sentiment-chip {{ _chip_class }}"
+data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
+{% if _rationale %}
+<p class="prism-rationale" data-testid="prism-rationale">{{ _rationale | e }}</p>
+{% endif %}
+{# Per-lens digest — render all 5 lenses, available or not (honest-availability) #}
+{% set _lens_names = ['technicals', 'sentiment', 'derivatives', 'macro', 'fundamentals'] %}
+{% if _per_lens %}
+<div class="prism-lenses" data-testid="prism-lenses">
+{% for _lens_name in _lens_names %}
+{% set _lens = _per_lens.get(_lens_name, {}) %}
+{% set _available = _lens.get('available', false) %}
+<div class="prism-lens {% if _available %}prism-lens--available{% else %}prism-lens--unavailable{% endif %}"
+data-testid="prism-lens-{{ _lens_name }}">
+<div class="prism-lens-name">{{ _lens_name | e }}</div>
+{% if _available %}
+<span class="prism-lens-status prism-lens-status--ok">Available</span>
+{% if _lens.get('summary') %}
+<p class="prism-lens-text">{{ _lens.get('summary') | e }}</p>
+{% endif %}
+{% else %}
+<span class="prism-lens-status prism-lens-status--unavailable">Unavailable</span>
+{% if _lens.get('reason') %}
+<p class="prism-lens-text">{{ _lens.get('reason') | e }}</p>
+{% endif %}
+{% endif %}
+</div>
+{% endfor %}
+</div>
+{% endif %}
+{# Per-lens source carousels — one carousel per non-empty lens in canonical
+order.  A URL that is cited under multiple lenses appears in each of
+those lens carousels.  Plain string citations (sources list) render as
+citation cards; article_corpus entries with a valid http(s) URL render
+as clickable anchor cards.  Lenses with zero sources are suppressed.
+XSS-safe: all values escaped with | e, no | safe used. #}
+{% set _ns = namespace(any_sources=false) %}
+{% for _lname in _lens_names %}
+{% set _le = _per_lens.get(_lname, {}) %}
+{% if _le.get('sources') or _le.get('article_corpus') %}
+{% set _ns.any_sources = true %}
+{% endif %}
+{% endfor %}
+{% if _ns.any_sources %}
+<div data-testid="prism-sources">
+<div class="prism-sources-header">Sources</div>
+{% for _lname in _lens_names %}
+{% set _le = _per_lens.get(_lname, {}) %}
+{% set _le_articles = _le.get('article_corpus', []) %}
+{% set _le_sources  = _le.get('sources', []) %}
+{% if _le_articles or _le_sources %}
+<div data-testid="prism-sources-lens-{{ _lname }}">
+<div class="prism-lens-carousel-label">{{ _lname | capitalize }}</div>
+<div class="prism-sources-carousel">
+{% for _art in _le_articles %}
+{% if _art.get('url') and _art.get('url').startswith(('http://', 'https://')) %}
+<a class="prism-source-card"
+href="{{ _art.get('url') | e }}"
+target="_blank"
+rel="noopener noreferrer">
+<span>{{ _art.get('title', 'Untitled') | e }}</span>
+{% if _art.get('published') %}
+<span class="prism-source-meta">{{ _art.get('published') | et_stamp(naive_is_utc=False) }}</span>
+{% endif %}
+</a>
+{% else %}
+<div class="prism-source-card prism-source-card--citation">
+<span>{{ _art.get('title', '') | e }}</span>
+</div>
+{% endif %}
+{% endfor %}
+{% for _src_str in _le_sources %}
+<div class="prism-source-card prism-source-card--citation">
+<span>{{ _src_str | e }}</span>
+</div>
+{% endfor %}
+</div>
+</div>
+{% endif %}
+{% endfor %}
+</div>
+{% endif %}
+{# Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10).
+2026-07 redesign: the day-to-day signal is the VERDICT, not 27
+individual passes — default render is one verdict pill + a
+short count line; only flagged/overridden checks (the actionable
+anti-fabrication catches) render as individual badges, with a
+collapsed "show all" disclosure for full transparency.
+Honest empty-state: renders nothing when no VERIFICATION row
+exists yet for this run_id (no fabricated badges).
+XSS-safe: all values escaped with | e, no | safe used. #}
+{# /review PR #92: one macro renders a single check badge (indicator
++ classification + optional annotation) — shared by the top-level
+actionable list and the <details> full list below, instead of two
+near-identical inline loops differing only by testid prefix. #}
+{% macro render_verify_check(chk, testid_prefix, show_annotation_testid=false) %}
+{# .get(key, default)'s default only fires when the key is
+ABSENT, not when it's present with value None (F1, /review
+PR #90). indicator can be None (Finding-1's `{}`-coercion
+path for a malformed cited_numbers entry); classification
+cannot be None from the real _build_check/_classify producer
+chain (always one of pass/flagged/overridden/unverifiable) —
+this guard is defense-in-depth only, against a hand-authored
+or legacy DB row bypassing the normal write path. #}
+{% set _cls = chk.get('classification') or 'unverifiable' %}
+{% set _indicator = chk.get('indicator') or '' %}
+{% set _badge_class = {
+'pass':         'prism-verify-badge--pass',
+'flagged':      'prism-verify-badge--flagged',
+'overridden':   'prism-verify-badge--overridden',
+'unverifiable': 'prism-verify-badge--unverifiable',
+}.get(_cls, 'prism-verify-badge--unverifiable') %}
+<div class="prism-verify-check"
+data-testid="{{ testid_prefix }}{{ _indicator | e }}">
+<span class="prism-verify-badge {{ _badge_class }}">
+{{ _indicator | e }} — {{ _cls | e }}
+</span>
+{% if chk.get('annotation') %}
+<p class="prism-verify-annotation"
+{% if show_annotation_testid %}data-testid="prism-verify-annotation"{% endif %}>{{ chk.get('annotation') | e }}</p>
+{% endif %}
+</div>
+{% endmacro %}
+{% if market_prism_verification is not none %}
+<div data-testid="prism-verification" class="prism-verification">
+<div class="prism-verification-header">Numeric Verification</div>
+{# verdict_label/verdict_class computed in ai_advisor_tab()
+(single source of truth — /review PR #92): the pill
+reuses the 4 existing check-badge classes, and an
+unknown/missing verdict renders a neutral pill labeled
+with the raw string (or "unknown") rather than
+defaulting to the specific "no-numeric-claims" claim. #}
+<div class="prism-verify-summary" data-testid="prism-verify-summary">
+<span class="prism-verify-badge {{ market_prism_verification.get('verdict_class', 'prism-verify-badge--unverifiable') }}"
+data-testid="prism-verify-verdict">{{ market_prism_verification.get('verdict_label', 'unknown') | e }}</span>
+{% if market_prism_verification.get('count_line') %}
+<span class="prism-verify-summary-count"
+data-testid="prism-verify-count-line">{{ market_prism_verification.get('count_line') | e }}</span>
+{% endif %}
+</div>
+{# Only the actionable catches (flagged/overridden) render as
+individual badges by default — pass/unverifiable stay folded
+into the count line above. #}
+{% for _chk in market_prism_verification.get('actionable_checks', []) %}
+{{ render_verify_check(_chk, 'prism-verify-check-', show_annotation_testid=true) }}
+{% endfor %}
+{% if market_prism_verification.get('checks') %}
+<details class="prism-verify-details" data-testid="prism-verify-details">
+<summary>Show all {{ market_prism_verification.get('checks') | length }} checks</summary>
+<div class="prism-verify-details-list">
+{% for _chk in market_prism_verification.get('checks', []) %}
+{{ render_verify_check(_chk, 'prism-verify-check-full-') }}
+{% endfor %}
+</div>
+</details>
+{% endif %}
+</div>
+{% endif %}
+{% else %}
+{# Informative empty state — pipeline runs nightly at 03:00 #}
+<p class="prism-empty" data-testid="prism-empty-state">
+No overnight market read yet — the off-hours pipeline runs daily at 03:00.
+</p>
+{% endif %}
+</div>{# /market-prism-block #}

@@ -21,7 +21,7 @@ Pinned data-testids (.claude/tdd-handoff.md "templates/ai_advisor.html"):
   retirement-run-now-status           status text element JS writes via textContent
 
 Pinned copy (case-insensitive substrings; the surrounding words are free):
-  never run          "Not run yet — runs nightly at 03:45, or use Run now."  (exact, plan AC-6)
+  never run          "Not run yet — runs nightly at 03:45 UTC, or use Run now."  (the schedule names its zone)
   series_unavailable "series unavailable"
   insufficient_symphonies "insufficient symphonies"
   internal_error     "internal error" + the summary's error_type
@@ -45,7 +45,7 @@ from tests.app._retirement_run_summary_stub import make_summary
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-_NEVER_RUN_TEXT = "Not run yet — runs nightly at 03:45, or use Run now."
+_NEVER_RUN_TEXT = "Not run yet — runs nightly at 03:45 UTC, or use Run now."
 _SUMMARY_ROLE = "RETIREMENT_RUN_SUMMARY"
 _REC_ROLE = "RETIREMENT_RECOMMENDATION"
 
@@ -134,9 +134,8 @@ def _render(client) -> str:
 
 
 def _panel(body: str) -> str:
-    start = body.index('data-testid="retirement-recommendations-panel"')
-    end = body.index("</section>", start)
-    return body[start:end]
+    # The section's own markup, by tag depth, wherever the page places it.
+    return _element_html(body, "retirement-recommendations-panel")
 
 
 _VOID_TAGS = frozenset(
@@ -323,10 +322,12 @@ class TestOkRunRendersEveryFact:
     def test_excluded_symphonies_are_listed_by_display_name_with_their_reasons(self, body):
         text = _sub_text(body, "retirement-last-run-excluded")
         assert "Alpha Rotation" in text
-        assert "no_account" in text
+        assert "No Composer account is recorded for this symphony." in text
         assert "Beta Momentum" in text
-        assert "HTTP 503" in text
-        assert "series_too_short" in text
+        assert "Its Composer series could not be fetched (HTTP 503)." in text
+        assert "Its Composer series has fewer than 2 daily returns." in text
+        for raw in ("no_account", "fetch_error", "series_too_short"):
+            assert raw not in text, f"the raw reason {raw} is shown"
 
     def test_an_excluded_symphony_missing_from_bot_state_falls_back_to_its_hash(self, body):
         text = _sub_text(body, "retirement-last-run-excluded")
@@ -396,7 +397,7 @@ class TestWorkerFallbackSummaryRendersHonestly:
         panel = _panel(body)
         assert 'data-testid="retirement-recommendation-card"' in panel
         assert 'data-testid="retirement-recommendations-empty"' not in panel
-        assert "2026-10-18" in _text(_element_html(panel, "retirement-cards-from-earlier-run"))
+        assert _OK_RUN_ET_DATE in _text(_element_html(panel, "retirement-cards-from-earlier-run"))
         assert "internal error" in _block_text(body).lower()
 
     def test_a_fallback_row_with_no_successful_run_falls_back_to_the_legacy_cards(
@@ -445,6 +446,10 @@ _FAILED_STATUS_MARKERS = {
 _NOTE_TESTID = "retirement-cards-from-earlier-run"
 _OK_RUN_AT = "2026-10-18T03:45:00Z"
 _FAILED_RUN_AT = "2026-10-21T03:45:00Z"
+# 03:45 UTC is 23:45 the evening before in New York (summer time, UTC-4), so the operator's
+# date for each run is the day before its stored UTC date.
+_OK_RUN_ET_DATE = "2026-10-17"
+_FAILED_RUN_ET_DATE = "2026-10-20"
 
 
 def _seed_failed_night(status: str) -> None:
@@ -484,8 +489,9 @@ class TestCardsFromEarlierRunNote:
         assert 'data-testid="retirement-recommendation-card"' in panel
         assert 'data-testid="retirement-recommendations-empty"' not in panel
         note = _text(_element_html(panel, _NOTE_TESTID))
-        assert "2026-10-18" in note, "the note names the successful run's run_at"
-        assert "UTC" in note
+        assert _OK_RUN_ET_DATE in note, "the note names the successful run's run_at (ET date)"
+        assert "2026-10-18" not in note, "the UTC date of the run is not the operator's date"
+        assert _FAILED_RUN_ET_DATE not in note, "it must not name the failed night"
         assert "2026-10-21" not in note, "it must not name the failed night"
         assert panel.index(f'data-testid="{_NOTE_TESTID}"') < panel.index(
             'data-testid="retirement-recommendation-card"'

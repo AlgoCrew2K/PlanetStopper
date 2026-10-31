@@ -45,6 +45,111 @@
         return sign + Number(delta).toFixed(3);
     }
 
+    // ---------------------------------------------------------------------------
+    // One ET time formatter: the page-script half of analytics.format_et_stamp
+    // (the Jinja filter `et_stamp` is the template half). Same contract and the
+    // same accepted text, so a time reads identically wherever it is shown:
+    // 'YYYY-MM-DD HH:MM ET' in America/New_York, minutes truncated; a time with
+    // no zone is read as UTC unless opts.naiveIsUtc is false (then it prints its
+    // date only, unconverted); opts.dateOnly prints the ET date; a calendar date
+    // alone is returned unchanged; anything absent or unreadable is the dash.
+    // Parsed with regular expressions, never Date.parse (its reading of zone-less
+    // and fractional text differs between browsers); never throws.
+    // ---------------------------------------------------------------------------
+
+    var ET_STAMP_MISSING = '\u2014';
+    var ET_STAMP_ISO = /^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?)?$/;
+    var ET_STAMP_COMPACT = /^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$/;
+    var ET_STAMP_TRIM = /^[ \t\r\n]+|[ \t\r\n]+$/g;
+    var _etStampFormatter = null;
+
+    function etDaysInMonth(year, month) {
+        if (month === 2) {
+            return (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28;
+        }
+        return (month === 4 || month === 6 || month === 9 || month === 11) ? 30 : 31;
+    }
+
+    function etPad(n, width) {
+        var s = String(n);
+        while (s.length < width) { s = '0' + s; }
+        return s;
+    }
+
+    function fmtEtStamp(value, opts) {
+        try {
+            var naiveIsUtc = !(opts && opts.naiveIsUtc === false);
+            var dateOnly = !!(opts && opts.dateOnly);
+            if (typeof value !== 'string') { return ET_STAMP_MISSING; }
+            var text = value.replace(ET_STAMP_TRIM, '');
+            if (!text) { return ET_STAMP_MISSING; }
+
+            var f;          // [year, month, day, hour, minute, second]
+            var zoneText = null;
+            var zoned = false;
+            var m = ET_STAMP_COMPACT.exec(text);
+            if (m) {
+                f = m.slice(1, 7).map(Number);
+                zoned = true;
+            } else {
+                m = ET_STAMP_ISO.exec(text);
+                if (!m) { return ET_STAMP_MISSING; }
+                f = [Number(m[1]), Number(m[2]), Number(m[3])];
+                if (m[4] === undefined) {
+                    // A calendar date alone: valid or not, never converted.
+                    if (f[0] < 1 || f[1] < 1 || f[1] > 12 || f[2] < 1 || f[2] > etDaysInMonth(f[0], f[1])) {
+                        return ET_STAMP_MISSING;
+                    }
+                    return text;
+                }
+                f.push(Number(m[4]), Number(m[5]), Number(m[6]));
+                zoneText = m[7] === undefined ? null : m[7];
+                zoned = zoneText !== null;
+            }
+            if (f[0] < 1 || f[1] < 1 || f[1] > 12 || f[2] < 1 || f[2] > etDaysInMonth(f[0], f[1]) ||
+                f[3] > 23 || f[4] > 59 || f[5] > 59) {
+                return ET_STAMP_MISSING;
+            }
+            var offsetMs = 0;
+            if (zoneText !== null && zoneText !== 'Z') {
+                var offsetHours = Number(zoneText.slice(1, 3));
+                var offsetMinutes = Number(zoneText.slice(4, 6));
+                if (offsetHours > 23 || offsetMinutes > 59) { return ET_STAMP_MISSING; }
+                offsetMs = (zoneText.charAt(0) === '-' ? -1 : 1) * (offsetHours * 60 + offsetMinutes) * 60000;
+            }
+            if (!zoned && !naiveIsUtc) {
+                return etPad(f[0], 4) + '-' + etPad(f[1], 2) + '-' + etPad(f[2], 2);
+            }
+            var local = new Date(0);
+            local.setUTCFullYear(f[0], f[1] - 1, f[2]);
+            local.setUTCHours(f[3], f[4], f[5], 0);
+            var instantMs = local.getTime() - offsetMs;
+            if (isNaN(instantMs)) { return ET_STAMP_MISSING; }
+
+            if (!_etStampFormatter) {
+                _etStampFormatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York',
+                    hourCycle: 'h23',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+            var parts = {};
+            _etStampFormatter.formatToParts(new Date(instantMs)).forEach(function (p) {
+                parts[p.type] = p.value;
+            });
+            var dayText = etPad(parts.year, 4) + '-' + parts.month + '-' + parts.day;
+            if (dateOnly) { return dayText; }
+            var hour = parts.hour === '24' ? '00' : parts.hour;
+            return dayText + ' ' + hour + ':' + parts.minute + ' ET';
+        } catch (err) {
+            return ET_STAMP_MISSING;
+        }
+    }
+
     // Module-level suggestion state — survives any poll cycle.
     var _activeSuggestions = null;
     var _activeSymphonyId = null;
@@ -63,6 +168,10 @@
         if (chipTotal) chipTotal.textContent = total + ' suggestion' + (total !== 1 ? 's' : '');
         if (chipPassed) chipPassed.textContent = passed + ' OOS passed';
         if (chipRejected) chipRejected.textContent = rejected + ' OOS rejected';
+        // The strip renders hidden: a count of zero before any run would read as a
+        // result. A returned run (even one with no suggestions) shows its own counts.
+        var strip = document.getElementById('advisor-summary-strip');
+        if (strip) strip.removeAttribute('hidden');
     }
 
     // ---------------------------------------------------------------------------
@@ -94,7 +203,7 @@
             var lensAsOf = body && body.lens_data_as_of;
             if (lensAsOf) {
                 var staleTag = body.lens_data_stale ? ' (stale)' : '';
-                lensAsOfEl.textContent = 'Market context as of ' + lensAsOf + staleTag;
+                lensAsOfEl.textContent = 'Market context as of ' + fmtEtStamp(lensAsOf) + staleTag;
                 lensAsOfEl.style.display = '';
             } else {
                 lensAsOfEl.textContent = '';
@@ -420,9 +529,33 @@
 
     var _sparkChart = null;
 
+    // The canvas carries an inline `display:block` in the template, which beats the
+    // `hidden` attribute, so it is hidden and shown through style.display. Shown again
+    // means back to the value the template writes.
+    var SPARK_CANVAS_DISPLAY = 'block';
+
+    function setSparklineVisible(canvas, visible) {
+        canvas.style.display = visible ? SPARK_CANVAS_DISPLAY : 'none';
+    }
+
+    // Destroy the chart the canvas holds, whoever created it: Chart.js refuses a second
+    // chart on a canvas that still holds one, and our own handle is null when another
+    // owner drew on the canvas first.
+    function releaseSparklineCanvas(canvas) {
+        var held = null;
+        if (typeof Chart !== 'undefined') {
+            held = typeof Chart.getChart === 'function' ? Chart.getChart(canvas) : _sparkChart;
+        }
+        if (held) held.destroy();
+        _sparkChart = null;
+    }
+
+    // Draws every returned run that has a score, oldest first. Hidden (no space taken)
+    // when the chart library is missing or no run has a score; a chart that fails to
+    // build hides the canvas too, and never reaches the caller's failure handler.
     function renderAutotuneSparkline(rows) {
         var canvas = document.getElementById('autotune-sparkline-canvas');
-        if (!canvas || typeof Chart === 'undefined') return;
+        if (!canvas) return;
 
         var sharpeValues = rows
             .slice()
@@ -430,47 +563,56 @@
             .map(function (r) { return r.naive_sharpe !== null && r.naive_sharpe !== undefined ? Number(r.naive_sharpe) : null; })
             .filter(function (v) { return v !== null; });
 
-        if (!sharpeValues.length) return;
-
-        var cs = getComputedStyle(document.documentElement);
-        // C-15: fall back to neutral token values — no bare hex.
-        var accentColor = cs.getPropertyValue('--studio-accent').trim() || cs.getPropertyValue('--studio-swatch-1').trim();
-        var borderColor = cs.getPropertyValue('--studio-rule').trim() || cs.getPropertyValue('--studio-border').trim();
-
-        if (_sparkChart) {
-            _sparkChart.destroy();
-            _sparkChart = null;
+        if (typeof Chart === 'undefined' || !sharpeValues.length) {
+            releaseSparklineCanvas(canvas);
+            setSparklineVisible(canvas, false);
+            return;
         }
 
-        _sparkChart = new Chart(canvas.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: sharpeValues.map(function (_, i) { return i + 1; }),
-                datasets: [{
-                    data: sharpeValues,
-                    borderColor: accentColor,
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    tension: 0.3,
-                    fill: false,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                scales: {
-                    x: { display: false },
-                    y: {
-                        display: true,
-                        grid: { color: borderColor, lineWidth: 0.5 },
-                        ticks: { font: { size: 8 }, color: borderColor, maxTicksLimit: 3 },
-                        border: { display: false },
+        try {
+            var cs = getComputedStyle(document.documentElement);
+            // C-15: fall back to neutral token values — no bare hex.
+            var accentColor = cs.getPropertyValue('--studio-accent').trim() || cs.getPropertyValue('--studio-swatch-1').trim();
+            var borderColor = cs.getPropertyValue('--studio-rule').trim() || cs.getPropertyValue('--studio-border').trim();
+
+            releaseSparklineCanvas(canvas);
+            // Shown before the chart is built: a responsive chart sizes itself from the
+            // canvas box, which a hidden canvas does not have.
+            setSparklineVisible(canvas, true);
+
+            _sparkChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: sharpeValues.map(function (_, i) { return i + 1; }),
+                    datasets: [{
+                        data: sharpeValues,
+                        borderColor: accentColor,
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        tension: 0.3,
+                        fill: false,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            display: true,
+                            grid: { color: borderColor, lineWidth: 0.5 },
+                            ticks: { font: { size: 8 }, color: borderColor, maxTicksLimit: 3 },
+                            border: { display: false },
+                        },
                     },
                 },
-            },
-        });
+            });
+        } catch (err) {
+            _sparkChart = null;
+            setSparklineVisible(canvas, false);
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -535,84 +677,134 @@
             : AUTOTUNE_SCORE_GENERIC;
     }
 
+    // One card per symphony, at most this many; every other returned run is an older run.
+    var AUTOTUNE_CARD_LIMIT = 12;
+    // The number of runs GET /api/autotune-runs returns (get_all_autotune_runs(limit=50)),
+    // so the older-runs summary can say how far back the list reaches.
+    var AUTOTUNE_ROUTE_ROW_LIMIT = 50;
+
+    // rows arrive newest first. A symphony's card shows its first (newest) row; the first
+    // AUTOTUNE_CARD_LIMIT symphonies, in the order their newest rows arrive, get cards;
+    // every other row, in the route's order, is an older run.
+    function splitAutotuneRuns(rows) {
+        var seen = Object.create(null);
+        var cards = [];
+        rows.forEach(function (r) {
+            var key = String(r.symphony_id);
+            if (seen[key]) return;
+            seen[key] = true;
+            if (cards.length < AUTOTUNE_CARD_LIMIT) cards.push(r);
+        });
+        var older = rows.filter(function (r) { return cards.indexOf(r) === -1; });
+        return { cards: cards, older: older };
+    }
+
+    // The markup of one run, used for a card and for a row of the older-runs list.
+    function autotuneRunCardHtml(r) {
+        var decision = r.baseline_decision || '';
+        var pillColor = decisionPillColor(decision);
+        // B-13: human-readable label instead of raw enum.
+        var pillLabel = decisionLabel(decision);
+        var frozenVerdict = r.frozen_eval_verdict || '';
+        var frozenColor = frozenEvalColor(frozenVerdict);
+        // The display name when the live state holds the symphony, else the
+        // stored key; the key itself stays in the title.
+        var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
+        var symKey = escHtml(r.symphony_id || '');
+        var scoreInfo = autotuneScoreInfo(r.objective);
+        // A run that never reached the frozen evaluation has no verdict:
+        // say so in dim ink instead of rendering an empty pill.
+        var frozenHtml = frozenVerdict
+            ? '<div class="autotune-run-verdict">Frozen-eval ' +
+              '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
+              escHtml(frozenVerdict) + '</span></div>'
+            : '<div class="autotune-run-verdict" style="color:' + cssVar('--studio-ink-dim') + ';">Frozen-eval not evaluated</div>';
+        // V-23: timestamp muted, best-score / selection t-stat bold mono.
+        // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
+        var selTstat = r.selection_tstat;
+        // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
+        // dim one-liner, same idiom as the timestamp span above. status ==
+        // 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
+        // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
+        // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
+        // renders nothing — a single non-adopted run isn't a pattern worth flagging.
+        var streak = r.never_adopted_streak;
+        var streakHtml = '';
+        if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
+            streakHtml =
+                '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config') + '</div>';
+        } else if (streak && streak.status === 'insufficient_history') {
+            streakHtml =
+                '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                'adoption streak: insufficient history (&lt;2 runs)</div>';
+        }
+        return (
+            '<div class="autotune-run-card" data-testid="autotune-run-row">' +
+            '<div class="autotune-run-top">' +
+            '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
+            '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
+            escHtml(pillLabel) + '</span>' +
+            '</div>' +
+            '<div class="autotune-run-meta">' +
+            // The New York stamp (the shared formatter), not the stored string.
+            '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(fmtEtStamp(r.run_timestamp)) + '</span>' +
+            '<span><span class="autotune-run-score" title="' + escHtml(scoreInfo.tip) + '">' +
+            escHtml(scoreInfo.label) + ' <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
+            ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
+            '</span>' +
+            '</div>' +
+            // V-23: FROZEN-EVAL as colored pill (or the dim not-evaluated line).
+            frozenHtml +
+            streakHtml +
+            '</div>'
+        );
+    }
+
+    // The older-runs <details> is static page markup: this writes only its rows container,
+    // its summary text and its `hidden` property. It never recreates the element and never
+    // touches `open`, so a 15 s poll leaves a details the operator opened open.
+    function renderOlderAutotuneRuns(older) {
+        var details = document.getElementById('autotune-older-runs');
+        var summary = document.getElementById('autotune-older-summary');
+        var olderList = document.getElementById('autotune-older-list');
+        if (olderList) olderList.innerHTML = older.map(autotuneRunCardHtml).join('');
+        if (summary) {
+            summary.textContent = older.length
+                ? older.length + (older.length === 1 ? ' older run' : ' older runs') +
+                  ' (covers the ' + AUTOTUNE_ROUTE_ROW_LIMIT + ' most recent runs)'
+                : '';
+        }
+        if (details) details.hidden = older.length === 0;
+    }
+
     function loadRecentRuns() {
         var list = document.getElementById('autotune-runs-list');
         if (!list) return;
         fetch('/api/autotune-runs')
             .then(function (resp) { return resp.json(); })
             .then(function (rows) {
-                if (!rows.length) {
+                if (!Array.isArray(rows) || !rows.length) {
                     list.innerHTML =
                         '<div style="text-align:center;padding:1rem;' +
                         'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No tuning runs recorded yet.</div>';
+                    renderOlderAutotuneRuns([]);
+                    renderAutotuneSparkline([]);
                     return;
                 }
-                renderAutotuneSparkline(rows);
                 // C-16: render card list with all per-run fields per advisor.jsx.
-                list.innerHTML = rows.map(function (r) {
-                    var decision = r.baseline_decision || '';
-                    var pillColor = decisionPillColor(decision);
-                    // B-13: human-readable label instead of raw enum.
-                    var pillLabel = decisionLabel(decision);
-                    var frozenVerdict = r.frozen_eval_verdict || '';
-                    var frozenColor = frozenEvalColor(frozenVerdict);
-                    // The display name when the live state holds the symphony, else the
-                    // stored key; the key itself stays in the title.
-                    var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
-                    var symKey = escHtml(r.symphony_id || '');
-                    var scoreInfo = autotuneScoreInfo(r.objective);
-                    // A run that never reached the frozen evaluation has no verdict:
-                    // say so in dim ink instead of rendering an empty pill.
-                    var frozenHtml = frozenVerdict
-                        ? '<div class="autotune-run-verdict">Frozen-eval ' +
-                          '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
-                          escHtml(frozenVerdict) + '</span></div>'
-                        : '<div class="autotune-run-verdict" style="color:' + cssVar('--studio-ink-dim') + ';">Frozen-eval not evaluated</div>';
-                    // V-23: timestamp muted, best-score / selection t-stat bold mono.
-                    // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
-                    var selTstat = r.selection_tstat;
-                    // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
-                    // dim one-liner, same idiom as the timestamp span above. status ==
-                    // 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
-                    // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
-                    // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
-                    // renders nothing — a single non-adopted run isn't a pattern worth flagging.
-                    var streak = r.never_adopted_streak;
-                    var streakHtml = '';
-                    if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
-                        streakHtml =
-                            '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                            escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config') + '</div>';
-                    } else if (streak && streak.status === 'insufficient_history') {
-                        streakHtml =
-                            '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                            'adoption streak: insufficient history (&lt;2 runs)</div>';
-                    }
-                    return (
-                        '<div class="autotune-run-card" data-testid="autotune-run-row">' +
-                        '<div class="autotune-run-top">' +
-                        '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
-                        '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
-                        escHtml(pillLabel) + '</span>' +
-                        '</div>' +
-                        '<div class="autotune-run-meta">' +
-                        '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(r.run_timestamp || '') + '</span>' +
-                        '<span><span class="autotune-run-score" title="' + escHtml(scoreInfo.tip) + '">' +
-                        escHtml(scoreInfo.label) + ' <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
-                        ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
-                        '</span>' +
-                        '</div>' +
-                        // V-23: FROZEN-EVAL as colored pill (or the dim not-evaluated line).
-                        frozenHtml +
-                        streakHtml +
-                        '</div>'
-                    );
-                }).join('');
+                var parts = splitAutotuneRuns(rows);
+                list.innerHTML = parts.cards.map(autotuneRunCardHtml).join('');
+                renderOlderAutotuneRuns(parts.older);
+                // Last, and on its own: the cards are on screen whatever the chart does.
+                renderAutotuneSparkline(rows);
             })
             .catch(function (err) {
                 list.innerHTML =
                     '<div style="text-align:center;padding:1rem;' +
                     'color:' + cssVar('--studio-neg') + ';">Failed to load runs: ' + escHtml(err.message) + '</div>';
+                var olderDetails = document.getElementById('autotune-older-runs');
+                if (olderDetails) olderDetails.hidden = true;
             });
     }
 
@@ -679,53 +871,81 @@
             syncRunBtn();
         }
 
-        // ----------------------------------------------------------------
-        // In-place tab switcher (AC2 — window-selector pattern).
-        // Matches the .active-toggle pattern from static/index.js:1348.
-        // ----------------------------------------------------------------
-        (function initTabSwitcher() {
-            var tabs = document.querySelectorAll('[role="tab"][data-tab]');
-            var panels = document.querySelectorAll('[role="tabpanel"][data-tab]');
-
-            if (!tabs.length || !panels.length) { return; }
-
-            function activateTab(targetTab) {
-                // Update tab button states.
-                tabs.forEach(function (btn) {
-                    var isActive = btn === targetTab;
-                    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-                    if (isActive) {
-                        btn.classList.add('active');
-                    } else {
-                        btn.classList.remove('active');
-                    }
-                });
-                // Show/hide panels — match data-tab to the button's data-tab.
-                var targetName = targetTab.getAttribute('data-tab');
-                panels.forEach(function (panel) {
-                    if (panel.getAttribute('data-tab') === targetName) {
-                        panel.classList.add('tab-panel--active');
-                    } else {
-                        panel.classList.remove('tab-panel--active');
-                    }
-                });
-            }
-
-            // Wire click handlers.
-            tabs.forEach(function (btn) {
-                btn.addEventListener('click', function () {
-                    activateTab(btn);
-                });
-            });
-
-            // Ensure the initially-active button's panel is shown.
-            var initialActive = document.querySelector('[role="tab"][aria-selected="true"]');
-            if (initialActive) {
-                activateTab(initialActive);
-            }
-        }());
-
+        initTabSwitcher();
     });
+
+    // ---------------------------------------------------------------------------
+    // In-place tab switcher (AC2 — window-selector pattern) and the #<tab>
+    // fragment. A click selects a tab and writes its name to the URL fragment
+    // (replaceState: no history entry), so a reload or a shared link opens the
+    // same tab; a hashchange (a link to #retirement, back/forward) selects the
+    // tab it names. The fragment is untrusted input: it is only ever compared
+    // with the data-tab names the page renders, never used to build a selector.
+    // ---------------------------------------------------------------------------
+
+    function renderedTabNames() {
+        var names = [];
+        document.querySelectorAll('[role="tab"][data-tab]').forEach(function (btn) {
+            names.push(btn.getAttribute('data-tab'));
+        });
+        return names;
+    }
+
+    /** The tab a URL fragment names: only a '#' + a rendered name, else 'overview'. */
+    function tabNameFromHash(hash, knownNames) {
+        if (typeof hash !== 'string' || hash.charAt(0) !== '#' || !Array.isArray(knownNames)) {
+            return 'overview';
+        }
+        var name = hash.slice(1);
+        return knownNames.indexOf(name) >= 0 ? name : 'overview';
+    }
+
+    function activateTabByName(name) {
+        document.querySelectorAll('[role="tab"][data-tab]').forEach(function (btn) {
+            var isActive = btn.getAttribute('data-tab') === name;
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            if (isActive) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        document.querySelectorAll('[role="tabpanel"][data-tab]').forEach(function (panel) {
+            if (panel.getAttribute('data-tab') === name) {
+                panel.classList.add('tab-panel--active');
+            } else {
+                panel.classList.remove('tab-panel--active');
+            }
+        });
+    }
+
+    /** Put a rendered tab's name in the URL fragment without adding a history entry. */
+    function writeTabFragment(name) {
+        try {
+            history.replaceState(null, '', '#' + name);
+        } catch (err) {
+            // Some embedded contexts refuse replaceState; the tab still switches.
+        }
+    }
+
+    function initTabSwitcher() {
+        var tabs = document.querySelectorAll('[role="tab"][data-tab]');
+        var panels = document.querySelectorAll('[role="tabpanel"][data-tab]');
+        if (!tabs.length || !panels.length) { return; }
+
+        tabs.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var name = btn.getAttribute('data-tab');
+                activateTabByName(name);
+                writeTabFragment(name);
+            });
+        });
+        window.addEventListener('hashchange', function () {
+            activateTabByName(tabNameFromHash(window.location.hash, renderedTabNames()));
+        });
+        // The first paint follows the URL: no fragment, or one naming no tab, is the Overview.
+        activateTabByName(tabNameFromHash(window.location.hash, renderedTabNames()));
+    }
 
     // ---------------------------------------------------------------------------
     // Strategy incubation gate — live status chip refresh (AC-5).
@@ -1164,6 +1384,9 @@
         frDispatchProposalAction('reject', proposalId);
     }
 
+    // The pill class per decision state; templates/ai_advisor.html maps the same three pairs.
+    var RETIREMENT_PILL_CLASS = { pending: 'standby', approved: 'armed', rejected: 'triggered' };
+
     /**
      * Shared approve/reject dispatch for a retirement recommendation card
      * (Cycle 2b, AC-5/AC-7; reworked Cycle 2c, AC-7). Mirrors
@@ -1231,15 +1454,15 @@
                                 '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:700;">' +
                                 msg + '</p>';
                         }
-                        // F4: the status chip must reflect the new decision
+                        // F4: the status pill must reflect the new decision
                         // immediately, not just the actions row -- otherwise a
-                        // stale "Pending" chip sits next to the confirmation
+                        // stale "Pending" pill sits next to the confirmation
                         // message until the page is reloaded.
                         var newStatus = action === 'reject' ? 'rejected' : 'approved';
                         var statusChip = card.querySelector('[data-testid="retirement-rec-status"]');
                         if (statusChip) {
                             statusChip.textContent = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
-                            statusChip.className = 'retirement-status-chip retirement-status-chip--' + newStatus;
+                            statusChip.className = 'status-pill ' + RETIREMENT_PILL_CLASS[newStatus];
                         }
                     }
                 } else {
@@ -1355,6 +1578,8 @@
                     var currentRunId = await readLastRunId();
                     if (currentRunId && currentRunId !== priorRunId) {
                         setStatus('Run complete — reloading…');
+                        // The reload opens the tab the operator was waiting on.
+                        writeTabFragment('retirement');
                         location.reload();
                         return;
                     }

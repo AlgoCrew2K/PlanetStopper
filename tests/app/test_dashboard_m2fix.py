@@ -198,9 +198,11 @@ class TestPortfolioStripSize:
             'data-testid="hero-section" must exist in index.html as the portfolio summary panel'
         )
 
-        # The hero-section CSS must include padding (Studio uses .hero-section { padding: ... })
-        hero_css_match = re.search(r"\.hero-section\s*\{([^}]+)\}", html, re.DOTALL)
-        assert hero_css_match, ".hero-section CSS definition not found in index.html <style> block"
+        # The hero-section CSS must include padding (Studio uses .hero-section { padding: ... }).
+        # The rule lives in the shared sheet static/layout.css, the dashboard primitives' one home.
+        layout_css = (_WORKTREE / "static" / "layout.css").read_text(encoding="utf-8")
+        hero_css_match = re.search(r"\.hero-section\s*\{([^}]+)\}", layout_css, re.DOTALL)
+        assert hero_css_match, ".hero-section CSS definition not found in static/layout.css"
 
         css_body = hero_css_match.group(1)
         assert "padding" in css_body, (

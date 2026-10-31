@@ -630,3 +630,78 @@ def test_ac6_active_tab_class_present(advisor_page_html):
         "No tab carries an active/selected state marker on initial page load. "
         "The default tab (Overview) must be visually marked active — AC6."
     )
+
+
+# ===========================================================================
+# Chat's example questions name only flows the page can start
+#
+# An example may name a swap, a logic change or a Strategy Builder proposal (each card carries a
+# Discuss button). No example may name correlations: no correlation element has a Discuss button.
+# ===========================================================================
+
+
+def _chat_examples(html: str) -> list[str]:
+    import re
+
+    match = re.search(r'<ul class="chat-example-prompts"[^>]*>(.*?)</ul>', html, flags=re.DOTALL)
+    assert match, "the Chat tab renders no example questions list"
+    return [
+        " ".join(re.sub(r"<[^>]+>", " ", item).split())
+        for item in re.findall(r"<li>(.*?)</li>", match.group(1), flags=re.DOTALL)
+    ]
+
+
+def test_chat_examples_do_not_name_correlations(advisor_page_html):
+    examples = _chat_examples(advisor_page_html)
+    assert examples, "the Chat tab keeps at least one example question"
+    named = [e for e in examples if "correlat" in e.lower()]
+    assert named == [], f"examples that name correlations, which cannot be discussed: {named}"
+
+
+def test_every_chat_example_names_a_flow_that_has_a_discuss_button(advisor_page_html):
+    flows = ("swap", "logic change", "strategy builder")
+    examples = _chat_examples(advisor_page_html)
+    unnamed = [e for e in examples if not any(f in e.lower() for f in flows)]
+    assert unnamed == [], (
+        f"examples that name no swap, logic change or Strategy Builder item: {unnamed}"
+    )
+
+
+def test_a_chat_example_names_a_strategy_builder_proposal(advisor_page_html):
+    assert any("strategy builder" in e.lower() for e in _chat_examples(advisor_page_html))
+
+
+def test_the_cards_of_the_flows_the_examples_name_carry_the_discuss_button():
+    # The Discuss button renders on a proposal card, so it needs data; the template is the
+    # place that says which cards carry it. Swap, logic change and Strategy Builder cards do.
+    import pathlib
+
+    template = (
+        pathlib.Path(__file__).resolve().parents[2] / "templates" / "ai_advisor.html"
+    ).read_text(encoding="utf-8")
+    assert template.count('data-testid="discuss-proposal-btn"') >= 2
+
+
+def test_the_explain_only_notice_and_panel_are_unchanged(advisor_page_html):
+    html = advisor_page_html
+    assert 'data-testid="explain-only-notice"' in html
+    assert (
+        "This chat explains advisor findings. It cannot apply changes, place trades,"
+        in " ".join(html.split())
+    )
+    assert 'data-testid="chat-panel"' in html
+    assert "Click &ldquo;Discuss this&rdquo;" in html
+
+
+def test_without_a_key_the_examples_still_render_and_chat_says_it_is_unavailable(
+    advisor_client, monkeypatch
+):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    fake_corr = MagicMock()
+    fake_corr.compute_pairwise_correlations.return_value = []
+    fake_corr.CRISIS_CAVEAT = "caveat"
+    with patch.dict("sys.modules", {"advisors.correlation_diagnostic": fake_corr}):
+        html = advisor_client.get("/ai-advisor").data.decode("utf-8", errors="replace")
+    assert _chat_examples(html)
+    assert 'data-testid="chat-unavailable"' in html
+    assert "Anthropic API key not configured." in html
