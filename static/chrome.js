@@ -223,6 +223,11 @@ function _panicAnswerText(res) {
     '), so nothing was liquidated.';
 }
 
+// One liquidation request at a time: Confirm is ignored from the moment a request is sent until
+// its answer arrives (accepted, refused or connection lost), so a double click cannot start two
+// liquidations. Client-side only; the request itself is the same for every click.
+var _panicRequestInFlight = false;
+
 function submitPanicLiquidation() {
   var accountEl = document.getElementById('panic-account');
   var phraseEl = document.getElementById('panic-phrase');
@@ -230,11 +235,15 @@ function submitPanicLiquidation() {
   var accountId = accountEl.value;
   var phrase = phraseEl.value;
   if (phrase !== 'LIQUIDATE') return;
+  if (_panicRequestInFlight) return;
+  _panicRequestInFlight = true;
+  var releasePanicGuard = function () { _panicRequestInFlight = false; };
   PSRequest.postAction('/api/sell_account', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': PSRequest.csrfToken() || '' },
     body: JSON.stringify({ account_id: accountId, confirm_account_id: accountId, confirm_phrase: phrase }),
   }).then(function (res) {
+    releasePanicGuard();
     closePanicModal();
     if (res.networkError) {
       alert('The liquidation request could not be sent, so nothing was liquidated. ' +
@@ -245,7 +254,7 @@ function submitPanicLiquidation() {
       status: res.status, ok: res.ok, readable: res.body !== null, body: res.body,
       refused: res.refused, tokenRefreshed: res.tokenRefreshed
     }));
-  });
+  }, releasePanicGuard);
 }
 window.submitPanicLiquidation = submitPanicLiquidation;
 

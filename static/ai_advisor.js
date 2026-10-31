@@ -367,13 +367,13 @@
                       'color:' + cssVar('--studio-ink-dim') + ';border:none;border-radius:0.5rem;' +
                       'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:not-allowed;">' +
                       'Blocked by OOS gate</button>'
-                    : '<button onclick="acceptSuggestion(' + i + ',\'' + escHtml(symphonyId) + '\')" ' +
+                    : '<button class="suggestion-apply-btn" data-card-index="' + i + '" ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-pos') + ';' +
                       'color:' + cssVar('--studio-white') + ';border:none;border-radius:0.5rem;' +
                       'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
                       'Apply suggestion</button>'
                 ) +
-                '<button onclick="rejectSuggestion(' + i + ',\'' + escHtml(symphonyId) + '\')" ' +
+                '<button class="suggestion-dismiss-btn" data-card-index="' + i + '" ' +
                 'style="padding:0.375rem 1rem;background:' + cssVar('--studio-surface-raised') + ';' +
                 'color:' + cssVar('--studio-ink-dim') + ';border:1px solid ' + cssVar('--studio-border') + ';' +
                 'border-radius:0.5rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
@@ -430,6 +430,20 @@
         container._symphonyId = symphonyId;
         _activeSuggestions = suggestions;
         _activeSymphonyId = symphonyId;
+
+        // The buttons carry only the card's index; the symphony's name is read here from the
+        // container when a button is pressed. A name is authored outside this app and can hold an
+        // apostrophe, a quote or code, so it is never written into an inline handler string.
+        container.querySelectorAll('.suggestion-apply-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                window.acceptSuggestion(Number(btn.getAttribute('data-card-index')), container._symphonyId);
+            });
+        });
+        container.querySelectorAll('.suggestion-dismiss-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                window.rejectSuggestion(Number(btn.getAttribute('data-card-index')), container._symphonyId);
+            });
+        });
     }
 
     // ---------------------------------------------------------------------------
