@@ -7,6 +7,7 @@
   <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
   <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+  {% include '_fonts.html' %}
   <style>
     body {
       background: var(--studio-bg);
@@ -107,6 +108,7 @@
   </style>
 </head>
 <body>
+  <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
   <div class="login-card">
     <div class="login-wordmark">
       Planet Stopper

@@ -30,59 +30,22 @@
 
         /* .page-wrap skeleton lives in static/layout.css (shared single source) */
 
-        /* Header */
-        .adv-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-            background: var(--studio-surface);
-            padding: 1.5rem;
-            border-radius: 1rem;
-            border: 1px solid var(--studio-border);
-            position: relative;
-            overflow: hidden;
-        }
+        /* The shared primitives (.hero-section, .section-header, .sym-card, .card-name,
+           .mini-stats, .legend-as-of, .status-pill) live in static/layout.css; the rules in this
+           block add layout only, never a look. */
+        .hero-section > .section-header:first-child { margin-top: 0; }
 
-        .adv-header::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 3px;
-            background: linear-gradient(to right, var(--studio-accent), var(--studio-ink-dim));
-        }
+        /* Non-clickable cards: the shared card is button-like (pointer cursor) on the dashboard. */
+        .sym-card.proposal-card,
+        .sym-card.autotune-run-card,
+        .sym-card.retirement-rec-card,
+        .sym-card.swap-card { cursor: default; }
 
-        .adv-title {
-            font-size: 2.25rem;
-            font-weight: 700;
-            letter-spacing: -0.02em;
-            color: var(--studio-ink);
-        }
-
-        .adv-subtitle {
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-            margin-top: 0.375rem;
-        }
-
-        .back-link {
-            font-size: 0.625rem;
-            color: var(--studio-ink-dim);
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            text-decoration: none;
-        }
-
-        .back-link:hover { color: var(--studio-ink); }
+        /* The page's description line, above the tab bar in the first panel. */
+        .adv-caption { margin: 0 0 1rem; }
 
         /* Controls */
         .adv-controls {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 1.25rem 1.5rem;
-            margin-bottom: 1rem;
             display: flex;
             align-items: flex-end;
             gap: 1rem;
@@ -180,17 +143,13 @@
            ultrawide rather than stretching to absurd widths. */
         .suggestions-col {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
             gap: 0.75rem;
             min-height: 8rem;
             align-items: start;
         }
 
         .suggestions-placeholder {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 2rem 1.5rem;
             color: var(--studio-ink-dim);
             font-size: 0.875rem;
             text-align: center;
@@ -199,31 +158,17 @@
 
         /* Autotune panel */
         .autotune-panel {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 1.25rem 1.5rem;
             min-width: 0;
         }
 
-        .autotune-header {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 1rem;
-        }
-
         .autotune-run-card {
-            padding: 0.6875rem 1rem;
-            border-bottom: 1px solid var(--studio-border);
             display: flex;
             flex-direction: column;
             gap: 0.25rem;
+            margin-bottom: 0.5rem;
         }
 
-        .autotune-run-card:last-child { border-bottom: none; }
+        .autotune-run-card:last-child { margin-bottom: 0; }
 
         /* Older runs: a closed details under the cards. No display rule here: the
            hidden attribute must keep hiding it while it has no rows. */
@@ -303,9 +248,15 @@
         .cap-nav {
             display: flex;
             gap: 0.25rem;
-            margin-bottom: 1.25rem;
             border-bottom: 1px solid var(--studio-border);
             padding-bottom: 0;
+        }
+
+        /* The eight tabs wrap onto more rows on a narrow screen instead of widening the page. */
+        @media (max-width: 700px) {
+            .cap-nav { flex-wrap: wrap; }
+            .cap-tab { max-width: 100%; }
+            .cap-tab-attribution { white-space: normal; }
         }
 
         /* Tab buttons — not anchors; JS handles switching (AC2) */
@@ -386,26 +337,15 @@
         .crisis-caveat-icon { font-size: 1rem; flex-shrink: 0; color: var(--studio-warn); }
         .crisis-caveat-text { margin: 0; }
         .correlations-state {
-            padding: 2rem 1.5rem;
             text-align: center;
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            margin-bottom: 1rem;
         }
         .correlations-state-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
         .correlations-state-line { color: var(--studio-ink-dim); font-size: 0.875rem; margin: 0.25rem 0 0; }
         .correlations-notes { margin-bottom: 0.75rem; }
         .refresh-link { color: var(--studio-accent); text-decoration: none; font-size: 0.75rem; }
         .refresh-link:hover { text-decoration: underline; }
-        .matrix-card {
-            background: var(--studio-surface); border: 1px solid var(--studio-border);
-            border-radius: 1rem; padding: 1.25rem 1.5rem; overflow-x: auto; margin-bottom: 1rem;
-        }
-        .matrix-card-header {
-            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.1em; color: var(--studio-ink-dim); margin-bottom: 1rem;
-        }
+        /* The matrix scrolls inside its own wrapper, so the legend and header stay put. */
+        .matrix-scroll { overflow-x: auto; }
         .heatmap-table { border-collapse: collapse; min-width: 100%; font-size: 0.8125rem; }
         .heatmap-table th, .heatmap-table td { padding: 0.375rem 0.5rem; text-align: center; }
         .heatmap-table th { font-size: 0.6875rem; font-weight: 700; color: var(--studio-ink-dim); white-space: nowrap; }
@@ -457,20 +397,9 @@
         }
         .advise-only-banner-icon, .fdr-warning-banner-icon { color: var(--studio-warn); flex-shrink: 0; }
         .advise-only-banner-text, .fdr-warning-banner-text { margin: 0; }
-        .no-api-key-state {
-            padding: 2rem 1.5rem; text-align: center; background: var(--studio-surface);
-            border: 1px solid var(--studio-border); border-radius: 1rem; margin-bottom: 1rem;
-        }
+        .no-api-key-state { text-align: center; }
         .no-api-key-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
         .no-api-key-body { color: var(--studio-ink-dim); font-size: 0.875rem; }
-        .try-swap-panel, .try-tweak-panel {
-            background: var(--studio-surface); border: 1px solid var(--studio-border);
-            border-radius: 1rem; padding: 1.25rem 1.5rem; margin-bottom: 1rem;
-        }
-        .try-swap-header, .try-tweak-header {
-            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.1em; color: var(--studio-ink-dim); margin-bottom: 1rem;
-        }
         .try-swap-form, .try-tweak-form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
         .form-row { display: flex; flex-wrap: wrap; gap: 1rem; width: 100%; }
         .form-group { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 10rem; }
@@ -507,10 +436,7 @@
         }
 
         /* Chat panel (slide-in, always in DOM — AC4) */
-        .chat-default-state {
-            padding: 3rem 1.5rem; text-align: center; background: var(--studio-surface);
-            border: 1px solid var(--studio-border); border-radius: 1rem; margin-bottom: 1rem;
-        }
+        .chat-default-state { text-align: center; }
         .chat-default-icon { font-size: 2rem; margin-bottom: 0.75rem; }
         .chat-default-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
         .chat-default-body { color: var(--studio-ink-dim); font-size: 0.875rem; margin-bottom: 1rem; }
@@ -544,7 +470,8 @@
         .artifact-key-stat { font-size: 0.75rem; color: var(--studio-ink-dim); }
         .explain-only-notice {
             display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.625rem 1.25rem;
-            background: rgba(26, 110, 136, 0.08); border-bottom: 1px solid rgba(26, 110, 136, 0.25);
+            background: color-mix(in srgb, var(--studio-cyan) 8%, transparent);
+            border-bottom: 1px solid color-mix(in srgb, var(--studio-cyan) 25%, transparent);
             font-size: 0.75rem; color: var(--studio-cyan, var(--studio-ink-dim)); flex-shrink: 0;
         }
         .explain-only-notice-icon { flex-shrink: 0; }
@@ -594,14 +521,6 @@
         .sb-risk-banner-text strong { color: var(--studio-ink); font-weight: 700; }
 
         /* Run controls panel */
-        .run-controls-panel {
-            background: var(--studio-surface); border: 1px solid var(--studio-border);
-            border-radius: 1rem; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;
-        }
-        .run-controls-header {
-            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.1em; color: var(--studio-ink-dim); margin-bottom: 1rem;
-        }
         .run-controls-row { display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap; }
         .run-trigger-btn {
             padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-white);
@@ -609,30 +528,21 @@
             cursor: pointer; flex-shrink: 0; white-space: nowrap; align-self: flex-end;
             font-family: var(--studio-sans, sans-serif);
         }
+        @media (max-width: 700px) {
+            .run-trigger-btn { white-space: normal; flex-shrink: 1; }
+        }
         .run-trigger-btn:hover:not(:disabled) { opacity: 0.9; }
         .run-trigger-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .run-controls-note { font-size: 0.75rem; color: var(--studio-ink-dim); margin-top: 0.75rem; }
         .run-error { font-size: 0.8125rem; color: var(--studio-neg); margin-top: 0.5rem; }
         #sb-run-results { min-height: 4rem; margin-top: 1rem; }
         .sb-loading-state {
-            background: var(--studio-surface); border: 1px solid var(--studio-border);
-            border-radius: 1rem; padding: 2rem 1.5rem; text-align: center;
+            text-align: center;
             color: var(--studio-ink-dim); font-size: 0.875rem;
         }
 
-        /* Section header */
-        .section-header {
-            font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
-            letter-spacing: 0.1em; color: var(--studio-ink-dim);
-            margin-bottom: 0.875rem; margin-top: 1.5rem;
-        }
-
         /* Proposal card grid */
-        .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 0.875rem; }
-        .proposal-card {
-            background: var(--studio-surface); border: 1px solid var(--studio-border);
-            border-radius: 1rem; padding: 1.25rem 1.5rem;
-        }
+        .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.875rem; }
         .proposal-card--survivor { border-color: var(--studio-pos); }
         .proposal-card--rejected { opacity: 0.75; }
         .proposal-card--backtest-failed { background: var(--studio-warn-tint); border-color: var(--studio-warn-border); }
@@ -645,8 +555,7 @@
         }
 
         /* Card anatomy */
-        .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem; }
-        .card-candidate-id { font-size: 0.875rem; font-weight: 700; color: var(--studio-ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
 
         /* Strategy incubation gate status chip — mirrors .prism-sentiment-chip's
            shape exactly. Status is computed LIVE via a candidate_hash join at
@@ -675,7 +584,7 @@
         .incubation-status-chip--promoted {
             color: var(--studio-pos);
             border-color: var(--studio-pos);
-            background: rgba(31, 122, 77, 0.12);
+            background: color-mix(in srgb, var(--studio-pos) 12%, transparent);
             font-weight: 800;
         }
 
@@ -713,7 +622,7 @@
         /* Gate verdict */
         .gate-verdict-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: var(--studio-bg); flex-wrap: wrap; }
         .gate-pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.5625rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid; }
-        .gate-pill--passed { color: var(--studio-pos); border-color: var(--studio-pos); background: rgba(31,122,77,0.07); }
+        .gate-pill--passed { color: var(--studio-pos); border-color: var(--studio-pos); background: color-mix(in srgb, var(--studio-pos) 7%, transparent); }
         .gate-pill--withheld { color: var(--studio-warn); border-color: var(--studio-warn); background: var(--studio-warn-tint); }
         .gate-pill--failed { color: var(--studio-neg); border-color: var(--studio-neg); background: var(--studio-neg-tint); }
         .fdr-metadata { font-size: 0.6875rem; color: var(--studio-ink-muted); font-variant-numeric: tabular-nums; margin-top: 0.25rem; flex-basis: 100%; }
@@ -740,22 +649,11 @@
         /* Rejected section */
         .rejected-section { margin-top: 1.5rem; }
         .rejected-collapsible summary { cursor: pointer; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-faint, var(--studio-ink-dim)); margin-bottom: 0.875rem; user-select: none; }
-        .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr)); gap: 0.875rem; margin-top: 0.875rem; }
+        .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.875rem; margin-top: 0.875rem; }
 
         /* ------------------------------------------------------------------ */
         /* Market Prism block — always-on overnight market summary             */
         /* ------------------------------------------------------------------ */
-        .prism-block {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 1.25rem 1.5rem;
-            margin-bottom: 1.25rem;
-        }
-
-        /* The block sits under the suggestions/autotune grid: the same gap above as below. */
-        .adv-grid + .prism-block { margin-top: 1.25rem; }
-
         .prism-block-header {
             display: flex;
             justify-content: space-between;
@@ -765,13 +663,8 @@
             gap: 0.5rem;
         }
 
-        .prism-block-title {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-        }
+        /* The title is a .section-header; inside this flex row it carries no outer margin. */
+        .prism-block-header .section-header { margin: 0; }
 
         .prism-as-of {
             font-size: 0.625rem;
@@ -806,7 +699,7 @@
         .prism-sentiment-chip--risk-on {
             color: var(--studio-pos);
             border-color: var(--studio-pos);
-            background: rgba(31, 122, 77, 0.07);
+            background: color-mix(in srgb, var(--studio-pos) 7%, transparent);
         }
 
         .prism-sentiment-chip--risk-off {
@@ -1297,23 +1190,19 @@
 
     <div class="page-wrap" data-testid="advisor-page">
 
-        <!-- Header -->
-        <header data-testid="advisor-header" class="adv-header">
-            <div>
-                <h1 class="adv-title">AI Advisor</h1>
-                {# AC-1 (F4, Gap D): the page-global "Claude-powered" claim was TRUE
+        <!-- First panel: the page's description line and the capability tab bar. No title card;
+             the nav marks the page. -->
+        <section class="hero-section" data-testid="advisor-nav-panel">
+            {# AC-1 (F4, Gap D): the page-global "Claude-powered" claim was TRUE
                    for 3 of 6 tabs and FALSE/MISLEADING for the other 3 — the audit's
                    likely root cause of operator distrust (first thing rendered on
                    page load). Replaced with a neutral description; reasoning-mode
                    attribution now lives per-tab below (cap-tab-attribution), driven
                    by the same accessors the engine actually calls, never a hardcoded
                    model-name literal (AC-16 attribution-coherence requirement). #}
-                <p class="adv-subtitle">
-                    Advisory suite — operator must approve each change through safety gates
-                </p>
-            </div>
-            <a href="/" class="back-link">&larr; Dashboard</a>
-        </header>
+            <p class="legend-as-of adv-caption" data-testid="advisor-caption">
+                Advisory suite — operator must approve each change through safety gates
+            </p>
 
         <!-- Capability tab nav — in-place switching via JS (AC2: button not anchor) -->
         <nav class="cap-nav" role="tablist" aria-label="Advisor capabilities">
@@ -1393,6 +1282,7 @@
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Real Composer write — approval required"></span>
             </button>
         </nav>
+        </section>
 
         <!-- ============================================================ -->
         <!-- TAB PANEL: Overview (default active panel)                    -->
@@ -1410,7 +1300,7 @@
 
 
         <!-- Controls bar -->
-        <div data-testid="advisor-controls" class="adv-controls">
+        <div data-testid="advisor-controls" class="hero-section adv-controls">
             <div class="ctrl-group">
                 <label class="ctrl-label" for="symphony-id-input">Symphony</label>
                 <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
@@ -1446,19 +1336,19 @@
 
             <!-- Left: suggestions -->
             <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
-                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
+                <div data-testid="suggestions-placeholder" class="hero-section suggestions-placeholder">
                     Select a symphony and click Run Claude advisor to get suggestions.
                 </div>
             </div>
 
             <!-- Right: autotune panel -->
-            <aside data-testid="autotune-panel" class="autotune-panel">
-                <div data-testid="autotune-panel-header" class="autotune-header">
+            <aside data-testid="autotune-panel" class="hero-section autotune-panel">
+                <div data-testid="autotune-panel-header" class="section-header autotune-header">
                     Recent Autotune Runs
                 </div>
                 <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
                 <div id="autotune-runs-list" data-testid="autotune-runs-list">
-                    <div class="autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
+                    <div class="sym-card autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
                         Loading…
                     </div>
                 </div>
@@ -1479,7 +1369,7 @@
         <!-- Reads from get_latest_market_prism_summary() prefetched in   -->
         <!-- the route.  Advisory-only, no trade affordances.             -->
         <!-- ============================================================ -->
-        <div data-testid="market-prism-block" class="prism-block">
+        <div data-testid="market-prism-block" class="hero-section prism-block">
 
             {# Determine the sentiment value and CSS modifier once for the block #}
             {% if market_prism_summary %}
@@ -1491,7 +1381,7 @@
             {% endif %}
 
             <div class="prism-block-header">
-                <span class="prism-block-title">Market Prism</span>
+                <span class="section-header prism-block-title">Market Prism</span>
                 <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
                 {% if market_prism_summary %}
                     <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
@@ -1696,22 +1586,6 @@
         <!-- advisor-observations-section                                  -->
         <!-- ============================================================ -->
         <style>
-            .obs-section {
-                margin-top: 1.5rem;
-                background: var(--studio-surface);
-                border: 1px solid var(--studio-border);
-                border-radius: 1rem;
-                padding: 1.25rem 1.5rem;
-            }
-            .obs-section-header {
-                font-size: 0.6875rem;
-                font-weight: 700;
-                text-transform: uppercase;
-                letter-spacing: 0.1em;
-                color: var(--studio-ink-dim);
-                margin-bottom: 1rem;
-            }
-
             .obs-section .obs-framing-note { margin: 0 0 0.75rem; }
 
             /* One status line per producer; its history opens below the line. */
@@ -1830,8 +1704,8 @@
         {# What a line and a row read when the stored verdict is NULL or empty. #}
         {%- set _VERDICT_NOT_RECORDED = "verdict not recorded" -%}
 
-        <section data-testid="advisor-observations-section" class="obs-section">
-            <div class="obs-section-header">Advisor Observations</div>
+        <section data-testid="advisor-observations-section" class="hero-section obs-section">
+            <div class="section-header obs-section-header">Advisor Observations</div>
             {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
                NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
                bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
@@ -1949,7 +1823,7 @@
             {% if _cm.state != 'matrix' %}
 
             {# One state block, no matrix: no run yet, a run without pairs, a failed run, or an unreadable one. #}
-            <div class="correlations-state" data-testid="correlations-state" data-state="{{ _cm.state }}">
+            <div class="hero-section correlations-state" data-testid="correlations-state" data-state="{{ _cm.state }}">
                 <div class="correlations-state-title">{{ _cm.title }}</div>
                 {% for _line in _cm.lines %}
                 <p class="correlations-state-line">{{ _line }}</p>
@@ -1966,8 +1840,9 @@
                 {% endif %}
             </div>
 
-            <section class="matrix-card" data-testid="pairwise-matrix-card">
-                <div class="matrix-card-header">Pairwise Return Correlation</div>
+            <section class="hero-section matrix-card" data-testid="pairwise-matrix-card">
+                <div class="section-header matrix-card-header">Pairwise Return Correlation</div>
+                <div class="matrix-scroll">
                 <table class="heatmap-table" data-testid="correlation-matrix-table">
                     <thead>
                         <tr>
@@ -2002,6 +1877,7 @@
                         {%- endfor -%}
                     </tbody>
                 </table>
+                </div>{# /matrix-scroll #}
 
                 <div class="matrix-legend" data-testid="correlations-legend">
                     {%- for _b in _cm.legend_bands -%}
@@ -2194,8 +2070,8 @@
             </div>
         {% endmacro %}
 
-        <section class="matrix-card" data-testid="retirement-recommendations-panel">
-            <div class="matrix-card-header">Retirement Recommendations</div>
+        <section class="hero-section matrix-card" data-testid="retirement-recommendations-panel">
+            <div class="section-header matrix-card-header">Retirement Recommendations</div>
 
             {# Symphony tenure review: header, run state, then one entry per live symphony. #}
             <div class="tenure-review-header">
@@ -2454,7 +2330,7 @@
             </div>
 
             {% if no_api_key %}
-            <div class="no-api-key-state" data-testid="no-api-key-state">
+            <div class="hero-section no-api-key-state" data-testid="no-api-key-state">
                 <div class="no-api-key-title">Advisor Unavailable</div>
                 <div class="no-api-key-body">
                     Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
@@ -2462,8 +2338,8 @@
                 </div>
             </div>
             {% else %}
-            <div class="try-swap-panel" data-testid="try-swap-panel">
-                <div class="try-swap-header">Try a Swap</div>
+            <div class="hero-section try-swap-panel" data-testid="try-swap-panel">
+                <div class="section-header try-swap-header">Try a Swap</div>
                 <div class="try-swap-form" data-testid="try-swap-form">
                     <div class="form-group">
                         <label class="form-label" for="swap-symphony-select">Symphony</label>
@@ -2523,7 +2399,7 @@
             </div>
 
             {% if no_api_key %}
-            <div class="no-api-key-state" data-testid="no-api-key-state-logic">
+            <div class="hero-section no-api-key-state" data-testid="no-api-key-state-logic">
                 <div class="no-api-key-title">Advisor Unavailable</div>
                 <div class="no-api-key-body">
                     Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
@@ -2531,8 +2407,8 @@
                 </div>
             </div>
             {% else %}
-            <div class="try-tweak-panel" data-testid="try-tweak-panel">
-                <div class="try-tweak-header">Try a Logic Tweak</div>
+            <div class="hero-section try-tweak-panel" data-testid="try-tweak-panel">
+                <div class="section-header try-tweak-header">Try a Logic Tweak</div>
                 <div class="try-tweak-form" data-testid="try-tweak-form">
                     <div class="form-row">
                         <div class="form-group">
@@ -2589,7 +2465,7 @@
              data-tab="chat"
              class="tab-panel">
 
-            <div data-testid="chat-default-state" class="chat-default-state">
+            <div data-testid="chat-default-state" class="hero-section chat-default-state">
                 <div class="chat-default-icon" aria-hidden="true">&#x1F4AC;</div>
                 <div class="chat-default-title">
                     Select a recommendation or diagnostic figure to open a contextual explanation.
@@ -2650,7 +2526,7 @@
 
             <!-- AC-X4: no API key configured — run controls unavailable.
                  Stored observations from previous runs are still shown below. -->
-            <div class="no-api-key-state" data-testid="no-api-key-state-sb">
+            <div class="hero-section no-api-key-state" data-testid="no-api-key-state-sb">
                 <div class="no-api-key-title">Advisor Unavailable</div>
                 <div class="no-api-key-body">
                     Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
@@ -2662,8 +2538,8 @@
             {% else %}
 
             <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
-            <div class="run-controls-panel" data-testid="strategy-builder-controls">
-                <div class="run-controls-header">Propose New Strategies</div>
+            <div class="hero-section run-controls-panel" data-testid="strategy-builder-controls">
+                <div class="section-header run-controls-header">Propose New Strategies</div>
                 <div class="run-controls-row">
                     <div class="form-group">
                         <label class="form-label" for="sb-objective-select">Objective</label>
@@ -2855,9 +2731,9 @@
                 {% set n_cand = rr.get('n_candidates') or 1 %}
                 {% set fdr_q_val = rr.get('fdr_q') or 0.05 %}
                 {% set p_adj = rr.get('winner_p_adj') %}
-                <div class="proposal-card proposal-card--survivor">
+                <div class="sym-card proposal-card proposal-card--survivor">
                     <div class="card-header-row">
-                        <span class="card-candidate-id">{{ render_sb_card_title(obs, rr) }}</span>
+                        <span class="card-name">{{ render_sb_card_title(obs, rr) }}</span>
                         <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
                     </div>
                     {# Forward incubation status chip — only rendered when app.py's
@@ -2985,9 +2861,9 @@
             <div class="proposal-cards">
                 {% for obs in sb_bt_failed %}
                 {% set rr = obs.raw_response %}
-                <div class="proposal-card proposal-card--backtest-failed" data-testid="backtest-failed-card">
+                <div class="sym-card proposal-card proposal-card--backtest-failed" data-testid="backtest-failed-card">
                     <div class="card-header-row">
-                        <span class="card-candidate-id">{{ render_sb_card_title(obs, rr) }}</span>
+                        <span class="card-name">{{ render_sb_card_title(obs, rr) }}</span>
                         <span class="gate-pill gate-pill--failed">BACKTEST FAILED</span>
                     </div>
                     {{ render_sb_objective_strip(obs) }}
@@ -3007,9 +2883,9 @@
                         {% set rr = obs.raw_response %}
                         {% set metrics = rr.get('metrics') or {} %}
                         {% set n_cand = rr.get('n_candidates') or 1 %}
-                        <div class="proposal-card proposal-card--rejected">
+                        <div class="sym-card proposal-card proposal-card--rejected">
                             <div class="card-header-row">
-                                <span class="card-candidate-id">{{ render_sb_card_title(obs, rr) }}</span>
+                                <span class="card-name">{{ render_sb_card_title(obs, rr) }}</span>
                                 <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
                             </div>
                             {{ render_sb_sparkline(obs.sparkline_points) }}
@@ -3106,7 +2982,7 @@
             <!-- ANTHROPIC_API_KEY not configured — the build needs it for Fable
                  candidate generation. Pending proposals from a prior run (when the
                  key WAS configured) still render below regardless. -->
-            <div class="no-api-key-state" data-testid="no-api-key-state-fr">
+            <div class="hero-section no-api-key-state" data-testid="no-api-key-state-fr">
                 <div class="no-api-key-title">Frontrunner Builder Unavailable</div>
                 <div class="no-api-key-body">
                     <code>ANTHROPIC_API_KEY</code> not configured — the build needs it
@@ -3118,8 +2994,8 @@
             {% else %}
 
             <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
-            <div class="run-controls-panel" data-testid="frontrunner-builder-controls">
-                <div class="run-controls-header">Run Frontrunner Build</div>
+            <div class="hero-section run-controls-panel" data-testid="frontrunner-builder-controls">
+                <div class="section-header run-controls-header">Run Frontrunner Build</div>
                 <div class="run-controls-row">
                     <button id="fr-run-btn"
                             type="button"
@@ -3161,14 +3037,14 @@
                 {% for p in frontrunner_proposals %}
                 {% set m = p.metrics_json or {} %}
                 {% set is_fr = p.proposal_source == 'frontrunner_builder' %}
-                <div class="proposal-card"
+                <div class="sym-card proposal-card"
                      data-testid="frontrunner-proposal-card"
                      id="fr-card-{{ p.id }}">
                     <div class="card-header-row">
                         {# Title: the incumbent's display name (resolved in ai_advisor_tab());
                            the Composer hash stays only in the title attribute. A hash no
                            longer held in the live state reads as the hash. #}
-                        <span class="card-candidate-id" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }}</span>
+                        <span class="card-name" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }}</span>
                         <span class="advisory-only-badge" data-testid="proposal-source-badge">
                             {% if is_fr %}Frontrunner Builder{% else %}Strategy Builder (retrofit){% endif %}
                         </span>
@@ -3239,7 +3115,7 @@
                         <pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre>
                     </details>
                     {% endif %}
-                    <div class="proposal-actions" style="display:flex;gap:0.5rem;margin-top:0.75rem;">
+                    <div class="proposal-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.75rem;">
                         <button type="button"
                                 class="run-trigger-btn"
                                 data-testid="fr-approve-btn"

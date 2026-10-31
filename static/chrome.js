@@ -10,26 +10,47 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 // ── Force-run button (FP-T3-02) ────────────────────────────────────────────
+// The route is disabled by design (the dashboard never spawns the engine): it answers 200
+// with a message saying runs come from the scheduler. The button shows the route's own
+// answer, never "Triggered!" for a request the route declined.
+var FORCE_RUN_LABEL = 'Force run now';
+var FORCE_RUN_RESULT_MS = 2000;   // "Triggered!" / "Error" stay this long
+var FORCE_RUN_MESSAGE_MS = 6000;  // the route's sentence needs longer to read
+
 function forceRun(e) {
   var btn = document.querySelector('[data-testid="force-run-btn"]');
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   btn.textContent = 'Running…';
+  function settle(text, holdMs) {
+    btn.textContent = text;
+    setTimeout(function () {
+      btn.textContent = FORCE_RUN_LABEL;
+      btn.disabled = false;
+    }, holdMs);
+  }
   fetch('/api/trigger', { method: 'POST', headers: { 'X-CSRF-Token': _chromeCsrfToken || '' } })
     .then(function (r) {
-      btn.textContent = r.ok ? 'Triggered!' : 'Error';
-      setTimeout(function () {
-        btn.textContent = 'Force run now';
-        btn.disabled = false;
-      }, 2000);
+      var ok = r.ok;
+      // A body that is not JSON (a proxy page, the CSRF refusal's HTML) is an error, even on 2xx.
+      return r.json().then(
+        function (d) { return { ok: ok, readable: true, body: d }; },
+        function () { return { ok: ok, readable: false, body: null }; }
+      );
+    })
+    .then(function (res) {
+      var message = (res.body && typeof res.body.message === 'string') ? res.body.message : '';
+      if (!res.readable) {
+        settle('Error', FORCE_RUN_RESULT_MS);
+      } else if (message) {
+        settle(message, FORCE_RUN_MESSAGE_MS);
+      } else {
+        settle(res.ok ? 'Triggered!' : 'Error', FORCE_RUN_RESULT_MS);
+      }
       if (typeof window.loadState === 'function') window.loadState();
     })
     .catch(function () {
-      btn.textContent = 'Error';
-      setTimeout(function () {
-        btn.textContent = 'Force run now';
-        btn.disabled = false;
-      }, 2000);
+      settle('Error', FORCE_RUN_RESULT_MS);
     });
 }
 document.addEventListener('DOMContentLoaded', function () {
@@ -179,6 +200,27 @@ function openPanicModal() {
 }
 window.openPanicModal = openPanicModal;
 
+// What the operator is told about a /api/sell_account answer. Only text is produced here
+// (shown through alert); the request itself is built in submitPanicLiquidation and is the
+// same for every answer. A refusal never claims a liquidation and never goes unshown.
+function _panicAnswerText(res) {
+  var d = (res.body && typeof res.body === 'object') ? res.body : {};
+  if (res.ok) {
+    if (!res.readable) {
+      return 'The server answered HTTP ' + res.status + ' but its answer could not be read, ' +
+        'so the result is unknown. Check the account before trying again.';
+    }
+    return d.message || (d.executed ? 'Liquidation initiated.' : 'Dry-run: no action taken.');
+  }
+  if (typeof d.message === 'string' && d.message) return d.message;
+  if (res.status === 403) {
+    return 'The session check refused the request (HTTP 403), so nothing was liquidated. ' +
+      'Reload the page and try again.';
+  }
+  return 'The server refused the liquidation request (HTTP ' + res.status +
+    '), so nothing was liquidated.';
+}
+
 function submitPanicLiquidation() {
   var accountEl = document.getElementById('panic-account');
   var phraseEl = document.getElementById('panic-phrase');
@@ -190,9 +232,20 @@ function submitPanicLiquidation() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _chromeCsrfToken || '' },
     body: JSON.stringify({ account_id: accountId, confirm_account_id: accountId, confirm_phrase: phrase }),
-  }).then(function (r) { return r.json(); }).then(function (d) {
+  }).then(function (r) {
+    var status = r.status;
+    var ok = r.ok;
+    return r.json().then(
+      function (d) { return { status: status, ok: ok, readable: true, body: d }; },
+      function () { return { status: status, ok: ok, readable: false, body: null }; }
+    );
+  }).then(function (res) {
     closePanicModal();
-    alert(d.message || (d.executed ? 'Liquidation initiated.' : 'Dry-run: no action taken.'));
+    alert(_panicAnswerText(res));
+  }, function () {
+    closePanicModal();
+    alert('The liquidation request could not be sent, so nothing was liquidated. ' +
+      'Check the connection and try again.');
   });
 }
 window.submitPanicLiquidation = submitPanicLiquidation;

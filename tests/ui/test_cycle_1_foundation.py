@@ -658,3 +658,197 @@ def test_api_state_meta_valid_with_empty_bot_state(client):
     assert meta.get("triggered", -1) == 0, (
         f"meta.triggered should be 0 for empty state, got {meta.get('triggered')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# App shell: the shared header wraps at narrow widths, its fonts come from one partial,
+# and the mode pill reads the same on every page.
+#
+# Layout facts (a control inside the viewport) are asserted on a live render in
+# tests/ui/test_shell_header_browser.py; this section pins what the server renders: the
+# header's layout lives in classes a narrow-width rule can override (an inline style cannot be
+# overridden by a media rule), the wrap rule sits inside the existing 1400 px breakpoint, and
+# the font links moved to one partial that renders the same bytes at the same place.
+# ---------------------------------------------------------------------------
+
+import hashlib  # noqa: E402
+from html.parser import HTMLParser  # noqa: E402
+
+_SHELL_PAGES = ["/", "/history", "/performance", "/settings", "/ai-advisor"]
+
+# sha256 of the three font lines (two preconnect hints and the stylesheet link) that began
+# templates/_chrome.html at the plan base, joined by LF without a trailing newline.
+_BASE_FONT_LINES_SHA256 = "648e40b6981b508f6667b4fc0837a3c5b7029e0803584da7768f469858da7375"
+
+_LAYOUT_PROPERTIES = {
+    "display",
+    "flex",
+    "flex-wrap",
+    "flex-shrink",
+    "gap",
+    "margin",
+    "margin-left",
+    "min-width",
+    "overflow",
+    "align-items",
+}
+_VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source"}
+
+
+class _ChromeNodes(HTMLParser):
+    """The attributes of the header's nav, its link group and its status cluster."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.stack: list[tuple[str, dict]] = []
+        self.nav: dict | None = None
+        self.links: dict | None = None
+        self.status: dict | None = None
+
+    def handle_starttag(self, tag, attrs):
+        attr = dict(attrs)
+        if tag == "nav" and attr.get("data-testid") == "studio-nav":
+            self.nav = attr
+        if (
+            tag == "a"
+            and self.links is None
+            and len(self.stack) >= 2
+            and self.stack[-1][0] == "div"
+            and self.stack[-2][0] == "nav"
+        ):
+            self.links = self.stack[-1][1]
+        if attr.get("id") == "engine-status" and self.stack and self.stack[-1][0] == "div":
+            self.status = self.stack[-1][1]
+        if tag not in _VOID_TAGS:
+            self.stack.append((tag, attr))
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index][0] == tag:
+                del self.stack[index:]
+                break
+
+
+def _chrome_nodes(page: str) -> _ChromeNodes:
+    parser = _ChromeNodes()
+    parser.feed(page)
+    parser.close()
+    assert parser.nav is not None, "the page renders no studio nav"
+    assert parser.links is not None, "the nav has no link group"
+    assert parser.status is not None, "the nav has no status cluster"
+    return parser
+
+
+def _inline_properties(attrs: dict) -> set[str]:
+    style = attrs.get("style") or ""
+    return {decl.split(":", 1)[0].strip().lower() for decl in style.split(";") if ":" in decl}
+
+
+def _chrome_template_text() -> str:
+    return (PROJECT_ROOT / "templates" / "_chrome.html").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("route", _SHELL_PAGES)
+@pytest.mark.parametrize("element", ["nav", "links", "status"])
+def test_the_header_layout_is_in_a_class_not_an_inline_style(client, route, element):
+    """a media rule can wrap the header only if its layout is not inline."""
+    nodes = _chrome_nodes(client.get(route).get_data(as_text=True))
+    attrs = getattr(nodes, element)
+    leaked = _inline_properties(attrs) & _LAYOUT_PROPERTIES
+    assert not leaked, f"{element} keeps layout properties inline: {sorted(leaked)}"
+    assert (attrs.get("class") or "").strip(), f"{element} carries no class for its layout"
+
+
+def _rules_at_1400(page: str):
+    from tests.ui import _dashboard_primitives_capture as cap
+
+    for block in re.findall(r"<style\b[^>]*>(.*?)</style>", page, flags=re.DOTALL):
+        for context, selectors, decls in cap.iter_rules(block):
+            if re.search(r"max-width:\s*1400px", context):
+                yield selectors, dict(decls)
+
+
+@pytest.mark.parametrize("element", ["nav", "links"])
+def test_the_nav_and_its_link_group_wrap_inside_the_existing_1400px_breakpoint(client, element):
+    """wrap, not collapse, and at the breakpoint the header already has."""
+    page = client.get("/history").get_data(as_text=True)
+    attrs = getattr(_chrome_nodes(page), element)
+    classes = (attrs.get("class") or "").split()
+    wanted = {f".{c}" for c in classes}
+    if element == "nav":
+        wanted |= {'[data-testid="studio-nav"]', "nav"}
+    matches = [
+        decls
+        for selectors, decls in _rules_at_1400(page)
+        if any(sel.split()[-1].split(":")[0] in wanted for sel in selectors)
+    ]
+    assert any(d.get("flex-wrap") == "wrap" for d in matches), (
+        f"no rule inside @media (max-width: 1400px) sets flex-wrap: wrap on the {element}"
+    )
+
+
+def test_the_header_introduces_no_new_breakpoint_value():
+    """/ overview: the wrap uses the breakpoint the nav already has."""
+    widths = set(re.findall(r"@media\s*\(max-width:\s*(\d+)px\)", _chrome_template_text()))
+    assert widths <= {"1400", "700"}, sorted(widths)
+
+
+def test_the_font_links_live_in_one_partial_the_chrome_includes():
+    """login and the chrome share one font source."""
+    partial = PROJECT_ROOT / "templates" / "_fonts.html"
+    assert partial.is_file(), "templates/_fonts.html does not exist"
+    text = partial.read_text(encoding="utf-8").replace("\r\n", "\n").strip("\n")
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == _BASE_FONT_LINES_SHA256, (
+        "the partial must hold the three font lines of the base chrome verbatim"
+    )
+    chrome = _chrome_template_text()
+    assert "fonts.googleapis.com" not in chrome, "the chrome still carries its own font links"
+    assert re.search(r"\{%\s*include\s+['\"]_fonts\.html['\"]\s*%\}", chrome)
+
+
+@pytest.mark.parametrize("route", _SHELL_PAGES)
+def test_the_rendered_font_lines_are_the_base_bytes_at_the_same_place(client, route):
+    """the same rendered bytes before the header as at the base."""
+    page = client.get(route).get_data(as_text=True).replace("\r\n", "\n")
+    marker = '<div data-testid="top-bar"'
+    assert marker in page
+    before = page[: page.index(marker)].rstrip("\n")
+    # the include keeps the page's indentation on its first line only; the lines are compared bare
+    last_three = "\n".join(line.strip() for line in before.split("\n")[-3:])
+    assert hashlib.sha256(last_three.encode("utf-8")).hexdigest() == _BASE_FONT_LINES_SHA256
+
+
+@pytest.mark.parametrize("route", _SHELL_PAGES)
+def test_every_header_control_is_still_rendered_on_every_page(client, route):
+    """Render half: the indicator and its badge, and the three controls."""
+    page = client.get(route).get_data(as_text=True)
+    for marker in (
+        'data-testid="candidate-alert-indicator"',
+        'data-testid="candidate-alert-badge"',
+        'data-testid="mode-pill"',
+        'data-testid="force-run-btn"',
+        'id="emergency-liquidate"',
+        'data-testid="engine-status"',
+    ):
+        assert marker in page, f"{route} lost {marker}"
+
+
+@pytest.mark.parametrize("live, text", [(True, "LIVE"), (False, "DRY RUN")])
+@pytest.mark.parametrize("route", _SHELL_PAGES)
+def test_the_mode_pill_reads_live_or_dry_run_on_every_page(client, route, live, text):
+    """the pill's text and state follow the live flag, on every page."""
+    import app as app_module
+
+    env = {"LIVE_EXECUTION": "True" if live else "False", "EXECUTION_START_TIME": "09:30"}
+    with (
+        patch("database.load_state", return_value={}),
+        patch("dotenv.dotenv_values", return_value=env),
+        patch.object(app_module, "dotenv_values", lambda *_a, **_k: dict(env)),
+    ):
+        page = client.get(route).get_data(as_text=True)
+    pill = re.search(r'data-testid="mode-pill" data-live="(\w+)"[^>]*>\s*([A-Z ]+?)\s*<', page)
+    assert pill, f"{route} renders no mode pill"
+    assert pill.group(1) == ("true" if live else "false")
+    assert pill.group(2) == text
+    if live:
+        assert "var(--studio-neg)" in page[page.index('data-testid="mode-pill"') :][:400]

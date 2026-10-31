@@ -290,7 +290,7 @@ class TestIncumbentDisplayNameResolution:
     def test_unresolvable_hash_falls_back_to_the_hash_itself(self, client, monkeypatch):
         """Scoped specifically to the NEW fr-incumbent-name identity-line testid,
         not just 'anywhere in the card' — p.symphony_id already renders raw
-        elsewhere in the card (the pre-existing .card-candidate-id span), so an
+        elsewhere in the card (the pre-existing .card-name span), so an
         unscoped substring check would pass vacuously regardless of whether the
         NEW fallback logic exists at all."""
         row = _make_pending_row(row_id=2, symphony_id="unresolvable-hash-xyz")
@@ -817,7 +817,7 @@ def _card_title(client, proposal_id: int):
     tree = parse_html(resp.get_data(as_text=True))
     card = tree.find(attr=("id", f"fr-card-{proposal_id}"))
     assert card is not None, "the pending proposal must render a card"
-    title = card.find(cls="card-candidate-id")
+    title = card.find(cls="card-name")
     assert title is not None, "the card has a title"
     return title
 

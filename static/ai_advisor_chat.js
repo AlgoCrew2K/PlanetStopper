@@ -58,7 +58,7 @@
             return 'color:var(--studio-ink-dim);border-color:var(--studio-border);';
         }
         if (decision === 'ADOPT_CANDIDATE' || decision === 'passed') {
-            return 'color:var(--studio-pos);border-color:var(--studio-pos);background:rgba(31,122,77,0.07);';
+            return 'color:var(--studio-pos);border-color:var(--studio-pos);background:color-mix(in srgb, var(--studio-pos) 7%, transparent);';
         }
         if (decision === 'KEEP_INCUMBENT' || decision === 'withheld') {
             return 'color:var(--studio-warn);border-color:var(--studio-warn);background:var(--studio-warn-tint);';

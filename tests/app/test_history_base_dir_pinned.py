@@ -121,18 +121,19 @@ def test_all_calls_have_base_dir_kwarg(target_calls):
     )
 
 
-def test_at_least_three_call_sites_exist(target_calls):
+def test_the_call_sites_still_exist(target_calls):
     """
     Guard against a future refactor that silently eliminates all calls to
     analytics.get_history_with_cache_invalidation without a replacement.
 
-    The fix commit (c19a541) landed 3 call sites; asserting >= 3 allows new
-    call sites to be added while ensuring none are quietly removed.
+    Two sites read it: the hero fallback and the Advisor symphony list. The
+    Correlations matrix stopped reading post-mortems when it moved to the
+    realized series, so the floor is 2.
     """
     count = len(target_calls)
     line_numbers = [lineno for _, lineno in target_calls]
-    assert count >= 3, (
-        f"Expected >= 3 call sites for `{_TARGET_FUNC}` in app.py, "
+    assert count >= 2, (
+        f"Expected >= 2 call sites for `{_TARGET_FUNC}` in app.py, "
         f"found {count} (at lines {line_numbers}).  "
         "If the function was intentionally removed or renamed, update this test."
     )

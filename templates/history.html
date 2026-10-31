@@ -33,52 +33,14 @@
             --studio-page-max-width: 2400px;
         }
 
-        /* Header */
-        .hist-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1.5rem;
-            background: var(--studio-surface);
-            padding: 1.5rem;
-            border-radius: 1rem;
-            border: 1px solid var(--studio-border);
-            position: relative;
-            overflow: hidden;
-        }
+        /* The shared primitives (.hero-section, .section-header, .mini-stats, .sym-card) are
+           defined once in layout.css; the rules below add layout only, never a look. */
+        .hero-section > .section-header:first-child { margin-top: 0; }
 
-        .hist-header::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 3px;
-            background: linear-gradient(to right, var(--studio-pos), var(--studio-accent));
-        }
+        /* The shared stat label is upper-case; the alpha keeps its lower-case glyph. */
+        .alpha-glyph { text-transform: none; }
 
-        .hist-title {
-            font-size: 3rem;
-            font-weight: 800;
-            letter-spacing: -0.03em;
-            color: var(--studio-ink);
-            line-height: 1.05;
-        }
-
-        .hist-subtitle {
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-            margin-top: 0.25rem;
-        }
-
-        .back-link {
-            font-size: 0.625rem;
-            color: var(--studio-ink-dim);
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            text-decoration: none;
-        }
-
-        .back-link:hover { color: var(--studio-ink); }
+        .reason-grid .sym-card { cursor: default; overflow: hidden; }
 
         /* Controls bar */
         .controls-row {
@@ -124,55 +86,6 @@
             box-shadow: 0 1px 3px var(--studio-rule);
         }
 
-        /* Hero stat strip */
-        .history-hero {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
-            gap: 1rem;
-            margin-bottom: 1.25rem;
-        }
-
-        .hero-stat {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 0.75rem;
-            padding: 1rem 1.25rem;
-        }
-
-        .hero-stat-label {
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            font-weight: 600;
-            margin-bottom: 0.375rem;
-        }
-
-        .hero-stat-value {
-            font-size: 1.625rem;
-            font-weight: 800;
-            color: var(--studio-ink);
-            line-height: 1;
-        }
-
-        /* Section card */
-        .section-card {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 1.25rem 1.5rem;
-            margin-bottom: 1.25rem;
-        }
-
-        .section-title {
-            font-size: 1.125rem;
-            font-weight: 500;
-            text-transform: none;
-            letter-spacing: -0.01em;
-            color: var(--studio-ink);
-            margin-bottom: 1rem;
-        }
-
         /* Daily strip chart — fixed 100 px tall, full width (V-30).
            preserveAspectRatio="none" on the SVG scales bars horizontally
            without distorting bar height at any viewport width. */
@@ -216,23 +129,6 @@
             .reason-grid { grid-template-columns: 1fr; }
         }
 
-        /* .reason-card-inner is kept for fallback but dynamic cards use inline styles (V-28/V-29/V-33). */
-        .reason-card-inner {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 0.75rem;
-            overflow: hidden;
-            position: relative;
-            padding: 1rem;
-        }
-
-        .reason-name {
-            font-size: 0.75rem;
-            font-weight: 700;
-            color: var(--studio-ink);
-            margin-bottom: 0.5rem;
-        }
-
         .reason-stat {
             font-size: 0.6875rem;
             color: var(--studio-ink-dim);
@@ -257,6 +153,14 @@
         .triggers-tbl th { padding: 0.375rem 0.75rem; text-align: left; }
         .triggers-tbl td { padding: 0.375rem 0.75rem; color: var(--studio-ink-dim); }
         .triggers-tbl tbody tr { border-bottom: 1px solid var(--studio-border-dim, var(--studio-border)); }
+
+        @media (max-width: 700px) {
+            .mini-stats { flex-wrap: wrap; }
+            /* about two tiles to a line at 375 px, one at 320 px; never a clipped label */
+            .mini-stats .mini-stat { flex: 1 1 6.25rem; min-width: 0; }
+            .controls-row { flex-wrap: wrap; }
+            .window-selector { flex-wrap: wrap; }
+        }
     </style>
 </head>
 
@@ -266,54 +170,47 @@
 
     <div class="page-wrap" data-testid="history-page">
 
-        <!-- Header -->
-        <header data-testid="history-header" class="hist-header">
-            <div>
-                <h1 class="hist-title">Guard alpha history</h1>
-                <p class="hist-subtitle">
+        <!-- First panel: caption, window picker and headline figures -->
+        <section data-testid="history-controls" class="hero-section">
+            <div class="controls-row">
+                <div data-testid="window-selector" class="window-selector" id="window-picker">
+                    <button data-window="30" class="active" onclick="historySelectWindow(this, '30')">30d</button>
+                    <button data-window="60" onclick="historySelectWindow(this, '60')">60d</button>
+                    <button data-window="90" value="90" onclick="historySelectWindow(this, '90')">90d</button>
+                    <button data-window="125" onclick="historySelectWindow(this, '125')">125d</button>
+                    <button data-window="ytd" onclick="historySelectWindow(this, 'ytd')">YTD</button>
+                    <button data-window="365" onclick="historySelectWindow(this, '365')">1Y</button>
+                    <button data-window="1825" onclick="historySelectWindow(this, '1825')">5Y</button>
+                </div>
+                <span data-testid="history-caption" class="legend-as-of">
                     Rollup of post-mortem snapshots · how the bot's exits actually scored vs the if-held series
-                </p>
+                </span>
             </div>
-            <a href="/" class="back-link">&larr; Dashboard</a>
-        </header>
 
-        <!-- Window selector -->
-        <div class="controls-row">
-            <div data-testid="window-selector" class="window-selector" id="window-picker">
-                <button data-window="30" class="active" onclick="historySelectWindow(this, '30')">30d</button>
-                <button data-window="60" onclick="historySelectWindow(this, '60')">60d</button>
-                <button data-window="90" value="90" onclick="historySelectWindow(this, '90')">90d</button>
-                <button data-window="125" onclick="historySelectWindow(this, '125')">125d</button>
-                <button data-window="ytd" onclick="historySelectWindow(this, 'ytd')">YTD</button>
-                <button data-window="365" onclick="historySelectWindow(this, '365')">1Y</button>
-                <button data-window="1825" onclick="historySelectWindow(this, '1825')">5Y</button>
+            <!-- Hero stats -->
+            <div data-testid="history-hero" class="mini-stats">
+                <div data-testid="stat-total-alpha" class="mini-stat">
+                    <div class="mini-stat-value" id="val-total-alpha">--</div>
+                    <div class="mini-stat-label">Total guard <span class="alpha-glyph">&alpha;</span></div>
+                </div>
+                <div data-testid="stat-total-saved" class="mini-stat">
+                    <div class="mini-stat-value" id="val-total-saved">--</div>
+                    <div class="mini-stat-label">Dollar result</div>
+                </div>
+                <div data-testid="stat-trigger-count" class="mini-stat">
+                    <div class="mini-stat-value" id="val-trigger-count">--</div>
+                    <div class="mini-stat-label">Triggers</div>
+                </div>
+                <div data-testid="stat-win-rate" class="mini-stat">
+                    <div class="mini-stat-value" id="val-win-rate">--</div>
+                    <div class="mini-stat-label">Win rate</div>
+                </div>
             </div>
-        </div>
-
-        <!-- Hero stats -->
-        <div data-testid="history-hero" class="history-hero">
-            <div data-testid="stat-total-alpha" class="hero-stat">
-                <div class="hero-stat-label">Total guard &alpha;</div>
-                <div class="hero-stat-value" id="val-total-alpha">--</div>
-            </div>
-            <div data-testid="stat-total-saved" class="hero-stat">
-                <div class="hero-stat-label">Dollar result</div>
-                <div class="hero-stat-value" id="val-total-saved">--</div>
-            </div>
-            <div data-testid="stat-trigger-count" class="hero-stat">
-                <div class="hero-stat-label">Triggers</div>
-                <div class="hero-stat-value" id="val-trigger-count">--</div>
-            </div>
-            <div data-testid="stat-win-rate" class="hero-stat">
-                <div class="hero-stat-label">Win rate</div>
-                <div class="hero-stat-value" id="val-win-rate">--</div>
-            </div>
-        </div>
+        </section>
 
         <!-- Empty state (shown when no data for window) -->
-        <div data-testid="history-empty-state" id="history-empty-state"
-             style="display:none;padding:3rem;text-align:center;background:var(--studio-surface);
-                    border:1px solid var(--studio-border);border-radius:1rem;margin-bottom:1.25rem;">
+        <div data-testid="history-empty-state" id="history-empty-state" class="hero-section"
+             style="display:none;text-align:center;">
             <div style="font-size:1.5rem;font-weight:700;color:var(--studio-ink-dim);margin-bottom:0.5rem;">
                 No guard alpha data
             </div>
@@ -323,8 +220,8 @@
         </div>
 
         <!-- Daily alpha strip chart -->
-        <div data-testid="daily-strip" class="section-card">
-            <div data-testid="daily-strip-header" class="section-title">Daily Guard &alpha;</div>
+        <div data-testid="daily-strip" class="hero-section">
+            <div data-testid="daily-strip-header" class="section-header">Daily Guard &alpha;</div>
             <div class="daily-chart-wrap">
                 <svg id="daily-chart-svg" width="100%" height="100" preserveAspectRatio="none"></svg>
             </div>
@@ -341,28 +238,28 @@
         </div>
 
         <!-- By-reason breakdown -->
-        <div data-testid="by-reason-section" class="section-card">
-            <div data-testid="by-reason-header" class="section-title">By Exit Reason</div>
+        <div data-testid="by-reason-section" class="hero-section">
+            <div data-testid="by-reason-header" class="section-header">By Exit Reason</div>
             <div class="reason-grid" id="reason-cards">
                 <!-- Server-rendered placeholders ensure data-testid="reason-card" and
                      reason-bar SVGs are present in the HTML before JS fires (B-13). -->
-                <div data-testid="reason-card" class="reason-card-inner">
-                    <div class="reason-name">Take-Profit</div>
+                <div data-testid="reason-card" class="sym-card">
+                    <div class="card-name">Take-Profit</div>
                     <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-plum)"></rect></svg>
                     <div class="reason-stat">--</div>
                 </div>
-                <div data-testid="reason-card" class="reason-card-inner">
-                    <div class="reason-name">Trailing Stop</div>
+                <div data-testid="reason-card" class="sym-card">
+                    <div class="card-name">Trailing Stop</div>
                     <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>
                     <div class="reason-stat">--</div>
                 </div>
-                <div data-testid="reason-card" class="reason-card-inner">
-                    <div class="reason-name">VWAP Breakdown</div>
+                <div data-testid="reason-card" class="sym-card">
+                    <div class="card-name">VWAP Breakdown</div>
                     <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-cyan)"></rect></svg>
                     <div class="reason-stat">--</div>
                 </div>
-                <div data-testid="reason-card" class="reason-card-inner">
-                    <div class="reason-name">VWAP Bleed Cut</div>
+                <div data-testid="reason-card" class="sym-card">
+                    <div class="card-name">VWAP Bleed Cut</div>
                     <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-warn)"></rect></svg>
                     <div class="reason-stat">--</div>
                 </div>
@@ -370,8 +267,8 @@
         </div>
 
         <!-- Recent triggers -->
-        <div data-testid="recent-triggers" class="section-card">
-            <div class="section-title" id="todays-exits-heading">Today's exits</div>
+        <div data-testid="recent-triggers" class="hero-section">
+            <div class="section-header" id="todays-exits-heading">Today's exits</div>
             <div style="overflow-x:auto;">
                 <table class="triggers-tbl">
                     <thead>

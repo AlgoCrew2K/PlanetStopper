@@ -264,10 +264,12 @@ def test_advisor_page_has_chrome_include(adv_client):
     assert b'data-testid="top-bar"' in resp.data
 
 
-def test_advisor_page_has_page_header(adv_client):
-    """Page header section must be present."""
+def test_advisor_page_has_no_title_card(adv_client):
+    """The page opens on its first panel: no title header and no h1."""
     resp = adv_client.get("/ai-advisor")
-    assert b'data-testid="advisor-header"' in resp.data
+    assert b'data-testid="advisor-header"' not in resp.data
+    assert b"<h1" not in resp.data
+    assert b'data-testid="advisor-caption"' in resp.data
 
 
 def test_advisor_page_header_contains_title(adv_client):
@@ -1102,3 +1104,81 @@ def test_every_label_for_names_an_id_on_the_page(adv_client):
     assert labels, "the page has at least one label with a for attribute"
     dangling = sorted({name for name in labels if name not in ids})
     assert dangling == [], f"labels naming an id that is not on the page: {dangling}"
+
+
+# ---------------------------------------------------------------------------
+# App shell: chip, pill and notice tints come from --studio tokens
+#
+# A tint is a token, or a token with a fallback after it (`var(--studio-x, rgba(...))`, where the
+# token wins). A raw `rgba(` or hex colour outside that form is fixed at one value in both themes
+# (the dark render of each tint is checked in tests/ui/test_narrow_containment_browser.py).
+# ---------------------------------------------------------------------------
+
+_TINT_SELECTOR = re.compile(r"chip|pill|notice|badge|status", re.IGNORECASE)
+_TOKEN_WITH_FALLBACK = re.compile(r"var\(--studio-[\w-]+(?:\s*,[^()]*(?:\([^()]*\)[^()]*)*)?\)")
+_RAW_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(")
+
+_NAMED_TINT_RULES = {
+    "the explain-only notice": ".explain-only-notice",
+    "the promoted incubation chip": ".incubation-status-chip--promoted",
+    "the passed gate pill": ".gate-pill--passed",
+    "the risk-on sentiment chip": ".prism-sentiment-chip--risk-on",
+}
+
+
+def _advisor_style_rules():
+    from tests.ui import _dashboard_primitives_capture as cap
+
+    template = (PROJECT_ROOT / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
+    for block in re.findall(r"<style\b[^>]*>(.*?)</style>", template, flags=re.DOTALL):
+        yield from cap.iter_rules(block)
+
+
+def test_every_chip_pill_and_notice_rule_uses_tokens_for_its_tint():
+    """no raw colour outside a var(--studio-...) fallback in such a rule."""
+    leaks = []
+    for _context, selectors, decls in _advisor_style_rules():
+        if not any(_TINT_SELECTOR.search(s) for s in selectors):
+            continue
+        for prop, value in decls:
+            if _RAW_COLOUR.search(_TOKEN_WITH_FALLBACK.sub("", value)):
+                leaks.append(f"{selectors}: {prop}: {value}")
+    assert leaks == [], leaks
+
+
+@pytest.mark.parametrize("label, selector", sorted(_NAMED_TINT_RULES.items()))
+def test_each_named_tint_references_a_studio_token(label, selector):
+    """the tint of each named element is derived from a token."""
+    rules = [
+        dict(decls)
+        for _context, selectors, decls in _advisor_style_rules()
+        if selector in selectors
+    ]
+    assert rules, f"no rule for {label} ({selector})"
+    backgrounds = [r.get("background") or r.get("background-color") or "" for r in rules]
+    assert all("var(--studio-" in b for b in backgrounds), (label, backgrounds)
+    assert all(not _RAW_COLOUR.search(_TOKEN_WITH_FALLBACK.sub("", b)) for b in backgrounds), (
+        label,
+        backgrounds,
+    )
+
+
+def test_the_notice_border_is_derived_from_a_token_too():
+    """the explain-only notice also tints its border."""
+    border = [
+        dict(decls).get("border-bottom", "")
+        for _context, selectors, decls in _advisor_style_rules()
+        if ".explain-only-notice" in selectors
+    ]
+    assert border and all(
+        not _RAW_COLOUR.search(_TOKEN_WITH_FALLBACK.sub("", b)) for b in border
+    ), border
+
+
+def test_the_gate_pill_the_chat_script_draws_takes_its_tint_from_a_token():
+    """the passed gate pill is drawn by a script too (the chat panel's artifact strip)."""
+    source = (PROJECT_ROOT / "static" / "ai_advisor_chat.js").read_text(encoding="utf-8")
+    start = source.index("function _gatePillStyle")
+    body = source[start : source.index("function _gatePillLabel")]
+    leaks = _RAW_COLOUR.findall(_TOKEN_WITH_FALLBACK.sub("", body))
+    assert leaks == [], f"the gate pill script still writes a raw colour: {leaks}"

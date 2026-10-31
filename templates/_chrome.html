@@ -1,7 +1,5 @@
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,500;8..60,600;8..60,700;8..60,800&family=Manrope:wght@300;400;500;600;700;800&family=Geist:wght@300;400;500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
-<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav" style="display:flex;align-items:center;gap:clamp(8px,1.2vw,20px);padding:14px clamp(16px,2vw,40px);border-bottom:1px solid var(--studio-rule);background:var(--studio-paper);font-family:var(--studio-sans,Manrope,sans-serif);width:100%;box-sizing:border-box;min-width:0;">
+{% include '_fonts.html' %}
+<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav" class="shell-nav" style="padding:14px clamp(16px,2vw,40px);border-bottom:1px solid var(--studio-rule);background:var(--studio-paper);font-family:var(--studio-sans,Manrope,sans-serif);width:100%;box-sizing:border-box;">
 
   <!-- Wordmark -->
   <div style="font-weight:700;font-size:18px;letter-spacing:-0.02em;color:var(--studio-ink);display:flex;align-items:baseline;gap:7px;">
@@ -10,7 +8,7 @@
   </div>
 
   <!-- Nav links (C-12: url_for() not hardcoded paths) -->
-  <div style="display:flex;gap:2px;margin-left:8px;flex-shrink:0;">
+  <div class="shell-nav-links">
     <a href="{{ url_for('dashboard') }}"
        {% if active_route == 'dashboard' %}aria-current="page"{% endif %}
        style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'dashboard' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'dashboard' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
@@ -46,7 +44,7 @@
   <div style="flex:1;"></div>
 
   <!-- Right-rail: status cluster (shrinks gracefully; ET clock hides at narrow widths) -->
-  <div style="display:flex;align-items:center;gap:clamp(6px,0.8vw,14px);flex-shrink:1;min-width:0;overflow:hidden;">
+  <div class="shell-nav-status">
     <!-- Single engine-state indicator — written only by chrome.js renderEngineLabel() -->
     {% set _paused = meta is defined and meta.system_online and engine_phase is defined and engine_phase in ('blackout', 'opening') %}
     <span id="engine-status" data-testid="engine-status"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %} style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;flex-shrink:0;">
@@ -110,6 +108,26 @@
 
 <!-- ======================== PANIC MODAL (chrome — all pages) ======================== -->
 <style>
+  /* Header layout lives in classes (not inline style) so a media rule can wrap it.
+     Values are the ones the nav carried inline; at 1440 px the header is unchanged.
+     At the existing 1400 px breakpoint the nav and its link group wrap onto as many rows
+     as they need, so every control stays on screen (interim narrow layout; the real
+     mobile layout is a separate design). */
+  .shell-nav { display:flex; align-items:center; gap:clamp(8px,1.2vw,20px); min-width:0; }
+  .shell-nav-links { display:flex; gap:2px; margin-left:8px; flex-shrink:0; }
+  .shell-nav-status { display:flex; align-items:center; gap:clamp(6px,0.8vw,14px); flex-shrink:1; min-width:0; overflow:hidden; }
+  @media (max-width: 1400px) {
+    .shell-nav { flex-wrap:wrap; row-gap:16px; }
+    /* row-gap leaves room for the active link's underline (bottom:-14px) between wrapped rows */
+    .shell-nav-links { flex-wrap:wrap; flex-shrink:1; row-gap:16px; }
+    .shell-nav-status { flex-wrap:wrap; overflow:visible; }
+  }
+  @media (max-width: 700px) {
+    /* Force run now shows the route's answer (a sentence) for a few seconds; on a phone it
+       wraps inside the screen instead of widening the page. The button's own inline style
+       says nowrap, so only !important can override it here. */
+    [data-testid="force-run-btn"] { max-width:100%; white-space:normal !important; }
+  }
   /* display:flex must NOT appear as an inline style — it overrides [hidden].
      Gate display on the hidden attribute so setAttribute('hidden','') actually hides. */
   #panic-modal { display:none; position:fixed; inset:0; z-index:99999; align-items:center; justify-content:center; background:var(--studio-scrim); }

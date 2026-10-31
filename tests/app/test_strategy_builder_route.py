@@ -1565,7 +1565,7 @@ def _sb_tree(client):
 def _card_by_id(tree, candidate_id: str, kind_class: str):
     """The Strategy Builder card of the given kind whose title carries ``candidate_id``."""
     for card in tree.find_all(cls=kind_class):
-        title = card.find(cls="card-candidate-id")
+        title = card.find(cls="card-name")
         if title is not None and candidate_id in title.text:
             return card
     raise AssertionError(f"no {kind_class} card for {candidate_id}")
@@ -1586,7 +1586,7 @@ class TestStoredCardLabels:
         assert "Objective: Volatility mitigation" in strip.text
         assert "Source: Built new" in strip.text
         assert "Template" not in strip.text
-        title = card.find(cls="card-candidate-id")
+        title = card.find(cls="card-name")
         assert title.text.startswith("Volatility mitigation"), title.text
         secondary = title.find(cls="stat-nil")
         assert secondary is not None and secondary.text == "vol-mit-7", (
@@ -1612,7 +1612,7 @@ class TestStoredCardLabels:
             assert f"Objective: {objective_label}" in strip.text
             assert f"Source: {source_label}" in strip.text
             assert "_" not in strip.text
-            assert "_" not in card.find(cls="card-candidate-id").text.replace(candidate_id, "")
+            assert "_" not in card.find(cls="card-name").text.replace(candidate_id, "")
 
     @pytest.mark.parametrize("kind", ["survivor", "rejected"])
     @pytest.mark.parametrize("variant", ["key_removed", "null", "unknown_value"])

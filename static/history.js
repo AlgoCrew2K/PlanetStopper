@@ -206,6 +206,15 @@
         'VWAP Bleed Cut': 'BLEED',
     };
 
+    // The badge is the shared .status-pill; layout.css tints its .tp / .stop / .vwap / .bleed
+    // variants with the same four tokens as REASON_STRIP_COLOR, so no page-local pill is drawn.
+    var REASON_PILL_CLASS = {
+        'Take-Profit':    'tp',
+        'Trailing Stop':  'stop',
+        'VWAP Breakdown': 'vwap',
+        'VWAP Bleed Cut': 'bleed',
+    };
+
     function canonicalizeByReason(byReason) {
         var merged = {};
         CANONICAL_REASONS.forEach(function (c) {
@@ -245,10 +254,17 @@
         var canonical = canonicalizeByReason(byReason || {});
 
         if (Object.keys(canonical).length === 0) {
-            container.innerHTML = '<div style="padding:2rem;text-align:center;color:' +
+            // The message is a card in the grid (spanning every column), so the empty state
+            // sits in the same box the cards would.
+            container.innerHTML = '<div class="sym-card" style="grid-column:1/-1;text-align:center;color:' +
                 cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No exit reason data for this window.</div>';
             return;
         }
+
+        // The card is the dashboard's .sym-card and its name .card-name: layout.css owns their
+        // look (radius, border, padding, type), so nothing of that is written inline here.
+        var cardOpen = '<div data-testid="reason-card" class="sym-card">';
+        var nameOpen = '<span class="card-name">';
 
         var html = Object.keys(canonical).map(function (reason) {
             var s = canonical[reason];
@@ -259,29 +275,24 @@
                 : cssVar('--studio-ink');
             var stripToken = reasonStripColor(reason);
             var badge = reasonBadge(reason);
+            var pillClass = REASON_PILL_CLASS[reason] || 'standby';
             var winRateNum = s.count > 0 ? (s.wins / s.count) * 100 : 0;
             var descText = REASON_DESCRIPTIONS[reason] || reason;
             var avgAlpha = s.count > 0 && alphaNum !== null ? alphaNum / s.count : null;
             var avgStr = avgAlpha !== null ? (avgAlpha >= 0 ? '+' : '') + avgAlpha.toFixed(3) + '%' : '--';
 
             return (
-                // V-33: use --studio-surface (paper token) so cards are dark in dark theme.
-                // V-29: 4px colored top border per design spec (position:absolute span, top 0).
-                '<div data-testid="reason-card" style="' +
-                'background:' + cssVar('--studio-surface') + ';' +
-                'border:1px solid ' + cssVar('--studio-border') + ';' +
-                'border-radius:0.75rem;overflow:hidden;position:relative;">' +
+                // V-29: 4px colored top edge per design spec (position:absolute span, top 0).
+                cardOpen +
                 '<span style="position:absolute;top:0;left:0;right:0;height:4px;background:' + cssVar(stripToken) + ';display:block;"></span>' +
+                '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem;">' +
+                nameOpen + escHtml(reason) + '</span>' +
+                '<span class="status-pill ' + pillClass + '">' + escHtml(badge) + '</span>' +
+                '</div>' +
                 // B-13: reason-bar SVG whose rect width reflects win-rate for this reason.
-                '<svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="100%" height="4" style="display:block;">' +
+                '<svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="100%" height="4" style="display:block;margin-bottom:0.5rem;">' +
                 '<rect x="0" y="0" width="' + Math.min(winRateNum, 100).toFixed(1) + '" height="4" fill="' + cssVar(stripToken) + '" opacity="0.35"></rect>' +
                 '</svg>' +
-                '<div style="padding:1rem;padding-top:0.75rem;">' +
-                '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem;">' +
-                '<span style="font-size:0.8125rem;font-weight:700;color:' + cssVar('--studio-ink') + ';">' + escHtml(reason) + '</span>' +
-                '<span style="padding:2px 7px;background:color-mix(in srgb,' + cssVar(stripToken) + ' 13%,transparent);border:1px solid color-mix(in srgb,' + cssVar(stripToken) + ' 33%,transparent);' +
-                'border-radius:999px;font-size:0.625rem;font-weight:700;color:' + cssVar(stripToken) + ';letter-spacing:0.08em;">' + escHtml(badge) + '</span>' +
-                '</div>' +
                 '<div style="font-size:1.75rem;font-weight:800;color:' + alphaColor + ';line-height:1;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;">' +
                 escHtml(alphaStr) + '</div>' +
                 '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;margin-bottom:0.75rem;">' +
@@ -298,7 +309,6 @@
                 '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.625rem;">' + escHtml(descText) + '</div>' +
                 '<div style="font-size:0.625rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;font-variant-numeric:tabular-nums;">' +
                 'avg per exit: ' + escHtml(avgStr) + '</div>' +
-                '</div>' +
                 '</div>'
             );
         }).join('');

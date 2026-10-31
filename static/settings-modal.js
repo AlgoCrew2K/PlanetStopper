@@ -290,7 +290,7 @@
             return '<button type="button" class="sym-settings-locked-var-btn"' +
                 ' data-key="' + _esc(key) + '"' +
                 ' style="display:flex;align-items:center;gap:9px;padding:8px 10px;cursor:pointer;' +
-                'text-align:left;width:100%;' + btnBg + ';' + btnBorder + ';' +
+                'text-align:left;width:100%;min-width:0;' + btnBg + ';' + btnBorder + ';' +
                 'border-radius:8px;font-family:var(--studio-sans,Manrope),sans-serif;">' +
                 '<span style="width:16px;height:16px;border-radius:4px;flex-shrink:0;' +
                 'display:flex;align-items:center;justify-content:center;' +
@@ -376,7 +376,7 @@
             '</div>' +
 
             _sectionHeader('Locked tuning variables', 'Checked vars the autotuner may NOT change.') +
-            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;' +
+            '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;' +
             'background:var(--studio-bg);border:1px solid var(--studio-rule);border-radius:10px;padding:12px;">' +
             lockedVarsRows + '</div>' +
 
@@ -618,8 +618,10 @@
             'color:var(--studio-ink-dim);cursor:pointer;font-size:15px;">×</button>' +
             '</div>' +
 
-            '<div style="flex:1;overflow:auto;padding:18px;' +
-            'display:flex;flex-direction:column;gap:20px;">' +
+            // min-height:0 lets this flex child shrink below its content so it scrolls inside the
+            // capped surface and the footer (Cancel, Save) stays on screen.
+            '<div style="flex:1;min-height:0;overflow:auto;padding:18px;' +
+            'display:flex;flex-direction:column;gap:10px;">' +
             bodyHtml + '</div>' +
 
             footerSection +
@@ -631,8 +633,11 @@
             ? '<div style="font-size:11px;color:var(--studio-ink-faint);margin-top:3px;">' +
               _esc(caption) + '</div>'
             : '';
-        return '<div style="display:flex;flex-direction:column;gap:10px;">' +
-            '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">' +
+        // One balanced element: the header row. This function used to open a column wrapper it
+        // never closed, so every block after it nested inside that wrapper and the footer
+        // (Cancel, Save) ended up inside the scrolling body instead of below it. The blocks are
+        // now siblings in the body's column, which carries the gap the wrapper used to carry.
+        return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">' +
             '<div>' +
             '<div style="font-size:11px;font-weight:700;color:var(--studio-ink);' +
             'letter-spacing:0.1em;text-transform:uppercase;">' + _esc(title) + '</div>' +
