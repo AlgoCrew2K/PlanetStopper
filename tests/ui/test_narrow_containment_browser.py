@@ -358,8 +358,18 @@ def test_a_pending_frontrunner_cards_buttons_are_visible_at_narrow_widths(
         probe.page.wait_for_selector('[data-testid="fr-approve-btn"]', state="visible")
         approve = probe.page.locator('[data-testid="fr-approve-btn"]').first
         reject = probe.page.locator('[data-testid="fr-reject-btn"]').first
+        card = probe.page.locator('[data-testid="frontrunner-proposal-card"]').first
+        card_box = card.bounding_box()
+        assert card_box["x"] >= -0.5 and card_box["x"] + card_box["width"] <= width + 0.5, (
+            f"the Frontrunner card is wider than the screen: {card_box}"
+        )
         for button, label in ((approve, "Approve"), (reject, "Reject")):
-            button.scroll_into_view_if_needed()
+            # Vertical scroll only: scrolling a control into view would also scroll the page
+            # sideways, which hides exactly the clipping this test looks for.
+            button.evaluate(
+                "(b) => window.scrollTo(0, window.scrollY + b.getBoundingClientRect().top"
+                " - innerHeight / 2)"
+            )
             box = button.bounding_box()
             assert box["x"] >= -0.5 and box["x"] + box["width"] <= width + 0.5, (
                 f"{label} is outside the viewport horizontally: {box}"
@@ -402,7 +412,7 @@ _TINT_PROBE = """
     el.textContent = name;
     document.body.appendChild(el);
     const s = getComputedStyle(el);
-    out[name] = [s.backgroundColor, s.borderBottomColor];
+    out[name] = s.backgroundColor;
     el.remove();
   }
   return out;

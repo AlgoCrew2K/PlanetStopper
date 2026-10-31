@@ -39,8 +39,6 @@ import app as app_module
 from tests.app import _chrome_node_harness as harness
 from tests.app import _chrome_route_answers as answers
 
-pytestmark = pytest.mark.skipif is None  # no marker: collected and run by default
-
 REPO = pathlib.Path(__file__).resolve().parents[2]
 BASE = json.loads(
     (REPO / "tests" / "fixtures" / "chrome" / "panic_request_at_base.json").read_text(

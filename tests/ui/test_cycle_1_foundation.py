@@ -813,7 +813,8 @@ def test_the_rendered_font_lines_are_the_base_bytes_at_the_same_place(client, ro
     marker = '<div data-testid="top-bar"'
     assert marker in page
     before = page[: page.index(marker)].rstrip("\n")
-    last_three = "\n".join(before.split("\n")[-3:])
+    # the include keeps the page's indentation on its first line only; the lines are compared bare
+    last_three = "\n".join(line.strip() for line in before.split("\n")[-3:])
     assert hashlib.sha256(last_three.encode("utf-8")).hexdigest() == _BASE_FONT_LINES_SHA256
 
 

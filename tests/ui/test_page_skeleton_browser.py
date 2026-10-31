@@ -97,7 +97,7 @@ _PRIMITIVE_COLOURS = [
     ("/history", ".hero-section", "backgroundColor", "background", "--studio-paper"),
     ("/history", ".section-header", "color", "color", "--studio-ink-faint"),
     ("/history", ".mini-stat", "backgroundColor", "background", "--studio-chip-bg"),
-    ("/history", '[data-testid="reason-card"]', "backgroundColor", "background", "--studio-paper"),
+    ("/history", "#reason-cards > *", "backgroundColor", "background", "--studio-paper"),
     ("/performance", ".hero-section", "backgroundColor", "background", "--studio-paper"),
     ("/performance", ".section-header", "color", "color", "--studio-ink-faint"),
     ("/performance", ".mini-stat", "backgroundColor", "background", "--studio-chip-bg"),
