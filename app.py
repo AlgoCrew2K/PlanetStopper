@@ -1718,8 +1718,27 @@ def _canonical_evidence_snapshot(rec: dict) -> dict:
     return _round_floats(snapshot, _MATERIAL_CHANGE_ROUND_NDIGITS)
 
 
+def _retirement_row_producer(raw: object) -> str | None:
+    """Which job wrote a recommendation: "review" (the tenure review, stamped with
+    review_run_id), "recommender" (the recommender run, stamped with run_id), or None for a
+    record that carries neither stamp (a row written before the stamps existed, or a record
+    that has not been stamped yet).
+
+    The two jobs write the same role for a pair they both flag, with evidence that is not the
+    same record (a different basis label, and window fields only the review carries), so a row
+    of one never equals a row of the other and only the same job's rows can be reused.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if "review_run_id" in raw:
+        return "review"
+    if "run_id" in raw:
+        return "recommender"
+    return None
+
+
 def _build_retirement_prior_row_map(rows: list[dict]) -> dict[tuple, dict]:
-    """Build a {(candidate_id, sibling_id): newest_matching_raw_response}
+    """Build a {(candidate_id, sibling_id, producer): newest_matching_raw_response}
     map from a newest-first advisor_observations row list.
 
     PR#140 /code-review finding 2 (Cycle 2c, AC-4 efficiency): hoists the
@@ -1727,20 +1746,35 @@ def _build_retirement_prior_row_map(rows: list[dict]) -> dict[tuple, dict]:
     per rec -- _retirement_recommender_tick_worker builds this map once from
     a single database.get_advisor_observations_for_role() call, then every
     rec's reuse decision is an O(1) dict lookup against it. Only the FIRST
-    (i.e. newest, since `rows` is newest-first by id DESC) row per pair is
-    kept -- matches the pre-existing "most recent prior row governs"
-    contract. Malformed rows (non-dict raw_response) are skipped, never
-    raised.
+    (i.e. newest, since `rows` is newest-first by id DESC) row per pair AND
+    producer is kept -- matches the pre-existing "most recent prior row governs"
+    contract, per job (_retirement_row_producer). Malformed rows (non-dict
+    raw_response) are skipped, never raised.
     """
     prior_map: dict[tuple, dict] = {}
     for row in rows:
         raw = row.get("raw_response")
         if not isinstance(raw, dict):
             continue
-        key = (raw.get("candidate_id"), raw.get("sibling_id"))
+        key = (raw.get("candidate_id"), raw.get("sibling_id"), _retirement_row_producer(raw))
         if key not in prior_map:
             prior_map[key] = raw
     return prior_map
+
+
+def _retirement_prior_raw_for(rec: dict, prior_map: dict) -> dict | None:
+    """The newest stored row of the same pair written by the same job as `rec`.
+
+    A row from the other job is never returned. A row that carries neither job's stamp is the
+    fallback: it is nobody's in particular (it predates the stamps), and each job then replaces
+    it with a row of its own.
+    """
+    pair = (rec.get("candidate_id"), rec.get("sibling_id"))
+    producer = _retirement_row_producer(rec)
+    prior_raw = prior_map.get((*pair, producer))
+    if prior_raw is None and producer is not None:
+        prior_raw = prior_map.get((*pair, None))
+    return prior_raw
 
 
 def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> str | None:
@@ -1748,9 +1782,11 @@ def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> s
     fresh explain_recommendation call (Cycle 2c, AC-4: nightly-explain spend
     control).
 
-    `prior_map` is a {(candidate_id, sibling_id): newest_matching_raw_response}
+    `prior_map` is a {(candidate_id, sibling_id, producer): newest_matching_raw_response}
     map pre-built ONCE per tick via _build_retirement_prior_row_map (PR#140
     review finding 2) -- an O(1) lookup here, no DB access, no per-rec query.
+    The row compared is the newest one written by the SAME job as `rec`
+    (_retirement_prior_raw_for), never the other job's.
 
     Reuse-eligible iff the prior row's explanation is truthy AND
     _canonical_evidence_snapshot(rec) == _canonical_evidence_snapshot(prior_raw)
@@ -1760,8 +1796,7 @@ def _retirement_find_reusable_prior_explanation(rec: dict, prior_map: dict) -> s
     identically to the "no prior history" case. Never propagates.
     """
     try:
-        key = (rec.get("candidate_id"), rec.get("sibling_id"))
-        prior_raw = prior_map.get(key)
+        prior_raw = _retirement_prior_raw_for(rec, prior_map)
         if prior_raw is None:
             return None
 
@@ -1924,7 +1959,7 @@ def _prepare_retirement_recs_for_persist(recs: list[dict], *, written_on: str) -
 
         reused_explanation = _retirement_find_reusable_prior_explanation(rec, _prior_map)
         if reused_explanation is not None:
-            prior_raw = _prior_map.get((rec.get("candidate_id"), rec.get("sibling_id"))) or {}
+            prior_raw = _retirement_prior_raw_for(rec, _prior_map) or {}
             rec["explanation"] = reused_explanation
             rec["explanation_written_on"] = prior_raw.get("explanation_written_on")
             continue
