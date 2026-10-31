@@ -45,6 +45,111 @@
         return sign + Number(delta).toFixed(3);
     }
 
+    // ---------------------------------------------------------------------------
+    // One ET time formatter: the page-script half of analytics.format_et_stamp
+    // (the Jinja filter `et_stamp` is the template half). Same contract and the
+    // same accepted text, so a time reads identically wherever it is shown:
+    // 'YYYY-MM-DD HH:MM ET' in America/New_York, minutes truncated; a time with
+    // no zone is read as UTC unless opts.naiveIsUtc is false (then it prints its
+    // date only, unconverted); opts.dateOnly prints the ET date; a calendar date
+    // alone is returned unchanged; anything absent or unreadable is the dash.
+    // Parsed with regular expressions, never Date.parse (its reading of zone-less
+    // and fractional text differs between browsers); never throws.
+    // ---------------------------------------------------------------------------
+
+    var ET_STAMP_MISSING = '\u2014';
+    var ET_STAMP_ISO = /^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?)?$/;
+    var ET_STAMP_COMPACT = /^([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z$/;
+    var ET_STAMP_TRIM = /^[ \t\r\n]+|[ \t\r\n]+$/g;
+    var _etStampFormatter = null;
+
+    function etDaysInMonth(year, month) {
+        if (month === 2) {
+            return (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28;
+        }
+        return (month === 4 || month === 6 || month === 9 || month === 11) ? 30 : 31;
+    }
+
+    function etPad(n, width) {
+        var s = String(n);
+        while (s.length < width) { s = '0' + s; }
+        return s;
+    }
+
+    function fmtEtStamp(value, opts) {
+        try {
+            var naiveIsUtc = !(opts && opts.naiveIsUtc === false);
+            var dateOnly = !!(opts && opts.dateOnly);
+            if (typeof value !== 'string') { return ET_STAMP_MISSING; }
+            var text = value.replace(ET_STAMP_TRIM, '');
+            if (!text) { return ET_STAMP_MISSING; }
+
+            var f;          // [year, month, day, hour, minute, second]
+            var zoneText = null;
+            var zoned = false;
+            var m = ET_STAMP_COMPACT.exec(text);
+            if (m) {
+                f = m.slice(1, 7).map(Number);
+                zoned = true;
+            } else {
+                m = ET_STAMP_ISO.exec(text);
+                if (!m) { return ET_STAMP_MISSING; }
+                f = [Number(m[1]), Number(m[2]), Number(m[3])];
+                if (m[4] === undefined) {
+                    // A calendar date alone: valid or not, never converted.
+                    if (f[0] < 1 || f[1] < 1 || f[1] > 12 || f[2] < 1 || f[2] > etDaysInMonth(f[0], f[1])) {
+                        return ET_STAMP_MISSING;
+                    }
+                    return text;
+                }
+                f.push(Number(m[4]), Number(m[5]), Number(m[6]));
+                zoneText = m[7] === undefined ? null : m[7];
+                zoned = zoneText !== null;
+            }
+            if (f[0] < 1 || f[1] < 1 || f[1] > 12 || f[2] < 1 || f[2] > etDaysInMonth(f[0], f[1]) ||
+                f[3] > 23 || f[4] > 59 || f[5] > 59) {
+                return ET_STAMP_MISSING;
+            }
+            var offsetMs = 0;
+            if (zoneText !== null && zoneText !== 'Z') {
+                var offsetHours = Number(zoneText.slice(1, 3));
+                var offsetMinutes = Number(zoneText.slice(4, 6));
+                if (offsetHours > 23 || offsetMinutes > 59) { return ET_STAMP_MISSING; }
+                offsetMs = (zoneText.charAt(0) === '-' ? -1 : 1) * (offsetHours * 60 + offsetMinutes) * 60000;
+            }
+            if (!zoned && !naiveIsUtc) {
+                return etPad(f[0], 4) + '-' + etPad(f[1], 2) + '-' + etPad(f[2], 2);
+            }
+            var local = new Date(0);
+            local.setUTCFullYear(f[0], f[1] - 1, f[2]);
+            local.setUTCHours(f[3], f[4], f[5], 0);
+            var instantMs = local.getTime() - offsetMs;
+            if (isNaN(instantMs)) { return ET_STAMP_MISSING; }
+
+            if (!_etStampFormatter) {
+                _etStampFormatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York',
+                    hourCycle: 'h23',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+            var parts = {};
+            _etStampFormatter.formatToParts(new Date(instantMs)).forEach(function (p) {
+                parts[p.type] = p.value;
+            });
+            var dayText = etPad(parts.year, 4) + '-' + parts.month + '-' + parts.day;
+            if (dateOnly) { return dayText; }
+            var hour = parts.hour === '24' ? '00' : parts.hour;
+            return dayText + ' ' + hour + ':' + parts.minute + ' ET';
+        } catch (err) {
+            return ET_STAMP_MISSING;
+        }
+    }
+
     // Module-level suggestion state — survives any poll cycle.
     var _activeSuggestions = null;
     var _activeSymphonyId = null;
@@ -63,6 +168,10 @@
         if (chipTotal) chipTotal.textContent = total + ' suggestion' + (total !== 1 ? 's' : '');
         if (chipPassed) chipPassed.textContent = passed + ' OOS passed';
         if (chipRejected) chipRejected.textContent = rejected + ' OOS rejected';
+        // The strip renders hidden: a count of zero before any run would read as a
+        // result. A returned run (even one with no suggestions) shows its own counts.
+        var strip = document.getElementById('advisor-summary-strip');
+        if (strip) strip.removeAttribute('hidden');
     }
 
     // ---------------------------------------------------------------------------
@@ -94,7 +203,7 @@
             var lensAsOf = body && body.lens_data_as_of;
             if (lensAsOf) {
                 var staleTag = body.lens_data_stale ? ' (stale)' : '';
-                lensAsOfEl.textContent = 'Market context as of ' + lensAsOf + staleTag;
+                lensAsOfEl.textContent = 'Market context as of ' + fmtEtStamp(lensAsOf) + staleTag;
                 lensAsOfEl.style.display = '';
             } else {
                 lensAsOfEl.textContent = '';
@@ -679,53 +788,81 @@
             syncRunBtn();
         }
 
-        // ----------------------------------------------------------------
-        // In-place tab switcher (AC2 — window-selector pattern).
-        // Matches the .active-toggle pattern from static/index.js:1348.
-        // ----------------------------------------------------------------
-        (function initTabSwitcher() {
-            var tabs = document.querySelectorAll('[role="tab"][data-tab]');
-            var panels = document.querySelectorAll('[role="tabpanel"][data-tab]');
-
-            if (!tabs.length || !panels.length) { return; }
-
-            function activateTab(targetTab) {
-                // Update tab button states.
-                tabs.forEach(function (btn) {
-                    var isActive = btn === targetTab;
-                    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-                    if (isActive) {
-                        btn.classList.add('active');
-                    } else {
-                        btn.classList.remove('active');
-                    }
-                });
-                // Show/hide panels — match data-tab to the button's data-tab.
-                var targetName = targetTab.getAttribute('data-tab');
-                panels.forEach(function (panel) {
-                    if (panel.getAttribute('data-tab') === targetName) {
-                        panel.classList.add('tab-panel--active');
-                    } else {
-                        panel.classList.remove('tab-panel--active');
-                    }
-                });
-            }
-
-            // Wire click handlers.
-            tabs.forEach(function (btn) {
-                btn.addEventListener('click', function () {
-                    activateTab(btn);
-                });
-            });
-
-            // Ensure the initially-active button's panel is shown.
-            var initialActive = document.querySelector('[role="tab"][aria-selected="true"]');
-            if (initialActive) {
-                activateTab(initialActive);
-            }
-        }());
-
+        initTabSwitcher();
     });
+
+    // ---------------------------------------------------------------------------
+    // In-place tab switcher (AC2 — window-selector pattern) and the #<tab>
+    // fragment. A click selects a tab and writes its name to the URL fragment
+    // (replaceState: no history entry), so a reload or a shared link opens the
+    // same tab; a hashchange (a link to #retirement, back/forward) selects the
+    // tab it names. The fragment is untrusted input: it is only ever compared
+    // with the data-tab names the page renders, never used to build a selector.
+    // ---------------------------------------------------------------------------
+
+    function renderedTabNames() {
+        var names = [];
+        document.querySelectorAll('[role="tab"][data-tab]').forEach(function (btn) {
+            names.push(btn.getAttribute('data-tab'));
+        });
+        return names;
+    }
+
+    /** The tab a URL fragment names: only a '#' + a rendered name, else 'overview'. */
+    function tabNameFromHash(hash, knownNames) {
+        if (typeof hash !== 'string' || hash.charAt(0) !== '#' || !Array.isArray(knownNames)) {
+            return 'overview';
+        }
+        var name = hash.slice(1);
+        return knownNames.indexOf(name) >= 0 ? name : 'overview';
+    }
+
+    function activateTabByName(name) {
+        document.querySelectorAll('[role="tab"][data-tab]').forEach(function (btn) {
+            var isActive = btn.getAttribute('data-tab') === name;
+            btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+            if (isActive) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        document.querySelectorAll('[role="tabpanel"][data-tab]').forEach(function (panel) {
+            if (panel.getAttribute('data-tab') === name) {
+                panel.classList.add('tab-panel--active');
+            } else {
+                panel.classList.remove('tab-panel--active');
+            }
+        });
+    }
+
+    /** Put a rendered tab's name in the URL fragment without adding a history entry. */
+    function writeTabFragment(name) {
+        try {
+            history.replaceState(null, '', '#' + name);
+        } catch (err) {
+            // Some embedded contexts refuse replaceState; the tab still switches.
+        }
+    }
+
+    function initTabSwitcher() {
+        var tabs = document.querySelectorAll('[role="tab"][data-tab]');
+        var panels = document.querySelectorAll('[role="tabpanel"][data-tab]');
+        if (!tabs.length || !panels.length) { return; }
+
+        tabs.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var name = btn.getAttribute('data-tab');
+                activateTabByName(name);
+                writeTabFragment(name);
+            });
+        });
+        window.addEventListener('hashchange', function () {
+            activateTabByName(tabNameFromHash(window.location.hash, renderedTabNames()));
+        });
+        // The first paint follows the URL: no fragment, or one naming no tab, is the Overview.
+        activateTabByName(tabNameFromHash(window.location.hash, renderedTabNames()));
+    }
 
     // ---------------------------------------------------------------------------
     // Strategy incubation gate — live status chip refresh (AC-5).
@@ -1164,6 +1301,9 @@
         frDispatchProposalAction('reject', proposalId);
     }
 
+    // The pill class per decision state; templates/ai_advisor.html maps the same three pairs.
+    var RETIREMENT_PILL_CLASS = { pending: 'standby', approved: 'armed', rejected: 'triggered' };
+
     /**
      * Shared approve/reject dispatch for a retirement recommendation card
      * (Cycle 2b, AC-5/AC-7; reworked Cycle 2c, AC-7). Mirrors
@@ -1231,15 +1371,15 @@
                                 '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:700;">' +
                                 msg + '</p>';
                         }
-                        // F4: the status chip must reflect the new decision
+                        // F4: the status pill must reflect the new decision
                         // immediately, not just the actions row -- otherwise a
-                        // stale "Pending" chip sits next to the confirmation
+                        // stale "Pending" pill sits next to the confirmation
                         // message until the page is reloaded.
                         var newStatus = action === 'reject' ? 'rejected' : 'approved';
                         var statusChip = card.querySelector('[data-testid="retirement-rec-status"]');
                         if (statusChip) {
                             statusChip.textContent = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
-                            statusChip.className = 'retirement-status-chip retirement-status-chip--' + newStatus;
+                            statusChip.className = 'status-pill ' + RETIREMENT_PILL_CLASS[newStatus];
                         }
                     }
                 } else {
@@ -1355,6 +1495,8 @@
                     var currentRunId = await readLastRunId();
                     if (currentRunId && currentRunId !== priorRunId) {
                         setStatus('Run complete — reloading…');
+                        // The reload opens the tab the operator was waiting on.
+                        writeTabFragment('retirement');
                         location.reload();
                         return;
                     }

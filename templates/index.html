@@ -24,13 +24,6 @@
     /* status-strip removed (V-40): status info is inline in the chrome nav right-rail */
 
     /* ---- Hero ---- */
-    .hero-section {
-      background: var(--studio-paper);
-      border-radius: 14px;
-      padding: 28px 32px 24px;
-      margin-bottom: 28px;
-    }
-
     .hero-grid {
       display: grid;
       grid-template-columns: 1.15fr 1fr;
@@ -171,12 +164,6 @@
       );
     }
 
-    .legend-as-of {
-      margin-left: auto;
-      font-size: 10px;
-      color: var(--studio-ink-faint);
-    }
-
     /* VsRows */
     .vs-rows {
       display: flex;
@@ -273,66 +260,11 @@
     .vs-delta.pos { color: var(--studio-pos); }
     .vs-delta.neg { color: var(--studio-neg); }
 
-    /* Mini-stats */
-    .mini-stats {
-      display: flex;
-      gap: 10px;
-    }
-
-    .mini-stat {
-      flex: 1;
-      background: var(--studio-chip-bg);
-      border-radius: 8px;
-      padding: 10px 12px;
-      text-align: center;
-    }
-
-    .mini-stat-value {
-      font-size: 22px;
-      font-weight: 800;
-      color: var(--studio-ink);
-      line-height: 1;
-      margin-bottom: 3px;
-    }
-
-    .mini-stat-label {
-      font-size: 10px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--studio-ink-faint);
-    }
-
     /* ---- Card sections ---- */
-    .section-header {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--studio-ink-faint);
-      margin: 28px 0 12px;
-    }
-
     .cards-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(min(100%, 640px), 1fr));
       gap: 16px;
-    }
-
-    /* Symphony card */
-    .sym-card {
-      background: var(--studio-paper);
-      border: 1px solid var(--studio-rule);
-      border-radius: 12px;
-      padding: 18px 20px 16px;
-      cursor: pointer;
-      transition: box-shadow 0.15s;
-      position: relative;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-    }
-
-    .sym-card:hover {
-      box-shadow: 0 4px 16px var(--studio-rule-hi);
     }
 
     .card-top {
@@ -341,46 +273,6 @@
       align-items: flex-start;
       margin-bottom: 12px;
     }
-
-    .card-name {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--studio-ink);
-    }
-
-    /* Status pill */
-    .status-pill {
-      display: inline-flex;
-      align-items: center;
-      padding: 3px 9px;
-      border-radius: 20px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-
-    .status-pill.armed { background: color-mix(in srgb, var(--studio-pos-dim) 70%, transparent); color: var(--studio-pos); }
-    .status-pill.triggered { background: color-mix(in srgb, var(--studio-neg-dim) 70%, transparent); color: var(--studio-neg); }
-    .status-pill.standby { background: color-mix(in srgb, var(--studio-chip-bg) 70%, transparent); color: var(--studio-ink-dim); }
-    /* Strategy-type colored pills */
-    .status-pill.tp   { background: color-mix(in srgb, var(--studio-plum) 18%, transparent); color: var(--studio-plum); }
-    .status-pill.stop { background: color-mix(in srgb, var(--studio-neg) 18%, transparent);  color: var(--studio-neg); }
-    .status-pill.vwap { background: color-mix(in srgb, var(--studio-cyan) 18%, transparent); color: var(--studio-cyan); }
-    .status-pill.bleed { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-warn); }
-    .status-pill.tp-armed { background: color-mix(in srgb, var(--studio-plum) 18%, transparent); color: var(--studio-plum); }
-    .status-pill.para-armed { background: color-mix(in srgb, var(--studio-cyan) 18%, transparent); color: var(--studio-cyan); }
-
-    /* Managed Sleeves status pills (AC-16) -- each of the 6 named statuses
-       (SHADOW/PAPER/LIVE/BENCHED/PAUSED_RECONCILIATION/stale) gets its own
-       pairwise-distinct background/color/border combo, never collapsing
-       into a shared "standby" look (s3-ux live-render finding #1) --
-       PAUSED_RECONCILIATION additionally gets a bordered/bold treatment so
-       it reads as the serious operational state it is, never mistaken for
-       a mundane fresh SHADOW sleeve. */
-    .status-pill.sleeve-benched { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-warn); }
-    .status-pill.sleeve-paused { background: color-mix(in srgb, var(--studio-neg) 18%, transparent); color: var(--studio-neg); border: 1px solid var(--studio-neg); font-weight: 800; }
-    .status-pill.sleeve-stale { background: color-mix(in srgb, var(--studio-cyan) 12%, transparent); color: var(--studio-ink-faint); border: 1px dashed var(--studio-ink-faint); }
 
     /* Generic inert-control marker (AC-16 finding #5) -- a disabled sleeve
        control must never look identical to its enabled counterpart.

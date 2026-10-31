@@ -44,8 +44,9 @@ import math
 import os
 import re
 import sqlite3
-from datetime import UTC, date
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 import database
 
@@ -2307,6 +2308,93 @@ def format_dollar_saved(
     if whole.isdigit():
         whole = f"{int(whole):,}"
     return f"${whole}{dot}{fraction} {word}"
+
+
+# ---------------------------------------------------------------------------
+# One ET time formatter (Python half; the page-script half is fmtEtStamp in
+# static/ai_advisor.js, and the Jinja filter `et_stamp` registers this function)
+# ---------------------------------------------------------------------------
+
+# The zone every operator-facing stamp is shown in, and its label.
+_ET_STAMP_ZONE = ZoneInfo("America/New_York")
+ET_STAMP_SUFFIX = " ET"
+# What an absent or unreadable time reads as (the missing-value character the
+# Advisor page already prints). Never the input.
+ET_STAMP_MISSING = "\u2014"
+
+# Producers write four shapes of instant: SQLite datetime('now') text with no zone,
+# ISO text with `Z` or a numeric offset, a fraction of any length, and GDELT's
+# compact YYYYMMDDTHHMMSSZ. A calendar date alone is not an instant. Digits are
+# ASCII-only so the Python and page-script halves accept the same text.
+_ET_STAMP_ISO = re.compile(
+    r"([0-9]{4})-([0-9]{2})-([0-9]{2})"
+    r"(?:[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?"
+    r"(Z|[+-][0-9]{2}:[0-9]{2})?)?"
+)
+_ET_STAMP_COMPACT = re.compile(r"([0-9]{4})([0-9]{2})([0-9]{2})T([0-9]{2})([0-9]{2})([0-9]{2})Z")
+_ET_STAMP_TRIM = " \t\r\n"
+
+
+def format_et_stamp(value: object, *, naive_is_utc: bool = True, date_only: bool = False) -> str:
+    """Render a stored time as ``YYYY-MM-DD HH:MM ET`` (America/New_York, ``ET`` in
+    summer and winter time alike; minutes truncated, never rounded; no seconds, no
+    fraction). The single Python implementation of the operator-facing time form.
+
+    ``value`` must be text. A time with no zone is read as UTC when ``naive_is_utc``
+    (the default: SQLite ``datetime('now')`` text); with ``naive_is_utc=False`` (feed
+    publish times, whose zone is unknown) it prints its date only, as written and not
+    converted. A time with a zone converts whatever ``naive_is_utc`` says.
+    ``date_only=True`` prints the ET date of the instant. A calendar date with no time
+    of day is not an instant and is returned unchanged.
+
+    ``None``, empty, blank, non-text and impossible values read ``ET_STAMP_MISSING``.
+    Never raises and never echoes its input.
+    """
+    if not isinstance(value, str):
+        return ET_STAMP_MISSING
+    text = value.strip(_ET_STAMP_TRIM)
+    if not text:
+        return ET_STAMP_MISSING
+    zone_text: str | None = None
+    zoned = False
+    compact = _ET_STAMP_COMPACT.fullmatch(text)
+    iso = None if compact else _ET_STAMP_ISO.fullmatch(text)
+    if compact:
+        fields = [int(g) for g in compact.groups()]
+        zoned = True
+    elif iso:
+        year, month, day = (int(g) for g in iso.groups()[:3])
+        if iso.group(4) is None:
+            # A calendar date alone: valid or not, never converted.
+            try:
+                date(year, month, day)
+            except ValueError:
+                return ET_STAMP_MISSING
+            return text
+        fields = [year, month, day, *(int(g) for g in iso.groups()[3:6])]
+        zone_text = iso.group(7)
+        zoned = zone_text is not None
+    else:
+        return ET_STAMP_MISSING
+    offset = timedelta(0)
+    if zone_text is not None and zone_text != "Z":
+        sign = -1 if zone_text[0] == "-" else 1
+        offset_hours, offset_minutes = int(zone_text[1:3]), int(zone_text[4:6])
+        if offset_hours > 23 or offset_minutes > 59:
+            return ET_STAMP_MISSING
+        offset = sign * timedelta(hours=offset_hours, minutes=offset_minutes)
+    try:
+        # datetime() rejects an impossible date or time (month 13, 30 Feb, hour 25).
+        local = datetime(*fields, tzinfo=UTC)
+        if not zoned and not naive_is_utc:
+            return f"{local.year:04d}-{local.month:02d}-{local.day:02d}"
+        moment = (local - offset).astimezone(_ET_STAMP_ZONE)
+    except (ValueError, OverflowError):
+        return ET_STAMP_MISSING
+    day_text = f"{moment.year:04d}-{moment.month:02d}-{moment.day:02d}"
+    if date_only:
+        return day_text
+    return f"{day_text} {moment.hour:02d}:{moment.minute:02d}{ET_STAMP_SUFFIX}"
 
 
 def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
