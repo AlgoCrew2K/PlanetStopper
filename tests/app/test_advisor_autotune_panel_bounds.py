@@ -418,8 +418,19 @@ class TestSparkline:
 _PAGE_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
+_STATIC_URL_FOR = re.compile(
+    r"""^\{\{\s*url_for\(\s*'static'\s*,\s*filename\s*=\s*'([^']+)'\s*\)\s*\}\}$"""
+)
+
+
 def _chart_src(markup: str) -> list[str]:
-    return re.findall(r'<script[^>]+src="([^"]*chart[^"]*)"', markup, flags=re.IGNORECASE)
+    """The chart library script URLs of a page, a template's static ``url_for`` tag resolved to
+    the URL it renders to, so a template and a rendered page compare on what the browser loads."""
+    found = re.findall(r'<script[^>]+src="([^"]*chart[^"]*)"', markup, flags=re.IGNORECASE)
+    return [
+        f"/static/{match.group(1)}" if (match := _STATIC_URL_FOR.match(src)) else src
+        for src in found
+    ]
 
 
 class TestPageMarkup:
