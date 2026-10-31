@@ -77,10 +77,16 @@ class TestOuterWrapperIsFlexColumn:
             "the shared page-layout skeleton."
         )
         css_body = page_wrap_css_match.group(1)
+        # Only the .page-wrap rules and the --studio-page-max-width declarations can cap the page;
+        # a responsive breakpoint (@media (max-width: 700px)) is a viewport condition.
+        cap_scope = " ".join(
+            re.findall(r"\.page-wrap\s*\{([^}]*)\}", layout_css)
+            + re.findall(r"--studio-page-max-width\s*:[^;}]*", layout_css)
+        )
         narrow_cap = re.search(
             r"(?:max-width|--studio-page-max-width)\s*:\s*"
             r"(?:[0-9]{1,3}px|[0-9]{2,3}rem)",
-            layout_css,
+            cap_scope,
         )
         assert not narrow_cap, (
             f".page-wrap must not set a narrow max-width in static/layout.css; "

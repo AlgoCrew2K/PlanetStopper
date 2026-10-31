@@ -6,6 +6,11 @@ this file:
     DB_PATH=<scratch>/state.db ATLAS_CACHE_DB_PATH=<scratch>/atlas.db \
         python tests/fixtures/dashboard/primitives_baseline/capture_baseline.py
 
+A later plan that changes a primitive on purpose records the change with ``--rules-only``: only
+``resolved`` and ``ordered`` are replaced (``ordered`` is then read from ``static/layout.css``,
+where the rules live since the move), the base's ``structure`` and ``base_sha`` are kept, and the
+revision is recorded under ``rules_revision``.
+
 ``baseline.json`` holds, from the markup and sheets the route served at ``base_sha``:
 
 * ``structure``: ``[[tag, [class, ...]], ...]`` for every element in ``<body>``;
@@ -39,6 +44,32 @@ def _git(*args: str) -> str:
     ).stdout.strip()
 
 
+def revise_rules(resolved: dict, ordered: list) -> None:
+    """Replace only ``resolved`` and ``ordered``, for a primitive a later plan changed on purpose.
+
+    ``structure`` and ``base_sha`` stay the base's. The revision is recorded under
+    ``rules_revision`` (the head it was taken at, the time, the counts before and after).
+    """
+    path = HERE / "baseline.json"
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    before = recorded["resolved"], recorded["ordered"]
+    recorded["resolved"] = resolved
+    recorded["ordered"] = ordered
+    recorded["rules_revision"] = {
+        "head_sha": _git("rev-parse", "HEAD"),
+        "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "resolved_before": len(before[0]),
+        "resolved_after": len(resolved),
+        "ordered_before": len(before[1]),
+        "ordered_after": len(ordered),
+    }
+    path.write_text(json.dumps(recorded, indent=1) + "\n", encoding="utf-8")
+    print(
+        f"rewrote resolved ({len(before[0])} -> {len(resolved)}) and ordered "
+        f"({len(before[1])} -> {len(ordered)}); structure and base_sha kept"
+    )
+
+
 def main() -> None:
     watched = [
         "templates/index.html",
@@ -69,6 +100,11 @@ def main() -> None:
     second = cap.render_dashboard_html()
     if cap.body_structure(second) != structure:
         raise SystemExit("the route's element structure is not stable across two renders")
+
+    if "--rules-only" in sys.argv[1:]:
+        layout = (REPO / "static" / "layout.css").read_text(encoding="utf-8")
+        revise_rules(resolved, cap.ordered_primitive_rules(layout))
+        return
 
     template = (REPO / "templates" / "index.html").read_text(encoding="utf-8")
     import re

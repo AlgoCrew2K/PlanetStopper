@@ -313,6 +313,11 @@ def _two_decimal_forms(value: float) -> list[str]:
     return [text, text.replace("-", _MINUS)]
 
 
+def _printed_figure(name: str, value: float) -> float:
+    """A stored figure as the panel prints it: a drawdown is a magnitude, any other keeps its sign."""
+    return abs(value) if name == "max_drawdown" else value
+
+
 def _shows(node: pb.Node, value: float) -> bool:
     haystack = node.everything()
     return any(form in haystack for form in _two_decimal_forms(value))
@@ -645,7 +650,9 @@ class TestEvidenceItems:
                     assert str(window["days"]) in text, where
                 for fig_name, fig in item["figures"].items():
                     if fig["value"] is not None:
-                        assert _shows(shown, fig["value"]), f"{where} / {fig_name}"
+                        assert _shows(shown, _printed_figure(fig_name, fig["value"])), (
+                            f"{where} / {fig_name}"
+                        )
                 checked += 1
         assert checked >= 10, "the roster must exercise many available items"
 
@@ -5334,9 +5341,15 @@ class TestAPercentFigureCarriesThePercentSign:
                         text = lines[0].text()
                         assert any(
                             re.search(rf"{re.escape(form)}%(?![\w%])", text)
-                            for form in _two_decimal_forms(fig["value"])
+                            for form in _two_decimal_forms(_printed_figure(fig_name, fig["value"]))
                         ), (where, text)
                         assert not re.search(r"\bpercent\b", text.lower()), (where, text)
+                        if fig_name == "max_drawdown" and fig["value"] < 0:
+                            magnitude = _two_decimal_forms(abs(fig["value"]))[0]
+                            assert not re.search(rf"[-{_MINUS}]{re.escape(magnitude)}", text), (
+                                f"{where}: a drawdown prints its magnitude, no minus sign",
+                                text,
+                            )
                         checked += 1
         assert checked >= 20, f"the records must hold many percent figures, got {checked}"
 

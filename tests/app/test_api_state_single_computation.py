@@ -29,12 +29,14 @@ from tests.app._refresh_timing_state_world import (
     BRANCHES,
     count_analytics_call,
     count_app_call,
+    format_figure,
     install_account_total_drift,
     load_record,
     mask_account_totals,
     polled_figures,
     rendered_page_figures,
     seeded_world,
+    window_mdd_figures,
 )
 
 CLOSED_BRANCHES = ("closed_frozen", "pre_market")
@@ -192,6 +194,16 @@ class TestValuesMatchReference:
             f"(reference, served): {changed}"
         )
 
+    def test_the_headline_is_the_gap_between_the_hero_lines(self, monkeypatch, tmp_path):
+        """The headline is the compounded Bot minus If-held gap, the distance between the two
+        lines the same response draws (series rounded to four decimals)."""
+        world = seeded_world(monkeypatch, tmp_path, "open")
+
+        served = world.poll()["portfolio_strip"]
+
+        gap = served["hist_bot"][-1] - served["hist_held"][-1]
+        assert served["guard_alpha"] == pytest.approx(gap, abs=1e-4)
+
 
 class TestServerRenderEqualsFirstPoll:
     """With no engine cycle between `GET /` and the first poll, every value the page renders
@@ -205,6 +217,13 @@ class TestServerRenderEqualsFirstPoll:
 
         rendered = rendered_page_figures(world.page())
         polled = polled_figures(world.poll())
+        # The Max DD row is the picked window's, so its figures are the strip answer's and not
+        # the poll's lifetime drawdown.
+        polled.update(window_mdd_figures(world.poll("/api/strip/30d")))
+        lifetime = world.poll()["portfolio_strip"]["max_drawdown"]
+        assert rendered["mdd_bot"] != format_figure(lifetime["dry_run"]), (
+            f"{branch}: the Max DD row prints the poll's lifetime drawdown, a figure no window has"
+        )
 
         differing = {
             key: (rendered[key], polled[key]) for key in polled if rendered.get(key) != polled[key]

@@ -5519,6 +5519,10 @@
    "letter-spacing": "0.06em",
    "color": "var(--studio-ink-faint)"
   },
+  "@media (max-width: 700px)||.hero-section": {
+   "padding": "18px 16px 16px",
+   "margin-bottom": "16px"
+  },
   "||.section-header": {
    "font-size": "11px",
    "font-weight": "700",
@@ -5548,6 +5552,7 @@
   "||.status-pill": {
    "display": "inline-flex",
    "align-items": "center",
+   "white-space": "nowrap",
    "padding": "3px 9px",
    "border-radius": "20px",
    "font-size": "10px",
@@ -5753,6 +5758,22 @@
    ]
   },
   {
+   "context": "@media (max-width: 700px)",
+   "selectors": [
+    ".hero-section"
+   ],
+   "declarations": [
+    [
+     "padding",
+     "18px 16px 16px"
+    ],
+    [
+     "margin-bottom",
+     "16px"
+    ]
+   ]
+  },
+  {
    "context": "",
    "selectors": [
     ".section-header"
@@ -5869,6 +5890,10 @@
     [
      "align-items",
      "center"
+    ],
+    [
+     "white-space",
+     "nowrap"
     ],
     [
      "padding",
@@ -6100,5 +6125,13 @@
     ]
    ]
   }
- ]
+ ],
+ "rules_revision": {
+  "head_sha": "38b0cbe8007ec7442cfb127114a8ff58d79b2a24",
+  "captured_at_utc": "2026-10-31T16:19:21Z",
+  "resolved_before": 23,
+  "resolved_after": 24,
+  "ordered_before": 23,
+  "ordered_after": 24
+ }
 }

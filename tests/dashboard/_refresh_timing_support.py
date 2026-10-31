@@ -268,6 +268,18 @@ def vol_texts(strip: dict) -> dict:
     }
 
 
+def mdd_texts(strip: dict) -> dict:
+    """The Max DD row text for a strip whose window supplies both legs, as the client writes it:
+    two magnitudes (a drawdown carries no plus sign) and the saved difference, Held minus Bot."""
+    legs = strip["max_drawdown"]
+    bot, held = abs(legs["dry_run"]), abs(legs["if_held"])
+    return {
+        "bot": f"Bot {bot:.2f}%",
+        "held": f"Held {held:.2f}%",
+        "delta": f"α {fmt_pct(held - bot)}",
+    }
+
+
 def summary_with(summary: dict, *, saved: float, events: int, coverage: tuple[int, int]) -> dict:
     """A $-saved summary body carrying chosen totals (so two windows read differently on the panel)."""
     out = copy.deepcopy(summary)

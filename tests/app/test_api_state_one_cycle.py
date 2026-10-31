@@ -38,6 +38,7 @@ from tests.app._refresh_timing_state_world import (
     load_record,
     rendered_page_figures,
     seeded_world,
+    window_mdd_figures,
 )
 
 
@@ -175,13 +176,17 @@ class TestPollAfterTheEngineExits:
 
         figures = rendered_page_figures(world.page())
 
-        for row, key in (
-            ("today", "today_change"),
-            ("cumulative", "cumulative_return"),
-            ("mdd", "max_drawdown"),
-        ):
+        for row, key in (("today", "today_change"), ("cumulative", "cumulative_return")):
             assert figures[f"{row}_bot"] == format_figure(golden[key]["dry_run"]), row
             assert figures[f"{row}_held"] == format_figure(golden[key]["if_held"]), row
+        # The Max DD row is the picked window's: the page prints what the strip answers for the
+        # default window, not the lifetime drawdown the poll carries.
+        window = window_mdd_figures(world.poll("/api/strip/30d"))
+        assert (figures["mdd_bot"], figures["mdd_held"]) == (window["mdd_bot"], window["mdd_held"])
+        lifetime = golden["max_drawdown"]
+        assert figures["mdd_bot"] != format_figure(lifetime["dry_run"]), (
+            "the Max DD row prints the poll's lifetime drawdown, a figure no window has"
+        )
 
 
 class TestFailuresNeverProduceAPartialMix:

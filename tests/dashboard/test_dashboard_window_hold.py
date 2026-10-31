@@ -348,7 +348,7 @@ def test_a_failed_1y_strip_request_keeps_the_last_1y_values(spec):
 # ---------------------------------------------------------------------------
 
 
-def test_the_comparison_rows_read_the_same_whatever_window_is_picked():
+def test_only_the_max_dd_row_follows_the_picked_window():
     def scenario(token: str) -> str:
         return (
             r"""
@@ -371,8 +371,18 @@ def test_the_comparison_rows_read_the_same_whatever_window_is_picked():
         ).replace("__TOKEN__", token)
 
     control, picked = _run(scenario("30d")), _run(scenario("1y"))
-    assert picked["rows"] == control["rows"], (
-        "the picked window changed a Today/Cumulative/Max DD row"
+    for row in ("today", "cumulative"):
+        assert picked["rows"][row] == control["rows"][row], (
+            f"the picked window changed the {row} row"
+        )
+    # The Max DD row is the picked window's own: the strip's figures, whatever the poll carries.
+    for result, token in ((control, "30d"), (picked, "1y")):
+        window = sup.mdd_texts(_strip(token))
+        assert result["rows"]["mdd"] == [window["bot"], window["held"], window["delta"]], (
+            f"{token}: the Max DD row is not the picked window's"
+        )
+    assert picked["rows"]["mdd"] != control["rows"]["mdd"], (
+        "the two windows must differ for this to tell the picked window from the default"
     )
     assert picked["hero"] == ["/api/hero-chart/1y"], picked["hero"]
     assert picked["saved"] == ["/api/guard-alpha-summary?window=1y"], picked["saved"]

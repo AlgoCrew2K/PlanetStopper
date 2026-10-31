@@ -154,13 +154,14 @@ def test_alpha_win_rate_and_reason_cards_render_from_the_payload(client, pm_dir_
         % _pick("30"),
     )
 
-    assert result["alpha"] == f"{payload['total_alpha']:.2f}%"
+    # A sum of per-exit alpha is in points, never a percent.
+    assert result["alpha"] == f"{payload['total_alpha']:+.2f} pts"
     assert result["win"] == f"{payload['win_rate']:.1f}%"
     assert len(result["cards"]) == len(payload["by_reason"])
     for reason, stats in payload["by_reason"].items():
         card = next(c for c in result["cards"] if reason in c)
         assert analytics.format_dollar_saved(stats["dollars"]) in card
-        assert f"{stats['alpha']:+.2f}%" in card
+        assert f"{stats['alpha']:+.2f} pts" in card
 
 
 def test_an_empty_window_shows_the_empty_state_and_hides_the_tiles(client, pm_dir_factory):

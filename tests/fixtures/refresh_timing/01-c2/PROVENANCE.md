@@ -62,9 +62,9 @@ Produced by `produce_golden_ref.py` (a pytest module not collected in this tree)
 
 | File | Case it covers | Source | Scenarios | sha256 | PM sign-off |
 |---|---|---|---|---|---|
-| `golden_ref_api_state_open.json` | reference `/api/state`, market open | 37c8e983 producer, plus `mdd_lifetime` on each card (see "Revision: mdd_lifetime" below) | S-2.6, S-7.4, S-6.6, S-8.4 | `b82b8a24bc1df40114f723047d60b03196a056a62e69a271f0e1a074744cff69` | n/a (producer output) |
-| `golden_ref_api_state_closed_frozen.json` | reference `/api/state`, after the close | 37c8e983 producer | S-2.6, S-8.4 | `2092c9eaa901b086fe04642417e1a24ed2103fdfc9a47c48dd0c99f8bb172e9d` | n/a (producer output) |
-| `golden_ref_api_state_pre_market.json` | reference `/api/state`, pre-market | 37c8e983 producer | S-2.6, S-8.4 | `8b7eba3f3733b3e6771e64f2575f68cb050c2a640b5e6578b9ec06418a1f6fa9` | n/a (producer output) |
+| `golden_ref_api_state_open.json` | reference `/api/state`, market open | 37c8e983 producer, plus `mdd_lifetime` on each card (see "Revision: mdd_lifetime" below) and the headline `guard_alpha` (see "Revision: guard_alpha" below) | S-2.6, S-7.4, S-6.6, S-8.4 | `06dc797f257b27df48c955996a78ae66059dfbccae146fc22c2a695c1568f79f` | n/a (producer output) |
+| `golden_ref_api_state_closed_frozen.json` | reference `/api/state`, after the close | 37c8e983 producer, headline `guard_alpha` revised (see "Revision: guard_alpha" below) | S-2.6, S-8.4 | `2fa1d45d6cfb90a7a1b64001b48b32bdf80bf04f6d0c2bbdd9b895641dcb5da9` | n/a (producer output) |
+| `golden_ref_api_state_pre_market.json` | reference `/api/state`, pre-market | 37c8e983 producer, headline `guard_alpha` revised (see "Revision: guard_alpha" below) | S-2.6, S-8.4 | `c05c8cc16c0a2d54dfe72083fc5fada7e47b91c2d0f9c6220e5c65c1d2641005` | n/a (producer output) |
 
 ### Revision: mdd_lifetime
 
@@ -75,3 +75,12 @@ Refresh-timing 03 adds `mdd_lifetime` (Composer's lifetime max-drawdown scalar, 
 3. The committed golden is the 37c8e983 body with those two `mdd_lifetime` values added, written with `json.dumps(indent=2, sort_keys=True)` and a trailing newline. Nothing else in the file changed (two inserted lines).
 
 The `mdd_lifetime` values are therefore this tree's producer output, not the reference commit's; the tests that read them (`test_api_state_frozen_cards.py`, `test_api_state_one_cycle.py`) check that the live branch changed no other figure. The `mdd_lifetime` figure itself is not independently pinned by a reference value: `test_dashboard_panels_payload.py` checks that every card carries it and its shape.
+
+### Revision: guard_alpha
+
+The UX review fixes redefine the dashboard headline `guard_alpha` as the compounded gap between the Simulated Bot return and the If-held return over the window (the gap between the hero chart's two lines), where 37c8e983 served the additive epoch sum over symphonies with a Composer cost basis. The figure the seeded world serves therefore changes, in the open, closed_frozen and pre_market goldens alike: `portfolio_strip.guard_alpha` and its copy `meta.portfolio.guard_alpha` (two lines per file, six in all) go from `-0.2774829692757424` (37c8e983 producer) to `-0.2766452878182668`. The steps, so the change can be checked:
+
+1. `produce_golden_ref.py` was run in this tree at the head of the review fixes (`GOLDEN_OUT=<dir> python -m pytest -n0 tests/app/produce_golden_ref.py`, with the file copied to `tests/app/` for the run). All three branches serve `portfolio_strip.guard_alpha` `-0.2766452878182668`.
+2. Compared with the committed goldens, every `portfolio_strip` key the tests compare (all but `data_as_of`) is equal except `guard_alpha`. The producer's other differences are the stamps, the frozen `symphonies`, the engine phase and the window fields that earlier plans added; the tests do not compare them against these files.
+3. Cross-check on the open response: its own hero series ends `hist_bot` -0.3328 and `hist_held` -0.0562, a gap of -0.2766 (the series are rounded to four decimals), which is the new `guard_alpha`; the old value was the epoch sum, which no pair of points in the response gives. `test_api_state_single_computation.py::TestValuesMatchReference` asserts that equality on the served body.
+4. The committed files were edited by replacing those six occurrences in place; nothing else in them changed (`git diff` shows six replaced lines), and the sha256 column above is of the edited files.

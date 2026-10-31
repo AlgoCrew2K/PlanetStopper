@@ -538,7 +538,8 @@ def test_every_other_metric_cell_and_headline_keeps_its_existing_text(client):
         assert rows[label][1] == _ref_fmt(live[key], kind), label
         assert rows[label][2] == _ref_fmt(shadow[key], kind), label
     guard = (shadow["total_return"] - live["total_return"]) * 100
-    assert result["guard"] == f"{'+' if guard >= 0 else ''}{analytics.js_to_fixed(guard, 2)}%"
+    # The headline is a gap between two returns, so its unit is percentage points.
+    assert result["guard"] == f"{'+' if guard >= 0 else ''}{analytics.js_to_fixed(guard, 2)} pp"
     assert result["mdd"] == f"+{_pp(_reduction_pp(payload))}"
 
 
