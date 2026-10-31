@@ -19,21 +19,15 @@ import pytest
 
 from tests.dashboard import _account_page_harness as harness
 
-pytestmark = pytest.mark.usefixtures("_isolated_env")
-
 # A count no rendered page starts with: the server renders the tracked count from the same state
 # the route reports, so only a refresh that really ran can show this value.
 _TRACKED_AFTER_REFRESH = 977
 
 
 @pytest.fixture
-def _isolated_env(monkeypatch, tmp_path):
-    harness.isolate_environment(monkeypatch, tmp_path)
-
-
-@pytest.fixture
 def page_without_chart(monkeypatch, tmp_path) -> dict:
     """The scenario result of loading the page, then one poll tick, with ``Chart`` undefined."""
+    harness.isolate_environment(monkeypatch, tmp_path)
     fx = harness.load_accounts_fixture()
     html = harness.render_dashboard_html(fx["bot_state"])
     with harness.state_api(monkeypatch, fx["bot_state"]) as client:
@@ -86,6 +80,5 @@ def test_a_state_body_that_arrived_is_not_reported_as_connection_lost(page_witho
 
 def test_the_missing_chart_library_leaves_no_rejected_promise(page_without_chart):
     assert page_without_chart["unhandled"] == [], (
-        "the page's scripts left promises rejected: "
-        f"{page_without_chart['unhandled']}"
+        f"the page's scripts left promises rejected: {page_without_chart['unhandled']}"
     )
