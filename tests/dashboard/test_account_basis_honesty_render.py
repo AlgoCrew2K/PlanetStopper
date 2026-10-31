@@ -316,7 +316,7 @@ class TestBackendComputationByteUnchanged:
 
     def test_live_as_of_assignment_line_present(self):
         assert (
-            '_strip["account_basis_as_of"] = _account_totals_last_success_at or datetime.now('
+            '_strip["account_basis_as_of"] = _account_totals_last_success_at or _NO_STAMP'
             in _app_py()
         ), "AC-5 FAIL: the live account_basis_as_of assignment line was changed"
 

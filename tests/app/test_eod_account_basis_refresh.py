@@ -1795,7 +1795,21 @@ class TestFrozenBranchStaleFlagIsOutsideTheLiveGrace:
 
         monkeypatch.setattr(real_analytics, "DB_FILE", os.environ["DB_PATH"])
         monkeypatch.setattr(app_module, "get_market_state", lambda dt: "closed_frozen")
-        trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
+        # A fixed trading day and a clock the test moves: the last successful read comes
+        # just BEFORE the 16:00:01 capture, so no read has succeeded since the capture and
+        # the frozen strip falls back to the labelled last-good totals whatever the host's
+        # time of day. A read after the capture would latch fresh totals instead.
+        trading_day = "2026-10-27"
+        clock = {"instant": datetime(2026, 10, 27, 15, 59, 30, tzinfo=_ET)}
+
+        class _MovableClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return (
+                    clock["instant"].astimezone(tz) if tz else clock["instant"].replace(tzinfo=None)
+                )
+
+        monkeypatch.setattr(app_module, "datetime", _MovableClock)
         sym_id = "iaSOOUsmnCJHiZvbrWfs"
         state = database.load_state() or {}
         state["last_market_close_snapshot"] = {
@@ -1809,6 +1823,7 @@ class TestFrozenBranchStaleFlagIsOutsideTheLiveGrace:
         database.save_state(state)
         _refresh_succeeds(app_module, composer_total_stats)
         monotonic_clock.advance(40.0)
+        clock["instant"] = datetime(2026, 10, 27, 16, 0, 10, tzinfo=_ET)
         app_module._account_totals_cache.mark_stale()
         app_module.app.config["TESTING"] = True
 

@@ -103,6 +103,36 @@ def _bot_state_with_cycle_at(cycle_ts: str) -> dict:
     }
 
 
+def _seed_cycle_observation(monkeypatch, ts_utc: str, ts_et: str = "2026-06-23T10:09:00") -> None:
+    """Record the shadow_history row of the completed cycle the stamp must name.
+
+    The stamp names the newest observation of the completed cycle, not the cycle stamp
+    in bot_state, so a test that checks it needs the row the engine writes in its data
+    phase. ts_utc carries the instant (aware or naive-as-UTC) and ts_et its ET form. The
+    analytics reader is pointed at the per-test database, because database.DB_FILE is
+    frozen at import.
+    """
+    import os
+
+    import analytics
+    import database as db
+
+    monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
+
+    db.record_shadow_observation(
+        symphony_id="sym-1",
+        account_id=None,
+        cycle_id=None,
+        ts_utc=ts_utc,
+        ts_et=ts_et,
+        trading_day=ts_et[:10],
+        current_return=1.5,
+        shadow_return=1.5,
+        is_post_trigger=0,
+        trigger_id=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # AC-7: data_as_of derives from real data age
 # ---------------------------------------------------------------------------
@@ -162,7 +192,9 @@ class TestDataAsOfReflectsRealDataAge:
                 "not datetime.now(_ET)."
             )
 
-    def test_compute_portfolio_strip_data_as_of_reflects_last_successful_cycle_at(self):
+    def test_compute_portfolio_strip_data_as_of_reflects_last_successful_cycle_at(
+        self, monkeypatch
+    ):
         """When bot_state contains last_successful_cycle_at='2026-06-23T10:09:00',
         data_as_of must encode that timestamp — not the server render time.
 
@@ -172,6 +204,8 @@ class TestDataAsOfReflectsRealDataAge:
         Fails until rt-impl reads last_successful_cycle_at from bot_state.
         """
         bot_state = _bot_state_with_cycle_at(_FAKE_CYCLE_TS)
+        # Naive row timestamp: read as UTC, so 14:09 UTC is 10:09 ET.
+        _seed_cycle_observation(monkeypatch, "2026-06-23T14:09:00")
 
         result = app_module._compute_portfolio_strip(bot_state)
 
@@ -185,7 +219,7 @@ class TestDataAsOfReflectsRealDataAge:
             "format it as 'HH:MM ET' (or similar), replacing datetime.now(_ET)."
         )
 
-    def test_compute_portfolio_strip_data_as_of_reflects_aware_cycle_ts(self):
+    def test_compute_portfolio_strip_data_as_of_reflects_aware_cycle_ts(self, monkeypatch):
         """_compute_portfolio_strip must correctly parse the PRODUCTION-shape aware
         isoformat string (with UTC offset) and render the correct ET HH:MM.
 
@@ -201,6 +235,8 @@ class TestDataAsOfReflectsRealDataAge:
         Would go RED if the reader stripped tzinfo or mishandled the offset.
         """
         bot_state = _bot_state_with_cycle_at(_FAKE_CYCLE_TS_AWARE)
+        # Aware row timestamp with a UTC offset: must convert to ET, not be read as ET.
+        _seed_cycle_observation(monkeypatch, "2026-06-23T14:09:00+00:00")
 
         result = app_module._compute_portfolio_strip(bot_state)
 
@@ -700,9 +736,11 @@ class TestSnapshotBranchDataAsOfUsesSnapshotTimestamp:
                 f"timestamp ({_SNAP_DATA_AS_OF}) — cannot distinguish snapshot vs clock source."
             )
 
-        assert data_as_of == _SNAP_DATA_AS_OF, (
-            f"portfolio_strip.data_as_of='{data_as_of}' does not match the snapshot "
-            f"timestamp '{_SNAP_DATA_AS_OF}'. "
+        # The stamp is dated and names the snapshot's own moment; a trailing
+        # previous-session marker depends on the clock the test runs at, so it is not pinned.
+        assert data_as_of.startswith(f"{_SNAP_TRADING_DAY} {_SNAP_DATA_AS_OF}"), (
+            f"portfolio_strip.data_as_of='{data_as_of}' does not name the snapshot "
+            f"moment '{_SNAP_TRADING_DAY} {_SNAP_DATA_AS_OF}'. "
             "The snapshot branch must use snapshot.get('data_as_of') not datetime.now(). "
             "Regression target: app.py lines ~1776 and ~1792 in the closed_frozen branch."
         )
@@ -824,7 +862,7 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
                 "replace with state_data.get('last_successful_cycle_at') (top-level)."
             )
 
-    def test_get_state_top_level_data_as_of_encodes_cycle_timestamp(self, client):
+    def test_get_state_top_level_data_as_of_encodes_cycle_timestamp(self, client, monkeypatch):
         """GET /api/state top-level data_as_of must encode the cycle timestamp HH:MM.
 
         When bot_state contains last_successful_cycle_at='2026-06-23T10:09:00',
@@ -851,8 +889,12 @@ class TestTopLevelDataAsOfDerivesFromCycleTimestamp:
                 "last_successful_cycle_at": _FAKE_CYCLE_TS,  # top-level, production shape
             }
         )
+        _seed_cycle_observation(monkeypatch, "2026-06-23T14:09:00+00:00")
 
-        response = client.get("/api/state")
+        # The live branch names the newest committed observation; pin the market state so
+        # the test does not depend on the host's time of day.
+        with patch("app.get_market_state", return_value="open"):
+            response = client.get("/api/state")
         assert response.status_code == 200, (
             f"GET /api/state returned {response.status_code}; expected 200."
         )

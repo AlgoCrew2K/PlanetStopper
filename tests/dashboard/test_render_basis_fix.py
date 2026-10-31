@@ -1121,7 +1121,7 @@ class TestFrozenPathAccountAllTimeCr:
     @pytest.fixture()
     def frozen_client(self, monkeypatch):
         """Flask test client wired for the closed_frozen path with a valid snapshot
-        and a populated _account_totals_cache carrying portfolio_cr = 63.95."""
+        and the close totals latched with portfolio_cr = 63.95."""
         import app as app_module
 
         app_module.app.config["TESTING"] = True
@@ -1134,9 +1134,20 @@ class TestFrozenPathAccountAllTimeCr:
         monkeypatch.setattr(
             app_module, "get_market_state", lambda dt: "closed_frozen", raising=False
         )
-        # Inject portfolio_cr into the module-level _account_totals_cache.
-        # This mirrors the live path where Alpaca polling populates the cache.
-        monkeypatch.setitem(app_module._account_totals_cache, "portfolio_cr", _ACCT_CR_LIVE)
+        # After the close the frozen strip reads the account totals latched for its
+        # snapshot (the first read at or after the capture), never the live cache.
+        monkeypatch.setattr(
+            app_module,
+            "_frozen_account_totals",
+            {
+                "key": (
+                    _FROZEN_SNAPSHOT_FOR_ACCT_CR["trading_day"],
+                    _FROZEN_SNAPSHOT_FOR_ACCT_CR["captured_at_et"],
+                ),
+                "totals": {"portfolio_cr": _ACCT_CR_LIVE},
+                "as_of": "2026-06-04 16:00:30 ET",
+            },
+        )
 
         with (
             patch.object(app_module, "analytics") as mock_analytics,
@@ -1164,7 +1175,7 @@ class TestFrozenPathAccountAllTimeCr:
                 "if_held": -8.1,
                 "dry_run": -5.3,
             }
-            # This fixture sets _account_totals_cache["portfolio_cr"]=63.95 with
+            # This fixture latches portfolio_cr=63.95 with
             # portfolio_tc left unset (CR-warm/TC-absent) — the independent-gating
             # branch (DE-EOD-BASIS-001 review revise) now reaches these two wrap
             # helpers on the frozen path. Stub them so the route doesn't try to

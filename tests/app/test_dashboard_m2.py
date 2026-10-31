@@ -18,6 +18,7 @@ Fixture-derived assertions only — no hardcoded producer-computed values.
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -84,6 +85,39 @@ def _default_analytics_mock():
     # cover today_change / cumulative_return / max_drawdown (M1 helpers), not vol.
     m.get_portfolio_daily_returns_from_shadow.return_value = None
     return m
+
+
+# The newest recorded observation of the completed cycle: the instant the stamp must name.
+_OBSERVATION_UTC = "2026-06-23T14:09:00+00:00"
+_OBSERVATION_ET = "2026-06-23T10:09:00"
+_OBSERVATION_STAMP = "2026-06-23 10:09 ET"
+
+
+def _open_market_with_observation(monkeypatch):
+    """Pin the live branch and record one engine observation; return the analytics mock.
+
+    The stamp names the newest shadow_history row, not the request clock, so a test of it
+    needs that row in the per-test database, which the mocked analytics module is pointed
+    at. The market state is pinned so the branch does not depend on the host's time of day.
+    """
+    import database as real_database
+
+    monkeypatch.setattr(app_module, "get_market_state", lambda dt: "open")
+    real_database.record_shadow_observation(
+        symphony_id="sym1",
+        account_id=None,
+        cycle_id=None,
+        ts_utc=_OBSERVATION_UTC,
+        ts_et=_OBSERVATION_ET,
+        trading_day=_OBSERVATION_ET[:10],
+        current_return=1.5,
+        shadow_return=1.5,
+        is_post_trigger=0,
+        trigger_id=None,
+    )
+    analytics_mock = _default_analytics_mock()
+    analytics_mock._get_shadow_db_file.return_value = os.environ["DB_PATH"]
+    return analytics_mock
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +248,21 @@ class TestPortfolioStripJson:
         resp = client.get("/api/state")
         body = resp.get_json()
         assert body["status"] == "waiting"
-        # strip must not appear in a non-active response
-        assert "portfolio_strip" not in body, "waiting response must not include portfolio_strip"
+        # The waiting response keeps the strip key: the page reads it. With no state it
+        # states no more than the value-weighted floor over zero symphonies, marked as such,
+        # and the dash of an unknown moment; it fabricates no account figure.
+        assert "portfolio_strip" in body, "waiting response must carry the portfolio_strip key"
+        strip = body["portfolio_strip"]
+        assert isinstance(strip, dict)
+        assert strip.get("basis") == "value_weighted", (
+            "the waiting strip must carry the honest value-weighted floor marker"
+        )
+        assert strip.get("data_as_of") == app_module._NO_STAMP
+        assert not strip.get("account_value"), "no account value exists without state"
+        assert all(v is None for v in (strip.get("cumulative_return") or {}).values()), (
+            f"waiting response must not fabricate a cumulative return: "
+            f"{strip.get('cumulative_return')!r}"
+        )
 
     def test_portfolio_m1_helpers_called_with_symphonies_list(
         self, client, mock_database, monkeypatch
@@ -702,61 +749,41 @@ class TestFreshnessTimestamp:
 
     def test_data_as_of_is_hhmm_string(self, client, mock_database, monkeypatch):
         """
-        data_as_of must be a string in HH:MM format (wall clock, ET implied).
-        We assert format only — not an exact value (wall clock is non-deterministic).
+        data_as_of must be a string naming the data's ET date and time.
+        We assert format only here; the value is pinned by the next test.
         """
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
-        monkeypatch.setattr(app_module, "analytics", _default_analytics_mock())
+        monkeypatch.setattr(app_module, "analytics", _open_market_with_observation(monkeypatch))
 
         resp = client.get("/api/state")
         data_as_of = resp.get_json()["data_as_of"]
 
         assert isinstance(data_as_of, str), f"data_as_of must be a string; got {type(data_as_of)}"
-        # Accept HH:MM or H:MM with optional seconds and/or 'ET' suffix
-        hhmm_pattern = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?(\s*ET)?$")
-        assert hhmm_pattern.match(data_as_of.strip()), (
-            f"data_as_of must match HH:MM format; got '{data_as_of}' — "
-            "format should read like '09:45 ET' or '14:32'"
+        # The stamp names the ET date and time of the data: 'YYYY-MM-DD HH:MM ET'.
+        stamp_pattern = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})? ET$")
+        assert stamp_pattern.match(data_as_of.strip()), (
+            f"data_as_of must match 'YYYY-MM-DD HH:MM ET'; got '{data_as_of}'"
         )
 
-    def test_data_as_of_reflects_current_time(self, client, mock_database, monkeypatch):
+    def test_data_as_of_names_the_data_moment_not_the_request_clock(
+        self, client, mock_database, monkeypatch
+    ):
         """
-        data_as_of must be close to the current wall-clock time expressed in ET.
-        We verify the hour matches (within a 1-minute window boundary tolerance).
-
-        This guards against using a stale cached timestamp — the staleness bug
-        was precisely that a cached time appeared as the freshness indicator.
-
-        AC-7 fixed the fallback from naive datetime.now() to ET-aware
-        datetime.now(ZoneInfo("America/New_York")), so the rendered hour is always
-        in ET regardless of server timezone.  CI runs in UTC; comparing against
-        naive datetime.now() (UTC) would therefore be wrong on ET/UTC boundaries
-        (e.g. CI hour 20 UTC = hour 16 ET → assertion fails).  Compare against
-        ET-aware datetimes to match what the route actually renders.
+        data_as_of must name the newest recorded observation, never the clock of the
+        request. The observation is far from now, so a stamp built from the request time
+        cannot equal it, and a stamp cached across requests cannot follow a new row.
         """
-        _ET = ZoneInfo("America/New_York")
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
         monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
-        monkeypatch.setattr(app_module, "analytics", _default_analytics_mock())
+        monkeypatch.setattr(app_module, "analytics", _open_market_with_observation(monkeypatch))
 
-        before = datetime.now(_ET)
         resp = client.get("/api/state")
-        after = datetime.now(_ET)
 
-        data_as_of = resp.get_json()["data_as_of"]
-        # Parse just HH:MM from the value
-        time_part = data_as_of.strip().split(" ")[0]  # strip 'ET' suffix if present
-        parsed = datetime.strptime(time_part, "%H:%M")
-
-        # The hour must match what it was (in ET) when the request ran.
-        # We allow the hour to be either before.hour or after.hour (straddle boundary).
-        valid_hours = {before.hour, after.hour}
-        assert parsed.hour in valid_hours, (
-            f"data_as_of hour={parsed.hour} does not match current ET hour (one of {valid_hours}); "
-            "the timestamp must be generated fresh per request — not a stale cached value"
+        assert resp.get_json()["data_as_of"] == _OBSERVATION_STAMP, (
+            "the stamp must name the newest observation's ET date and time"
         )
 
     def test_rendered_html_contains_freshness_indicator(self, client, mock_database, monkeypatch):
@@ -767,7 +794,7 @@ class TestFreshnessTimestamp:
         """
         mock_database.load_state.return_value = _make_state_with_one_symphony()
         monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
-        monkeypatch.setattr(app_module, "analytics", _default_analytics_mock())
+        monkeypatch.setattr(app_module, "analytics", _open_market_with_observation(monkeypatch))
 
         resp = client.get("/api/state")
         html = resp.get_json().get("html", "")

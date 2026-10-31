@@ -55,13 +55,17 @@ def _load(name: str) -> dict:
     return json.loads((_FIXTURE_DIR / f"{name}.json").read_text(encoding="utf-8"))
 
 
-def _seed_closed_market_snapshot(fixture: dict) -> None:
+def _seed_closed_market_snapshot(fixture: dict, trading_day: str | None = None) -> None:
     """Seeds last_market_close_snapshot.accounts_map from the fixture's symphony
     rows, mirroring app.py's own snapshot-symphony shape (app.py:2242-2258 /
     2330-2348 both read current_return, current_value, simple_return,
     net_deposits, time_weighted_return, max_drawdown, id, name, account off
     each accounts_map entry) -- and test_held_basis_route_convergence.py's
     _seed_frozen_snapshot_symphony helper for the same shape.
+
+    trading_day overrides the fixture's: after the close every row the response reads is
+    cut at the snapshot's capture moment, so a test that seeds recent shadow rows must
+    capture the snapshot on their day.
     """
     state = database_module.load_state() or {}
     account_id = fixture["account_id"]
@@ -87,7 +91,7 @@ def _seed_closed_market_snapshot(fixture: dict) -> None:
     state["last_market_close_snapshot"] = {
         "captured_at_et": "16:00:00 ET",
         "data_as_of": "16:00 ET",
-        "trading_day": fixture["trading_day"],
+        "trading_day": trading_day or fixture["trading_day"],
         "accounts_map": accounts_map,
     }
     database_module.save_state(state)
@@ -132,7 +136,8 @@ def _seed_windowed_shadow_history(fixture: dict) -> None:
                     "VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         f"{trading_day}T20:00:00Z",
-                        f"{trading_day}T20:00:00",
+                        # Before the snapshot's 16:00 ET capture: later rows are cut.
+                        f"{trading_day}T15:00:00",
                         trading_day,
                         sym_id,
                         row["current_return"],
@@ -236,7 +241,7 @@ class TestClosedFrozenGuardAlphaPresence:
         proof the real windowed-analytics path is reached end-to-end.
         """
         fixture = _load("closed_market_account_basis_divergence")
-        _seed_closed_market_snapshot(fixture)
+        _seed_closed_market_snapshot(fixture, trading_day=datetime.now(UTC).date().isoformat())
         _seed_windowed_shadow_history(fixture)
 
         resp = frozen_client.get("/api/state")
@@ -353,10 +358,15 @@ class TestClosedFrozenCumulativeReturnBasis:
 
         app_module._account_totals_cache.clear()
         app_module._account_totals_last_good.clear()
-        app_module._account_totals_cache["portfolio_cr"] = account_cr
-        app_module._account_totals_cache["portfolio_value"] = fixture["account_totals"][
-            "portfolio_value"
-        ]
+        # After the close the strip reads the totals latched for its snapshot.
+        app_module._frozen_account_totals = {
+            "key": (fixture["trading_day"], "16:00:00 ET"),
+            "totals": {
+                "portfolio_cr": account_cr,
+                "portfolio_value": fixture["account_totals"]["portfolio_value"],
+            },
+            "as_of": f"{fixture['trading_day']} 16:00:30 ET",
+        }
 
         vw_if_held = _recompute_vw_if_held(fixture)
         # Non-vacuity guard: the two bases must actually be distinguishable in this
