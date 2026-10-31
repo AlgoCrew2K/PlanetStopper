@@ -279,8 +279,9 @@ class TestCardContent:
         newest_card = _cards(loaded["list"])[
             [r["symphony_id"] for r in _expected_partition(rows)[0]].index(streak_key)
         ]
-        older_row = _cards(loaded["older"]["html"])[0]
-        for card in (newest_card, older_row):
+        older_rows = _cards(loaded["older"]["html"])
+        assert len(older_rows) == 1, "the streak symphony's older run is not listed"
+        for card in (newest_card, older_rows[0]):
             classes = {c for n in card.walk() for c in n.classes()}
             assert "decision-pill" in classes
             assert "Fallback" in card.text()
@@ -301,8 +302,9 @@ class TestCardContent:
         )
         rows, (loaded,) = _loaded(client)
         assert [r["run_timestamp"] for r in rows][0] == stamped
-        newest, older = _cards(loaded["list"])[0], _cards(loaded["older"]["html"])[0]
-        for card, row in ((newest, rows[0]), (older, rows[1])):
+        older_rows = _cards(loaded["older"]["html"])
+        assert len(older_rows) == 1, "the older run is not listed"
+        for card, row in ((_cards(loaded["list"])[0], rows[0]), (older_rows[0], rows[1])):
             expected = analytics.format_et_stamp(row["run_timestamp"])
             assert expected.endswith(" ET") and expected != analytics.ET_STAMP_MISSING
             assert expected in card.text()

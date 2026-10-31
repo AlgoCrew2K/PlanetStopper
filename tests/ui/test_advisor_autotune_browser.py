@@ -60,6 +60,15 @@ def _seed(runs_each: int) -> int:
     return len(keys) * runs_each
 
 
+def _wait_for_some_cards(probe):
+    wait_until(
+        probe,
+        "(sel) => document.querySelectorAll(sel).length > 0",
+        "the autotune list never showed a card",
+        arg=_CARDS_IN_LIST,
+    )
+
+
 def _wait_for_cards(probe, count: int):
     wait_until(
         probe,
@@ -74,7 +83,7 @@ def test_a_page_without_the_chart_library_hides_the_canvas_and_still_lists_the_c
 ):
     _seed(2)
     open_advisor(advisor_probe)
-    _wait_for_cards(advisor_probe, 11)
+    _wait_for_some_cards(advisor_probe)
     state = advisor_probe.page.evaluate(
         """() => {
           const canvas = document.getElementById('autotune-sparkline-canvas');
@@ -94,6 +103,7 @@ def test_a_page_without_the_chart_library_hides_the_canvas_and_still_lists_the_c
     assert state["display"] == "none", state
     assert state["height"] == 0 and state["width"] == 0, state
     assert advisor_probe.page_errors == [], advisor_probe.page_errors
+    _wait_for_cards(advisor_probe, 11)
 
 
 def test_the_older_runs_are_reachable_in_a_closed_details_when_there_are_any(advisor_probe):
@@ -101,6 +111,7 @@ def test_the_older_runs_are_reachable_in_a_closed_details_when_there_are_any(adv
     open_advisor(advisor_probe)
     _wait_for_cards(advisor_probe, 11)
     details = advisor_probe.page.locator("#autotune-older-runs")
+    assert details.count() == 1, "the page has no older-runs details"
     assert details.is_visible(), "older runs exist but their details is not shown"
     assert details.evaluate("(el) => el.open") is False
     assert advisor_probe.page.locator(_ROWS_IN_OLDER).first.is_hidden(), (
@@ -122,8 +133,8 @@ def test_the_older_runs_details_takes_no_space_when_each_symphony_has_one_run(ad
     open_advisor(advisor_probe)
     _wait_for_cards(advisor_probe, 11)
     details = advisor_probe.page.locator("#autotune-older-runs")
+    assert details.count() == 1, "the page has no older-runs details"
     assert details.is_hidden(), "a details with no rows is shown"
-    box = details.bounding_box()
-    assert box is None or (box["height"] == 0 and box["width"] == 0), box
+    assert details.evaluate("(el) => el.getBoundingClientRect().height") == 0
     if advisor_probe.page_errors:
         fail(advisor_probe, "the page raised")

@@ -32,7 +32,6 @@ _OVERVIEW_ORDER = (
     "advisor-lens-as-of",
     "advisor-grid",
     "market-prism-block",
-    "advisor-observations-section",
 )
 
 
@@ -67,12 +66,25 @@ class TestOverviewOrder:
         assert positions == sorted(positions), dict(zip(_OVERVIEW_ORDER, positions, strict=True))
         assert len(set(positions)) == len(positions)
 
+    @pytest.mark.parametrize("with_prism_row", [False, True], ids=["no prism row", "prism row"])
+    def test_the_observations_follow_the_prism_block_inside_the_panel(
+        self, isolated_db, client, with_prism_row
+    ):
+        w.seed_roster()
+        store("guardrail_clear", times=3)
+        if with_prism_row:
+            store_prism_row()
+        _, panel, order = _overview(client)
+        section = panel.find("advisor-observations-section")
+        assert section is not None, "the Overview panel has no observations section"
+        assert order.index(panel.find("market-prism-block")) < order.index(section)
+
     def test_the_empty_prism_state_sits_where_the_block_does(self, isolated_db, client):
         _, panel, order = _overview(client)
         block, empty = panel.find("market-prism-block"), panel.find("prism-empty-state")
         assert empty is not None and empty.is_inside(block)
         assert order.index(panel.find("advisor-grid")) < order.index(block)
-        assert order.index(block) < order.index(panel.find("advisor-observations-section"))
+        assert order.index(panel.find("advisor-grid")) < order.index(empty)
 
     def test_the_pointer_and_controls_precede_the_prism_block(self, isolated_db, client):
         w.seed_roster()

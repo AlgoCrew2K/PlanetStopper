@@ -55,14 +55,6 @@
       "advisor_role": "ADD_CANDIDATE"
     }
   },
-  "market_prism_role": {
-    "source": {
-      "case": "guardrail_clear"
-    },
-    "changes": {
-      "advisor_role": "MARKET_PRISM"
-    }
-  },
   "feature_off_stub": {
     "source": {
       "producer": "advisors.divergence_explainer.compute_divergence_explainer_observation",

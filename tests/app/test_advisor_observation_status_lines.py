@@ -31,6 +31,7 @@ import analytics
 import database
 from advisors.prism_render import humanize_obs_preview
 from tests._advisor_observation_records import FIRST_MOMENT, case_row, store
+from tests._advisor_overview_prism import store_prism_row
 from tests._ux_truth_support import captured_symphonies
 from tests.app import _retirement_tab_world as w
 from tests.app import _tenure_review_panel_builders as pb
@@ -81,6 +82,18 @@ def _page(client) -> tuple[str, pb.Node]:
 def _producers(root: pb.Node) -> dict[str, pb.Node]:
     found = {n.attrs.get("data-role"): n for n in root.find_all("obs-producer")}
     return found
+
+
+def _line(root: pb.Node, role: str) -> pb.Node:
+    lines = _producers(root)
+    assert role in lines, f"no status line for {role}; the page has {sorted(map(str, lines))}"
+    return lines[role]
+
+
+def _history(root: pb.Node, role: str) -> pb.Node:
+    history = _line(root, role).find("obs-producer-history")
+    assert history is not None, f"the {role} line has no history expander"
+    return history
 
 
 def _text(node: pb.Node, testid: str) -> str:
@@ -187,8 +200,16 @@ class TestStatusLines:
         w.seed_roster()
         store("add_candidate_role", times=2)
         _, root = _page(client)
-        line = _producers(root)["ADD_CANDIDATE"]
+        line = _line(root, "ADD_CANDIDATE")
         assert line.find("obs-producer-label").text() == "Add Candidate"
+
+    def test_the_market_prism_read_has_its_own_line_named_market_prism(self, isolated_db, client):
+        w.seed_roster()
+        store_prism_row()
+        _, root = _page(client)
+        line = _line(root, "MARKET_PRISM")
+        assert line.find("obs-producer-label").text() == "Market Prism"
+        assert _digits(_text(line, "obs-producer-total")) == ["1"]
 
     @pytest.mark.parametrize("case", ["empty_verdict", "null_verdict"])
     def test_an_empty_or_null_latest_verdict_reads_verdict_not_recorded(
@@ -197,7 +218,7 @@ class TestStatusLines:
         w.seed_roster()
         store(case, times=1)
         _, root = _page(client)
-        line = _producers(root)[_SC]
+        line = _line(root, _SC)
         assert _text(line, "obs-producer-verdict") == _NOT_RECORDED
         assert _digits(_text(line, "obs-producer-total")) == ["1"]
 
@@ -205,7 +226,7 @@ class TestStatusLines:
         w.seed_roster()
         store("markup_verdict", times=1)
         html, root = _page(client)
-        line = _producers(root)[_SC]
+        line = _line(root, _SC)
         assert _text(line, "obs-producer-verdict") == case_row("markup_verdict")["verdict"]
         assert "<script>alert(1)</script>" not in html
 
@@ -219,7 +240,7 @@ class TestExpanders:
     def test_rows_are_newest_first_with_display_name_verdict_time_and_summary(self, seeded):
         client, oc, _ = seeded
         _, root = _page(client)
-        history = _producers(root)[_OC].find("obs-producer-history")
+        history = _history(root, _OC)
         rows = history.find_all("obs-row")
         newest_first = list(reversed(oc))[:_HISTORY_LIMIT]
         assert [int(r.attrs["data-obs-id"]) for r in rows] == [r[0] for r in newest_first]
@@ -236,12 +257,11 @@ class TestExpanders:
     def test_the_overfitting_expander_holds_fifty_rows_and_states_fifty_of_the_total(self, seeded):
         client, oc, sc = seeded
         _, root = _page(client)
-        producers = _producers(root)
-        history = producers[_OC].find("obs-producer-history")
+        history = _history(root, _OC)
         assert len(history.find_all("obs-row")) == _HISTORY_LIMIT < len(oc)
         note = _text(history, "obs-producer-history-note")
         assert re.search(rf"\b{_HISTORY_LIMIT}\s+of\s+{len(oc)}\b", note), note
-        small = producers[_SC].find("obs-producer-history")
+        small = _history(root, _SC)
         assert len(small.find_all("obs-row")) == len(sc)
         assert small.find("obs-producer-history-note") is None, "no cap note under the limit"
 
@@ -250,7 +270,7 @@ class TestExpanders:
         store("guardrail_clear", times=5)
         store("feature_off_stub_under_a_shown_role", times=2, start=_minutes_in(30))
         _, root = _page(client)
-        line = _producers(root)[_OC]
+        line = _line(root, _OC)
         assert _digits(_text(line, "obs-producer-total")) == ["5"]
         assert len(line.find_all("obs-row")) == 5
         assert _text(line, "obs-producer-verdict") == case_row("guardrail_clear")["verdict"]
@@ -260,6 +280,8 @@ class TestExpanders:
         store("feature_off_stub_under_a_shown_role", times=2)
         _, root = _page(client)
         assert _producers(root) == {}
+        empty = root.find("obs-empty")
+        assert empty is not None and empty.text() == _EMPTY_TEXT, "stubs are not observations"
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +320,10 @@ class TestEmptyAndUnavailable:
             monkeypatch.setattr(
                 database, "count_advisor_observations_by_role", count, raising=False
             )
-        response = client.get("/ai-advisor")
+        try:
+            response = client.get("/ai-advisor")
+        except sqlite3.OperationalError as error:
+            pytest.fail(f"the page raised instead of reporting the failed read: {error}")
         assert response.status_code == 200
         html = response.get_data(as_text=True)
         root = pb.parse_html(html)

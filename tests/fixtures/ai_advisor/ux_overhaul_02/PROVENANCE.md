@@ -154,7 +154,7 @@ The PM signed these off in the brief for the round that added them (2026-10-30).
 | `feature_off_stub_under_a_shown_role` | `feature_off_stub` | `advisor_role` -> `OVERFITTING_CONSCIENCE` | the Divergence Explainer role is not on the page; the stub rule is role-blind, so the stub must sit under a shown role to prove it is left out of the line and the list | stub in neither total nor rows |
 | `empty_verdict`, `null_verdict` | `guardrail_watch` | `verdict` -> `""`, `null` | a producer row whose verdict is empty or NULL (no captured row of either kind) | "verdict not recorded" |
 | `markup_verdict` | `guardrail_watch` | `verdict` -> `<script>alert(1)</script>` | markup in the one new place a verdict is printed | escaping |
-| `add_candidate_role`, `market_prism_role` | `guardrail_clear` | `advisor_role` -> `ADD_CANDIDATE`, `MARKET_PRISM` | the two roles the label table lacks | role labels |
+| `add_candidate_role` | `guardrail_clear` | `advisor_role` -> `ADD_CANDIDATE` | a role the label table lacks | role labels |
 | `non_json_raw_response` | `guardrail_clear` | `raw_response` -> `not json at all` | the writer accepts a pre-serialised string as is | count keeps it |
 | `json_array_raw_response` | `guardrail_clear` | `raw_response` -> `[1, 2]` | valid JSON that is not an object | count keeps it |
 | `feature_flag_on_stub` | `feature_off_stub` | `raw_response` -> `{"feature_flag": "on"}` | NOT_APPLICABLE with the flag not off | count keeps it |
