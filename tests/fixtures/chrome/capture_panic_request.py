@@ -32,15 +32,14 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(REPO))
 
 
-def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
 def main() -> None:
     watched = ["static/chrome.js", "templates/_chrome.html"]
-    dirty = _git("status", "--porcelain", "--", *watched)
+    dirty = subprocess.run(
+        ["git", "-C", str(REPO), "status", "--porcelain", "--", *watched],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     if dirty:
         raise SystemExit(f"refusing to capture: the base files are modified:\n{dirty}")
 
@@ -91,7 +90,12 @@ def main() -> None:
         raise SystemExit(f"the page sent no POST: {request!r}")
 
     record = {
-        "base_sha": _git("rev-parse", "HEAD"),
+        "base_sha": subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip(),
         "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "inputs": {"csrf_token": token, "account_id": account_id, "phrase": "LIQUIDATE"},
         "single_confirm_request": {

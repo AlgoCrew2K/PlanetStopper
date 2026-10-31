@@ -42,14 +42,13 @@ sys.path.insert(0, str(REPO))
 WATCHED = ["templates", "static", "app.py"]
 
 
-def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True
-    ).stdout.strip()
-
-
 def main() -> None:
-    dirty = _git("status", "--porcelain", "--", *WATCHED)
+    dirty = subprocess.run(
+        ["git", "-C", str(REPO), "status", "--porcelain", "--", *WATCHED],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
     if dirty:
         raise SystemExit(f"refusing to capture: the base files are modified:\n{dirty}")
 
@@ -115,7 +114,12 @@ def main() -> None:
             browser.close()
 
     out = {
-        "base_sha": _git("rev-parse", "HEAD"),
+        "base_sha": subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip(),
         "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dashboard": {"structure_outside_top_bar": structure, "resolved": resolved},
         "pages_1440": pages,

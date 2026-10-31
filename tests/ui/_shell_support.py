@@ -194,6 +194,11 @@ def _dark_theme_init_script() -> str:
     return "if (!localStorage.getItem('studioTweaks')) { localStorage.setItem('studioTweaks', JSON.stringify({theme: 'dark'})); }"
 
 
+def _accept_dialog(messages: list, dialog) -> None:
+    messages.append(dialog.message)
+    dialog.accept()
+
+
 @contextmanager
 def open_probe(
     firefox, server, *, width: int, height: int, theme: str | None = None, allow: tuple = ()
@@ -227,11 +232,7 @@ def open_probe(
     page.route("**/*", route)
     page.on("pageerror", lambda exc: state.page_errors.append(str(exc)))
 
-    def on_dialog(dialog):
-        state.dialogs.append(dialog.message)
-        dialog.accept()
-
-    page.on("dialog", on_dialog)
+    page.on("dialog", lambda dialog: _accept_dialog(state.dialogs, dialog))
     if theme == "dark":
         context.add_init_script(_dark_theme_init_script())
     try:
