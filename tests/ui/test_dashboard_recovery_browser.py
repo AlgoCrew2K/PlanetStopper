@@ -15,11 +15,11 @@ import re
 import pytest
 
 from tests.dashboard import _refresh_timing_support as sup
+from tests.ui._browser_server import running_server
 from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtures)
     count_requests,
     firefox,
     new_probe,
-    server,
     text,
     wait_for,
     wait_refresh,
@@ -37,12 +37,13 @@ def _ms(moment: dt.datetime) -> int:
 
 
 @pytest.fixture
-def probe(firefox, server, world):  # noqa: F811
-    probe = new_probe(firefox, server, world)
-    try:
-        yield probe
-    finally:
-        probe.context.close()
+def probe(firefox, world):  # noqa: F811
+    with running_server() as server:
+        probe = new_probe(firefox, server, world)
+        try:
+            yield probe
+        finally:
+            probe.context.close()
 
 
 def _load(probe, at: dt.datetime | None = None) -> None:
@@ -76,28 +77,29 @@ def test_a_refused_poll_keeps_the_numbers_and_says_connection_lost_until_data_re
     assert text(probe, "#hero-data-as-of") == sup.AS_OF_PREFIX + sup.later_stamp(stamp)
 
 
-def test_a_stream_answered_502_is_reopened_by_its_own_tab_only(firefox, server, world):  # noqa: F811
-    context = firefox.new_context(viewport={"width": 1440, "height": 900})
-    context.clock.install()
-    broken = new_probe(firefox, server, world, context=context)
-    healthy = new_probe(firefox, server, world, context=context)
-    try:
-        broken.events = lambda route: route.fulfill(status=502, body="")
-        for probe in (broken, healthy):
-            probe.state = sup.with_stamp(world["state"], sup.render_stamp(world))
-            probe.page.goto(server.base_url + "/")
-            wait_refresh(probe, 1)
-        before = count_requests(broken, "GET", "/api/events")
-        context.clock.run_for(35_000)
-        broken.page.wait_for_timeout(500)
-        assert count_requests(broken, "GET", "/api/events") > before, (
-            "the page never opened a new stream after the 502"
-        )
-        assert count_requests(healthy, "GET", "/api/events") == 1, (
-            "the other tab's stream was touched"
-        )
-    finally:
-        context.close()
+def test_a_stream_answered_502_is_reopened_by_its_own_tab_only(firefox, world):  # noqa: F811
+    with running_server() as server:
+        context = firefox.new_context(viewport={"width": 1440, "height": 900})
+        context.clock.install()
+        broken = new_probe(firefox, server, world, context=context)
+        healthy = new_probe(firefox, server, world, context=context)
+        try:
+            broken.events = lambda route: route.fulfill(status=502, body="")
+            for probe in (broken, healthy):
+                probe.state = sup.with_stamp(world["state"], sup.render_stamp(world))
+                probe.page.goto(server.base_url + "/")
+                wait_refresh(probe, 1)
+            before = count_requests(broken, "GET", "/api/events")
+            context.clock.run_for(35_000)
+            broken.page.wait_for_timeout(500)
+            assert count_requests(broken, "GET", "/api/events") > before, (
+                "the page never opened a new stream after the 502"
+            )
+            assert count_requests(healthy, "GET", "/api/events") == 1, (
+                "the other tab's stream was touched"
+            )
+        finally:
+            context.close()
 
 
 def test_the_wake_signals_of_a_returning_tab_send_one_state_request(probe, world):

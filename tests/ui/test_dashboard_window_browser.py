@@ -10,11 +10,11 @@ from __future__ import annotations
 import pytest
 
 from tests.dashboard import _refresh_timing_support as sup
+from tests.ui._browser_server import running_server
 from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtures)
     count_requests,
     firefox,
     new_probe,
-    server,
     text,
     wait_for,
     wait_refresh,
@@ -25,12 +25,13 @@ pytestmark = pytest.mark.browser
 
 
 @pytest.fixture
-def probe(firefox, server, world):  # noqa: F811
-    probe = new_probe(firefox, server, world)
-    try:
-        yield probe
-    finally:
-        probe.context.close()
+def probe(firefox, world):  # noqa: F811
+    with running_server() as server:
+        probe = new_probe(firefox, server, world)
+        try:
+            yield probe
+        finally:
+            probe.context.close()
 
 
 def test_three_refreshes_with_1y_picked_keep_the_1y_headline_and_ask_for_its_strip_once_each(

@@ -35,12 +35,6 @@ def world() -> (
     return hx.get_world("default")
 
 
-@pytest.fixture
-def server():
-    with running_server() as running:
-        yield running
-
-
 def _json(route, body, status: int = 200) -> None:
     route.fulfill(status=status, content_type="application/json", body=json.dumps(body))
 
