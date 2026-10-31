@@ -8023,7 +8023,10 @@ def ai_advisor_tab():
     server-side render.  Tab switching is handled in-place by JS (no navigation).
 
     Template context:
-      observations       — advisor_observations rows for the Overview panel
+      observation_groups — per-producer status lines for the Overview panel, each
+                           {role, total, rows}: the newest kept rows (at most 50,
+                           newest first) and the producer's whole kept-row count
+      observations_unavailable — True when the observation read failed
       correlation_matrix — PairResult list for the Correlations panel
       as_of              — ISO timestamp for the matrix
       crisis_caveat      — instability warning string
@@ -8035,40 +8038,21 @@ def ai_advisor_tab():
     # ------------------------------------------------------------------ #
     # Overview panel: advisor observations                                  #
     # ------------------------------------------------------------------ #
-    observations: list[dict] = []
-    for role in _ADVISOR_ROLES:
-        observations.extend(
-            database.get_advisor_observations_for_role(role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT)
-        )
-    seen: set = set()
-    deduped_obs: list[dict] = []
-    for obs in observations:
-        if obs["id"] not in seen:
-            seen.add(obs["id"])
-            deduped_obs.append(obs)
-    # Suppress pure feature-off stubs (NOT_APPLICABLE / feature_flag=off).
-    deduped_obs = [
-        obs
-        for obs in deduped_obs
-        if not (
-            obs.get("verdict") == "NOT_APPLICABLE"
-            and isinstance(obs.get("raw_response"), dict)
-            and obs["raw_response"].get("feature_flag") == "off"
-        )
-    ]
-    observations = deduped_obs[:_ADVISOR_OBSERVATIONS_PAGE_LIMIT]
-
-    # Stamp _preview_text onto each non-MARKET_PRISM observation so the template
-    # can render a concise human-readable cell without dumping raw JSON.
-    # MARKET_PRISM rows are handled separately (show verdict only).
+    # One status line per producer with its history behind a closed expander. A
+    # failed read shows the unavailable text in place of the lines; it never takes
+    # the rest of the page down and never reads as an empty history.
+    observation_groups: list[dict] = []
+    observations_unavailable = False
     try:
-        from advisors.prism_render import humanize_obs_preview as _humanize_obs  # noqa: PLC0415
-
-        for _obs in observations:
-            if _obs.get("advisor_role") != "MARKET_PRISM":
-                _obs["_preview_text"] = _humanize_obs(_obs.get("raw_response"))
-    except Exception:
-        pass  # Humanization failure must never crash the route.
+        observation_groups = _build_advisor_observation_groups()
+    except Exception as exc:
+        observation_groups = []
+        observations_unavailable = True
+        logging.getLogger(__name__).warning(
+            "advisor observations unavailable: %s", type(exc).__name__
+        )
+    # Every listed row, flat, for the display-name stamp below.
+    observations: list[dict] = [row for group in observation_groups for row in group["rows"]]
 
     # ------------------------------------------------------------------ #
     # Correlations panel: pairwise return matrix                           #
@@ -8632,7 +8616,8 @@ def ai_advisor_tab():
         "ai_advisor.html",
         active_route="advisor",
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
-        observations=observations,
+        observation_groups=observation_groups,
+        observations_unavailable=observations_unavailable,
         correlation_matrix=correlation_matrix,
         as_of=datetime.now(_ET).isoformat(),
         crisis_caveat=crisis_caveat,
@@ -10386,6 +10371,81 @@ _ADVISOR_ROLES = [
 
 # Hard limit on observations returned per request — prevents unbounded UI renders.
 _ADVISOR_OBSERVATIONS_PAGE_LIMIT = 50
+
+
+def _is_feature_off_stub(obs: dict) -> bool:
+    """Whether an advisor_observations row is a pure feature-off stub.
+
+    The rule the AI Advisor page leaves such rows out by, and the rule
+    ``database.count_advisor_observations_by_role`` counts by: verdict
+    NOT_APPLICABLE and a raw_response that is a dict with ``feature_flag`` "off".
+    """
+    raw = obs.get("raw_response")
+    return (
+        obs.get("verdict") == "NOT_APPLICABLE"
+        and isinstance(raw, dict)
+        and raw.get("feature_flag") == "off"
+    )
+
+
+# The preview text of a row whose stored raw_response is not JSON (see
+# database._parse_advisor_observation_row): the row is listed, and says so.
+_OBSERVATION_UNREADABLE_TEXT = "Stored record could not be read."
+
+
+def _build_advisor_observation_groups() -> list[dict]:
+    """Per-producer observation groups for the AI Advisor Overview.
+
+    One group per role in ``_ADVISOR_ROLES`` that has at least one kept row, in that
+    order: ``{"role", "total", "rows"}``. ``rows`` are the role's newest
+    ``_ADVISOR_OBSERVATIONS_PAGE_LIMIT`` rows, newest first, feature-off stubs left out
+    (a row listed under an earlier role is not listed again). ``total`` is the role's
+    whole kept-row count from ``database.count_advisor_observations_by_role``, never
+    lower than the rows listed. Each row not from MARKET_PRISM gains ``_preview_text``
+    (the humanised raw_response, or the unreadable text for a row whose stored
+    raw_response is not JSON).
+
+    Raises whatever the database reads raise; the caller shows the unavailable text.
+    """
+    per_role = [
+        (
+            role,
+            database.get_advisor_observations_for_role(
+                role, limit=_ADVISOR_OBSERVATIONS_PAGE_LIMIT
+            ),
+        )
+        for role in _ADVISOR_ROLES
+    ]
+    counts = database.count_advisor_observations_by_role(_ADVISOR_ROLES)
+
+    try:
+        from advisors.prism_render import humanize_obs_preview as _humanize_obs  # noqa: PLC0415
+    except Exception:
+        _humanize_obs = None  # Humanization failure must never crash the route.
+
+    seen: set = set()
+    groups: list[dict] = []
+    for role, role_rows in per_role:
+        kept: list[dict] = []
+        for obs in role_rows:
+            if obs["id"] in seen or _is_feature_off_stub(obs):
+                continue
+            seen.add(obs["id"])
+            kept.append(obs)
+        if not kept:
+            continue
+        for obs in kept:
+            if obs.get("advisor_role") == "MARKET_PRISM":
+                continue
+            if obs.get("raw_response_unreadable"):
+                obs["_preview_text"] = _OBSERVATION_UNREADABLE_TEXT
+            elif _humanize_obs is not None:
+                try:
+                    obs["_preview_text"] = _humanize_obs(obs.get("raw_response"))
+                except Exception:
+                    pass  # The cell then reads blank; the row still renders.
+        groups.append({"role": role, "total": max(counts.get(role, 0), len(kept)), "rows": kept})
+    return groups
 
 
 @app.route("/api/advisor-observations", methods=["GET"])

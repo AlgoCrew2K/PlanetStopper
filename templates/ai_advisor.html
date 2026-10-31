@@ -225,6 +225,15 @@
 
         .autotune-run-card:last-child { border-bottom: none; }
 
+        /* Older runs: a closed details under the cards. No display rule here: the
+           hidden attribute must keep hiding it while it has no rows. */
+        .autotune-older { margin-top: 0.75rem; }
+        .autotune-older-summary {
+            cursor: pointer;
+            font-size: 0.6875rem;
+            color: var(--studio-ink-dim);
+        }
+
         .autotune-run-top {
             display: flex;
             justify-content: space-between;
@@ -727,6 +736,9 @@
             padding: 1.25rem 1.5rem;
             margin-bottom: 1.25rem;
         }
+
+        /* The block sits under the suggestions/autotune grid: the same gap above as below. */
+        .adv-grid + .prism-block { margin-top: 1.25rem; }
 
         .prism-block-header {
             display: flex;
@@ -1380,6 +1392,72 @@
             <a class="mini-stat" href="#retirement" data-testid="retirement-pointer"><span class="mini-stat-label">{{ retirement_pointer.text }}</span></a>
         </div>
 
+
+        <!-- Controls bar -->
+        <div data-testid="advisor-controls" class="adv-controls">
+            <div class="ctrl-group">
+                <label class="ctrl-label" for="symphony-id-input">Symphony</label>
+                <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
+                    <option value="">Select symphony…</option>
+                </select>
+            </div>
+            <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
+                    onclick="getSuggestions()" disabled>
+                Run Claude advisor
+            </button>
+            <div id="advisor-error" class="adv-error"></div>
+        </div>
+
+        <!-- Summary strip -->
+        <div id="advisor-summary-strip" data-testid="advisor-summary-strip" class="summary-strip" hidden>
+            <div data-testid="chip-total-suggestions" class="summary-chip"
+                 id="chip-total">0 suggestions</div>
+            <div data-testid="chip-oos-passed" class="summary-chip"
+                 id="chip-passed">0 OOS passed</div>
+            <div data-testid="chip-oos-rejected" class="summary-chip"
+                 id="chip-rejected">0 OOS rejected</div>
+        </div>
+
+        <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
+             Uses textContent only; never innerHTML (XSS guard). -->
+        <div id="advisor-lens-as-of"
+             data-testid="advisor-lens-as-of"
+             class="prism-as-of"
+             style="display:none;padding:0.25rem 0;"></div>
+
+        <!-- Two-column grid -->
+        <div data-testid="advisor-grid" class="adv-grid">
+
+            <!-- Left: suggestions -->
+            <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
+                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
+                    Select a symphony and click Run Claude advisor to get suggestions.
+                </div>
+            </div>
+
+            <!-- Right: autotune panel -->
+            <aside data-testid="autotune-panel" class="autotune-panel">
+                <div data-testid="autotune-panel-header" class="autotune-header">
+                    Recent Autotune Runs
+                </div>
+                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
+                <div id="autotune-runs-list" data-testid="autotune-runs-list">
+                    <div class="autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
+                        Loading…
+                    </div>
+                </div>
+                {# The runs beyond one card per symphony. Static, so a 15 s poll only rewrites the
+                   rows and the summary text and never closes a details the operator opened;
+                   hidden while it has no rows (no display rule on .autotune-older, so the
+                   hidden attribute is what governs it). #}
+                <details id="autotune-older-runs" data-testid="autotune-older-runs" class="autotune-older" hidden>
+                    <summary id="autotune-older-summary" data-testid="autotune-older-summary" class="autotune-older-summary"></summary>
+                    <div id="autotune-older-list" data-testid="autotune-older-list"></div>
+                </details>
+            </aside>
+
+        </div>
+
         <!-- ============================================================ -->
         <!-- Market Prism block — always-on overnight market summary      -->
         <!-- Reads from get_latest_market_prism_summary() prefetched in   -->
@@ -1595,62 +1673,239 @@
 
         </div>{# /market-prism-block #}
 
-        <!-- Controls bar -->
-        <div data-testid="advisor-controls" class="adv-controls">
-            <div class="ctrl-group">
-                <label class="ctrl-label" for="symphony-id-input">Symphony</label>
-                <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
-                    <option value="">Select symphony…</option>
-                </select>
+        <!-- ============================================================ -->
+        <!-- Advisor observations — one status line per producer, its      -->
+        <!-- history behind a closed expander. Read-only display of        -->
+        <!-- advisor_observations rows. data-testid used by tests:         -->
+        <!-- advisor-observations-section                                  -->
+        <!-- ============================================================ -->
+        <style>
+            .obs-section {
+                margin-top: 1.5rem;
+                background: var(--studio-surface);
+                border: 1px solid var(--studio-border);
+                border-radius: 1rem;
+                padding: 1.25rem 1.5rem;
+            }
+            .obs-section-header {
+                font-size: 0.6875rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.1em;
+                color: var(--studio-ink-dim);
+                margin-bottom: 1rem;
+            }
+
+            .obs-section .obs-framing-note { margin: 0 0 0.75rem; }
+
+            /* One status line per producer; its history opens below the line. */
+            .obs-producer {
+                border-top: 1px solid var(--studio-border);
+                padding: 0.625rem 0;
+            }
+            .obs-producer-line {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: baseline;
+                gap: 0.25rem 1rem;
+                font-size: 0.8125rem;
+            }
+            .obs-producer .obs-producer-label {
+                margin: 0;
+                min-width: 11rem;
+            }
+            .obs-producer-time,
+            .obs-producer-total {
+                color: var(--studio-ink-dim);
+                font-variant-numeric: tabular-nums;
+            }
+            .obs-history { margin-top: 0.375rem; }
+            .obs-history > summary {
+                cursor: pointer;
+                font-size: 0.6875rem;
+                color: var(--studio-ink-dim);
+            }
+            .obs-history-note {
+                margin: 0.375rem 0 0;
+                font-size: 0.6875rem;
+                color: var(--studio-ink-dim);
+            }
+
+            .obs-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.8125rem;
+            }
+            .obs-table th {
+                text-align: left;
+                font-size: 0.625rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: var(--studio-ink-muted);
+                padding: 0.375rem 0.625rem;
+                border-bottom: 1px solid var(--studio-border);
+            }
+            .obs-table td {
+                padding: 0.5rem 0.625rem;
+                border-bottom: 1px solid var(--studio-border);
+                vertical-align: top;
+            }
+            .obs-table tr:last-child td { border-bottom: none; }
+            .obs-table .obs-time { white-space: nowrap; }
+
+            /* Verdict classes — color via design-system tokens, never raw hex. */
+            .verdict-clear { color: var(--studio-pos); font-weight: 700; }
+            .verdict-watch { color: var(--studio-warn); font-weight: 700; }
+            .verdict-breach { color: var(--studio-neg); font-weight: 700; }
+            .verdict-unknown { color: var(--studio-ink-dim); font-weight: 700; }
+
+            /* Advisory-only badge */
+            .advisory-only-badge {
+                display: inline-block;
+                padding: 0.1rem 0.4rem;
+                border-radius: 999px;
+                font-size: 0.5rem;
+                font-weight: 700;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+                border: 1px solid var(--studio-border);
+                color: var(--studio-ink-dim);
+                white-space: nowrap;
+            }
+
+            .obs-empty {
+                color: var(--studio-ink-dim);
+                font-size: 0.875rem;
+                text-align: center;
+                padding: 1.5rem 0;
+            }
+
+            .obs-raw-preview {
+                font-size: 0.6875rem;
+                color: var(--studio-ink-dim);
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                width: 100%;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+        </style>
+
+        {# Role label mapping — human-friendly names for operator display #}
+        {%- set _ROLE_LABELS = {
+            "OVERFITTING_CONSCIENCE": "Overfitting Conscience",
+            "SPEC_CRITIC": "Spec Critic",
+            "DIVERGENCE_EXPLAINER": "Divergence Explainer",
+            "NARRATOR": "Narrator",
+            "MARKET_PRISM": "Market Prism",
+            "ADD_CANDIDATE": "Add Candidate",
+            "ASSET_SWAP": "Asset Swap",
+            "LOGIC_CHANGE": "Logic Change",
+        } -%}
+
+        {# Verdict CSS class mapping #}
+        {%- set _VERDICT_CLASS = {
+            "CLEAR": "verdict-clear",
+            "WATCH": "verdict-watch",
+            "BREACH": "verdict-breach",
+        } -%}
+
+        {# What a line and a row read when the stored verdict is NULL or empty. #}
+        {%- set _VERDICT_NOT_RECORDED = "verdict not recorded" -%}
+
+        <section data-testid="advisor-observations-section" class="obs-section">
+            <div class="obs-section-header">Advisor Observations</div>
+            {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
+               NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
+               bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
+               Overfitting Conscience checks exactly one narrow DoF source (BACKTEST_SELECTION)
+               and a CLEAR there does not imply general overfitting protection; Divergence
+               Explainer is disabled by default (SECOND_WINDOW_CVAR_ENABLED) and its rows are
+               informational-only.  Named individually below so an operator can't over-read a
+               uniform "all clear" across three producers with different actual scope. #}
+            <p data-testid="guardrail-uniform-note" class="obs-framing-note">
+                Spec Critic is an active guardrail checking the shared, frozen THEORY spec
+                structure — a CLEAR verdict means the spec was evaluated and passed.
+                Overfitting Conscience checks one narrow overfitting-risk source
+                (backtest-selection degrees of freedom) — a CLEAR here does not mean
+                'no overfitting risk exists,' only that this one source is clean.
+                Divergence Explainer is disabled by default and its rows are
+                informational-only, not currently monitoring anything active.
+                Per-symphony recommendations come from
+                the <strong>Run Claude advisor</strong> button.
+            </p>
+            {% if observations_unavailable %}
+            <div class="obs-empty" data-testid="observations-unavailable">Observations could not be loaded.</div>
+            {% elif observation_groups %}
+            {% for group in observation_groups %}
+            {% set latest = group.rows[0] %}
+            {% set latest_verdict = latest.verdict or _VERDICT_NOT_RECORDED %}
+            {% set latest_class = _VERDICT_CLASS.get(latest.verdict, "verdict-unknown") %}
+            <div class="obs-producer" data-testid="obs-producer" data-role="{{ group.role | e }}">
+                <div class="obs-producer-line">
+                    <span class="section-header obs-producer-label" data-testid="obs-producer-label">{{ _ROLE_LABELS.get(group.role, group.role) | e }}</span>
+                    <span class="obs-producer-verdict {{ latest_class }}" data-testid="obs-producer-verdict">{{ latest_verdict | e }}</span>
+                    <span class="obs-producer-time" data-testid="obs-producer-time">{{ latest.created_at | et_stamp }}</span>
+                    <span class="obs-producer-total" data-testid="obs-producer-total">{{ group.total }} {{ "observation" if group.total == 1 else "observations" }}</span>
+                    <span class="advisory-only-badge" title="Advisory only — never moves money">advisory only</span>
+                </div>
+                <details class="obs-history" data-testid="obs-producer-history">
+                    <summary>History</summary>
+                    <table class="obs-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symphony</th>
+                                <th>Subject</th>
+                                <th>Verdict</th>
+                                <th>Badge</th>
+                                <th>Summary</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        {% for obs in group.rows %}
+                            {% set verdict = obs.verdict or _VERDICT_NOT_RECORDED %}
+                            {% set verdict_class = _VERDICT_CLASS.get(obs.verdict, "verdict-unknown") %}
+                            <tr data-testid="obs-row" data-obs-id="{{ obs.id }}">
+                                <td class="obs-time" data-testid="obs-time">{{ obs.created_at | et_stamp }}</td>
+                                {# Display name from the live state (stamped in ai_advisor_tab());
+                                   the stored key stays only in the title. No live match, or an
+                                   empty key: the stored key, or the dash. #}
+                                {% if obs._symphony_name %}
+                                <td class="obs-symphony" data-testid="obs-symphony" title="{{ obs.symphony_id | e }}">{{ obs._symphony_name | e }}</td>
+                                {% else %}
+                                <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
+                                {% endif %}
+                                <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
+                                <td class="{{ verdict_class }}" data-testid="obs-verdict">{{ verdict | e }}</td>
+                                <td>
+                                    <span class="advisory-only-badge" data-testid="advisory-only-badge"
+                                          title="Advisory only — never moves money">
+                                        advisory only
+                                    </span>
+                                </td>
+                                <td class="obs-raw-preview" data-testid="obs-summary">
+                                    {%- if obs.advisor_role == 'MARKET_PRISM' -%}
+                                        {{ obs.verdict | e }}
+                                    {%- else -%}
+                                        {{ obs.get('_preview_text', '') | e }}
+                                    {%- endif -%}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if group.total > group.rows | length %}
+                    <p class="obs-history-note" data-testid="obs-producer-history-note" title="The newest rows shown, of all this producer's rows">{{ group.rows | length }} of {{ group.total }}</p>
+                    {% endif %}
+                </details>
             </div>
-            <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
-                    onclick="getSuggestions()" disabled>
-                Run Claude advisor
-            </button>
-            <div id="advisor-error" class="adv-error"></div>
-        </div>
-
-        <!-- Summary strip -->
-        <div id="advisor-summary-strip" data-testid="advisor-summary-strip" class="summary-strip" hidden>
-            <div data-testid="chip-total-suggestions" class="summary-chip"
-                 id="chip-total">0 suggestions</div>
-            <div data-testid="chip-oos-passed" class="summary-chip"
-                 id="chip-passed">0 OOS passed</div>
-            <div data-testid="chip-oos-rejected" class="summary-chip"
-                 id="chip-rejected">0 OOS rejected</div>
-        </div>
-
-        <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
-             Uses textContent only; never innerHTML (XSS guard). -->
-        <div id="advisor-lens-as-of"
-             data-testid="advisor-lens-as-of"
-             class="prism-as-of"
-             style="display:none;padding:0.25rem 0;"></div>
-
-        <!-- Two-column grid -->
-        <div data-testid="advisor-grid" class="adv-grid">
-
-            <!-- Left: suggestions -->
-            <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
-                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
-                    Select a symphony and click Run Claude advisor to get suggestions.
-                </div>
-            </div>
-
-            <!-- Right: autotune panel -->
-            <aside data-testid="autotune-panel" class="autotune-panel">
-                <div data-testid="autotune-panel-header" class="autotune-header">
-                    Recent Autotune Runs
-                </div>
-                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
-                <div id="autotune-runs-list" data-testid="autotune-runs-list">
-                    <div class="autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
-                        Loading…
-                    </div>
-                </div>
-            </aside>
-
-        </div>
+            {% endfor %}
+            {% else %}
+            <div class="obs-empty" data-testid="obs-empty">No observations from advisors at this time.</div>
+            {% endif %}
+        </section>
 
         </div>{# /tab-panel-overview #}
 
@@ -3074,174 +3329,6 @@
         window._chatAvailable = {{ 'true' if chat_available else 'false' }};
     </script>
 
-    <!-- Advisor Observations — read-only display of advisor_observations rows. -->
-    <!-- data-testid used by tests: advisor-observations-section                 -->
-    <style>
-        .obs-section {
-            margin-top: 1.5rem;
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 1rem;
-            padding: 1.25rem 1.5rem;
-        }
-        .obs-section-header {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 1rem;
-        }
-        .obs-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.8125rem;
-        }
-        .obs-table th {
-            text-align: left;
-            font-size: 0.625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: var(--studio-ink-muted);
-            padding: 0.375rem 0.625rem;
-            border-bottom: 1px solid var(--studio-border);
-        }
-        .obs-table td {
-            padding: 0.5rem 0.625rem;
-            border-bottom: 1px solid var(--studio-border);
-            vertical-align: top;
-        }
-        .obs-table tr:last-child td { border-bottom: none; }
-
-        /* Verdict cell classes — color via design-system tokens, never raw hex. */
-        .verdict-clear { color: var(--studio-pos); font-weight: 700; }
-        .verdict-watch { color: var(--studio-warn); font-weight: 700; }
-        .verdict-breach { color: var(--studio-neg); font-weight: 700; }
-        .verdict-unknown { color: var(--studio-ink-dim); font-weight: 700; }
-
-        /* Advisory-only badge */
-        .advisory-only-badge {
-            display: inline-block;
-            padding: 0.1rem 0.4rem;
-            border-radius: 999px;
-            font-size: 0.5rem;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            border: 1px solid var(--studio-border);
-            color: var(--studio-ink-dim);
-            white-space: nowrap;
-        }
-
-        .obs-empty {
-            color: var(--studio-ink-dim);
-            font-size: 0.875rem;
-            text-align: center;
-            padding: 1.5rem 0;
-        }
-
-        .obs-raw-preview {
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            width: 100%;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-    </style>
-
-    {# Role label mapping — human-friendly names for operator display #}
-    {%- set _ROLE_LABELS = {
-        "OVERFITTING_CONSCIENCE": "Overfitting Conscience",
-        "SPEC_CRITIC": "Spec Critic",
-        "DIVERGENCE_EXPLAINER": "Divergence Explainer",
-        "NARRATOR": "Narrator",
-        "ASSET_SWAP": "Asset Swap",
-        "LOGIC_CHANGE": "Logic Change",
-    } -%}
-
-    {# Verdict CSS class mapping #}
-    {%- set _VERDICT_CLASS = {
-        "CLEAR": "verdict-clear",
-        "WATCH": "verdict-watch",
-        "BREACH": "verdict-breach",
-    } -%}
-
-    <section data-testid="advisor-observations-section" class="obs-section">
-        <div class="obs-section-header">Advisor Observations</div>
-        {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
-           NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
-           bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
-           Overfitting Conscience checks exactly one narrow DoF source (BACKTEST_SELECTION)
-           and a CLEAR there does not imply general overfitting protection; Divergence
-           Explainer is disabled by default (SECOND_WINDOW_CVAR_ENABLED) and its rows are
-           informational-only.  Named individually below so an operator can't over-read a
-           uniform "all clear" across three producers with different actual scope. #}
-        <p data-testid="guardrail-uniform-note" class="obs-framing-note">
-            Spec Critic is an active guardrail checking the shared, frozen THEORY spec
-            structure — a CLEAR verdict means the spec was evaluated and passed.
-            Overfitting Conscience checks one narrow overfitting-risk source
-            (backtest-selection degrees of freedom) — a CLEAR here does not mean
-            'no overfitting risk exists,' only that this one source is clean.
-            Divergence Explainer is disabled by default and its rows are
-            informational-only, not currently monitoring anything active.
-            Per-symphony recommendations come from
-            the <strong>Run Claude advisor</strong> button.
-        </p>
-        {% if observations %}
-        <table class="obs-table">
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Symphony</th>
-                    <th>Advisor</th>
-                    <th>Subject</th>
-                    <th>Verdict</th>
-                    <th>Badge</th>
-                    <th>Summary</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for obs in observations %}
-                {% set verdict = obs.verdict or "" %}
-                {% set role_label = _ROLE_LABELS.get(obs.advisor_role, obs.advisor_role) %}
-                {% set verdict_class = _VERDICT_CLASS.get(verdict, "verdict-unknown") %}
-                <tr data-obs-id="{{ obs.id }}">
-                    <td>{{ obs.created_at | e }}</td>
-                    {# Display name from the live state (stamped in ai_advisor_tab());
-                       the stored key stays only in the title. No live match, or an
-                       empty key: the stored key, or the dash. #}
-                    {% if obs._symphony_name %}
-                    <td class="obs-symphony" data-testid="obs-symphony" title="{{ obs.symphony_id | e }}">{{ obs._symphony_name | e }}</td>
-                    {% else %}
-                    <td class="obs-symphony" data-testid="obs-symphony">{{ obs.symphony_id | e if obs.symphony_id else "—" }}</td>
-                    {% endif %}
-                    <td>{{ role_label | e }}</td>
-                    <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | e }}</span></td>
-                    <td class="{{ verdict_class }}">{{ verdict | e }}</td>
-                    <td>
-                        <span class="advisory-only-badge" data-testid="advisory-only-badge"
-                              title="Advisory only — never moves money">
-                            advisory only
-                        </span>
-                    </td>
-                    <td class="obs-raw-preview">
-                        {%- if obs.advisor_role == 'MARKET_PRISM' -%}
-                            {{ obs.verdict | e }}
-                        {%- else -%}
-                            {{ obs.get('_preview_text', '') | e }}
-                        {%- endif -%}
-                    </td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="obs-empty">No observations from advisors at this time.</div>
-        {% endif %}
-    </section>
 
     <script src="{{ url_for('static', filename='ai_advisor.js') }}"></script>
     <script src="{{ url_for('static', filename='ai_advisor_asset_swaps.js') }}"></script>

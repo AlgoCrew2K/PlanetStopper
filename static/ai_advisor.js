@@ -529,9 +529,33 @@
 
     var _sparkChart = null;
 
+    // The canvas carries an inline `display:block` in the template, which beats the
+    // `hidden` attribute, so it is hidden and shown through style.display. Shown again
+    // means back to the value the template writes.
+    var SPARK_CANVAS_DISPLAY = 'block';
+
+    function setSparklineVisible(canvas, visible) {
+        canvas.style.display = visible ? SPARK_CANVAS_DISPLAY : 'none';
+    }
+
+    // Destroy the chart the canvas holds, whoever created it: Chart.js refuses a second
+    // chart on a canvas that still holds one, and our own handle is null when another
+    // owner drew on the canvas first.
+    function releaseSparklineCanvas(canvas) {
+        var held = null;
+        if (typeof Chart !== 'undefined') {
+            held = typeof Chart.getChart === 'function' ? Chart.getChart(canvas) : _sparkChart;
+        }
+        if (held) held.destroy();
+        _sparkChart = null;
+    }
+
+    // Draws every returned run that has a score, oldest first. Hidden (no space taken)
+    // when the chart library is missing or no run has a score; a chart that fails to
+    // build hides the canvas too, and never reaches the caller's failure handler.
     function renderAutotuneSparkline(rows) {
         var canvas = document.getElementById('autotune-sparkline-canvas');
-        if (!canvas || typeof Chart === 'undefined') return;
+        if (!canvas) return;
 
         var sharpeValues = rows
             .slice()
@@ -539,47 +563,56 @@
             .map(function (r) { return r.naive_sharpe !== null && r.naive_sharpe !== undefined ? Number(r.naive_sharpe) : null; })
             .filter(function (v) { return v !== null; });
 
-        if (!sharpeValues.length) return;
-
-        var cs = getComputedStyle(document.documentElement);
-        // C-15: fall back to neutral token values — no bare hex.
-        var accentColor = cs.getPropertyValue('--studio-accent').trim() || cs.getPropertyValue('--studio-swatch-1').trim();
-        var borderColor = cs.getPropertyValue('--studio-rule').trim() || cs.getPropertyValue('--studio-border').trim();
-
-        if (_sparkChart) {
-            _sparkChart.destroy();
-            _sparkChart = null;
+        if (typeof Chart === 'undefined' || !sharpeValues.length) {
+            releaseSparklineCanvas(canvas);
+            setSparklineVisible(canvas, false);
+            return;
         }
 
-        _sparkChart = new Chart(canvas.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: sharpeValues.map(function (_, i) { return i + 1; }),
-                datasets: [{
-                    data: sharpeValues,
-                    borderColor: accentColor,
-                    borderWidth: 1.5,
-                    pointRadius: 0,
-                    tension: 0.3,
-                    fill: false,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                scales: {
-                    x: { display: false },
-                    y: {
-                        display: true,
-                        grid: { color: borderColor, lineWidth: 0.5 },
-                        ticks: { font: { size: 8 }, color: borderColor, maxTicksLimit: 3 },
-                        border: { display: false },
+        try {
+            var cs = getComputedStyle(document.documentElement);
+            // C-15: fall back to neutral token values — no bare hex.
+            var accentColor = cs.getPropertyValue('--studio-accent').trim() || cs.getPropertyValue('--studio-swatch-1').trim();
+            var borderColor = cs.getPropertyValue('--studio-rule').trim() || cs.getPropertyValue('--studio-border').trim();
+
+            releaseSparklineCanvas(canvas);
+            // Shown before the chart is built: a responsive chart sizes itself from the
+            // canvas box, which a hidden canvas does not have.
+            setSparklineVisible(canvas, true);
+
+            _sparkChart = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: sharpeValues.map(function (_, i) { return i + 1; }),
+                    datasets: [{
+                        data: sharpeValues,
+                        borderColor: accentColor,
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        tension: 0.3,
+                        fill: false,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                    scales: {
+                        x: { display: false },
+                        y: {
+                            display: true,
+                            grid: { color: borderColor, lineWidth: 0.5 },
+                            ticks: { font: { size: 8 }, color: borderColor, maxTicksLimit: 3 },
+                            border: { display: false },
+                        },
                     },
                 },
-            },
-        });
+            });
+        } catch (err) {
+            _sparkChart = null;
+            setSparklineVisible(canvas, false);
+        }
     }
 
     // ---------------------------------------------------------------------------
@@ -644,84 +677,134 @@
             : AUTOTUNE_SCORE_GENERIC;
     }
 
+    // One card per symphony, at most this many; every other returned run is an older run.
+    var AUTOTUNE_CARD_LIMIT = 12;
+    // The number of runs GET /api/autotune-runs returns (get_all_autotune_runs(limit=50)),
+    // so the older-runs summary can say how far back the list reaches.
+    var AUTOTUNE_ROUTE_ROW_LIMIT = 50;
+
+    // rows arrive newest first. A symphony's card shows its first (newest) row; the first
+    // AUTOTUNE_CARD_LIMIT symphonies, in the order their newest rows arrive, get cards;
+    // every other row, in the route's order, is an older run.
+    function splitAutotuneRuns(rows) {
+        var seen = Object.create(null);
+        var cards = [];
+        rows.forEach(function (r) {
+            var key = String(r.symphony_id);
+            if (seen[key]) return;
+            seen[key] = true;
+            if (cards.length < AUTOTUNE_CARD_LIMIT) cards.push(r);
+        });
+        var older = rows.filter(function (r) { return cards.indexOf(r) === -1; });
+        return { cards: cards, older: older };
+    }
+
+    // The markup of one run, used for a card and for a row of the older-runs list.
+    function autotuneRunCardHtml(r) {
+        var decision = r.baseline_decision || '';
+        var pillColor = decisionPillColor(decision);
+        // B-13: human-readable label instead of raw enum.
+        var pillLabel = decisionLabel(decision);
+        var frozenVerdict = r.frozen_eval_verdict || '';
+        var frozenColor = frozenEvalColor(frozenVerdict);
+        // The display name when the live state holds the symphony, else the
+        // stored key; the key itself stays in the title.
+        var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
+        var symKey = escHtml(r.symphony_id || '');
+        var scoreInfo = autotuneScoreInfo(r.objective);
+        // A run that never reached the frozen evaluation has no verdict:
+        // say so in dim ink instead of rendering an empty pill.
+        var frozenHtml = frozenVerdict
+            ? '<div class="autotune-run-verdict">Frozen-eval ' +
+              '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
+              escHtml(frozenVerdict) + '</span></div>'
+            : '<div class="autotune-run-verdict" style="color:' + cssVar('--studio-ink-dim') + ';">Frozen-eval not evaluated</div>';
+        // V-23: timestamp muted, best-score / selection t-stat bold mono.
+        // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
+        var selTstat = r.selection_tstat;
+        // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
+        // dim one-liner, same idiom as the timestamp span above. status ==
+        // 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
+        // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
+        // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
+        // renders nothing — a single non-adopted run isn't a pattern worth flagging.
+        var streak = r.never_adopted_streak;
+        var streakHtml = '';
+        if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
+            streakHtml =
+                '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config') + '</div>';
+        } else if (streak && streak.status === 'insufficient_history') {
+            streakHtml =
+                '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
+                'adoption streak: insufficient history (&lt;2 runs)</div>';
+        }
+        return (
+            '<div class="autotune-run-card" data-testid="autotune-run-row">' +
+            '<div class="autotune-run-top">' +
+            '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
+            '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
+            escHtml(pillLabel) + '</span>' +
+            '</div>' +
+            '<div class="autotune-run-meta">' +
+            // The New York stamp (the shared formatter), not the stored string.
+            '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(fmtEtStamp(r.run_timestamp)) + '</span>' +
+            '<span><span class="autotune-run-score" title="' + escHtml(scoreInfo.tip) + '">' +
+            escHtml(scoreInfo.label) + ' <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
+            ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
+            '</span>' +
+            '</div>' +
+            // V-23: FROZEN-EVAL as colored pill (or the dim not-evaluated line).
+            frozenHtml +
+            streakHtml +
+            '</div>'
+        );
+    }
+
+    // The older-runs <details> is static page markup: this writes only its rows container,
+    // its summary text and its `hidden` property. It never recreates the element and never
+    // touches `open`, so a 15 s poll leaves a details the operator opened open.
+    function renderOlderAutotuneRuns(older) {
+        var details = document.getElementById('autotune-older-runs');
+        var summary = document.getElementById('autotune-older-summary');
+        var olderList = document.getElementById('autotune-older-list');
+        if (olderList) olderList.innerHTML = older.map(autotuneRunCardHtml).join('');
+        if (summary) {
+            summary.textContent = older.length
+                ? older.length + (older.length === 1 ? ' older run' : ' older runs') +
+                  ' (covers the ' + AUTOTUNE_ROUTE_ROW_LIMIT + ' most recent runs)'
+                : '';
+        }
+        if (details) details.hidden = older.length === 0;
+    }
+
     function loadRecentRuns() {
         var list = document.getElementById('autotune-runs-list');
         if (!list) return;
         fetch('/api/autotune-runs')
             .then(function (resp) { return resp.json(); })
             .then(function (rows) {
-                if (!rows.length) {
+                if (!Array.isArray(rows) || !rows.length) {
                     list.innerHTML =
                         '<div style="text-align:center;padding:1rem;' +
                         'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No tuning runs recorded yet.</div>';
+                    renderOlderAutotuneRuns([]);
+                    renderAutotuneSparkline([]);
                     return;
                 }
-                renderAutotuneSparkline(rows);
                 // C-16: render card list with all per-run fields per advisor.jsx.
-                list.innerHTML = rows.map(function (r) {
-                    var decision = r.baseline_decision || '';
-                    var pillColor = decisionPillColor(decision);
-                    // B-13: human-readable label instead of raw enum.
-                    var pillLabel = decisionLabel(decision);
-                    var frozenVerdict = r.frozen_eval_verdict || '';
-                    var frozenColor = frozenEvalColor(frozenVerdict);
-                    // The display name when the live state holds the symphony, else the
-                    // stored key; the key itself stays in the title.
-                    var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
-                    var symKey = escHtml(r.symphony_id || '');
-                    var scoreInfo = autotuneScoreInfo(r.objective);
-                    // A run that never reached the frozen evaluation has no verdict:
-                    // say so in dim ink instead of rendering an empty pill.
-                    var frozenHtml = frozenVerdict
-                        ? '<div class="autotune-run-verdict">Frozen-eval ' +
-                          '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
-                          escHtml(frozenVerdict) + '</span></div>'
-                        : '<div class="autotune-run-verdict" style="color:' + cssVar('--studio-ink-dim') + ';">Frozen-eval not evaluated</div>';
-                    // V-23: timestamp muted, best-score / selection t-stat bold mono.
-                    // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
-                    var selTstat = r.selection_tstat;
-                    // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
-                    // dim one-liner, same idiom as the timestamp span above. status ==
-                    // 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
-                    // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
-                    // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
-                    // renders nothing — a single non-adopted run isn't a pattern worth flagging.
-                    var streak = r.never_adopted_streak;
-                    var streakHtml = '';
-                    if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
-                        streakHtml =
-                            '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                            escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config') + '</div>';
-                    } else if (streak && streak.status === 'insufficient_history') {
-                        streakHtml =
-                            '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                            'adoption streak: insufficient history (&lt;2 runs)</div>';
-                    }
-                    return (
-                        '<div class="autotune-run-card" data-testid="autotune-run-row">' +
-                        '<div class="autotune-run-top">' +
-                        '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
-                        '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
-                        escHtml(pillLabel) + '</span>' +
-                        '</div>' +
-                        '<div class="autotune-run-meta">' +
-                        '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(r.run_timestamp || '') + '</span>' +
-                        '<span><span class="autotune-run-score" title="' + escHtml(scoreInfo.tip) + '">' +
-                        escHtml(scoreInfo.label) + ' <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
-                        ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
-                        '</span>' +
-                        '</div>' +
-                        // V-23: FROZEN-EVAL as colored pill (or the dim not-evaluated line).
-                        frozenHtml +
-                        streakHtml +
-                        '</div>'
-                    );
-                }).join('');
+                var parts = splitAutotuneRuns(rows);
+                list.innerHTML = parts.cards.map(autotuneRunCardHtml).join('');
+                renderOlderAutotuneRuns(parts.older);
+                // Last, and on its own: the cards are on screen whatever the chart does.
+                renderAutotuneSparkline(rows);
             })
             .catch(function (err) {
                 list.innerHTML =
                     '<div style="text-align:center;padding:1rem;' +
                     'color:' + cssVar('--studio-neg') + ';">Failed to load runs: ' + escHtml(err.message) + '</div>';
+                var olderDetails = document.getElementById('autotune-older-runs');
+                if (olderDetails) olderDetails.hidden = true;
             });
     }
 
