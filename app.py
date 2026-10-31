@@ -1638,6 +1638,10 @@ def _retirement_internal_error_summary(error_type: str) -> dict:
         "recommendations": 0,
         "screen_threshold": None,
         "stress_gate_min_aligned_days": None,
+        # Unknown, not "none found": a failed run never claims an empty matrix.
+        "pairs": None,
+        "series_windows": None,
+        "uncertainty_min_aligned_days": None,
     }
 
 
@@ -5604,6 +5608,424 @@ def _retirement_resolve_excluded_symphonies(
         return []
 
 
+# ---------------------------------------------------------------------------
+# Correlations tab: the matrix of the latest successful retirement run
+#
+# The tab renders the pairs the retirement recommender stored in its run summary
+# (the realized series). Nothing here fetches a series or recomputes a
+# correlation: the render reads the stored summary and shapes it.
+# ---------------------------------------------------------------------------
+
+# Display bound between the neutral and the moderate (warn) correlation bands and,
+# negated, the start of the diversifying band. A display choice of the matrix, not
+# a screen or a gate: the screen threshold the high band starts at is read from the
+# run's own summary.
+_CORRELATION_MODERATE_BOUND = 0.40
+
+# Inline fill strength (percent of the band token mixed over the page) of a filled
+# cell: linear in the printed |r| from the moderate bound (MIN) to 1.00 (MAX). The
+# cap keeps the ink-token number at 4.5:1 contrast or better over the strongest mix
+# of each signal token in both themes (computed from static/tokens.css: the weakest
+# pairing is the dark theme's positive token, 5.2:1 at 45%).
+_CORRELATION_FILL_PCT_MIN = 15.0
+_CORRELATION_FILL_PCT_MAX = 45.0
+
+_CORRELATION_UNDEFINED_TEXT = "undefined"
+_CORRELATION_FILLED_BANDS = ("danger", "warn", "diversifying")
+_CORRELATION_NEXT_RUN_TEXT = "nightly at 03:45 UTC, or Run now on the Retirement tab"
+_CORRELATION_NEVER_RUN_TEXT = (
+    "No realized series yet: the matrix fills after the next retirement run "
+    f"({_CORRELATION_NEXT_RUN_TEXT})."
+)
+_CORRELATION_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _retirement_correlation_text(r: object) -> str:
+    """The correlation as a cell prints it: signed, two decimals; the word
+    "undefined" for a missing or non-finite value."""
+    if isinstance(r, bool) or not isinstance(r, (int, float)) or not math.isfinite(r):
+        return _CORRELATION_UNDEFINED_TEXT
+    return f"{r:+.2f}"
+
+
+def _retirement_correlation_band(text: str, screen_threshold: float) -> str:
+    """The band of a PRINTED correlation (a stored 0.6499 prints +0.65 and bands
+    with it): danger at or above ``screen_threshold``, warn from the moderate
+    bound up to it, diversifying at or below the negated moderate bound, neutral
+    between, undefined for the word. A negative value is never danger."""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return "undefined"
+    if not math.isfinite(value):
+        return "undefined"
+    if value >= screen_threshold:
+        return "danger"
+    if value >= _CORRELATION_MODERATE_BOUND:
+        return "warn"
+    if value <= -_CORRELATION_MODERATE_BOUND:
+        return "diversifying"
+    return "neutral"
+
+
+def _retirement_correlation_fill_pct(text: str) -> float:
+    """Fill strength of a filled cell: linear in the printed size |r| between the
+    two fill constants, the same for +x and -x."""
+    try:
+        size = abs(float(text))
+    except (TypeError, ValueError):
+        return _CORRELATION_FILL_PCT_MIN
+    if not math.isfinite(size):
+        return _CORRELATION_FILL_PCT_MIN
+    low = _CORRELATION_MODERATE_BOUND
+    fraction = (min(max(size, low), 1.0) - low) / (1.0 - low)
+    return (
+        _CORRELATION_FILL_PCT_MIN
+        + (_CORRELATION_FILL_PCT_MAX - _CORRELATION_FILL_PCT_MIN) * fraction
+    )
+
+
+def _retirement_correlation_thin_level(n_obs: int, uncertainty_min: int, stress_min: int) -> str:
+    """Which recommender gate a pair's aligned days cannot pass: "uncertainty"
+    below the uncertainty minimum, else "stress" below the stress minimum, else
+    "none". Both minimums come from the run's summary."""
+    if n_obs < uncertainty_min:
+        return "uncertainty"
+    if n_obs < stress_min:
+        return "stress"
+    return "none"
+
+
+def _retirement_correlation_is_date(value: object) -> bool:
+    """True for a stored ISO calendar date (YYYY-MM-DD) that is a real date."""
+    if not isinstance(value, str) or not _CORRELATION_ISO_DATE_RE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _retirement_series_through(run: object) -> str | None:
+    """The latest ``window_last`` among a run summary's ``series_windows``, as
+    stored (a calendar date, never put through the time formatter), or None for a
+    run that stored no windows."""
+    windows = run.get("series_windows") if isinstance(run, dict) else None
+    if not isinstance(windows, dict):
+        return None
+    lasts = [
+        w["window_last"]
+        for w in windows.values()
+        if isinstance(w, dict) and _retirement_correlation_is_date(w.get("window_last"))
+    ]
+    return max(lasts) if lasts else None
+
+
+def _retirement_correlation_count(value: object) -> int | None:
+    """A stored non-negative whole number, or None."""
+    count = _retirement_summary_count(value)
+    return count if count is not None and count >= 0 else None
+
+
+def _retirement_correlation_run_stamp(run: object) -> str | None:
+    """The run's Eastern time, or None when it recorded none."""
+    run_at = run.get("run_at") if isinstance(run, dict) else None
+    if not isinstance(run_at, str) or not run_at.strip():
+        return None
+    stamp = analytics.format_et_stamp(run_at)
+    return None if stamp == analytics.ET_STAMP_MISSING else stamp
+
+
+def _retirement_correlation_state_view(state: str, title: str, lines: list[str]) -> dict:
+    return {"state": state, "title": title, "lines": lines}
+
+
+def _retirement_correlation_no_matrix_view(last_run: dict) -> dict:
+    """The state block for a latest run that holds no matrix (a failed run, and no
+    earlier successful one)."""
+    stamp = _retirement_correlation_run_stamp(last_run) or "time not recorded"
+    status = last_run.get("status")
+    if status in ("series_unavailable", "insufficient_symphonies"):
+        lines = [
+            f"The latest run ({stamp}) found fewer than two symphonies with a usable series.",
+            "Symphonies analysed: "
+            f"{_retirement_summary_count_text(last_run.get('symphonies_with_series'))} of "
+            f"{_retirement_summary_count_text(last_run.get('roster_size'))}.",
+        ]
+    elif status == "internal_error":
+        error_type = last_run.get("error_type")
+        detail = f" ({error_type})" if isinstance(error_type, str) and error_type.strip() else ""
+        lines = [f"The latest run ({stamp}) ended in an internal error{detail}."]
+    else:
+        lines = [f"The latest run ({stamp}) did not produce a matrix."]
+    lines.append(f"The matrix fills after the next retirement run ({_CORRELATION_NEXT_RUN_TEXT}).")
+    return _retirement_correlation_state_view("no_matrix", "No matrix exists yet", lines)
+
+
+def _retirement_correlation_parse_pair(record: object) -> dict | None:
+    """One stored pair, validated, or None for a record that is not a pair."""
+    if not isinstance(record, dict):
+        return None
+    sym_a, sym_b = record.get("sym_a"), record.get("sym_b")
+    if not (isinstance(sym_a, str) and sym_a and isinstance(sym_b, str) and sym_b):
+        return None
+    if sym_a == sym_b:
+        return None
+    correlation = record.get("correlation")
+    if correlation is not None:
+        if isinstance(correlation, bool) or not isinstance(correlation, (int, float)):
+            return None
+        if not math.isfinite(correlation) or abs(correlation) > 1.0:
+            return None
+    n_obs = _retirement_correlation_count(record.get("n_obs"))
+    if n_obs is None:
+        return None
+    window_first, window_last = record.get("window_first"), record.get("window_last")
+    for edge in (window_first, window_last):
+        if edge is not None and not _retirement_correlation_is_date(edge):
+            return None
+    return {
+        "correlation": correlation,
+        "n_obs": n_obs,
+        "window_first": window_first,
+        "window_last": window_last,
+    }
+
+
+def _retirement_correlation_matrix_state(
+    last_run: dict | None, matrix_run: dict, bot_state_getter: Callable[[], dict]
+) -> dict:
+    """The matrix view of ``matrix_run`` (its summary has a ``pairs`` list).
+
+    Raises ValueError when the stored run cannot draw a truthful matrix (a missing
+    or malformed threshold, minimum, window, or a pair missing for two analysed
+    symphonies); the caller turns that into the unavailable state. Never partial.
+    """
+    threshold = matrix_run.get("screen_threshold")
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or not math.isfinite(threshold)
+        or not 0.0 < threshold <= 1.0
+    ):
+        raise ValueError("screen threshold")
+    uncertainty_min = _retirement_correlation_count(matrix_run.get("uncertainty_min_aligned_days"))
+    stress_min = _retirement_correlation_count(matrix_run.get("stress_gate_min_aligned_days"))
+    if uncertainty_min is None or stress_min is None:
+        raise ValueError("gate minimums")
+
+    windows = matrix_run.get("series_windows")
+    if not isinstance(windows, dict) or len(windows) < 2:
+        raise ValueError("series windows")
+    for sym, w in windows.items():
+        if not (isinstance(sym, str) and sym and isinstance(w, dict)):
+            raise ValueError("series window entry")
+        dates = (w.get("window_first"), w.get("window_last"))
+        dates += (w.get("series_first"), w.get("series_last"))
+        counts = (w.get("window_days"), w.get("series_points"))
+        if not all(_retirement_correlation_is_date(d) for d in dates):
+            raise ValueError("series window dates")
+        if any(_retirement_correlation_count(c) is None for c in counts):
+            raise ValueError("series window counts")
+
+    stored: dict[tuple[str, str], dict] = {}
+    for record in matrix_run["pairs"]:
+        pair = _retirement_correlation_parse_pair(record)
+        if pair is not None:
+            key = tuple(sorted((record["sym_a"], record["sym_b"])))
+            stored.setdefault(key, pair)
+
+    # Names: the live display name, the hash when the symphony left the live state.
+    try:
+        bot_state = bot_state_getter()
+    except Exception:
+        bot_state = {}
+    try:
+        from advisors.frontrunner_builder import (  # noqa: PLC0415 -- CC-2 lazy
+            resolve_incumbent_display_name as _resolve_name,
+        )
+    except Exception:
+        _resolve_name = None
+    raw_names: dict[str, str] = {}
+    for sym in windows:
+        resolved = _resolve_name(bot_state, sym) if _resolve_name is not None else sym
+        raw_names[sym] = resolved if isinstance(resolved, str) and resolved.strip() else sym
+    order = sorted(windows, key=lambda sym: (raw_names[sym], sym))
+    names = {sym: " ".join(raw_names[sym].split()) for sym in order}
+
+    max_fill = f"{_CORRELATION_FILL_PCT_MAX:.1f}"
+    axes: list[dict] = []
+    for number, row_sym in enumerate(order, start=1):
+        w = windows[row_sym]
+        row_name = names[row_sym]
+        aria = (
+            f"{row_name}. Matrix window: {w['window_first']} to {w['window_last']} "
+            f"({w['window_days']} returns). Full series: {w['series_first']} to "
+            f"{w['series_last']} ({w['series_points']} points)."
+        )
+        cells: list[dict] = []
+        for col_sym in order:
+            if col_sym == row_sym:
+                cells.append({"diagonal": True})
+                continue
+            key = tuple(sorted((row_sym, col_sym)))
+            pair = stored.get(key)
+            if pair is None:
+                raise ValueError("pair missing")
+            text = _retirement_correlation_text(pair["correlation"])
+            band = _retirement_correlation_band(text, threshold)
+            thin = _retirement_correlation_thin_level(pair["n_obs"], uncertainty_min, stress_min)
+            title = f"{row_name} and {names[col_sym]}: {text}, {pair['n_obs']} aligned days"
+            if pair["n_obs"] > 0 and pair["window_first"] and pair["window_last"]:
+                title += f", {pair['window_first']} to {pair['window_last']}"
+            cells.append(
+                {
+                    "diagonal": False,
+                    "sym_a": key[0],
+                    "sym_b": key[1],
+                    "text": text,
+                    "band": band,
+                    "thin": thin,
+                    "n_obs": pair["n_obs"],
+                    "title": title,
+                    "fill_pct": (
+                        f"{_retirement_correlation_fill_pct(text):.1f}"
+                        if band in _CORRELATION_FILLED_BANDS
+                        else None
+                    ),
+                }
+            )
+        axes.append(
+            {
+                "number": number,
+                "sym": row_sym,
+                "name": row_name,
+                "row_aria": aria,
+                "row_title": f"{aria} {row_sym}",
+                "col_aria": f"{row_name} (column {number})",
+                "col_title": f"{row_name} ({row_sym})" if row_name != row_sym else row_name,
+                "cells": cells,
+            }
+        )
+
+    run_stamp = _retirement_correlation_run_stamp(matrix_run)
+    through = _retirement_series_through(matrix_run)
+    run_part = f"run {run_stamp}" if run_stamp else "run time not recorded"
+    basis = matrix_run.get("basis_label")
+
+    same_run = last_run is matrix_run or (
+        isinstance(last_run, dict)
+        and last_run.get("run_id") is not None
+        and last_run.get("run_id") == matrix_run.get("run_id")
+    )
+    note = None
+    if not same_run:
+        note = (
+            f"From the run of {run_stamp or 'an unrecorded time'}; the latest run did not complete."
+        )
+
+    threshold_text = f"{threshold:.2f}"
+    moderate_text = f"{_CORRELATION_MODERATE_BOUND:.2f}"
+    legend_bands = [
+        {"band": "danger", "text": f"High: {threshold_text} and above", "fill_pct": max_fill},
+        {
+            "band": "warn",
+            "text": f"Moderate: {moderate_text} up to {threshold_text}",
+            "fill_pct": max_fill,
+        },
+        {
+            "band": "neutral",
+            "text": f"Weak: -{moderate_text} to {moderate_text}",
+            "fill_pct": None,
+        },
+        {
+            "band": "diversifying",
+            "text": f"Diversifying: -{moderate_text} and below",
+            "fill_pct": max_fill,
+        },
+    ]
+    legend_thin = [
+        {
+            "level": "uncertainty",
+            "text": f"fewer than {uncertainty_min} aligned days: the uncertainty gate cannot pass",
+        },
+        {
+            "level": "stress",
+            "text": f"fewer than {stress_min} aligned days: the stress gate cannot pass",
+        },
+    ]
+
+    excluded = []
+    for entry in _retirement_resolve_excluded_symphonies(matrix_run, lambda: bot_state):
+        name = " ".join(str(entry["name"]).split()) or entry["symphony_id"]
+        excluded.append(
+            {
+                "symphony_id": entry["symphony_id"],
+                "text": f"Not in the matrix: {name}. {entry['reason_text']}",
+            }
+        )
+
+    return {
+        "state": "matrix",
+        "basis": basis if isinstance(basis, str) and basis.strip() else "basis not recorded",
+        "as_of": f"Series through {through} · {run_part}",
+        "earlier_run_note": note,
+        "axes": axes,
+        "legend_bands": legend_bands,
+        "legend_thin": legend_thin,
+        "excluded": excluded,
+    }
+
+
+def _retirement_correlation_matrix_view(
+    last_run: dict | None,
+    cards_run: dict | None,
+    *,
+    read_failed: bool,
+    bot_state_getter: Callable[[], dict],
+) -> dict:
+    """What the Correlations panel renders, read from the stored retirement runs.
+
+    ``cards_run`` (the newest successful run) is the matrix run; ``last_run`` (the
+    newest run of any status) only decides the earlier-run note and the failed-run
+    message. The result's ``state`` is "matrix", or one state block:
+    "never_run" (no run), "needs_newer_run" (the matrix run stored no pairs),
+    "no_matrix" (only failed runs), or "unavailable" (a summary read raised, or
+    the stored run cannot draw a truthful matrix). Never raises, reads no series
+    and makes no request; ``bot_state_getter`` is called only when a matrix is
+    drawn (display names).
+    """
+    unavailable = _retirement_correlation_state_view(
+        "unavailable",
+        "Correlations unavailable",
+        ["The stored retirement run could not be read, so the matrix is unavailable."],
+    )
+    try:
+        if read_failed:
+            return unavailable
+        if not isinstance(cards_run, dict):
+            if not isinstance(last_run, dict):
+                return _retirement_correlation_state_view(
+                    "never_run", "No matrix yet", [_CORRELATION_NEVER_RUN_TEXT]
+                )
+            return _retirement_correlation_no_matrix_view(last_run)
+        if not isinstance(cards_run.get("pairs"), list):
+            stamp = _retirement_correlation_run_stamp(cards_run) or "time not recorded"
+            return _retirement_correlation_state_view(
+                "needs_newer_run",
+                "A newer run is needed",
+                [
+                    _CORRELATION_NEVER_RUN_TEXT,
+                    f"The latest successful run ({stamp}) holds no stored pairs, so it "
+                    "cannot draw a matrix; a newer run will.",
+                ],
+            )
+        return _retirement_correlation_matrix_state(last_run, cards_run, bot_state_getter)
+    except Exception:
+        return unavailable
+
+
 # Sentinel for the `last_run` parameter of _fetch_retirement_cards_run and the
 # `cards_run` keyword of _fetch_retirement_recommendations: "the caller did not
 # supply one -- look it up yourself". An explicit None is a real value ("no
@@ -8027,10 +8449,8 @@ def ai_advisor_tab():
                            {role, total, rows}: the newest kept rows (at most 50,
                            newest first) and the producer's whole kept-row count
       observations_unavailable — True when the observation read failed
-      correlation_matrix — PairResult list for the Correlations panel
-      as_of              — ISO timestamp for the matrix
+      correlation_matrix_view — the Correlations panel, read from the stored retirement run
       crisis_caveat      — instability warning string
-      insufficient_data  — True when no correlation pairs available
       no_api_key         — True when Composer credentials absent (swaps + logic)
       symphonies         — known symphony IDs (swap + logic forms)
       chat_available     — True when ANTHROPIC_API_KEY is set
@@ -8055,35 +8475,18 @@ def ai_advisor_tab():
     observations: list[dict] = [row for group in observation_groups for row in group["rows"]]
 
     # ------------------------------------------------------------------ #
-    # Correlations panel: pairwise return matrix                           #
+    # Correlations panel: the instability caveat is always on, so it is    #
+    # read in its own try, independent of every run read below. The matrix #
+    # itself is built from the stored retirement run further down.         #
     # Lazy import keeps the module off the live 1-minute execution path.   #
     # ------------------------------------------------------------------ #
-    correlation_matrix: list = []
     crisis_caveat: str = ""
     try:
         from advisors import correlation_diagnostic as _corr_diag  # noqa: PLC0415
 
-        # The caveat is always on: assign it before any computation that can
-        # fail, so a failed series build still renders the whole caveat.
         crisis_caveat = _corr_diag.CRISIS_CAVEAT
-        _history = analytics.get_history_with_cache_invalidation(
-            base_dir=analytics._POST_MORTEMS_DIR
-        )
-        _sym_ids = analytics.list_available_symphonies(_history)
-        # Date-keyed (not positional-list) so compute_pairwise_correlations
-        # aligns each pair by shared calendar date, not raw list index —
-        # per-symphony series are sparse trigger-day returns with unrelated
-        # calendars, so positional alignment pairs unrelated dates.
-        _series_dict: dict[str, dict[str, float]] = {}
-        for _sym_id in _sym_ids:
-            _dates, _live_rets, _shadow = analytics.compute_per_symphony_returns(_history, _sym_id)
-            if _live_rets:
-                _series_dict[_sym_id] = dict(zip(_dates, _live_rets))
-        correlation_matrix = _corr_diag.compute_pairwise_correlations(_series_dict)
     except Exception:
-        pass  # Correlations panel renders as insufficient_data on any error.
-
-    insufficient_data: bool = len(correlation_matrix) == 0
+        pass
 
     # ------------------------------------------------------------------ #
     # Asset Swaps + Logic Changes panels: API key availability             #
@@ -8418,15 +8821,18 @@ def ai_advisor_tab():
     # (never a 500); a failed cards-run lookup falls back to the legacy date
     # filter.
     retirement_last_run: dict | None = None
+    retirement_runs_read_failed = False
     try:
         retirement_last_run = _fetch_retirement_last_run()
     except Exception:
         retirement_last_run = None
+        retirement_runs_read_failed = True
     retirement_cards_run: dict | None = None
     try:
         retirement_cards_run = _fetch_retirement_cards_run(retirement_last_run)
     except Exception:
         retirement_cards_run = None
+        retirement_runs_read_failed = True
 
     # Symphony tenure review: the newest stored review run, its entries, the
     # in-process run state and whether the stored run could be read.
@@ -8467,6 +8873,18 @@ def ai_advisor_tab():
     # (zero extra load_state() when the run excluded nothing).
     retirement_last_run_excluded = _retirement_resolve_excluded_symphonies(
         retirement_last_run, _ensure_ai_advisor_bot_state
+    )
+
+    # The Correlations panel and the Retirement tab's "Series through" line read
+    # the same stored run: the matrix from the newest successful run, the date
+    # from the latest run. A failed read of either run shows the unavailable state
+    # (it must never look like a run that never happened). No series is fetched.
+    retirement_series_through = _retirement_series_through(retirement_last_run)
+    correlation_matrix_view = _retirement_correlation_matrix_view(
+        retirement_last_run,
+        retirement_cards_run,
+        read_failed=retirement_runs_read_failed,
+        bot_state_getter=_ensure_ai_advisor_bot_state,
     )
 
     # ------------------------------------------------------------------ #
@@ -8618,10 +9036,9 @@ def ai_advisor_tab():
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
         observation_groups=observation_groups,
         observations_unavailable=observations_unavailable,
-        correlation_matrix=correlation_matrix,
-        as_of=datetime.now(_ET).isoformat(),
         crisis_caveat=crisis_caveat,
-        insufficient_data=insufficient_data,
+        correlation_matrix_view=correlation_matrix_view,
+        retirement_series_through=retirement_series_through,
         no_api_key=no_api_key,
         symphonies=symphonies,
         chat_available=chat_available,
