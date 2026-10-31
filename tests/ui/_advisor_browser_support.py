@@ -26,6 +26,9 @@ import app as app_module
 from tests.ui._browser_server import running_server
 from tests.ui.test_dashboard_charts_browser import firefox  # noqa: F401  (module-scoped fixture)
 
+# Console errors a refused request causes; any other error is the page's own.
+_REFUSED_REQUEST_NOISE = re.compile(r"Failed to load resource|NetworkError|NS_ERROR|net::")
+
 PAGE_TIMEOUT_MS = 10_000
 WAIT_MS = 8_000
 
@@ -89,9 +92,7 @@ def advisor_probe(firefox, advisor_server):  # noqa: F811  (the imported module-
             route.abort()
 
     def on_console(message):
-        if message.type == "error" and not re.search(
-            r"Failed to load resource|NetworkError|NS_ERROR|net::", message.text
-        ):
+        if message.type == "error" and not _REFUSED_REQUEST_NOISE.search(message.text):
             state.console_errors.append(message.text)
 
     page.route("**/*", refuse_outbound)
