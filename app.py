@@ -103,6 +103,64 @@ app.jinja_env.auto_reload = True
 # {{ v | et_stamp(date_only=True) }}, {{ v | et_stamp(naive_is_utc=False) }}.
 app.add_template_filter(analytics.format_et_stamp, name="et_stamp")
 
+# Raw stored enums (verdicts, observation subjects) read as words through ONE mapping. A value
+# with no entry reads as its own words (underscores to spaces, sentence case), so a value no
+# producer has written yet is never printed raw.
+_ADVISOR_WORDS = {
+    "CLEAR": "Clear",
+    "WATCH": "Watch",
+    "BREACH": "Breach",
+    "ADOPT_CANDIDATE": "Adopt candidate",
+    "KEEP_INCUMBENT": "Keep incumbent",
+    "REJECT_VETO_FAILED": "Rejected: failed the overfitting check",
+    "REJECT_FDR_FAILED": "Rejected: not significant after correction",
+    "REJECT_NOT_A_WINNER": "Rejected: not the strongest candidate",
+}
+
+
+def advisor_words(value):
+    """A stored verdict or subject as words: the mapped phrase, else the value's own words.
+
+    A non-text value is returned as it is (the template's autoescape prints it).
+    """
+    if not isinstance(value, str):
+        return value
+    mapped = _ADVISOR_WORDS.get(value)
+    if mapped is not None:
+        return mapped
+    text = " ".join(value.replace("_", " ").split()).lower()
+    return text[:1].upper() + text[1:]
+
+
+app.add_template_filter(advisor_words, name="advisor_words")
+
+
+_BASIS_SOURCE_PARENTHETICAL = re.compile(r"(.*?) \(Composer, (.*)\)")
+
+
+def retirement_basis(last_run):
+    """The basis line of a retirement run in words, for the Retirement tab's last-run block.
+
+    The run's own stored label is the text. For a Composer run the source is named first in
+    words: the stored "realized daily returns (Composer, deposit-adjusted)" reads "Composer
+    realized daily returns (deposit-adjusted)", and a label of another shape reads
+    "Composer: <label>". Any other source prints the stored label as it is, and a run that
+    stored none says so. The source token itself (``composer``) is never printed.
+    """
+    run = last_run if isinstance(last_run, dict) else {}
+    label = run.get("basis_label")
+    if not (isinstance(label, str) and label.strip()):
+        return "basis not recorded"
+    if run.get("source") != "composer":
+        return label
+    folded = _BASIS_SOURCE_PARENTHETICAL.fullmatch(label)
+    if folded is not None:
+        return f"Composer {folded.group(1)} ({folded.group(2)})"
+    return f"Composer: {label}"
+
+
+app.add_template_filter(retirement_basis, name="retirement_basis")
+
 # ---------------------------------------------------------------------------
 # Session cookie hardening (AC-10)
 # ---------------------------------------------------------------------------
@@ -2723,7 +2781,7 @@ def _render_dashboard(
 
     # The same read the state poll carries (``dashboard_panels``), so the render and the poll agree.
     try:
-        panels = _dashboard_panels_payload(live_state)
+        panels = _dashboard_panels_payload(_without_symphonies(live_state, view["no_longer_held"]))
     except Exception:
         panels = _panels_unreadable()
     vars_locked_count = panels["vars_locked_count"] or 0
@@ -2874,6 +2932,9 @@ def _render_dashboard(
     return render_template(
         "index.html",
         engine_phase=engine_phase,
+        # The headline's descriptor says "Simulated" while the engine's last cycle placed no real
+        # orders; the state poll carries the same flag (execution_simulated).
+        execution_simulated=_execution_is_simulated(live_state),
         # The figure is the exit return minus the card's current return: live while the
         # market is open, fixed at the capture after the close.
         verdict_basis_label="vs held now" if market_state == "open" else "at close",
@@ -2891,7 +2952,7 @@ def _render_dashboard(
             meta,
             bot_state,
             hero_conn=shadow_conn if view["branch"] == "frozen" else None,
-            hero_state=view["weights_state"] if view["branch"] == "frozen" else None,
+            hero_state=view["weights_state"],
         ),
         fleet_alert=_fleet_alert,
         fleet_alert_text=_fleet_alert_sentence(_fleet_alert) if _fleet_alert else "",
@@ -3066,6 +3127,9 @@ def _build_meta(
         # hero Ann. Vol vs-row. None-safe: stays None when no shadow history.
         "vol_bot": ps.get("vol_bot"),
         "vol_held": ps.get("vol_held"),
+        # The default window's volatility, which the hero's Ann. Vol row opens on.
+        "window_vol_bot": ps.get("window_vol_bot", ps.get("vol_bot")),
+        "window_vol_held": ps.get("window_vol_held", ps.get("vol_held")),
         # Option A: the WINDOWED guard alpha (default window) + its window echo feed the
         # SSR hero headline so first paint matches the picker; account_all_time_cr is the
         # SEPARATE, non-windowed "Account · all-time" reference.
@@ -3212,6 +3276,74 @@ def _committed_shadow_conn(state: dict | None) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def _execution_is_simulated(state: dict | None) -> bool:
+    """True when the engine's last cycle ran simulated (``last_execution_mode`` saved False).
+
+    A state that does not say reads as not simulated: the page then makes no "Simulated" claim.
+    """
+    return (state or {}).get("last_execution_mode") is False
+
+
+def _no_longer_held_ids(
+    state: dict | None,
+    conn: sqlite3.Connection | None = None,
+    now_et: datetime | None = None,
+) -> frozenset[str]:
+    """The ids of the state's symphonies that are no longer held, from the ONE shared rule.
+
+    Every surface that lists, counts or weights symphonies asks ``analytics
+    .no_longer_held_symphony_ids`` through here, so no page decides for itself. ``conn`` is the
+    request's own connection (the closed-market branch passes its cut); without one the rule
+    opens a single read-only connection. A read that fails answers "none": a page keeps showing
+    what it has rather than hiding a symphony on an error.
+    """
+    try:
+        ids = analytics.no_longer_held_symphony_ids(state, conn=conn, now=now_et)
+    except Exception:
+        _daemon_log.debug("no-longer-held read failed", exc_info=True)
+        return frozenset()
+    return frozenset(ids) if isinstance(ids, (set, frozenset, list, tuple)) else frozenset()
+
+
+def _without_symphonies(state: dict, gone: frozenset[str]) -> dict:
+    """``state`` without the entries named in ``gone``; the same object when none are named."""
+    if not gone:
+        return state
+    return {key: value for key, value in state.items() if key not in gone}
+
+
+def _snapshot_without_symphonies(snapshot: dict, gone: frozenset[str]) -> dict:
+    """A close snapshot whose accounts_map lacks the entries named in ``gone``.
+
+    The entries kept are the snapshot's own dicts, so what is computed onto them still lands
+    where the page and the poll read it; the snapshot itself is never changed.
+    """
+    if not gone:
+        return snapshot
+    accounts_map = {
+        account: [
+            entry
+            for entry in entries or []
+            if not (isinstance(entry, dict) and entry.get("id") in gone)
+        ]
+        for account, entries in (snapshot.get("accounts_map") or {}).items()
+    }
+    return {**snapshot, "accounts_map": accounts_map}
+
+
+def _held_state_kwargs(now_et: datetime | None = None) -> dict:
+    """``{"state": <the saved bot_state without its no-longer-held entries>}`` for a route that
+    reads a portfolio series without a request connection, so the value weights leave those
+    entries out; ``{}`` when every saved symphony is held (the reader then loads the state
+    itself, as it always has)."""
+    try:
+        state = database.load_state() or {}
+    except Exception:
+        return {}
+    gone = _no_longer_held_ids(state, None, now_et)
+    return {"state": _without_symphonies(state, gone)} if gone else {}
 
 
 def _portfolio_hist_series(
@@ -3397,6 +3529,33 @@ def _normalize_frozen_symphonies(snapshot: dict) -> None:
                     sym.setdefault(field, default)
 
 
+def _apply_default_window_legs(strip: dict, windowed: dict) -> None:
+    """Put the default window's Max DD legs and volatility on a portfolio strip.
+
+    The hero's Max DD and Ann. Vol rows follow the picked window and the dashboard opens on the
+    default one, so the strip the page renders from and the poll carries holds that window's
+    figures: the first paint, the poll and the window's own strip then say one thing. The
+    Max DD legs replace the lifetime pair (the Composer lifetime scalar stays as it was);
+    ``n_obs`` is the days the window held, which decides whether the row has a figure to show.
+    A window that supplies no figure leaves its legs None (the row then says so), never the
+    lifetime figure under the window's name. The volatility goes to its own keys.
+    """
+    legs = windowed.get("max_drawdown")
+    if isinstance(legs, dict):
+        day_count = windowed.get("window_day_count")
+        strip["max_drawdown"] = {
+            **(strip.get("max_drawdown") or {}),
+            "dry_run": legs.get("dry_run"),
+            "if_held": legs.get("if_held"),
+            "n_obs": day_count if isinstance(day_count, int) else 0,
+        }
+    if "vol_bot" in windowed or "vol_held" in windowed:
+        # Kept apart from the lifetime volatility the strip already holds: the Ann. Vol row's
+        # first paint reads these, and the row is hidden when the window has no figure.
+        strip["window_vol_bot"] = windowed.get("vol_bot")
+        strip["window_vol_held"] = windowed.get("vol_held")
+
+
 def _compute_frozen_portfolio_strip(
     snapshot: dict, conn: sqlite3.Connection | None, now_et: datetime | None = None
 ) -> dict:
@@ -3518,6 +3677,7 @@ def _compute_frozen_portfolio_strip(
 
         # Its own try: a failure here must not discard the figures computed above. The
         # windowed cumulative return is left out (no client reads it from this strip).
+        default = None
         try:
             default = analytics.compute_windowed_portfolio_strip(
                 symphonies_list,
@@ -3533,6 +3693,7 @@ def _compute_frozen_portfolio_strip(
                 )
                 window = default.get("window", _DEFAULT_HERO_WINDOW)
                 strip["window"] = window if isinstance(window, str) else _DEFAULT_HERO_WINDOW
+                _apply_default_window_legs(strip, default)
         except Exception:
             _daemon_log.error("closed_frozen default-window strip failed", exc_info=True)
 
@@ -3548,6 +3709,9 @@ def _compute_frozen_portfolio_strip(
                     "hist_source": "shadow_history",
                 }
             )
+            if isinstance(default, dict):
+                # The update above wrote the lifetime vol; the window's figures stand.
+                _apply_default_window_legs(strip, default)
         except Exception:
             _daemon_log.error("closed_frozen hero series failed", exc_info=True)
         return strip
@@ -3571,7 +3735,10 @@ def _portfolio_view(
 
     branch "frozen": after the close with a snapshot; the served state and the strip
     both come from the snapshot. "waiting": no state yet. "live": everything else.
-    Returns {"branch", "state" (the state served to cards), "snapshot", "portfolio_strip"}.
+    Returns {"branch", "state" (the state served to cards), "snapshot", "portfolio_strip",
+    "weights_state", "no_longer_held"}. The served state, the snapshot and every figure of the
+    strip leave out the symphonies the shared rule finds no longer held ("no_longer_held" names
+    them); the frozen branch asks it through the connection cut at the capture.
     now_et is the request's one clock reading; without it the clock is read here.
     """
     if now_et is None:
@@ -3583,6 +3750,11 @@ def _portfolio_view(
             for sym in entries or []:
                 if isinstance(sym, dict) and "id" in sym:
                     served[sym["id"]] = sym
+        # A symphony no longer held is left out of the snapshot's cards and portfolio figures,
+        # asked through the connection cut at the capture so the answer is fixed with them.
+        gone = _no_longer_held_ids(served, conn, now_et)
+        served = _without_symphonies(served, gone)
+        snapshot = _snapshot_without_symphonies(snapshot, gone)
         strip = _compute_frozen_portfolio_strip(snapshot, conn, now_et)
         return {
             "branch": "frozen",
@@ -3590,9 +3762,12 @@ def _portfolio_view(
             "snapshot": snapshot,
             "portfolio_strip": strip,
             "weights_state": _frozen_symphony_inputs(snapshot)[1],
+            "no_longer_held": gone,
         }
     branch = "live" if state else "waiting"
     trading_day = now_et.strftime("%Y-%m-%d")
+    gone = _no_longer_held_ids(state, conn, now_et) if state else frozenset()
+    state = _without_symphonies(state, gone) if state else state
     strip = _compute_portfolio_strip(state or {}, trading_day=trading_day, conn=conn)
     return {
         "branch": branch,
@@ -3600,6 +3775,7 @@ def _portfolio_view(
         "snapshot": None,
         "portfolio_strip": strip,
         "weights_state": state,
+        "no_longer_held": gone,
     }
 
 
@@ -3850,7 +4026,7 @@ def _compute_portfolio_strip(
         # NEGATIVE, app.py:272); analytics.get_portfolio_max_drawdown's own
         # if_held_lifetime is already positive magnitude.
         max_drawdown: dict = analytics.get_portfolio_max_drawdown(
-            symphonies_list, bot_state, trading_day=trading_day, conn=conn
+            symphonies_list, bot_state, trading_day=trading_day, conn=conn, state=bot_state
         )
         _cached_mdd = _account_totals_cache.get("portfolio_mdd")
         if _cached_mdd is not None:
@@ -3933,12 +4109,14 @@ def _compute_portfolio_strip(
                 window=_DEFAULT_HERO_WINDOW,
                 trading_day=trading_day,
                 conn=conn,
+                state=bot_state,
             )
             if isinstance(_default, dict):
                 _ga = _default.get("guard_alpha")
                 _strip["guard_alpha"] = _ga if isinstance(_ga, (int, float)) else None
                 _win = _default.get("window", _DEFAULT_HERO_WINDOW)
                 _strip["window"] = _win if isinstance(_win, str) else _DEFAULT_HERO_WINDOW
+                _apply_default_window_legs(_strip, _default)
                 # DE-CLOSED-BOUNCE-001 (revise round): windowed_cumulative_return is
                 # NOT currently consumed client-side — F-014 removed updateComparison
                 # Rows' only read of it, and the revise round's rows-array gate
@@ -4239,6 +4417,7 @@ def get_state():
             "live_mode": _additive_live_mode,
         }
         state_data = database.load_state()
+        _additive["execution_simulated"] = _execution_is_simulated(state_data)
         _additive["engine_phase"] = _engine_phase(
             _req_now_et,
             market_state,
@@ -4250,6 +4429,10 @@ def get_state():
         # hero (meta), the rows (portfolio_strip) and the cards all read from them.
         _shadow_conn = _committed_shadow_conn(_view_cut_state(state_data, market_state))
         view = _portfolio_view(state_data, market_state, _shadow_conn, now_et=_req_now_et)
+        if view["branch"] == "live":
+            # The cards, counts and panels below read the state without the symphonies the
+            # view found no longer held, so every figure of this response names one roster.
+            state_data = view["state"]
         _portfolio_strip = view["portfolio_strip"]
         _meta_strip = _strip_with_hist_fallback(
             _portfolio_strip, _shadow_conn, view["weights_state"]
@@ -4260,7 +4443,9 @@ def get_state():
         # that fails must not take the response down: every part then reads as "could not read"
         # and the page keeps its own.
         try:
-            _additive["dashboard_panels"] = _dashboard_panels_payload(state_data or {})
+            _additive["dashboard_panels"] = _dashboard_panels_payload(
+                _without_symphonies(state_data or {}, view["no_longer_held"])
+            )
         except Exception as panels_exc:
             _daemon_log.warning("dashboard panels read failed: %s", type(panels_exc).__name__)
             _additive["dashboard_panels"] = _panels_unreadable()
@@ -4857,13 +5042,23 @@ def get_hero_chart(window):
         live_state = database.load_state() or {}
     except Exception:
         live_state = {}
-    market_state = get_market_state(datetime.now(_ET))
+    now_et = datetime.now(_ET)
+    market_state = get_market_state(now_et)
     snapshot = _frozen_snapshot_of(live_state, market_state)
     if snapshot is None:
-        return jsonify(_hero_chart_body(window))
+        # Weights come from the state without the symphonies no longer held; without any such
+        # symphony the chart reads the saved state itself, as it always has.
+        gone = _no_longer_held_ids(live_state, None, now_et)
+        return jsonify(
+            _hero_chart_body(window, None, _without_symphonies(live_state, gone))
+            if gone
+            else _hero_chart_body(window)
+        )
     conn = _committed_shadow_conn(_view_cut_state(live_state, market_state))
     try:
-        return jsonify(_hero_chart_body(window, conn, _frozen_symphony_inputs(snapshot)[1]))
+        weights = _frozen_symphony_inputs(snapshot)[1]
+        weights = _without_symphonies(weights, _no_longer_held_ids(weights, conn, now_et))
+        return jsonify(_hero_chart_body(window, conn, weights))
     finally:
         conn.close()
 
@@ -4892,12 +5087,13 @@ def get_windowed_strip(window):
     if token not in _STRIP_WINDOW_TOKENS:
         return jsonify({"error": "unknown window token"}), 404
 
-    trading_day = datetime.now(_ET).strftime("%Y-%m-%d")
+    now_et = datetime.now(_ET)
+    trading_day = now_et.strftime("%Y-%m-%d")
     try:
         bot_state = database.load_state() or {}
     except Exception:
         bot_state = {}
-    market_state = get_market_state(datetime.now(_ET))
+    market_state = get_market_state(now_et)
     snapshot = _frozen_snapshot_of(bot_state, market_state)
     frozen_conn = None
     if snapshot is not None:
@@ -4905,8 +5101,12 @@ def get_windowed_strip(window):
         # capture moment, exactly as the poll's default-window strip is.
         frozen_conn = _committed_shadow_conn(_view_cut_state(bot_state, market_state))
         symphonies_list, bot_state = _frozen_symphony_inputs(snapshot)
+        gone = _no_longer_held_ids(bot_state, frozen_conn, now_et)
+        symphonies_list = [s for s in symphonies_list if s.get("id") not in gone]
+        bot_state = _without_symphonies(bot_state, gone)
         trading_day = snapshot.get("trading_day") or trading_day
     else:
+        bot_state = _without_symphonies(bot_state, _no_longer_held_ids(bot_state, None, now_et))
         symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
         symphonies_list = []
         for k in symphony_keys:
@@ -4927,7 +5127,7 @@ def get_windowed_strip(window):
     try:
         if frozen_conn is None:
             strip = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=token
+                symphonies_list, bot_state, window=token, state=bot_state
             )
         else:
             strip = analytics.compute_windowed_portfolio_strip(
@@ -6226,6 +6426,9 @@ def _retirement_correlation_matrix_state(
                 "row_title": f"{aria} {row_sym}",
                 "col_aria": f"{row_name} (column {number})",
                 "col_title": f"{row_name} ({row_sym})" if row_name != row_sym else row_name,
+                "series_first": w["series_first"],
+                "series_last": w["series_last"],
+                "series_points": w["series_points"],
                 "cells": cells,
             }
         )
@@ -6333,13 +6536,19 @@ def _retirement_correlation_matrix_view(
             return _retirement_correlation_no_matrix_view(last_run)
         if not isinstance(cards_run.get("pairs"), list):
             stamp = _retirement_correlation_run_stamp(cards_run) or "time not recorded"
+            analysed = cards_run.get("symphonies_with_series")
+            if isinstance(analysed, int) and not isinstance(analysed, bool) and analysed >= 0:
+                count_text = f"{analysed} {'symphony' if analysed == 1 else 'symphonies'}"
+            else:
+                count_text = "its symphonies"
+            # The run did analyse series; what it lacks is the stored pairs a matrix is drawn from.
             return _retirement_correlation_state_view(
                 "needs_newer_run",
                 "A newer run is needed",
                 [
-                    _CORRELATION_NEVER_RUN_TEXT,
-                    f"The latest successful run ({stamp}) holds no stored pairs, so it "
-                    "cannot draw a matrix; a newer run will.",
+                    f"The latest successful run ({stamp}) analysed {count_text} but stored no "
+                    "pairs, so it cannot draw a matrix.",
+                    f"A newer run will ({_CORRELATION_NEXT_RUN_TEXT}).",
                 ],
             )
         return _retirement_correlation_matrix_state(last_run, cards_run, bot_state_getter)
@@ -7318,8 +7527,12 @@ def api_performance():
         # event sample that dropped zero-trigger days and contradicted the Overview
         # chart on the same screen).  Every shadow_history trading day appears.
         dates, live_returns, shadow_returns = [], [], []
+        # The value weights leave out a symphony no longer held (the same rule every page asks).
+        _held_weights = _held_state_kwargs(datetime.now(_ET))
         try:
-            _series = analytics.get_portfolio_bot_and_held_daily_returns(days=_fetch_days)
+            _series = analytics.get_portfolio_bot_and_held_daily_returns(
+                days=_fetch_days, **_held_weights
+            )
             if is_window_token:
                 _series = _slice_series_by_window_cutoff(_series, days)
             if _series is not None:
@@ -7366,7 +7579,7 @@ def api_performance():
     # count with no cutoff and keeps the fallbacks untouched.
     if not dates and scope == "aggregate":
         try:
-            _fallback = analytics.get_portfolio_bot_and_held_daily_returns()
+            _fallback = analytics.get_portfolio_bot_and_held_daily_returns(**_held_weights)
             if is_window_token:
                 _fallback = _slice_series_by_window_cutoff(_fallback, days)
             if _fallback is not None:
@@ -7470,6 +7683,9 @@ def api_performance_symphonies():
     into GET /api/performance?scope=symphony&symphony_id=.
     """
     state = database.load_state()
+    # A symphony no longer held is not offered: the picker and the Advisor's select are filled
+    # from here, and neither can read a series for it that means anything.
+    state = _without_symphonies(state, _no_longer_held_ids(state, None, datetime.now(_ET)))
     symphonies = [
         {"id": sym_id, "name": data["name"]}
         for sym_id, data in state.items()
@@ -8162,13 +8378,22 @@ def get_settings():
 
     # Fetch unique symphony names from the current bot_state
     state_data = database.load_state()
+    # A symphony no longer held is listed apart, so Settings can show it dimmed: it is known,
+    # but it has no override to edit and is not part of the active roster.
+    no_longer_held_ids = _no_longer_held_ids(state_data, None, datetime.now(_ET))
     symphony_names = set()
     raw_names = {}  # normalized_name -> display name
-    for data in state_data.values():
+    gone_names: dict[str, str] = {}  # normalized_name -> display name, no longer held
+    for sym_id, data in state_data.items():
         if isinstance(data, dict) and "name" in data:
             norm = database.normalize_name(data["name"])
+            if sym_id in no_longer_held_ids:
+                gone_names[norm] = data["name"]
+                continue
             symphony_names.add(norm)
             raw_names[norm] = data["name"]
+    # The same normalized name held under another id keeps the entry active.
+    gone_names = {norm: name for norm, name in gone_names.items() if norm not in symphony_names}
 
     symphonies_data = {}
     for name in symphony_names:
@@ -8188,6 +8413,9 @@ def get_settings():
             "symphonies": symphonies_data,
             "symphony_overrides": symphonies_data,
             "symphonies_list": symphonies_list,
+            "symphonies_no_longer_held": [
+                {"id": norm, "name": gone_names[norm]} for norm in sorted(gone_names)
+            ],
             "param_meta": _ALGO_PARAM_META,
         }
     )
@@ -11004,9 +11232,10 @@ def ai_advisor_reject():
 def ai_advisor_chat():
     """Redirect to the unified /ai-advisor page (in-place tabs migration).
 
-    Chat is now an always-in-DOM slide panel on /ai-advisor, not a separate page.
+    Chat is now an always-in-DOM slide panel on /ai-advisor, not a separate page. The redirect
+    names the Chat tab (#chat) so the page opens on it.
     """
-    return redirect(url_for("ai_advisor_tab"), code=302)
+    return redirect(url_for("ai_advisor_tab") + "#chat", code=302)
 
 
 @app.route("/ai-advisor/chat/send", methods=["POST"])

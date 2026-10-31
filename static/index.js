@@ -146,6 +146,12 @@
         return (value >= 0 ? '+' : '') + value.toFixed(decimals) + '%';
     }
 
+    // A difference of two returns, in percentage points: signed, two decimals, then "pp".
+    function fmtPp(value) {
+        if (value == null || isNaN(value)) return '--';
+        return (value >= 0 ? '+' : '') + value.toFixed(2) + ' pp';
+    }
+
     // ---------------------------------------------------------------------------
     // Hero chart (bot vs held cumulative returns)
     // ---------------------------------------------------------------------------
@@ -231,7 +237,19 @@
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
+                // The tooltip follows the pointer along the x axis, like the Performance tab's
+                // chart: it appears with the pointer anywhere over a day, not only on a point.
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function (c) {
+                                return c.dataset.label + ': ' + c.parsed.y.toFixed(2) + '%';
+                            }
+                        }
+                    }
+                },
                 // F-025: the y-axis (magnitude) must stay visible so this chart's
                 // day-by-day cumulative series (~-3% scale) can't be visually
                 // conflated with the adjacent VW-lifetime scalar headline (~+34%,
@@ -332,15 +350,15 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Guard alpha headline, window label and Ann. Vol row: the picked window's strip
+    // Guard effect headline, window label, Max DD row and Ann. Vol row: the picked window's strip
     // ---------------------------------------------------------------------------
-    // Three elements are written by one path, from one /api/strip/<window> answer:
-    // #guard-alpha-headline, #guard-alpha-window-label and the Ann. Vol row. A poll never
-    // writes them (its own figures are the default window's and lifetime's), so a refresh
-    // cannot put another window's value under the picked window's label. The label is
+    // These are written by one path, from one /api/strip/<window> answer:
+    // #guard-alpha-headline, #guard-alpha-window-label, the Max DD row and the Ann. Vol row.
+    // A poll never writes them (its own figures are the default window's and lifetime's), so a
+    // refresh cannot put another window's value under the picked window's label. The label is
     // written with the value it describes. Do NOT derive guard_alpha from
     // cumulative_return.dry_run - cumulative_return.if_held: those fields can be on
-    // different bases (windowed value-weighted bot against account-basis held).
+    // different bases (the cumulative row leaves out a symphony with no Composer cost basis).
 
     var _stripRequestSeq = 0;      // only the newest strip request may apply
     var _stripAnsweredToken = null; // the window whose strip request was last answered; null before the first
@@ -358,6 +376,10 @@
         var volDelta    = document.querySelector('[data-testid="comp-vol-delta"]');
         var volBotBars  = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
         var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
+        // A window with no volatility figure hides the row: a row of dashes says nothing.
+        var volRow = volBotText && typeof volBotText.closest === 'function'
+            ? volBotText.closest('[data-testid="vs-row"]') : null;
+        if (volRow) volRow.hidden = !hasVol;
 
         if (hasVol) {
             var volBotPct  = rawVolBot  * 100;
@@ -394,19 +416,58 @@
         }
     }
 
-    // The one writer of the headline value, its window label and the Ann. Vol row.
-    // A null guard_alpha (no weight in the window, or no rows) reads '--' under the
-    // window's label, so the previous window's value never stays under the new label.
+    // Max DD row: the picked window's drawdown, Bot and Held, printed as magnitudes (a drawdown
+    // carries no plus sign). A leg the window cannot supply shows no digits, the row's own
+    // "insufficient history" label shows, and no side leads; the poll's lifetime figure is never
+    // written here or anywhere else on this row. A strip with no max_drawdown object changes nothing.
+    function updateMddRow(strip) {
+        var legs = strip && strip.max_drawdown;
+        if (!legs || typeof legs !== 'object') return;
+        var bot = typeof legs.dry_run === 'number' && isFinite(legs.dry_run) ? Math.abs(legs.dry_run) : null;
+        var held = typeof legs.if_held === 'number' && isFinite(legs.if_held) ? Math.abs(legs.if_held) : null;
+        var supplied = bot !== null && held !== null && strip.insufficient_history !== true;
+        var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
+        var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
+        if (botText) botText.textContent = bot !== null ? 'Bot ' + bot.toFixed(2) + '%' : '\u2014';
+        if (heldText) heldText.textContent = held !== null ? 'Held ' + held.toFixed(2) + '%' : '\u2014';
+        var maxAbs = Math.max(bot === null ? 0 : bot, held === null ? 0 : held, 0.01);
+        var botBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
+        var heldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
+        botBars.forEach(function (el) {
+            el.style.width = Math.min((bot === null ? 0 : bot) / maxAbs * 100, 100).toFixed(1) + '%';
+        });
+        heldBars.forEach(function (el) {
+            el.style.width = Math.min((held === null ? 0 : held) / maxAbs * 100, 100).toFixed(1) + '%';
+        });
+        // The smaller drawdown leads; with no figure for the window no side does.
+        applyBarClasses(botBars, heldBars, supplied ? bot <= held : null);
+        var deltaEl = document.querySelector('[data-testid="comp-mdd-delta"]');
+        if (deltaEl) {
+            deltaEl.hidden = !supplied;
+            if (supplied) {
+                var saved = held - bot;
+                deltaEl.textContent = '\u03b1 ' + fmtPct(saved);
+                setPosNeg(deltaEl, saved);
+            }
+        }
+        var notice = document.querySelector('[data-testid="mdd-insufficient-label"]');
+        if (notice) notice.hidden = supplied;
+    }
+
+    // The one writer of the headline value, its window label, the Max DD row and the Ann. Vol
+    // row. A null guard_alpha (fewer than two days in the window) reads '--' under the window's
+    // label, so the previous window's value never stays under the new label.
     function applyWindowedStrip(token, strip) {
         var guard_alpha = typeof strip.guard_alpha === 'number' ? strip.guard_alpha : null;
         var el = document.getElementById('guard-alpha-headline');
         if (el) {
-            el.textContent = fmtPct(guard_alpha);
+            el.textContent = fmtPp(guard_alpha);
             el.style.color = guard_alpha === null ? cs('--studio-ink-dim')
                 : (guard_alpha >= 0 ? cs('--studio-pos') : cs('--studio-neg'));
         }
         var labelEl = document.getElementById('guard-alpha-window-label');
         if (labelEl) labelEl.textContent = WINDOW_LABELS[token] || token;
+        updateMddRow(strip);
         updateVolRow(strip);
     }
 
@@ -1015,9 +1076,27 @@
         return { stopLevel: stopLevel, shadowPeak: shadowPeak };
     }
 
-    function writeDetailTitle(sym) {
+    // The name the card carries, for a panel opened before any state named its symphony.
+    function cardNameFor(symId) {
+        if (!symId) return null;
+        var safeId = String(symId).replace(/["\\]/g, '');
+        var nameEl = document.querySelector('.sym-card[data-sym-id="' + safeId + '"] .card-name');
+        var text = nameEl ? nameEl.textContent.trim() : '';
+        return text || null;
+    }
+
+    function writeDetailTitle(sym, symId) {
         var titleEl = document.getElementById('detail-panel-title');
-        if (titleEl) titleEl.textContent = (sym && sym.name) || DETAIL_UNKNOWN_TITLE;
+        if (titleEl) {
+            titleEl.textContent = (sym && sym.name) || cardNameFor(symId) || DETAIL_UNKNOWN_TITLE;
+        }
+    }
+
+    // The panel says it is waiting from the moment it opens until the first state names its
+    // symphony (or says it is not in the view): never a panel of dashes with no explanation.
+    function setDetailLoading(waiting) {
+        var loadingEl = document.getElementById('detail-loading');
+        if (loadingEl) loadingEl.hidden = !waiting;
     }
 
     // The panel's own requests: the tape, the events, the variables and the risk profile. Each
@@ -1096,9 +1175,10 @@
         var rpEl = document.getElementById('detail-risk-profile');
         if (rpEl) rpEl.innerHTML = '';
 
-        writeDetailTitle(sym);
+        writeDetailTitle(sym, symId);
         // No poll has named this symphony yet: the first one fills the panel and asks for the rest.
         _detailNeedsFetch = !sym;
+        setDetailLoading(!sym);
         if (!sym) return;
 
         var kept = writeDetailFigures(sym);
@@ -1126,12 +1206,13 @@
     function refreshOpenDetailPanel(botState) {
         if (!_detailSymId || !detailPanelIsOpen()) return;
         var sym = botState ? botState[_detailSymId] : null;
+        setDetailLoading(false);
         if (!isSymphonyEntry(sym)) {
             var sub = document.getElementById('dp-live-ret-sub');
             if (sub) sub.textContent = DETAIL_NOT_IN_VIEW_TEXT;
             return;
         }
-        writeDetailTitle(sym);
+        writeDetailTitle(sym, _detailSymId);
         var kept = writeDetailFigures(sym);
         populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak, true);
         if (_detailNeedsFetch) {
@@ -1650,15 +1731,15 @@
         }
     }
 
-    // Max DD labels: the hero row and every card render both the "insufficient history" label and
-    // the alpha element, one hidden. They follow meta.portfolio.insufficient_history; a body that
-    // does not say leaves them as they are.
+    // Max DD labels on the cards: each card renders both the "insufficient history" label and the
+    // alpha element, one hidden. They follow meta.portfolio.insufficient_history; a body that does
+    // not say leaves them as they are. The hero row is not here: it follows the picked window's
+    // strip (updateMddRow), so a poll never decides what it says.
     function applyMddLabels(data) {
         var portfolio = (data && data.meta && data.meta.portfolio) || {};
         var insufficient = portfolio.insufficient_history;
         if (typeof insufficient !== 'boolean') return;
-        [['[data-testid="mdd-insufficient-label"]', '[data-testid="comp-mdd-delta"]'],
-         ['[data-testid="card-mdd-insufficient-label"]', '[data-field="mdd-alpha-badge"]']
+        [['[data-testid="card-mdd-insufficient-label"]', '[data-field="mdd-alpha-badge"]']
         ].forEach(function (pair) {
             document.querySelectorAll(pair[0]).forEach(function (el) { el.hidden = !insufficient; });
             document.querySelectorAll(pair[1]).forEach(function (el) { el.hidden = insufficient; });
@@ -1668,8 +1749,6 @@
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
         applyMddLabels(data);
-        var insufficientHistory = !!(data && data.meta && data.meta.portfolio
-            && data.meta.portfolio.insufficient_history === true);
         // The account-basis helpers run only on a genuine state-poll payload.
         // 'data_as_of' is unconditionally set by _compute_portfolio_strip on every
         // /api/state poll (app.py), so it discriminates a poll from any other payload
@@ -1683,20 +1762,18 @@
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
-        // ALL THREE rows are built only from a genuine /api/state poll payload (which
-        // always carries data_as_of): a payload without it is on a different basis
-        // and scope for every row (Today can be account-basis on a real poll vs
-        // always-VW on a windowed strip; MDD can be scoped to the snapshot's
-        // trading_day vs the picker's window), so leaving `rows` empty leaves each
-        // row's last-correct DOM value alone instead of bouncing it. The picked
-        // window never changes these rows; the Ann. Vol row is the strip's (see
-        // updateVolRow).
+        // Both rows are built only from a genuine /api/state poll payload (which always
+        // carries data_as_of): a payload without it is on a different basis and scope (Today
+        // can be account-basis on a real poll vs always-VW on a windowed strip), so leaving
+        // `rows` empty leaves each row's last-correct DOM value alone instead of bouncing it.
+        // The picked window never changes these two rows. The Max DD and Ann. Vol rows are
+        // the strip's, not the poll's (see updateMddRow and updateVolRow): the poll's own Max DD
+        // is a different window's figure and is never written under the row's label.
         var rows = [];
         if ('data_as_of' in ps) {
             rows = [
                 { id: 'today',      deltaTestid: 'comp-today-delta',      values: ps.today_change      || {}, higherIsBetter: true },
-                { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true },
-                { id: 'mdd',        deltaTestid: 'comp-mdd-delta',        values: ps.max_drawdown      || {}, higherIsBetter: false }
+                { id: 'cumulative', deltaTestid: 'comp-cumulative-delta', values: ps.cumulative_return || {}, higherIsBetter: true }
             ];
         }
         rows.forEach(function (row) {
@@ -1717,12 +1794,8 @@
                 el.style.width = Math.min(Math.abs(held) / maxAbs * 100, 100).toFixed(1) + '%';
             });
             // The leader, by the rule the server render applies to the row (a missing leg reads
-            // as 0 there). Max DD: the smaller drawdown leads, and with too little history no
-            // side does.
-            var botWins;
-            if (row.higherIsBetter) botWins = (bot === null ? 0 : bot) >= (held === null ? 0 : held);
-            else if (insufficientHistory) botWins = null;
-            else botWins = Math.abs(bot === null ? 0 : bot) <= Math.abs(held === null ? 0 : held);
+            // as 0 there): the higher return leads.
+            var botWins = (bot === null ? 0 : bot) >= (held === null ? 0 : held);
             applyBarClasses(botBars, heldBars, botWins);
 
             var botText  = document.querySelector('[data-testid="comp-' + row.id + '-bot-text"]');
@@ -1732,27 +1805,23 @@
                 // F-016: guard setPosNeg -- its `value >= 0` check is TRUE for null in
                 // JS (null coerces to 0), which would mis-classify a missing value as
                 // positive/green if called unguarded.
-                if (bot !== null) setPosNeg(botText, row.higherIsBetter ? bot : -bot);
+                if (bot !== null) setPosNeg(botText, bot);
                 else botText.classList.remove('pos', 'neg');
             }
             if (heldText) {
                 heldText.textContent = 'Held ' + fmtPct(held);
-                if (held !== null) setPosNeg(heldText, row.higherIsBetter ? held : -held);
+                if (held !== null) setPosNeg(heldText, held);
                 else heldText.classList.remove('pos', 'neg');
             }
 
             // AC-4a: recompute + write the alpha (.vs-delta) span every poll so the
             // displayed alpha == displayed (Bot - Held) by construction. Without this
             // the delta stays frozen at its server-side-render value while Bot/Held
-            // tick live (the 2.17-vs-1.72 staleness symptom). For Max DD, alpha is the
-            // drawdown the guard SAVED: abs(held) - abs(bot) (less DD = better),
-            // matching the template's mdd_alpha and the per-card convention.
+            // tick live (the 2.17-vs-1.72 staleness symptom).
             var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
             if (deltaEl) {
                 if (bot !== null && held !== null) {
-                    var deltaAlpha = row.higherIsBetter
-                        ? (bot - held)
-                        : (Math.abs(held) - Math.abs(bot));
+                    var deltaAlpha = bot - held;
                     deltaEl.textContent = 'α ' + fmtPct(deltaAlpha);
                     setPosNeg(deltaEl, deltaAlpha);
                 } else {
@@ -1773,7 +1842,8 @@
     // ---------------------------------------------------------------------------
 
     function _fmtSignedPct(val, decimals) {
-        if (val == null || isNaN(val)) return '--';
+        // A missing figure reads as the server render prints it: an em dash.
+        if (val == null || isNaN(val)) return '\u2014';
         decimals = decimals != null ? decimals : 1;
         return (val >= 0 ? '+' : '') + val.toFixed(decimals) + '%';
     }
@@ -2283,9 +2353,17 @@
         var badge = document.querySelector('[data-testid="edit-vars-indicator"]');
         if (!badge) return;
         var shown = count > 0;
-        setTextIfChanged(badge, shown ? String(count) : '');
+        setTextIfChanged(badge, shown ? count + ' locked' : '');
         badge.hidden = !shown;
         badge.style.display = shown ? 'inline-flex' : 'none';
+    }
+
+    // The headline's descriptor says "Simulated" while the engine's last cycle ran simulated; the
+    // poll carries the flag (execution_simulated). A body that does not carry it leaves the text.
+    function renderExecutionDescriptor(data) {
+        if (!data || typeof data.execution_simulated !== 'boolean') return;
+        setTextIfChanged(document.getElementById('guard-alpha-simulated'),
+            data.execution_simulated ? 'Simulated ' : '');
     }
 
     function renderDashboardPanels(data) {
@@ -2372,6 +2450,8 @@
             function () { refreshOpenDetailPanel(botState); },
             // The Sleeves and CVaR panels and the Edit Vars badge.
             function () { renderDashboardPanels(data); },
+            // The headline descriptor's "Simulated" word.
+            function () { renderExecutionDescriptor(data); },
             // Without a stream the poll is the only thing that moves the $-saved panel.
             function () { refreshPanelWithoutStream(); },
             function () { renderAsOf(); }

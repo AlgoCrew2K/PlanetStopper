@@ -84,6 +84,19 @@ body {
   color: var(--studio-ink-faint);
 }
 
+/* A stat tile's one-line statement of what the number is (basis, window, unit). */
+.mini-stat-note {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--studio-ink-faint);
+  margin-top: 4px;
+}
+
+/* The shared stat labels, section headers and chips are upper-case. A Greek alpha or rho in
+   one would turn into the Latin A or P and read as another word, so the glyph carries this
+   class: lower-case, whatever its parent does. The one rule for every page. */
+.alpha-glyph { text-transform: none; }
+
 .section-header {
   font-size: 11px;
   font-weight: 700;

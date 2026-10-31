@@ -696,6 +696,11 @@ def _run_pipeline(
         raise ValueError("unknown return-series source")
 
     bot_state = database.load_state()
+    # The roster is the symphonies still held: the state keeps an entry whose rows stopped, and
+    # the shared rule every page asks decides it is gone (never a second rule here).
+    no_longer_held = analytics.no_longer_held_symphony_ids(bot_state, db_path=db_file)
+    if no_longer_held:
+        bot_state = {key: value for key, value in bot_state.items() if key not in no_longer_held}
     symphony_ids = _live_symphony_roster(bot_state)
     summary["roster_size"] = len(symphony_ids)
     if len(symphony_ids) < 2:
