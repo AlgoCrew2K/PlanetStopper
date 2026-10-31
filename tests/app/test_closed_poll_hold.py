@@ -12,7 +12,9 @@ The figures of a closed market cannot change, so the result is held:
     several request threads at once;
   * the first poll after a new snapshot, and the first after a daemon start, is answered from a
     result a background thread built beforehand;
-  * while the market is open a request never runs the same per-symphony query twice.
+  * while the market is open a request never runs the same per-symphony query twice;
+  * a result built while one of its parts failed (a locked database, say) still answers, but is
+    not held: the next poll builds again, and the result of a complete build is held.
 
 What is pinned is query counts and bytes, never wall time: a database statement is counted by the
 trace on every connection the process opens (`SqlTrace`), and bytes are compared at a frozen host
@@ -23,6 +25,7 @@ cycle record of the run that stored it (outcome "eod", changed) followed by a sc
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
 from collections import Counter
@@ -30,6 +33,7 @@ from datetime import date
 
 import pytest
 
+import analytics
 import app as app_module
 from tests.app._closed_session_world import (
     ClosedWorld,
@@ -328,3 +332,148 @@ def test_an_open_poll_never_runs_the_same_query_twice_for_one_symphony(monkeypat
     assert not repeated, (
         f"one open poll ran {len(repeated)} per-symphony statements more than once: {repeated}"
     )
+
+
+# ---------------------------------------------------------------------------
+# A build in which a part failed answers, and is not held
+# ---------------------------------------------------------------------------
+# A closed market holds a result until the next snapshot, which is all weekend. A build that
+# lost a part to a transient fault (the reader of the shadow rows raised) answers with that part
+# missing, as it always has; holding that answer would keep the figures blank until the next
+# snapshot, long after the fault has passed. The fault is injected at the reader the build calls,
+# raising the error a locked database raises on its first call(s); every later call runs the real
+# reader. Expected answers are the ones of a build that met no fault, read from the same world.
+
+DATABASE_LOCKED = "database is locked"
+
+# part -> (module, reader, calls that fail, the route polled first)
+FAILED_PARTS = {
+    "portfolio figures": (analytics, "get_portfolio_today_change", 1, "/api/state"),
+    "default window strip": (analytics, "compute_windowed_portfolio_strip", 1, "/api/state"),
+    "hero series": (analytics, "get_portfolio_daily_returns_from_shadow", 1, "/api/state"),
+    "hero series and its fallback": (
+        analytics,
+        "get_portfolio_daily_returns_from_shadow",
+        2,
+        "/api/state",
+    ),
+    "hero chart route": (
+        analytics,
+        "get_portfolio_bot_and_held_daily_returns",
+        1,
+        "/api/hero-chart/30d",
+    ),
+}
+
+
+def fail_first_calls(monkeypatch, owner, name: str, times: int) -> dict:
+    """The first `times` calls of owner.name raise a locked-database error, the rest run the real
+    function. Returns the counters {"calls", "failed"}."""
+    real = getattr(owner, name)
+    seen = {"calls": 0, "failed": 0}
+
+    def faulty(*args, **kwargs):
+        seen["calls"] += 1
+        if seen["failed"] < times:
+            seen["failed"] += 1
+            raise sqlite3.OperationalError(DATABASE_LOCKED)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, name, faulty)
+    return seen
+
+
+def read_closed_routes(cw: ClosedWorld) -> dict[str, bytes]:
+    return {path: cw.raw(path) for path in CLOSED_ROUTES}
+
+
+@pytest.mark.parametrize("part", sorted(FAILED_PARTS))
+def test_a_poll_answered_from_a_build_with_a_failed_part_is_not_held(monkeypatch, tmp_path, part):
+    cw, trace = world(monkeypatch, tmp_path)
+    cw.at(*CLOSED_INSTANTS["closed_frozen"])
+    reference = read_closed_routes(cw)
+    app_module._CLOSED_HOLD.clear()
+    owner, reader, times, path = FAILED_PARTS[part]
+    seen = fail_first_calls(monkeypatch, owner, reader, times)
+
+    answered = cw.world.client.get(path)
+    assert answered.status_code == 200, f"{path}: the poll with a failed {part} did not answer"
+    assert seen["failed"] == times, f"fixture sanity: the {part} fault was not reached"
+    assert answered.get_data() != reference[path], (
+        f"fixture sanity: the failed {part} left {path} unchanged, so nothing is proven"
+    )
+
+    next_poll = cw.raw(path)
+    assert next_poll == reference[path], (
+        f"{path}: the answer of a build whose {part} failed was held, so the next poll "
+        "answered the same degraded bytes instead of building again"
+    )
+    mark = trace.mark()
+    held = cw.raw(path)
+    queries = request_queries(trace, mark)
+    assert not queries, (
+        f"{path}: the answer of a complete build was not held ({len(queries)} statements)"
+    )
+    assert held == next_poll
+    assert read_closed_routes(cw) == reference, (
+        f"after the {part} recovered, a closed route answered other than a fault-free build"
+    )
+
+
+def test_a_strip_build_that_raised_is_not_held(monkeypatch, tmp_path):
+    """The window strip raises when it cannot be built (a 500, never a degraded body); the next
+    request builds again, and the complete result is then held."""
+    cw, trace = world(monkeypatch, tmp_path)
+    cw.at(*CLOSED_INSTANTS["closed_frozen"])
+    path = "/api/strip/30d"
+    reference = cw.raw(path)
+    app_module._CLOSED_HOLD.clear()
+    seen = fail_first_calls(monkeypatch, analytics, "compute_windowed_portfolio_strip", 1)
+
+    assert cw.world.client.get(path).status_code == 500
+    assert seen["failed"] == 1, "fixture sanity: the fault was not reached"
+    assert cw.raw(path) == reference, "the failed strip build was held"
+    mark = trace.mark()
+    assert cw.raw(path) == reference
+    assert not request_queries(trace, mark), "the complete strip was not held"
+
+
+@pytest.mark.parametrize("part", ["portfolio figures", "default window strip"])
+def test_a_warm_up_build_with_a_failed_part_is_not_held(monkeypatch, tmp_path, part):
+    cw, trace = world(monkeypatch, tmp_path)
+    isolate_scheduler(monkeypatch)
+    cw.at(*CLOSED_INSTANTS["closed_frozen"])
+    reference = read_closed_routes(cw)
+    app_module._CLOSED_HOLD.clear()
+    owner, reader, times, _ = FAILED_PARTS[part]
+    seen = fail_first_calls(monkeypatch, owner, reader, times)
+
+    mark = trace.mark()
+    app_module._start_closed_warmup()
+    assert wait_for_background_build(trace, mark), "the warm-up read no shadow rows"
+    for thread in threading.enumerate():
+        if thread.name == "closed-warmup":
+            thread.join(timeout=WARM_WAIT_S)
+    assert seen["failed"] == times, f"fixture sanity: the {part} fault was not reached"
+
+    first = read_closed_routes(cw)
+    mark = trace.mark()
+    again = read_closed_routes(cw)
+    assert first == reference, (
+        f"the first polls after a warm-up whose {part} failed answered other than a fault-free "
+        "build: the warm-up held the failed result"
+    )
+    assert not request_queries(trace, mark), "the complete result was not held"
+    assert again == first
+
+
+def test_an_open_poll_after_a_failed_part_is_computed_again(monkeypatch, tmp_path):
+    """An open market holds nothing: a poll after a fault answers what a fault-free poll does."""
+    cw, _ = world(monkeypatch, tmp_path)
+    write_engine_cycle(cw.world, local(MONDAY, "10:00:20"), 1)
+    cw.at(MONDAY, "10:01:00")
+    reference = cw.raw("/api/state")
+    fail_first_calls(monkeypatch, analytics, "get_portfolio_today_change", 1)
+
+    cw.world.client.get("/api/state")  # the poll that meets the fault: any answer
+    assert cw.raw("/api/state") == reference
