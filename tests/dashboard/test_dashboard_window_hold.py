@@ -378,8 +378,12 @@ def test_only_the_max_dd_row_follows_the_picked_window():
     # The Max DD row is the picked window's own: the strip's figures, whatever the poll carries.
     for result, token in ((control, "30d"), (picked, "1y")):
         window = sup.mdd_texts(_strip(token))
-        assert result["rows"]["mdd"] == [window["bot"], window["held"], window["delta"]], (
+        bot, held, delta = result["rows"]["mdd"]
+        assert [bot, held] == [window["bot"], window["held"]], (
             f"{token}: the Max DD row is not the picked window's"
+        )
+        assert abs(sup.pp_delta_value(delta) - window["delta_pp"]) <= 0.006, (
+            f"{token}: the Max DD delta {delta!r} is not the picked window's"
         )
     assert picked["rows"]["mdd"] != control["rows"]["mdd"], (
         "the two windows must differ for this to tell the picked window from the default"

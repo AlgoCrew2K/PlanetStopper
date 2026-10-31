@@ -216,6 +216,127 @@ def test_tenure_evidence_prints_max_drawdown_as_a_magnitude(client, isolated_db,
     assert f"{abs(value):.2f}" in lines[0], lines[0]
 
 
+# Every drawdown figure of the tenure evidence is a positive magnitude, the realized and backtest
+# legs and the with and without legs included, and a gap between two of them reads correctly in that
+# convention. The stored values stay signed (a drawdown is at most zero, and the verdict compares the
+# signed values), so the edit below is the render's only input: the stored figures are set the way
+# the producer computes them (the first leg minus the second, in percent, signed).
+_DRAWDOWN_LEGS = {
+    "backtest": {
+        "first": "realized_max_drawdown",
+        "second": "backtest_max_drawdown",
+        "gap": "max_drawdown_gap",
+        "subjects": ("realized", "backtest"),
+    },
+    "marginal": {
+        "first": "without_max_drawdown",
+        "second": "with_max_drawdown",
+        "gap": "max_drawdown_difference",
+        "subjects": ("without", "with"),
+    },
+}
+_LEG_PAIRS = [(-12.35, -15.50), (-20.00, -15.00), (-9.10, -9.10), (0.0, -4.25)]
+
+
+def _drawdown_lines(client, item: str, signed: dict[str, float]) -> dict[str, str]:
+    record = pb.full_record()
+    entry = pb.entry_with_verdict(record, "watch")
+    figures = entry["evidence"][item]["figures"]
+    for name, value in signed.items():
+        figures[name]["value"] = value
+    pb.store_run(record)
+    block = pb.entry_node(pb.panel_of(w.get_page(client)), entry["symphony_id"]).find(
+        f"tenure-review-evidence-{item}"
+    )
+    lines = {}
+    for node in pb.leaf_nodes_containing(block, "max drawdown"):
+        text = node.text().strip()
+        label = text.split(":", 1)[0].strip().lower().replace(" ", "_")
+        lines[label] = text
+    return lines
+
+
+def _number_after_the_label(line: str) -> tuple[float, bool]:
+    """The first number after the label, and whether it carries a minus sign."""
+    value_part = line.split(":", 1)[1]
+    match = re.search(r"([-\u2212]?)\s*(\d+\.\d{2})", value_part)
+    assert match, f"no figure in {line!r}"
+    return float(match.group(2)), bool(match.group(1))
+
+
+@pytest.mark.parametrize("item", sorted(_DRAWDOWN_LEGS))
+@pytest.mark.parametrize(("first", "second"), _LEG_PAIRS)
+def test_tenure_drawdown_legs_print_positive_magnitudes(client, isolated_db, item, first, second):
+    names = _DRAWDOWN_LEGS[item]
+    lines = _drawdown_lines(
+        client,
+        item,
+        {names["first"]: first, names["second"]: second, names["gap"]: first - second},
+    )
+    for name, value in ((names["first"], first), (names["second"], second)):
+        line = lines.get(name)
+        assert line, f"no {name} line among {sorted(lines)}"
+        assert not re.search(r"[-\u2212]", line), (
+            f"a signed drawdown in the tenure evidence: {line!r}"
+        )
+        assert f"{abs(value):.2f}" in line, line
+
+
+@pytest.mark.parametrize("item", sorted(_DRAWDOWN_LEGS))
+@pytest.mark.parametrize(("first", "second"), _LEG_PAIRS)
+def test_tenure_drawdown_gap_reads_correctly_in_the_magnitude_convention(
+    client, isolated_db, item, first, second
+):
+    """The gap is read from the magnitudes on the page: the first leg's magnitude minus the second's.
+    It reads either as that signed number, or in words naming which leg is shallower or deeper."""
+    names = _DRAWDOWN_LEGS[item]
+    lines = _drawdown_lines(
+        client,
+        item,
+        {names["first"]: first, names["second"]: second, names["gap"]: first - second},
+    )
+    line = lines.get(names["gap"])
+    assert line, f"no {names['gap']} line among {sorted(lines)}"
+    shown_difference = round(abs(first) - abs(second), 2)
+    magnitude, minus = _number_after_the_label(line)
+    assert magnitude == abs(shown_difference), (
+        f"the gap {line!r} is not the difference of the magnitudes {abs(first)} and {abs(second)}"
+    )
+    words = line.split(":", 1)[1].lower()
+    if "shallower" in words or "deeper" in words:
+        first_subject, second_subject = names["subjects"]
+        spots = {
+            subject: m.start()
+            for subject in names["subjects"]
+            if (m := re.search(rf"\b{subject}\b", words))
+        }
+        assert spots, f"a gap in words must name which leg it speaks of: {line!r}"
+        named_first = min(spots, key=spots.get) == first_subject
+        word = "shallower" if "shallower" in words else "deeper"
+        first_is_shallower = shown_difference < 0
+        says_first_is_shallower = (word == "shallower") == named_first
+        if shown_difference != 0:
+            assert says_first_is_shallower == first_is_shallower, line
+    elif shown_difference < 0:
+        assert minus, (
+            f"the {names['subjects'][0]} leg is shallower, so the gap is negative: {line!r}"
+        )
+    else:
+        assert not minus, f"the gap should not be negative: {line!r}"
+
+
+def test_the_stored_drawdown_figures_stay_signed():
+    """The render takes the magnitude; the producer's figures are what the verdict compares."""
+    record = pb.full_record()
+    for entry in record["entries"]:
+        for item in ("performance", "backtest", "marginal"):
+            figures = (entry["evidence"].get(item) or {}).get("figures") or {}
+            for name, figure in figures.items():
+                value = figure.get("value")
+                if name.endswith("max_drawdown") and isinstance(value, (int, float)):
+                    assert value <= 0, f"{name} is stored as a magnitude: {value}"
+
+
 # ---------------------------------------------------------------------------
 # Retirement tab (UXR-21)
 # ---------------------------------------------------------------------------

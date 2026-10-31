@@ -31,6 +31,7 @@ Expected state: RED for missing patterns until .gitignore is updated.
 from __future__ import annotations
 
 import pathlib
+import subprocess
 
 import pytest
 
@@ -183,3 +184,58 @@ def test_gitignore_is_not_empty():
         "(S-1 finding). "
         f"Current patterns: {lines}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Real backups, keys, logs and credentials files: asked of git itself
+# ---------------------------------------------------------------------------
+#
+# The checks above scan the patterns by a simplified glob. These ask ``git check-ignore`` (without the
+# index, so a tracked file does not hide a missing pattern), because the repository is public and one
+# ``git add -A`` in a checkout that holds these publishes them. The backup names are the shapes of the
+# real untracked files in the primary checkout: a database copy taken before a restart or a cleanup,
+# with SQLite's -shm and -wal companions.
+
+MUST_BE_IGNORED = [
+    "alphabot_state.db.pre-data-cleanup-20260609-104917",
+    "alphabot_state.db.pre-data-cleanup-20260609-104917-shm",
+    "alphabot_state.db.pre-data-cleanup-20260609-104917-wal",
+    "alphabot_state.db.pre-restart-oom-20260610-130505",
+    "alphabot_state.db.pre-rogue-prism-cleanup",
+    "optuna_studies.db.pre-restart-20260609-123159",
+    "optuna_studies.db.pre-restart-20260609-123159-wal",
+    "server.key",
+    "certs/privkey.pem",
+    "debug.log",
+    "logs/app.log",
+    "credentials.json",
+    "composer-credentials.json",
+    "config/service-account-credentials.json",
+    ".env.bak-20260701",
+]
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True, check=False
+    )
+
+
+@pytest.mark.parametrize("path", MUST_BE_IGNORED)
+def test_git_ignores_the_real_backup_key_log_and_credentials_shapes(path):
+    result = _git("check-ignore", "-q", "--no-index", path)
+    assert result.returncode == 0, f"git would add {path!r}: .gitignore does not cover it"
+
+
+def test_no_tracked_file_is_matched_by_an_ignore_pattern():
+    """A pattern broad enough to match a tracked file hides its later changes from ``git status``.
+
+    The two SQLite fixtures under tests/fixtures/optuna_studies are tracked and match ``*.sqlite``
+    already; the widening of the ignore list must not add to them (a fixture named for an invalid
+    credentials answer is tracked and must stay visible)."""
+    result = _git("ls-files", "-ci", "--exclude-standard")
+    assert result.returncode == 0, result.stderr
+    newly_hidden = [
+        line for line in result.stdout.splitlines() if line and not line.endswith(".sqlite")
+    ]
+    assert newly_hidden == [], f"tracked files now match an ignore pattern: {newly_hidden}"

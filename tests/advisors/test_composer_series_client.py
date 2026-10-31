@@ -209,6 +209,26 @@ class TestRequestContract:
         _fetch(client_mod, _Http([_resp(200, self._ok_body())]), monkeypatch)
         assert client_mod._test_sleeps == []  # noqa: SLF001
 
+    def test_the_request_does_not_follow_redirects(self, client_mod, monkeypatch):
+        # A followed redirect would carry the Composer key header to whatever host the answer names.
+        http = _Http([_resp(200, self._ok_body())])
+        _fetch(client_mod, http, monkeypatch)
+
+        _args, kwargs = http.calls[0]
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+    def test_a_redirect_answer_is_an_error_and_is_not_followed_or_retried(
+        self, client_mod, monkeypatch, status
+    ):
+        http = _Http([_resp(status, headers={"Location": "https://elsewhere.example/steal"})])
+        res = _fetch(client_mod, http, monkeypatch)
+
+        assert res.error == f"HTTP {status}"
+        assert res.returns == {}
+        assert len(http.calls) == 1, "a redirect was retried or followed"
+        assert all(kw.get("allow_redirects") is False for _a, kw in http.calls)
+
     def test_only_get_is_ever_issued(self, client_mod, monkeypatch):
         # client_mod's fixture makes every non-GET verb raise AssertionError;
         # a clean parse therefore proves no other verb was attempted.
