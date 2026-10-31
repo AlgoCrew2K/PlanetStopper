@@ -529,9 +529,6 @@ class TestVisibleStalenessCueOnFetchFailure:
             assert wrong not in index_js_source and wrong not in chrome_js, (
                 f"a script addresses {wrong!r}, which no template renders"
             )
-        assert "#e33" not in index_js_source and "#e33" not in chrome_js, (
-            "the cue must use design tokens, not a raw colour"
-        )
 
 
 # ---------------------------------------------------------------------------

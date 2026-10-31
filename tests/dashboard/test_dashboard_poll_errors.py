@@ -231,6 +231,24 @@ def test_the_waiting_body_with_its_notice_is_data_not_an_error(monkeypatch):
     assert r["count"] == "1", "the waiting body counts as a handled refresh"
 
 
+def test_the_waiting_body_after_a_failed_poll_clears_the_cue(monkeypatch):
+    """The waiting body is data: it ends the failed state like any other data body."""
+    body = sup.waiting_body(monkeypatch)
+    scenario = r"""
+    await H.boot({ extras: true, state: H.bodies.pollEqual });
+    H.route('/api/state', { reject: true });
+    await H.runTimers(30000);
+    const failed = H.text('#engine-status-label');
+    H.route('/api/state', { body: H.bodies.waiting });
+    await H.runTimers(30000); await H.completeAnimations();
+    return { failed: failed, label: H.text('#engine-status-label'), asOf: H.text('#hero-data-as-of') };
+    """
+    r = _run(scenario, waiting=body)
+    assert r["failed"] == "Connection Lost"
+    assert r["label"] != "Connection Lost", "the waiting body was treated as an error"
+    assert not r["asOf"].startswith("connection lost"), r["asOf"]
+
+
 # ---------------------------------------------------------------------------
 # S-2.10, S-2.13: a superseded request never counts and never shows a cue
 # ---------------------------------------------------------------------------

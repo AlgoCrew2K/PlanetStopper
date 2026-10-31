@@ -15,7 +15,6 @@ from the clock the scenario set. Derived bodies: tests/fixtures/refresh_timing/0
 from __future__ import annotations
 
 import datetime as dt
-import json
 import re
 
 import pytest
@@ -184,7 +183,7 @@ class TestTheAgeCue:
         await H.runTimers(95000);
         const silent = header();
         H.route('/api/state', { reject: true });
-        await window.loadState();
+        await H.sandbox.window.loadState();
         return { silent: silent, failed: header() };
         """,
             poll=poll_body(),
@@ -518,7 +517,7 @@ class TestTheLabelFollowsTheServersClock:
             r"""
         await H.boot({ extras: true, state: H.bodies.poll });
         const before = header();
-        window.updateEngineStatus(H.bodies.old);
+        H.sandbox.window.updateEngineStatus(H.bodies.old);
         return { before: before, after: header() };
         """,
             poll=poll_body(),
@@ -852,8 +851,3 @@ class TestAPageLeftOpenOvernight:
         assert r["waiting"] == 0, "a request from before the sleep is still waiting"
         assert r["header"]["label"] == "Live", r["header"]
         assert r["reloads"] == 0
-
-
-def test_the_overnight_servers_json_is_serialisable():
-    """The scenario bodies cross into node as JSON; a non-serialisable value would fail every test above."""
-    json.dumps(_overnight_bodies(_ms("2026-11-01T22:00:07Z")))

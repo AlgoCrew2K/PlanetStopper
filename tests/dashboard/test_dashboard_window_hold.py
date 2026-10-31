@@ -173,15 +173,22 @@ class TestWhichStripARefreshRequests:
         """
             + PICK_1Y
             + r"""
+        const picked = H.guardAlpha();
         const n0 = H.fetchLog.length;
         H.route('/api/state', { body: H.bodies.pollEqual });
         await H.runTimers(30000);
         await H.runTimers(30000);
-        return { strips: H.fetchLog.slice(n0).map(function (e) { return e.url; })
+        return { picked: picked, after: H.guardAlpha(),
+          strips: H.fetchLog.slice(n0).map(function (e) { return e.url; })
           .filter(function (u) { return /^\/api\/strip\//.test(u); }) };
         """
         )
-        assert _run(scenario)["strips"] == [], "an unchanged stamp must not refetch the strip"
+        r = _run(scenario)
+        assert r["strips"] == [], "an unchanged stamp must not refetch the strip"
+        assert r["picked"] == _headline("1y", "1Y")
+        assert r["after"] == r["picked"], (
+            "with no request, the poll's own value replaced the headline"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +215,7 @@ class TestDefaultWindow:
         poll = sup.with_poll_vol(_bodies()["pollEqual"], 0.0123, 0.0456)  # lifetime vol of the poll
         scenario = r"""
         await H.boot({ extras: true, state: H.bodies.pollLifetimeVol });
-        return { vol: H.vol(), loaded: typeof window.updateChromeTicker,
+        return { vol: H.vol(), loaded: typeof H.sandbox.window.updateChromeTicker,
                  strips: H.requests(/^\/api\/strip\//) };
         """
         r = _run(scenario, extra={"pollLifetimeVol": poll}, scripts=sup.CHROME_AND_INDEX)
@@ -442,7 +449,7 @@ class TestPickedWindowWithNoData:
         assert r["after"]["constructs"] == r["before"]["constructs"], "the hero was rebuilt"
         assert r["after"]["labels"] == r["before"]["labels"], "the drawn series changed"
         assert r["label"] == "YTD"
-        assert r["cue"]["hidden"] is False, "the no-data cue is not shown"
+        assert r["cue"]["exists"] and r["cue"]["hidden"] is False, "the no-data cue is not shown"
         assert r["cue"]["text"] == _NO_DATA_CUE + "YTD"
 
     def test_a_refused_ytd_request_with_no_poll_row_in_the_window_shows_the_same_cue(self):
@@ -458,6 +465,7 @@ class TestPickedWindowWithNoData:
         assert r["after"]["labels"] == r["before"]["labels"], "a refused request changed the series"
         assert r["after"]["constructs"] == r["before"]["constructs"]
         assert r["label"] == "YTD"
+        assert r["cue"]["exists"], "no #hero-window-no-data element on the page"
         assert r["cue"]["hidden"] is False and r["cue"]["text"] == _NO_DATA_CUE + "YTD"
 
     def test_the_cue_clears_when_data_for_the_window_arrives(self):
@@ -470,6 +478,7 @@ class TestPickedWindowWithNoData:
         return { shown: shown, cue: H.el('#hero-window-no-data'), hero: H.summary()['cum-chart'] };
         """
         r = self._run(scenario)
+        assert r["shown"]["exists"], "no #hero-window-no-data element on the page"
         assert r["shown"]["hidden"] is False, "precondition: the cue showed for the empty window"
         assert r["cue"]["hidden"] is True, "the cue stayed after a series for the window was drawn"
         assert r["hero"]["labels"] == self._world()["hero"]["all"]["hist_dates"]
@@ -484,5 +493,6 @@ class TestPickedWindowWithNoData:
         """
         r = self._run(scenario)
         assert r["label"] == "30d"
+        assert r["cue"]["exists"], "no #hero-window-no-data element on the page"
         assert r["cue"]["hidden"] is True, "the cue outlived the pick of a window that has data"
         assert r["hero"]["labels"] == self._world()["hero"]["30d"]["hist_dates"]

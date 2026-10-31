@@ -28,8 +28,10 @@ from tests.ui.test_dashboard_charts_browser import firefox  # noqa: F401  (modul
 PAGE_TIMEOUT_MS = 20_000
 
 
-@pytest.fixture(scope="module")
-def world() -> dict:
+@pytest.fixture
+def world() -> (
+    dict
+):  # built per test (it needs the suite's per-test auth switch); cached by the harness
     return hx.get_world("default")
 
 
@@ -107,9 +109,22 @@ def new_probe(browser, server, world, *, context=None):
     return probe
 
 
+def wait_for(probe, expression: str, message: str, arg=None, timeout_ms: int = 8_000) -> None:
+    """Wait for a page condition; a timeout is a failed assertion that names what never happened."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    try:
+        probe.page.wait_for_function(expression, arg=arg, timeout=timeout_ms)
+    except PlaywrightTimeout:
+        raise AssertionError(f"{message} (page errors: {probe.page_errors})") from None
+
+
 def wait_refresh(probe, count: int) -> None:
-    probe.page.wait_for_function(
-        "(n) => document.body && document.body.dataset.refreshCount === String(n)", arg=count
+    wait_for(
+        probe,
+        "(n) => document.body && document.body.dataset.refreshCount === String(n)",
+        f"the page never settled refresh number {count}",
+        arg=count,
     )
 
 

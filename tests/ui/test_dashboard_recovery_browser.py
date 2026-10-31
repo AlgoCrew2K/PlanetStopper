@@ -21,6 +21,7 @@ from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtur
     new_probe,
     server,
     text,
+    wait_for,
     wait_refresh,
     world,
 )
@@ -107,7 +108,11 @@ def test_the_wake_signals_of_a_returning_tab_send_one_state_request(probe, world
         "() => { document.dispatchEvent(new Event('visibilitychange'));"
         " window.dispatchEvent(new Event('online')); }"
     )
-    probe.page.wait_for_function("() => document.body.dataset.refreshCount === '2'")
+    wait_for(
+        probe,
+        "() => document.body.dataset.refreshCount === '2'",
+        "the wake signals of a returning tab sent no state request",
+    )
     probe.page.wait_for_timeout(600)
     assert count_requests(probe, "GET", "/api/state", since) == 1, probe.requests[since:]
 
@@ -124,8 +129,10 @@ def test_a_laptop_asleep_over_the_weekend_resumes_with_the_monday_open_and_no_re
     probe.state = monday  # the daemon has been serving since Sunday
     probe.context.clock.fast_forward(_ms(_MONDAY_OPEN_PLUS) - _ms(_FRIDAY_EVENING))
     probe.context.clock.run_for(35_000)
-    probe.page.wait_for_function(
-        "() => document.getElementById('engine-status-label').textContent.trim() !== 'Closed'"
+    wait_for(
+        probe,
+        "() => document.getElementById('engine-status-label').textContent.trim() !== 'Closed'",
+        "the header still reads Closed after the page woke on the Monday open",
     )
     assert text(probe, "#engine-status-label") in ("Live", "Opening")
     assert re.fullmatch(r"NEXT \d\d:\d\d", text(probe, "#next-run-countdown"))

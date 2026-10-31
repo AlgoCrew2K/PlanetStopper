@@ -16,6 +16,7 @@ from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtur
     new_probe,
     server,
     text,
+    wait_for,
     wait_refresh,
     world,
 )
@@ -40,8 +41,10 @@ def test_three_refreshes_with_1y_picked_keep_the_1y_headline_and_ask_for_its_str
     probe.page.goto(probe.server.base_url + "/")
     wait_refresh(probe, 1)
     probe.page.locator('[data-testid="window-1y"]').click()
-    probe.page.wait_for_function(
-        "() => document.getElementById('guard-alpha-window-label').textContent.trim() === '1Y'"
+    wait_for(
+        probe,
+        "() => document.getElementById('guard-alpha-window-label').textContent.trim() === '1Y'",
+        "the window label never read 1Y after the pick",
     )
     want = sup.fmt_pct(world["strips"]["1y"]["guard_alpha"])
     assert text(probe, "#guard-alpha-headline") == want

@@ -58,13 +58,21 @@ def _html() -> str:
 
 
 def _headline_writers(js: str) -> list[tuple[str, str]]:
-    """(name, body) of every IIFE-scope function that writes #guard-alpha-headline."""
+    """(name, body) of every IIFE-scope function that assigns #guard-alpha-headline's text."""
     positions = [(m.start(), m.group(1)) for m in re.finditer(r"\n    function (\w+)\(", js)]
     out = []
     for n, (start, name) in enumerate(positions):
         end = positions[n + 1][0] if n + 1 < len(positions) else len(js)
         body = js[start:end]
-        if "guard-alpha-headline" in body:
+        direct = re.search(
+            r"getElementById\(\s*['\"]guard-alpha-headline['\"]\s*\)\s*\.textContent\s*=", body
+        )
+        via_variable = re.search(
+            r"(\w+)\s*=\s*document\.getElementById\(\s*['\"]guard-alpha-headline['\"]\s*\)"
+            r"[\s\S]*?\b\1\.textContent\s*=",
+            body,
+        )
+        if direct or via_variable:
             out.append((name, body))
     return out
 
