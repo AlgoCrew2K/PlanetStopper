@@ -1,8 +1,9 @@
 """TEST-ONLY support for the Correlations tab tests (rendered from the stored retirement run).
 
-Two fixtures (``client``, ``isolated_db``), a seeding helper that runs the REAL recommender over the
-PM's real Composer captures and persists its summary through the production accessor, and readers
-for the rendered panel (a small HTML tree from ``tests._ux_truth_support``).
+The ``client`` and ``isolated_db`` fixtures and ``get_page`` are the retirement panel tests' own,
+re-exported. On top of them: a seeding helper that runs the REAL recommender over the PM's real
+Composer captures and persists its summary through the production accessor, and readers for the
+rendered panel (a small HTML tree from ``tests._ux_truth_support``).
 
 Derived records (suite fixture rule 4) are built here from one real record each, changing only the
 named fields; ``tests/fixtures/retirement/derived/PROVENANCE.md`` lists every one:
@@ -24,14 +25,13 @@ import copy
 import json
 import pathlib
 import re
-from datetime import datetime
 
-import pytest
-
-import app as app_module
-import database as db_module
 from tests._ux_truth_support import Node, parse_html
 from tests.advisors import _series_captures as captures
+
+# The page fetch and the two fixtures the retirement panel tests already define, reused by name.
+from tests.app.test_retirement_panel_render import _page as get_page  # noqa: F401
+from tests.app.test_retirement_run_panel_render import client, isolated_db  # noqa: F401
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DERIVED_DIR = REPO_ROOT / "tests" / "fixtures" / "retirement" / "derived"
@@ -44,22 +44,6 @@ MARKUP_SUFFIX = ' <b>bold</b> & Co "q"'
 UNMAPPED_REASON = "retired_by_operator"
 
 EMPTY_CAPTURE = "INfCn3eKsu6i4oTTqdUp"
-
-
-@pytest.fixture()
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
-@pytest.fixture()
-def isolated_db(tmp_path, monkeypatch):
-    db_path = str(tmp_path / "test_correlations_view.db")
-    monkeypatch.setattr(db_module, "DB_FILE", db_path)
-    db_module.init_db()
-    db_module.run_migrations()
-    return db_path
 
 
 # ---------------------------------------------------------------------------
@@ -132,12 +116,6 @@ def name_override_swap(first: str, second: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Reading the rendered page
 # ---------------------------------------------------------------------------
-
-
-def get_page(client) -> str:
-    resp = client.get("/ai-advisor")
-    assert resp.status_code == 200
-    return resp.get_data(as_text=True)
 
 
 def tree_of(body: str) -> Node:
@@ -245,21 +223,3 @@ def oracle_band(printed: str, threshold: float) -> str:
     if value <= -0.40:
         return "diversifying"
     return "neutral"
-
-
-class FrozenClock:
-    """Replace ``app.datetime`` so the page's notion of "now" is a chosen instant."""
-
-    def __init__(self, monkeypatch) -> None:
-        self._monkeypatch = monkeypatch
-        self._real = app_module.datetime
-
-    def at(self, instant: datetime) -> None:
-        real = self._real
-
-        class _Frozen(real):
-            @classmethod
-            def now(cls, tz=None):
-                return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
-
-        self._monkeypatch.setattr(app_module, "datetime", _Frozen)

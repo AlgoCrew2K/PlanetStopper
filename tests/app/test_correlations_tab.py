@@ -46,7 +46,6 @@ from tests.advisors import _series_captures as captures
 from tests.app._correlations_view_support import (  # noqa: F401  (fixtures)
     EMPTY_CAPTURE,
     NEVER_RUN_TEXT,
-    FrozenClock,
     client,
     collapse,
     correlation_text,
@@ -70,6 +69,7 @@ from tests.app._correlations_view_support import (  # noqa: F401  (fixtures)
     with_run_at_removed,
     with_unmapped_exclusion_reason,
 )
+from tests.app._tenure_review_job_builders import freeze_app_clock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _ET = ZoneInfo("America/New_York")
@@ -415,13 +415,12 @@ class TestAsOf:
 
     def test_the_as_of_does_not_follow_the_render_time(self, client, isolated_db, monkeypatch):
         summary = seed_run(monkeypatch)
-        clock = FrozenClock(monkeypatch)
         texts = []
         for instant in (
             datetime(2026, 11, 2, 10, 0, tzinfo=_ET),
             datetime(2027, 3, 14, 23, 30, tzinfo=_ET),
         ):
-            clock.at(instant)
+            freeze_app_clock(monkeypatch, instant)
             texts.append(collapse(render_panel(client).find(testid="correlations-as-of").text))
         assert texts[0] == texts[1] == _expected_as_of(summary)
         assert "2026-11-02" not in texts[0] and "2027-03-14" not in texts[0]
