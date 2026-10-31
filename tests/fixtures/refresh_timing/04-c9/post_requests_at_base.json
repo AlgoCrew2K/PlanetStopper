@@ -1,0 +1,355 @@
+{
+ "base_sha": "7d8db3cd123397c1d013b693d7921c115e00ef07",
+ "captured_at_utc": "2026-10-31T09:35:32Z",
+ "controls": {
+  "advisor_accept_suggestion": {
+   "body": "{\"symphony_id\":\"sym-x\",\"suggestion\":{\"field\":\"X\"}}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/accept"
+  },
+  "advisor_asset_swap_evaluate": {
+   "body": "{\"symphony_id\":\"sym-x\",\"from_ticker\":\"\",\"to_ticker\":\"\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/asset-swaps/evaluate"
+  },
+  "advisor_frontrunner_run": {
+   "body": "{}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/frontrunner-builder/run"
+  },
+  "advisor_logic_change_evaluate": {
+   "body": "{\"symphony_id\":\"sym-x\",\"objective_type\":\"reduce_drawdown\",\"change_description\":\"raise the threshold\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/logic-changes/evaluate"
+  },
+  "advisor_proposal_approve": {
+   "body": "{\"proposal_id\":5}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/proposal/approve"
+  },
+  "advisor_proposal_reject": {
+   "body": "{\"proposal_id\":5}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/proposal/reject"
+  },
+  "advisor_reject_suggestion": {
+   "body": "{\"symphony_id\":\"sym-x\",\"suggestion\":{\"field\":\"X\"}}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/reject"
+  },
+  "advisor_retirement_approve": {
+   "body": "{\"candidate_id\":\"cand-1\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/retirement/approve"
+  },
+  "advisor_retirement_reject": {
+   "body": "{\"candidate_id\":\"cand-1\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/retirement/reject"
+  },
+  "advisor_retirement_review_run": {
+   "body": null,
+   "headers": {
+    "x-csrf-token": "<token>",
+    "x-requested-with": "XMLHttpRequest"
+   },
+   "initKeys": [
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/retirement/review/run"
+  },
+  "advisor_strategy_builder_run": {
+   "body": "{\"objective\":\"diversify\",\"universe\":[],\"symphony_id\":\"\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/strategy-builder/run"
+  },
+  "advisor_suggest": {
+   "body": "{\"symphony_id\":\"sym-x\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/suggest"
+  },
+  "cash_now": {
+   "body": "{\"symphony_id\":\"5XjzXjdGnjh99MIsdM97\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": null,
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/sell_account"
+  },
+  "chat_send": {
+   "body": "{\"artifact_id\":\"a-1\",\"artifact_type\":\"asset_swap\",\"artifact\":{},\"history\":[],\"message\":\"why was this swap rejected?\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/ai-advisor/chat/send"
+  },
+  "emergency_liquidate": {
+   "body": "{\"account_id\":\"7c2607c5-4583-4c1b-ae55-e5a05bb49f0d\",\"confirm_account_id\":\"7c2607c5-4583-4c1b-ae55-e5a05bb49f0d\",\"confirm_phrase\":\"LIQUIDATE\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/sell_account"
+  },
+  "fleet_dismiss": {
+   "body": null,
+   "headers": {
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": null,
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/fleet-alert/dismiss"
+  },
+  "flush_confirm": {
+   "body": null,
+   "headers": {
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/settings/flush-resync"
+  },
+  "force_run": {
+   "body": null,
+   "headers": {
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/trigger"
+  },
+  "mark_viewed": {
+   "body": null,
+   "headers": {
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "headers",
+    "keepalive",
+    "method"
+   ],
+   "keepalive": true,
+   "method": "POST",
+   "url": "/api/candidate-alert/mark-viewed"
+  },
+  "modal_save": {
+   "body": "{\"live_mode\":false,\"locked_vars\":[\"TRIGGER_THRESHOLD_PCT\"]}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/symphony-settings/symphony_b"
+  },
+  "modal_save_go_live": {
+   "body": "{\"live_mode\":true,\"locked_vars\":[\"TRIGGER_THRESHOLD_PCT\"],\"confirm\":true}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/symphony-settings/symphony_b"
+  },
+  "settings_save": {
+   "body": "{\"globals\":{\"EXECUTION_START_TIME\":\"09:35\"},\"symphonies\":{}}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": [
+    "body",
+    "headers",
+    "method"
+   ],
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/settings"
+  },
+  "sleeve_arm": {
+   "body": "{\"target_mode\":\"PAPER\"}",
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": null,
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/sleeves/s1/rules/r1/arm"
+  },
+  "sleeve_delete": {
+   "body": null,
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": null,
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/sleeves/s1/delete"
+  },
+  "sleeve_disarm": {
+   "body": null,
+   "headers": {
+    "content-type": "application/json",
+    "x-csrf-token": "<token>"
+   },
+   "initKeys": null,
+   "keepalive": false,
+   "method": "POST",
+   "url": "/api/sleeves/s1/disarm"
+  }
+ },
+ "token_placeholder": "<token>"
+}

@@ -3348,3 +3348,55 @@ class TestThePanelsScanReportsAPlantedCall:
         node.body.extend(ast.parse("_post_bench_note(rule_id)").body)
         subtrees = _collect_transitive_local_call_subtrees(tree, _BENCH_READ_FN_NAME)
         assert "_post_bench_note" in {getattr(n, "name", None) for n in subtrees}
+
+
+# ===========================================================================
+# The reads this work adds never reach an order, a symphony creation or the live flag
+# (header status, the Frontrunner build outcome, the armed-symphonies list)
+# ===========================================================================
+
+_HEADER_READ_ENTRY_POINT_FN_NAMES = [
+    "header_status",
+    "frontrunner_build_last_run",
+    "armed_symphonies",
+]
+# `_build_meta` renders the mode word from the live flag it READS; that read is a display of the
+# flag, not a write, and exists apart from these routes (the state route's walk allows the same hit).
+_HEADER_READ_BASE_HITS = frozenset({"LIVE_EXECUTION via _build_meta"})
+
+
+def _header_read_hits(tree: ast.Module, fn_name: str) -> list[str]:
+    return [h for h in _exec_seam_hits(tree, fn_name) if h not in _HEADER_READ_BASE_HITS]
+
+
+class TestTheHeaderAndOutcomeReadsNeverReachAnOrderOrACreation:
+    @pytest.mark.parametrize("fn_name", _HEADER_READ_ENTRY_POINT_FN_NAMES)
+    def test_the_handler_exists(self, fn_name):
+        assert _find_function_def(_parse_app_py(), fn_name) is not None, (
+            f"app.py has no function named {fn_name!r}: this read's boundary is unverifiable without it"
+        )
+
+    @pytest.mark.parametrize("fn_name", _HEADER_READ_ENTRY_POINT_FN_NAMES)
+    def test_the_call_graph_reaches_no_order_creation_or_live_flag_write(self, fn_name):
+        tree = _parse_app_py()
+        assert _find_function_def(tree, fn_name) is not None, f"app.py has no {fn_name!r}"
+        assert _header_read_hits(tree, fn_name) == []
+
+    def test_the_header_read_does_reach_the_health_and_phase_helpers(self):
+        """Non-vacuity: the walk is genuinely descending past the handler."""
+        tree = _parse_app_py()
+        reached = {
+            getattr(n, "name", None)
+            for n in _collect_transitive_local_call_subtrees(tree, "header_status")
+        }
+        assert {"_health_status", "_build_meta"} <= reached, f"the walk reached only {reached}"
+
+
+class TestTheHeaderAndOutcomeReadScanReportsAPlantedCall:
+    """Mutation proof: each plant goes into each handler, and the scan must fail on it."""
+
+    @pytest.mark.parametrize("plant", list(_PANELS_PLANTS))
+    @pytest.mark.parametrize("fn_name", _HEADER_READ_ENTRY_POINT_FN_NAMES)
+    def test_a_call_planted_in_the_handler_is_reported(self, fn_name, plant):
+        tree = _tree_with_planted_call(fn_name, _PANELS_PLANTS[plant])
+        assert _header_read_hits(tree, fn_name), f"{plant} planted in {fn_name} was not reported"

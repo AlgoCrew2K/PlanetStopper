@@ -46,7 +46,8 @@ below are derived from `_d(days_ago)` — always comfortably inside the
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -347,7 +348,8 @@ def test_a_trigger_without_a_name_yields_no_name_rather_than_its_id_or_a_blank_s
 
 def test_todays_exits_keep_their_shape_and_values(tmp_path):
     triggers = _captured_stamped("2026-06-22")
-    today = date.today().isoformat()
+    # The route's "today" is the Eastern trading date, whatever the host's own date is.
+    today = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
     _write_post_mortem(tmp_path, today, triggers)
 
     stats = analytics.get_history_summary(days=30, base_dir=str(tmp_path))

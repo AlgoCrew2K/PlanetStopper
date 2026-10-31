@@ -1,0 +1,20 @@
+{
+ "base_sha": "7d8db3cd123397c1d013b693d7921c115e00ef07",
+ "captured_at_utc": "2026-10-31T09:25:50Z",
+ "tick_requests": [
+  "GET /api/exit-turnover?symphony_id=5XjzXjdGnjh99MIsdM97",
+  "GET /api/exit-turnover?symphony_id=8FAXAnQmYi1INDubazeC",
+  "GET /api/exit-turnover?symphony_id=Gpaw3IhZghQPRE6AdEKx",
+  "GET /api/exit-turnover?symphony_id=INfCn3eKsu6i4oTTqdUp",
+  "GET /api/exit-turnover?symphony_id=MoAkUHnavSYw3oONiUxe",
+  "GET /api/exit-turnover?symphony_id=hvPiGP1O7AHfutHE3Fjy",
+  "GET /api/exit-turnover?symphony_id=iaSOOUsmnCJHiZvbrWfs",
+  "GET /api/exit-turnover?symphony_id=lW4ZzWuqR8tEO2DhXbil",
+  "GET /api/exit-turnover?symphony_id=n2ooAZTvBRN6ZzpMmWmU",
+  "GET /api/exit-turnover?symphony_id=nOyb55RMGVCKPiYXv7TI",
+  "GET /api/exit-turnover?symphony_id=qF5ZU7ALjrlhxrGEwsyJ",
+  "GET /api/guard-alpha-preconditions",
+  "GET /api/performance/symphonies",
+  "GET /api/performance?scope=aggregate&days=60d"
+ ]
+}

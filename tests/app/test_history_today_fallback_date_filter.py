@@ -370,8 +370,8 @@ class TestPostMortemPathTimeColumn:
             if t.get("time_triggered")
         }
         assert expected_times, "fixture integrity: source file must carry trigger times"
-        # get_history_summary looks the today-file up by the LOCAL date.
-        today_local = date.today().isoformat()
+        # get_history_summary looks the today-file up by the Eastern trading date.
+        today_local = _today_et().isoformat()
         (pm_dir / f"post_mortem_{today_local}.json").write_text(
             json.dumps(pm_data), encoding="utf-8"
         )
@@ -390,3 +390,149 @@ class TestPostMortemPathTimeColumn:
                 f"entry's time_triggered {expected!r} — the Time column renders an "
                 "em-dash on the post-mortem path"
             )
+
+
+# ---------------------------------------------------------------------------
+# "Today" is the Eastern trading date, whatever the host's own date is (S-3.3),
+# and the response says how fresh its newest exit is (S-3.6)
+# ---------------------------------------------------------------------------
+
+import datetime as _datetime_module  # noqa: E402  (stdlib module, patched for the frozen clock)
+from datetime import UTC  # noqa: E402
+
+# 23:30Z and 00:30Z the next day are 19:30 and 20:30 EDT: the same Eastern day, two UTC dates.
+_ET_DAY = date(2026, 10, 22)
+_AT_1930_EDT = datetime(2026, 10, 22, 23, 30, tzinfo=UTC)
+_AT_2030_EDT = datetime(2026, 10, 23, 0, 30, tzinfo=UTC)
+
+
+def _freeze_host_clock(monkeypatch, instant_utc: datetime) -> None:
+    """The host (UTC) clock stands at ``instant_utc`` for every date the app or analytics reads."""
+
+    class _FrozenDate(_datetime_module.date):
+        @classmethod
+        def today(cls):
+            return instant_utc.date()
+
+    class _FrozenDatetime(_datetime_module.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return instant_utc.astimezone(tz)
+            return instant_utc.replace(tzinfo=None)
+
+    monkeypatch.setattr(_datetime_module, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(_datetime_module, "date", _FrozenDate)
+    for module in (analytics, app_module):
+        monkeypatch.setattr(module, "datetime", _FrozenDatetime, raising=False)
+        monkeypatch.setattr(module, "date", _FrozenDate, raising=False)
+    monkeypatch.setattr(app_module, "_now_et", lambda: instant_utc.astimezone(_ET))
+
+
+def _copy_post_mortem_to(pm_dir: Path, day: date, *, mark: str | None = None) -> dict:
+    source = max(
+        pm_dir.glob("post_mortem_*.json"),
+        key=lambda f: len(json.loads(f.read_text(encoding="utf-8")).get("triggers", [])),
+    )
+    data = json.loads(source.read_text(encoding="utf-8"))
+    if mark:
+        for trigger in data["triggers"]:
+            trigger["exit_reason"] = mark
+    (pm_dir / f"post_mortem_{day.isoformat()}.json").write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+class TestTodaysExitsFollowTheEasternDate:
+    def test_exits_after_2000_edt_equal_those_before_it(
+        self, client, pm_dir, monkeypatch, positions
+    ):
+        _seed_symphony_names(positions)
+        _copy_post_mortem_to(pm_dir, _ET_DAY)
+        served = {}
+        for label, instant in (("19:30", _AT_1930_EDT), ("20:30", _AT_2030_EDT)):
+            _freeze_host_clock(monkeypatch, instant)
+            response = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}")
+            assert response.status_code == 200
+            served[label] = response.get_json()["todays_exits"]
+        assert served["19:30"], "fixture integrity: the Eastern day's post-mortem carries exits"
+        assert served["20:30"] == served["19:30"], (
+            "after 20:00 EDT the host's UTC date moved on and 'Today's exits' changed basis"
+        )
+
+    def test_a_file_dated_for_the_utc_tomorrow_is_not_todays_exits(
+        self, client, pm_dir, monkeypatch, positions
+    ):
+        _seed_symphony_names(positions)
+        _copy_post_mortem_to(pm_dir, _ET_DAY, mark="Take-Profit")
+        _copy_post_mortem_to(pm_dir, _ET_DAY + timedelta(days=1), mark="STALE-UTC-DAY")
+        _freeze_host_clock(monkeypatch, _AT_2030_EDT)
+        exits = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}").get_json()["todays_exits"]
+        assert exits and {e["reason"] for e in exits} == {"Take-Profit"}, (
+            "'Today's exits' were read from the UTC date's file, not the Eastern date's"
+        )
+
+    def test_detail_values_do_not_change_across_2000_edt(
+        self, client, pm_dir, monkeypatch, positions
+    ):
+        _seed_symphony_names(positions)
+        _copy_post_mortem_to(pm_dir, _ET_DAY)
+        details = []
+        for instant in (_AT_1930_EDT, _AT_2030_EDT):
+            _freeze_host_clock(monkeypatch, instant)
+            exits = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}").get_json()["todays_exits"]
+            details.append([e["detail"] for e in exits])
+        assert details[0] and details[0] == details[1]
+
+
+def _instant_et(day_text: str, clock_text: str) -> datetime:
+    return datetime.fromisoformat(f"{day_text}T{clock_text}").replace(tzinfo=_ET)
+
+
+def _newest_post_mortem_instant(pm_dir: Path) -> datetime | None:
+    stamps = []
+    for path in pm_dir.glob("post_mortem_*.json"):
+        day = path.stem.removeprefix("post_mortem_")
+        for trigger in json.loads(path.read_text(encoding="utf-8")).get("triggers", []):
+            if trigger.get("time_triggered"):
+                stamps.append(_instant_et(day, trigger["time_triggered"]))
+    return max(stamps) if stamps else None
+
+
+class TestDataAsOf:
+    def test_field_is_the_stamp_of_the_newest_post_mortem_exit(self, client, pm_dir):
+        expected = app_module._format_data_stamp(_newest_post_mortem_instant(pm_dir))
+        assert expected != "--", "fixture integrity: the captured days carry trigger times"
+        response = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}")
+        assert response.status_code == 200
+        body = response.get_json()
+        assert "data_as_of" in body, "the response must say how fresh its newest exit is"
+        assert body["data_as_of"] == expected
+
+    def test_a_backfilled_exit_newer_than_every_post_mortem_wins(
+        self, client, pm_dir, exit_trigger_rows, positions
+    ):
+        _seed_symphony_names(positions)
+        seeded = _shift_and_seed_exit_triggers(exit_trigger_rows, _today_et())
+        todays = [r for r in seeded if r["ts_et"][:10] == _today_et().isoformat()]
+        candidates = [
+            datetime.strptime(r["ts_et"], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=_ET) for r in todays
+        ]
+        post_mortem_newest = _newest_post_mortem_instant(pm_dir)
+        expected = app_module._format_data_stamp(max([*candidates, post_mortem_newest]))
+        body = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}").get_json()
+        assert body["data_as_of"] == expected
+
+    def test_no_timed_entry_reads_the_dash(self, client, pm_dir):
+        for path in pm_dir.glob("post_mortem_*.json"):
+            path.unlink()
+        body = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}").get_json()
+        assert body["data_as_of"] == "--"
+
+    def test_an_exit_with_no_time_is_not_a_stamp(self, client, pm_dir):
+        for path in pm_dir.glob("post_mortem_*.json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            for trigger in data["triggers"]:
+                trigger.pop("time_triggered", None)
+            path.write_text(json.dumps(data), encoding="utf-8")
+        body = client.get(f"/api/history/{_WIDE_WINDOW_DAYS}").get_json()
+        assert body["data_as_of"] == "--"

@@ -6,7 +6,8 @@ Scope: POST /api/fleet-alert/dismiss — Option-A implementation (background thr
 
 CONTRACT BEING ASSERTED (all tests must be RED on the current broken handler):
 
-  1. Handler returns 200 in <50 ms — it must not block on the DB write.
+  1. The handler answers 200 only AFTER the write has landed, waiting a bounded time
+     (app._FLEET_DISMISS_WRITE_WAIT_S); it still returns quickly when the write is quick.
   2. write_fleet_alert is dispatched to a background thread (NOT called directly
      on the Flask request thread).
   3. The background thread completes the write within a bounded timeout — the
@@ -15,7 +16,8 @@ CONTRACT BEING ASSERTED (all tests must be RED on the current broken handler):
      fleet_alert_state (the user-visible outcome).
   5. Side-effect ban preserved: the Flask handler frame itself does NOT call
      write_fleet_alert synchronously.  Background-thread dispatch is permitted.
-  6. If write_fleet_alert raises, handler still returns 200 (logged, not surfaced).
+  6. If write_fleet_alert raises, or the write misses the bounded wait, the handler answers
+     503 {status: error, message: Dismissal not saved}, never ok.
   7. Two rapid dismiss POSTs both return 200; effective write is idempotent.
   8. Ten rapid POSTs — handler latency stays below ceiling across all ten
      (background threads must not accumulate and block subsequent requests).
@@ -99,58 +101,60 @@ def flask_client():
 # ---------------------------------------------------------------------------
 
 
-class TestDismissHandlerReturnsBeforeBackgroundWrite:
+class TestDismissAnswersAfterItsWriteLands:
     """
-    AC: The handler must return 200 before the background write completes.
-    The <50 ms ceiling (from fixture) accounts for Python test-client overhead
-    while still rejecting a synchronous DB write (typically >1 ms on SQLite).
+    AC: the route answers ok only after dismissed_at_et has been written. The write still
+    runs on the background executor (never on the request thread, see Section 2), and the
+    route waits for it for a bounded time (app._FLEET_DISMISS_WRITE_WAIT_S).
+
+    This replaces the earlier contract that the handler returned BEFORE the write: an ok
+    that arrives before the write can be false (a lock held, a failed write), and the
+    banner would hide for a dismissal that was never stored.
     """
 
-    def test_dismiss_handler_returns_200_within_latency_ceiling(self, flask_client):
-        """Handler must return 200 BEFORE the background write completes.
-
-        The test intentionally holds the mock write until the test releases it,
-        then asserts the handler returned before the write was released.  This is
-        the logical contract (background dispatch) rather than a wall-clock ceiling,
-        which proved brittle on slow CI runners (267 ms observed vs a 50 ms ceiling).
-
-        A synchronous handler would block for the full hold duration; the background-
-        dispatch handler returns before write_started is even set — let alone before
-        write_may_proceed.set() releases the write.
-        """
+    def test_the_answer_waits_for_the_write_and_is_ok_once_it_lands(self, flask_client):
         write_started = threading.Event()
         write_may_proceed = threading.Event()
-        handler_returned = threading.Event()
+        written = {}
+        answered = {}
 
-        def _slow_write(_payload):
+        def _gated_write(payload):
+            written["thread"] = threading.current_thread().ident
+            written["payload"] = dict(payload)
             write_started.set()
-            # Hold the write until the test releases it — proves handler didn't wait.
-            write_may_proceed.wait(timeout=2)
+            write_may_proceed.wait(timeout=5)
+
+        def _post():
+            answered["thread"] = threading.current_thread().ident
+            answered["response"] = flask_client.post("/api/fleet-alert/dismiss")
 
         with (
             patch("database.read_fleet_alert", return_value=_active_row()),
-            patch("database.write_fleet_alert", side_effect=_slow_write),
+            patch("database.write_fleet_alert", side_effect=_gated_write),
         ):
-            resp = flask_client.post("/api/fleet-alert/dismiss")
-            # Mark that the handler has returned BEFORE releasing the write.
-            handler_returned.set()
-            # Now let the write complete so the background thread isn't leaked.
+            requester = threading.Thread(target=_post)
+            requester.start()
+            assert write_started.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
+            requester.join(timeout=0.4)
+            still_waiting = requester.is_alive()
             write_may_proceed.set()
-            # Wait briefly to let the background thread finish (inside the patch context).
-            write_started.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
+            requester.join(timeout=5)
 
-        assert resp.status_code == 200, f"Dismiss handler must return 200. Got {resp.status_code}."
-        # Logical-contract assertion: handler_returned was set BEFORE write_may_proceed
-        # was released, so if the write ever started it must have started AFTER handler_returned.
-        # A synchronous handler cannot reach this point without blocking on _slow_write first,
-        # which would NOT allow handler_returned.set() to precede write_may_proceed.set().
-        # (The actual ordering proof is in TestDismissDispatchesToBackgroundThread which
-        # captures thread IDs; this test verifies the 200 response and non-blocking nature.)
-        assert handler_returned.is_set(), (
-            "handler_returned must be set — handler must have returned a 200 response. "
-            "A synchronous handler blocked on write_fleet_alert would never reach this point "
-            "while the write is still held."
+        assert still_waiting, "the route answered before dismissed_at_et was written"
+        assert not requester.is_alive()
+        assert answered["response"].status_code == 200
+        assert answered["response"].get_json() == {"status": "ok"}
+        assert isinstance(written["payload"].get("dismissed_at_et"), str)
+        assert written["thread"] != answered["thread"], "the write must stay off the request thread"
+
+    def test_the_wait_is_a_named_bound_above_the_database_lock_timeout(self):
+        import app as flask_app
+
+        bound = getattr(flask_app, "_FLEET_DISMISS_WRITE_WAIT_S", None)
+        assert isinstance(bound, float), (
+            "app._FLEET_DISMISS_WRITE_WAIT_S is the route's bounded wait"
         )
+        assert 10.0 < bound <= 30.0, "it must outlast the state database's 10 s lock wait"
 
     def test_dismiss_handler_returns_200_when_no_alert_row(self, flask_client):
         """Handler must return 200 quickly even when read_fleet_alert returns None.
@@ -490,23 +494,18 @@ class TestDismissSideEffectBanOnRequestThread:
 # ---------------------------------------------------------------------------
 
 
-class TestDismissHandlerResilientToWriteFailure:
+class TestDismissAnswers503WhenTheWriteFails:
     """
-    AC: If write_fleet_alert raises in the background thread, the handler must
-    still return 200.  The operator UI must not degrade on a transient DB error.
-    (Failure is logged; it is not surfaced to the operator.)
+    AC: a write that raises, or that does not land within the bounded wait, is answered 503
+    {"status": "error", "message": "Dismissal not saved"} (a fixed string, never the exception's),
+    and never ok.
     """
 
-    def test_handler_returns_200_when_background_write_raises(self, flask_client):
-        """Handler must return 200 even when write_fleet_alert raises an exception.
+    NOT_SAVED = {"status": "error", "message": "Dismissal not saved"}
 
-        The exception fires in the background thread.  The handler has already
-        returned 200 before the thread executes, so the exception must not
-        surface to the Flask response layer.
-        """
-
+    def test_a_write_that_raises_is_503_not_ok(self, flask_client):
         def _write_raises(_payload):
-            raise OSError("DB locked: simulated transient write failure")
+            raise OSError("DB locked at /private/path/alphabot_state.db")
 
         with (
             patch("database.read_fleet_alert", return_value=_active_row()),
@@ -514,37 +513,50 @@ class TestDismissHandlerResilientToWriteFailure:
         ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
 
-        # Allow background thread to run and raise.
-        time.sleep(0.1)
+        assert resp.status_code == 503, f"a failed dismissal answered {resp.status_code}"
+        assert resp.get_json() == self.NOT_SAVED
+        assert "/private/path" not in resp.get_data(as_text=True)
 
-        assert (
-            resp.status_code == _FIXTURE["error_resilience"]["expected_status_on_write_failure"]
-        ), (
-            f"Handler must return 200 even when the background write raises. "
-            f"Got {resp.status_code}. "
-            "A raised exception in the background thread must not propagate to the Flask handler."
-        )
+    def test_a_read_that_raises_is_503_not_ok(self, flask_client):
+        with patch("database.read_fleet_alert", side_effect=RuntimeError("locked")):
+            resp = flask_client.post("/api/fleet-alert/dismiss")
+        assert resp.status_code == 503
+        assert resp.get_json() == self.NOT_SAVED
 
-    def test_handler_returns_status_ok_json_when_background_write_raises(self, flask_client):
-        """Response JSON must have status=ok even when write_fleet_alert raises."""
+    def test_a_write_held_past_the_bounded_wait_is_503_not_ok(self, flask_client, monkeypatch):
+        import app as flask_app
 
-        def _write_raises(_payload):
-            raise RuntimeError("Simulated disk full")
+        monkeypatch.setattr(flask_app, "_FLEET_DISMISS_WRITE_WAIT_S", 0.3, raising=False)
+        release = threading.Event()
 
+        def _held_write(_payload):
+            release.wait(timeout=5)
+
+        try:
+            with (
+                patch("database.read_fleet_alert", return_value=_active_row()),
+                patch("database.write_fleet_alert", side_effect=_held_write),
+            ):
+                started = time.monotonic()
+                resp = flask_client.post("/api/fleet-alert/dismiss")
+                waited = time.monotonic() - started
+        finally:
+            release.set()
+
+        assert resp.status_code == 503, "a dismissal that had not landed was answered ok"
+        assert resp.get_json() == self.NOT_SAVED
+        assert 0.25 <= waited < 3.0, f"the route waited {waited:.2f}s for a 0.3s bound"
+
+    def test_an_already_dismissed_alert_is_ok_with_no_write(self, flask_client):
+        row = _active_row()
+        row["dismissed_at_et"] = "2026-10-22T09:00:00-04:00"
         with (
-            patch("database.read_fleet_alert", return_value=_active_row()),
-            patch("database.write_fleet_alert", side_effect=_write_raises),
+            patch("database.read_fleet_alert", return_value=row),
+            patch("database.write_fleet_alert") as mock_write,
         ):
             resp = flask_client.post("/api/fleet-alert/dismiss")
-
-        time.sleep(0.1)
-
-        data = resp.get_json()
-        assert data is not None, "Response must be JSON."
-        assert data.get("status") == "ok", (
-            f"Response JSON must have status='ok' even when the background write raises. "
-            f"Got: {data!r}."
-        )
+        assert resp.status_code == 200 and resp.get_json() == {"status": "ok"}
+        mock_write.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
