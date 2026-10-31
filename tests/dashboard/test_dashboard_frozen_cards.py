@@ -14,6 +14,8 @@ named fields of one real body: tests/fixtures/refresh_timing/03-c4/PROVENANCE.md
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 import app as app_module
@@ -231,6 +233,37 @@ class TestBadgesEqualTheCardsInTheirSections:
             "a badge counted something other than the cards in its section"
         )
         assert sorted(r["sections"]) == sorted([TRIGGERED, ARMED])
+
+    def test_a_frozen_body_with_no_card_list_leaves_the_badges_at_the_number_of_cards(self):
+        """The closed branch once carried no card list, and the badges read 0 on every poll."""
+        listless = copy.deepcopy(_frozen())
+        del listless["symphonies"]
+        r = _run(
+            r"""
+        await H.boot({ extras: true });
+        await poll(H.bodies.listless);
+        return { badges: badges(), active: visibleIn('active'), standby: visibleIn('standby') };
+        """,
+            listless=listless,
+        )
+        assert r["badges"] == {"active": str(r["active"]), "standby": str(r["standby"])}
+        assert r["active"] + r["standby"] == 2, "the render's cards must still be on the page"
+
+    def test_a_scalar_or_a_nameless_entry_in_the_state_map_is_not_counted_as_a_card(self):
+        padded = copy.deepcopy(_frozen())
+        for key in ("bot_state", "state"):
+            if isinstance(padded.get(key), dict):
+                padded[key]["last_successful_cycle_at"] = "2026-10-21T16:00:41-04:00"
+                padded[key]["post_mortem_run"] = {"ran": True}
+        r = _run(
+            r"""
+        await H.boot({ extras: true });
+        await poll(H.bodies.padded);
+        return { badges: badges(), active: visibleIn('active'), standby: visibleIn('standby') };
+        """,
+            padded=padded,
+        )
+        assert r["badges"] == {"active": str(r["active"]), "standby": str(r["standby"])}
 
     def test_after_picking_an_account_the_badges_count_only_the_cards_shown(self):
         other = "a6c0f6a2-1b7e-4a3d-9f58-3d2c7e5b9a10"  # a second account's id, not a real one

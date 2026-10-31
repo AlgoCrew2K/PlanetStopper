@@ -619,7 +619,9 @@ class TestThePanelsFollowThePoll:
             zero=_with_panels(_same_stamp(world), vars_locked_count=0),
         )
         assert r["three"] == {"hidden": False, "text": "3"}
-        assert r["zero"]["hidden"] is True
+        assert r["zero"]["hidden"] is True and r["zero"]["text"] == "", (
+            "a badge hidden at zero must also be empty (the server render's empty state)"
+        )
 
     def test_a_part_whose_read_failed_keeps_what_the_page_shows(self):
         world = hx.get_world(PANELS_WORLD)
