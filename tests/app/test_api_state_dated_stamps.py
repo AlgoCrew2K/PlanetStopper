@@ -83,10 +83,12 @@ class TestFrozenBranchStatesItsTradingDay:
             "the hero's as-of text must read the same dated stamp as the poll"
         )
 
-    def test_before_the_close_step_commits_the_earlier_snapshot_is_flagged(
+    def test_before_the_close_step_commits_the_session_that_just_closed_is_served(
         self, monkeypatch, tmp_path
     ):
-        # 16:00:20: the session is over but the close step has not stored today's snapshot.
+        # 16:00:20: the session is over but the close step has not stored today's snapshot. The
+        # page serves the last committed state of the session that closed, never the earlier
+        # snapshot, and the ordinary gap is not yet a missing snapshot.
         world = snapshot_world(
             monkeypatch, tmp_path, et(CAPTURE_DAY, "16:00:20"), trading_day=PREVIOUS_DAY
         )
@@ -94,11 +96,12 @@ class TestFrozenBranchStatesItsTradingDay:
         body = world.poll()
 
         assert body["market_state"] == "closed_frozen"
-        assert body.get("trading_day") == PREVIOUS_DAY
-        assert body.get("snapshot_is_previous_session") is True
+        assert body.get("trading_day") == CAPTURE_DAY
+        assert body.get("snapshot_is_previous_session") is False
         assert_every_stamp(
-            body, close_stamp(PREVIOUS_DAY, previous=True), "snapshot of the earlier session"
+            body, close_stamp(CAPTURE_DAY), "session that just closed, snapshot not yet stored"
         )
+        assert "close_snapshot_missing" not in body["degraded_reasons"]
 
     def test_the_last_finished_session_carries_no_marker_on_monday_morning(
         self, monkeypatch, tmp_path
@@ -185,18 +188,25 @@ class TestFrozenBranchStatesItsTradingDay:
         )
 
     @pytest.mark.parametrize("clock", ["17:00:00", "19:30:00", "23:30:00"])
-    def test_a_missing_session_snapshot_is_flagged_on_every_evening_poll(
+    def test_a_missing_session_snapshot_serves_the_closed_session_and_says_so_on_every_poll(
         self, monkeypatch, tmp_path, clock
     ):
-        # The daemon was down across today's close, so only yesterday's snapshot exists.
+        # The daemon was down across today's close, so only yesterday's snapshot is stored. The
+        # figures are the closed session's last committed state, held all evening, and the poll
+        # states that the snapshot is missing.
         world = snapshot_world(
             monkeypatch, tmp_path, et(CAPTURE_DAY, clock), trading_day=PREVIOUS_DAY
         )
 
         body = world.poll()
 
-        assert body.get("snapshot_is_previous_session") is True, clock
-        assert_every_stamp(body, close_stamp(PREVIOUS_DAY, previous=True), clock)
+        assert body.get("trading_day") == CAPTURE_DAY, clock
+        assert body.get("snapshot_is_previous_session") is False, clock
+        assert_every_stamp(body, close_stamp(CAPTURE_DAY), clock)
+        assert "close_snapshot_missing" in body["degraded_reasons"], clock
+        assert (
+            "close_snapshot_missing" in world.client.get("/health").get_json()["degraded_reasons"]
+        ), clock
 
     def test_half_day_before_the_close_step_commits_flags_the_earlier_snapshot(
         self, monkeypatch, tmp_path

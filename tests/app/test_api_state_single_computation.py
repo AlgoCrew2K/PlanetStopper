@@ -102,26 +102,54 @@ class TestHeroAndRowsAreOneComputation:
         )
         _assert_meta_repeats_strip(body, f"{branch}, account totals unavailable")
 
-    @pytest.mark.parametrize("branch", BRANCHES)
-    def test_two_polls_in_flight_together_each_hold_the_relations(
-        self, monkeypatch, tmp_path, branch
-    ):
-        seeded_world(monkeypatch, tmp_path, branch)
+    def test_two_open_polls_in_flight_together_each_hold_the_relations(self, monkeypatch, tmp_path):
+        # An open market computes every request, so the rendezvous proves both are mid-build.
+        seeded_world(monkeypatch, tmp_path, "open")
         rendezvous = threading.Barrier(2)
         install_account_total_drift(monkeypatch, rendezvous=rendezvous)
 
-        def poll_once() -> tuple[int, dict]:
-            with app_module.app.test_client() as client:
-                response = client.get("/api/state")
-                return response.status_code, response.get_json()
+        results = _poll_state_together(2)
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(poll_once) for _ in range(2)]
-            results = [future.result(timeout=90) for future in futures]
+        for status, body in results:
+            assert status == 200, f"open: a poll in flight answered {status}: {body}"
+            _assert_meta_repeats_strip(body, "open, two polls in flight")
+
+    @pytest.mark.parametrize("branch", CLOSED_BRANCHES)
+    def test_two_closed_polls_in_flight_together_each_hold_the_relations(
+        self, monkeypatch, tmp_path, branch
+    ):
+        # A closed market builds a result once per snapshot and the second poll waits for it, so
+        # the two cannot be held mid-build together (a rendezvous inside the build would never
+        # be reached by the peer). Both start together, the account totals move after every
+        # computation, and each response must still repeat its rows in its hero, with the one
+        # computation shared.
+        seeded_world(monkeypatch, tmp_path, branch)
+        drift = install_account_total_drift(monkeypatch)
+
+        results = _poll_state_together(2)
 
         for status, body in results:
             assert status == 200, f"{branch}: a poll in flight answered {status}: {body}"
             _assert_meta_repeats_strip(body, f"{branch}, two polls in flight")
+        assert drift["calls"] == 1, (
+            f"{branch}: two polls in flight together ran {drift['calls']} default-window strip "
+            "computations; a closed market computes once and the peer waits for it"
+        )
+
+
+def _poll_state_together(count: int) -> list[tuple[int, dict]]:
+    """`count` GET /api/state requests released at the same moment, each on its own client."""
+    start = threading.Barrier(count)
+
+    def poll_once() -> tuple[int, dict]:
+        with app_module.app.test_client() as client:
+            start.wait(timeout=30)
+            response = client.get("/api/state")
+            return response.status_code, response.get_json()
+
+    with ThreadPoolExecutor(max_workers=count) as pool:
+        futures = [pool.submit(poll_once) for _ in range(count)]
+        return [future.result(timeout=90) for future in futures]
 
 
 class TestOneComputationPerRequest:
