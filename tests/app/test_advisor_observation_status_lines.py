@@ -248,7 +248,9 @@ class TestExpanders:
         raw = case_row("guardrail_clear")["raw_response"]
         for row, (row_id, created_at, key) in zip(rows, newest_first, strict=True):
             symphony = row.find("obs-symphony")
-            assert symphony.text() == names[key], "the row names the symphony, not its stored key"
+            assert symphony.text() == names[key].strip(), (
+                "the row names the symphony, not its stored key"
+            )
             assert key not in symphony.text() or key == names[key]
             assert row.find("obs-time").text() == analytics.format_et_stamp(created_at)
             assert row.find("obs-verdict").text() == case_row("guardrail_clear")["verdict"]

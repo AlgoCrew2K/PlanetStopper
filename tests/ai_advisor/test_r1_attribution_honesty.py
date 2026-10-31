@@ -176,7 +176,7 @@ def test_ac2_market_prism_block_carries_model_attribution(client, monkeypatch):
     attribution finding)."""
     html = _get_html(client, monkeypatch)
     block = _extract_by_testid(
-        html, "market-prism-block", closing_tag='data-testid="advisor-controls"'
+        html, "market-prism-block", closing_tag='data-testid="advisor-observations-section"'
     )
     block_lower = block.lower()
     assert "opus" in block_lower or "claude" in block_lower, (
@@ -193,7 +193,7 @@ def test_ac2_market_prism_attribution_reflects_resolved_model_accessor_not_hardc
     monkeypatch.setenv("ADVISOR_SYNTHESIS_MODEL", "test-marker-prism-model")
     html = _get_html(client, monkeypatch)
     block = _extract_by_testid(
-        html, "market-prism-block", closing_tag='data-testid="advisor-controls"'
+        html, "market-prism-block", closing_tag='data-testid="advisor-observations-section"'
     )
     assert "test-marker-prism-model" in block, (
         "AC-2 GAP: setting ADVISOR_SYNTHESIS_MODEL did not change the "

@@ -1252,7 +1252,7 @@ def _store_cases(case: str, times: int = 1, **overrides) -> None:
 
 
 def _counts(roles=None) -> dict:
-    return db_module.count_advisor_observations_by_role(roles or _COUNT_ROLES)
+    return db_module.count_advisor_observations_by_role(_COUNT_ROLES if roles is None else roles)
 
 
 def test_count_by_role_equals_the_rows_inserted_for_each_requested_role():
