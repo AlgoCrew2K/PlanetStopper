@@ -10,7 +10,8 @@
     cycle line on the timing logger through ``_log_skipped_minute(record)`` and emits the event.
   - ``trigger_alpha_bot``'s ``finally`` ends the run slot (``_end_engine_run(cycle_id)``) before it
     publishes, each in its own guard, so a publishing fault never leaves the slot taken.
-  - Nothing kills an engine: a hung run is reported and each minute skipped until it exits.
+  - A hung run is reported and each minute skipped until it exits or reaches the bound that ends
+    a run (tests/app/test_engine_run_bound.py).
   - A thread that cannot start frees the slot and logs one ERROR; the next ``:00`` spawns normally.
 
 The engine process is replaced by ``StubEngine`` (tests/app/conftest.py), which blocks on an
@@ -192,7 +193,7 @@ class TestSkippedMinute:
             "the second run may only start after the first ended"
         )
 
-    def test_a_hung_engine_is_never_killed_and_every_minute_is_skipped(
+    def test_a_hung_engine_inside_the_session_bound_is_not_signalled_and_every_minute_is_skipped(
         self,
         stub_engine,
         et_clock,
@@ -201,6 +202,9 @@ class TestSkippedMinute:
         join_engine_threads,
         monkeypatch,
     ):
+        """Nine minutes after the start, short of the 600 second bound that ends a run begun in
+        the session (tests/app/test_engine_run_bound.py): nothing is signalled and each minute is
+        skipped."""
         kills: list = []
         monkeypatch.setattr(app_module.os, "kill", lambda *a, **k: kills.append(a), raising=False)
         stub_engine.hold = True
@@ -208,18 +212,18 @@ class TestSkippedMinute:
         assert stub_engine.started.wait(timeout=_WAIT_S)
         first_id = _run_state().cycle_id
 
-        for _ in range(10):
+        for _ in range(9):
             et_clock.now += timedelta(minutes=1)
             monotonic_clock.advance(60.0)
             app_module.threaded_trigger()
 
         assert stub_engine.starts == 1
-        assert len([r for r in published_cycles if r.outcome == "skipped"]) == 10
+        assert len([r for r in published_cycles if r.outcome == "skipped"]) == 9
         assert all(
             r.running_cycle_id == first_id for r in published_cycles if r.outcome == "skipped"
         )
-        assert _engine_threads(), "the daemon must not end the engine run"
-        assert kills == [], "the daemon must not signal the engine"
+        assert _engine_threads(), "a run inside the bound must not be ended"
+        assert kills == [], "a run inside the bound must not be signalled"
         assert _run_state() is not None
         stub_engine.release.set()
         assert join_engine_threads()
