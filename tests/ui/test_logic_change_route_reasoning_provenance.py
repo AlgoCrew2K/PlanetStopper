@@ -290,15 +290,25 @@ def test_default_provenance_generation_model_is_empty_when_family_unresolved(
 
 
 @pytest.fixture
-def route_world(monkeypatch):
-    """Factory: build a fake over a models page and wire the route and engine collaborators to it."""
+def route_world(_stub_database_load_state_for_advisor_routes):
+    """Factory: build a fake over a models page and wire the route and engine collaborators to it.
+
+    The world replaces database.load_state, which the suite's autouse stub has already replaced.
+    Its own patches are undone when this fixture ends, which is before the stub's because this
+    fixture depends on it; the test's shared monkeypatch is undone after the stub and would put
+    the stub back on the module for every later test in the worker.
+    """
+    patches = pytest.MonkeyPatch()
 
     def _build(page: str = support.CAPTURED_MODELS_PAGE):
         fake = support.new_fake(page)
-        spy = support.install_route_world(monkeypatch, fake)
+        spy = support.install_route_world(patches, fake)
         return fake, spy
 
-    return _build
+    try:
+        yield _build
+    finally:
+        patches.undo()
 
 
 @pytest.mark.parametrize("page", [support.CAPTURED_MODELS_PAGE, support.RELISTED_MODELS_PAGE])

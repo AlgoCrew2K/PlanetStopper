@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import app as app_module
+from tests._timing_capture import TIMING_LOGGER_NAME
 
 _ET = ZoneInfo("America/New_York")
 _SATURDAY_NOON = datetime(2026, 10, 24, 12, 0, 0, tzinfo=_ET)
@@ -178,7 +179,13 @@ class TestSkippedMinuteLine:
             app_module.threaded_trigger()
 
         _one(timing_records.of("cycle"))
-        assert [r for r in caplog.records if "skipped" in r.getMessage()] == []
+        # The one cycle line is the timing line asserted above; from pytest 9 caplog also holds
+        # the lines of non-propagating loggers, so that logger is left out of the second-line check.
+        assert [
+            r
+            for r in caplog.records
+            if r.name != TIMING_LOGGER_NAME and "skipped" in r.getMessage()
+        ] == []
 
 
 class TestOneLinePerRunThroughTheScheduler:

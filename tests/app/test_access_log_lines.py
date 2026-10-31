@@ -101,15 +101,16 @@ def _assert_whole_line(text: str, method: str):
 
 class TestOneLinePerRequest:
     def test_get_api_state_logs_method_path_status_duration_and_size(
-        self, client, timing_records, timing_clock, monkeypatch
+        self, client, timing_records, timing_clock
     ):
         def state():
             timing_clock.advance(0.125)
             return dict(_STUB_STATE)
 
-        monkeypatch.setattr(app_module, "get_api_state_dict", state)
-
-        response = client.get("/api/state", buffered=True)
+        # A context manager inside the test is undone before the suite's autouse stub of the
+        # same name; a monkeypatch undo runs after it and would put the stub back for good.
+        with patch.object(app_module, "get_api_state_dict", state):
+            response = client.get("/api/state", buffered=True)
 
         assert response.status_code == 200
         line = _one(_access(timing_records, "/api/state"))
