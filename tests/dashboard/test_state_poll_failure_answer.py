@@ -86,7 +86,8 @@ def _run(tmp_path, fx, bodies, scenario: str) -> dict:
           H.release(H.deferredUrls().length - 1, H.params.ok);
           await H.flush();
           """
-        + scenario,
+        + scenario
+        + "}",
         html=html,
         routes={"/api/state": bodies["ok"]},
         params={"ok": bodies["ok"], "error": bodies["error"]},
