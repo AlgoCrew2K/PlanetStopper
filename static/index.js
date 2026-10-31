@@ -645,18 +645,26 @@
             : 'Early exit · gave up ' + Math.abs(ga).toFixed(1) + '%α';
     }
 
-    // Writes only the text span and un-hides the "at exit" qualifier. An absent
-    // guard_alpha writes nothing: the closed-market body carries none, and
-    // overwriting the painted verdict with a dash would flash it away.
-    function writeVerdict(verdict, ga) {
+    // The figure is the exit return minus the card's current return: it moves with the card
+    // while the market is open and is fixed at the capture after the close.
+    function verdictBasisLabel(marketState) {
+        return marketState === 'open' ? 'vs held now' : 'at close';
+    }
+
+    // Writes the text span and the basis label beside it, and un-hides the label. An absent
+    // guard_alpha writes nothing: the card keeps its dash and a hidden label.
+    function writeVerdict(verdict, ga, marketState) {
         if (verdict == null || typeof ga !== 'number' || !isFinite(ga)) return;
         var textEl = verdict.querySelector('[data-field="verdict-text"]');
         if (textEl) textEl.textContent = verdictText(ga);
-        var qualifier = verdict.querySelector('[data-testid="guard-alpha-at-exit"]');
-        if (qualifier) qualifier.removeAttribute('hidden');
+        var qualifier = verdict.querySelector('[data-testid="guard-alpha-basis"]');
+        if (qualifier) {
+            qualifier.textContent = verdictBasisLabel(marketState);
+            qualifier.removeAttribute('hidden');
+        }
     }
 
-    function updateVerdicts(botState) {
+    function updateVerdicts(botState, marketState) {
         var cards = document.querySelectorAll('[data-testid="triggered-verdict"]');
         cards.forEach(function (el) {
             var card = el.closest('[data-testid="sym-card"]');
@@ -666,7 +674,7 @@
             if (!symId) return;
             var sym = (botState || {})[symId];
             if (!sym) return;
-            writeVerdict(el, sym.guard_alpha);
+            writeVerdict(el, sym.guard_alpha, marketState);
         });
     }
 
@@ -1548,7 +1556,7 @@
                 if (verdict != null) {
                     if (sym.triggered) {
                         verdict.style.display = '';
-                        writeVerdict(verdict, sym.guard_alpha);
+                        writeVerdict(verdict, sym.guard_alpha, data.market_state);
                     } else {
                         verdict.style.display = 'none';
                     }
@@ -1730,16 +1738,10 @@
             function () { renderHeroChart(meta); },
             function () { renderGuardAlpha(data); },
             function () { updateComparisonRows(data); },
-            function () { updateVerdicts(botState); },
+            function () { updateVerdicts(botState, data.market_state); },
             function () { if (typeof window.updateBanners === 'function') window.updateBanners(data); },
             function () { updateMiniStats(meta); },
-            function () { updateStatusStrip(meta); },
             function () { chartsSettled = loadCharts(botState); },
-            function () {
-                var elTicker = document.getElementById('hero-ticker');
-                if (elTicker && data.ticker_price != null) elTicker.textContent = data.ticker_price;
-            },
-            function () { updateMarketDot(data); },
             function () { if (typeof window.updateChromeTicker === 'function') window.updateChromeTicker(data); },
             // cards-live: refresh per-symphony card value spans from data.symphonies.
             // Reuses POLL_INTERVAL_MS — no new timer. Cards stay live between hard-refreshes.
@@ -1763,30 +1765,6 @@
         if (elArmed) elArmed.textContent = meta.armed != null ? meta.armed : 0;
         var elTriggered = document.getElementById('hero-triggered');
         if (elTriggered) elTriggered.textContent = meta.triggered != null ? meta.triggered : 0;
-    }
-
-    function updateMarketDot(data) {
-        var meta = data.meta || {};
-        var dot = document.querySelector('.status-dot');
-        if (!dot) return;
-        if (meta.market_state === 'open') {
-            dot.classList.remove('closed');
-        } else {
-            dot.classList.add('closed');
-        }
-    }
-
-    function updateStatusStrip(meta) {
-        var label = document.getElementById('market-label');
-        if (label && meta.market_state_label) label.textContent = meta.market_state_label;
-
-        var triggers = (meta.triggers_today) || {};
-        var chipTs = document.getElementById('strip-chip-trailing');
-        var chipTp = document.getElementById('strip-chip-tp');
-        var chipVwap = document.getElementById('strip-chip-vwap');
-        if (chipTs) chipTs.textContent = 'Trailing stop: ' + (triggers.trailing_stop || 0);
-        if (chipTp) chipTp.textContent = 'Take-profit: ' + (triggers.take_profit || 0);
-        if (chipVwap) chipVwap.textContent = 'VWAP: ' + (triggers.vwap || 0);
     }
 
     // ---------------------------------------------------------------------------
@@ -1966,7 +1944,7 @@
     document.addEventListener('DOMContentLoaded', function () {
         try { paintFirstFrame(); } catch (e) { console.error('first paint error:', e); }
 
-        // Poll floor is 15 s — matches the engine's minute cadence (see POLL_INTERVAL_MS).
+        // Poll every 30 s (POLL_INTERVAL_MS); the engine writes once a minute.
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
 

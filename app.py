@@ -2434,6 +2434,7 @@ def _inject_guard_alpha(*entry_maps: dict) -> None:
 
     Shared by GET / (first paint) and get_state (poll) so both carry one number.
     setdefault keeps a value already on the entry; any failure leaves verdicts at the dash.
+    An entry with no current_return gets no figure: an absent return is not a 0.0 return.
     """
     try:
         triggered_ids = list(
@@ -2449,7 +2450,9 @@ def _inject_guard_alpha(*entry_maps: dict) -> None:
         for sid, ga in database.get_guard_alpha_by_symphony(triggered_ids).items():
             for entries in entry_maps:
                 if sid in entries and isinstance(entries[sid], dict):
-                    cr = entries[sid].get("current_return") or 0.0
+                    cr = entries[sid].get("current_return")
+                    if cr is None:
+                        continue
                     entries[sid].setdefault("guard_alpha", round(float(ga) - float(cr), 6))
     except Exception:
         pass
@@ -2571,6 +2574,8 @@ def _render_dashboard(
     view = _portfolio_view(live_state, market_state, shadow_conn)
     bot_state = view["state"] or {}
     if view["branch"] == "frozen":
+        # Before the defaults fill a missing current_return with 0.0.
+        _inject_guard_alpha(bot_state)
         _normalize_frozen_symphonies(view["snapshot"])
     portfolio_strip = _strip_with_hist_fallback(view["portfolio_strip"], shadow_conn, live_state)
     meta = _build_meta(bot_state, market_state=market_state, portfolio_strip=portfolio_strip)
@@ -2677,9 +2682,10 @@ def _render_dashboard(
 
     # First paint carries the verdict and dial text the client would write on its
     # first poll, so the card never shows a placeholder before then.
-    _inject_guard_alpha(
-        bot_state, {s["id"]: s for s in symphonies if isinstance(s, dict) and s.get("id")}
-    )
+    if view["branch"] != "frozen":
+        _inject_guard_alpha(
+            bot_state, {s["id"]: s for s in symphonies if isinstance(s, dict) and s.get("id")}
+        )
     for _s in symphonies:
         if isinstance(_s, dict):
             _s.update(_first_paint_verdict(_s))
@@ -2742,6 +2748,9 @@ def _render_dashboard(
     return render_template(
         "index.html",
         engine_phase=engine_phase,
+        # The figure is the exit return minus the card's current return: live while the
+        # market is open, fixed at the capture after the close.
+        verdict_basis_label="vs held now" if market_state == "open" else "at close",
         vars_locked_count=vars_locked_count,
         active_route="dashboard",
         meta=meta,
@@ -2879,22 +2888,6 @@ def _build_meta(
     clock_et = datetime.now(_ET).strftime("%I:%M:%S %p ET")
     next_run_str = f"{next_run_seconds // 60:02d}:{next_run_seconds % 60:02d}"
 
-    # Build triggers_today counts from exit_triggers (D-DAT-R04).
-    _today_start = datetime.now(_ET).strftime("%Y-%m-%d") + "T00:00:00Z"
-    _triggers_today: dict = {"trailing_stop": 0, "take_profit": 0, "vwap": 0}
-    try:
-        _today_exits = database.get_triggers(since=_today_start, limit=500)
-        for _t in _today_exits:
-            _reason = (_t.get("triggered_reason") or "").lower()
-            if "trailing" in _reason:
-                _triggers_today["trailing_stop"] += 1
-            elif "take" in _reason or "profit" in _reason:
-                _triggers_today["take_profit"] += 1
-            elif "vwap" in _reason:
-                _triggers_today["vwap"] += 1
-    except Exception:
-        pass
-
     # Build meta.portfolio from portfolio_strip (AC-C2 Hero chart data).
     ps = portfolio_strip or {}
     tc_data = ps.get("today_change") or {}
@@ -2966,7 +2959,6 @@ def _build_meta(
         "market_state_label": ms_label,
         "clock_et": clock_et,
         "portfolio": portfolio_meta,
-        "triggers_today": _triggers_today,
     }
 
 
@@ -4025,6 +4017,65 @@ def _strip_with_hist_fallback(
     return strip
 
 
+def _sym_status(s: dict) -> str:
+    if s.get("triggered"):
+        return "triggered"
+    if s.get("para_armed"):
+        return "para_armed"
+    if s.get("tp_armed"):
+        return "tp_armed"
+    if s.get("armed"):
+        return "armed"
+    return "standby"
+
+
+def _tc_cr_mdd_floats(s: dict) -> tuple:
+    tc = s.get("_tc") or {}
+    cr = s.get("_cr") or {}
+    mdd = s.get("_mdd") or {}
+    # F-016 (3rd locus): the trailing `or None` this function used to have
+    # converted a genuine 0.0 (falsy in Python) into a fabricated null --
+    # `.get()` on a missing key already returns None, so `or None` was
+    # redundant AND the only thing silently misrendering a real "no change
+    # today" (or cumulative/MDD) value as the empty-state '--' on every
+    # /api/state poll. Same pattern, same fix, on all six fields.
+    tc_bot = tc.get("dry_run") if isinstance(tc, dict) else tc
+    tc_held = tc.get("if_held") if isinstance(tc, dict) else None
+    cr_bot = cr.get("dry_run") if isinstance(cr, dict) else cr
+    cr_held = cr.get("if_held") if isinstance(cr, dict) else None
+    mdd_bot = mdd.get("dry_run") if isinstance(mdd, dict) else mdd
+    mdd_held = mdd.get("if_held") if isinstance(mdd, dict) else None
+    return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
+
+
+def _symphony_card(sym_id: str, s: dict) -> dict:
+    """One card of the /api/state `symphonies` list, built from a state or snapshot entry."""
+    _tc_b, _tc_h, _cr_b, _cr_h, _mdd_b, _mdd_h = _tc_cr_mdd_floats(s)
+    return {
+        "id": sym_id,
+        "account": s.get("account"),
+        "status": _sym_status(s),
+        # Raw bot_state fields needed for card status pill + MC dial refresh.
+        "current_return": s.get("current_return"),
+        "stop_trigger": s.get("stop_trigger"),
+        "mc_prob": s.get("mc_prob"),
+        "armed": bool(s.get("armed")),
+        "tp_armed": bool(s.get("tp_armed")),
+        "para_armed": bool(s.get("para_armed")),
+        "triggered": bool(s.get("triggered")),
+        "triggered_reason": s.get("triggered_reason"),
+        # guard_alpha for the outcome banner on triggered cards (see _inject_guard_alpha).
+        "guard_alpha": s.get("guard_alpha"),
+        # Analytics-derived display values.
+        "tc_bot": _tc_b,
+        "tc_held": _tc_h,
+        "cr_bot": _cr_b,
+        "cr_held": _cr_h,
+        "mdd_bot": _mdd_b,
+        "mdd_held": _mdd_h,
+    }
+
+
 @app.route("/api/state")
 def get_state():
     _shadow_conn = None
@@ -4167,6 +4218,8 @@ def get_state():
                 if _acc_trad:
                     _account_labels_frozen[_acc_trad] = "Trad. IRA"
 
+                # Before the defaults fill a missing current_return with 0.0.
+                _inject_guard_alpha(_state)
                 _normalize_frozen_symphonies(snapshot)
                 _frozen_stamps = _snapshot_stamps(snapshot, _req_now_et)
 
@@ -4204,6 +4257,11 @@ def get_state():
                         "portfolio_strip": _portfolio_strip,
                         "shadow_divergence": sd,
                         "accounts_map": snapshot.get("accounts_map"),
+                        "symphonies": [
+                            _symphony_card(_id, _e)
+                            for _id, _e in _state.items()
+                            if isinstance(_e, dict)
+                        ],
                         "fleet_correlation_alert": _alert,
                         "html": _frozen_html,
                         "meta": _build_meta(
@@ -4475,64 +4533,7 @@ def get_state():
         # Build per-symphony list for card live-refresh (cards-live).
         # Reuses _tc/_cr/_mdd already attached above — no re-computation.
         # Status priority: triggered > para_armed > tp_armed > armed > standby.
-        def _sym_status(s: dict) -> str:
-            if s.get("triggered"):
-                return "triggered"
-            if s.get("para_armed"):
-                return "para_armed"
-            if s.get("tp_armed"):
-                return "tp_armed"
-            if s.get("armed"):
-                return "armed"
-            return "standby"
-
-        def _tc_cr_mdd_floats(s: dict) -> tuple:
-            tc = s.get("_tc") or {}
-            cr = s.get("_cr") or {}
-            mdd = s.get("_mdd") or {}
-            # F-016 (3rd locus): the trailing `or None` this function used to have
-            # converted a genuine 0.0 (falsy in Python) into a fabricated null --
-            # `.get()` on a missing key already returns None, so `or None` was
-            # redundant AND the only thing silently misrendering a real "no change
-            # today" (or cumulative/MDD) value as the empty-state '--' on every
-            # /api/state poll. Same pattern, same fix, on all six fields.
-            tc_bot = tc.get("dry_run") if isinstance(tc, dict) else tc
-            tc_held = tc.get("if_held") if isinstance(tc, dict) else None
-            cr_bot = cr.get("dry_run") if isinstance(cr, dict) else cr
-            cr_held = cr.get("if_held") if isinstance(cr, dict) else None
-            mdd_bot = mdd.get("dry_run") if isinstance(mdd, dict) else mdd
-            mdd_held = mdd.get("if_held") if isinstance(mdd, dict) else None
-            return tc_bot, tc_held, cr_bot, cr_held, mdd_bot, mdd_held
-
-        _symphonies_for_cards: list[dict] = []
-        for _k in symphony_keys:
-            _s = state_data[_k]
-            _tc_b, _tc_h, _cr_b, _cr_h, _mdd_b, _mdd_h = _tc_cr_mdd_floats(_s)
-            _symphonies_for_cards.append(
-                {
-                    "id": _k,
-                    "status": _sym_status(_s),
-                    # Raw bot_state fields needed for card status pill + MC dial refresh.
-                    "current_return": _s.get("current_return"),
-                    "stop_trigger": _s.get("stop_trigger"),
-                    "mc_prob": _s.get("mc_prob"),
-                    "armed": bool(_s.get("armed")),
-                    "tp_armed": bool(_s.get("tp_armed")),
-                    "para_armed": bool(_s.get("para_armed")),
-                    "triggered": bool(_s.get("triggered")),
-                    "triggered_reason": _s.get("triggered_reason"),
-                    # guard_alpha for the outcome banner on triggered cards.
-                    # Injected above from database.get_guard_alpha_by_symphony().
-                    "guard_alpha": _s.get("guard_alpha"),
-                    # Analytics-derived display values.
-                    "tc_bot": _tc_b,
-                    "tc_held": _tc_h,
-                    "cr_bot": _cr_b,
-                    "cr_held": _cr_h,
-                    "mdd_bot": _mdd_b,
-                    "mdd_held": _mdd_h,
-                }
-            )
+        _symphonies_for_cards = [_symphony_card(_k, state_data[_k]) for _k in symphony_keys]
 
         _narrowed_state = {
             k: v
