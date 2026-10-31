@@ -602,3 +602,88 @@ def test_api_performance_invalid_scope_returns_400(client, mock_analytics):
     assert body is not None
     has_error_signal = body.get("status") == "error" or "error" in body or "message" in body
     assert has_error_signal, f"invalid-scope 400 must include an error/message field, got {body!r}"
+
+
+# ---------------------------------------------------------------------------
+# A stored review run changes no figure on any other surface
+# ---------------------------------------------------------------------------
+
+
+class TestReviewRunLeavesOtherSurfacesUnchanged:
+    """The review is read-only evidence about each symphony. Storing a run must not
+    move a number on the Performance tab, the History tab, the hero or the state
+    poll, which are all computed from shadow history and post-mortem files."""
+
+    _URLS = (
+        "/api/performance?scope=aggregate&days=30",
+        "/api/history/30",
+        "/api/hero-chart/30d",
+        "/api/strip/30d",
+        "/api/performance/symphonies",
+        "/api/guard-alpha-summary",
+        "/api/state",
+        "/",
+    )
+
+    @staticmethod
+    def _recent_days(n):
+        import datetime
+
+        today = datetime.date.today()
+        return [(today - datetime.timedelta(days=i)).isoformat() for i in range(n, 0, -1)]
+
+    # Fields of the state poll that follow the wall clock and so differ between two reads
+    # whatever is stored: the seconds to the next minute, its mm:ss text and the clock.
+    _CLOCK_FIELDS = (("next_run_seconds",), ("meta", "next_run"), ("meta", "clock_et"))
+
+    @classmethod
+    def _without_clock_fields(cls, body: str) -> str:
+        import json
+
+        data = json.loads(body)
+        for path in cls._CLOCK_FIELDS:
+            node = data
+            for key in path[:-1]:
+                node = node.get(key, {}) if isinstance(node, dict) else {}
+            if isinstance(node, dict):
+                node.pop(path[-1], None)
+        return json.dumps(data, sort_keys=True)
+
+    def _snapshot(self, client):
+        out = {}
+        for url in self._URLS:
+            resp = client.get(url)
+            body = resp.get_data(as_text=True)
+            if url == "/api/state":
+                body = self._without_clock_fields(body)
+            out[url] = (resp.status_code, body)
+        return out
+
+    def test_storing_a_completed_run_changes_none_of_their_responses(
+        self, client, tmp_path, monkeypatch
+    ):
+        from tests.advisors._retirement_recommender_reference import seed_state_db
+        from tests.app import _tenure_review_panel_builders as pb
+
+        days = self._recent_days(40)
+        seed_state_db(
+            tmp_path,
+            monkeypatch,
+            series_by_symphony={
+                "sym-a": {d: (0.08 * i, 0.10 * i) for i, d in enumerate(days)},
+                "sym-b": {d: (0.05 * i, 0.04 * i) for i, d in enumerate(days)},
+            },
+            filename="performance_with_review.db",
+        )
+        before = self._snapshot(client)
+        assert all(status == 200 for status, _ in before.values())
+
+        record = pb.full_record()
+        pb.store_run(record)
+        # The run is really stored and served, so equality below is not an empty store.
+        served = pb.strict_json(client.get("/api/retirement-recommendations"))
+        assert served["review_run"]["run_id"] == record["run_id"]
+        assert len(served["review_entries"]) == len(record["entries"])
+
+        after = self._snapshot(client)
+        assert after == before

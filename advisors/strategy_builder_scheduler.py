@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+import model_config
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -100,6 +102,7 @@ def _already_ran_this_week() -> bool:
 # ---------------------------------------------------------------------------
 
 
+@model_config.pin_run
 def run_weekly_build() -> None:
     """Run the real builder for all four objectives, then the Frontrunner
     Builder over all live symphonies; skip if already ran this week.
@@ -160,7 +163,7 @@ def run_weekly_build() -> None:
                     attempt,
                     MAX_ATTEMPTS,
                 )
-                propose_strategies(
+                run = propose_strategies(
                     objective=objective,
                     universe=[],  # self-source from C1 (Q2-A)
                     screen_config=ScreenConfig(),
@@ -171,6 +174,13 @@ def run_weekly_build() -> None:
                     # HTTP route and a direct engine call.
                     invocation_source="weekly-scheduler",
                 )
+                reason = getattr(run, "generation_reason", None)
+                if isinstance(reason, str) and reason:
+                    logger.warning(
+                        "strategy_builder_scheduler: objective=%s generated nothing (%s)",
+                        objective.value,
+                        reason,
+                    )
                 logger.info("strategy_builder_scheduler: objective=%s completed", objective.value)
                 break  # success — no retry needed
             except Exception as exc:

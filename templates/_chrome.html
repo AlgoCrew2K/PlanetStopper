@@ -48,9 +48,10 @@
   <!-- Right-rail: status cluster (shrinks gracefully; ET clock hides at narrow widths) -->
   <div style="display:flex;align-items:center;gap:clamp(6px,0.8vw,14px);flex-shrink:1;min-width:0;overflow:hidden;">
     <!-- Single Live/Stale/Closed indicator — updated by chrome.js updateEngineStatus() on each poll -->
-    <span id="engine-status" data-testid="engine-status" style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;flex-shrink:0;">
-      <span id="engine-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{% if meta is defined and meta.system_online %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};flex-shrink:0;"></span>
-      <span id="engine-status-label" style="color:{% if meta is defined and meta.system_online %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};">{% if meta is defined and meta.system_online %}Live{% elif meta is defined %}Closed{% else %}Closed{% endif %}</span>
+    {% set _paused = meta is defined and meta.system_online and engine_phase is defined and engine_phase in ('blackout', 'opening') %}
+    <span id="engine-status" data-testid="engine-status"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %} style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;flex-shrink:0;">
+      <span id="engine-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};flex-shrink:0;"></span>
+      <span id="engine-status-label" style="color:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};">{% if _paused %}{% if engine_phase == 'blackout' %}Rebalance pause{% else %}Opening{% endif %}{% elif meta is defined and meta.system_online %}Live{% else %}Closed{% endif %}</span>
     </span>
     <span data-testid="et-clock" id="et-clock" class="studio-nav-wide" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.04em;color:var(--studio-ink-dim);white-space:nowrap;">--:--:--</span>
     <!-- NEXT countdown — ticks every second via chrome.js; hidden when market closed -->

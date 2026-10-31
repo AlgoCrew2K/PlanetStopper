@@ -1,7 +1,8 @@
 """RED tests -- Cycle 2c AC-2: display names threaded into the explainer prompt.
 
-feature-plans/retirement-approval-polish.md AC-2: the 03:45 tick worker
-(app._retirement_recommender_tick_worker) enriches each recommendation dict
+feature-plans/retirement-approval-polish.md AC-2: both producers of recommendations (the tenure review job,
+app._tenure_review_job, and the Cycle 2e recommender worker,
+app._retirement_recommender_tick_worker) enrich each recommendation dict
 with candidate_name/sibling_name (resolved from database.load_state()) BEFORE
 calling advisors.retirement_explainer.explain_recommendation, so the fable-5
 prompt is grounded in readable names and the persisted raw_response.explanation
@@ -45,6 +46,8 @@ from tests._anthropic_site_harness import (
     served_by,
     text_of,
 )
+from tests.app import _tenure_review_job_builders as jb
+from tests.app._retirement_producers import producer_fixture
 from tests.app._retirement_run_summary_stub import with_summary
 from tests.llm_request.conftest import error_outcome
 
@@ -52,6 +55,15 @@ _CANDIDATE_HASH = "cand-enrich-aaa"
 _CANDIDATE_NAME = "Momentum Alpha Rotation"
 _SIBLING_HASH = "sib-enrich-bbb"
 _SIBLING_NAME = "Value Tilt Core"
+
+
+@pytest.fixture(autouse=True)
+def _no_live_calls(monkeypatch):
+    """No test here may reach a real Anthropic client or a request the Composer router does
+    not serve."""
+    jb.block_live_calls(monkeypatch)
+    yield
+    jb.assert_no_unserved_requests()
 
 
 def _sample_rec(candidate_id=_CANDIDATE_HASH, sibling_id=_SIBLING_HASH):
@@ -86,8 +98,11 @@ def isolated_db(tmp_path, monkeypatch):
     yield db_path
 
 
+producer = producer_fixture()
+
+
 class TestExplainerReceivesResolvedNames:
-    def test_explainer_receives_resolved_candidate_and_sibling_names(self, isolated_db):
+    def test_explainer_receives_resolved_candidate_and_sibling_names(self, isolated_db, producer):
         import app as app_module
 
         _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME, _SIBLING_HASH: _SIBLING_NAME})
@@ -104,15 +119,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [rec]),
-            )
+            producer.install(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()
+            producer.run()
 
         assert len(captured_calls) == 1
         passed = captured_calls[0]
@@ -128,7 +139,7 @@ class TestExplainerReceivesResolvedNames:
         assert passed["candidate_id"] == _CANDIDATE_HASH
         assert passed["sibling_id"] == _SIBLING_HASH
 
-    def test_persisted_raw_response_carries_resolved_names(self, isolated_db):
+    def test_persisted_raw_response_carries_resolved_names(self, isolated_db, producer):
         """AC-4 dependency: the reuse/material-change check needs
         candidate_name/sibling_name to be present in the PERSISTED
         raw_response (not just the transient dict passed to
@@ -149,15 +160,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [rec]),
-            )
+            producer.install(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", _fake_persist)
             mp.setattr(explainer_module, "explain_recommendation", lambda r: "explanation text")
 
-            app_module._retirement_recommender_tick_worker()
+            producer.run()
 
         assert len(captured_persisted) == 1
         persisted = captured_persisted[0]
@@ -167,7 +174,7 @@ class TestExplainerReceivesResolvedNames:
         )
         assert persisted.get("sibling_name") == _SIBLING_NAME
 
-    def test_falls_back_to_raw_candidate_id_when_unresolvable(self, isolated_db):
+    def test_falls_back_to_raw_candidate_id_when_unresolvable(self, isolated_db, producer):
         import app as app_module
 
         _seed_named_roster({_SIBLING_HASH: _SIBLING_NAME})  # candidate absent from bot_state
@@ -182,22 +189,18 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [rec]),
-            )
+            producer.install(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()
+            producer.run()
 
         assert captured_calls[0].get("candidate_name") == _CANDIDATE_HASH, (
             "An unresolvable candidate must fall back to its own raw id as the "
             "'name' -- never None, never a crash."
         )
 
-    def test_falls_back_to_raw_sibling_id_when_unresolvable(self, isolated_db):
+    def test_falls_back_to_raw_sibling_id_when_unresolvable(self, isolated_db, producer):
         import app as app_module
 
         _seed_named_roster({_CANDIDATE_HASH: _CANDIDATE_NAME})  # sibling absent
@@ -212,20 +215,16 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [rec]),
-            )
+            producer.install(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()
+            producer.run()
 
         assert captured_calls[0].get("sibling_name") == _SIBLING_HASH
 
     def test_bot_state_load_failure_still_explains_with_hash_fallback(
-        self, isolated_db, monkeypatch
+        self, isolated_db, monkeypatch, producer
     ):
         """Edge case: bot_state load failure during the tick -> degrade to
         hashes, never abort the rec (the explainer must still run -- a
@@ -250,19 +249,15 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [rec]),
-            )
+            producer.install(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
             try:
-                app_module._retirement_recommender_tick_worker()
+                producer.run()
             except Exception as exc:  # noqa: BLE001
                 pytest.fail(
-                    f"_retirement_recommender_tick_worker must never propagate a "
+                    f"the producer ({producer.kind}) must never propagate a "
                     f"bot_state load failure: {type(exc).__name__}: {exc}"
                 )
 
@@ -272,7 +267,7 @@ class TestExplainerReceivesResolvedNames:
         assert captured_calls[0].get("candidate_name") == _CANDIDATE_HASH
         assert captured_calls[0].get("sibling_name") == _SIBLING_HASH
 
-    def test_names_are_always_strings_never_none(self, isolated_db):
+    def test_names_are_always_strings_never_none(self, isolated_db, producer):
         """Adversarial non-vacuity guard: whatever the resolution outcome,
         candidate_name/sibling_name must be a str -- never a bare None that
         would corrupt the JSON embedded in the explainer's prompt or a
@@ -292,20 +287,16 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: [rec]),
-            )
+            producer.install(mp, lambda: [rec])
             mp.setattr(recommender_module, "persist_recommendations", lambda recs, **kw: len(recs))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()
+            producer.run()
 
         assert isinstance(captured_calls[0].get("candidate_name"), str)
         assert isinstance(captured_calls[0].get("sibling_name"), str)
 
-    def test_multiple_recs_each_get_their_own_resolved_names(self, isolated_db):
+    def test_multiple_recs_each_get_their_own_resolved_names(self, isolated_db, producer):
         """Non-vacuity: enrichment must be per-rec, not a single value bled
         across every recommendation in the batch."""
         import app as app_module
@@ -331,15 +322,11 @@ class TestExplainerReceivesResolvedNames:
             import advisors.retirement_explainer as explainer_module
             import advisors.retirement_recommender as recommender_module
 
-            mp.setattr(
-                recommender_module,
-                "build_recommendations_with_summary",
-                with_summary(lambda **kw: recs),
-            )
+            producer.install(mp, lambda: recs)
             mp.setattr(recommender_module, "persist_recommendations", lambda r, **kw: len(r))
             mp.setattr(explainer_module, "explain_recommendation", _fake_explain)
 
-            app_module._retirement_recommender_tick_worker()
+            producer.run()
 
         assert len(captured_calls) == 2
         by_candidate = {c["candidate_id"]: c for c in captured_calls}
@@ -377,6 +364,13 @@ def _run_worker_with_the_real_explainer(fake, recs):
 
 
 class TestExplanationRequestThroughTheWorker:
+    @pytest.fixture(autouse=True)
+    def _no_live_calls(self):
+        """These tests build a real client over the HTTP fake (the fake raises on any request it
+        does not serve and records it in ``fake.misuse``), which the module's live-call guard
+        would refuse; the guard is switched off for this class only."""
+        yield
+
     @pytest.mark.parametrize(
         "page_fixture",
         ["models/page_captured.json", "models/relisted_newer_fable.json"],

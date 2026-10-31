@@ -2425,15 +2425,11 @@ def run_autotuner(
         raise ValueError(
             f"spec_bundle_id={spec_bundle_id} has non-numeric gamma facet: {_gamma_str!r}"
         )
-    # objective_kind: 'crra_eu' triggers the new CRRA-EU objective branch.
-    # 'sortino_loss_aversion' (or absent) uses the legacy Sortino branch.
-    # utility_family='CRRA' in the Phase-1 bundle implies objective_kind='crra_eu'.
-    _utility_family = _facets_by_name.get("utility_family", "")
-    _objective_kind = _facets_by_name.get("objective_kind", "")
-    if not _objective_kind:
-        _objective_kind = (
-            "crra_eu" if _utility_family.upper() == "CRRA" else "sortino_loss_aversion"
-        )
+    # objective_kind: 'crra_eu' triggers the CRRA-EU objective branch; any other value
+    # uses the legacy Sortino branch. The selection rule lives in
+    # database.objective_kind_for_facets so the Advisor's autotune card names the same
+    # objective this run optimises under.
+    _objective_kind = database.objective_kind_for_facets(_facets_by_name)
 
     # Apply optuna_001 archive migration once if any bare (non-prefixed) legacy
     # studies exist — renames them to LEGACY__<name> non-destructively.

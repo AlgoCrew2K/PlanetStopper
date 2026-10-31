@@ -24,7 +24,7 @@ import time
 
 import requests
 import requests.exceptions
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 import database
 import model_config
@@ -110,15 +110,6 @@ _OOS_HOLDOUT_FRACTION = 0.20
 # the 125-day OOS replay window is exactly half of the autotuner's 250-day
 # walk-forward window (synthetic_history.py:511-513: "exactly half").
 _OOS_HOLDOUT_PURGE_DAYS = 10
-
-
-def resolve_advisor_model() -> str:
-    """Return the configured advisor synthesis model ID.
-
-    Reads ADVISOR_SYNTHESIS_MODEL at call time so a daemon restart is not
-    required to pick up a change.  Default: claude-opus-4-8 (Opus 4.8).
-    """
-    return os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +263,14 @@ class ConfigSuggestionsResponse(BaseModel):
     """
 
     suggestions: list[ConfigSuggestion]
+    # Set by request_suggestions after validation; private so it never enters the schema
+    # sent to the model.
+    _serving_model: str = PrivateAttr(default="")
+
+    @property
+    def serving_model(self) -> str:
+        """Model that produced these suggestions; empty when not recorded."""
+        return self._serving_model
 
 
 # ---------------------------------------------------------------------------
@@ -1895,7 +1894,8 @@ def request_suggestions(
         # message — exception text may contain API keys or internal paths.
         # exc_info detail is logged server-side only.
         msg = f"Claude advisor unavailable: could not build client ({type(exc).__name__})."
-        logger.warning("ai_advisor: client construction failed: %s", exc, exc_info=True)
+        logger.warning("ai_advisor: client construction failed: %s", type(exc).__name__)
+        logger.debug("ai_advisor: client construction failed", exc_info=True)
         return None, msg
 
     # parse() validates every text block inside the SDK and raises on a refusal's or a
@@ -1918,6 +1918,7 @@ def request_suggestions(
     except Exception as exc:  # noqa: BLE001 - the whole contract: never raise
         # D-1: the browser sees only the class name; exception text can carry secrets.
         logger.warning("ai_advisor: suggestion request failed: %s", type(exc).__name__)
+        logger.debug("ai_advisor: suggestion request failed", exc_info=True)
         return None, (
             f"Claude advisor request failed ({type(exc).__name__}). Try again, or decide manually."
         )
@@ -1927,7 +1928,9 @@ def request_suggestions(
         return None, f"Claude advisor unavailable: {reply.reason_text()}. No suggestions this call."
 
     try:
-        return ConfigSuggestionsResponse.model_validate_json(reply.text()), None
+        parsed = ConfigSuggestionsResponse.model_validate_json(reply.text())
+        parsed._serving_model = reply.model
+        return parsed, None
     except Exception as exc:  # noqa: BLE001 - graceful degradation contract
         logger.warning("ai_advisor: response failed schema validation: %s", type(exc).__name__)
         return None, (

@@ -544,3 +544,31 @@ def _isolate_db(tmp_path, monkeypatch):
 
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test_alphabot_state.db"))
     _db.init_db()
+
+
+# ---------------------------------------------------------------------------
+# Timing log harness (observability and transport), shared by tests/app and
+# tests/advisors: the daemon's timing lines are captured from the
+# planetstopper.timing logger, and every duration comes from a clock the test
+# advances (timing_log.clock), never from wall time.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def timing_records():
+    """Capture every line the timing logger receives during the test."""
+    from tests._timing_capture import capture_timing_records
+
+    with capture_timing_records() as capture:
+        yield capture
+
+
+@pytest.fixture()
+def timing_clock(monkeypatch):
+    """Install a controllable timing_log.clock (read at call time by every emitter)."""
+    import timing_log
+    from tests._timing_capture import FakeClock
+
+    clock = FakeClock()
+    monkeypatch.setattr(timing_log, "clock", clock)
+    return clock

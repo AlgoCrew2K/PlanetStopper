@@ -105,6 +105,30 @@ def session_close(d: date) -> dt_time:
     return close_ts.to_pydatetime().timetz().replace(tzinfo=None).replace(second=0, microsecond=0)
 
 
+# Minutes before the session close at which the engine pauses for Composer's rebalance.
+# Source: alpha_bot_execution.py main(), rebalance_blackout = close - timedelta(minutes=7).
+REBALANCE_BLACKOUT_MINUTES = 7
+# Minutes after the session close until which the engine still runs the post-mortem step.
+# Source: alpha_bot_execution.py main(), post_mortem_cutoff = close + timedelta(minutes=5).
+POST_MORTEM_GRACE_MINUTES = 5
+
+
+def _close_offset(d: date, minutes: int) -> dt_time:
+    close = session_close(d)
+    total = close.hour * 60 + close.minute + minutes
+    return dt_time(total // 60, total % 60)
+
+
+def rebalance_blackout_start(d: date) -> dt_time:
+    """First minute of the engine's rebalance blackout (inclusive) for session *d*."""
+    return _close_offset(d, -REBALANCE_BLACKOUT_MINUTES)
+
+
+def post_mortem_cutoff(d: date) -> dt_time:
+    """Last moment (inclusive) the engine still runs after the close for session *d*."""
+    return _close_offset(d, POST_MORTEM_GRACE_MINUTES)
+
+
 def get_market_state(current_et) -> str:
     """Return the current US equity market state based on ET clock time and calendar.
 

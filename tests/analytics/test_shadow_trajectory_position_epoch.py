@@ -992,3 +992,210 @@ class TestTrajectoryReadWithoutAWrite:
         _FrozenUtc.instant = real_datetime(2026, 10, 23, 12, 0, tzinfo=datetime_module.UTC)
 
         assert _get_shadow_cumulative_trajectory(sym, db_file) == sentinel
+
+
+# ---------------------------------------------------------------------------
+# A later row for a trading day that already has one.
+#
+# The engine writes a shadow row on every cycle, so the day's value the reader
+# chains is the LAST row of that day by ts_utc. A write that adds no new trading
+# day (the count of days is unchanged) must still reach the next read. The
+# earlier same-day row is a derived record (PROVENANCE.md, intraday row): the
+# captured row is the day's 16:04 ET row, so an 11:00 ET row of the same day
+# stands for the earlier cycle that the captured row later supersedes.
+# ---------------------------------------------------------------------------
+
+_DERIVED_ROWS_PATH = _TRAJECTORY_ROWS_PATH.with_name("derived_records.json")
+
+
+def _earlier_same_day_row() -> dict:
+    with open(_DERIVED_ROWS_PATH, encoding="utf-8") as fh:
+        return json.load(fh)["shadow_intraday_row_on_last_trajectory_day"]
+
+
+def _write_row_through_the_daemon(row: dict) -> None:
+    _db.record_shadow_observation(
+        symphony_id=row["symphony_id"],
+        account_id=row["account_id"],
+        cycle_id=row["cycle_id"],
+        ts_utc=row["ts_utc"],
+        ts_et=row["ts_et"],
+        trading_day=row["trading_day"],
+        current_return=row["current_return"],
+        shadow_return=row["shadow_return"],
+        is_post_trigger=row["is_post_trigger"],
+        trigger_id=None,
+        position_epoch=row["position_epoch"],
+    )
+
+
+class TestSameDayWriteReachesTheTrajectory:
+    def test_fixture_rows_share_the_day_and_the_captured_row_is_later(self):
+        captured = _captured_trajectory_rows()[3]
+        earlier = _earlier_same_day_row()
+        assert earlier["trading_day"] == captured["trading_day"]
+        assert earlier["ts_utc"] < captured["ts_utc"]
+        assert earlier["shadow_return"] != captured["shadow_return"], (
+            "the two same-day rows must carry different values or the cases below prove nothing"
+        )
+
+    @pytest.mark.parametrize(("schema", "columns"), _SHADOW_DB_SHAPES)
+    def test_a_later_row_for_the_same_day_replaces_that_days_value_in_the_next_read(
+        self, tmp_path, schema, columns
+    ):
+        rows = _captured_trajectory_rows()
+        earlier = _earlier_same_day_row()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, schema)
+        _insert_captured_rows(db_file, [*rows[:3], earlier], columns)
+
+        first = _get_shadow_cumulative_trajectory(sym, db_file)
+        assert first == pytest.approx([*_shadow_returns(rows[:3]), earlier["shadow_return"]]), (
+            "the first read must end at the day's only row so far"
+        )
+
+        _insert_captured_rows(db_file, rows[3:], columns)
+        second = _get_shadow_cumulative_trajectory(sym, db_file)
+
+        assert second == pytest.approx(_shadow_returns(rows)), (
+            f"a later row for a day the reader already holds must replace that day's value; "
+            f"got {second}, expected {_shadow_returns(rows)} (the day count is unchanged, so a "
+            f"cache keyed on the number of days or on the newest trading day serves {first})"
+        )
+        assert len(second) == len(first)
+
+    def test_a_later_same_day_row_written_in_the_reading_process_is_read(
+        self, tmp_path, monkeypatch
+    ):
+        rows = _captured_trajectory_rows()
+        earlier = _earlier_same_day_row()
+        sym = rows[0]["symphony_id"]
+        db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+        monkeypatch.setattr(_db, "DB_FILE", db_file)
+        _insert_captured_rows(db_file, [*rows[:3], earlier], _ROW_COLUMNS_WITH_EPOCH)
+        assert _get_shadow_cumulative_trajectory(sym, db_file) is not None
+
+        _write_row_through_the_daemon(rows[3])
+
+        assert _get_shadow_cumulative_trajectory(sym, db_file) == pytest.approx(
+            _shadow_returns(rows)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Eviction while another thread reads or writes the cache.
+#
+# The daemon serves many requests on threads, and the engine-facing writer runs
+# on others, all sharing database._shadow_cr_cache. Evicting a symphony's older
+# keys must not raise when a competing thread removed the same key first, nor
+# when it changed the cache while the keys were being scanned. Both interleavings
+# are produced here deterministically: no sleep and no timing.
+# ---------------------------------------------------------------------------
+
+_STALE_KEYS_PER_SYMPHONY = 2
+_STALE_EPOCH = "earlier-epoch"
+
+
+class _CacheWhoseKeysAreRemovedByACompetitorFirst(dict):
+    """Each removal of a key first lets a competing thread remove that same key."""
+
+    def __delitem__(self, key):
+        dict.pop(self, key, None)
+        dict.__delitem__(self, key)
+
+    def pop(self, key, *default):
+        dict.pop(self, key, None)
+        return dict.pop(self, key, *default)
+
+
+class _KeyThatChangesTheCacheWhenInspected(tuple):
+    """A cache key whose indexing adds an entry to the cache, as a competing thread's
+    store would while a scan of the cache is in progress."""
+
+    cache: dict = {}
+    added = 0
+
+    def __getitem__(self, index):
+        type(self).added += 1
+        dict.__setitem__(
+            type(self).cache, ("competing-symphony", "db", None, str(type(self).added)), [0.0, 1.0]
+        )
+        return tuple.__getitem__(self, index)
+
+
+def _stale_keys(symphony_id: str, key_type=tuple) -> list[tuple]:
+    return [
+        key_type((symphony_id, "db", _STALE_EPOCH, f"2026-01-0{n}T00:00:00Z"))
+        for n in range(1, _STALE_KEYS_PER_SYMPHONY + 1)
+    ]
+
+
+_EVICTION_SITES = [
+    pytest.param("read-miss", id="evicted-by-a-read-that-misses"),
+    pytest.param("write", id="evicted-by-the-writer"),
+]
+
+
+def _evict_through(site: str, tmp_path, monkeypatch, cache) -> list[float] | None:
+    """Seed three captured days and install `cache`, then evict through the named
+    site. Returns the read's trajectory, or None for the writer."""
+    rows = _captured_trajectory_rows()
+    sym = rows[0]["symphony_id"]
+    db_file = _new_shadow_db(tmp_path, _SHADOW_SCHEMA_WITH_EPOCH)
+    monkeypatch.setattr(_db, "DB_FILE", db_file)
+    monkeypatch.setattr(_db, "_shadow_cr_cache", cache)
+    _insert_captured_rows(db_file, rows[:3], _ROW_COLUMNS_WITH_EPOCH)
+    if site == "write":
+        _write_row_through_the_daemon(rows[3])
+        return None
+    return _get_shadow_cumulative_trajectory(sym, db_file)
+
+
+def _stale_entries_left(cache: dict, symphony_id: str) -> list:
+    return [k for k in cache if k[0] == symphony_id and k[2] == _STALE_EPOCH]
+
+
+class TestCacheEvictionUnderConcurrentUse:
+    @pytest.mark.parametrize("site", _EVICTION_SITES)
+    def test_eviction_survives_a_competing_thread_removing_the_same_key_first(
+        self, site, tmp_path, monkeypatch
+    ):
+        cache = _CacheWhoseKeysAreRemovedByACompetitorFirst()
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        for key in _stale_keys(sym):
+            dict.__setitem__(cache, key, [9.0, 9.0])
+
+        result = _evict_through(site, tmp_path, monkeypatch, cache)
+
+        assert _stale_entries_left(cache, sym) == [], (
+            "the symphony's older keys must be gone after the eviction"
+        )
+        if site == "read-miss":
+            assert result == pytest.approx(_shadow_returns(rows[:3]))
+
+    @pytest.mark.parametrize("site", _EVICTION_SITES)
+    def test_eviction_survives_a_competing_thread_changing_the_cache_during_the_scan(
+        self, site, tmp_path, monkeypatch
+    ):
+        cache: dict = {}
+        _KeyThatChangesTheCacheWhenInspected.cache = cache
+        _KeyThatChangesTheCacheWhenInspected.added = 0
+        rows = _captured_trajectory_rows()
+        sym = rows[0]["symphony_id"]
+        for key in _stale_keys(sym, _KeyThatChangesTheCacheWhenInspected):
+            dict.__setitem__(cache, key, [9.0, 9.0])
+        bystander = ("another-symphony", "db", None, "2026-01-01T00:00:00Z")
+        cache[bystander] = [1.0, 2.0]
+
+        result = _evict_through(site, tmp_path, monkeypatch, cache)
+
+        assert _KeyThatChangesTheCacheWhenInspected.added > 0, (
+            "the scan must have inspected the symphony's keys, or the interleaving never happened"
+        )
+        assert _stale_entries_left(cache, sym) == [], (
+            "the symphony's older keys must be gone after the eviction"
+        )
+        assert bystander in cache, "another symphony's entry must survive the eviction"
+        if site == "read-miss":
+            assert result == pytest.approx(_shadow_returns(rows[:3]))

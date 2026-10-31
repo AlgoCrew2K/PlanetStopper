@@ -1,0 +1,12 @@
+{
+"_fixture_provenance": "captured-from-producer: live Composer API response to a credentialed request, captured 2026-10-20. Only account id and user id are replaced by placeholders; every other value is verbatim except the trimming recorded in _trimmed.",
+"_case": "6: oversized backtest body rejected with HTTP 413",
+"_capture_date": "2026-10-20",
+"_response_date_header": "Tue, 20 Oct 2026 18:31:28 GMT",
+"_endpoint": "POST /api/v0.1/backtest",
+"_request": {"method":"POST","url":"https://api.composer.trade/api/v0.1/backtest","query":{},"credentials":"valid Composer key pair from the repo .env (values not recorded)","body_encoding":"requests.post(json=body): default JSON separators, Content-Type: application/json","body_bytes":1066003,"body_params":{"symphony.raw_value":"the /score body of hvPiGP1O7AHfutHE3Fjy (largest live definition; not stored)","capital":10000.0,"apply_reg_fee":true,"apply_taf_fee":true,"slippage_percent":0.005,"broker":"alpaca","backtest_version":"v2","start_date":"2026-07-20","end_date":"2026-10-19"},"symphony_id":"hvPiGP1O7AHfutHE3Fjy","symphony_name":"(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations"},
+"_trimmed": {"kept":"complete response body, verbatim","dropped":[],"note":"the body is an HTML page, not JSON; the script block carries per-request Cloudflare challenge values, not credentials"},
+"response_status": 413,
+"response_content_type": "text/html",
+"response_body_text": "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n<body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n<hr><center>nginx/1.28.1</center>\r\n<script>window.__CF$cv$params={r:'a4da19851dffe745',t:'MTc5MjUyMTA4OA==',u:'01a15a952fd771dfafae57232fac16f4',ut:'sTQCYMO53AOd1lN55yuX2tgJhPJerTz.VKyLKuthgZc-1792521088-1.2.1.1-DfZNpx2t35UOsEFaDzPN3Qc3oN6TRKxWDLGiCe5KgGcqgY3NEsb84_95NUTh8AUQDPZBNVm_zA2c_FHrgiDAVIkpwwZHou2rcZZfIFxncaU',i:60};(function(){if(!document.body)return;var s=document.createElement('script');s.src='/cdn-cgi/challenge-platform/scripts/precursor/main.js';document.head.appendChild(s);})();</script></body>\r\n</html>\r\n"
+}

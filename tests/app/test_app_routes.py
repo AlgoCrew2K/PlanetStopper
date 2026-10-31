@@ -913,55 +913,43 @@ def test_threaded_trigger_starts_daemon_thread(monkeypatch):
 
 def test_run_scheduler_registers_minute_job_and_can_be_interrupted(monkeypatch):
     """
-    run_scheduler() loops forever in production.  We patch ``schedule`` to
-    capture the registered job, then patch ``time.sleep`` to raise on first
-    call so the loop exits cleanly.  This pins:
+    run_scheduler() loops forever in production.  It runs here on a real
+    ``schedule.Scheduler`` whose ``run_pending`` counts its calls and whose clock
+    ``time.sleep`` raises a ``BaseException`` stopper on its first call, so the loop exits
+    cleanly (a ``BaseException`` because the loop-level catch around ``run_pending`` swallows
+    every ``Exception``).  This pins:
       (1) the cadence is every minute at :00
       (2) the thread does not crash on startup
-      (3) the scheduled callable is threaded_trigger
+      (3) the scheduled callable is threaded_trigger (wrapped by the per-slot guard, so it is
+          read from the wrapper's ``func``)
+      (4) run_pending is attempted before the sleep
     """
-    registered_jobs = []
+    import datetime as _dt
+    from types import SimpleNamespace
 
-    class FakeJob:
-        def __init__(self):
-            self._at = None
+    import schedule as schedule_lib
 
-        def every(self):
-            return self
+    scheduler = schedule_lib.Scheduler()
+    run_pending_calls = []
 
-        # Fluent chains: .minute.at(":00").do(fn) and .day.at("02:00").do(fn)
-        @property
-        def minute(self):
-            return self
+    def run_pending():
+        run_pending_calls.append(1)
+        # Nothing may fire when the real minute turns over during this test.
+        for job in scheduler.jobs:
+            job.next_run = _dt.datetime.now() + _dt.timedelta(days=1)
+        scheduler.run_pending()
 
-        @property
-        def day(self):
-            return self
+    monkeypatch.setattr(
+        app_module,
+        "schedule",
+        SimpleNamespace(every=scheduler.every, run_pending=run_pending),
+    )
 
-        def at(self, spec):
-            self._at = spec
-            return self
-
-        def do(self, fn):
-            registered_jobs.append({"at": self._at, "fn": fn})
-            return self
-
-    # Return a fresh FakeJob per every() call so multiple registrations don't collide.
-    fake_schedule_module = MagicMock()
-    fake_schedule_module.every.side_effect = lambda: FakeJob()
-
-    monkeypatch.setattr(app_module, "schedule", fake_schedule_module)
-
-    class StopLoop(Exception):
+    class StopLoop(BaseException):
         pass
 
-    call_count = {"n": 0}
-
     def fake_sleep(_n):
-        call_count["n"] += 1
-        # Allow one run_pending iteration, then break out.
-        if call_count["n"] >= 1:
-            raise StopLoop()
+        raise StopLoop()
 
     monkeypatch.setattr(app_module.time, "sleep", fake_sleep)
 
@@ -969,13 +957,14 @@ def test_run_scheduler_registers_minute_job_and_can_be_interrupted(monkeypatch):
         app_module.run_scheduler()
 
     # The minute-cadence job (threaded_trigger) must be registered at ":00".
-    minute_jobs = [j for j in registered_jobs if j["at"] == ":00"]
-    assert minute_jobs, "No job registered at ':00'"
-    assert any(j["fn"] is app_module.threaded_trigger for j in minute_jobs), (
-        "threaded_trigger must be the callable registered for the ':00' cadence"
-    )
+    minute_jobs = [j for j in scheduler.jobs if j.unit == "minutes"]
+    assert minute_jobs, "No minute-cadence job registered"
+    assert all(j.at_time.second == 0 and j.at_time.minute == 0 for j in minute_jobs)
+    assert any(
+        getattr(j.job_func, "func", None) is app_module.threaded_trigger for j in minute_jobs
+    ), "threaded_trigger must be the callable registered for the ':00' cadence"
     # run_pending was at least attempted once.
-    assert fake_schedule_module.run_pending.call_count >= 1
+    assert len(run_pending_calls) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -989,3 +978,76 @@ def test_dashboard_root_returns_200(client, monkeypatch):
     monkeypatch.setattr(app_module, "render_template", lambda *_a, **_kw: "<html></html>")
     resp = client.get("/")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# 11. Save after "Reset to globals" (money path): the stored row, the live flag, the env
+#
+# The Settings page's reset sends {"params": {}, "locked_vars": []} for the symphony. The
+# engine then falls back to the globals for that symphony, and the next autotune may tune
+# the dimensions the locks held. These tests run the real route over the real database.
+# ---------------------------------------------------------------------------
+
+_RESET_SYMPHONY = "(INVEST) LQD + EYEG 5 ways Full Market"
+_NEIGHBOUR_SYMPHONY = "Corporate Chaos 5 ways "
+
+
+def _doubled_params():
+    import database
+
+    return {k: v * 2 for k, v in database.DEFAULT_STRATEGY.items()}
+
+
+def _post_reset(client, *names):
+    import database
+
+    body = {
+        "globals": {},
+        "symphonies": {
+            database.normalize_name(n): {"params": {}, "locked_vars": []} for n in names
+        },
+    }
+    return client.post("/api/settings", json=body)
+
+
+def test_saving_a_reset_stores_empty_params_and_no_locks(client, isolated_env_file):
+    import database
+
+    database.save_symphony_strategy(_RESET_SYMPHONY, _doubled_params(), ["MAX_SQUEEZE_FLOOR"])
+
+    resp = _post_reset(client, _RESET_SYMPHONY)
+
+    assert resp.status_code == 200 and resp.get_json()["status"] == "success"
+    stored = database.get_symphony_strategy(_RESET_SYMPHONY)
+    assert stored["params"] == {}, "a reset leaves the symphony with no stored parameters"
+    assert stored["locked_vars"] == [], "a reset leaves the symphony with no locks"
+
+
+def test_saving_a_reset_keeps_the_symphonys_live_mode(client, isolated_env_file):
+    """The row is updated in place: replacing it would silently turn live trading off."""
+    import database
+
+    database.save_symphony_strategy(_RESET_SYMPHONY, _doubled_params(), ["MAX_SQUEEZE_FLOOR"])
+    database.set_symphony_live_mode(_RESET_SYMPHONY, 1, "test")
+    assert database.get_symphony_live_mode(_RESET_SYMPHONY) == 1
+
+    assert _post_reset(client, _RESET_SYMPHONY).status_code == 200
+
+    assert database.get_symphony_live_mode(_RESET_SYMPHONY) == 1
+
+
+def test_saving_a_reset_touches_no_other_symphony_and_writes_no_env_key(client, isolated_env_file):
+    import database
+
+    other_params = _doubled_params()
+    database.save_symphony_strategy(_RESET_SYMPHONY, _doubled_params(), ["MAX_SQUEEZE_FLOOR"])
+    database.save_symphony_strategy(_NEIGHBOUR_SYMPHONY, other_params, ["TRIGGER_THRESHOLD_PCT"])
+    neighbour_before = database.get_symphony_strategy(_NEIGHBOUR_SYMPHONY)
+    env_before = isolated_env_file.read_bytes()
+
+    assert _post_reset(client, _RESET_SYMPHONY).status_code == 200
+
+    assert database.get_symphony_strategy(_NEIGHBOUR_SYMPHONY) == neighbour_before
+    assert isolated_env_file.read_bytes() == env_before, (
+        "a body with no globals must not write the .env file"
+    )

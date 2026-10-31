@@ -757,8 +757,9 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
 
     result = [float(r[1]) for r in rows]
     # One entry per symphony: drop older keys before storing the current one.
-    for stale_key in [k for k in _db._shadow_cr_cache if k[0] == symphony_id]:
-        del _db._shadow_cr_cache[stale_key]
+    # Snapshot keys and pop with a default: a competing thread may mutate the dict.
+    for stale_key in [k for k in list(_db._shadow_cr_cache) if k[0] == symphony_id]:
+        _db._shadow_cr_cache.pop(stale_key, None)
     _db._shadow_cr_cache[cache_key] = result  # type: ignore[assignment]
     return result
 
@@ -2006,7 +2007,7 @@ _V1_BOOTSTRAP_MIN_DAYS = 30
 
 # AC-3 windowed-metric tokens. Numeric tokens are a trailing-day count; ytd = since
 # Jan 1 of the current year; 1y = trailing 365 calendar days; all = no window (lifetime).
-_WINDOW_TRAILING_DAYS = {"30d": 30, "60d": 60, "90d": 90, "125d": 125, "1y": 365}
+_WINDOW_TRAILING_DAYS = {"30d": 30, "60d": 60, "90d": 90, "125d": 125, "1y": 365, "5y": 1825}
 # Reuse the Bailey/de-Prado interpretability floor as the windowed vol sufficiency
 # gate (F7): vol is meaningless on a handful of days, so it is suppressed below this.
 _WINDOWED_VOL_MIN_DAYS = _V1_BOOTSTRAP_MIN_DAYS
@@ -2318,7 +2319,17 @@ def format_dollar_saved(
     "Total Saved" line and Managed Sleeves realized_pnl_usd -- gain/loss).
     """
     word = positive_word if value >= 0 else negative_word
-    return f"${abs(value):,.2f} {word}"
+    if math.isnan(value):
+        # js_to_fixed is defined for finite input; a NaN total keeps its old text
+        # rather than raising inside a Discord post.
+        return f"${abs(value)} {word}"
+    # The magnitude rounds through js_to_fixed (ties away from zero, as the History
+    # page's toFixed does) so the Discord text and the web text agree on every tie.
+    magnitude = js_to_fixed(abs(value), 2)
+    whole, dot, fraction = magnitude.partition(".")
+    if whole.isdigit():
+        whole = f"{int(whole):,}"
+    return f"${whole}{dot}{fraction} {word}"
 
 
 def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
@@ -2390,6 +2401,9 @@ def get_history_summary(days: int = 30, base_dir: str = ".") -> dict:
                 day_exits.append(
                     {
                         "symphony_id": t.get("symphony_id", ""),
+                        # The producer's own display name; None when the entry
+                        # carries none (never the id standing in for a name).
+                        "symphony_name": t.get("symphony_name"),
                         "reason": reason,
                         "detail": t.get("detail", alpha),
                         # Same sourcing as the todays_exits path below (Finding 11) —

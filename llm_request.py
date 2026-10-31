@@ -10,6 +10,7 @@ stays free of the SDK.
 from __future__ import annotations
 
 import copy
+import re
 
 import model_config
 
@@ -24,6 +25,40 @@ REASON_NO_TOOL_CALL = "no_tool_call"
 
 _OVERRIDE_REASONS = frozenset({REASON_OVERRIDE_MODEL_NOT_FOUND, REASON_OVERRIDE_REQUEST_REJECTED})
 _FALLBACK_BETA_HEADER = "server-side-fallback-2026-07-01"
+
+
+def default_generation_model() -> str:
+    """Model id the suggestion knob names now, without listing the Models API."""
+    return model_config.peek(model_config.Knob.SUGGESTION).model_id
+
+
+def adopt_reply(provenance: dict, replies: list):
+    """Record the serving model of the last reply in ``provenance``; return that reply.
+
+    A reply with no model (the model was unavailable) clears the minted model, since no
+    model served the run. With no reply collected the minted model stays.
+    """
+    reply = replies[-1] if replies else None
+    if reply is not None:
+        model = getattr(reply, "model", "")
+        provenance["generation_model"] = model if isinstance(model, str) else ""
+    return reply
+
+
+def empty_run_message(reply, noun: str, default: str) -> str:
+    """Run message when nothing was generated: the reply's reason when it has one."""
+    if getattr(reply, "reason", None):
+        return f"no {noun} was generated this run ({reply.reason_text()})"
+    return default
+
+
+_REASON_IN_MESSAGE = re.compile(r"this run \(([a-z_]+)[:)]")
+
+
+def reason_in_message(message) -> str | None:
+    """Reason code that ``empty_run_message`` put in a run message, else None."""
+    match = _REASON_IN_MESSAGE.search(message) if isinstance(message, str) else None
+    return match.group(1) if match else None
 
 
 def _field(obj, name):

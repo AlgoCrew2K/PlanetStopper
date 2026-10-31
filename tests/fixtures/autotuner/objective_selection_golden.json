@@ -1,0 +1,114 @@
+{
+  "_provenance": "Recorded by executing the objective-selection block of run_autotuner at 37c8e983 over each authored facet case. See tests/fixtures/autotuner/PROVENANCE.md.",
+  "ref": "37c8e983",
+  "cases": [
+    {
+      "name": "objective_kind_crra_eu",
+      "facets": {
+        "objective_kind": "crra_eu"
+      },
+      "objective_kind": "crra_eu"
+    },
+    {
+      "name": "objective_kind_sortino_loss_aversion",
+      "facets": {
+        "objective_kind": "sortino_loss_aversion"
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "objective_kind_wins_over_crra_family",
+      "facets": {
+        "objective_kind": "sortino_loss_aversion",
+        "utility_family": "CRRA"
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "objective_kind_wins_over_other_family",
+      "facets": {
+        "objective_kind": "crra_eu",
+        "utility_family": "CARA"
+      },
+      "objective_kind": "crra_eu"
+    },
+    {
+      "name": "objective_kind_unrecognised_value_kept",
+      "facets": {
+        "objective_kind": "some_other_kind"
+      },
+      "objective_kind": "some_other_kind"
+    },
+    {
+      "name": "family_upper_crra",
+      "facets": {
+        "utility_family": "CRRA"
+      },
+      "objective_kind": "crra_eu"
+    },
+    {
+      "name": "family_lower_crra",
+      "facets": {
+        "utility_family": "crra"
+      },
+      "objective_kind": "crra_eu"
+    },
+    {
+      "name": "family_mixed_case_crra",
+      "facets": {
+        "utility_family": "Crra"
+      },
+      "objective_kind": "crra_eu"
+    },
+    {
+      "name": "family_padded_crra_is_not_crra",
+      "facets": {
+        "utility_family": " CRRA "
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "family_other",
+      "facets": {
+        "utility_family": "CARA"
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "family_empty",
+      "facets": {
+        "utility_family": ""
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "empty_objective_kind_falls_through_to_crra",
+      "facets": {
+        "objective_kind": "",
+        "utility_family": "CRRA"
+      },
+      "objective_kind": "crra_eu"
+    },
+    {
+      "name": "empty_objective_kind_falls_through_to_other",
+      "facets": {
+        "objective_kind": "",
+        "utility_family": "CARA"
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "neither_facet_other_facets_present",
+      "facets": {
+        "gamma": "2.0",
+        "wealth_argument": "compounded_return"
+      },
+      "objective_kind": "sortino_loss_aversion"
+    },
+    {
+      "name": "no_facets",
+      "facets": {},
+      "objective_kind": "sortino_loss_aversion"
+    }
+  ]
+}

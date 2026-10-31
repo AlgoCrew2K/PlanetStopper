@@ -102,3 +102,25 @@ def swap_fake(monkeypatch):
     monkeypatch.setattr(ase, "_build_client", lambda: fake.client)
     monkeypatch.setattr(ase, "get_tradeable_set", lambda **kwargs: sup.tradeable_universe())
     return fake
+
+
+@pytest.fixture
+def model_clock(monkeypatch):
+    """The clock the model registry reads its cache age from, held by the test.
+
+    ``advance_past_relist()`` moves it beyond the daily relist interval, so the next
+    resolution outside a pinned run lists the Models API again.
+    """
+    import types
+
+    import model_config
+    from tests.llm_request.conftest import Clock
+
+    clock = Clock()
+    monkeypatch.setattr(model_config, "time", types.SimpleNamespace(monotonic=clock.monotonic))
+
+    def advance_past_relist() -> None:
+        clock.now += model_config._RELIST_INTERVAL_SECONDS + 60
+
+    clock.advance_past_relist = advance_past_relist
+    return clock

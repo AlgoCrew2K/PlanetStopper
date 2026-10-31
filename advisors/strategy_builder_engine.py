@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 import ai_advisor
 import database
-import model_config
+import llm_request
 from advisors import incubation, symphony_schema
 from advisors.backtest_gate_engine import (
     HARVEY_LIU_FDR_Q,
@@ -167,10 +167,6 @@ class ProposalRun:
     # "no_tool_call" or "model_unavailable"); None when it produced plans, was
     # never reached, or was replaced by a caller-supplied stand-in.
     generation_reason: str | None = None
-
-
-# Reason the LLM request layer reports when the resolved model no longer exists.
-_MODEL_UNAVAILABLE_REASON = "model_unavailable"
 
 
 class _GeneratedTrees(list):
@@ -992,7 +988,7 @@ def propose_strategies(
         invocation_source if invocation_source is not None else "unattributed-direct-call"
     )
     provenance: dict = {
-        "generation_model": model_config.peek(model_config.Knob.SUGGESTION).model_id,
+        "generation_model": llm_request.default_generation_model(),
         "mode": "build-new",
         "evidence_injected": reasoning_manifest or ai_advisor._EMPTY_MANIFEST,
         "run_id": run_id,
@@ -1020,9 +1016,10 @@ def propose_strategies(
         reply_model = getattr(candidate_infos, "generation_model", None)
         if isinstance(reply_model, str) and reply_model:
             provenance["generation_model"] = reply_model
-        elif generation_reason == _MODEL_UNAVAILABLE_REASON:
-            # The resolved model answered 404: no reply came from it, so the run
-            # must not name it (a plain-list stand-in carries no reason and keeps the peek).
+        elif generation_reason is not None:
+            # The generator ran and no reply carried a model (model unavailable, transport
+            # error): no model served, so the run must not name the resolved one (a
+            # plain-list stand-in carries no reason and keeps the minted model).
             provenance["generation_model"] = ""
 
         # Step 1b: Inject caller-provided community candidates (keyword-only, AC-2/AC-3/AC-6).

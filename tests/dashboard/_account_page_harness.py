@@ -8,7 +8,9 @@ come from the real ``/api/state`` route.
 What is stubbed: the network (``fetch`` answers from a route table, at once or, after
 ``H.deferState(true)``, only when the scenario releases or rejects each request, in any order), timers
 (recorded, never fired by themselves), ``EventSource`` (records listeners) and a small DOM (selectors,
-classes, attributes, ``hidden``). Chart.js is deliberately absent: a draw is judged on a live render, never here.
+classes, attributes, ``hidden``) and ``Chart``, an inert stand-in that counts as drawn at once (a draw is
+judged on a live render, never here). ``run_page(chart=None)`` leaves ``Chart`` undefined, as when the
+chart library's CDN request fails.
 
 Nothing here reads or writes the developer ``.env`` and nothing touches the network.
 """
@@ -487,6 +489,37 @@ const document = {
 
 globalThis.window = globalThis;
 globalThis.document = document;
+// The page's scripts listen on window for the theme and accent change event; the listeners are
+// recorded and never fired, because a redraw is judged on a live render.
+const winListeners = {};
+globalThis.addEventListener = function (t, f) { (winListeners[t] = winListeners[t] || []).push(f); };
+globalThis.removeEventListener = function () {};
+
+// Inert Chart.js stand-in: it records nothing and draws nothing, but reproduces the two rules the
+// page's scripts lean on: getChart answers the live chart of a canvas, and a chart whose plugins
+// have rendered once reports itself drawn.
+const unhandled = [];
+if (cfg.chart !== 'absent') {
+  globalThis.Chart = class Chart {
+    constructor(canvas, config) {
+      this.canvas = canvas;
+      this.config = config;
+      this.data = config.data;
+      this.options = config.options || {};
+      canvas.__chart = this;
+      (config.plugins || []).forEach((p) => { if (p.afterRender) p.afterRender(this); });
+    }
+    update() {}
+    destroy() { if (this.canvas.__chart === this) this.canvas.__chart = null; }
+    getDatasetMeta() { return {}; }
+    static getChart(c) { return c && c.__chart ? c.__chart : undefined; }
+  };
+  globalThis.Chart.defaults = {};
+  globalThis.Chart.animator = { running: function () { return false; } };
+}
+if (cfg.collectUnhandled) {
+  process.on('unhandledRejection', function (e) { unhandled.push(String((e && e.message) || e)); });
+}
 globalThis.getComputedStyle = function () { return { getPropertyValue: function () { return ''; } }; };
 globalThis.location = { href: 'http://127.0.0.1/', pathname: '/', search: '', hash: '', reload: function () {} };
 globalThis.setInterval = function (fn, ms) { intervals.push({ fn: fn, ms: ms }); return intervals.length; };
@@ -564,6 +597,7 @@ const H = {
   intervals: intervals,
   eventSources: eventSources,
   unrouted: unrouted,
+  unhandled: unhandled,
   flush: async function (n) { for (let i = 0; i < (n || 40); i++) await new Promise(function (r) { realSetImmediate(r); }); },
   fire: function (type) { (docListeners[type] || []).slice().forEach(function (f) { f({ type: type }); }); },
   click: function (el) {
@@ -612,7 +646,7 @@ vm.runInThisContext(fs.readFileSync(cfg.indexJs, 'utf8'), { filename: 'index.js'
 
 const scenario = vm.runInThisContext('(' + fs.readFileSync(cfg.scenarioPath, 'utf8') + ')');
 scenario(H).then(function (result) {
-  process.stdout.write(JSON.stringify({ result: result, errors: errors, unrouted: unrouted }));
+  process.stdout.write(JSON.stringify({ result: result, errors: errors, unrouted: unrouted, unhandled: unhandled }));
 }).catch(function (e) {
   process.stderr.write(String(e && e.stack || e));
   process.exit(1);
@@ -621,13 +655,23 @@ scenario(H).then(function (result) {
 
 
 def run_page(
-    tmp_path: Path, scenario_js: str, *, html: str, routes: dict, params: dict | None = None
+    tmp_path: Path,
+    scenario_js: str,
+    *,
+    html: str,
+    routes: dict,
+    params: dict | None = None,
+    chart_library: bool = True,
+    collect_unhandled: bool = False,
 ):
     """Run the real scripts over the rendered page and return the scenario's JSON result.
 
     ``scenario_js`` is the source of ``async function (H) { ... return {...}; }``. ``routes`` maps
     ``/api/state`` (no account) and ``/api/state|<account>`` to bodies; other paths answer ``{}``
-    unless listed (``REJECT`` makes the request fail).
+    unless listed (``REJECT`` makes the request fail). ``chart_library=False`` leaves ``Chart``
+    undefined, as when the CDN request for the chart library fails. ``collect_unhandled=True``
+    records unhandled promise rejections in the returned ``unhandled`` list instead of ending the
+    process, which is what a browser does with them.
     """
     node = shutil.which("node")
     assert node, (
@@ -639,6 +683,8 @@ def run_page(
         "elements": parse_elements(html),
         "routes": routes,
         "params": params or {},
+        "chart": "stub" if chart_library else "absent",
+        "collectUnhandled": collect_unhandled,
         "indexJs": str(INDEX_JS),
         "chromeJs": str(CHROME_JS),
         "scenarioPath": str(tmp_path / "scenario.js"),

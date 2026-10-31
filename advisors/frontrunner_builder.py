@@ -1296,6 +1296,7 @@ def splice_candidate_into_symphony(
 # ---------------------------------------------------------------------------
 
 
+@model_config.pin_run
 def run_frontrunner_build(symphony_ids: list[str] | None = None) -> None:
     """Run the frontrunner build over all (or the given) live symphonies.
 

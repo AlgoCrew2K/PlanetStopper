@@ -272,3 +272,93 @@ def test_required_modules_exist_for_this_boundary_to_be_meaningful():
         path = REPO_ROOT / rel
         assert path.exists(), f"{rel} does not exist — the no-trade boundary is unverifiable"
         assert inspect is not None  # inspect imported for future AST-based extensions here
+
+
+# ---------------------------------------------------------------------------
+# The Composer create call has exactly one caller, and every click is bounded
+# ---------------------------------------------------------------------------
+
+
+def _production_python_sources() -> list[pathlib.Path]:
+    import subprocess
+
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "*.py"], cwd=REPO_ROOT, capture_output=True, check=True
+    ).stdout.decode("utf-8")
+    return [
+        REPO_ROOT / rel
+        for rel in out.split(chr(0))
+        if rel and not rel.startswith(("tests/", "docs/", "feature-plans/", ".claude/"))
+    ]
+
+
+def _enclosing_function_names(tree: ast.AST) -> dict[int, str | None]:
+    """Map each node id to the name of the innermost function that contains it."""
+    owner: dict[int, str | None] = {}
+
+    def visit(node: ast.AST, current: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            name = (
+                child.name
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else current
+            )
+            owner[id(child)] = name
+            visit(child, name)
+
+    visit(tree, None)
+    return owner
+
+
+def test_save_symphony_is_referenced_only_inside_approve_frontrunner_proposal():
+    """Every reference to the create call, outside its own module, sits in the approval function."""
+    offenders = []
+    approvals = 0
+    for path in _production_python_sources():
+        relative = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
+        if relative == "advisors/composer_draft_client.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        owner = _enclosing_function_names(tree)
+        for node in ast.walk(tree):
+            refers = (isinstance(node, ast.Attribute) and node.attr == "save_symphony") or (
+                isinstance(node, ast.Name) and node.id == "save_symphony"
+            )
+            refers = refers or (
+                isinstance(node, ast.alias) and node.name.split(".")[-1] == "save_symphony"
+            )
+            if not refers:
+                continue
+            function = owner.get(id(node))
+            if (
+                function == "approve_frontrunner_proposal"
+                and relative == "advisors/frontrunner_builder.py"
+            ):
+                approvals += 1
+            else:
+                offenders.append(f"{relative}:{getattr(node, 'lineno', '?')} in {function}")
+
+    assert offenders == [], f"save_symphony referenced outside the approval function: {offenders}"
+    assert approvals >= 1, "the approval function no longer reaches save_symphony: scan is vacuous"
+
+
+def test_every_http_call_a_click_can_wait_on_in_the_draft_client_carries_a_timeout():
+    """A click on Approve waits on these calls; none may be able to wait without a bound."""
+    path = REPO_ROOT / "advisors" / "composer_draft_client.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "requests"
+        and node.func.attr in {"get", "post", "put", "patch", "delete", "request"}
+    ]
+    assert calls, "no HTTP call found: the scan is vacuous"
+    for call in calls:
+        timeout = next((k.value for k in call.keywords if k.arg == "timeout"), None)
+        assert timeout is not None, f"line {call.lineno}: HTTP call without a timeout"
+        assert not (isinstance(timeout, ast.Constant) and timeout.value is None), (
+            f"line {call.lineno}: timeout=None is unbounded"
+        )

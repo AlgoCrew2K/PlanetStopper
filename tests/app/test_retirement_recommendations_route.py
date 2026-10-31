@@ -37,15 +37,24 @@ Contract under test (pinned in .claude/tdd-handoff.md "app.py -- route"):
 
 from __future__ import annotations
 
+import ast
+import functools
+import inspect
 import json
+import logging
 import math
+import re
+import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
+import advisors.tenure_review as tenure_review
 import app as app_module
 import database as db_module
 from database import init_db, run_migrations
+from tests.app import _tenure_review_panel_builders as pb
 
 _RAW_RESPONSE_KEYS = {
     "candidate_id",
@@ -418,3 +427,1210 @@ class TestRetirementRecommendationsRouteNotWriteSurface:
         if allowlist is None:
             pytest.skip("_SETTINGS_WRITE_ALLOWLIST not found on app module")
         assert "/api/retirement-recommendations" not in allowlist
+
+
+# ---------------------------------------------------------------------------
+# The symphony tenure review on the API: the latest completed run, one entry per
+# live symphony, joined to the operator's decisions. Run rows are produced by the
+# real review compute (tests/app/_tenure_review_panel_builders.py) and stored the way
+# the run pipeline stores them; the route only reads.
+# ---------------------------------------------------------------------------
+
+_ITEM_NAMES = ("performance", "composite", "redundancy", "backtest", "marginal", "long_vix")
+
+
+def _get(client):
+    resp = client.get("/api/retirement-recommendations")
+    assert resp.status_code == 200, f"expected 200, got {resp.status_code}"
+    return pb.strict_json(resp)
+
+
+def _entries_by_id(data):
+    return {e["symphony_id"]: e for e in data["review_entries"]}
+
+
+class TestNoRunYet:
+    def test_the_review_fields_are_empty_and_the_status_is_idle(self, client, isolated_db):
+        data = _get(client)
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == []
+        status = data["review_status"]
+        assert status["running"] is False
+        assert status["running_since"] is None
+        assert status["last_failed_attempt"] is None
+
+    def test_existing_recommendations_stay_listed_next_to_the_empty_review(
+        self, client, isolated_db
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        data = _get(client)
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
+        assert data["review_entries"] == []
+        assert data["review_run"] is None
+
+    def test_a_row_that_is_not_a_run_record_degrades_without_a_500(self, client, isolated_db):
+        db_module.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=pb.RUN_ID_FIRST,
+            verdict="completed",
+            raw_response="this is not json {",
+        )
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        data = _get(client)
+        assert isinstance(data["review_entries"], list)
+        assert "review_run" in data
+        assert data["recommendations"] == [], (
+            "a run row exists but cannot be read, so which recommendations belong to it is "
+            "unknown: the list must be empty, never the latest-date list"
+        )
+
+    def test_a_read_failure_degrades_every_review_field_and_never_500s(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+        monkeypatch.setattr(
+            db_module,
+            "get_advisor_observations_for_role",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("simulated DB failure")),
+        )
+        data = _get(client)
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == []
+
+
+class TestZeroLiveSymphonies:
+    def test_a_completed_run_with_no_entries_returns_an_empty_list_and_status_200(
+        self, client, isolated_db
+    ):
+        record = pb.empty_record()
+        pb.store_run(record)
+        data = _get(client)
+        assert data["review_entries"] == []
+        assert data["review_run"]["run_id"] == record["run_id"], (
+            "an empty run is still the latest completed run, so its header must be present"
+        )
+
+
+class TestLatestRunIsReturnedWhole:
+    def test_the_run_header_carries_every_run_field_but_not_the_entries(self, client, isolated_db):
+        record = pb.store_full_run()
+        data = _get(client)
+        expected = {k: v for k, v in record.items() if k != "entries"}
+        assert data["review_run"] == expected
+        assert "entries" not in data["review_run"]
+
+    def test_every_live_symphony_has_exactly_one_entry_equal_to_the_stored_one(
+        self, client, isolated_db
+    ):
+        record = pb.store_full_run()
+        data = _get(client)
+        assert len(data["review_entries"]) == len(record["entries"])
+        got = _entries_by_id(data)
+        assert len(got) == len(record["entries"]), "a symphony appears more than once"
+        for stored in record["entries"]:
+            served = dict(got[stored["symphony_id"]])
+            served.pop("approval_status")
+            assert served == stored, stored["display_name"]
+
+    def test_an_unknown_tenure_is_served_as_null_and_never_as_zero(self, client, isolated_db):
+        pb.store_full_run()
+        dateless = _entries_by_id(_get(client))[pb.FULL_IDS["dateless"]]
+        assert dateless["tenure_trading_days"] is None
+        assert dateless["eligible"] is False
+        assert dateless["verdict"] is None
+        assert "tenure unavailable" in dateless["eligibility_text"]
+
+    def test_every_evidence_item_names_its_basis_window_subject_source_and_figure_units(
+        self, client, isolated_db
+    ):
+        pb.store_full_run()
+        for entry in _get(client)["review_entries"]:
+            assert set(entry["evidence"]) == set(_ITEM_NAMES), entry["display_name"]
+            for name, item in entry["evidence"].items():
+                where = f"{entry['display_name']} / {name}"
+                for key in ("status", "label", "window", "subject", "source", "figures"):
+                    assert key in item, f"{where} lacks {key}"
+                assert item["label"], where
+                assert item["subject"], where
+                assert item["source"], where
+                for fig_name, fig in item["figures"].items():
+                    assert fig.get("unit"), f"{where} / {fig_name} has no unit"
+                    if fig["value"] is None:
+                        assert fig.get("reason"), f"{where} / {fig_name} is null without a reason"
+
+    def test_the_counterfactual_item_carries_its_own_label_and_the_realized_item_does_not(
+        self, client, isolated_db
+    ):
+        pb.store_full_run()
+        watch = _entries_by_id(_get(client))[pb.FULL_IDS["watch"]]
+        assert "counterfactual" in watch["evidence"]["backtest"]["label"]
+        assert "counterfactual" not in watch["evidence"]["performance"]["label"]
+        assert "realized" in watch["evidence"]["performance"]["label"]
+
+    def test_the_comparison_item_lists_the_excluded_symphony_by_display_name(
+        self, client, isolated_db
+    ):
+        pb.store_run(pb.small_record())
+        marginal = _entries_by_id(_get(client))[pb.SMALL_IDS["first"]]["evidence"]["marginal"]
+        assert [x["display_name"] for x in marginal["excluded"]] == [pb.SMALL_NAMES["young"]]
+
+
+class TestDecisionsJoinOnTheComposerHash:
+    def test_an_entry_without_a_decision_row_reads_none_not_pending(self, client, isolated_db):
+        pb.store_full_run()
+        for entry in _get(client)["review_entries"]:
+            assert entry["approval_status"] is None, entry["display_name"]
+
+    def test_each_decided_symphony_carries_its_own_status_whatever_its_verdict(
+        self, client, isolated_db
+    ):
+        pb.store_full_run()
+        ids = pb.FULL_IDS
+        db_module.upsert_retirement_decision(ids["retire"], approval_status="approved")
+        db_module.upsert_retirement_decision(ids["keep"], approval_status="rejected")
+        db_module.upsert_retirement_decision(ids["watch"], approval_status="approved")
+        entries = _entries_by_id(_get(client))
+        assert entries[ids["retire"]]["approval_status"] == "approved"
+        assert entries[ids["keep"]]["approval_status"] == "rejected"
+        assert entries[ids["watch"]]["approval_status"] == "approved", (
+            "a decision made on an earlier verdict must show on a watch entry too"
+        )
+        assert entries[ids["young"]]["approval_status"] is None
+        assert entries[ids["silent"]]["approval_status"] is None
+
+    def test_a_stored_pending_decision_reads_pending_unlike_no_row(self, client, isolated_db):
+        pb.store_full_run()
+        db_module.upsert_retirement_decision(pb.FULL_IDS["keep"], approval_status="pending")
+        entries = _entries_by_id(_get(client))
+        assert entries[pb.FULL_IDS["keep"]]["approval_status"] == "pending"
+        assert entries[pb.FULL_IDS["watch"]]["approval_status"] is None
+
+    def test_a_decision_made_between_two_requests_shows_on_the_second(self, client, isolated_db):
+        pb.store_full_run()
+        first = _entries_by_id(_get(client))
+        assert first[pb.FULL_IDS["retire"]]["approval_status"] is None
+        db_module.upsert_retirement_decision(pb.FULL_IDS["retire"], approval_status="approved")
+        second = _entries_by_id(_get(client))
+        assert second[pb.FULL_IDS["retire"]]["approval_status"] == "approved"
+
+    def test_a_failed_decision_read_degrades_every_entry_to_none(
+        self, client, isolated_db, monkeypatch
+    ):
+        record = pb.store_full_run()
+        monkeypatch.setattr(
+            db_module,
+            "get_retirement_decisions",
+            lambda: (_ for _ in ()).throw(RuntimeError("simulated decision read failure")),
+        )
+        data = _get(client)
+        assert len(data["review_entries"]) == len(record["entries"])
+        assert all(e["approval_status"] is None for e in data["review_entries"])
+
+
+class TestOnlyTheLatestRunIsShown:
+    def _two_runs_on_one_date(self):
+        first = pb.full_record(pb.RUN_ID_FIRST, completed_at="2026-12-31T03:50:00+00:00")
+        first_text = "Explanation written by the first run."
+        pb.set_explanation(first, pb.FULL_IDS["retire"], first_text, "2026-12-30")
+        pb.store_recommendation(
+            pb.recommendation_for(
+                first,
+                pb.entry_of(first, pb.FULL_IDS["retire"]),
+                explanation=first_text,
+                written_on="2026-12-30",
+            )
+        )
+        pb.store_run(first)
+
+        second = pb.full_record(
+            pb.RUN_ID_SECOND, trigger="on_demand", completed_at="2026-12-31T21:10:00+00:00"
+        )
+        second_text = "Explanation written by the second run."
+        pb.entry_of(second, pb.FULL_IDS["keep"])["display_name"] = "Yankee Tail Two Renamed"
+        pb.set_explanation(second, pb.FULL_IDS["retire"], second_text, "2026-12-31")
+        pb.store_recommendation(
+            pb.recommendation_for(
+                second,
+                pb.entry_of(second, pb.FULL_IDS["retire"]),
+                explanation=second_text,
+                written_on="2026-12-31",
+            )
+        )
+        pb.store_run(second)
+        return first, second
+
+    def test_a_nightly_and_a_later_on_demand_run_on_one_date_show_only_the_later(
+        self, client, isolated_db
+    ):
+        _, second = self._two_runs_on_one_date()
+        data = _get(client)
+        assert data["review_run"]["run_id"] == second["run_id"]
+        assert data["review_run"]["trigger"] == "on_demand"
+        ids = [e["symphony_id"] for e in data["review_entries"]]
+        assert len(ids) == len(set(ids)) == len(second["entries"]), (
+            "each live symphony must appear once"
+        )
+        renamed = _entries_by_id(data)[pb.FULL_IDS["keep"]]["display_name"]
+        assert renamed == "Yankee Tail Two Renamed"
+
+    def test_the_recommendation_list_holds_one_row_per_candidate_from_the_later_run(
+        self, client, isolated_db
+    ):
+        _, second = self._two_runs_on_one_date()
+        recs = _get(client)["recommendations"]
+        assert [r["candidate_id"] for r in recs] == [pb.FULL_IDS["retire"]]
+        assert recs[0]["review_run_id"] == second["run_id"]
+        assert recs[0]["explanation"] == "Explanation written by the second run."
+
+    def test_rows_of_a_run_that_never_completed_and_rows_with_no_run_link_are_hidden(
+        self, client, isolated_db
+    ):
+        record = pb.full_record(pb.RUN_ID_FIRST)
+        candidate = pb.entry_of(record, pb.FULL_IDS["retire"])
+        own = pb.recommendation_for(record, candidate)
+        orphan = dict(own, candidate_id="orphan-cand", review_run_id=pb.RUN_ID_THIRD)
+        unlinked = {k: v for k, v in own.items() if k != "review_run_id"}
+        unlinked["candidate_id"] = "unlinked-cand"
+        pb.store_recommendation(orphan)
+        pb.store_recommendation(unlinked)
+        pb.store_recommendation(own)
+        pb.store_run(record)
+        recs = _get(client)["recommendations"]
+        assert [r["candidate_id"] for r in recs] == [pb.FULL_IDS["retire"]], (
+            "only recommendation rows linked to the latest completed run may be listed"
+        )
+
+
+class TestStrictJsonThroughLists:
+    def test_non_finite_numbers_inside_lists_are_served_as_null(self, client, isolated_db):
+        record = pb.full_record()
+        entry = pb.entry_of(record, pb.FULL_IDS["keep"])
+        entry["verdict_reasons"] = ["finite reason", float("nan"), float("inf")]
+        entry["evidence"]["marginal"]["excluded"] = [
+            {"display_name": "Nested", "reason": float("-inf")}
+        ]
+        pb.store_run(record)
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200
+        body = resp.get_data(as_text=True)
+        assert "NaN" not in body and "Infinity" not in body
+        served = _entries_by_id(pb.strict_json(resp))[pb.FULL_IDS["keep"]]
+        assert served["verdict_reasons"] == ["finite reason", None, None]
+        assert served["evidence"]["marginal"]["excluded"] == [
+            {"display_name": "Nested", "reason": None}
+        ]
+
+
+class TestReviewStatusReportsTheLiveRunState:
+    def test_a_run_in_progress_is_reported_with_who_started_it_and_when(self, client, isolated_db):
+        pb.store_full_run()
+        assert tenure_review.REVIEW_RUN_STATE.try_start("on_demand")
+        data = _get(client)
+        status = data["review_status"]
+        assert status["running"] is True
+        assert status["trigger"] == "on_demand"
+        assert isinstance(status["running_since"], str) and status["running_since"]
+        assert data["review_run"]["run_id"] == pb.RUN_ID_FIRST, (
+            "the previous completed run stays the one served while a run is in progress"
+        )
+
+    def test_a_failed_attempt_is_reported_with_its_reason_and_time(self, client, isolated_db):
+        pb.store_full_run()
+        state = tenure_review.REVIEW_RUN_STATE
+        token = state.try_start("nightly")
+        assert token
+        state.finish_failure(
+            token, "Composer statistics unavailable", datetime(2026, 12, 31, tzinfo=UTC)
+        )
+        data = _get(client)
+        status = data["review_status"]
+        assert status["running"] is False
+        assert status["last_failed_attempt"]["reason"] == "Composer statistics unavailable"
+        assert status["last_failed_attempt"]["at"].startswith("2026-12-31")
+        assert data["review_run"]["run_id"] == pb.RUN_ID_FIRST
+
+
+# ---------------------------------------------------------------------------
+# No Composer request on a read path
+# ---------------------------------------------------------------------------
+
+
+class TestTheApiReadsOnlyTheStoredRun:
+    def test_serving_a_completed_run_makes_no_outbound_request(
+        self, client, isolated_db, monkeypatch
+    ):
+        record = pb.store_full_run()
+        attempts = pb.forbid_network(monkeypatch)
+        data = _get(client)
+        assert data["review_run"]["run_id"] == pb.RUN_ID_FIRST
+        assert len(data["review_entries"]) == len(record["entries"])
+        assert attempts == []
+
+    def test_serving_the_run_writes_nothing(self, client, isolated_db):
+        pb.store_full_run()
+        before = pb.observation_count()
+        assert _get(client)["review_run"]["run_id"] == pb.RUN_ID_FIRST
+        _get(client)
+        assert pb.observation_count() == before
+        assert db_module.get_retirement_decisions() == []
+
+
+# ---------------------------------------------------------------------------
+# Authentication on the review API
+# ---------------------------------------------------------------------------
+
+_XHR = {"X-Requested-With": "XMLHttpRequest"}
+
+
+@pytest.fixture()
+def read_spy(monkeypatch):
+    """Record every call to the advisor observation reader, to prove a refused request
+    read nothing."""
+    calls = []
+    real = db_module.get_advisor_observations_for_role
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(db_module, "get_advisor_observations_for_role", spy)
+    return calls
+
+
+class TestReviewApiRefusals:
+    def test_an_unauthenticated_request_gets_401_and_nothing_is_read_or_written(
+        self, client, isolated_db, monkeypatch, read_spy
+    ):
+        pb.store_full_run()
+        # The same data is served while the gate is open, so the refusal below is the
+        # gate's doing and not an empty store.
+        assert _get(client)["review_run"]["run_id"] == pb.RUN_ID_FIRST
+        read_spy.clear()
+        before = pb.observation_count()
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        with app_module.app.test_client() as locked:
+            resp = locked.get("/api/retirement-recommendations")
+        assert resp.status_code == 401
+        assert resp.get_json() == {"error": "unauthenticated"}
+        assert pb.FULL_NAMES["retire"] not in resp.get_data(as_text=True)
+        assert read_spy == [], "a refused request must read nothing"
+        assert pb.observation_count() == before
+
+    @pytest.mark.parametrize(
+        "unset",
+        [
+            ("SECRET_KEY", "FLASK_SECRET_KEY"),
+            ("DASHBOARD_PASSWORD", "DASHBOARD_PASSWORD_HASH"),
+        ],
+        ids=["secret key not configured", "dashboard credential not configured"],
+    )
+    @pytest.mark.parametrize("headers", [{}, _XHR], ids=["api path", "api path with xhr header"])
+    def test_unconfigured_authentication_answers_503_and_nothing_is_read_or_written(
+        self, client, isolated_db, monkeypatch, read_spy, unset, headers
+    ):
+        pb.store_full_run()
+        assert _get(client)["review_run"] is not None
+        read_spy.clear()
+        before = pb.observation_count()
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        for name in unset:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        with app_module.app.test_client() as locked:
+            resp = locked.get("/api/retirement-recommendations", headers=headers)
+        assert resp.status_code == 503
+        assert resp.get_json() == {"error": "misconfigured"}
+        assert pb.FULL_NAMES["retire"] not in resp.get_data(as_text=True)
+        assert read_spy == []
+        assert pb.observation_count() == before
+
+
+class TestMalformedStoredData:
+    def test_malformed_entries_never_break_the_response_and_good_entries_survive(
+        self, client, isolated_db
+    ):
+        record = pb.full_record()
+        good = pb.entry_of(record, pb.FULL_IDS["keep"])
+        record["entries"] = [good, "garbage", 42, None, {"symphony_id": "partial-only"}]
+        pb.store_run(record)
+        data = _get(client)
+        assert data["review_run"]["run_id"] == record["run_id"]
+        assert pb.FULL_IDS["keep"] in _entries_by_id(data)
+
+    def test_a_failed_read_of_the_run_alone_degrades_the_review_fields_and_never_500s(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+        real = db_module.get_advisor_observations_for_role
+
+        def selective(role, *args, **kwargs):
+            if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+                raise RuntimeError("simulated run read failure")
+            return real(role, *args, **kwargs)
+
+        monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+        data = _get(client)
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == [], (
+            "the run's own recommendation rows cannot be told from an unfinished run's when "
+            "the run cannot be read"
+        )
+
+
+# ---------------------------------------------------------------------------
+# A run that cannot be read fails closed: which recommendation rows belong to it is
+# unknown, so none are listed (the latest-date list can include the rows of a run that
+# never finished, and it is only right when no run was ever stored).
+# ---------------------------------------------------------------------------
+
+
+def _seed_unrelated_recommendation_of_another_run(record) -> None:
+    candidate = pb.entry_of(record, pb.FULL_IDS["retire"])
+    body = pb.recommendation_for(record, candidate)
+    pb.store_recommendation(
+        dict(body, candidate_id="orphan-of-unfinished-run", review_run_id=pb.RUN_ID_THIRD)
+    )
+
+
+class TestFailClosedWhenTheLatestRunIsUnusable:
+    def test_a_failed_read_of_the_run_lists_no_recommendation_of_an_unfinished_run(
+        self, client, isolated_db, monkeypatch
+    ):
+        record = pb.store_full_run()
+        _seed_unrelated_recommendation_of_another_run(record)
+        real = db_module.get_advisor_observations_for_role
+
+        def selective(role, *args, **kwargs):
+            if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+                raise RuntimeError("simulated run read failure")
+            return real(role, *args, **kwargs)
+
+        monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+        data = _get(client)
+        assert data["recommendations"] == [], (
+            "a list that falls back to the latest-date filter shows an unfinished run's rows"
+        )
+        assert data["review_run"] is None and data["review_entries"] == []
+
+    @pytest.mark.parametrize(
+        "stored",
+        ['"plain text"', '["not", "a", "record"]', "42", "null", "this is not json {"],
+        ids=["json text", "json list", "json number", "json null", "unparseable"],
+    )
+    def test_a_stored_record_that_is_not_a_dict_lists_no_recommendation(
+        self, client, isolated_db, stored
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        db_module.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=pb.RUN_ID_FIRST,
+            verdict="completed",
+            raw_response=stored,
+        )
+        data = _get(client)
+        assert data["recommendations"] == []
+        assert data["review_run"] is None and data["review_entries"] == []
+
+    def test_a_stored_record_with_no_run_id_matches_no_recommendation(self, client, isolated_db):
+        """A recommendation row written before reviews existed carries no run id at all, so
+        a record whose run id is also missing must not be taken to own it."""
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        db_module.insert_advisor_observation(
+            advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+            subject_type="tenure_review_run",
+            subject_id=pb.RUN_ID_FIRST,
+            verdict="completed",
+            raw_response={"trigger": "nightly", "entries": []},
+        )
+        assert _get(client)["recommendations"] == []
+
+    def test_with_no_run_row_at_all_the_latest_date_list_still_applies(self, client, isolated_db):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        data = _get(client)
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
+
+
+def _store_orphan_row(candidate_id="orphan-cand", sibling_id="orphan-sib") -> None:
+    """A recommendation row of a run that wrote it and then failed before its run row: it names
+    a run that no run row describes."""
+    pb.store_recommendation(
+        dict(_sample_raw_response(candidate_id, sibling_id), review_run_id=pb.RUN_ID_THIRD)
+    )
+
+
+def _legacy_card_ids(client) -> list[str]:
+    db_module.save_state(
+        {sid: {"name": sid, "logic_holdings": {}} for sid in ("legacy-cand", "orphan-cand")}
+    )
+    response = client.get("/ai-advisor")
+    assert response.status_code == 200
+    panel = pb.panel_of(response.get_data(as_text=True))
+    return [
+        card.attrs.get("data-candidate-id") or card.text()
+        for card in panel.find_all("retirement-recommendation-card")
+    ]
+
+
+class TestRowsOfARunThatNeverCompletedAreIgnoredBeforeTheFirstRunToo:
+    """With no run row at all, the reader lists the newest night's rows. A row that carries a run
+    id belongs to a review run (one that completed has a run row, so it is not in this branch); it
+    is never a legacy row, so it takes no part in choosing the newest night or in the list."""
+
+    def test_rows_that_name_a_run_no_row_describes_are_not_listed(self, client, isolated_db):
+        _store_orphan_row()
+
+        data = _get(client)
+
+        assert data["review_run"] is None, "premise: no run row exists"
+        assert data["recommendations"] == []
+
+    def test_a_row_of_the_same_night_without_a_run_id_is_still_listed_beside_one_that_has_one(
+        self, client, isolated_db
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        _store_orphan_row()
+
+        data = _get(client)
+
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
+
+    def test_a_newer_orphan_row_does_not_hide_the_newest_night_of_rows_without_a_run_id(
+        self, client, isolated_db
+    ):
+        _seed_recommendation_backdated("legacy-cand", "legacy-sib", days_ago=2)
+        _store_orphan_row()
+
+        data = _get(client)
+
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"], (
+            "the orphan row picked the newest date and pushed the real legacy night out"
+        )
+
+    def test_the_fetch_helper_gives_the_same_answer_as_the_route(self, isolated_db):
+        _seed_recommendation_backdated("legacy-cand", "legacy-sib", days_ago=2)
+        _store_orphan_row()
+
+        listed = app_module._fetch_retirement_recommendations()
+
+        assert [r["candidate_id"] for r in listed] == ["legacy-cand"]
+
+    def test_the_panel_lists_the_same_cards_as_the_api(self, client, isolated_db):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        _store_orphan_row()
+
+        cards = _legacy_card_ids(client)
+
+        assert len(cards) == 1, f"the panel shows {len(cards)} recommendation cards, not one"
+        assert not any("orphan-cand" in card for card in cards)
+
+    def test_the_panel_shows_no_recommendation_card_for_orphan_rows_alone(
+        self, client, isolated_db
+    ):
+        _store_orphan_row()
+
+        assert _legacy_card_ids(client) == []
+
+
+# ---------------------------------------------------------------------------
+# The shared review fetch never raises; any failure is an honest empty answer.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def review_module_unimportable(monkeypatch):
+    """Make ``from advisors import tenure_review`` raise ImportError inside the app: the
+    package attribute is removed (a from-import reads it first) and the module entry is
+    set to None (which makes the fallback import fail)."""
+    import advisors
+
+    monkeypatch.delattr(advisors, "tenure_review")
+    monkeypatch.setitem(sys.modules, "advisors.tenure_review", None)
+
+
+class TestTheReviewFetchNeverRaises:
+    def test_a_review_module_that_cannot_be_imported_still_answers_200(
+        self, client, isolated_db, review_module_unimportable
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200, "an import failure became a server error"
+        data = pb.strict_json(resp)
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert isinstance(data["review_status"], dict) and "running" in data["review_status"]
+        assert data["recommendations"] == [], (
+            "the run that owns the rows is unknown, so no row may be listed"
+        )
+
+    def test_a_run_state_snapshot_that_raises_still_answers_200(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise RuntimeError("simulated run state failure")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        resp = client.get("/api/retirement-recommendations")
+        assert resp.status_code == 200, "a run state failure became a server error"
+        data = pb.strict_json(resp)
+        assert isinstance(data["review_status"], dict) and "running" in data["review_status"]
+
+
+# ---------------------------------------------------------------------------
+# One join of retirement decisions serves recommendations and review entries.
+# ---------------------------------------------------------------------------
+
+
+class TestOneDecisionJoin:
+    def test_the_join_takes_the_id_key_and_the_absent_status_as_keyword_only_options(self):
+        params = inspect.signature(app_module._join_retirement_approval_status).parameters
+        assert params["id_key"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["id_key"].default == "candidate_id"
+        assert params["absent_status"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert params["absent_status"].default == "pending"
+
+    def test_one_function_stamps_entries_by_symphony_id_and_recommendations_by_candidate_id(
+        self, isolated_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            db_module,
+            "get_retirement_decisions",
+            lambda: [
+                {"candidate_id": "hash-a", "approval_status": "approved"},
+                {"candidate_id": "hash-b", "approval_status": "pending"},
+            ],
+        )
+        entries = [{"symphony_id": "hash-a"}, {"symphony_id": "hash-b"}, {"symphony_id": "hash-c"}]
+        app_module._join_retirement_approval_status(
+            entries, id_key="symphony_id", absent_status=None
+        )
+        assert [e["approval_status"] for e in entries] == ["approved", "pending", None]
+        recs = [{"candidate_id": "hash-a"}, {"candidate_id": "hash-c"}]
+        app_module._join_retirement_approval_status(recs)
+        assert [r["approval_status"] for r in recs] == ["approved", "pending"], (
+            "the call the recommendation list already makes must keep its meaning"
+        )
+
+    def test_a_failed_read_leaves_each_list_at_its_own_absent_status(
+        self, isolated_db, monkeypatch
+    ):
+        monkeypatch.setattr(
+            db_module,
+            "get_retirement_decisions",
+            lambda: (_ for _ in ()).throw(RuntimeError("simulated decision read failure")),
+        )
+        entries = [{"symphony_id": "hash-a"}]
+        app_module._join_retirement_approval_status(
+            entries, id_key="symphony_id", absent_status=None
+        )
+        recs = [{"candidate_id": "hash-a"}]
+        app_module._join_retirement_approval_status(recs)
+        assert entries[0]["approval_status"] is None
+        assert recs[0]["approval_status"] == "pending"
+
+    def test_no_second_function_in_the_app_reads_the_decisions_table(self):
+        source = (Path(__file__).resolve().parents[2] / "app.py").read_text(encoding="utf-8")
+        readers = []
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for call in ast.walk(node):
+                if (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "get_retirement_decisions"
+                ):
+                    readers.append(node.name)
+                    break
+        assert readers == ["_join_retirement_approval_status"], (
+            f"the decisions table is read by {readers}; a second join can drift from the first"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The route and the fetch helper document what they now return and filter.
+# ---------------------------------------------------------------------------
+
+
+class TestDocstringsNameWhatChanged:
+    @staticmethod
+    def _flat(fn) -> str:
+        return " ".join((fn.__doc__ or "").split())
+
+    @pytest.mark.parametrize(
+        "key", ["review_run", "review_entries", "review_status", "review_read_failed"]
+    )
+    def test_the_route_docstring_names_each_new_response_key(self, key):
+        assert key in self._flat(app_module.api_retirement_recommendations)
+
+    def test_the_route_docstring_states_that_the_list_follows_the_latest_run(self):
+        doc = self._flat(app_module.api_retirement_recommendations)
+        assert "review_run_id" in doc or "latest run" in doc.lower()
+
+    def test_the_fetch_helper_docstring_names_the_run_id_filter(self):
+        doc = self._flat(app_module._fetch_retirement_recommendations)
+        assert "review_run_id" in doc
+
+    def test_the_review_fetch_docstring_states_the_non_list_entries_case_on_one_line(self):
+        # A plain substring check on the docstring as written, so the phrase must not wrap.
+        doc = app_module._fetch_tenure_review.__doc__ or ""
+        assert "not a list" in doc, (
+            "the docstring does not say a non-list entries value is unreadable"
+        )
+
+
+# ---------------------------------------------------------------------------
+# review_read_failed: whether the empty review fields mean "nothing stored" or "the
+# stored review cannot be read". Both leave review_run null and review_entries empty,
+# so a client cannot tell them apart without this flag.
+# ---------------------------------------------------------------------------
+
+
+def _store_unreadable_run_record(raw_response) -> None:
+    db_module.insert_advisor_observation(
+        advisor_role=tenure_review.TENURE_REVIEW_RUN_ROLE,
+        subject_type="tenure_review_run",
+        subject_id=pb.RUN_ID_FIRST,
+        verdict="completed",
+        raw_response=raw_response,
+    )
+
+
+def _make_run_read_raise(monkeypatch) -> None:
+    real = db_module.get_advisor_observations_for_role
+
+    def selective(role, *args, **kwargs):
+        if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+            raise RuntimeError("simulated run read failure")
+        return real(role, *args, **kwargs)
+
+    monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+
+
+def _read_failed_flag(data):
+    assert "review_read_failed" in data, "the response carries no review_read_failed key"
+    return data["review_read_failed"]
+
+
+class TestReviewReadFailedSaysWhetherTheStoredReviewCanBeRead:
+    def test_a_completed_run_reports_false(self, client, isolated_db):
+        pb.store_full_run()
+        data = _get(client)
+        assert _read_failed_flag(data) is False
+        assert data["review_run"] is not None and data["review_entries"]
+
+    def test_with_no_run_stored_it_reports_false_with_or_without_older_recommendations(
+        self, client, isolated_db
+    ):
+        assert _read_failed_flag(_get(client)) is False
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        data = _get(client)
+        assert _read_failed_flag(data) is False, (
+            "nothing stored is not a failure: the latest-date list applies"
+        )
+        assert [r["candidate_id"] for r in data["recommendations"]] == ["legacy-cand"]
+
+    def test_a_completed_run_with_no_entries_reports_false(self, client, isolated_db):
+        pb.store_run(pb.empty_record())
+        data = _get(client)
+        assert data["review_entries"] == []
+        assert _read_failed_flag(data) is False, (
+            "empty entries beside a header is an honest empty run, not a failed read"
+        )
+
+    def test_a_completed_run_that_lists_no_recommendation_reports_false(self, client, isolated_db):
+        pb.store_run(pb.small_record())
+        data = _get(client)
+        assert data["recommendations"] == []
+        assert _read_failed_flag(data) is False, (
+            "an empty recommendation list does not mean the run could not be read"
+        )
+
+    def test_a_run_state_snapshot_that_raises_does_not_make_the_stored_run_unreadable(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise RuntimeError("simulated run state failure")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        data = _get(client)
+        assert _read_failed_flag(data) is False
+        assert data["review_run"] is not None
+
+    def test_a_failed_read_of_the_run_reports_true_with_the_review_fields_empty(
+        self, client, isolated_db, monkeypatch
+    ):
+        record = pb.store_full_run()
+        _seed_unrelated_recommendation_of_another_run(record)
+        _make_run_read_raise(monkeypatch)
+        data = _get(client)
+        assert _read_failed_flag(data) is True
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == []
+
+    @pytest.mark.parametrize(
+        "stored",
+        ['"plain text"', '["not", "a", "record"]', "42", "null", "this is not json {"],
+        ids=["json text", "json list", "json number", "json null", "unparseable"],
+    )
+    def test_a_stored_record_that_is_not_a_dict_reports_true_with_the_review_fields_empty(
+        self, client, isolated_db, stored
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        _store_unreadable_run_record(stored)
+        data = _get(client)
+        assert _read_failed_flag(data) is True
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == []
+
+    def test_a_stored_record_with_no_run_id_reports_true_as_the_other_fields_read_unusable(
+        self, client, isolated_db
+    ):
+        """The record is a dict but names no run, so the header is withheld and no
+        recommendation can be tied to it: the same state as the cases above, so the same flag."""
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        _store_unreadable_run_record({"trigger": "nightly", "entries": []})
+        data = _get(client)
+        assert _read_failed_flag(data) is True
+        assert data["review_run"] is None and data["recommendations"] == []
+
+    def test_a_review_module_that_cannot_be_imported_reports_true(
+        self, client, isolated_db, review_module_unimportable
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        data = _get(client)
+        assert _read_failed_flag(data) is True
+        assert data["review_run"] is None and data["recommendations"] == []
+
+    def test_the_newest_row_decides_when_a_broken_row_is_followed_by_a_good_run(
+        self, client, isolated_db
+    ):
+        _store_unreadable_run_record('["not", "a", "record"]')
+        pb.store_full_run(pb.RUN_ID_SECOND)
+        data = _get(client)
+        assert _read_failed_flag(data) is False
+        assert data["review_run"]["run_id"] == pb.RUN_ID_SECOND
+
+    def test_the_newest_row_decides_when_a_good_run_is_followed_by_a_broken_row(
+        self, client, isolated_db
+    ):
+        pb.store_full_run(pb.RUN_ID_FIRST)
+        _store_unreadable_run_record('["not", "a", "record"]')
+        data = _get(client)
+        assert _read_failed_flag(data) is True
+        assert data["review_run"] is None and data["review_entries"] == []
+
+    def test_the_flag_is_written_as_a_json_boolean_in_every_state(
+        self, client, isolated_db, monkeypatch
+    ):
+        """The literal true or false in the body: not 1 or 0, not a string, not absent."""
+        pattern = re.compile(r'"review_read_failed"\s*:\s*(true|false)\b')
+        bodies = [client.get("/api/retirement-recommendations").get_data(as_text=True)]
+        pb.store_full_run()
+        bodies.append(client.get("/api/retirement-recommendations").get_data(as_text=True))
+        _make_run_read_raise(monkeypatch)
+        bodies.append(client.get("/api/retirement-recommendations").get_data(as_text=True))
+        found = [pattern.search(body) for body in bodies]
+        assert all(found), "the key is missing or is not a JSON boolean in some state"
+        assert [m.group(1) for m in found] == ["false", "false", "true"]
+
+
+class TestTheCompositeItemServesItsPopulationSize:
+    def test_every_available_composite_item_carries_its_stored_whole_number_population(
+        self, client, isolated_db
+    ):
+        record = pb.store_full_run()
+        got = _entries_by_id(_get(client))
+        checked = 0
+        for stored in record["entries"]:
+            item = stored["evidence"]["composite"]
+            if item["status"] != "available":
+                continue
+            served = got[stored["symphony_id"]]["evidence"]["composite"]
+            assert isinstance(served["population_size"], int), stored["display_name"]
+            assert not isinstance(served["population_size"], bool), stored["display_name"]
+            assert served["population_size"] == item["population_size"], stored["display_name"]
+            checked += 1
+        assert checked >= 3
+
+
+class TestTheRedundancyItemServesWhatThePanelRenders:
+    """The panel renders the list of peers not compared; the API serves the stored item
+    as it is, so the two surfaces list the same peers with the same reasons."""
+
+    @pytest.mark.parametrize("which", ["full", "small", "edge", "quiet"])
+    def test_the_served_item_carries_the_stored_not_compared_list_and_the_stored_missing_items(
+        self, client, isolated_db, which
+    ):
+        builders = {
+            "full": pb.full_record,
+            "small": pb.small_record,
+            "edge": pb.edge_record,
+            "quiet": pb.quiet_record,
+        }
+        record = builders[which]()
+        pb.store_run(record)
+        got = _entries_by_id(_get(client))
+        listed = 0
+        for stored in record["entries"]:
+            served = got[stored["symphony_id"]]
+            item = stored["evidence"]["redundancy"]
+            assert served["evidence"]["redundancy"].get("not_compared") == item.get(
+                "not_compared"
+            ), stored["display_name"]
+            assert served["missing_items"] == stored["missing_items"], stored["display_name"]
+            listed += len(item.get("not_compared") or [])
+        assert listed >= (3 if which == "full" else 0)
+
+
+class TestNoEntryListsItselfAsLeftOut:
+    @pytest.mark.parametrize("which", ["full", "small", "edge"])
+    def test_an_entrys_comparison_item_never_names_the_entry_itself(
+        self, client, isolated_db, which
+    ):
+        builders = {"full": pb.full_record, "small": pb.small_record, "edge": pb.edge_record}
+        pb.store_run(builders[which]())
+        served = _get(client)["review_entries"]
+        assert served, "fixture sanity: the record has entries"
+        listed = 0
+        for entry in served:
+            excluded = entry["evidence"]["marginal"].get("excluded") or []
+            names = [x["display_name"] for x in excluded]
+            assert entry["display_name"] not in names, entry["display_name"]
+            listed += len(names)
+        if which != "edge":
+            assert listed, "fixture sanity: some entry lists a left-out symphony"
+
+
+_SERVED_RECORDS = {
+    "gap": pb.gap_record,
+    "lone": pb.lone_record,
+    "solo": pb.solo_record,
+    "apart": pb.apart_record,
+    "shadow_start": pb.shadow_start_record,
+    **{
+        f"state:{kind}": functools.partial(pb.state_record, kind)
+        for kind in ("below_floor_no_hit", "at_floor", "structural_undefined")
+    },
+}
+
+
+class TestTheApiServesTheItemStatesAndWindowsAsStored:
+    """The panel renders the stored item, so the API serves the same item as it is: the
+    days a window used beside the sessions its span holds, the comparison portfolio's
+    exclusions with their labels, the reason of an item that decided nothing and a shadow
+    series that has no first return."""
+
+    @pytest.mark.parametrize("which", sorted(_SERVED_RECORDS))
+    def test_the_served_entry_carries_the_stored_evidence_basis_and_missing_items(
+        self, client, isolated_db, which
+    ):
+        record = _SERVED_RECORDS[which]()
+        pb.store_run(record)
+        got = _entries_by_id(_get(client))
+        assert set(got) == {e["symphony_id"] for e in record["entries"]}
+        for stored in record["entries"]:
+            served = got[stored["symphony_id"]]
+            where = f"{which} / {stored['display_name']}"
+            expected = json.loads(json.dumps(stored))
+            assert served["evidence"] == expected["evidence"], where
+            assert served["basis"] == expected["basis"], where
+            assert served["missing_items"] == expected["missing_items"], where
+            assert served["verdict_text"] == expected["verdict_text"], where
+
+    def test_every_served_window_states_the_days_used_and_the_sessions_its_span_holds(
+        self, client, isolated_db
+    ):
+        short = 0
+        for which in ("gap", "apart"):
+            record = _SERVED_RECORDS[which]()
+            pb.store_run(record)
+            for served in _get(client)["review_entries"]:
+                for name, item in served["evidence"].items():
+                    window = item.get("window")
+                    if not window:
+                        continue
+                    where = f"{which} / {served['display_name']} / {name}"
+                    assert isinstance(window["days"], int), where
+                    assert isinstance(window["sessions"], int), where
+                    assert window["days"] <= window["sessions"], where
+                    short += window["days"] < window["sessions"]
+        assert short >= 6, "the gap record must serve windows that use fewer days than they span"
+
+
+# ---------------------------------------------------------------------------
+# A stored run whose entries are not a list cannot be read: the flag says so, and the
+# response never reads as a completed run with no live symphonies.
+# ---------------------------------------------------------------------------
+
+_ENTRIES_NOT_A_LIST = [
+    pytest.param(None, True, id="missing"),
+    pytest.param(None, False, id="null"),
+    pytest.param("garbage", False, id="text"),
+    pytest.param(7, False, id="a number"),
+    pytest.param({"a": 1}, False, id="a dict"),
+]
+
+
+class TestARunWhoseEntriesAreNotAListReportsAReadFailure:
+    @pytest.mark.parametrize(("entries", "dropped"), _ENTRIES_NOT_A_LIST)
+    def test_the_flag_is_true_and_every_review_field_is_empty(
+        self, client, isolated_db, entries, dropped
+    ):
+        _seed_recommendation("legacy-cand", "legacy-sib")
+        record = pb.full_record()
+        if dropped:
+            del record["entries"]
+        else:
+            record["entries"] = entries
+        pb.store_run(record)
+        data = _get(client)
+        assert _read_failed_flag(data) is True, (
+            "a run whose entries cannot be read was served as a run with no live symphonies"
+        )
+        assert data["review_run"] is None
+        assert data["review_entries"] == []
+        assert data["recommendations"] == []
+
+    def test_an_empty_list_of_entries_is_still_a_completed_run_with_no_live_symphonies(
+        self, client, isolated_db
+    ):
+        pb.store_run(pb.empty_record())
+        data = _get(client)
+        assert _read_failed_flag(data) is False
+        assert data["review_run"] is not None and data["review_entries"] == []
+
+
+# ---------------------------------------------------------------------------
+# The run state keeps its four keys whichever way it is read.
+# ---------------------------------------------------------------------------
+
+_RUN_STATE_KEYS = {"running", "running_since", "trigger", "last_failed_attempt"}
+
+
+class TestTheRunStateKeepsItsShapeWhenItCannotBeRead:
+    def test_an_idle_state_carries_all_four_keys(self, client, isolated_db):
+        status = _get(client)["review_status"]
+        assert set(status) == _RUN_STATE_KEYS
+        assert status["trigger"] is None
+
+    def test_a_review_module_that_cannot_be_imported_still_carries_all_four_keys(
+        self, client, isolated_db, review_module_unimportable
+    ):
+        status = _get(client)["review_status"]
+        assert set(status) == _RUN_STATE_KEYS, "a key of the documented shape is absent"
+        assert status["running"] is False
+        assert status["trigger"] is None
+
+    def test_a_run_state_snapshot_that_raises_still_carries_all_four_keys(
+        self, client, isolated_db, monkeypatch
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise RuntimeError("simulated run state failure")
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        status = _get(client)["review_status"]
+        assert set(status) == _RUN_STATE_KEYS, "a key of the documented shape is absent"
+        assert status["running"] is False
+        assert status["trigger"] is None
+
+
+# ---------------------------------------------------------------------------
+# The read path logs the type of an exception and nothing else: the message of an error
+# can carry a request address or an account number, and a traceback carries the message.
+# ---------------------------------------------------------------------------
+
+_SECRET_TEXT = "key=zz-test-secret-4411 account 99887766 https://example.invalid/v0/zz"
+
+
+def _review_log_records(caplog) -> list:
+    return [
+        r
+        for r in caplog.records
+        if r.name == "alphabot" and "_fetch_tenure_review" in r.getMessage()
+    ]
+
+
+class TestTheReadPathLogsOnlyTheExceptionType:
+    @pytest.fixture(autouse=True)
+    def _capture_the_daemon_log(self, caplog):
+        caplog.set_level(logging.DEBUG, logger="alphabot")
+
+    @staticmethod
+    def _assert_type_only(caplog, type_name: str) -> None:
+        records = _review_log_records(caplog)
+        assert records, "the failure was not logged at all"
+        for record in records:
+            assert not record.exc_info, (
+                "a traceback, which carries the exception message, was logged"
+            )
+            assert not record.exc_text
+            assert "zz-test-secret" not in record.getMessage()
+            assert "99887766" not in record.getMessage()
+            assert "example.invalid" not in record.getMessage()
+        assert any(type_name in r.getMessage() for r in records), (
+            f"the exception type {type_name} is not named in the log line"
+        )
+
+    def test_a_failed_read_of_the_run_logs_the_type_alone(
+        self, client, isolated_db, monkeypatch, caplog
+    ):
+        pb.store_full_run()
+        real = db_module.get_advisor_observations_for_role
+
+        def selective(role, *args, **kwargs):
+            if role == tenure_review.TENURE_REVIEW_RUN_ROLE:
+                raise RuntimeError(_SECRET_TEXT)
+            return real(role, *args, **kwargs)
+
+        monkeypatch.setattr(db_module, "get_advisor_observations_for_role", selective)
+        assert client.get("/api/retirement-recommendations").status_code == 200
+        self._assert_type_only(caplog, "RuntimeError")
+
+    def test_a_run_state_snapshot_that_raises_logs_the_type_alone(
+        self, client, isolated_db, monkeypatch, caplog
+    ):
+        pb.store_full_run()
+
+        def broken():
+            raise ValueError(_SECRET_TEXT)
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        assert client.get("/api/retirement-recommendations").status_code == 200
+        self._assert_type_only(caplog, "ValueError")
+
+    def test_a_review_module_that_cannot_be_imported_logs_the_type_alone(
+        self, client, isolated_db, review_module_unimportable, caplog
+    ):
+        assert client.get("/api/retirement-recommendations").status_code == 200
+        self._assert_type_only(caplog, "ModuleNotFoundError")
+        assert not any("halted" in r.getMessage() for r in _review_log_records(caplog)), (
+            "the text of the import error was logged"
+        )
+
+    def test_the_page_logs_the_same_way(self, client, isolated_db, monkeypatch, caplog):
+        pb.store_full_run()
+
+        def broken():
+            raise ValueError(_SECRET_TEXT)
+
+        monkeypatch.setattr(tenure_review.REVIEW_RUN_STATE, "snapshot", broken)
+        assert client.get("/ai-advisor").status_code == 200
+        self._assert_type_only(caplog, "ValueError")

@@ -38,6 +38,11 @@ import app as app_module
 import database as db_module
 from tests.app._retirement_run_summary_stub import make_summary
 
+# The 03:45 tick these tests run now starts the symphony tenure review before the recommender run
+# they are about; no_review_accounts (tests/app/conftest.py) makes that review stop at "no Composer
+# account configured" before any request, so no test here can read a real account.
+pytestmark = pytest.mark.usefixtures("no_review_accounts")
+
 _RUN_URL = "/ai-advisor/retirement/run"
 _WAIT_SECONDS = 5.0
 

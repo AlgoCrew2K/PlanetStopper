@@ -32,6 +32,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._ux_truth_support import parse_html
+
 
 @pytest.fixture(scope="function")
 def flask_client():
@@ -129,3 +131,29 @@ def test_ai_advisor_renders_honest_uniform_guardrail_explanation(flask_client, u
             "truthful explanation (no frozen-THEORY-spec reason, no Run-Advisor "
             "pointer). The honest framing must have real content."
         )
+
+
+# ===========================================================================
+# Notes and placeholders name the suggestion control by its on-screen label.
+# ===========================================================================
+
+
+def test_note_and_placeholder_name_the_suggestion_control_by_its_label(
+    flask_client, uniform_clear_rows
+):
+    html_text = flask_client.get("/ai-advisor").get_data(as_text=True)
+    tree = parse_html(html_text)
+
+    button = tree.find(testid="run-advisor-btn")
+    assert button is not None
+    label = button.text
+    assert label == "Run Claude advisor"
+
+    note = tree.find(testid="guardrail-uniform-note")
+    placeholder = tree.find(testid="suggestions-placeholder")
+    assert note is not None and placeholder is not None
+    assert label in note.text, note.text
+    assert label in placeholder.text, placeholder.text
+    for surface in (note.text, placeholder.text):
+        assert "gear" not in surface.lower(), surface
+    assert "gear icon" not in html_text.lower()

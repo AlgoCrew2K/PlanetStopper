@@ -17,6 +17,8 @@ import re
 
 import pytest
 
+from tests.dashboard.test_account_basis_honesty_render import _extract_function_with_signature
+
 _STATIC_DIR = pathlib.Path(__file__).parent.parent.parent / "static"
 _INDEX_JS = _STATIC_DIR / "index.js"
 
@@ -58,35 +60,31 @@ class TestClientEventSourceWiring:
         )
 
     def test_index_js_calls_loadstate_in_cycle_complete_handler(self, index_js_source: str):
-        """The cycle-complete handler must call loadState() to fetch fresh /api/state.
+        """The cycle-complete listener is the named `handleCycleCompleteEvent`, and that handler
+        still calls loadState() to fetch fresh /api/state (and the $-saved panel's summary).
 
-        The handler must not just log or silently ignore the event — it must trigger
-        an immediate dashboard refresh.
-
-        Fails until rt-impl calls loadState() (or equivalent) inside the event handler.
+        The handler is now the single place the event is interpreted: it parses the payload and
+        skips both fetches only for `changed === false`. Its skip behaviour is exercised under
+        node in test_cycle_event_client_skip.py; this test pins that the refetch calls live in
+        the registered handler and not in some other function.
         """
-        # Locate the ACTUAL addEventListener('cycle-complete', ...) call, not just any
-        # occurrence of the substring "cycle-complete" — a doc-comment elsewhere in the
-        # file (e.g. describing the $-saved panel's refresh timing, Finding 8) can also
-        # mention the event name, and a bare .find() would anchor its 300-char window on
-        # that comment instead of the real handler, producing a false RED/false GREEN
-        # depending on file layout. Anchoring on the addEventListener call itself is
-        # layout-stable regardless of what prose precedes it in the file.
-        match = re.search(r"addEventListener\(\s*['\"]cycle-complete['\"]", index_js_source)
+        match = re.search(
+            r"addEventListener\(\s*['\"]cycle-complete['\"]\s*,\s*handleCycleCompleteEvent\s*\)",
+            index_js_source,
+        )
         assert match is not None, (
-            "static/index.js must register a real addEventListener('cycle-complete', ...) "
-            "call — not just mention 'cycle-complete' in a comment or string. See previous test."
+            "static/index.js must register `addEventListener('cycle-complete', "
+            "handleCycleCompleteEvent)` -- a real call, not a mention in a comment or string."
         )
 
-        # Check for loadState within 300 chars AFTER the addEventListener call — the
-        # handler body follows the call site, so we only need a forward window.
-        window_end = min(len(index_js_source), match.end() + 300)
-        window = index_js_source[match.start() : window_end]
+        handler = _extract_function_with_signature(index_js_source, "handleCycleCompleteEvent")
 
-        assert "loadState" in window, (
-            "The 'cycle-complete' event handler in static/index.js must call `loadState()` "
-            "within 300 characters of the addEventListener('cycle-complete', ...) call. "
-            "rt-impl: `_es.addEventListener('cycle-complete', function() { loadState(); })`."
+        assert "loadState" in handler, (
+            "handleCycleCompleteEvent must call `loadState()` so an event that changed data "
+            "refreshes the dashboard immediately."
+        )
+        assert "fetchGuardAlphaSummary" in handler, (
+            "handleCycleCompleteEvent must refresh the $-saved panel on a changed event too."
         )
 
     def test_index_js_retains_polling_fallback(self, index_js_source: str):

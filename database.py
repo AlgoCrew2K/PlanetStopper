@@ -329,6 +329,27 @@ def load_state():
     return json.loads(row[0]) if row else {}
 
 
+def read_cycle_markers() -> tuple[str | None, str | None]:
+    """Read only the two engine-written cycle markers, never the whole bot_state blob.
+
+    Returns (last_successful_cycle_at, last_market_close_snapshot.trading_day); any
+    failure returns (None, None) so the caller treats the state as unobservable.
+    """
+    try:
+        conn = get_ro_connection()
+        try:
+            row = conn.execute(
+                "SELECT json_extract(data, '$.last_successful_cycle_at'),"
+                " json_extract(data, '$.last_market_close_snapshot.trading_day')"
+                " FROM bot_state WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        return (row[0], row[1]) if row else (None, None)
+    except Exception:
+        return (None, None)
+
+
 def _sanitize_state_for_json(value):
     """Recursively coerce a bot_state tree to JSON-safe native Python.
 
@@ -2396,6 +2417,82 @@ def get_spec_facets_for_bundle(bundle_hash: str) -> "list[dict]":
     return [dict(zip(_SPEC_FACET_COLUMNS, row)) for row in rows]
 
 
+def objective_kind_for_facets(facets_by_name: dict) -> str:
+    """Return the optimizer objective a spec bundle's facets select.
+
+    The one rule shared by ``autotuner.run_autotuner`` (which optimises under the
+    answer) and ``get_autotune_run_objectives`` (which names the answer on a stored
+    run), so the card can never describe a different objective than the one the run used.
+
+    * A non-empty ``objective_kind`` facet is used as stored, including a value this
+      code does not recognise.
+    * Otherwise ``utility_family`` decides: ``CRRA`` (any letter case, no padding) selects
+      ``'crra_eu'``; anything else, or no facets at all, selects
+      ``'sortino_loss_aversion'``.
+
+    Pure: reads ``facets_by_name`` (facet name -> facet value) and never mutates it.
+    """
+    objective_kind = facets_by_name.get("objective_kind", "")
+    if objective_kind:
+        return objective_kind
+    utility_family = facets_by_name.get("utility_family", "")
+    return "crra_eu" if utility_family.upper() == "CRRA" else "sortino_loss_aversion"
+
+
+# SQLite caps the number of bound variables in one statement (999 on older builds);
+# the run-id lookup below is chunked well under it.
+_RUN_OBJECTIVE_LOOKUP_CHUNK = 500
+
+
+def get_autotune_run_objectives(run_ids: "list[int]") -> "dict[int, str | None]":
+    """Return, for each autotune run id, the objective that run optimised.
+
+    The run stores the hash of the spec bundle it ran under; the bundle's facets decide
+    the objective through ``objective_kind_for_facets``. One read of the run rows and
+    one facet read per distinct bundle hash, however many runs share it.
+
+    Every requested id is present in the result. The value is ``None`` when the run has
+    no readable objective: no bundle recorded, a bundle that was never stored, a stored
+    bundle with no facet rows, or an id with no run row. ``None`` is distinct from a
+    stored bundle whose facets select the fall-through objective, which is a real answer.
+    Read-only (``get_ro_connection``); never mutates stored rows.
+    """
+    ids = list(run_ids)
+    bundle_by_run: dict[int, str | None] = {run_id: None for run_id in ids}
+    if not ids:
+        return {}
+
+    conn = get_ro_connection()
+    try:
+        for start in range(0, len(ids), _RUN_OBJECTIVE_LOOKUP_CHUNK):
+            chunk = ids[start : start + _RUN_OBJECTIVE_LOOKUP_CHUNK]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT id, spec_bundle_id FROM autotune_runs WHERE id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for run_id, bundle_hash in rows:
+                bundle_by_run[run_id] = bundle_hash or None
+    finally:
+        conn.close()
+
+    objective_by_bundle: dict[str, str | None] = {}
+    for bundle_hash in set(bundle_by_run.values()):
+        if bundle_hash is None:
+            continue
+        facets = get_spec_facets_for_bundle(bundle_hash)
+        objective_by_bundle[bundle_hash] = (
+            objective_kind_for_facets({f["facet_name"]: f["facet_value"] for f in facets})
+            if facets
+            else None
+        )
+
+    return {
+        run_id: objective_by_bundle.get(bundle_hash) if bundle_hash is not None else None
+        for run_id, bundle_hash in bundle_by_run.items()
+    }
+
+
 # --- 018: Researcher DOF Ledger ---
 # Append-only degrees-of-freedom ledger for the NN1 multiple-testing haircut.
 # Records every facet evaluated on a strategy P&L / strategy-return basis.
@@ -3152,9 +3249,9 @@ def record_shadow_observation(
     self-selects the current epoch. None on a legacy/unstamped row.
     """
     # Invalidate all cache entries for this symphony (keys now include db_file as 3rd element).
-    stale = [k for k in _shadow_cr_cache if k[0] == symphony_id]
-    for k in stale:
-        del _shadow_cr_cache[k]
+    # Snapshot keys and pop with a default: a competing thread may mutate the dict.
+    for k in [k for k in list(_shadow_cr_cache) if k[0] == symphony_id]:
+        _shadow_cr_cache.pop(k, None)
     try:
         conn = sqlite3.connect(_db_file(), timeout=10.0)
         conn.execute(

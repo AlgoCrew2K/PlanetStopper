@@ -1489,3 +1489,84 @@ class TestSecurity:
             f"application/x-www-form-urlencoded or multipart/form-data. "
             f"Body: {resp.get_data(as_text=True)[:200]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The review panel sits behind the same gate as the rest of the AI Advisor page
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def review_data(tmp_path, monkeypatch):
+    """A stored completed review run, readable while the gate is open."""
+    import database as db_module
+    from tests.app import _tenure_review_panel_builders as pb
+
+    monkeypatch.setattr(db_module, "DB_FILE", str(tmp_path / "dashboard_auth_review.db"))
+    db_module.init_db()
+    db_module.run_migrations()
+    pb.seed_bot_state()
+    return pb.store_full_run()
+
+
+class TestReviewPanelBehindTheGate:
+    def test_a_signed_in_session_gets_the_panel_and_an_anonymous_browser_gets_only_a_redirect(
+        self, auth_client_authed, review_data
+    ):
+        from tests.app import _tenure_review_panel_builders as pb
+
+        resp = auth_client_authed.get("/ai-advisor")
+        assert resp.status_code == 200
+        panel = pb.panel_of(resp.get_data(as_text=True))
+        assert len(panel.find_all("tenure-review-entry")) == len(review_data["entries"])
+
+        with app_module.app.test_client() as anonymous:
+            refused = anonymous.get("/ai-advisor", follow_redirects=False)
+        assert refused.status_code == 302
+        assert "/login" in refused.headers.get("Location", "")
+        body = refused.get_data(as_text=True)
+        assert "retirement-recommendations-panel" not in body
+        assert "tenure-review" not in body
+        assert pb.FULL_NAMES["retire"] not in body
+
+    @pytest.mark.parametrize(
+        "unset",
+        [
+            ("SECRET_KEY", "FLASK_SECRET_KEY"),
+            ("DASHBOARD_PASSWORD", "DASHBOARD_PASSWORD_HASH"),
+        ],
+        ids=["secret key not configured", "dashboard credential not configured"],
+    )
+    def test_unconfigured_authentication_redirects_the_page_to_login_and_reads_nothing(
+        self, monkeypatch, review_data, unset
+    ):
+        import database as db_module
+        from tests.app import _tenure_review_panel_builders as pb
+
+        with app_module.app.test_client() as open_gate:
+            opened = open_gate.get("/ai-advisor")
+        assert len(pb.panel_of(opened.get_data(as_text=True)).find_all("tenure-review-entry")) > 0
+
+        reads = []
+        for name in ("get_advisor_observations_for_role", "load_state"):
+            real = getattr(db_module, name)
+
+            def spy(*args, _real=real, _name=name, **kwargs):
+                reads.append(_name)
+                return _real(*args, **kwargs)
+
+            monkeypatch.setattr(db_module, name, spy)
+        before = pb.observation_count()
+
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
+        for name in unset:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        with app_module.app.test_client() as locked:
+            resp = locked.get("/ai-advisor", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "/login" in resp.headers.get("Location", "")
+        assert "tenure-review" not in resp.get_data(as_text=True)
+        assert reads == [], "a refused page request must read nothing"
+        assert pb.observation_count() == before
