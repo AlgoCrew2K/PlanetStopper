@@ -251,8 +251,10 @@ class TestLensStamp:
 class TestSymphonyLabel:
     def test_the_label_names_the_selects_id(self, flask_client):
         html = _page(flask_client)
-        select = re.search(r'<select\b[^>]*data-testid="symphony-select"[^>]*>', html)
-        assert select, "the symphony select is missing"
-        select_id = re.search(r'\bid="([^"]+)"', select.group(0)).group(1)
-        labels = re.findall(r'<label\b[^>]*\bfor="([^"]+)"[^>]*>\s*Symphony\s*</label>', html)
+        start = re.search(r'<div[^>]*data-testid="advisor-controls"', html).start()
+        controls = html[start:].split('data-testid="run-advisor-btn"', 1)[0]
+        select = re.search(r'<select[^>]*data-testid="symphony-select"[^>]*>', controls)
+        assert select, "the symphony select is missing from the controls bar"
+        select_id = re.search(r'id="([^"]+)"', select.group(0)).group(1)
+        labels = re.findall(r'<label[^>]*for="([^"]+)"[^>]*>\s*Symphony\s*</label>', controls)
         assert labels == [select_id], (labels, select_id)

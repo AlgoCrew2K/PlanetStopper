@@ -28,8 +28,6 @@ import types
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-import pytest
-
 import app as app_module
 import database
 from tests.app import _tenure_review_panel_builders as pb
@@ -348,10 +346,3 @@ def et_text(utc_text: str, fmt: str, offset_hours: int) -> str:
     return (datetime.strptime(utc_text, fmt) + timedelta(hours=offset_hours)).strftime(
         "%Y-%m-%d %H:%M"
     ) + " ET"
-
-
-@pytest.fixture
-def flask_client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c

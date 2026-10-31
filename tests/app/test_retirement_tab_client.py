@@ -28,7 +28,6 @@ from tests._ai_advisor_page_harness import call_exports, run_advisor_page
 from tests.advisors.test_retirement_recommender_composer_source import _series_cluster_scenario
 from tests.app import _retirement_tab_world as w
 from tests.app import _tenure_review_panel_builders as pb
-from tests.app._retirement_tab_world import flask_client as client  # noqa: F401 (fixture)
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -127,6 +126,7 @@ class TestRunNow:
             ("GET", _POLL),
             ("GET", _POLL),
         ]
+        assert step["requests"][0]["headers"] == {"Accept": "application/json"}
         start = step["requests"][0]["at"]
         assert [r["at"] - start for r in step["requests"][2:]] == [5000, 10000]
         post = step["requests"][1]
@@ -519,7 +519,9 @@ class TestFragment:
             ],
             watch=_WATCH,
         )
-        pointer = result["loaded"]["watched"]["pointer"][0]
+        pointers = result["loaded"]["watched"]["pointer"]
+        assert pointers, "the Overview has no Retirement pointer"
+        pointer = pointers[0]
         assert pointer["attrs"]["href"] == "#retirement"
         click, follow = result["steps"]
         assert follow["obs"]["watched"]["tabs"] and _active_tab(follow["obs"]) == ["retirement"]

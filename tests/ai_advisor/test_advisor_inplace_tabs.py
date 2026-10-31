@@ -671,9 +671,15 @@ def test_a_chat_example_names_a_strategy_builder_proposal(advisor_page_html):
     assert any("strategy builder" in e.lower() for e in _chat_examples(advisor_page_html))
 
 
-def test_the_flows_the_examples_name_each_carry_a_discuss_button(advisor_page_html):
-    # Swap and logic change cards and Strategy Builder proposal cards all render the button.
-    assert 'data-testid="discuss-proposal-btn"' in advisor_page_html
+def test_the_cards_of_the_flows_the_examples_name_carry_the_discuss_button():
+    # The Discuss button renders on a proposal card, so it needs data; the template is the
+    # place that says which cards carry it. Swap, logic change and Strategy Builder cards do.
+    import pathlib
+
+    template = (
+        pathlib.Path(__file__).resolve().parents[2] / "templates" / "ai_advisor.html"
+    ).read_text(encoding="utf-8")
+    assert template.count('data-testid="discuss-proposal-btn"') >= 2
 
 
 def test_the_explain_only_notice_and_panel_are_unchanged(advisor_page_html):

@@ -32,7 +32,6 @@ from tests.advisors.test_retirement_recommender_composer_source import (
 )
 from tests.app import _retirement_tab_world as w
 from tests.app import _tenure_review_panel_builders as pb
-from tests.app._retirement_tab_world import flask_client as client  # noqa: F401 (fixture)
 
 _RUN_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _NEVER_RUN_TEXT = "Not run yet \u2014 runs nightly at 03:45 UTC, or use Run now."
@@ -100,8 +99,14 @@ class TestTabAndPanel:
     def test_the_tab_button_follows_the_pattern_of_the_others(self, client, isolated_db):
         root = pb.parse_html(w.get_page(client))
         button = next(
-            n for n in root.walk() if n.attrs.get("data-tab") == "retirement" and n.tag == "button"
+            (
+                n
+                for n in root.walk()
+                if n.attrs.get("data-tab") == "retirement" and n.tag == "button"
+            ),
+            None,
         )
+        assert button is not None, "the tab bar has no Retirement tab button"
         assert button.attrs["role"] == "tab"
         assert button.attrs["aria-controls"] == "tab-panel-retirement"
         assert button.attrs["aria-selected"] == "false"
@@ -740,9 +745,9 @@ class TestScheduleZone:
         if state == "ok":
             w.seed_roster()
             w.store_captured_summary()
-        html = w.get_page(client)
-        panel_markup = html.split('id="tab-panel-retirement"', 1)[1].split('id="tab-panel-', 1)[0]
-        bare = re.findall(r"03:45(?!\s*UTC)", panel_markup)
+        panel = w.tab_panel(w.get_page(client), "retirement")
+        # Text and every attribute value (a button title, a tooltip) in the tab.
+        bare = re.findall(r"03:45(?!\s*UTC)", panel.everything())
         assert bare == [], "a mention of the 03:45 slot names no zone (the droplet clock is UTC)"
 
     def test_the_never_run_copy_names_the_slot_in_utc(self, client, isolated_db):

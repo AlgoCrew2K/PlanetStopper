@@ -237,7 +237,18 @@ class TestOneDefinition:
             if r["selectors"] == [_ADVISOR_KEEPS_SELECTOR]
         ]
         assert len(local_rules) == 1, "the Advisor page keeps exactly one .section-header rule"
-        assert set(shared) <= set(local_rules[0]), sorted(set(shared) - set(local_rules[0]))
+        local = local_rules[0]
+        leaked = set(shared) - set(local)
+        if leaked == {"margin"}:
+            # The shared rule writes the margin as a shorthand and the page-local one writes the
+            # top and bottom longhands. The sides the shorthand adds must equal the universal
+            # reset the page already has (0), or the Advisor page's headers move.
+            parts = shared["margin"].split()
+            sides = {1: (0, 0), 2: (1, 1), 3: (1, 1), 4: (1, 3)}[len(parts)]
+            assert {parts[i] for i in sides} == {"0"}, shared["margin"]
+            assert {"margin-top", "margin-bottom"} <= set(local)
+        else:
+            assert leaked == set(), sorted(leaked)
 
     def test_the_advisor_page_still_links_the_shared_sheet(self):
         html = (_TEMPLATES / _ADVISOR_TEMPLATE).read_text(encoding="utf-8")

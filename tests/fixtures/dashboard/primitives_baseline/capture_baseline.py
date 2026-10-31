@@ -40,7 +40,12 @@ def _git(*args: str) -> str:
 
 
 def main() -> None:
-    watched = ["templates/index.html", "static/layout.css", "static/tokens.css", "static/tweaks.css"]
+    watched = [
+        "templates/index.html",
+        "static/layout.css",
+        "static/tokens.css",
+        "static/tweaks.css",
+    ]
     dirty = _git("status", "--porcelain", "--", *watched)
     if dirty:
         raise SystemExit(f"refusing to capture: the base files are modified:\n{dirty}")
