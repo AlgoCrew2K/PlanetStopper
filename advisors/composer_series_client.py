@@ -24,10 +24,14 @@ whose ratios are returns -- nothing here claims what it means economically.
 
 Date handling
 -------------
-Each ``epoch_ms`` maps to its America/New_York calendar date (NOT the UTC date: a
-late-evening ET point lands on the next UTC day). Several points on one ET date
-collapse to the LAST point BEFORE returns are computed (close-to-close). Every
-date >= today's ET date is dropped -- a partial day is never used.
+Composer stamps each point at 00:00 UTC of its OWN calendar date, so each
+``epoch_ms`` is labelled with the UTC calendar date of the stamp (reading it in
+America/New_York would label every point a day early). Several points on one UTC
+date collapse to the LAST point BEFORE returns are computed (close-to-close).
+A date is kept when it is before today's America/New_York date, or equals it once
+the New York clock is at or past the session close
+(``market_calendar.MARKET_CLOSE_TIME``): a partial day is never used, but a
+finished day is, including at the 03:45 UTC nightly slot (23:45 ET the day before).
 
 Error contract (D-1)
 --------------------
@@ -57,7 +61,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -65,6 +69,7 @@ import requests
 
 import timing_log
 from alpha_bot_execution import COMPOSER_BASE_URL, get_composer_headers
+from market_calendar import MARKET_CLOSE_TIME
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +117,8 @@ _MS_PER_SECOND: float = 1000.0
 # analytics.compute_quantstats_metrics expects (it divides by 100 itself).
 _PERCENT_SCALE: float = 100.0
 
-# Composer's trading-day calendar is US-equity; every epoch maps to this zone.
+# Composer's trading-day calendar is US-equity; "today" and the session close are
+# read in this zone. (Point labels are UTC dates -- see the module docstring.)
 _ET = ZoneInfo("America/New_York")
 
 # Hard cap on SeriesResult.error length (D-1: short, fixed-shape strings).
@@ -131,8 +137,8 @@ _ENDPOINT_LOG_NAME: str = "GET /portfolio/accounts/{account}/symphonies/{symphon
 class SeriesResult:
     """Outcome of one ``fetch_symphony_daily_returns`` call.
 
-    returns: ISO ``YYYY-MM-DD`` America/New_York date -> simple daily return in
-        PERCENT scale. Empty on failure or when fewer than two usable dates exist.
+    returns: ISO ``YYYY-MM-DD`` UTC calendar date of the stamp -> simple daily
+        return in PERCENT scale. Empty on failure or when fewer than two usable dates exist.
     points: ``len(returns)``.
     first_date / last_date: ``min`` / ``max`` of ``returns``, or None when empty.
     error: None on success; otherwise a short D-1-safe failure string.
@@ -167,17 +173,40 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _epoch_ms_to_et_date(epoch_ms: float) -> date:
-    """Epoch milliseconds -> America/New_York calendar date."""
-    return datetime.fromtimestamp(epoch_ms / _MS_PER_SECOND, tz=_ET).date()
+def _epoch_ms_to_utc_date(epoch_ms: float) -> date:
+    """Epoch milliseconds -> the UTC calendar date of the stamp."""
+    return datetime.fromtimestamp(epoch_ms / _MS_PER_SECOND, tz=UTC).date()
 
 
-def _parse_series_body(body: Any, today_et: date) -> SeriesResult:
+def _now_et() -> datetime:
+    """The current instant as an aware America/New_York datetime.
+
+    The clock seam for the session cut-off: tests patch this module attribute, and
+    ``_fetch_with_retry`` reads it at call time.
+    """
+    return datetime.now(_ET)
+
+
+def _is_finished_session(d: date, now_et: datetime) -> bool:
+    """True when the point dated ``d`` is a finished day as seen from ``now_et``.
+
+    An earlier date is finished. Today's date is finished only once the New York
+    clock is at or past the session close; a later date never is.
+    """
+    today = now_et.date()
+    if d < today:
+        return True
+    return d == today and now_et.time() >= MARKET_CLOSE_TIME
+
+
+def _parse_series_body(body: Any, now_et: datetime) -> SeriesResult:
     """Parse a 200 response body into a ``SeriesResult``. Never raises.
 
-    Steps: validate shape/types -> map each epoch to its ET date -> collapse to
-    ONE value per ET date (the last point wins) -> drop dates >= ``today_et`` ->
-    close-to-close simple returns in percent between consecutive remaining dates.
+    ``now_et`` is an aware America/New_York datetime. Steps: validate shape/types
+    -> map each epoch to its UTC calendar date -> collapse to ONE value per date
+    (the last point wins) -> keep only finished sessions (see
+    ``_is_finished_session``) -> close-to-close simple returns in percent between
+    consecutive remaining dates.
     """
     if not isinstance(body, dict):
         return _error_result("malformed response: body is not a JSON object")
@@ -196,11 +225,11 @@ def _parse_series_body(body: Any, today_et: date) -> SeriesResult:
             return _error_result("malformed response: epoch_ms is not epoch milliseconds")
         by_date: dict[date, float] = {}
         for epoch_ms, value in points:
-            by_date[_epoch_ms_to_et_date(float(epoch_ms))] = float(value)  # last point wins
+            by_date[_epoch_ms_to_utc_date(float(epoch_ms))] = float(value)  # last point wins
     except (OverflowError, OSError, ValueError):
         return _error_result("malformed response: unconvertible epoch or value")
 
-    dates = sorted(d for d in by_date if d < today_et)
+    dates = sorted(d for d in by_date if _is_finished_session(d, now_et))
     returns: dict[str, float] = {}
     prev_value: float | None = None
     for d in dates:
@@ -298,7 +327,7 @@ def _fetch_with_retry(account_id: str, symphony_id: str) -> SeriesResult:
                     body = response.json()
                 except ValueError:
                     return _error_result("malformed response: body is not valid JSON")
-                return _parse_series_body(body, datetime.now(_ET).date())
+                return _parse_series_body(body, _now_et())
             last_error = f"HTTP {status}"
             if status not in _RETRYABLE_HTTP_STATUSES:
                 return _error_result(last_error)
@@ -317,7 +346,7 @@ def _fetch_with_retry(account_id: str, symphony_id: str) -> SeriesResult:
 
 
 def fetch_symphony_daily_returns(account_id: str, symphony_id: str) -> SeriesResult:
-    """Fetch one symphony's realized daily returns (percent scale, ET dates).
+    """Fetch one symphony's realized daily returns (percent scale, UTC date labels).
 
     Issues ``GET {COMPOSER_BASE_URL}/portfolio/accounts/{account_id}/symphonies/
     {symphony_id}`` with an explicit timeout and bounded retry (see module

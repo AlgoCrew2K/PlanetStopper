@@ -11,7 +11,8 @@ symphony_id) -> SeriesResult`` issues ONE kind of request --
 symphonies/{symphony_id}", headers=get_composer_headers(), timeout=...)`` --
 parses ``epoch_ms`` + ``deposit_adjusted_series`` (never the raw ``series``,
 which jumps on deposits/withdrawals), and returns the simple daily return in
-PERCENT scale keyed by America/New_York calendar date. It never raises.
+PERCENT scale keyed by the calendar date Composer stamps (the UTC date of each
+``epoch_ms``). It never raises.
 
 All HTTP is mocked (``requests.get`` is patched) and ``time.sleep`` is patched
 -- no live network and no real sleeping from any test in this file. The
@@ -41,6 +42,8 @@ import requests
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from requests.structures import CaseInsensitiveDict
+
+from tests.advisors import _series_captures as captures
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "composer" / "symphony_daily_series_v1.json"
@@ -286,37 +289,60 @@ class TestGoldenParsing:
         assert len(res.returns) == 1
 
 
-class TestEasternDateConversion:
-    def test_edt_point_after_utc_midnight_belongs_to_the_previous_et_date(
-        self, client_mod, monkeypatch
-    ):
-        """DST began 2026-03-08 (EDT = UTC-4). 2026-03-10 03:30Z is 2026-03-09
-        23:30 EDT -> ET date 03-09 (UTC date would be 03-10)."""
-        epochs = [
-            _utc_ms(2026, 3, 6, 21, 0),  # Fri 16:00 EST  -> 03-06
-            _utc_ms(2026, 3, 10, 3, 30),  # Mon 23:30 EDT  -> 03-09 (UTC date 03-10)
-            _utc_ms(2026, 3, 11, 3, 30),  # Tue 23:30 EDT  -> 03-10 (UTC date 03-11)
-        ]
-        res = _fetch(
-            client_mod, _Http([_resp(200, _body(epochs, [100.0, 102.0, 104.04]))]), monkeypatch
-        )
-        assert res.error is None
-        assert list(res.returns) == ["2026-03-09", "2026-03-10"]
+class TestUtcDateLabels:
+    """Composer stamps each point at 00:00 UTC of its own calendar date, so a point is labelled
+    with the UTC date of its epoch; the New York reading labels it a day early."""
 
-    def test_est_point_after_utc_midnight_belongs_to_the_previous_et_date(
+    def test_a_point_in_the_utc_early_morning_keeps_its_utc_date_in_summer_time(
         self, client_mod, monkeypatch
     ):
-        """2026-01-15 04:30Z is 2026-01-14 23:30 EST -> ET date 01-14."""
+        """DST began 2026-03-08 (EDT = UTC-4). 2026-03-10 03:30Z is 2026-03-09 23:30 EDT, but
+        its calendar date is 2026-03-10."""
         epochs = [
-            _utc_ms(2026, 1, 12, 21, 0),  # Mon 16:00 EST -> 01-12
-            _utc_ms(2026, 1, 15, 4, 30),  # Wed 23:30 EST -> 01-14 (UTC date 01-15)
-            _utc_ms(2026, 1, 16, 4, 30),  # Thu 23:30 EST -> 01-15 (UTC date 01-16)
+            _utc_ms(2026, 3, 6, 21, 0),
+            _utc_ms(2026, 3, 10, 3, 30),
+            _utc_ms(2026, 3, 11, 3, 30),
         ]
         res = _fetch(
             client_mod, _Http([_resp(200, _body(epochs, [100.0, 102.0, 104.04]))]), monkeypatch
         )
         assert res.error is None
-        assert list(res.returns) == ["2026-01-14", "2026-01-15"]
+        assert list(res.returns) == ["2026-03-10", "2026-03-11"]
+
+    def test_a_point_in_the_utc_early_morning_keeps_its_utc_date_in_winter_time(
+        self, client_mod, monkeypatch
+    ):
+        """2026-01-15 04:30Z is 2026-01-14 23:30 EST; its calendar date is 2026-01-15."""
+        epochs = [
+            _utc_ms(2026, 1, 12, 21, 0),
+            _utc_ms(2026, 1, 15, 4, 30),
+            _utc_ms(2026, 1, 16, 4, 30),
+        ]
+        res = _fetch(
+            client_mod, _Http([_resp(200, _body(epochs, [100.0, 102.0, 104.04]))]), monkeypatch
+        )
+        assert res.error is None
+        assert list(res.returns) == ["2026-01-15", "2026-01-16"]
+
+    def test_the_label_changes_exactly_at_utc_midnight(self, client_mod, monkeypatch):
+        """One millisecond before 2026-02-04T00:00Z is still 2026-02-03; the instant itself is
+        2026-02-04 (a floor to the UTC date, in neither zone's local midnight)."""
+        midnight_ms = _utc_ms(2026, 2, 4, 0, 0)
+        epochs = [_utc_ms(2026, 2, 2, 0, 0), midnight_ms - 1, midnight_ms]
+        res = _fetch(
+            client_mod, _Http([_resp(200, _body(epochs, [100.0, 110.0, 121.0]))]), monkeypatch
+        )
+        assert res.error is None
+        assert list(res.returns) == ["2026-02-03", "2026-02-04"]
+
+    def test_a_point_stamped_at_utc_midnight_keeps_that_date(self, client_mod, monkeypatch):
+        epochs = [_utc_ms(2026, 2, 2, 0, 0), _utc_ms(2026, 2, 3, 0, 0), _utc_ms(2026, 2, 4, 0, 0)]
+        res = _fetch(
+            client_mod, _Http([_resp(200, _body(epochs, [100.0, 101.0, 102.0]))]), monkeypatch
+        )
+        assert res.error is None
+        assert list(res.returns) == ["2026-02-03", "2026-02-04"]
+        assert res.first_date == "2026-02-03" and res.last_date == "2026-02-04"
 
     def test_keys_are_iso_calendar_date_strings(self, client_mod, monkeypatch):
         epochs = [_utc_ms(2026, 2, 2), _utc_ms(2026, 2, 3)]
@@ -325,22 +351,127 @@ class TestEasternDateConversion:
             assert isinstance(key, str)
             assert date.fromisoformat(key).isoformat() == key
 
+    def test_the_new_york_date_converter_is_replaced_by_a_utc_one(self, client_mod):
+        """The module keeps exactly one epoch-to-date converter, and it reads the UTC date."""
+        assert hasattr(client_mod, "_epoch_ms_to_utc_date")
+        assert not hasattr(client_mod, "_epoch_ms_to_et_date")
+        assert client_mod._epoch_ms_to_utc_date(float(_utc_ms(2026, 2, 3, 0, 0))) == date(
+            2026, 2, 3
+        )
 
-class TestDuplicateAndTodayHandling:
-    def test_several_points_on_one_et_date_collapse_to_the_last_before_returns(
+
+def _capture_utc_dates(symphony_id: str) -> list[date]:
+    """The oracle: each stamp's UTC calendar date, read straight from the capture."""
+    return [
+        datetime.fromtimestamp(ms / 1000, tz=UTC).date()
+        for ms in captures.load_capture(symphony_id)["epoch_ms"]
+    ]
+
+
+def _session_close_on(day: date, *, shift: timedelta = timedelta(0)) -> datetime:
+    """The ET session close on ``day`` (the calendar's own constant), moved by ``shift``."""
+    from market_calendar import MARKET_CLOSE_TIME  # noqa: PLC0415
+
+    return datetime.combine(day, MARKET_CLOSE_TIME, tzinfo=_ET) + shift
+
+
+class TestSessionCutOff:
+    """A point is kept when its UTC-stamped date is before today's ET date, or equals it once the
+    ET clock is at or past the session close; the clock is the module's ``_now_et`` seam."""
+
+    _CAPTURE = "Gpaw3IhZghQPRE6AdEKx"
+
+    def test_now_et_is_an_aware_new_york_instant(self, client_mod):
+        now = client_mod._now_et()
+        assert isinstance(now, datetime)
+        assert now.tzinfo is not None
+        assert now.utcoffset() == datetime.now(_ET).utcoffset()
+        assert abs((datetime.now(UTC) - now.astimezone(UTC)).total_seconds()) < 60
+
+    def test_a_same_day_point_is_dropped_one_minute_before_the_close(self):
+        dates = _capture_utc_dates(self._CAPTURE)
+        res = captures.parsed(
+            self._CAPTURE, _session_close_on(dates[-1], shift=-timedelta(minutes=1))
+        )
+        assert res.error is None
+        assert dates[-1].isoformat() not in res.returns
+        assert res.last_date == dates[-2].isoformat()
+
+    def test_a_same_day_point_is_dropped_at_the_last_instant_before_the_close(self):
+        dates = _capture_utc_dates(self._CAPTURE)
+        res = captures.parsed(
+            self._CAPTURE, _session_close_on(dates[-1], shift=-timedelta(microseconds=1))
+        )
+        assert res.last_date == dates[-2].isoformat()
+
+    def test_a_same_day_point_is_kept_at_the_close(self):
+        dates = _capture_utc_dates(self._CAPTURE)
+        res = captures.parsed(self._CAPTURE, _session_close_on(dates[-1]))
+        assert res.error is None
+        assert dates[-1].isoformat() in res.returns
+        assert res.last_date == dates[-1].isoformat()
+
+    def test_a_same_day_point_is_kept_after_the_close(self):
+        dates = _capture_utc_dates(self._CAPTURE)
+        res = captures.parsed(self._CAPTURE, _session_close_on(dates[-1], shift=timedelta(hours=7)))
+        assert res.last_date == dates[-1].isoformat()
+
+    def test_the_nightly_slot_keeps_the_days_point(self):
+        """03:45 UTC on 2026-10-22 is 23:45 ET on 2026-10-21: the capture's 2026-10-21 point is
+        kept although the UTC clock already reads the next date."""
+        nightly_et = datetime(2026, 10, 22, 3, 45, tzinfo=UTC).astimezone(_ET)
+        assert (nightly_et.date(), nightly_et.hour, nightly_et.minute) == (
+            date(2026, 10, 21),
+            23,
+            45,
+        )
+        res = captures.parsed("hvPiGP1O7AHfutHE3Fjy", nightly_et)
+        assert res.last_date == "2026-10-21"
+
+    def test_a_point_dated_after_today_is_dropped_even_late_in_the_day(self):
+        dates = _capture_utc_dates(self._CAPTURE)
+        late_on_previous_day = _session_close_on(dates[-2], shift=timedelta(hours=7))
+        res = captures.parsed(self._CAPTURE, late_on_previous_day)
+        assert dates[-1].isoformat() not in res.returns
+        assert res.last_date == dates[-2].isoformat()
+
+    def test_a_date_before_today_is_kept_at_midnight(self):
+        dates = _capture_utc_dates(self._CAPTURE)
+        midnight = datetime.combine(dates[-1], datetime.min.time(), tzinfo=_ET)
+        res = captures.parsed(self._CAPTURE, midnight)
+        assert res.last_date == dates[-2].isoformat()
+
+    def test_the_fetch_path_reads_the_session_clock_through_the_now_et_seam(
         self, client_mod, monkeypatch
     ):
-        """02-03 has two points (10:00 -> 101, 16:00 -> 110). The day's value
-        is the LAST point (110); returns are then close-to-close between
-        consecutive dates: 02-03 = 110/100 - 1 = 10%, 02-04 = 121/110 - 1 = 10%.
+        """A body whose last point is stamped on one day: kept or dropped by the patched clock."""
+        day = date(2026, 6, 10)
+        epochs = [_utc_ms(2026, 6, 8, 0, 0), _utc_ms(2026, 6, 9, 0, 0), _utc_ms(2026, 6, 10, 0, 0)]
+        body = _body(epochs, [100.0, 101.0, 102.0])
 
-        (An implementation that returns-then-dedupes would report 02-03 as
-        110/101 - 1 = 8.91% and is wrong.)"""
+        monkeypatch.setattr(
+            client_mod, "_now_et", lambda: _session_close_on(day, shift=-timedelta(minutes=1))
+        )
+        during = _fetch(client_mod, _Http([_resp(200, body)]), monkeypatch)
+        monkeypatch.setattr(client_mod, "_now_et", lambda: _session_close_on(day))
+        after = _fetch(client_mod, _Http([_resp(200, body)]), monkeypatch)
+
+        assert list(during.returns) == ["2026-06-09"]
+        assert list(after.returns) == ["2026-06-09", "2026-06-10"]
+
+
+class TestSameDateCollapse:
+    def test_several_points_on_one_utc_date_collapse_to_the_last_before_returns(
+        self, client_mod, monkeypatch
+    ):
+        """02-03 has two points (10:00Z -> 101, 20:00Z -> 110). The day's value is the LAST point
+        (110); returns are then close-to-close between consecutive dates: 02-03 = 110/100 - 1 =
+        10%, 02-04 = 121/110 - 1 = 10%. (Returns-then-dedupe would report 110/101 - 1.)"""
         epochs = [
-            _et_ms("2026-02-02", 16),
-            _et_ms("2026-02-03", 10),
-            _et_ms("2026-02-03", 16),
-            _et_ms("2026-02-04", 16),
+            _utc_ms(2026, 2, 2, 20),
+            _utc_ms(2026, 2, 3, 10),
+            _utc_ms(2026, 2, 3, 20),
+            _utc_ms(2026, 2, 4, 20),
         ]
         res = _fetch(
             client_mod,
@@ -352,39 +483,197 @@ class TestDuplicateAndTodayHandling:
         assert res.returns["2026-02-03"] == pytest.approx(10.0, abs=1e-9)  # abs: exact ratio
         assert res.returns["2026-02-04"] == pytest.approx(10.0, abs=1e-9)
 
-    def test_points_dated_today_et_are_dropped(self, client_mod, monkeypatch):
-        """A midday 'Run now' must never use a partial day: no return keyed at
-        today's ET date (clock-relative -- derived, never hardcoded)."""
-        for _attempt in range(2):  # guard the (rare) ET-midnight race
-            today_before = _et_today()
-            days = [today_before - timedelta(days=k) for k in (3, 2, 1, 0)]
-            epochs = [_et_ms(d.isoformat(), 12) for d in days]
-            res = _fetch(
-                client_mod,
-                _Http([_resp(200, _body(epochs, [100.0, 101.0, 102.01, 103.0301]))]),
-                monkeypatch,
-            )
-            if _et_today() == today_before:
-                break
-        assert res.error is None
-        assert today_before.isoformat() not in res.returns
-        assert list(res.returns) == [days[1].isoformat(), days[2].isoformat()]
-        assert res.last_date == days[2].isoformat()
-
-    def test_a_series_whose_only_new_point_is_today_yields_no_todays_return(
+    def test_the_later_point_wins_whatever_order_the_arrays_arrive_in(
         self, client_mod, monkeypatch
     ):
-        for _attempt in range(2):
-            today_before = _et_today()
-            yesterday = today_before - timedelta(days=1)
-            epochs = [_et_ms(yesterday.isoformat(), 12), _et_ms(today_before.isoformat(), 12)]
-            res = _fetch(
-                client_mod, _Http([_resp(200, _body(epochs, [100.0, 130.0]))]), monkeypatch
-            )
-            if _et_today() == today_before:
-                break
-        assert today_before.isoformat() not in res.returns
+        epochs = [_utc_ms(2026, 2, 4, 20), _utc_ms(2026, 2, 3, 20), _utc_ms(2026, 2, 3, 10)]
+        res = _fetch(
+            client_mod, _Http([_resp(200, _body(epochs, [121.0, 110.0, 101.0]))]), monkeypatch
+        )
+        assert list(res.returns) == ["2026-02-04"]
+        assert res.returns["2026-02-04"] == pytest.approx((121.0 / 110.0 - 1.0) * 100.0, abs=1e-9)
+
+    def test_a_series_whose_only_new_point_is_dated_today_before_the_close_yields_no_return(
+        self, client_mod, monkeypatch
+    ):
+        day = date(2026, 6, 10)
+        epochs = [_utc_ms(2026, 6, 9, 0, 0), _utc_ms(2026, 6, 10, 0, 0)]
+        monkeypatch.setattr(
+            client_mod, "_now_et", lambda: _session_close_on(day, shift=-timedelta(hours=4))
+        )
+        res = _fetch(client_mod, _Http([_resp(200, _body(epochs, [100.0, 130.0]))]), monkeypatch)
+        assert res.error is None
         assert res.returns == {}
+
+
+class TestRealCaptureLabels:
+    """The twelve real bodies (every stamp 00:00 UTC), parsed at the capture time."""
+
+    @pytest.mark.parametrize("symphony_id", captures.capture_ids())
+    def test_no_return_is_labelled_a_weekend_day(self, symphony_id):
+        res = captures.parsed(symphony_id)
+        assert res.error is None
+        for key in res.returns:
+            assert date.fromisoformat(key).weekday() < 5, f"{symphony_id}: {key} is a weekend day"
+
+    @pytest.mark.parametrize("symphony_id", captures.capture_ids())
+    def test_every_label_is_the_utc_date_of_a_stamp_after_the_first(self, symphony_id):
+        dates = _capture_utc_dates(symphony_id)
+        res = captures.parsed(symphony_id)
+        assert list(res.returns) == [d.isoformat() for d in dates[1:]]
+        assert res.points == len(res.returns)
+
+    @pytest.mark.parametrize("symphony_id", captures.capture_ids())
+    def test_the_last_label_is_the_last_stamps_utc_date_not_the_day_before(self, symphony_id):
+        dates = _capture_utc_dates(symphony_id)
+        res = captures.parsed(symphony_id)
+        if not dates:
+            assert res.returns == {} and res.last_date is None and res.first_date is None
+            return
+        last_stamp_ms = captures.load_capture(symphony_id)["epoch_ms"][-1]
+        new_york_date = datetime.fromtimestamp(last_stamp_ms / 1000, tz=UTC).astimezone(_ET).date()
+        assert new_york_date != dates[-1], "premise: the New York reading is a day early"
+        assert res.last_date == dates[-1].isoformat()
+        assert res.last_date != new_york_date.isoformat()
+
+    def test_the_first_and_last_dates_are_the_ends_of_the_labelled_returns(self):
+        sid = "Gpaw3IhZghQPRE6AdEKx"
+        dates = _capture_utc_dates(sid)
+        res = captures.parsed(sid)
+        assert res.first_date == dates[1].isoformat()
+        assert res.last_date == dates[-1].isoformat()
+
+    def test_the_empty_capture_yields_an_empty_result_without_an_error(self):
+        empty = [s for s in captures.capture_ids() if not captures.load_capture(s)["epoch_ms"]]
+        assert empty, "premise: one real symphony returns empty arrays"
+        for sid in empty:
+            res = captures.parsed(sid)
+            assert res.error is None and res.returns == {} and res.points == 0
+
+
+class TestDerivedBodies:
+    """Two bodies that change only named ``epoch_ms`` entries of one real capture (PROVENANCE.md)."""
+
+    _DIR = REPO_ROOT / "tests" / "fixtures" / "composer" / "series_derived"
+    _SOURCE_ID = "q7WQHwLzt49cMgFBzHsX"
+    _TWO_IN_ONE_DATE = "q7WQHwLzt49cMgFBzHsX_two_points_one_utc_date.json"
+    _EVENING = "q7WQHwLzt49cMgFBzHsX_last_point_in_utc_evening.json"
+
+    def _load(self, name: str) -> dict:
+        return json.loads((self._DIR / name).read_text(encoding="utf-8"))
+
+    def test_each_derived_body_differs_from_its_source_only_in_the_named_entries(self):
+        source = captures.load_capture(self._SOURCE_ID)
+        n = len(source["epoch_ms"])
+        for name, changed in ((self._TWO_IN_ONE_DATE, {n - 2, n - 1}), (self._EVENING, {n - 1})):
+            derived = self._load(name)
+            assert set(derived) == set(source), name
+            assert derived["series"] == source["series"], name
+            assert derived["deposit_adjusted_series"] == source["deposit_adjusted_series"], name
+            differing = {
+                i
+                for i, (a, b) in enumerate(
+                    zip(derived["epoch_ms"], source["epoch_ms"], strict=True)
+                )
+                if a != b
+            }
+            assert len(derived["epoch_ms"]) == n and differing == changed, name
+
+    def test_two_points_in_one_utc_date_make_one_value_and_the_later_point_wins(self):
+        body = self._load(self._TWO_IN_ONE_DATE)
+        by_date: dict[date, float] = {}
+        for ms, value in sorted(
+            zip(body["epoch_ms"], body["deposit_adjusted_series"], strict=True)
+        ):
+            by_date[datetime.fromtimestamp(ms / 1000, tz=UTC).date()] = value
+        days = sorted(by_date)
+        expected = (by_date[days[-1]] / by_date[days[-2]] - 1.0) * 100.0
+
+        from advisors import composer_series_client as client  # noqa: PLC0415
+
+        res = client._parse_series_body(body, captures.CAPTURE_NOW_ET)  # noqa: SLF001
+        assert res.error is None
+        assert res.last_date == days[-1].isoformat()
+        assert list(res.returns).count(days[-1].isoformat()) == 1
+        assert res.returns[days[-1].isoformat()] == pytest.approx(expected, abs=1e-9)
+        assert res.points == len(days) - 1
+
+    def test_a_point_stamped_in_the_utc_evening_is_labelled_with_its_own_date(self):
+        body = self._load(self._EVENING)
+        last_ms = body["epoch_ms"][-1]
+        assert datetime.fromtimestamp(last_ms / 1000, tz=UTC).hour == 20, "premise"
+        from advisors import composer_series_client as client  # noqa: PLC0415
+
+        res = client._parse_series_body(body, captures.CAPTURE_NOW_ET)  # noqa: SLF001
+        assert res.error is None
+        assert res.last_date == datetime.fromtimestamp(last_ms / 1000, tz=UTC).date().isoformat()
+        values = body["deposit_adjusted_series"]
+        assert res.returns[res.last_date] == pytest.approx(
+            (values[-1] / values[-2] - 1.0) * 100.0, abs=1e-9
+        )
+
+
+def _new_york_reading(body: dict, now_et: datetime) -> dict[str, float]:
+    """The previous algorithm, kept as an independent oracle: label by the New York date and drop
+    every date on or after today's New York date."""
+    by_date: dict[date, float] = {}
+    for ms, value in sorted(zip(body["epoch_ms"], body["deposit_adjusted_series"], strict=True)):
+        by_date[datetime.fromtimestamp(ms / 1000, tz=UTC).astimezone(_ET).date()] = value
+    days = sorted(d for d in by_date if d < now_et.date())
+    return {
+        cur.isoformat(): (by_date[cur] / by_date[prev] - 1.0) * 100.0
+        for prev, cur in zip(days, days[1:], strict=False)
+    }
+
+
+class TestRelabellingLeavesTheRecommendersStatisticsUnchanged:
+    """Only the labels move: every return, every aligned-day count, every correlation and every
+    gate result equals what the New York reading gave on the same bodies."""
+
+    _IDS = [s for s in captures.capture_ids() if captures.load_capture(s)["epoch_ms"]]
+
+    def _series(self, reading: str) -> dict[str, dict[str, float]]:
+        import advisors.retirement_recommender as rr  # noqa: PLC0415
+
+        out = {}
+        for sid in self._IDS:
+            if reading == "utc":
+                returns = captures.parsed(sid).returns
+            else:
+                returns = _new_york_reading(captures.load_capture(sid), captures.CAPTURE_NOW_ET)
+            out[sid] = dict(sorted(returns.items())[-rr.RETIREMENT_LOOKBACK_DAYS :])
+        return out
+
+    def test_every_return_value_is_equal_and_every_label_is_one_day_later(self):
+        utc, new_york = self._series("utc"), self._series("ny")
+        for sid in self._IDS:
+            assert list(utc[sid].values()) == list(new_york[sid].values()), sid
+            shifted = [(date.fromisoformat(k) - timedelta(days=1)).isoformat() for k in utc[sid]]
+            assert shifted == list(new_york[sid]), sid
+
+    def test_all_pairs_have_equal_counts_correlations_and_gate_results(self):
+        import advisors.correlation_diagnostic as cd  # noqa: PLC0415
+        import advisors.retirement_recommender as rr  # noqa: PLC0415
+
+        utc, new_york = self._series("utc"), self._series("ny")
+        pairs_utc = cd.compute_pairwise_correlations(utc)
+        pairs_ny = cd.compute_pairwise_correlations(new_york)
+        assert len(pairs_utc) == len(pairs_ny) == len(self._IDS) * (len(self._IDS) - 1) // 2
+        for left, right in zip(pairs_utc, pairs_ny, strict=True):
+            assert (left.sym_a, left.sym_b) == (right.sym_a, right.sym_b)
+            assert left.n_obs == right.n_obs
+            assert left.correlation == right.correlation
+            assert rr.evaluate_uncertainty_gate(left) == rr.evaluate_uncertainty_gate(right)
+            a_u, b_u, _w = cd._extract_aligned_pairs(utc[left.sym_a], utc[left.sym_b])  # noqa: SLF001
+            a_n, b_n, _w = cd._extract_aligned_pairs(  # noqa: SLF001
+                new_york[right.sym_a], new_york[right.sym_b]
+            )
+            stressed_u = rr._compute_stressed_correlation(a_u, b_u)  # noqa: SLF001
+            stressed_n = rr._compute_stressed_correlation(a_n, b_n)  # noqa: SLF001
+            assert stressed_u == stressed_n
+            assert rr.evaluate_structural_redundancy_gate(
+                left, stressed_u, None
+            ) == rr.evaluate_structural_redundancy_gate(right, stressed_n, None)
 
 
 class TestNonPositiveAndNonFiniteValues:
@@ -528,11 +817,11 @@ class TestFixtureFile:
 
 class TestFixtureDrivenParse:
     def _expected_returns(self, fx: dict) -> dict[str, float]:
-        """Independent oracle: ET date per point, last-point-per-date, ratio
+        """Independent oracle: UTC date per point, last-point-per-date, ratio
         return in percent -- written against the plan, not the client."""
         by_date: dict[str, float] = {}
         for ms, value in zip(fx["epoch_ms"], fx["deposit_adjusted_series"], strict=True):
-            d = datetime.fromtimestamp(ms / 1000, tz=UTC).astimezone(_ET).date().isoformat()
+            d = datetime.fromtimestamp(ms / 1000, tz=UTC).date().isoformat()
             by_date[d] = value
         dates = sorted(by_date)
         return {

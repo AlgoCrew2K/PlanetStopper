@@ -272,8 +272,7 @@ function pick(sel) {
     out.steps.push({ label: step.label || step.op, obs: observe(), requests: requests.slice(startReq), now });
   }
   out.ready = true;
-  process.stdout.write(JSON.stringify(out));
-  process.exit(0);
+  process.stdout.write(JSON.stringify(out), function () { process.exit(0); });
 })();
 """
 

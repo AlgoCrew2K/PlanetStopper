@@ -551,7 +551,59 @@ def _new_run_summary(*, source: str, days: int | None) -> dict:
         "recommendations": 0,
         "screen_threshold": CORRELATION_SCREEN_THRESHOLD,
         "stress_gate_min_aligned_days": STRESS_GATE_MIN_ALIGNED_DAYS,
+        # The Correlations matrix reads these three keys, so a page render needs no
+        # series fetch. ``pairs``: every unordered pair of the analysed symphonies.
+        # ``series_windows``: per analysed symphony, the window the matrix uses and
+        # the full series depth. ``uncertainty_min_aligned_days``: the uncertainty
+        # gate's minimum, read here at build time so a retuned MIN_OBS_FLOOR shows.
+        "pairs": [],
+        "series_windows": {},
+        "uncertainty_min_aligned_days": MIN_OBS_FLOOR,
     }
+
+
+def _pair_record(pair: correlation_diagnostic.PairResult) -> dict:
+    """One evaluated pair as stored in the run summary (strict-JSON values only).
+
+    ``correlation`` is None when undefined; ``window_first`` / ``window_last`` are
+    None when the pair has no finite overlap (``PairResult.window`` is None).
+    """
+    window_first, window_last = pair.window if pair.window else (None, None)
+    return {
+        "sym_a": pair.sym_a,
+        "sym_b": pair.sym_b,
+        "correlation": pair.correlation,
+        "n_obs": pair.n_obs,
+        "window_first": window_first,
+        "window_last": window_last,
+    }
+
+
+def _series_windows(
+    series_by_symphony: dict[str, dict[str, float]],
+    series_depth: dict[str, dict],
+) -> dict[str, dict]:
+    """Per kept symphony: the matrix window and the full series depth.
+
+    The window (``window_first`` / ``window_last`` / ``window_days``) is read from
+    the series the run actually correlated, i.e. after the lookback trim. The
+    ``series_*`` fields are the full series as the source returned it
+    (``series_depth``); a source that reports no separate depth (shadow_history
+    returns only the lookback-trimmed rows) falls back to the window itself.
+    """
+    windows: dict[str, dict] = {}
+    for sym in sorted(series_by_symphony):
+        dates = sorted(series_by_symphony[sym])
+        depth = series_depth.get(sym) or {}
+        windows[sym] = {
+            "window_first": dates[0],
+            "window_last": dates[-1],
+            "window_days": len(dates),
+            "series_first": depth.get("series_first", dates[0]),
+            "series_last": depth.get("series_last", dates[-1]),
+            "series_points": depth.get("series_points", len(dates)),
+        }
+    return windows
 
 
 def _collect_shadow_series(
@@ -582,12 +634,16 @@ def _collect_composer_series(
     *,
     days: int | None,
     excluded: list[dict],
+    series_depth: dict[str, dict],
 ) -> tuple[dict[str, dict[str, float]], dict[str, dict]]:
     """Per-symphony realized daily-return series from Composer (Cycle 2e AC-2).
 
     One basis per run: a symphony without an account id, or whose fetch fails, is
     EXCLUDED with a reason -- it is never backfilled from shadow_history. Fetches
     are spaced COMPOSER_FETCH_MIN_INTERVAL_SECONDS apart (Composer's 1 req/s limit).
+    ``series_depth`` is an out-parameter: for each KEPT symphony it receives the
+    full fetched series' ``series_first`` / ``series_last`` / ``series_points``
+    (from the ``SeriesResult``, before the lookback trim).
     """
     # CC-2 lazy import, resolved as a module attribute at CALL time so the shadow
     # source never loads the Composer client and tests can patch the seam.
@@ -619,6 +675,11 @@ def _collect_composer_series(
             excluded.append({"symphony_id": sym, "reason": _REASON_SERIES_TOO_SHORT})
             continue
         series_by_symphony[sym] = dict(ordered)
+        series_depth[sym] = {
+            "series_first": result.first_date,
+            "series_last": result.last_date,
+            "series_points": result.points,
+        }
         holdings_by_symphony[sym] = bot_state[sym].get("logic_holdings") or {}
     return series_by_symphony, holdings_by_symphony
 
@@ -642,9 +703,10 @@ def _run_pipeline(
         return []
 
     excluded: list[dict] = summary["symphonies_without_series"]
+    series_depth: dict[str, dict] = {}
     if source == SOURCE_COMPOSER:
         series_by_symphony, holdings_by_symphony = _collect_composer_series(
-            symphony_ids, bot_state, days=days, excluded=excluded
+            symphony_ids, bot_state, days=days, excluded=excluded, series_depth=series_depth
         )
     else:
         series_by_symphony, holdings_by_symphony = _collect_shadow_series(
@@ -652,6 +714,7 @@ def _run_pipeline(
         )
 
     summary["symphonies_with_series"] = len(series_by_symphony)
+    summary["series_windows"] = _series_windows(series_by_symphony, series_depth)
     if series_by_symphony:
         lengths = [len(series) for series in series_by_symphony.values()]
         summary["series_days_min"] = min(lengths)
@@ -660,9 +723,9 @@ def _run_pipeline(
         summary["status"] = STATUS_SERIES_UNAVAILABLE
         return []
 
-    summary["pairs_evaluated"] = len(
-        correlation_diagnostic.compute_pairwise_correlations(series_by_symphony)
-    )
+    evaluated_pairs = correlation_diagnostic.compute_pairwise_correlations(series_by_symphony)
+    summary["pairs_evaluated"] = len(evaluated_pairs)
+    summary["pairs"] = [_pair_record(pair) for pair in evaluated_pairs]
     pairs = screen_correlated_pairs(series_by_symphony)
     summary["pairs_screened"] = len(pairs)
     if not pairs:

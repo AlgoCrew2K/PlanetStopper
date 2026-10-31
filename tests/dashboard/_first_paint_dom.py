@@ -543,8 +543,7 @@ async function flush() { for (let i = 0; i < 40; i++) await new Promise((r) => s
     await flush();
     out.steps.push({ label: step.label || step.op, obs: observe(), requests: requests.slice(startReq) });
   }
-  process.stdout.write(JSON.stringify(out));
-  process.exit(0);
+  process.stdout.write(JSON.stringify(out), function () { process.exit(0); });
 })();
 """
 
