@@ -45,7 +45,7 @@
 
   <!-- Right-rail: status cluster (shrinks gracefully; ET clock hides at narrow widths) -->
   <div class="shell-nav-status">
-    <!-- Single Live/Stale/Closed indicator — updated by chrome.js updateEngineStatus() on each poll -->
+    <!-- Single engine-state indicator — written only by chrome.js renderEngineLabel() -->
     {% set _paused = meta is defined and meta.system_online and engine_phase is defined and engine_phase in ('blackout', 'opening') %}
     <span id="engine-status" data-testid="engine-status"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %} style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;flex-shrink:0;">
       <span id="engine-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};flex-shrink:0;"></span>

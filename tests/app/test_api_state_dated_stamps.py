@@ -251,13 +251,16 @@ class TestFrozenBranchStatesItsTradingDay:
         body = world.poll()
 
         added = set(body) - {"html"} - set(golden)
-        # engine_phase and symphonies are later, separately specified additive fields:
-        # the engine's phase label and the frozen per-symphony cards.
+        # engine_phase, symphonies, degraded_reasons and dashboard_panels are later, separately
+        # specified additive fields: the engine's phase label, the frozen per-symphony cards, the
+        # daemon's degraded-state reasons and the Sleeves, CVaR and locked-variables panels.
         expected_added = {
             "trading_day",
             "snapshot_is_previous_session",
             "engine_phase",
             "symphonies",
+            "degraded_reasons",
+            "dashboard_panels",
         }
         assert added == expected_added, (
             f"{branch}: fields added to the frozen response: {sorted(added)}"

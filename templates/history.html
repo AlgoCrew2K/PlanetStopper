@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='tokens.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='tweaks.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='layout.css') }}">
+    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
     <style>
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -165,7 +166,6 @@
 </head>
 
 <body>
-    <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
     {% include '_chrome.html' %}
 
     <div class="page-wrap" data-testid="history-page">

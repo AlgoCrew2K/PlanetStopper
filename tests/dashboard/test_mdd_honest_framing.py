@@ -71,24 +71,28 @@ class TestMddTemplateGatesOnInsufficiency:
 
     def test_insufficient_label_is_gated_on_the_flag(self):
         block = _max_dd_row_markup(_template_src())
+        # The annotation is always in the markup (the poll shows and hides it), so the gate is
+        # the `hidden` attribute: present unless the history is insufficient.
         assert re.search(
-            r"{%\s*if\s+mdd_insufficient\s*%}[^\n]*mdd-insufficient-label",
+            r"mdd-insufficient-label\"[^\n]*?\{%\s*if\s+not\s+mdd_insufficient\s*%\}\s*hidden",
             block,
         ), (
-            "AC-4c FAIL: the 'mdd-insufficient-label' annotation is not gated on "
-            "`{% if mdd_insufficient %}` — it must show ONLY when history is insufficient."
+            "AC-4c FAIL: the 'mdd-insufficient-label' annotation is not hidden by "
+            "`{% if not mdd_insufficient %} hidden{% endif %}` — it must show ONLY when history "
+            "is insufficient."
         )
 
     def test_alpha_delta_is_suppressed_when_insufficient(self):
         block = _max_dd_row_markup(_template_src())
+        # The delta is always in the markup (the poll shows and hides it), so the gate is the
+        # `hidden` attribute set when the history is insufficient, on the span itself.
         assert re.search(
-            r"{%\s*if\s+not\s+mdd_insufficient\s*%}.*?comp-mdd-delta",
+            r"comp-mdd-delta\"[^\n]*?\{%\s*if\s+mdd_insufficient\s*%\}\s*hidden",
             block,
-            re.DOTALL,
         ), (
-            "AC-4c FAIL: the comp-mdd-delta alpha span is not gated on "
-            "`{% if not mdd_insufficient %}` — a misleading 0.00% guard-saved alpha would "
-            "render under insufficient history."
+            "AC-4c FAIL: the comp-mdd-delta alpha span is not hidden by "
+            "`{% if mdd_insufficient %} hidden{% endif %}` — a misleading 0.00% guard-saved alpha "
+            "would render under insufficient history."
         )
 
     def test_mdd_winner_styling_is_gated_on_sufficiency(self):
@@ -195,18 +199,29 @@ class TestMddRenderedInsufficientFraming:
         # Strip HTML comments so explanatory prose ("INVERTED winner direction" in the next
         # row's leading comment) is not mistaken for winner STYLING.
         mdd_row_nocomment = re.sub(r"<!--.*?-->", "", mdd_row, flags=re.DOTALL)
-        if 'data-testid="mdd-insufficient-label"' in mdd_row_nocomment:
-            # A winner is only a guard win if it appears as a CSS class on a rendered element.
-            assert not re.search(r'class="[^"]*\bwinner\b[^"]*"', mdd_row_nocomment), (
-                "AC-4c FAIL: rendered Max DD row applies a 'winner' class while showing the "
-                "insufficient-history annotation — the 0.00% artifact is presented as a win."
-            )
-            assert 'data-testid="comp-mdd-delta"' not in mdd_row, (
-                "AC-4c FAIL: rendered Max DD row shows the alpha delta under insufficient "
-                "history — the misleading guard-saved number must be suppressed."
-            )
-        else:
-            pytest.fail(
-                "AC-4c expected insufficient-history framing on a 9-day shadow page but the "
-                "annotation was absent — the route did not gate the MDD row on sufficiency."
-            )
+        # Both elements are always in the markup (the poll shows and hides them): what the page
+        # shows is the `hidden` attribute of each.
+        label_tag = re.search(
+            r'<span data-testid="mdd-insufficient-label"[^>]*>', mdd_row_nocomment
+        )
+        delta_tag = re.search(r'<span data-testid="comp-mdd-delta"[^>]*>', mdd_row_nocomment)
+        assert label_tag, "AC-4c FAIL: the Max DD row holds no insufficient-history annotation."
+        assert delta_tag, "AC-4c FAIL: the Max DD row holds no alpha delta element to suppress."
+
+        def _hidden(tag: str) -> bool:
+            # Only attributes are read: the inline style is dropped first.
+            return bool(re.search(r"\shidden(\s|=|>|/)", re.sub(r'style="[^"]*"', "", tag)))
+
+        assert not _hidden(label_tag.group(0)), (
+            "AC-4c expected insufficient-history framing on a 9-day shadow page but the "
+            "annotation is hidden — the route did not gate the MDD row on sufficiency."
+        )
+        # A winner is only a guard win if it appears as a CSS class on a rendered element.
+        assert not re.search(r'class="[^"]*\bwinner\b[^"]*"', mdd_row_nocomment), (
+            "AC-4c FAIL: rendered Max DD row applies a 'winner' class while showing the "
+            "insufficient-history annotation — the 0.00% artifact is presented as a win."
+        )
+        assert _hidden(delta_tag.group(0)), (
+            "AC-4c FAIL: rendered Max DD row shows the alpha delta under insufficient "
+            "history — the misleading guard-saved number must be suppressed."
+        )

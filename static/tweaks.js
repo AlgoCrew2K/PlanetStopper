@@ -111,6 +111,11 @@
 
   window.studioTweaks = { get: get, set: set, getAll: getAll, DEFAULTS: TWEAK_DEFAULTS };
 
+  // This script is loaded in <head>, after the stylesheets and before the body exists, so every
+  // stored attribute (the theme included) is on the root element before the first paint. Only the
+  // controls of the tweaks panel wait for the document: they are in the body.
+  applyAll(getAll());
+
   document.addEventListener('DOMContentLoaded', function () {
     var values = getAll();
     applyAll(values);
@@ -120,5 +125,16 @@
     var values = getAll();
     applyAll(values);
     syncControls(values);
+  });
+
+  // A change made in another tab arrives as a storage event for this key. It is applied and
+  // announced like a local change, and never written back: the value in storage is already the
+  // new one, so two tabs cannot set each other off.
+  window.addEventListener('storage', function (e) {
+    if (!e || e.key !== STORAGE_KEY) return;
+    var values = getAll();
+    applyAll(values);
+    syncControls(values);
+    window.dispatchEvent(new CustomEvent('tweakchange', { detail: { key: STORAGE_KEY, value: values } }));
   });
 })();

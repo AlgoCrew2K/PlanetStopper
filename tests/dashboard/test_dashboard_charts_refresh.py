@@ -22,6 +22,7 @@ import pytest
 
 import analytics
 from tests.dashboard import _index_js_harness as hx
+from tests.dashboard import _refresh_timing_support as sup
 
 IDS = hx.SYMPHONY_IDS
 HERO_KEYS = ("hist_dates", "hist_bot", "hist_held")
@@ -35,6 +36,20 @@ def _spark(sym_id: str) -> str:
 
 def _run(scenario: str, world_name: str = "default", **kwargs) -> dict:
     return hx.run_scenario(hx.get_world(world_name), scenario, **kwargs)["result"]
+
+
+def _later_states(world: dict, count: int) -> dict:
+    """``count`` real poll bodies, each carrying a data stamp newer than the one before it.
+
+    A refresh asks for the sparkline tapes only when its stamp is a new one, so a scenario that
+    wants every poll to refresh them hands each poll a body of its own.
+    """
+    stamp = sup.render_stamp(world)
+    out = {}
+    for i in range(count):
+        stamp = sup.later_stamp(stamp)
+        out[f"later{i}"] = sup.with_stamp(world["next"]["state"], stamp)
+    return out
 
 
 def _hero_matches_body(hero: dict, body: dict, *, tol: float | None = None) -> None:
@@ -103,10 +118,11 @@ class TestRefreshKeepsDrawnCharts:
         await H.boot({});
         const before = H.summary();
         H.route(/^\/api\/chart\/(.+)$/, function (url, o, m) { return { body: H.bodies.chartsNext[m[1]] }; });
+        H.route('/api/state', { body: H.bodies.later0 });
         await H.tick(); await H.completeAnimations();
         return { before: before, after: H.summary() };
         """
-        r = _run(scenario)
+        r = _run(scenario, extra_bodies=_later_states(world, 1))
         for sym_id in IDS:
             key = _spark(sym_id)
             before, after = r["before"][key], r["after"][key]
@@ -172,10 +188,13 @@ class TestRefreshKeepsDrawnCharts:
     def test_refreshes_update_in_place_without_replaying_the_entry_animation(self):
         scenario = r"""
         await H.boot({});
-        for (let i = 0; i < 3; i++) { await H.tick(); await H.completeAnimations(); }
+        for (let i = 0; i < 3; i++) {
+          H.route('/api/state', { body: H.bodies['later' + i] });
+          await H.tick(); await H.completeAnimations();
+        }
         return { summary: H.summary() };
         """
-        summary = _run(scenario)["summary"]
+        summary = _run(scenario, extra_bodies=_later_states(hx.get_world("default"), 3))["summary"]
         for sym_id in IDS:
             updates = summary[_spark(sym_id)]["updates"]
             assert updates, f"{sym_id}: a refresh must update the existing chart"
@@ -600,9 +619,13 @@ class TestRefreshShowsTheSelectedCalendarWindow:
         const b = H.fetchLog.length;
         await H.tick();
         const pollUrls = H.fetchLog.slice(b).map(function (e) { return e.url; });
-        return { clickUrls: clickUrls, pollUrls: pollUrls };
+        const c = H.fetchLog.length;
+        H.route('/api/state', { body: H.bodies.later0 });
+        await H.tick();
+        const newerPollUrls = H.fetchLog.slice(c).map(function (e) { return e.url; });
+        return { clickUrls: clickUrls, pollUrls: pollUrls, newerPollUrls: newerPollUrls };
         """
-        r = _run(scenario)
+        r = _run(scenario, extra_bodies=_later_states(world, 1))
         assert sorted(r["clickUrls"]) == sorted(
             ["/api/hero-chart/60d", "/api/strip/60d", "/api/guard-alpha-summary?window=60d"]
         ), "a picker click re-windows the chart, the strip headline and the dollar-saved panel"
@@ -614,13 +637,20 @@ class TestRefreshShowsTheSelectedCalendarWindow:
         assert ids, "fixture sanity: the poll carries symphony ids"
         poll = r["pollUrls"]
         assert poll.count("/api/state") == 1
-        for sym_id in ids:
-            assert poll.count(f"/api/chart/{sym_id}") == 1, sym_id
-        extra = [u for u in poll if u != "/api/state" and not u.startswith("/api/chart/")]
-        assert set(extra) <= {"/api/strip/30d"}, (
+        assert not [u for u in poll if u.startswith("/api/chart/")], (
+            "a poll carrying the stamp already applied sends no chart request"
+        )
+        extra = [u for u in poll if u != "/api/state"]
+        assert set(extra) <= {"/api/strip/60d"}, (
             f"an unchanged-series poll sent unexpected requests: {extra}"
         )
         assert not [u for u in poll if u.startswith("/api/hero-chart/")]
+        newer = r["newerPollUrls"]
+        assert newer.count("/api/state") == 1
+        for sym_id in ids:
+            assert newer.count(f"/api/chart/{sym_id}") == 1, (
+                f"{sym_id}: a poll with a newer stamp asks for the symphony's tape once"
+            )
 
     def test_a_poll_requests_the_hero_series_only_when_the_series_changed(self):
         scenario = r"""

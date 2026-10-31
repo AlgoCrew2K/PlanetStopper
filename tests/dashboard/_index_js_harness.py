@@ -27,6 +27,13 @@ a canvas that still holds a live chart throws.
 dataset label at construction, so a test can show that nothing depends on label text.
 ``H.useTokenEpoch(label)`` makes every colour token read as ``<name>@<label>``.
 
+Time is virtual and moves only when a scenario says so: ``H.runTimers(ms)`` advances the
+page's ``Date`` and ``performance.now()`` together and runs every timer that falls due, in
+order; ``H.sleepFor(ms, {perf})`` jumps the clocks with no timer running (a closed laptop; with
+``perf: false`` only ``Date`` jumps, as on a platform whose monotonic clock stops in sleep) and
+``H.wakeUp()`` then runs each overdue timer once. Neither claims a browser's real timer
+throttling; they model the two clocks a page can read.
+
 ``animation.onComplete`` and plugin ``afterRender`` hooks fire only when a
 scenario says so (``H.completeAnimations``, ``H.fireAfterRender``);
 ``Chart.animator.running(chart)`` answers from ``H.animating``, which holds
@@ -272,15 +279,29 @@ def _world_specs() -> dict[str, dict]:
             "intraday": False,
             "frozen_today": _dt_mod.date(2027, 1, 2),
         },
+        # 1 January: the year-to-date window holds no row yet (explicit dates end 31 December).
+        "ytd-jan1": {
+            "explicit_dates": ["2026-12-29", "2026-12-30", "2026-12-31"],
+            "intraday": False,
+            "frozen_today": _dt_mod.date(2027, 1, 1),
+        },
         # a stored exit reason that would break out of a script element.
         "hostile": {"history_offsets": [3, 2, 1], "intraday": False, "hostile_reason": True},
     }
 
 
+# Worlds built from the refresh-timing card worlds (tests/app/_refresh_timing_card_world.py): the
+# same two captured symphonies (one triggered, one armed) on a page rendered at market open, after the
+# close and before the next open, each with the bodies the real routes return for it.
+CARD_WORLDS = ("cards-open", "cards-frozen", "cards-premarket", "cards-panels")
+CARD_TRIGGERED_ID = "nOyb55RMGVCKPiYXv7TI"
+CARD_ARMED_ID = "5XjzXjdGnjh99MIsdM97"
+
+
 def get_world(name: str) -> dict:
     """Build (once per process) and return the named world."""
     if name not in _WORLD_CACHE:
-        _WORLD_CACHE[name] = _build_world(name)
+        _WORLD_CACHE[name] = _build_card_world(name) if name in CARD_WORLDS else _build_world(name)
     return _WORLD_CACHE[name]
 
 
@@ -414,6 +435,20 @@ def _capture(client, frozen_today) -> dict:
             f"/api/state -> {state.status_code}: {state.get_data(as_text=True)[:600]}"
         )
         out["state"] = state.get_json()
+
+        strips: dict = {}
+        summaries: dict = {}
+        for token in HERO_TOKENS:
+            strip = client.get(f"/api/strip/{token}")
+            assert strip.status_code == 200, f"/api/strip/{token} -> {strip.status_code}"
+            strips[token] = strip.get_json()
+            summary = client.get(f"/api/guard-alpha-summary?window={token}")
+            assert summary.status_code == 200, (
+                f"/api/guard-alpha-summary?window={token} -> {summary.status_code}"
+            )
+            summaries[token] = summary.get_json()
+        out["strips"] = strips
+        out["summaries"] = summaries
     return out
 
 
@@ -516,6 +551,145 @@ def _build_world(name: str) -> dict:
     return world
 
 
+_PANEL_FIRE_AT = "2026-10-21 14:30:00"  # UTC, inside the card worlds' ET day
+
+
+def _first_symphony_entry(database) -> tuple[str, dict]:
+    state = database.load_state()
+    return next((k, v) for k, v in state.items() if isinstance(v, dict) and "name" in v)
+
+
+def _seed_panels_first(database) -> dict:
+    """Sleeves, rules, fires, a CVaR diagnostic and locked variables, through the real writers."""
+    ids: dict = {}
+    ids["s1"] = database.create_sleeve("Income sleeve", 1000.0, envelope_json="{}")
+    ids["r1"] = database.create_sleeve_rule(ids["s1"], "Trim on drawdown", json_doc="{}")
+    ids["r2"] = database.create_sleeve_rule(ids["s1"], "Buy the dip", json_doc="{}")
+    ids["s2"] = database.create_sleeve("Growth sleeve", 2500.0, envelope_json="{}")
+    database.update_sleeve_status(ids["s2"], "PAPER")
+    ids["r3"] = database.create_sleeve_rule(ids["s2"], "Rotate leaders", json_doc="{}")
+    database.insert_sleeve_rule_fire(
+        ids["r1"], ids["s1"], "buy", "ENTRY", "SHADOW", fired_at=_PANEL_FIRE_AT
+    )
+    sym_id, sym = _first_symphony_entry(database)
+    ids["cvar_symphony"] = sym_id
+    database.record_cvar_diagnostic(
+        "2026-10-21T10:43:00-04:00", sym_id, -0.0412, 0.0031, 12, -0.0388, 20, mode="live"
+    )
+    database.save_symphony_strategy(sym["name"], {}, ["TRAILING_STOP_PCT"])
+    return ids
+
+
+def _change_panels(database, ids: dict) -> None:
+    """One more fire; a rule added and another removed; a sleeve added and another removed; a newer
+    CVaR diagnostic; one more locked variable. The writers are the real ones; no accessor deletes a rule,
+    so that row goes by a direct delete on the world's own database file."""
+    import sqlite3
+
+    database.insert_sleeve_rule_fire(
+        ids["r1"], ids["s1"], "sell", "DEFENSIVE", "SHADOW", fired_at="2026-10-21 14:40:00"
+    )
+    ids["r4"] = database.create_sleeve_rule(ids["s1"], "Harvest losses", json_doc="{}")
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    try:
+        conn.execute("DELETE FROM sleeve_rules WHERE id = ?", (ids["r2"],))
+        conn.execute(
+            "UPDATE cvar_diagnostics SET ts_utc = '2026-10-21 14:00:00' WHERE cycle_id = ?",
+            ("2026-10-21T10:43:00-04:00",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    ids["s3"] = database.create_sleeve("Hedge sleeve", 500.0, envelope_json="{}")
+    ids["r5"] = database.create_sleeve_rule(ids["s3"], "Buy protection", json_doc="{}")
+    database.delete_sleeve(ids["s2"])
+    database.record_cvar_diagnostic(
+        "2026-10-21T10:44:00-04:00",
+        ids["cvar_symphony"],
+        -0.0518,
+        0.0044,
+        17,
+        -0.0490,
+        25,
+        mode="live",
+    )
+    _sym_id, sym = _first_symphony_entry(database)
+    database.save_symphony_strategy(
+        sym["name"], {}, ["TRAILING_STOP_PCT", "MC_EXIT_PCT", "VWAP_MULT"]
+    )
+
+
+def _build_card_world(name: str) -> dict:
+    """The page and the bodies the real routes return for a refresh-timing card world.
+
+    The market state comes from the real XNYS calendar at the world's instant (open at 10:44 ET,
+    closed after 16:00, pre-market at 08:00 the next day); nothing a producer returns is typed in.
+    """
+    import analytics
+    import database
+    from tests.app import _refresh_timing_card_world as cw
+
+    work_dir = tempfile.mkdtemp(prefix=f"charts_world_{name}_")
+    patch = pytest.MonkeyPatch()
+    try:
+        patch.setenv("DB_PATH", os.path.join(work_dir, "world.db"))
+        patch.setattr(analytics, "DB_FILE", os.path.join(work_dir, "world.db"))
+        # The card-world modules capture the real functions at their own import, which can happen
+        # after a conftest stub is installed; the real ones are put back before anything is built.
+        patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
+        patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
+        database.init_db()
+        if name in ("cards-open", "cards-panels"):
+            world = cw.open_cards_world(patch, Path(work_dir))
+        elif name == "cards-frozen":
+            world = cw.closed_cards_world(patch, Path(work_dir))
+            cw.seed_exit_row()
+        else:
+            world = cw.closed_cards_world(patch, Path(work_dir), cw.PRE_MARKET_INSTANT)
+            cw.seed_exit_row()
+        patch.setattr(_app_module, "get_api_state_dict", _REAL_GET_API_STATE_DICT)
+        patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
+        ids = _seed_panels_first(database) if name == "cards-panels" else {}
+        out: dict = {"html": world.page(), "state": world.poll()}
+        out["hero"] = {t: world.poll(f"/api/hero-chart/{t}") for t in HERO_TOKENS}
+        out["strips"] = {t: world.poll(f"/api/strip/{t}") for t in HERO_TOKENS}
+        out["summaries"] = {
+            t: world.poll(f"/api/guard-alpha-summary?window={t}") for t in HERO_TOKENS
+        }
+        out["charts"] = {
+            i: world.poll(f"/api/chart/{i}") for i in (CARD_TRIGGERED_ID, CARD_ARMED_ID)
+        }
+        instant = {
+            "cards-panels": cw.OPEN_INSTANT,
+            "cards-open": cw.OPEN_INSTANT,
+            "cards-frozen": cw.CLOSED_INSTANT,
+            "cards-premarket": cw.PRE_MARKET_INSTANT,
+        }[name]
+        out["seeded_today"] = instant.date().isoformat()
+        out["now_iso"] = instant.astimezone(_dt_mod.UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        out["spec_name"] = name
+        out["ids"] = [CARD_TRIGGERED_ID, CARD_ARMED_ID]
+        out["bot_state"] = out["state"].get("bot_state", {})
+        if name == "cards-panels":
+            # Later: the panels' data changes through the real writers, and the page and the poll
+            # are taken again. ``next`` carries the later poll in the shape ``run_scenario`` reads,
+            # plus the later server render for a cross-render comparison.
+            _change_panels(database, ids)
+            later_state = world.poll()
+            out["panel_ids"] = ids
+            out["next"] = {
+                "hero": out["hero"],
+                "charts": out["charts"],
+                "state": later_state,
+                "strips": out["strips"],
+                "summaries": out["summaries"],
+                "html": world.page(),
+            }
+    finally:
+        patch.undo()
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Running a scenario under node
 # ---------------------------------------------------------------------------
@@ -535,29 +709,39 @@ def run_scenario(
     extra_bodies: dict | None = None,
     now_iso: str | None = None,
     timeout: int = 120,
+    scripts: tuple[str, ...] = ("static/index.js",),
 ) -> dict:
     """Run ``scenario`` (the body of an async JS function taking ``H``) against
     the world's page and return its JSON result.
 
+    ``scripts`` names the files loaded into the one page context, in page order
+    (``("static/chrome.js", "static/index.js")`` is how ``/`` loads them); the
+    default keeps every existing scenario on ``static/index.js`` alone.
+
     ``H.bodies`` carries ``hero`` (token -> /api/hero-chart body), ``charts``
-    (id -> /api/chart body), ``state`` (the /api/state body), their ``*Next``
-    captures when the world has them, and anything in ``extra_bodies``.
+    (id -> /api/chart body), ``state`` (the /api/state body), ``strips`` (token ->
+    /api/strip body), ``summaries`` (token -> /api/guard-alpha-summary body), their
+    ``*Next`` captures when the world has them, and anything in ``extra_bodies``.
     """
     bodies = {
         "hero": world["hero"],
         "charts": world["charts"],
         "state": world["state"],
+        "strips": world["strips"],
+        "summaries": world["summaries"],
     }
     if "next" in world:
         bodies["heroNext"] = world["next"]["hero"]
         bodies["chartsNext"] = world["next"]["charts"]
         bodies["stateNext"] = world["next"]["state"]
+        bodies["stripsNext"] = world["next"]["strips"]
+        bodies["summariesNext"] = world["next"]["summaries"]
     bodies.update(extra_bodies or {})
     payload = {
         "tree": parse_html(world["html"]),
         "bodies": bodies,
         "tokens": load_tokens(),
-        "indexJs": str(INDEX_JS),
+        "scripts": [str(_REPO / name) for name in scripts],
         "scenario": scenario,
         "now": now_iso,
     }
@@ -596,7 +780,7 @@ def seeded_now_iso(world: dict) -> str:
     Pinning the page's clock to the seeded day (``_build_world`` captures as of that day too)
     keeps both on one date at every hour, where the real UTC now is a day past the newest row
     for part of each evening west of UTC."""
-    return f"{world['seeded_today']}T12:00:00.000Z"
+    return world.get("now_iso") or f"{world['seeded_today']}T12:00:00.000Z"
 
 
 def window_cutoff_iso(token: str, today: _dt_mod.date | None = None) -> str | None:
@@ -654,8 +838,9 @@ const H = {
   eventSources: [], charts: [], animating: new Set(), globalPlugins: [],
   console: { errors: [], logs: [] }, unhandled: [],
   tokens: Object.assign({}, world.tokens.light), accentOverride: null, theme: 'light',
-  reloads: 0
+  reloads: 0, navigations: [], streamAutoOpen: true, failNewStreams: false, htmlWrites: []
 };
+let timerSeq = 0;
 process.on('unhandledRejection', function (e) { H.unhandled.push(String((e && e.message) || e)); });
 
 function clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
@@ -677,6 +862,7 @@ class Emitter {
 class TextNode {
   constructor(data) { this.nodeType = 3; this.data = data; this.parentNode = null; }
   get textContent() { return this.data; }
+  cloneNode() { return new TextNode(this.data); }
 }
 function makeStyle() {
   const s = {};
@@ -766,12 +952,43 @@ class Element extends Emitter {
     if (s !== '') { const t = new TextNode(s); t.parentNode = this; this.childNodes.push(t); }
   }
   get innerHTML() { return this._innerHTML || ''; }
-  set innerHTML(v) { this.textContent = ''; this._innerHTML = String(v); }
+  set innerHTML(v) {
+    this.textContent = ''; this._innerHTML = String(v);
+    const within = [];
+    for (let e = this.parentNode; e && e.nodeType === 1; e = e.parentNode) { const t = e.getAttribute('data-testid'); if (t) within.push(t); }
+    H.htmlWrites.push({ tag: this.localName, id: this.id, testid: this.getAttribute('data-testid'), within: within, value: String(v) });
+  }
   get outerHTML() { return '<' + this.localName + '>' + this.textContent + '</' + this.localName + '>'; }
   insertAdjacentHTML() {}
-  appendChild(n) { if (n.parentNode) n.parentNode.removeChild(n); n.parentNode = this; this.childNodes.push(n); return n; }
+  appendChild(n) {
+    if (n.nodeType === 11) { n.childNodes.slice().forEach(function (c) { this.appendChild(c); }, this); return n; }
+    if (n.parentNode) n.parentNode.removeChild(n); n.parentNode = this; this.childNodes.push(n); return n;
+  }
+  get firstElementChild() { return this.children[0] || null; }
+  get lastElementChild() { const c = this.children; return c[c.length - 1] || null; }
+  get nextElementSibling() {
+    if (!this.parentNode) return null;
+    const c = this.parentNode.children; const i = c.indexOf(this);
+    return i >= 0 ? (c[i + 1] || null) : null;
+  }
+  get previousElementSibling() {
+    if (!this.parentNode) return null;
+    const c = this.parentNode.children; const i = c.indexOf(this);
+    return i > 0 ? c[i - 1] : null;
+  }
+  cloneNode(deep) {
+    const copy = this.nodeType === 11 ? new FragmentNode() : new Element(this.localName);
+    this._attrs.forEach(function (v, k) { copy._attrs.set(k, v); });
+    Object.keys(this.style).forEach(function (k) { copy.style[k] = this.style[k]; }, this);
+    if (deep) {
+      this.childNodes.forEach(function (c) { const cc = c.cloneNode(true); cc.parentNode = copy; copy.childNodes.push(cc); });
+      if (this.content) copy.content = this.content.cloneNode(true);
+    }
+    return copy;
+  }
   append() { const self = this; Array.prototype.forEach.call(arguments, function (n) { self.appendChild(typeof n === 'string' ? new TextNode(n) : n); }); }
   insertBefore(n, ref) {
+    if (n.nodeType === 11) { n.childNodes.slice().forEach(function (c) { this.insertBefore(c, ref); }, this); return n; }
     if (n.parentNode) n.parentNode.removeChild(n);
     const i = ref ? this.childNodes.indexOf(ref) : -1;
     n.parentNode = this;
@@ -793,6 +1010,11 @@ class Element extends Emitter {
   getContext() { if (!this._ctx) this._ctx = makeCtx(); return this._ctx; }
   focus() {} blur() {} scrollIntoView() {}
   getBoundingClientRect() { return { top: 0, left: 0, width: 0, height: 0, right: 0, bottom: 0 }; }
+}
+
+// A DocumentFragment (what a <template>'s content is): its children are not part of the page tree.
+class FragmentNode extends Element {
+  constructor() { super('#document-fragment'); this.nodeType = 11; this.tagName = '#DOCUMENT-FRAGMENT'; this.localName = ''; }
 }
 
 // ---- selectors: compound selectors joined by descendant (space) and child (>) combinators
@@ -882,7 +1104,9 @@ function build(n) {
   if (typeof n === 'string') return new TextNode(n);
   const el = new Element(n.t);
   Object.keys(n.a || {}).forEach(function (k) { el.setAttribute(k, n.a[k]); });
-  (n.c || []).forEach(function (c) { const ch = build(c); ch.parentNode = el; el.childNodes.push(ch); });
+  // A <template>'s children live in its content fragment, never in the page tree.
+  const holder = n.t === 'template' ? (el.content = new FragmentNode()) : el;
+  (n.c || []).forEach(function (c) { const ch = build(c); ch.parentNode = holder; holder.childNodes.push(ch); });
   return el;
 }
 const root = build(world.tree);
@@ -890,24 +1114,35 @@ const documentObj = new Emitter();
 Object.assign(documentObj, {
   documentElement: root,
   body: queryAll(root, 'body')[0],
-  readyState: 'loading',
+  readyState: 'loading', visibilityState: 'visible', hidden: false,
   getElementById: function (id) { return queryAll(root, '#' + id)[0] || null; },
   querySelector: function (sel) { return queryAll(root, sel)[0] || null; },
   querySelectorAll: function (sel) { return queryAll(root, sel); },
-  createElement: function (t) { return new Element(t); },
-  createTextNode: function (d) { return new TextNode(d); }
+  createElement: function (t) { const e = new Element(t); if (String(t).toLowerCase() === 'template') e.content = new FragmentNode(); return e; },
+  createTextNode: function (d) { return new TextNode(d); },
+  createDocumentFragment: function () { return new FragmentNode(); },
+  importNode: function (node, deep) { return node.cloneNode(!!deep); }
 });
 
 // ------------------------------------------------------------------ Date
 const RealDate = Date;
 let fixedNow = world.now ? RealDate.parse(world.now) : null;
+let dateOffset = 0;      // moves Date when no instant is pinned
+let perfNow = 1000;      // the page's performance.now(), in ms
+function nowMs() { return fixedNow !== null ? fixedNow : RealDate.now() + dateOffset; }
 class FakeDate extends RealDate {
   constructor() {
-    if (arguments.length === 0 && fixedNow !== null) super(fixedNow); else super(...arguments);
+    if (arguments.length === 0) super(nowMs()); else super(...arguments);
   }
-  static now() { return fixedNow !== null ? fixedNow : RealDate.now(); }
+  static now() { return nowMs(); }
 }
 H.setNow = function (iso) { fixedNow = RealDate.parse(iso); };
+H.nowIso = function () { return new RealDate(nowMs()).toISOString(); };
+H.perfNow = function () { return perfNow; };
+function advanceClocks(ms, perfToo) {
+  if (fixedNow !== null) fixedNow += ms; else dateOffset += ms;
+  if (perfToo !== false) perfNow += ms;
+}
 
 // ------------------------------------------------------------------ Chart
 function statFor(canvas) {
@@ -1028,26 +1263,46 @@ function findRoute(url, opts) {
   }
   return null;
 }
+// A response carries the headers a real one does: `Date` is the page clock when the response is
+// made (a server on the same clock) unless the spec names headers of its own.
 function makeResponse(spec) {
   const status = spec.status === undefined ? 200 : spec.status;
+  const headers = Object.assign({ 'date': new RealDate(nowMs()).toUTCString() }, lowerKeys(spec.headers || {}));
+  if (spec.noDate) delete headers['date'];
+  const isText = spec.text !== undefined;
   return {
-    ok: status >= 200 && status < 300, status: status,
-    json: function () { return spec.badJson ? Promise.reject(new SyntaxError('Unexpected token')) : Promise.resolve(clone(spec.body === undefined ? {} : spec.body)); },
-    text: function () { return Promise.resolve(JSON.stringify(spec.body === undefined ? {} : spec.body)); }
+    ok: status >= 200 && status < 300, status: status, statusText: '',
+    headers: { get: function (n) { const v = headers[String(n).toLowerCase()]; return v === undefined ? null : v; } },
+    json: function () {
+      if (spec.badJson || isText) return Promise.reject(new SyntaxError('Unexpected token < in JSON'));
+      return Promise.resolve(clone(spec.body === undefined ? {} : spec.body));
+    },
+    text: function () { return Promise.resolve(isText ? spec.text : JSON.stringify(spec.body === undefined ? {} : spec.body)); }
   };
 }
+function lowerKeys(o) { const out = {}; Object.keys(o).forEach(function (k) { out[k.toLowerCase()] = o[k]; }); return out; }
+function abortError() { const e = new Error('The operation was aborted.'); e.name = 'AbortError'; return e; }
 function fetchStub(url, opts) {
   opts = opts || {};
-  const entry = { url: String(url), method: String(opts.method || 'GET').toUpperCase(), headers: opts.headers || {}, body: opts.body, n: H.fetchLog.length };
+  const signal = opts.signal || null;
+  const entry = { url: String(url), method: String(opts.method || 'GET').toUpperCase(), headers: opts.headers || {}, body: opts.body, n: H.fetchLog.length, hasSignal: !!signal, aborted: false };
   H.fetchLog.push(entry);
+  if (signal && signal.aborted) { entry.aborted = true; return Promise.reject(abortError()); }
   let spec = findRoute(entry.url, opts);
   if (!spec) { H.unrouted.push(entry.url); spec = { status: 200, body: {} }; }
   if (spec.pending) {
     return new Promise(function (resolve, reject) {
-      H.pending.push({
-        url: entry.url,
-        settle: function (s) { if (s.reject) reject(new TypeError('Failed to fetch')); else resolve(makeResponse(s)); }
-      });
+      const item = {
+        url: entry.url, entry: entry,
+        settle: function (s) { if (item.done) return; item.done = true; if (s.reject) reject(new TypeError('Failed to fetch')); else resolve(makeResponse(s)); }
+      };
+      H.pending.push(item);
+      if (signal) {
+        signal.addEventListener('abort', function () {
+          if (item.done) return;
+          item.done = true; entry.aborted = true; reject(abortError());
+        });
+      }
     });
   }
   if (spec.reject) return Promise.reject(new TypeError('Failed to fetch'));
@@ -1056,10 +1311,19 @@ function fetchStub(url, opts) {
 H.requests = function (re) { return H.fetchLog.filter(function (e) { return re.test(e.url); }).map(function (e) { return e.url; }); };
 H.releasePending = async function (url, spec) {
   const hits = H.pending.filter(function (p) { return p.url === url && !p.done; });
-  hits.forEach(function (p) { p.done = true; p.settle(spec); });
+  hits.forEach(function (p) { p.settle(spec); });
   await H.settle();
   return hits.length;
 };
+// Releases the pending request at `index` among those still waiting for `url` (0 = the oldest).
+H.releaseNth = async function (url, index, spec) {
+  const hits = H.pending.filter(function (p) { return p.url === url && !p.done; });
+  if (!hits[index]) return 0;
+  hits[index].settle(spec);
+  await H.settle();
+  return 1;
+};
+H.waiting = function (url) { return H.pending.filter(function (p) { return p.url === url && !p.done; }).length; };
 H.routeCommon = function (opts) {
   opts = opts || {};
   const b = H.bodies;
@@ -1070,9 +1334,19 @@ H.routeCommon = function (opts) {
   H.route(/^\/api\/chart\/(.+)$/, function (url, o, m) { return { body: (opts.charts || b.charts)[m[1]] }; });
   H.route('/api/state', { body: opts.state || b.state });
 };
+// The window strips, the $-saved summaries, the header's alert poll and the event-stream probe:
+// the producer output captured with the world, so a scenario that polls does not hit a bare 200.
+H.routeExtras = function () {
+  const b = H.bodies;
+  H.route('/api/candidate-alert', { body: { new_valid_count: 0, last_run: null } });
+  H.route(/^\/api\/strip\/([a-z0-9]+)$/, function (url, o, m) { return { body: b.strips[m[1]] }; });
+  H.route(/^\/api\/guard-alpha-summary\?window=([a-z0-9]+)$/, function (url, o, m) { return { body: b.summaries[m[1]] }; });
+  H.route('/api/events', { status: 200, body: {} });
+};
 H.boot = async function (opts) {
   opts = opts || {};
   H.routeCommon(opts);
+  if (opts.extras) H.routeExtras();
   (opts.overrides || []).forEach(function (o) { H.route(o[0], o[1]); });
   if (opts.statePending) H.route('/api/state', { pending: true });
   if (opts.stateReject) H.route('/api/state', { reject: true });
@@ -1087,15 +1361,122 @@ H.tick = async function () {
   H.intervals.slice().forEach(function (iv) { try { iv.fn(); } catch (e) { H.console.errors.push('interval threw: ' + (e && e.stack || e)); } });
   await H.settle();
 };
-H.sse = async function (type) {
-  H.eventSources.forEach(function (es) { (es.listeners[type] || []).slice().forEach(function (f) { try { f({ type: type }); } catch (e) { H.console.errors.push('sse threw: ' + (e && e.stack || e)); } }); });
+// Delivers a named event to every open stream. `data` (an object or text) becomes the event's JSON `data`.
+H.sse = async function (type, data) {
+  const evt = { type: type };
+  if (data !== undefined) evt.data = typeof data === 'string' ? data : JSON.stringify(data);
+  H.eventSources.forEach(function (es) {
+    if (es.readyState !== 1) return;
+    (es.listeners[type] || []).slice().forEach(function (f) { try { f(evt); } catch (e) { H.console.errors.push('sse threw: ' + (e && e.stack || e)); } });
+  });
   await H.settle();
 };
+H.liveStreams = function () { return H.eventSources.filter(function (es) { return es.readyState !== 2; }).length; };
+// The stream at `index` reports an error: closed for good (a refused reconnect), or still
+// CONNECTING (a transport drop the browser reconnects by itself).
+H.streamError = async function (index, closed) {
+  const es = H.eventSources[index];
+  es.readyState = closed ? 2 : 0;
+  const evt = { type: 'error' };
+  if (typeof es.onerror === 'function') es.onerror(evt);
+  (es.listeners['error'] || []).slice().forEach(function (f) { f(evt); });
+  await H.settle();
+};
+H.streamOpen = async function (index) {
+  const es = H.eventSources[index];
+  es.readyState = 1;
+  const evt = { type: 'open' };
+  if (typeof es.onopen === 'function') es.onopen(evt);
+  (es.listeners['open'] || []).slice().forEach(function (f) { f(evt); });
+  await H.settle();
+};
+
+// ---- virtual time: timers fall due on the page's performance.now() and never fire by themselves.
+function allTimers() { return H.intervals.concat(H.timeouts); }
+function fireTimer(t) {
+  if (t.kind === 'timeout') H.timeouts = H.timeouts.filter(function (x) { return x !== t; });
+  else t.due += t.ms > 0 ? t.ms : 1;
+  try { t.fn.apply(null, t.args || []); } catch (e) { H.console.errors.push('timer threw: ' + (e && e.stack || e)); }
+}
+// Advances time by `ms`, running each timer when it falls due (a due interval runs, then falls due
+// again one period later). With `skipBelow`, intervals shorter than that many ms are not run during
+// the span and each runs once at its end, so a span of hours stays cheap (the page's one-second ticks
+// are skipped with `skipBelow: 5000`; everything, polls included, with `skipBelow: 600000`).
+H.runTimers = async function (ms, opts) {
+  opts = opts || {};
+  const skipBelow = opts.skipBelow || 0;
+  const end = perfNow + ms;
+  for (;;) {
+    const due = allTimers().filter(function (t) {
+      if (skipBelow && t.kind === 'interval' && t.ms < skipBelow) return false;
+      return t.due <= end;
+    });
+    if (!due.length) break;
+    due.sort(function (a, b) { return a.due - b.due || a.id - b.id; });
+    const t = due[0];
+    if (t.due > perfNow) advanceClocks(t.due - perfNow);
+    fireTimer(t);
+    if (t.kind === 'timeout' || t.ms >= 5000) await H.settle(); else await Promise.resolve();
+  }
+  if (end > perfNow) advanceClocks(end - perfNow);
+  if (skipBelow) {
+    H.intervals.filter(function (t) { return t.ms < skipBelow; }).forEach(function (t) { fireTimer(t); t.due = perfNow + t.ms; });
+  }
+  await H.settle();
+};
+// The clocks jump with no timer running. `perf: false` moves Date alone.
+H.sleepFor = function (ms, opts) {
+  opts = opts || {};
+  advanceClocks(ms, opts.perf !== false);
+};
+// Waking runs each overdue timer once; an interval falls due again one period after the wake.
+H.wakeUp = async function () {
+  const overdue = allTimers().filter(function (t) { return t.due <= perfNow; });
+  overdue.sort(function (a, b) { return a.due - b.due || a.id - b.id; });
+  overdue.forEach(function (t) { fireTimer(t); if (t.kind === 'interval') t.due = perfNow + (t.ms > 0 ? t.ms : 1); });
+  await H.settle();
+};
+H.setVisibility = async function (state) {
+  documentObj.visibilityState = state; documentObj.hidden = state === 'hidden';
+  documentObj.dispatchEvent({ type: 'visibilitychange' });
+  await H.settle();
+};
+H.fireWindow = async function (type, props) {
+  if (type === 'online') sandbox.navigator.onLine = true;
+  if (type === 'offline') sandbox.navigator.onLine = false;
+  winEmitter.dispatchEvent(Object.assign({ type: type }, props || {}));
+  await H.settle();
+};
+H.guardAlpha = function () { return { headline: H.text('#guard-alpha-headline'), label: H.text('#guard-alpha-window-label') }; };
+H.vol = function () {
+  return {
+    bot: H.text('[data-testid="comp-vol-bot-text"]'),
+    held: H.text('[data-testid="comp-vol-held-text"]'),
+    delta: H.text('[data-testid="comp-vol-delta"]')
+  };
+};
+H.text = function (sel) { const e = queryAll(root, sel)[0]; return e ? e.textContent.trim() : null; };
+H.requestsTo = function (re, method) { return H.fetchLog.filter(function (e) { return re.test(e.url) && (!method || e.method === method); }); };
 H.domReady = async function () {
   documentObj.readyState = 'interactive';
   const list = ((documentObj._listeners || {}).DOMContentLoaded || []).slice();
   list.forEach(function (f) { try { f.call(documentObj, { type: 'DOMContentLoaded' }); } catch (e) { H.console.errors.push('DOMContentLoaded handler threw: ' + (e && e.stack || e)); } });
   await H.settle();
+};
+// A press the way a user's click reaches a control: nothing happens on a disabled control, the
+// element's own handler property runs, then its inline `onclick` attribute (evaluated in the page's
+// context with `event`), then the listeners. `H.click` skips the disabled check and the attribute.
+H.press = async function (sel) {
+  const el = queryAll(root, sel)[0];
+  if (!el) throw new Error('no element for ' + sel);
+  if (el.hasAttribute('disabled')) { await H.settle(); return false; }
+  const evt = { type: 'click', target: el, currentTarget: el, stopPropagation: function () {}, preventDefault: function () {} };
+  if (typeof el.onclick === 'function') el.onclick.call(el, evt);
+  const code = el.getAttribute('onclick');
+  if (code) { vm.runInContext('(function (event) {' + code + ' })', ctx).call(el, evt); }
+  el.dispatchEvent(evt);
+  await H.settle();
+  return true;
 };
 H.click = async function (sel) {
   const el = queryAll(root, sel)[0];
@@ -1129,10 +1510,49 @@ H.tweak = async function () {
 };
 
 // ------------------------------------------------------------------ sandbox
+// readyState follows the HTML specification: CONNECTING 0, OPEN 1, CLOSED 2. A stream opens at once
+// unless `H.streamAutoOpen` is false, and a new stream fails (closed, error event) when
+// `H.failNewStreams` is true, as a reconnect answered 502 does.
 class EventSourceStub {
-  constructor(url) { this.url = url; this.listeners = {}; H.eventSources.push(this); }
+  constructor(url) {
+    this.url = url; this.listeners = {}; this.onopen = null; this.onerror = null;
+    this.index = H.eventSources.length; this.readyState = 0;
+    this.createdAt = perfNow;
+    this.liveWhenCreated = H.eventSources.filter(function (es) { return es.readyState !== 2; }).length;
+    H.eventSources.push(this);
+    const self = this;
+    setImmediate(function () {
+      if (self.readyState !== 0) return;
+      if (H.failNewStreams) {
+        self.readyState = 2;
+        const evt = { type: 'error' };
+        if (typeof self.onerror === 'function') self.onerror(evt);
+        (self.listeners['error'] || []).slice().forEach(function (f) { f(evt); });
+      } else if (H.streamAutoOpen) {
+        self.readyState = 1;
+        if (typeof self.onopen === 'function') self.onopen({ type: 'open' });
+      }
+    });
+  }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
-  close() {}
+  close() { this.readyState = 2; this.closedByPage = true; }
+}
+EventSourceStub.CONNECTING = 0; EventSourceStub.OPEN = 1; EventSourceStub.CLOSED = 2;
+EventSourceStub.prototype.CONNECTING = 0; EventSourceStub.prototype.OPEN = 1; EventSourceStub.prototype.CLOSED = 2;
+
+class AbortSignalStub extends Emitter {
+  constructor() { super(); this.aborted = false; this.reason = undefined; this.onabort = null; }
+  throwIfAborted() { if (this.aborted) throw this.reason; }
+}
+class AbortControllerStub {
+  constructor() { this.signal = new AbortSignalStub(); }
+  abort(reason) {
+    if (this.signal.aborted) return;
+    this.signal.aborted = true; this.signal.reason = reason || abortError();
+    const evt = { type: 'abort', target: this.signal };
+    if (typeof this.signal.onabort === 'function') this.signal.onabort(evt);
+    this.signal.dispatchEvent(evt);
+  }
 }
 const pageConsole = {
   log: function () { H.console.logs.push(Array.prototype.join.call(arguments, ' ')); },
@@ -1141,13 +1561,20 @@ const pageConsole = {
 };
 const sandbox = {
   console: pageConsole, document: documentObj, fetch: fetchStub, Chart: Chart, EventSource: EventSourceStub,
-  setInterval: function (fn, ms) { const id = H.intervals.length + 1; H.intervals.push({ id: id, fn: fn, ms: ms }); return id; },
+  setInterval: function (fn, ms) { const id = ++timerSeq; const period = Number(ms) || 0; H.intervals.push({ id: id, kind: 'interval', fn: fn, ms: period, due: perfNow + (period > 0 ? period : 1) }); return id; },
   clearInterval: function (id) { H.intervals = H.intervals.filter(function (i) { return i.id !== id; }); },
-  setTimeout: function (fn, ms) { const id = H.timeouts.length + 1; H.timeouts.push({ id: id, fn: fn, ms: ms }); return id; },
-  clearTimeout: function () {},
+  setTimeout: function (fn, ms) { const id = ++timerSeq; const delay = Number(ms) || 0; H.timeouts.push({ id: id, kind: 'timeout', fn: fn, ms: delay, due: perfNow + delay, args: Array.prototype.slice.call(arguments, 2) }); return id; },
+  clearTimeout: function (id) { H.timeouts = H.timeouts.filter(function (t) { return t.id !== id; }); },
+  AbortController: AbortControllerStub,
+  performance: { now: function () { return perfNow; } },
   getComputedStyle: function () { return { getPropertyValue: function (n) { return H.tokens[n] === undefined ? '' : String(H.tokens[n]); } }; },
   Date: FakeDate, CustomEvent: CustomEventStub, Event: CustomEventStub,
-  location: { reload: function () { H.reloads++; }, search: '', href: 'http://localhost/' },
+  location: {
+    reload: function () { H.reloads++; },
+    assign: function (url) { H.navigations.push(String(url)); },
+    replace: function (url) { H.navigations.push(String(url)); },
+    search: '', href: 'http://localhost/'
+  },
   localStorage: { getItem: function () { return null; }, setItem: function () {} },
   navigator: { userAgent: 'harness' },
   addEventListener: function (t, f) { winEmitter.addEventListener(t, f); },
@@ -1162,7 +1589,9 @@ H.sandbox = sandbox;
 (async function main() {
   let result; let error = null;
   try {
-    vm.runInContext(fs.readFileSync(world.indexJs, 'utf8'), ctx, { filename: 'static/index.js' });
+    world.scripts.forEach(function (file) {
+      vm.runInContext(fs.readFileSync(file, 'utf8'), ctx, { filename: file });
+    });
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const scenario = new AsyncFunction('H', world.scenario);
     result = await scenario(H);

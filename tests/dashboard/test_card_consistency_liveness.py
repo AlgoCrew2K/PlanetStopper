@@ -691,17 +691,18 @@ class TestMarketStateAndStripChipsUpdate:
             )
 
     def test_engine_status_indicator_reads_the_market_state_of_the_poll(self):
-        """CC-8c: updateEngineStatus must derive open/closed from data.market_state."""
-        chrome = (_WORKTREE / "static" / "chrome.js").read_text(encoding="utf-8")
-        start = chrome.find("function updateEngineStatus(")
-        assert start != -1, "function updateEngineStatus not found in static/chrome.js"
-        body = chrome[start : start + 1200]
+        """CC-8c: the header label must derive open/closed from the poll's market_state.
 
-        assert "data.market_state" in body, (
-            "CC-8c FAIL: updateEngineStatus does not read data.market_state."
-        )
-        assert "'Closed'" in body, (
-            "CC-8c FAIL: updateEngineStatus has no closed label for a closed market."
+        The label is computed by one function in static/chrome.js (renderEngineLabel) from the fields
+        updateChromeTicker stores; the check reads the whole file so it follows the label wherever the
+        precedence lives, and the labels themselves are run under node in test_dashboard_liveness.py.
+        """
+        chrome = (_WORKTREE / "static" / "chrome.js").read_text(encoding="utf-8")
+
+        assert "function updateEngineStatus(" in chrome, "updateEngineStatus must stay exposed"
+        assert "market_state" in chrome, "CC-8c FAIL: chrome.js does not read market_state."
+        assert "'Closed'" in chrome, (
+            "CC-8c FAIL: chrome.js has no closed label for a closed market."
         )
 
 

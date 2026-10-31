@@ -57,6 +57,8 @@ import subprocess
 
 import pytest
 
+from tests.dashboard.test_render_basis_fix import _headline_writers
+
 _JS_PATH = pathlib.Path(__file__).parent.parent.parent / "static" / "index.js"
 _HTML_PATH = pathlib.Path(__file__).parent.parent.parent / "templates" / "index.html"
 
@@ -105,12 +107,11 @@ class TestDedicatedAccountRendererExists:
         """
         js = _js()
 
-        # Locate renderGuardAlpha body (up to the next top-level function).
-        start = js.find("function renderGuardAlpha")
-        if start == -1:
-            pytest.fail("renderGuardAlpha function not found in static/index.js")
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
+        # The headline writer(s), found by what they write rather than by function name.
+        writers = _headline_writers(js)
+        if not writers:
+            pytest.fail("no function in static/index.js writes #guard-alpha-headline")
+        body = "\n".join(b for _n, b in writers)
 
         assert "account-all-time-cr" not in body and "account_all_time_cr" not in body, (
             "AC-CS.1/AC-CS.5 FAIL: the account-all-time-cr reference is inside "
@@ -302,11 +303,10 @@ class TestGuardAlphaRenderBasisNonRegression:
         """
         js = _js()
 
-        start = js.find("function renderGuardAlpha")
-        if start == -1:
-            pytest.fail("renderGuardAlpha function not found in static/index.js")
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
+        writers = _headline_writers(js)
+        if not writers:
+            pytest.fail("no function in static/index.js writes #guard-alpha-headline")
+        body = "\n".join(b for _n, b in writers)
 
         assert "ps.guard_alpha" in body or ".guard_alpha" in body, (
             "NON-REGRESSION FAIL: renderGuardAlpha no longer reads a .guard_alpha "
@@ -323,11 +323,10 @@ class TestGuardAlphaRenderBasisNonRegression:
         """
         js = _js()
 
-        start = js.find("function renderGuardAlpha")
-        if start == -1:
-            pytest.fail("renderGuardAlpha function not found in static/index.js")
-        end_marker = js.find("\n    function ", start + 1)
-        body = js[start:end_marker] if end_marker != -1 else js[start : start + 800]
+        writers = _headline_writers(js)
+        if not writers:
+            pytest.fail("no function in static/index.js writes #guard-alpha-headline")
+        body = "\n".join(b for _n, b in writers)
 
         # Forbid the exact subtraction pattern that caused the original bug.
         # Strip comment lines (lines starting with optional whitespace + //) to avoid

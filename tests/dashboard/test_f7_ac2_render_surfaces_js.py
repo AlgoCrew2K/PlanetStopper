@@ -149,24 +149,31 @@ def _window_around(content: str, needle: str, before: int = 200, after: int = 20
     return content[max(0, idx - before) : idx + len(needle) + after]
 
 
-def test_load_charts_call_site_passes_or_derives_triggered_state_to_dial() -> None:
-    """loadCharts (~324-332) calls renderMcDial unconditionally today,
-    passing only the raw chart response -- it has no way to tell renderMcDial
-    "this symphony is exited, render the exited state actively" unless the
-    triggered/exited signal is threaded through (either via ``sym.triggered``
-    already in scope at this call site, or an equivalent field on the
-    passed chartData). Checked in a TIGHT window around the exact call
-    site, not the whole function -- a broad slice risks a false pass from
-    unrelated code."""
+def test_no_chart_loading_path_draws_the_dial_without_the_triggered_state() -> None:
+    """The dial used to be drawn from the chart response in loadCharts, which passed only the
+    raw response and so could not tell an exited symphony from a no-data-yet one. The dial now
+    follows the poll's reading (updateCards), and the chart loaders do not write it. Whatever
+    path draws it, each call site must carry the triggered state in its immediate vicinity, in
+    a TIGHT window around the call (a broad slice risks a false pass from unrelated code); and
+    the chart loaders must not be a call site at all, because a tape's reading is older than
+    the poll's and would overwrite it."""
     content = _read_index_js()
-    window = _window_around(content, "renderMcDial(sym.id, data)", before=300, after=50)
-    assert _TRIGGER_WORD_PATTERN.search(window), (
-        "AC-2 FAIL: loadCharts' renderMcDial call site has no trigger-state "
-        "awareness within its immediate vicinity -- sym.triggered is already "
-        "in scope at this call site (loadCharts iterates `sym` from "
-        "botState) but is never threaded through, so renderMcDial cannot "
-        f"distinguish exited from no-data-yet. Found window: {window!r}"
-    )
+    sites = [
+        m.start()
+        for m in re.finditer(r"renderMcDial\(", content)
+        if not content[max(0, m.start() - 9) : m.start()].endswith("function ")
+    ]
+    assert sites, "no renderMcDial call site left in static/index.js; the dial is never drawn"
+    for start in sites:
+        window = content[max(0, start - 300) : start + 100]
+        assert _TRIGGER_WORD_PATTERN.search(window), (
+            "AC-2 FAIL: a renderMcDial call site has no trigger-state awareness within its "
+            "immediate vicinity, so the dial cannot tell an exited symphony from a no-data-yet "
+            f"one. Found window: {window!r}"
+        )
+    for loader in ("function loadCharts(", "function loadSpark("):
+        body = _slice_function(content, loader)
+        assert "renderMcDial(" not in body, f"{loader} writes the dial from a chart response"
 
 
 def test_update_cards_call_site_is_triggered_aware() -> None:

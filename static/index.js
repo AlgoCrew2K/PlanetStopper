@@ -22,7 +22,35 @@
     var _botState = {};
     var _symIds = [];
     var _intradayChart = null;
+    // The engine writes once a minute and a cycle event refreshes the page at once; the poll
+    // is the fallback, so its interval stays well above the 15 s floor.
     var POLL_INTERVAL_MS = 30000;
+    // A /api/state request with no answer for this long is abandoned and counts as a failed
+    // refresh (over three times the slowest response measured, 6.11 s).
+    var STATE_REQUEST_TIMEOUT_MS = 20000;
+    // A stream that closed is opened again after this long, doubling while attempts fail up to
+    // the cap and starting over after an open. The page never gives up: the daemon may be down
+    // all night.
+    var EVENT_STREAM_RETRY_FIRST_MS = 5000;
+    var EVENT_STREAM_RETRY_MAX_MS = 60000;
+    var EVENT_STREAM_PROBE_TIMEOUT_MS = 10000;
+    // readyState values of an EventSource (HTML specification), named so the stream code reads
+    // the same under any stub.
+    var STREAM_OPEN = 1;
+    var STREAM_CLOSED = 2;
+    // Wake signals (the tab shown again, a page restored from the back-forward cache, the network
+    // back) arrive in bursts: one catch-up refresh serves every signal inside this span.
+    var CATCH_UP_COALESCE_MS = 1000;
+    // Where the age cue on the as-of text is redrawn; it sends no request.
+    var FRESHNESS_CHECK_MS = 1000;
+    // No data for this long means the page slept or was throttled: a stream that still reads
+    // OPEN cannot be trusted to be connected, because a socket dropped while asleep keeps
+    // reading OPEN.
+    var STREAM_TRUST_AFTER_SILENCE_MS = 90000;
+    var WINDOW_LABELS = {
+        '30d': '30d', '60d': '60d', '90d': '90d', '125d': '125d',
+        'ytd': 'YTD', '1y': '1Y', 'all': 'All Time'
+    };
 
     /** CSRF token fetched from GET /api/csrf-token on page load (AC-1). */
     var _csrfToken = null;
@@ -35,6 +63,13 @@
 
     function cs(varName) {
         return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    }
+
+    // The page's monotonic clock, in ms. Every age on this page is measured on it, never on the
+    // wall clock, which can be minutes off. A browser always has performance; the fallback is
+    // for a page environment without one.
+    function monoNow() {
+        return typeof performance === 'object' && performance !== null ? performance.now() : Date.now();
     }
 
     // The chart library is a CDN script. When that request fails `Chart` is undefined
@@ -131,6 +166,20 @@
         if (el) el.hidden = false;
     }
 
+    // The picked window has no data yet: the chart keeps the series it already drew and this
+    // cue, named for the picked window, says so. Any series drawn afterwards hides it.
+    function showWindowNoData(token) {
+        var el = document.getElementById('hero-window-no-data');
+        if (!el) return;
+        el.textContent = 'No data yet for ' + (WINDOW_LABELS[token] || token);
+        el.hidden = false;
+    }
+
+    function hideWindowNoData() {
+        var el = document.getElementById('hero-window-no-data');
+        if (el) el.hidden = true;
+    }
+
     // Draws a /api/hero-chart-shaped series: in place when the chart exists. A body
     // with no points never replaces a drawn series. Returns the chart, or null when nothing was drawn
     // (no points, no canvas, or no chart library: the empty text shows then).
@@ -143,6 +192,7 @@
         if (!canvas) return null;
         var emptyEl = document.getElementById('hero-chart-empty');
         if (emptyEl) emptyEl.hidden = true;
+        hideWindowNoData();
         if (_cumChart) {
             _cumChart.data.labels = dates;
             _cumChart.data.datasets[0].data = bot;
@@ -202,7 +252,11 @@
         var dates = _pollSeries.dates;
         var k = 0;
         if (cutoff) { while (k < dates.length && dates[k] < cutoff) k++; }
-        if (k >= dates.length) return;
+        if (k >= dates.length) {
+            // The poll holds no row inside the window: keep what is drawn and say so.
+            showWindowNoData(token);
+            return;
+        }
         // The caption describes the series drawn: it falls short of the window when the
         // poll series starts after the cutoff, or (all time) fills the poll's own cap.
         var naEl = document.getElementById('hero-chart-na');
@@ -240,6 +294,8 @@
                 // Always plot whatever data is available; caption when history is shorter than the window.
                 if (naEl) naEl.style.display = d.insufficient_history ? 'block' : 'none';
                 setHeroSeries(d);
+                // An answer with no points never replaces a drawn series: say the window is empty.
+                if (!Array.isArray(d.hist_dates) || !d.hist_dates.length) showWindowNoData(token);
             })
             .catch(function () {
                 if (seq === _heroRequestSeq) applyHeroFallback(token);
@@ -276,45 +332,117 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Guard alpha headline
+    // Guard alpha headline, window label and Ann. Vol row: the picked window's strip
     // ---------------------------------------------------------------------------
+    // Three elements are written by one path, from one /api/strip/<window> answer:
+    // #guard-alpha-headline, #guard-alpha-window-label and the Ann. Vol row. A poll never
+    // writes them (its own figures are the default window's and lifetime's), so a refresh
+    // cannot put another window's value under the picked window's label. The label is
+    // written with the value it describes. Do NOT derive guard_alpha from
+    // cumulative_return.dry_run - cumulative_return.if_held: those fields can be on
+    // different bases (windowed value-weighted bot against account-basis held).
 
-    function renderGuardAlpha(data, _fromStrip) {
-        var ps = (data || {}).portfolio_strip || {};
-        // Read the server-computed windowed VW guard alpha directly.  The server
-        // sets portfolio_strip.guard_alpha in _compute_portfolio_strip (app.py:846-847)
-        // and /api/strip/<window> returns it from compute_windowed_portfolio_strip.
-        // Do NOT derive guard_alpha from cumulative_return.dry_run - cumulative_return.if_held:
-        // those fields may be on different bases (windowed VW bot vs account-basis held),
-        // which produces a fabricated -36.18% instead of the correct ~+0.90%.
-        var guard_alpha = typeof ps.guard_alpha === 'number' ? ps.guard_alpha : null;
+    var _stripRequestSeq = 0;      // only the newest strip request may apply
+    var _stripAnsweredToken = null; // the window whose strip request was last answered; null before the first
 
-        // DE-CLOSED-BOUNCE-001 fallback: guard_alpha can still be null here (e.g. the
-        // frozen path's own default-window strip computation failed, or
-        // weight_sum==0 leaves guard_alpha genuinely null on any path). /api/strip/
-        // <window> works in all market states, so fetching it backfills the
-        // headline (via the renderGuardAlpha call inside fetchWindowedStrip).
-        // It does NOT backfill the "Cumulative · lifetime" comparison row --
-        // updateComparisonRows structurally excludes that row from any payload
-        // lacking data_as_of, which this wrapped strip payload never carries (see
-        // updateComparisonRows' rows-array construction). A windowed value under a
-        // "lifetime" label would be wrong, so the row is left untouched rather than
-        // populated.
-        // _fromStrip guard: compute_windowed_portfolio_strip can return guard_alpha:null
-        // when weight_sum==0 (no symphonies). Without the guard that would loop forever.
-        if (guard_alpha === null) {
-            if (!_fromStrip) fetchWindowedStrip('30d');
-            return;
-        }
+    // Ann. Vol row. vol is inverted: lower is better for this capital-preservation system.
+    // vol_bot/vol_held are fractions; a null on either side reads as dashes, never as a
+    // value from another window.
+    function updateVolRow(strip) {
+        var rawVolBot  = strip.vol_bot  != null ? strip.vol_bot  : null;
+        var rawVolHeld = strip.vol_held != null ? strip.vol_held : null;
+        var hasVol = rawVolBot != null && rawVolHeld != null;
 
-        var el = document.getElementById('guard-alpha-headline');
-        if (el) {
-            el.textContent = fmtPct(guard_alpha);
-            el.style.color = guard_alpha >= 0 ? cs('--studio-pos') : cs('--studio-neg');
+        var volBotText  = document.querySelector('[data-testid="comp-vol-bot-text"]');
+        var volHeldText = document.querySelector('[data-testid="comp-vol-held-text"]');
+        var volDelta    = document.querySelector('[data-testid="comp-vol-delta"]');
+        var volBotBars  = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
+        var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
+
+        if (hasVol) {
+            var volBotPct  = rawVolBot  * 100;
+            var volHeldPct = rawVolHeld * 100;
+            var volAlphaPp = (rawVolHeld - rawVolBot) * 100;
+            var volBotWins = rawVolBot <= rawVolHeld;
+            var botW  = volBotWins  ? 100 : Math.min(rawVolHeld / rawVolBot  * 100, 100);
+            var heldW = !volBotWins ? 100 : Math.min(rawVolBot  / rawVolHeld * 100, 100);
+
+            if (volBotText) {
+                volBotText.textContent = 'Bot ' + volBotPct.toFixed(1) + '%';
+                volBotText.className = volBotText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+            }
+            if (volHeldText) {
+                volHeldText.textContent = 'Held ' + volHeldPct.toFixed(1) + '%';
+                volHeldText.className = volHeldText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+            }
+            if (volDelta) {
+                volDelta.textContent = 'α ' + (volAlphaPp >= 0 ? '+' : '') + volAlphaPp.toFixed(1) + 'pp';
+                volDelta.className = volDelta.className.replace(/\bpos\b|\bneg\b/g, '').trim();
+                volDelta.classList.add(volAlphaPp >= 0 ? 'pos' : 'neg');
+            }
+            volBotBars.forEach(function (el) { el.style.width = botW.toFixed(1) + '%'; });
+            volHeldBars.forEach(function (el) { el.style.width = heldW.toFixed(1) + '%'; });
+            applyBarClasses(volBotBars, volHeldBars, volBotWins);
+        } else {
+            if (volBotText)  volBotText.textContent  = 'Bot —';
+            if (volHeldText) volHeldText.textContent = 'Held —';
+            if (volDelta)    volDelta.textContent    = 'α —';
+            volBotBars.forEach(function (el)  { el.style.width = '0%'; });
+            volHeldBars.forEach(function (el) { el.style.width = '0%'; });
+            // Without both legs no side leads.
+            applyBarClasses(volBotBars, volHeldBars, null);
         }
     }
 
-    // ---------------------------------------------------------------------------
+    // The one writer of the headline value, its window label and the Ann. Vol row.
+    // A null guard_alpha (no weight in the window, or no rows) reads '--' under the
+    // window's label, so the previous window's value never stays under the new label.
+    function applyWindowedStrip(token, strip) {
+        var guard_alpha = typeof strip.guard_alpha === 'number' ? strip.guard_alpha : null;
+        var el = document.getElementById('guard-alpha-headline');
+        if (el) {
+            el.textContent = fmtPct(guard_alpha);
+            el.style.color = guard_alpha === null ? cs('--studio-ink-dim')
+                : (guard_alpha >= 0 ? cs('--studio-pos') : cs('--studio-neg'));
+        }
+        var labelEl = document.getElementById('guard-alpha-window-label');
+        if (labelEl) labelEl.textContent = WINDOW_LABELS[token] || token;
+        updateVolRow(strip);
+    }
+
+    // Asks for the picked window's strip. Newest request wins, and an answer applies only
+    // while its window is still the picked one; a refused, failed or malformed answer
+    // changes nothing (the last values stay). A failed request leaves the window unanswered,
+    // so the next refresh asks again.
+    function requestWindowedStrip(token) {
+        var seq = ++_stripRequestSeq;
+        return fetch('/api/strip/' + token)
+            .then(function (r) {
+                if (!r.ok) throw new Error('strip HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function (strip) {
+                if (seq !== _stripRequestSeq || token !== _heroWindow) return;
+                _stripAnsweredToken = token;
+                if (!strip || typeof strip !== 'object' || strip.error || !('guard_alpha' in strip)) return;
+                applyWindowedStrip(token, strip);
+            })
+            .catch(function (err) { console.error('windowed strip load failed', err); });
+    }
+
+    // Per applied body: the strip is asked for when the body carries newer data than the last
+    // one, or when the picked window has no answered strip yet (the first poll, or a request
+    // that failed).
+    function refreshWindowedStrip(stampChanged) {
+        if (stampChanged || _stripAnsweredToken !== _heroWindow) requestWindowedStrip(_heroWindow);
+    }
+
+    // The data moment a body describes: the same value #hero-data-as-of shows.
+    function dataStamp(data) {
+        var portfolio = ((data && data.meta) || {}).portfolio || {};
+        return portfolio.data_as_of || (data && data.data_as_of) || null;
+    }
+
     // ---------------------------------------------------------------------------
     // Exit-event line plugin (vertical breakline + badge for TP/Stop/VWAP exits)
     // ---------------------------------------------------------------------------
@@ -451,6 +579,32 @@
         el.textContent = text;
     }
 
+    // Names the session of a tape that is not today's: one span beside the canvas, text
+    // "<session_date> session", present only while the tape's session differs from the ET
+    // day. A body naming either date less (a store that records no date) names no session.
+    // The date is written as text; the span is cleared by the next tape that is today's.
+    function setSparkSessionCaption(canvas, chartBody) {
+        var parent = canvas.parentNode;
+        if (!parent) return;
+        var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
+        var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
+        var text = session && today && session !== today ? session + ' session' : '';
+        var el = parent.querySelector('.spark-session');
+        if (!el) {
+            if (!text) return;
+            parent.style.position = 'relative';
+            el = document.createElement('span');
+            el.className = 'spark-session legend-as-of';
+            el.style.position = 'absolute';
+            el.style.top = '0';
+            el.style.left = '2px';
+            el.style.pointerEvents = 'none';
+            parent.appendChild(el);
+        }
+        el.textContent = text;
+        el.hidden = !text;
+    }
+
     function sparkHeldDataset(data) {
         return {
             data: data.map(function (d) { return d.held != null ? d.held : null; }),
@@ -489,6 +643,7 @@
             }
             var ctx = canvas.getContext('2d');
             if (!ctx) return;
+            setSparkSessionCaption(canvas, chartData);
             var labels = data.map(function (d) { return d.time || ''; });
             var returns = data.map(function (d) { return d['return'] !== undefined ? d['return'] : 0; });
             var hasHeld = data.some(function (d) { return d.held != null; });
@@ -548,12 +703,26 @@
         return Promise.all(charts.map(function (c) { return c.__drawn; }));
     }
 
+    // The state map holds symphony entries and flat metadata keys; a symphony entry is an
+    // object carrying a name (the server's own rule for telling them apart).
+    function isSymphonyEntry(v) {
+        return !!v && typeof v === 'object' && !Array.isArray(v) && 'name' in v;
+    }
+
+    // Newest request wins, per symphony: a chart answer applies only while no later request for
+    // the same symphony has been sent, so a slow older answer never replaces a newer tape.
+    var _chartRequestSeq = {};
+
     // Fetches one card's intraday series and draws it. Never rejects; resolves once the
     // request has settled and the card's chart has drawn (a card showing status text
     // holds none). onCharts, when given, receives the card's charts as soon as the
-    // request has settled.
+    // request has settled (an empty list for an answer a newer request has replaced).
+    // The card's MC dial is not written here: it follows the poll's reading (updateCards).
     function loadSpark(sym, onCharts) {
         var symId = sym.id;
+        var seq = (_chartRequestSeq[symId] || 0) + 1;
+        _chartRequestSeq[symId] = seq;
+        function replaced() { return seq !== _chartRequestSeq[symId]; }
         return fetch('/api/chart/' + symId)
             .then(function (r) {
                 if (!r.ok) throw new Error('chart request failed');
@@ -561,31 +730,47 @@
             })
             .then(function (data) {
                 if (!data || typeof data !== 'object') throw new Error('chart body unreadable');
+                if (replaced()) { if (onCharts) onCharts([]); return; }
                 var charts = renderSparkline(symId, data, sym);
                 if (onCharts) onCharts(charts);
-                try {
-                    // Thread the triggered/exited flag onto chartData so renderMcDial
-                    // can actively render the honest exited state instead of scanning
-                    // history for a (possibly stale, resurrected) reading.
-                    data.triggered = sym.triggered;
-                    renderMcDial(sym.id, data);
-                } catch (e) { console.error('mc dial render error:', e); }
                 return drawnPromise(charts);
             })
             .catch(function () {
+                if (replaced()) { if (onCharts) onCharts([]); return; }
                 var charts = renderSparkline(symId, null, sym);
                 if (onCharts) onCharts(charts);
                 return drawnPromise(charts);
             });
     }
 
-    function loadCharts(botState) {
+    // The tapes change only when the engine writes a new cycle: a refresh whose data stamp is
+    // the one already applied (the first poll after load included, which is compared with the
+    // stamp the page was rendered with) asks for none. A refresh with newer data asks once per
+    // symphony entry.
+    function loadCharts(botState, stampChanged) {
+        if (!stampChanged) return Promise.resolve([]);
         var settled = [];
-        Object.values(botState || {}).forEach(function (sym) {
-            if (!sym || !sym.id) return;
+        Object.keys(botState || {}).forEach(function (key) {
+            var sym = botState[key];
+            if (!isSymphonyEntry(sym) || !sym.id) return;
             settled.push(loadSpark(sym));
         });
         return Promise.all(settled);
+    }
+
+    // The stamp the server render printed beside the hero chart: the data block's data_stamp,
+    // else the text the render put in #hero-data-as-of (AS_OF_UNKNOWN when the render had none).
+    var AS_OF_PREFIX = 'data as of ';
+    var AS_OF_UNKNOWN = '--';
+    function seedAsOfStamp(block) {
+        var stamp = block && typeof block.data_stamp === 'string' ? block.data_stamp : null;
+        _lastRefreshStamp = stamp;
+        if (stamp === null) {
+            var el = document.getElementById('hero-data-as-of');
+            var shown = el ? el.textContent.replace(/\s+/g, ' ').trim() : '';
+            if (shown.indexOf(AS_OF_PREFIX) === 0) stamp = shown.slice(AS_OF_PREFIX.length);
+        }
+        _asOfStamp = stamp;
     }
 
     // Draws the hero and the card sparklines from the server render, before any
@@ -596,6 +781,9 @@
         if (node) {
             try { block = JSON.parse(node.textContent); } catch (e) { block = null; }
         }
+        // The render's data stamp is the baseline the first poll is compared with, and the one
+        // the as-of text keeps beside a connection-lost cue until a poll names a newer one.
+        seedAsOfStamp(block);
         // Ready is set synchronously at the moment the last held item is released.
         var holds = 0;
         function hold() {
@@ -651,16 +839,33 @@
         return marketState === 'open' ? 'vs held now' : 'at close';
     }
 
-    // Writes the text span and the basis label beside it, and un-hides the label. An absent
-    // guard_alpha writes nothing: the card keeps its dash and a hidden label.
+    // From this magnitude toFixed prints exponent text. The server render prints the dash for
+    // such a figure (analytics.JS_TO_FIXED_EXPONENT_FROM), so a poll must not print the text.
+    var JS_TO_FIXED_EXPONENT_FROM = 1e21;
+    var VERDICT_NO_VALUE_TEXT = '—';
+
+    // A guard alpha the verdict can print: a finite number below the bound. Anything else (absent,
+    // null, a string, NaN, a figure too large to print) has no verdict figure.
+    function usableGuardAlpha(ga) {
+        return typeof ga === 'number' && isFinite(ga) && Math.abs(ga) < JS_TO_FIXED_EXPONENT_FROM;
+    }
+
+    // Writes the text span and the basis label beside it. A usable guard alpha writes its
+    // wording and shows the label; any other value writes the dash and hides the label (a label
+    // is never shown beside no value), the server render's rule for the same entry.
     function writeVerdict(verdict, ga, marketState) {
-        if (verdict == null || typeof ga !== 'number' || !isFinite(ga)) return;
+        if (verdict == null) return;
+        var usable = usableGuardAlpha(ga);
         var textEl = verdict.querySelector('[data-field="verdict-text"]');
-        if (textEl) textEl.textContent = verdictText(ga);
+        if (textEl) textEl.textContent = usable ? verdictText(ga) : VERDICT_NO_VALUE_TEXT;
         var qualifier = verdict.querySelector('[data-testid="guard-alpha-basis"]');
         if (qualifier) {
-            qualifier.textContent = verdictBasisLabel(marketState);
-            qualifier.removeAttribute('hidden');
+            if (usable) {
+                qualifier.textContent = verdictBasisLabel(marketState);
+                qualifier.removeAttribute('hidden');
+            } else {
+                qualifier.setAttribute('hidden', '');
+            }
         }
     }
 
@@ -694,6 +899,9 @@
         if (!window.confirm('Sell "' + symName + '" to cash?\nThis will execute a live sell order.')) return;
         btn.disabled = true;
         btn.textContent = 'Selling…';
+        // The poll leaves a button in this state alone (updateCards): it is enabled again only by
+        // a refusal below, never by a card that reads as not exited.
+        btn.setAttribute('data-cash-state', 'selling');
         fetch('/api/sell_account', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': _csrfToken || '' },
@@ -702,10 +910,13 @@
         .then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             btn.textContent = 'In cash';
+            // Sold in this page load: no later poll turns the button back on.
+            btn.setAttribute('data-cash-state', 'sold');
         })
         .catch(function (err) {
             btn.disabled = false;
             btn.textContent = 'Cash Now';
+            btn.removeAttribute('data-cash-state');
             console.error('cashNow failed', err);
         });
     }
@@ -747,17 +958,21 @@
     // Detail panel
     // ---------------------------------------------------------------------------
 
-    function openDetailPanel(symIdOrIdx) {
-        document.getElementById('detail-panel').classList.add('open');
-        document.getElementById('detail-scrim').classList.add('open');
+    // The symphony the open panel shows, and the newest open: a request the panel makes applies
+    // only while it is still the newest one for the symphony the panel is open on.
+    var _detailSymId = null;
+    var _detailRequestSeq = 0;
+    var _detailNeedsFetch = false;  // opened before any poll named the symphony: ask once it does
+    var DETAIL_UNKNOWN_TITLE = 'Symphony Detail';
+    var DETAIL_NOT_IN_VIEW_TEXT = 'not in the current view';
 
-        var symId = (typeof symIdOrIdx === 'string') ? symIdOrIdx : _symIds[symIdOrIdx];
-        var sym = symId ? _botState[symId] : null;
+    function detailPanelIsOpen() {
+        var panel = document.getElementById('detail-panel');
+        return !!panel && panel.classList.contains('open');
+    }
 
-        var titleEl = document.getElementById('detail-panel-title');
-        if (titleEl) titleEl.textContent = (sym && sym.name) || 'Symphony Detail';
-        if (!sym) return;
-
+    // The stats row and its sub-labels, from a state entry. Written at open and by every poll.
+    function writeDetailFigures(sym) {
         // Live return: use triggered_at_return if triggered, else current_return
         var rawLive = sym.triggered ? sym.triggered_at_return : sym.current_return;
         var liveRet = sentinelToNull(typeof rawLive === 'number' ? rawLive : null);
@@ -797,68 +1012,138 @@
         var elAlphaSub = document.getElementById('dp-alpha-sub');
         if (elAlphaSub) elAlphaSub.textContent = ga != null ? (ga >= 0 ? 'saved vs hold' : 'gave up vs hold') : 'not exited';
 
-        // Populate Risk Math from bot state eagerly (B-04); chart fetch will overwrite with live data.
-        populateRiskMathFromState(sym, stopLevel, shadowPeak);
+        return { stopLevel: stopLevel, shadowPeak: shadowPeak };
+    }
 
-        fetchDetailChart(sym.id || symId, sym);
+    function writeDetailTitle(sym) {
+        var titleEl = document.getElementById('detail-panel-title');
+        if (titleEl) titleEl.textContent = (sym && sym.name) || DETAIL_UNKNOWN_TITLE;
+    }
+
+    // The panel's own requests: the tape, the events, the variables and the risk profile. Each
+    // answer applies only while this is still the newest open, on a panel that is still open.
+    function startDetailRequests(symId, sym, seq) {
+        fetchDetailChart(sym.id || symId, sym, seq);
 
         // Phase 2b (ux-design-deliverable.md §Change 5): Risk Profile section —
         // per-symphony Sharpe / Sortino / Max DD / Ann. volatility, bot vs if-held.
         // Fetched from /api/performance?scope=symphony so the panel shows the same
         // risk-adjusted metrics as the Performance page. Read-only; no engine rerun.
         var rpEl = document.getElementById('detail-risk-profile');
-        if (rpEl) {
-            rpEl.innerHTML = '';
-            fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
-                .then(function (r) { return r.json(); })
-                .then(function (p) {
-                    var bot = p.shadow_metrics || {};
-                    var held = p.live_metrics || {};
-                    // [label, botVal, heldVal, kind, invertDelta]
-                    // kind 'num' => raw value (Sharpe/Sortino); 'pct_frac' => fraction scaled to %.
-                    // invertDelta true => lower is better (Max DD, Ann. volatility).
-                    var rows = [
-                        ['Sharpe',          bot.sharpe,       held.sharpe,       'num',      false],
-                        ['Sortino',         bot.sortino,      held.sortino,      'num',      false],
-                        ['Max drawdown',    bot.max_drawdown, held.max_drawdown, 'pct_frac', true],
-                        ['Ann. volatility', bot.volatility,   held.volatility,   'pct_frac', true]
-                    ];
-                    var html = rows.map(function (row) {
-                        var label = row[0], bv = row[1], hv = row[2], kind = row[3], invert = row[4];
-                        var hasBoth = (bv != null && hv != null);
-                        var delta = hasBoth ? (bv - hv) : null;
-                        var deltaGood = invert ? (delta <= 0) : (delta >= 0);
-                        var dcol = (delta == null) ? 'inherit'
-                                 : deltaGood ? cs('--studio-pos') : cs('--studio-neg');
-                        function fmt(v) {
-                            if (v == null) return '—';
-                            return (kind === 'num') ? v.toFixed(2) : (v * 100).toFixed(1) + '%';
-                        }
-                        var deltaStr = (delta == null) ? '—'
-                            : (kind === 'num'
-                                ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
-                                : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
-                        // Match the existing .math-row pattern (index.html:1223-1258):
-                        // label + value share a flex row; hint sits below on its own line.
-                        return '<div class="math-row">'
-                            + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
-                            + '<span class="math-row-label">' + label + '</span>'
-                            + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
-                            + '</div>'
-                            + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
-                            + '</div>';
-                    }).join('');
-                    rpEl.innerHTML = html;
-                })
-                .catch(function () {
-                    // Graceful: leave the section empty on fetch failure — no JS error surfaced.
-                    rpEl.innerHTML = '';
-                });
+        if (!rpEl) return;
+        function current() { return seq === _detailRequestSeq && detailPanelIsOpen(); }
+        fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
+            .then(function (r) { return r.json(); })
+            .then(function (p) {
+                if (!current()) return;
+                var bot = p.shadow_metrics || {};
+                var held = p.live_metrics || {};
+                // [label, botVal, heldVal, kind, invertDelta]
+                // kind 'num' => raw value (Sharpe/Sortino); 'pct_frac' => fraction scaled to %.
+                // invertDelta true => lower is better (Max DD, Ann. volatility).
+                var rows = [
+                    ['Sharpe',          bot.sharpe,       held.sharpe,       'num',      false],
+                    ['Sortino',         bot.sortino,      held.sortino,      'num',      false],
+                    ['Max drawdown',    bot.max_drawdown, held.max_drawdown, 'pct_frac', true],
+                    ['Ann. volatility', bot.volatility,   held.volatility,   'pct_frac', true]
+                ];
+                var html = rows.map(function (row) {
+                    var label = row[0], bv = row[1], hv = row[2], kind = row[3], invert = row[4];
+                    var hasBoth = (bv != null && hv != null);
+                    var delta = hasBoth ? (bv - hv) : null;
+                    var deltaGood = invert ? (delta <= 0) : (delta >= 0);
+                    var dcol = (delta == null) ? 'inherit'
+                             : deltaGood ? cs('--studio-pos') : cs('--studio-neg');
+                    function fmt(v) {
+                        if (v == null) return '—';
+                        return (kind === 'num') ? v.toFixed(2) : (v * 100).toFixed(1) + '%';
+                    }
+                    var deltaStr = (delta == null) ? '—'
+                        : (kind === 'num'
+                            ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
+                            : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
+                    // Match the existing .math-row pattern (index.html:1223-1258):
+                    // label + value share a flex row; hint sits below on its own line.
+                    return '<div class="math-row">'
+                        + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
+                        + '<span class="math-row-label">' + label + '</span>'
+                        + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
+                        + '</div>'
+                        + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
+                        + '</div>';
+                }).join('');
+                rpEl.innerHTML = html;
+            })
+            .catch(function () {
+                // Graceful: leave the section empty on fetch failure — no JS error surfaced.
+                if (current()) rpEl.innerHTML = '';
+            });
+    }
+
+    function openDetailPanel(symIdOrIdx) {
+        document.getElementById('detail-panel').classList.add('open');
+        document.getElementById('detail-scrim').classList.add('open');
+
+        var symId = (typeof symIdOrIdx === 'string') ? symIdOrIdx : _symIds[symIdOrIdx];
+        var sym = symId ? _botState[symId] : null;
+
+        // Opening on another symphony takes the previous one's tape, events and variables off the
+        // panel at once: nothing of it may show under the new title while the new answers arrive.
+        var switched = _detailSymId !== null && symId !== _detailSymId;
+        _detailSymId = symId || null;
+        var seq = ++_detailRequestSeq;
+        if (switched) clearDetailPanelBody();
+        var rpEl = document.getElementById('detail-risk-profile');
+        if (rpEl) rpEl.innerHTML = '';
+
+        writeDetailTitle(sym);
+        // No poll has named this symphony yet: the first one fills the panel and asks for the rest.
+        _detailNeedsFetch = !sym;
+        if (!sym) return;
+
+        var kept = writeDetailFigures(sym);
+        // Populate Risk Math from bot state eagerly (B-04); chart fetch will overwrite with live data.
+        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak);
+        startDetailRequests(symId, sym, seq);
+    }
+
+    // Takes the previous symphony's tape, events and variables off the panel.
+    function clearDetailPanelBody() {
+        if (_intradayChart) { _intradayChart.destroy(); _intradayChart = null; }
+        var canvas = document.getElementById('intraday-canvas');
+        if (canvas) setSparkStatus(canvas, '');
+        disableOverlayToggles();
+        var events = document.getElementById('events-timeline');
+        if (events) events.textContent = '';
+        var vars = document.getElementById('vars-section');
+        if (vars) vars.textContent = '';
+    }
+
+    // The open panel follows each poll: the figures and the state-derived risk rows take the
+    // symphony's newest entry, and the tape (with the chart's toggles) is left as it is. An entry
+    // the body no longer carries leaves everything shown and says so; it reverts when the entry
+    // returns. A panel opened before any poll named its symphony fills from the first one that does.
+    function refreshOpenDetailPanel(botState) {
+        if (!_detailSymId || !detailPanelIsOpen()) return;
+        var sym = botState ? botState[_detailSymId] : null;
+        if (!isSymphonyEntry(sym)) {
+            var sub = document.getElementById('dp-live-ret-sub');
+            if (sub) sub.textContent = DETAIL_NOT_IN_VIEW_TEXT;
+            return;
+        }
+        writeDetailTitle(sym);
+        var kept = writeDetailFigures(sym);
+        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak, true);
+        if (_detailNeedsFetch) {
+            _detailNeedsFetch = false;
+            startDetailRequests(_detailSymId, sym, _detailRequestSeq);
         }
     }
 
-    function populateRiskMathFromState(sym, stopLevel, shadowPeak) {
-        // stopLevel and shadowPeak are already sentinel-guarded by openDetailPanel
+    // The risk rows a state entry can fill. The VWAP row is the tape's (the chart path writes it),
+    // so a poll passes keepVwap and leaves the text the chart gave it.
+    function populateRiskMathFromState(sym, stopLevel, shadowPeak, keepVwap) {
+        // stopLevel and shadowPeak are already sentinel-guarded by the caller
         var stopDist = (shadowPeak != null && stopLevel != null)
             ? ((shadowPeak - stopLevel).toFixed(2) + '%') : '--';
         var beVal = sym.breakeven_locked ? 'Active' : 'Off';
@@ -868,31 +1153,43 @@
         var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
         var rawPara = sentinelToNull(typeof sym.para_velocity === 'number' ? sym.para_velocity : null);
         var paraVal = rawPara != null ? rawPara.toFixed(2) + '%' : '--';
-        // vwap_pct does not exist on bot_state; the chart path fills this in via
-        // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
-        var rawVwap = null;
-        var vwapVal = '--';
         var fields = [
             { id: 'dp-rm-mc',   val: mcVal },
             { id: 'dp-rm-stop', val: stopDist },
             { id: 'dp-rm-vol',  val: volVal },
             { id: 'dp-rm-para', val: paraVal },
-            { id: 'dp-rm-be',   val: beVal },
-            { id: 'dp-rm-vwap', val: vwapVal },
+            { id: 'dp-rm-be',   val: beVal }
         ];
+        // vwap_pct does not exist on bot_state; the chart path fills this in via
+        // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
+        if (!keepVwap) fields.push({ id: 'dp-rm-vwap', val: '--' });
         fields.forEach(function (f) {
             var el = document.getElementById(f.id);
             if (el) el.textContent = f.val;
         });
+        // The reading's bar follows its text.
+        var mcBar = document.getElementById('dp-rm-mc-bar');
+        if (mcBar) {
+            if (rawMc != null) {
+                mcBar.style.width = Math.max(0, Math.min(100, rawMc)) + '%';
+                mcBar.style.background = rawMc < 15 ? cs('--studio-warn') : (rawMc > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+            } else {
+                mcBar.style.width = '0%';
+                mcBar.style.background = cs('--studio-ink-faint');
+            }
+        }
     }
 
-    function fetchDetailChart(symId, sym) {
+    function fetchDetailChart(symId, sym, seq) {
         if (!symId) return;
         Promise.all([
-            fetch('/api/chart/' + symId).then(function (r) { return r.json(); }).catch(function () { return {}; }),
+            fetch('/api/chart/' + symId).then(function (r) { return r.json(); }).catch(function () { return null; }),
             fetch('/api/logs/' + symId).then(function (r) { return r.json(); }).catch(function () { return []; }),
             fetch('/api/settings').then(function (r) { return r.json(); }).catch(function () { return {}; })
         ]).then(function (results) {
+            // Only the newest open's answers apply: the tape, the events and the variables of
+            // an earlier symphony that land late are dropped.
+            if (seq !== _detailRequestSeq || !detailPanelIsOpen()) return;
             // Pass settingsData (results[2]) to renderIntradayChart so the chart path
             // can read VWAP_BLEED_MULTIPLIER for the hint text (FIX 3 / Option A).
             renderIntradayChart(results[0], sym, results[2]);
@@ -904,8 +1201,20 @@
     function renderIntradayChart(chartData, sym, settingsData) {
         var canvas = document.getElementById('intraday-canvas');
         if (!canvas) return;
+        // null = the request failed: a chart already drawn stays, an empty canvas says so.
+        if (chartData === null || typeof chartData !== 'object') {
+            if (!_intradayChart) setSparkStatus(canvas, SPARK_UNAVAILABLE_TEXT);
+            return;
+        }
         var data = chartData.data || [];
-        if (!data.length) return;
+        if (!data.length) {
+            // This symphony has no tape: the previous symphony's chart must not stay on the panel.
+            if (_intradayChart) { _intradayChart.destroy(); _intradayChart = null; }
+            disableOverlayToggles();
+            setSparkStatus(canvas, SPARK_NO_DATA_TEXT);
+            return;
+        }
+        setSparkStatus(canvas, '');
 
         if (_intradayChart) { _intradayChart.destroy(); _intradayChart = null; }
 
@@ -967,6 +1276,14 @@
         renderRiskMathPanel(chartData, sym, settingsData);
     }
 
+    // With no chart the overlay toggles have nothing to switch.
+    function disableOverlayToggles() {
+        ['toggle-stop', 'toggle-breakeven', 'toggle-vwap', 'toggle-mc'].forEach(function (id) {
+            var btn = document.getElementById(id);
+            if (btn) btn.disabled = true;
+        });
+    }
+
     function wireOverlayToggles() {
         // Stop (idx 2) and Breakeven (idx 3) default ON; VWAP (4) and MC (5) default OFF.
         var toggleMap = {
@@ -993,7 +1310,7 @@
             if (legendEl) legendEl.style.display = initiallyVisible ? 'inline-flex' : 'none';
 
             btn.onclick = function () {
-                if (!hasData) return;
+                if (!hasData || !_intradayChart) return;
                 var meta = _intradayChart.getDatasetMeta(dsIdx);
                 var nowHidden = ds.hidden === true || meta.hidden === true;
                 ds.hidden = !nowHidden;
@@ -1228,9 +1545,9 @@
             if (dataPoints[i].mc_prob != null) { mcProb = dataPoints[i].mc_prob; break; }
         }
         if (mcProb === null) mcProb = chartData.mc_prob != null ? chartData.mc_prob : (chartData.mc_pct != null ? chartData.mc_pct : null);
-        if (mcProb === null) return;
-        // The engine's +/-999 means "no reading": the same dash a first paint shows.
-        if (isSentinel(mcProb)) {
+        // No reading (the engine's +/-999, or none at all) reads the dash, the same as a first
+        // paint: an older reading never stands in for a missing one.
+        if (mcProb === null || typeof mcProb !== 'number' || !isFinite(mcProb) || isSentinel(mcProb)) {
             showNoReading();
             return;
         }
@@ -1263,6 +1580,29 @@
         el.classList.remove('pos', 'neg');
         if (value >= 0) el.classList.add('pos');
         else el.classList.add('neg');
+    }
+
+    // Marks the leader of a comparison row as the server render does: the leader's bar fill
+    // carries `winner` and the other's `loser`, and the leader's label (the `.vs-bar-label` of the
+    // same row, bot first) carries `winner`; a label never carries `loser`. botWins null means no
+    // side leads, so no element carries a class. Classes other than these two are left alone.
+    function applyBarClasses(botFills, heldFills, botWins) {
+        function mark(els, cls) {
+            Array.prototype.forEach.call(els, function (el) {
+                el.classList.remove('winner', 'loser');
+                if (cls) el.classList.add(cls);
+            });
+        }
+        mark(botFills, botWins === null ? '' : (botWins ? 'winner' : 'loser'));
+        mark(heldFills, botWins === null ? '' : (botWins ? 'loser' : 'winner'));
+        var anchor = botFills.length ? botFills[0] : (heldFills.length ? heldFills[0] : null);
+        var row = anchor && typeof anchor.closest === 'function' ? anchor.closest('.vs-row') : null;
+        var labels = row ? row.querySelectorAll('.vs-bar-label') : [];
+        if (labels.length >= 2) {
+            labels[0].classList.remove('winner');
+            labels[1].classList.remove('winner');
+            if (botWins !== null) labels[botWins ? 0 : 1].classList.add('winner');
+        }
     }
 
     // BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): the backend
@@ -1310,21 +1650,31 @@
         }
     }
 
+    // Max DD labels: the hero row and every card render both the "insufficient history" label and
+    // the alpha element, one hidden. They follow meta.portfolio.insufficient_history; a body that
+    // does not say leaves them as they are.
+    function applyMddLabels(data) {
+        var portfolio = (data && data.meta && data.meta.portfolio) || {};
+        var insufficient = portfolio.insufficient_history;
+        if (typeof insufficient !== 'boolean') return;
+        [['[data-testid="mdd-insufficient-label"]', '[data-testid="comp-mdd-delta"]'],
+         ['[data-testid="card-mdd-insufficient-label"]', '[data-field="mdd-alpha-badge"]']
+        ].forEach(function (pair) {
+            document.querySelectorAll(pair[0]).forEach(function (el) { el.hidden = !insufficient; });
+            document.querySelectorAll(pair[1]).forEach(function (el) { el.hidden = insufficient; });
+        });
+    }
+
     function updateComparisonRows(data) {
         var ps = (data && data.portfolio_strip) || {};
-        // BL-4 live-gate fix: updateComparisonRows has TWO production callers --
-        // the /api/state poll (loadState()) AND fetchWindowedStrip (wraps
-        // /api/strip/<token>'s response, fires after every state poll). The
-        // windowed-strip shape (analytics.compute_windowed_portfolio_strip)
-        // NEVER carries basis/account_basis_stale/account_basis_as_of, so the
-        // account-basis helpers must only run on a genuine state-poll payload
-        // -- otherwise every windowed-strip tick wipes a real stale chip the
-        // state poll just set. 'data_as_of' is unconditionally set by
-        // _compute_portfolio_strip on every /api/state poll (app.py) and never
-        // set by the windowed-strip producer -- a real structural discriminator,
-        // unlike presence of the account-basis keys themselves (a healthy
-        // state poll also lacks those, so that alone can't distinguish the
-        // two payload shapes).
+        applyMddLabels(data);
+        var insufficientHistory = !!(data && data.meta && data.meta.portfolio
+            && data.meta.portfolio.insufficient_history === true);
+        // The account-basis helpers run only on a genuine state-poll payload.
+        // 'data_as_of' is unconditionally set by _compute_portfolio_strip on every
+        // /api/state poll (app.py), so it discriminates a poll from any other payload
+        // shape (the windowed strip never carries it, nor the basis keys: a healthy
+        // state poll lacks those too, so their absence alone proves nothing).
         if ('data_as_of' in ps) {
             renderAccountBasisChip('comp-today-basis-chip', ps);
             renderAccountBasisChip('comp-cumulative-basis-chip', ps);
@@ -1333,18 +1683,14 @@
         // AC-4a: each row names its alpha (.vs-delta) testid explicitly so the poll
         // can address + refresh the displayed alpha (comp-today-delta /
         // comp-cumulative-delta / comp-mdd-delta) — not just bot/held text.
-        // DE-CLOSED-BOUNCE-001 (revise round, PR #136 finding #1): ALL THREE rows
-        // are built only from a genuine /api/state poll payload (which always
-        // carries data_as_of, BL-4/DE-AUDIT-BL4-001 above) -- not just 'cumulative'.
-        // A windowed-strip payload (fetchWindowedStrip's /api/strip/<window>
-        // response) never carries data_as_of and is on a different basis/scope for
-        // every row, not only the "Cumulative · lifetime"-labeled one (Today can be
-        // account-basis on a real poll vs always-VW on the windowed strip; MDD can
-        // be scoped to the snapshot's trading_day vs the picker's window) -- leaving
-        // `rows` empty on that payload (rather than writing an honest-empty {} per
-        // row) leaves every row's last-correct DOM value alone instead of bouncing
-        // it and back. Applies uniformly to EVERY caller, including the
-        // window-picker click handler.
+        // ALL THREE rows are built only from a genuine /api/state poll payload (which
+        // always carries data_as_of): a payload without it is on a different basis
+        // and scope for every row (Today can be account-basis on a real poll vs
+        // always-VW on a windowed strip; MDD can be scoped to the snapshot's
+        // trading_day vs the picker's window), so leaving `rows` empty leaves each
+        // row's last-correct DOM value alone instead of bouncing it. The picked
+        // window never changes these rows; the Ann. Vol row is the strip's (see
+        // updateVolRow).
         var rows = [];
         if ('data_as_of' in ps) {
             rows = [
@@ -1370,6 +1716,14 @@
             heldBars.forEach(function (el) {
                 el.style.width = Math.min(Math.abs(held) / maxAbs * 100, 100).toFixed(1) + '%';
             });
+            // The leader, by the rule the server render applies to the row (a missing leg reads
+            // as 0 there). Max DD: the smaller drawdown leads, and with too little history no
+            // side does.
+            var botWins;
+            if (row.higherIsBetter) botWins = (bot === null ? 0 : bot) >= (held === null ? 0 : held);
+            else if (insufficientHistory) botWins = null;
+            else botWins = Math.abs(bot === null ? 0 : bot) <= Math.abs(held === null ? 0 : held);
+            applyBarClasses(botBars, heldBars, botWins);
 
             var botText  = document.querySelector('[data-testid="comp-' + row.id + '-bot-text"]');
             var heldText = document.querySelector('[data-testid="comp-' + row.id + '-held-text"]');
@@ -1407,51 +1761,6 @@
                 }
             }
         });
-
-        // Ann Vol row — data lives in meta.portfolio.vol_bot / vol_held (fraction scale).
-        // vol is inverted: lower is better for this capital-preservation system.
-        var portfolio = ((data && data.meta) || {}).portfolio || {};
-        var rawVolBot  = portfolio.vol_bot  != null ? portfolio.vol_bot  : null;
-        var rawVolHeld = portfolio.vol_held != null ? portfolio.vol_held : null;
-        var hasVol = rawVolBot != null && rawVolHeld != null;
-
-        var volBotText  = document.querySelector('[data-testid="comp-vol-bot-text"]');
-        var volHeldText = document.querySelector('[data-testid="comp-vol-held-text"]');
-        var volDelta    = document.querySelector('[data-testid="comp-vol-delta"]');
-        var volBotBars  = document.querySelectorAll('[data-testid="comp-bar-vol-bot"]');
-        var volHeldBars = document.querySelectorAll('[data-testid="comp-bar-vol-held"]');
-
-        if (hasVol) {
-            var volBotPct  = rawVolBot  * 100;
-            var volHeldPct = rawVolHeld * 100;
-            var volAlphaPp = (rawVolHeld - rawVolBot) * 100;
-            var volBotWins = rawVolBot <= rawVolHeld;
-            var volMax     = Math.max(rawVolBot, rawVolHeld, 0.0001);
-            var botW  = volBotWins  ? 100 : Math.min(rawVolHeld / rawVolBot  * 100, 100);
-            var heldW = !volBotWins ? 100 : Math.min(rawVolBot  / rawVolHeld * 100, 100);
-
-            if (volBotText) {
-                volBotText.textContent = 'Bot ' + volBotPct.toFixed(1) + '%';
-                volBotText.className = volBotText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
-            }
-            if (volHeldText) {
-                volHeldText.textContent = 'Held ' + volHeldPct.toFixed(1) + '%';
-                volHeldText.className = volHeldText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
-            }
-            if (volDelta) {
-                volDelta.textContent = 'α ' + (volAlphaPp >= 0 ? '+' : '') + volAlphaPp.toFixed(1) + 'pp';
-                volDelta.className = volDelta.className.replace(/\bpos\b|\bneg\b/g, '').trim();
-                volDelta.classList.add(volAlphaPp >= 0 ? 'pos' : 'neg');
-            }
-            volBotBars.forEach(function (el) { el.style.width = botW.toFixed(1) + '%'; });
-            volHeldBars.forEach(function (el) { el.style.width = heldW.toFixed(1) + '%'; });
-        } else {
-            if (volBotText)  volBotText.textContent  = 'Bot —';
-            if (volHeldText) volHeldText.textContent = 'Held —';
-            if (volDelta)    volDelta.textContent    = 'α —';
-            volBotBars.forEach(function (el)  { el.style.width = '0%'; });
-            volHeldBars.forEach(function (el) { el.style.width = '0%'; });
-        }
     }
 
     // ---------------------------------------------------------------------------
@@ -1547,6 +1856,13 @@
                 card.querySelectorAll('[data-field="cr-held"]').forEach(function (el) { el.textContent = _fmtSignedPct(sym.cr_held); _setPosNegClass(el, sym.cr_held); });
                 card.querySelectorAll('[data-field="mdd-bot"]').forEach(function (el) { el.textContent = _fmtAbsPct(sym.mdd_bot); });
                 card.querySelectorAll('[data-field="mdd-held"]').forEach(function (el) { el.textContent = _fmtAbsPct(sym.mdd_held); });
+                // Composer's lifetime drawdown scalar, printed apart from the comparison above. A
+                // body from before the key existed leaves the printed figure alone.
+                if ('mdd_lifetime' in sym) {
+                    card.querySelectorAll('[data-field="mdd-lifetime"]').forEach(function (el) {
+                        el.textContent = _fmtAbsPct(sym.mdd_lifetime);
+                    });
+                }
 
                 // Show/hide + update the triggered-verdict outcome banner.
                 // The template always renders this element; display:none hides it until exit.
@@ -1559,6 +1875,19 @@
                         writeVerdict(verdict, sym.guard_alpha, data.market_state);
                     } else {
                         verdict.style.display = 'none';
+                    }
+                }
+
+                // Cash Now is for a card that has not exited: disabled while the card reads as
+                // triggered, enabled once it does not (a new session). A button whose sell is in
+                // flight or done keeps that state (data-cash-state) whatever the card reads.
+                var cashBtn = card.querySelector('[data-testid="cash-now-btn"]');
+                if (cashBtn != null) {
+                    var cashState = cashBtn.getAttribute('data-cash-state');
+                    if (cashState !== 'selling' && cashState !== 'sold') {
+                        var exited = !!sym.triggered;
+                        if (cashBtn.disabled !== exited) cashBtn.disabled = exited;
+                        if (cashBtn.textContent !== 'Cash Now') cashBtn.textContent = 'Cash Now';
                     }
                 }
 
@@ -1648,34 +1977,47 @@
         });
     }
 
-    function updateSectionMeta(data) {
-        // F-011: data.symphonies genuinely does not exist on the closed/frozen
-        // /api/state branch (app.py emits state/bot_state only there) -- read the
-        // real field, present on BOTH branches, and filter to symphony entries the
-        // same way the server does (isinstance(v, dict) and "name" in v) since
-        // state/bot_state also carries flat non-symphony metadata keys.
-        var stateObj = (data && (data.bot_state || data.state)) || {};
-        var syms = Object.keys(stateObj)
-            .map(function (k) { return stateObj[k]; })
-            .filter(function (v) { return v && typeof v === 'object' && 'name' in v; })
-            .filter(_inPickedAccount);
-        var activeCount  = syms.filter(function (s) {
-            return s.armed || s.tp_armed || s.para_armed || s.triggered;
-        }).length;
-        var standbyCount = syms.filter(function (s) {
-            return !s.armed && !s.tp_armed && !s.para_armed && !s.triggered;
-        }).length;
+    // The badges count the cards on the page: the cards of each section that are shown. The
+    // card list places the cards (updateCards), the account filter hides the other accounts'
+    // (applyAccountFilter), so this runs after both and reads what they left.
+    function updateSectionMeta() {
+        [['active-section', 'active-section-count'], ['standby-section', 'standby-section-count']]
+            .forEach(function (pair) {
+                var section = document.querySelector('[data-testid="' + pair[0] + '"]');
+                var badge = document.querySelector('[data-testid="' + pair[1] + '"]');
+                if (!section || !badge) return;
+                var shown = 0;
+                section.querySelectorAll('.sym-card').forEach(function (card) {
+                    if (!card.hidden && card.style.display !== 'none') shown += 1;
+                });
+                badge.textContent = shown;
+            });
+    }
 
-        var activeBadge  = document.querySelector('[data-testid="active-section-count"]');
-        var standbyBadge = document.querySelector('[data-testid="standby-section-count"]');
-        if (activeBadge)  activeBadge.textContent  = activeCount;
-        if (standbyBadge) standbyBadge.textContent = standbyCount;
-
-        // Update "data as of <time>" in hero chart legend — id="hero-data-as-of".
-        var portfolio = ((data.meta) || {}).portfolio || {};
-        var dataAsOf = portfolio.data_as_of || data.data_as_of || null;
-        var asOfEl = document.getElementById('hero-data-as-of');
-        if (asOfEl && dataAsOf) asOfEl.textContent = 'data as of ' + dataAsOf;
+    // Each section lists its cards in the order of the response's card list (the order the page
+    // was rendered in). A card is moved only when the order differs, and moving a node keeps its
+    // canvas, so no chart is rebuilt.
+    function orderSectionCards(data) {
+        var syms = data && data.symphonies;
+        if (!Array.isArray(syms)) return;
+        var rank = {};
+        syms.forEach(function (sym, i) {
+            if (sym && sym.id && !(sym.id in rank)) rank[sym.id] = i;
+        });
+        function rankOf(card) {
+            var id = card.getAttribute('data-sym-id');
+            return id in rank ? rank[id] : syms.length;
+        }
+        ['active-section', 'standby-section'].forEach(function (testid) {
+            var section = document.querySelector('[data-testid="' + testid + '"]');
+            if (!section) return;
+            var grid = section.querySelector('.cards-grid') || section;
+            var cards = Array.prototype.filter.call(grid.children, function (c) { return c.classList.contains('sym-card'); });
+            var wanted = cards.slice().sort(function (a, b) { return rankOf(a) - rankOf(b); });
+            var differs = wanted.some(function (card, i) { return card !== cards[i]; });
+            if (!differs) return;
+            wanted.forEach(function (card) { grid.appendChild(card); });
+        });
     }
 
     // ---------------------------------------------------------------------------
@@ -1685,7 +2027,7 @@
     // with portfolio_strip.account_all_time_cr as fallback.  The SSR renders the element
     // only when the account cache is warm; if the cache was cold at page-load the element
     // is absent.  This renderer creates it when missing so cold-start shows the stat without
-    // requiring a manual page reload.  NOT wired to fetchWindowedStrip — this stat carries
+    // requiring a manual page reload.  NOT wired to the windowed strip — this stat carries
     // no window label and must not change when the window picker is clicked.
     function updateAccountAllTime(data) {
         var portfolio = ((data.meta) || {}).portfolio || {};
@@ -1722,10 +2064,275 @@
     }
 
     // ---------------------------------------------------------------------------
+    // Panels the page render fixes and the poll now carries (data.dashboard_panels):
+    // the Managed Sleeves panel, the CVaR diagnostic panel and the Edit Vars badge.
+    // Each part is applied only when it is present and sound; a part whose read failed
+    // (null, or ok false), or a body with no dashboard_panels, leaves the panel as it is.
+    // Existing elements are written by textContent; a card or row the page lacks is cloned
+    // from the matching <template> and filled the same way. Nothing here writes innerHTML.
+    // ---------------------------------------------------------------------------
+
+    function setTextIfChanged(el, text) {
+        if (el && el.textContent !== text) el.textContent = text;
+    }
+
+    function fieldOf(root, name) {
+        return root.querySelector('[data-field="' + name + '"]');
+    }
+
+    // $12.34 as the server render prints a dollar figure (toFixed rounding); `missing` stands
+    // in for a figure that is absent.
+    function dollarText(value, missing) {
+        return typeof value === 'number' && isFinite(value) ? '$' + value.toFixed(2) : missing;
+    }
+
+    // The element with data-<attr>="<id>" among a container's element children, or null.
+    function childWithId(container, attr, id) {
+        var kids = container.children;
+        for (var i = 0; i < kids.length; i++) {
+            if (kids[i].getAttribute(attr) === id) return kids[i];
+        }
+        return null;
+    }
+
+    // A copy of a <template>'s first element, owned by this document; null when the page has none.
+    function cloneTemplateRoot(templateId) {
+        var template = document.getElementById(templateId);
+        var first = template && template.content ? template.content.firstElementChild : null;
+        return first ? document.importNode(first, true) : null;
+    }
+
+    // Puts `wanted` (elements already children of `container`) in that order, moving only an
+    // element that is out of place.
+    function placeInOrder(container, wanted) {
+        var cursor = container.firstElementChild;
+        wanted.forEach(function (el) {
+            if (cursor === el) {
+                cursor = el.nextElementSibling;
+            } else {
+                container.insertBefore(el, cursor);
+            }
+        });
+    }
+
+    function wireButton(button, handlerName, argsFn) {
+        button.addEventListener('click', function () {
+            var handler = window[handlerName];
+            if (typeof handler === 'function') handler.apply(window, argsFn().concat([button]));
+        });
+    }
+
+    function syncArmControl(rowEl, sleeveId, rule) {
+        var existing = rowEl.querySelector('[data-testid="sleeve-arm-control"]');
+        var wanted = rule.mode === 'SHADOW';
+        if (wanted && !existing) {
+            var template = cloneTemplateRoot('sleeve-rule-row-template');
+            var fresh = template ? template.querySelector('[data-testid="sleeve-arm-control"]') : null;
+            var actions = fieldOf(rowEl, 'rule-actions');
+            if (!fresh || !actions) return;
+            fresh.setAttribute('data-sleeve-id', String(sleeveId));
+            fresh.setAttribute('data-rule-id', String(rule.id));
+            wireButton(fresh, 'armSleeveRuleToPaper', function () { return [sleeveId, rule.id]; });
+            actions.appendChild(fresh);
+        } else if (!wanted && existing) {
+            existing.parentNode.removeChild(existing);
+        }
+    }
+
+    function syncRuleRow(rowEl, sleeveId, rule) {
+        setTextIfChanged(fieldOf(rowEl, 'rule-name'), String(rule.name));
+        setTextIfChanged(fieldOf(rowEl, 'rule-mode'), '(' + rule.mode + ')');
+        setTextIfChanged(fieldOf(rowEl, 'rule-today'), String(rule.today_fires));
+        setTextIfChanged(fieldOf(rowEl, 'rule-lifetime'), String(rule.lifetime_fires));
+        setTextIfChanged(fieldOf(rowEl, 'rule-realized'), dollarText(rule.realized_pnl_usd, 'n/a'));
+        syncArmControl(rowEl, sleeveId, rule);
+    }
+
+    function newRuleRow(sleeveId, rule) {
+        var rowEl = cloneTemplateRoot('sleeve-rule-row-template');
+        if (!rowEl) return null;
+        rowEl.setAttribute('data-rule-id', String(rule.id));
+        var arm = rowEl.querySelector('[data-testid="sleeve-arm-control"]');
+        if (arm) arm.parentNode.removeChild(arm);  // syncArmControl adds it for a SHADOW rule
+        return rowEl;
+    }
+
+    function syncSleeveCard(card, sleeve) {
+        setTextIfChanged(fieldOf(card, 'sleeve-name'), String(sleeve.name));
+        var badge = card.querySelector('[data-testid="sleeve-status-badge"]');
+        if (badge) {
+            setTextIfChanged(badge, String(sleeve.status));
+            var badgeClass = 'status-pill ' + sleeve.status_badge_class;
+            if (badge.className !== badgeClass) badge.className = badgeClass;
+        }
+        setTextIfChanged(fieldOf(card, 'sleeve-capital'), dollarText(sleeve.capital_usd, '\u2014'));
+        setTextIfChanged(fieldOf(card, 'sleeve-ledger-cash'), dollarText(sleeve.ledger_cash_usd, '\u2014'));
+        setTextIfChanged(fieldOf(card, 'sleeve-realized'), dollarText(sleeve.realized_pnl_usd, 'n/a'));
+
+        var rules = Array.isArray(sleeve.rules) ? sleeve.rules : [];
+        var rulesBox = fieldOf(card, 'sleeve-rules');
+        if (rulesBox) {
+            var wantedIds = {};
+            var rows = [];
+            rules.forEach(function (rule) {
+                if (!rule || rule.id === null || rule.id === undefined) return;
+                var id = String(rule.id);
+                wantedIds[id] = true;
+                var rowEl = childWithId(rulesBox, 'data-rule-id', id);
+                if (!rowEl) {
+                    rowEl = newRuleRow(sleeve.id, rule);
+                    if (!rowEl) return;
+                    rulesBox.appendChild(rowEl);
+                }
+                syncRuleRow(rowEl, sleeve.id, rule);
+                rows.push(rowEl);
+            });
+            Array.prototype.slice.call(rulesBox.children).forEach(function (rowEl) {
+                if (!wantedIds[rowEl.getAttribute('data-rule-id')]) rulesBox.removeChild(rowEl);
+            });
+            placeInOrder(rulesBox, rows);
+            rulesBox.hidden = rows.length === 0;
+        }
+
+        // A SHADOW sleeve has nothing to disarm: the button is inert, as the server renders it.
+        var inert = sleeve.status === 'SHADOW';
+        var disarm = card.querySelector('[data-testid="sleeve-disarm-control"]');
+        if (disarm) {
+            if (disarm.disabled !== inert) disarm.disabled = inert;
+            if (disarm.classList.contains('control-disabled') !== inert) {
+                disarm.classList.toggle('control-disabled', inert);
+            }
+        }
+    }
+
+    function newSleeveCard(sleeve) {
+        var card = cloneTemplateRoot('sleeve-card-template');
+        if (!card) return null;
+        var id = String(sleeve.id);
+        card.setAttribute('data-sleeve-id', id);
+        var disarm = card.querySelector('[data-testid="sleeve-disarm-control"]');
+        var remove = card.querySelector('[data-testid="sleeve-delete-control"]');
+        if (disarm) {
+            disarm.setAttribute('data-sleeve-id', id);
+            wireButton(disarm, 'disarmSleeve', function () { return [sleeve.id]; });
+        }
+        if (remove) {
+            remove.setAttribute('data-sleeve-id', id);
+            wireButton(remove, 'deleteSleeve', function () { return [sleeve.id]; });
+        }
+        return card;
+    }
+
+    function updateSleevesPanel(sleeves) {
+        var list = document.querySelector('[data-testid="sleeves-panel"] [data-field="sleeves-list"]');
+        if (!list) return;
+        var wantedIds = {};
+        var cards = [];
+        sleeves.forEach(function (sleeve) {
+            if (!sleeve || sleeve.id === null || sleeve.id === undefined) return;
+            var id = String(sleeve.id);
+            wantedIds[id] = true;
+            var card = childWithId(list, 'data-sleeve-id', id);
+            if (!card) {
+                card = newSleeveCard(sleeve);
+                if (!card) return;
+                list.appendChild(card);
+            }
+            syncSleeveCard(card, sleeve);
+            cards.push(card);
+        });
+        Array.prototype.slice.call(list.children).forEach(function (card) {
+            if (!wantedIds[card.getAttribute('data-sleeve-id')]) list.removeChild(card);
+        });
+        placeInOrder(list, cards);
+        var empty = document.querySelector('[data-testid="sleeves-empty"]');
+        if (empty) empty.hidden = cards.length > 0;
+    }
+
+    function finiteOrNull(v) {
+        return typeof v === 'number' && isFinite(v) ? v : null;
+    }
+
+    // The CVaR panel shows the latest diagnostic and is hidden while there is none. The words and
+    // figures follow the server render's: four places, a dash for a missing figure.
+    function renderCvarPanel(diagnostic) {
+        var panel = document.getElementById('cvar-diagnostic-panel');
+        if (!panel) return;
+        var has = !!diagnostic && typeof diagnostic === 'object';
+        var five = has ? finiteOrNull(diagnostic.cvar_5pct) : null;
+        var stderr = has ? finiteOrNull(diagnostic.cvar_5pct_stderr) : null;
+        var nTail = has ? finiteOrNull(diagnostic.cvar_n_tail) : null;
+        setTextIfChanged(fieldOf(panel, 'cvar-5pct'), five !== null ? five.toFixed(4) : '\u2014');
+        var cell = fieldOf(panel, 'cvar-stderr-cell');
+        if (cell) cell.hidden = five === null;
+        var stderrEl = fieldOf(panel, 'cvar-stderr');
+        if (stderrEl) {
+            setTextIfChanged(stderrEl, '\u00b1' + (stderr !== null ? stderr.toFixed(4) : '\u2014') + ' stderr');
+            stderrEl.setAttribute('data-cvar-stderr', stderr !== null ? String(stderr) : '');
+        }
+        var nEl = fieldOf(panel, 'cvar-n-tail');
+        if (nEl) {
+            setTextIfChanged(nEl, 'n=' + (nTail !== null ? String(nTail) : '\u2014'));
+            nEl.setAttribute('data-cvar-n-tail', nTail !== null ? String(nTail) : '');
+        }
+        panel.hidden = !has;
+    }
+
+    // The Edit Vars badge shows how many variables are locked, and is hidden and empty at zero.
+    function renderEditVarsBadge(count) {
+        var badge = document.querySelector('[data-testid="edit-vars-indicator"]');
+        if (!badge) return;
+        var shown = count > 0;
+        setTextIfChanged(badge, shown ? String(count) : '');
+        badge.hidden = !shown;
+        badge.style.display = shown ? 'inline-flex' : 'none';
+    }
+
+    function renderDashboardPanels(data) {
+        var panels = data && data.dashboard_panels;
+        if (!panels || typeof panels !== 'object') return;
+        if (Array.isArray(panels.sleeves)) updateSleevesPanel(panels.sleeves);
+        if (panels.cvar && typeof panels.cvar === 'object' && panels.cvar.ok === true) {
+            renderCvarPanel(panels.cvar.diagnostic);
+        }
+        if (typeof panels.vars_locked_count === 'number' && isFinite(panels.vars_locked_count)) {
+            renderEditVarsBadge(panels.vars_locked_count);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
     // Main updateDashboard — called on each fetch('/api/state') response
     // ---------------------------------------------------------------------------
 
-    function updateDashboard(data) {
+    // The data stamp beside the hero chart (#hero-data-as-of), the stamp of the last applied
+    // body, and what the last refresh did. renderAsOf is the only writer of that element.
+    var _asOfStamp = null;          // the stamp shown; null until the render or a body names one
+    var _lastRefreshStamp = null;   // the stamp of the last applied body; seeded from the render
+    var _refreshFailed = false;     // the newest /api/state request ended in a handled failure
+    var _lastDataMono = null;       // performance.now() when the last good body arrived
+
+    // Says what the page knows about its data: that the last refresh failed, the stamp of the
+    // data on screen, and (once no data has arrived for a while) for how long. With nothing to
+    // say, the server render stands.
+    function renderAsOf() {
+        var el = document.getElementById('hero-data-as-of');
+        if (!el) return;
+        var parts = [];
+        if (_refreshFailed) parts.push('connection lost');
+        // The dashes the server prints for a render with no stamp are not a stamp to keep
+        // beside the cue.
+        var stampKnown = _asOfStamp !== null && _asOfStamp !== AS_OF_UNKNOWN;
+        if (stampKnown || (_asOfStamp !== null && !_refreshFailed)) parts.push(AS_OF_PREFIX + _asOfStamp);
+        var minutes = typeof window.notUpdatedForMinutes === 'function' ? window.notUpdatedForMinutes() : null;
+        if (minutes !== null) parts.push('not updated for ' + minutes + ' min');
+        if (!parts.length) return;
+        var text = parts.join(' · ');
+        if (el.textContent !== text) el.textContent = text;
+    }
+
+    // timing is the receipt record of the response that carried the body (null when the body
+    // did not come from a request).
+    function updateDashboard(data, timing) {
         var meta = data.meta || {};
         var botState = data.bot_state || data.state || {};
 
@@ -1733,25 +2340,41 @@
         _symIds = Object.keys(botState);
         var chartsSettled = Promise.resolve();
 
+        // One reading per applied body: does it carry newer data than the last one?
+        var stamp = dataStamp(data);
+        var stampChanged = stamp === null || stamp !== _lastRefreshStamp;
+        _lastRefreshStamp = stamp;
+        if (stamp !== null) _asOfStamp = stamp;
+
         // C-10: per-renderer try/catch so one failure doesn't kill subsequent renderers
         [
             function () { renderHeroChart(meta); },
-            function () { renderGuardAlpha(data); },
+            // The headline, its window label and the Ann. Vol row follow the picked window.
+            function () { refreshWindowedStrip(stampChanged); },
             function () { updateComparisonRows(data); },
             function () { updateVerdicts(botState, data.market_state); },
             function () { if (typeof window.updateBanners === 'function') window.updateBanners(data); },
             function () { updateMiniStats(meta); },
-            function () { chartsSettled = loadCharts(botState); },
-            function () { if (typeof window.updateChromeTicker === 'function') window.updateChromeTicker(data); },
+            function () { chartsSettled = loadCharts(botState, stampChanged); },
+            function () { if (typeof window.updateChromeTicker === 'function') window.updateChromeTicker(data, timing); },
             // cards-live: refresh per-symphony card value spans from data.symphonies.
             // Reuses POLL_INTERVAL_MS — no new timer. Cards stay live between hard-refreshes.
             function () { updateCards(data); },
-            // Update section count badges and hero "data as of" time.
-            function () { updateSectionMeta(data); },
+            function () { orderSectionCards(data); },
             // Account · all-time CR: fixed stat, not windowed — must fire on every poll
             // so cold-start (SSR omitted the element) resolves without a manual reload.
             function () { updateAccountAllTime(data); },
             function () { applyAccountFilter(data); },
+            function () { updateSectionMeta(); },
+            // The header's mode pill and the hero legend's mode word follow the body.
+            function () { if (typeof window.updateModeIndicators === 'function') window.updateModeIndicators(meta); },
+            // The open detail panel follows the body.
+            function () { refreshOpenDetailPanel(botState); },
+            // The Sleeves and CVaR panels and the Edit Vars badge.
+            function () { renderDashboardPanels(data); },
+            // Without a stream the poll is the only thing that moves the $-saved panel.
+            function () { refreshPanelWithoutStream(); },
+            function () { renderAsOf(); }
         ].forEach(function (fn) {
             try { fn(); } catch (e) { console.error('updateDashboard renderer error:', e); }
         });
@@ -1768,87 +2391,203 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Poll loop + staleness tracking
+    // Poll loop, failure handling and the event stream
     // ---------------------------------------------------------------------------
 
-    // AC-8: track the last time a successful /api/state response arrived so the badge
-    // can reflect a connection-lost state independently of the poll cadence.
-    var lastSuccessfulPollAt = 0;
+    // The page's one way out when the session is gone: every request this page makes goes
+    // through the auth gate, which answers 401 for an expired session.
+    function goToLogin() {
+        try {
+            window.location.assign('/login');
+        } catch (e) {
+            console.error('redirect to login failed', e);
+        }
+    }
 
-    // AC-8: surface a visible "connection lost" state when the poll/SSE fails.
-    // Flips the engine badge and the data-as-of element so the operator knows
-    // the displayed numbers are frozen — not silently stale.
-    function showConnectionLost() {
-        // Target real ids from _chrome.html:51-53 and index.html:846.
-        var dot = document.getElementById('engine-status-dot');
-        var label = document.getElementById('engine-status-label');
-        if (dot) { dot.style.background = 'var(--studio-neg, #e33)'; }
-        if (label) { label.textContent = 'Connection Lost'; label.style.color = 'var(--studio-neg, #e33)'; }
-        var dataAsOf = document.getElementById('hero-data-as-of');
-        if (dataAsOf) { dataAsOf.textContent = 'connection lost'; }
+    // A /api/state data body: an object carrying an object `meta` and a string `market_state`
+    // (the live, frozen and waiting bodies all do; the error bodies carry neither).
+    function isStateBody(d) {
+        return !!d && typeof d === 'object'
+            && !!d.meta && typeof d.meta === 'object'
+            && typeof d.market_state === 'string';
+    }
+
+    // The newest request ended in a handled failure: every value on the page stays, the header
+    // label and the as-of text say the data is not current, and the next poll is the retry.
+    function showConnectionLost(err) {
+        _refreshFailed = true;
+        if (typeof window.noteRefreshFailed === 'function') window.noteRefreshFailed();
+        renderAsOf();
+        console.error('state load failed', err);
+    }
+
+    // A good body arrived (not yet rendered).
+    function noteStateReceived(timing) {
+        _refreshFailed = false;
+        _lastDataMono = timing && typeof timing.receivedAtMono === 'number' ? timing.receivedAtMono : monoNow();
+        if (typeof window.noteDataReceived === 'function') window.noteDataReceived(timing);
     }
 
     // Newest-request-wins: every call takes a sequence number and only the
     // response (or failure) of the most recently issued call is applied, so a
-    // slow earlier response cannot overwrite a newer snapshot or account pick.
-    // Every call is counted once it has settled: its renderers ran (or its failure
+    // slow earlier response cannot overwrite a newer snapshot or account pick. The check
+    // runs before the answer is classified, so an older error is ignored too.
+    // The newest call is counted once it has settled: its renderers ran (or its failure
     // was handled), every card's chart request has answered and every chart it built
-    // has drawn.
+    // has drawn. A superseded call is never counted.
+    // A request with no answer within STATE_REQUEST_TIMEOUT_MS is abandoned (a failure).
     var _stateRequestSeq = 0;
     function loadState() {
         var seq = ++_stateRequestSeq;
         var query = window.activeAccount
             ? '?account=' + encodeURIComponent(window.activeAccount)
             : '';
-        return fetch('/api/state' + query)
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (seq !== _stateRequestSeq) return;
-                lastSuccessfulPollAt = Date.now();
-                return updateDashboard(data);
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var timeout = controller
+            ? setTimeout(function () { controller.abort(); }, STATE_REQUEST_TIMEOUT_MS)
+            : null;
+        var sentAtMono = monoNow();
+        return fetch('/api/state' + query, controller ? { signal: controller.signal } : undefined)
+            .then(function (r) {
+                if (seq !== _stateRequestSeq) return { superseded: true };
+                if (r.status === 401) return { login: true };
+                if (!r.ok) throw new Error('state request answered HTTP ' + r.status);
+                var timing = typeof window.receiptTiming === 'function'
+                    ? window.receiptTiming(sentAtMono, r)
+                    : { sentAtMono: sentAtMono, receivedAtMono: monoNow(), serverNowMs: null };
+                return r.json().then(function (data) {
+                    if (seq !== _stateRequestSeq) return { superseded: true };
+                    if (!isStateBody(data)) throw new Error('state response is not a data body');
+                    return { data: data, timing: timing };
+                });
+            })
+            .then(function (outcome) {
+                if (outcome.superseded) return;
+                if (outcome.login) { goToLogin(); return; }
+                noteStateReceived(outcome.timing);
+                return updateDashboard(outcome.data, outcome.timing);
             })
             .catch(function (err) {
                 if (seq !== _stateRequestSeq) return;
-                showConnectionLost();
-                console.error('state load failed', err);
+                showConnectionLost(err);
             })
             .then(function () {
+                if (timeout !== null) clearTimeout(timeout);
+                if (seq !== _stateRequestSeq) return;
                 _refreshCount += 1;
                 if (document.body) document.body.dataset.refreshCount = String(_refreshCount);
             });
     }
 
-    // Re-window the hero headline VALUE for a window token. The windowed strip
-    // dict shares portfolio_strip's shape, so we reuse renderGuardAlpha by
-    // wrapping it as a poll-style payload. DE-CLOSED-BOUNCE-001 (revise round):
-    // this wrapped payload never carries data_as_of, so updateComparisonRows'
-    // rows array construction is gated to skip ALL THREE comparison rows on it
-    // (see updateComparisonRows) — none of the three vs-rows re-window from this
-    // call; only the headline does.
-    // Defined at IIFE scope (not inside DOMContentLoaded) so renderGuardAlpha can call
-    // it as a frozen-path fallback — renderGuardAlpha is also at IIFE scope and the
-    // DOMContentLoaded callback would be invisible from there.
-    function fetchWindowedStrip(token) {
-        fetch('/api/strip/' + token)
-            .then(function (r) { return r.json(); })
-            .then(function (strip) {
-                if (!strip || strip.error) return;
-                var wrapped = {
-                    portfolio_strip: strip,
-                    meta: { portfolio: { vol_bot: strip.vol_bot, vol_held: strip.vol_held } }
-                };
-                renderGuardAlpha(wrapped, true); // _fromStrip=true — prevents re-entry when strip guard_alpha is null
-                updateComparisonRows(wrapped);
+    // Event stream. The cycle-complete event is the primary refresh path; the poll is the
+    // fallback. A closed stream (a reconnect answered 502, a refused connection) is opened
+    // again; a stream the browser is reconnecting by itself (CONNECTING) is left alone.
+    var _eventStream = null;
+    var _eventRetryTimer = null;
+    var _eventRetryDelayMs = EVENT_STREAM_RETRY_FIRST_MS;
+
+    function streamIsOpen() {
+        return !!_eventStream && _eventStream.readyState === STREAM_OPEN;
+    }
+
+    function cancelEventRetry() {
+        if (_eventRetryTimer !== null) {
+            clearTimeout(_eventRetryTimer);
+            _eventRetryTimer = null;
+        }
+    }
+
+    // Closes the current stream (if any) before opening the next, so at most one is ever open
+    // or connecting.
+    function openEventStream() {
+        cancelEventRetry();
+        if (_eventStream) {
+            try { _eventStream.close(); } catch (e) { /* already closed */ }
+        }
+        var stream = new EventSource('/api/events');
+        _eventStream = stream;
+        // Finding 8: the $-saved panel rides the same event — a page left open
+        // across the EOD post-mortem write (or a new guard event) updates live.
+        stream.addEventListener('cycle-complete', handleCycleCompleteEvent);
+        stream.onopen = function () {
+            if (stream === _eventStream) _eventRetryDelayMs = EVENT_STREAM_RETRY_FIRST_MS;
+        };
+        stream.onerror = function () { onEventStreamError(stream); };
+    }
+
+    function ensureEventStream() {
+        if (typeof EventSource === 'undefined') return;
+        if (_eventStream && _eventStream.readyState !== STREAM_CLOSED) return;
+        openEventStream();
+    }
+
+    // One reopen is pending at a time; its delay doubles while attempts fail.
+    function scheduleEventReopen() {
+        cancelEventRetry();
+        var delay = _eventRetryDelayMs;
+        _eventRetryDelayMs = Math.min(_eventRetryDelayMs * 2, EVENT_STREAM_RETRY_MAX_MS);
+        _eventRetryTimer = setTimeout(function () {
+            _eventRetryTimer = null;
+            ensureEventStream();
+        }, delay);
+    }
+
+    // An EventSource cannot read the status of a refused reconnect. HEAD on the endpoint
+    // answers the auth gate's status without registering a stream client: a 401 means the
+    // session is gone and the page goes to the login page instead of retrying.
+    function probeEventStream() {
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var timeout = controller
+            ? setTimeout(function () { controller.abort(); }, EVENT_STREAM_PROBE_TIMEOUT_MS)
+            : null;
+        var options = controller ? { method: 'HEAD', signal: controller.signal } : { method: 'HEAD' };
+        fetch('/api/events', options)
+            .then(function (r) {
+                if (r.status === 401) { cancelEventRetry(); goToLogin(); }
             })
-            .catch(function (err) { console.error('windowed strip load failed', err); });
+            .catch(function () { /* unreachable: the pending reopen carries on */ })
+            .then(function () { if (timeout !== null) clearTimeout(timeout); });
+    }
+
+    function onEventStreamError(stream) {
+        if (stream !== _eventStream) return;
+        if (stream.readyState !== STREAM_CLOSED) return;
+        scheduleEventReopen();
+        probeEventStream();
+    }
+
+    // One refresh at once when the page is shown again, restored from the back-forward cache
+    // or the network is back, whether or not the stream is up. A stream that still reads OPEN
+    // after a long silence is replaced: a laptop that slept keeps a dead socket reading OPEN.
+    var _lastCatchUpMono = null;
+    function catchUp() {
+        var now = monoNow();
+        if (_lastCatchUpMono !== null && now - _lastCatchUpMono < CATCH_UP_COALESCE_MS) return;
+        _lastCatchUpMono = now;
+        var silent = _lastDataMono === null || now - _lastDataMono > STREAM_TRUST_AFTER_SILENCE_MS;
+        if (streamIsOpen() && silent) {
+            cancelEventRetry();
+            _eventStream.close();
+        }
+        ensureEventStream();
+        loadState();
     }
 
     // AC-1: fetch /api/guard-alpha-summary and populate the dollar-saved panel.
-    // Called on page load AND on each SSE cycle-complete event (Finding 8) — no
-    // continuous polling; the panel updates when the engine actually cycles.
+    // Called on page load, on each SSE cycle-complete event whose data changed (Finding 8),
+    // and on each poll while no stream is open (refreshPanelWithoutStream): the panel updates
+    // when the engine actually cycles, or at the poll's pace when the stream is down.
     // Uses dollar-saved-headline — NOT guard-alpha-headline (that carries the windowed
     // % guard alpha from /api/strip/<window> and must not be clobbered).
+    // Newest request wins, and an answer applies only while its window is still the picked
+    // one; a refused, failed or malformed answer leaves the panel as it was.
+    var _summaryRequestSeq = 0;
+    var _summaryPendingSeq = 0;      // the request in flight, 0 when the newest has settled
+    var _summaryPendingToken = null; // the window that request is for
     function fetchGuardAlphaSummary(windowToken) {
+        var seq = ++_summaryRequestSeq;
+        _summaryPendingSeq = seq;
+        _summaryPendingToken = windowToken;
         var url = '/api/guard-alpha-summary' + (windowToken ? '?window=' + encodeURIComponent(windowToken) : '');
         fetch(url)
             .then(function (response) {
@@ -1856,7 +2595,10 @@
                 return response.json();
             })
             .then(function (data) {
-                if (!data) return;
+                if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
+                if (seq !== _summaryRequestSeq) return;
+                if (windowToken && windowToken !== _heroWindow) return;
+                if (!data || typeof data !== 'object' || typeof data.guard_event_count !== 'number') return;
                 var headlineEl = document.getElementById('dollar-saved-headline');
                 var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
@@ -1923,10 +2665,22 @@
                     if (realizedNetVerbEl) realizedNetVerbEl.textContent = realizedNetSaved >= 0 ? 'saved' : 'lost';
                 }
             })
-            .catch(function (err) { console.error('guard-alpha-summary load failed', err); });
+            .catch(function (err) {
+                if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
+                console.error('guard-alpha-summary load failed', err);
+            });
     }
 
     window.loadState = loadState;
+
+    // While no stream is open the poll also refreshes the $-saved panel for the picked window
+    // (with a stream open, events do). A request for that window already in flight is not
+    // sent twice: the page's first poll meets the one the load sent.
+    function refreshPanelWithoutStream() {
+        if (streamIsOpen()) return;
+        if (_summaryPendingSeq !== 0 && _summaryPendingToken === _heroWindow) return;
+        fetchGuardAlphaSummary(_heroWindow);
+    }
 
     // Refetch on every cycle-complete event except one that states changed === false.
     // Anything unparseable or missing the key refetches (never skip on doubt).
@@ -1944,24 +2698,35 @@
     document.addEventListener('DOMContentLoaded', function () {
         try { paintFirstFrame(); } catch (e) { console.error('first paint error:', e); }
 
-        // Poll every 30 s (POLL_INTERVAL_MS); the engine writes once a minute.
+        // Poll every 30 s (POLL_INTERVAL_MS); the engine writes once a minute. The poll keeps
+        // running in every market state and after hours: the server answers the same body
+        // then, so it changes nothing, and a page left open overnight picks up the open itself.
         loadState();
         setInterval(loadState, POLL_INTERVAL_MS);
 
         // AC-3: SSE event-driven update — primary path; poll (above) is the resilience fallback.
-        if (typeof EventSource !== 'undefined') {
-            var _es = new EventSource('/api/events');
-            // Finding 8: the $-saved panel rides the same event — a page left open
-            // across the EOD post-mortem write (or a new guard event) updates live.
-            _es.addEventListener('cycle-complete', handleCycleCompleteEvent);
-            _es.onerror = function () { /* silent — poll fallback handles reconnect */ };
-        }
+        // A closed stream is opened again (ensureEventStream), however long the daemon is away.
+        ensureEventStream();
 
         fetchGuardAlphaSummary(_heroWindow);
 
+        // The as-of text carries an age cue once no data has arrived for a while: redrawn on a
+        // timer that sends no request.
+        setInterval(renderAsOf, FRESHNESS_CHECK_MS);
+
+        // Catch-up: one refresh at once when the tab is shown again, the page is restored from
+        // the back-forward cache or the network returns (coalesced inside CATCH_UP_COALESCE_MS).
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') catchUp();
+        });
+        window.addEventListener('pageshow', function (evt) {
+            if (evt && evt.persisted) catchUp();
+        });
+        window.addEventListener('online', catchUp);
+
         // AC-3: each picker button maps to a lowercase URL window token. The SAME
-        // token drives BOTH /api/strip/<token> (re-windows the hero VALUE + vs-rows
-        // + label) and /api/hero-chart/<token> (re-windows the two chart lines).
+        // token drives BOTH /api/strip/<token> (re-windows the headline VALUE, its label
+        // and the Ann. Vol row) and /api/hero-chart/<token> (re-windows the two chart lines).
         // "window-all" is the NEW All-Time option (token "all" = lifetime cross-epoch).
         var windowTokenMap = {
             'window-30d':  '30d',
@@ -1972,11 +2737,6 @@
             'window-1y':   '1y',
             'window-all':  'all'
         };
-        var winLabelMap = {
-            'window-30d': '30d', 'window-60d': '60d', 'window-90d': '90d',
-            'window-125d': '125d', 'window-ytd': 'YTD', 'window-1y': '1Y',
-            'window-all': 'All Time'
-        };
 
         Object.keys(windowTokenMap).forEach(function (testid) {
             var btn = document.querySelector('[data-testid="' + testid + '"]');
@@ -1986,17 +2746,16 @@
                 btn.classList.add('active');
                 var token = windowTokenMap[testid];
                 _heroWindow = token;
+                // The label names the picked window at once; the strip's answer writes it
+                // again together with the value it describes (F1).
                 var winLabel = document.getElementById('guard-alpha-window-label');
-                if (winLabel) winLabel.textContent = winLabelMap[testid] || btn.textContent;
+                if (winLabel) winLabel.textContent = WINDOW_LABELS[token] || btn.textContent;
                 // The picker drives the chart lines (latest click wins) and the
-                // headline VALUE (windowed strip) -- NOT the three vs-rows, which stay
-                // gated to genuine /api/state polls only (DE-CLOSED-BOUNCE-001).
+                // headline value, its window label and the Ann. Vol row (windowed
+                // strip) -- NOT the Today/Cumulative/Max DD rows, which stay on genuine
+                // /api/state polls only (DE-CLOSED-BOUNCE-001).
                 requestHeroWindow(token);
-                // Re-window the headline guard-alpha VALUE so the label always matches
-                // the actual window (kills the F1 mislabel). Does NOT re-window the
-                // three vs-rows (DE-CLOSED-BOUNCE-001) -- fetchWindowedStrip's payload
-                // never carries data_as_of, so updateComparisonRows leaves them alone.
-                fetchWindowedStrip(token);
+                requestWindowedStrip(token);
                 // AC-2: the $-saved panel re-windows in lockstep with the rest of
                 // the hero instead of always showing the all-time sum.
                 fetchGuardAlphaSummary(token);

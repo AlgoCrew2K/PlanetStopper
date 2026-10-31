@@ -42,6 +42,39 @@ sys.path.insert(0, str(REPO))
 WATCHED = ["templates", "static", "app.py"]
 
 
+def rewrite_structure_only(structure: list, resolved: dict) -> None:
+    """Replace only ``dashboard.structure_outside_top_bar``, for a page that grew elements.
+
+    The header measurements and Save's request of ``pages_1440`` are the shell work's base and
+    are kept as they are, and so is ``base_sha``. The resolved primitive rules must equal the
+    recorded ones (the run stops otherwise: a rule that changed is not a change of structure).
+    The recapture is recorded under ``structure_revision`` (the head it was taken at, the time,
+    the element counts before and after).
+    """
+    path = HERE / "baseline.json"
+    recorded = json.loads(path.read_text(encoding="utf-8"))
+    if recorded["dashboard"]["resolved"] != resolved:
+        raise SystemExit("refusing: the resolved primitive rules differ from the recorded ones")
+    before = recorded["dashboard"]["structure_outside_top_bar"]
+    recorded["dashboard"]["structure_outside_top_bar"] = structure
+    recorded["structure_revision"] = {
+        "head_sha": subprocess.run(
+            ["git", "-C", str(REPO), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip(),
+        "captured_at_utc": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "elements_before": len(before),
+        "elements_after": len(structure),
+    }
+    path.write_text(json.dumps(recorded, indent=1) + "\n", encoding="utf-8")
+    print(
+        f"rewrote dashboard.structure_outside_top_bar: {len(before)} -> {len(structure)} elements; "
+        f"{len(resolved)} resolved primitive selectors unchanged"
+    )
+
+
 def main() -> None:
     dirty = subprocess.run(
         ["git", "-C", str(REPO), "status", "--porcelain", "--", *WATCHED],
@@ -72,6 +105,10 @@ def main() -> None:
     if shell.body_structure_outside_top_bar(cap.render_dashboard_html()) != structure:
         raise SystemExit("the dashboard's element structure is not stable across two renders")
     resolved = cap.resolved_primitive_rules(html)
+
+    if "--structure-only" in sys.argv[1:]:
+        rewrite_structure_only(structure, resolved)
+        return
 
     env_file = scratch / "shell.env"
     env_file.write_text("", encoding="utf-8")
