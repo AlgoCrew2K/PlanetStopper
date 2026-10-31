@@ -55,8 +55,10 @@ def database_stub(monkeypatch):
 
 
 @pytest.fixture
-def client():
+def client(env_file):
+    """A client whose app writes to the temp ``.env``, never the developer's."""
     app_module.app.config["TESTING"] = True
+    assert str(env_file) == app_module.ENV_FILE_PATH
     with app_module.app.test_client() as c:
         yield c
 
