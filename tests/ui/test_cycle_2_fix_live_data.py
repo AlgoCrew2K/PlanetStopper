@@ -2570,6 +2570,9 @@ def test_api_state_bot_state_triggered_symphony_includes_guard_alpha(monkeypatch
             "net_deposits": 0.0,
             "time_weighted_return": 0.05,
             "triggered": True,
+            # A real 0.0 return, not an absent one: guard alpha is the exit row's
+            # at_return minus current_return, and an absent return gets no figure.
+            "current_return": 0.0,
         }
     }
     # Use dict-valued portfolio_strip (not flat floats) so _build_meta can call .get().
@@ -3817,6 +3820,9 @@ def test_api_state_guard_alpha_populated_from_real_db_exit_triggers(tmp_path, mo
             "time_weighted_return": 0.08,
             "triggered": True,
             "triggered_at_return": 8.5,
+            # A real 0.0 return, not an absent one: guard alpha is the exit row's
+            # at_return minus current_return, and an absent return gets no figure.
+            "current_return": 0.0,
         }
     }
 

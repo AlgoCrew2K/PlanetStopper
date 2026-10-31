@@ -251,8 +251,15 @@ class TestFrozenBranchStatesItsTradingDay:
         body = world.poll()
 
         added = set(body) - {"html"} - set(golden)
-        # engine_phase is a later, separately specified additive field (the engine's phase label).
-        assert added == {"trading_day", "snapshot_is_previous_session", "engine_phase"}, (
+        # engine_phase and symphonies are later, separately specified additive fields:
+        # the engine's phase label and the frozen per-symphony cards.
+        expected_added = {
+            "trading_day",
+            "snapshot_is_previous_session",
+            "engine_phase",
+            "symphonies",
+        }
+        assert added == expected_added, (
             f"{branch}: fields added to the frozen response: {sorted(added)}"
         )
         for key in ("state", "bot_state", "accounts_map", "shadow_divergence", "live_mode"):

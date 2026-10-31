@@ -22,9 +22,9 @@ CONTRACT (bugs being fixed):
         server-rendered content.
   CC-7  Hero mini-stats (hero-tracked, hero-armed, hero-triggered) update on
         every poll via updateMiniStats(meta) — already wired; regression guard.
-  CC-8  Market-state dot + strip chips update on every poll — already wired;
-        regression guard that updateStatusStrip and updateMarketDot are still
-        called from updateDashboard.
+  CC-8  The open/closed indicator updates on every poll through
+        updateChromeTicker -> updateEngineStatus; the deleted strip and dot
+        writers stay deleted.
   CC-9  node --check static/index.js passes (no syntax error).
   CC-10 REGRESSION: no sym-table-container; cards-grid/sym-card/card-spark
         structure preserved; data-field spans addressed in-place only.
@@ -662,39 +662,46 @@ class TestHeroMiniStatsLiveUpdate:
 
 class TestMarketStateAndStripChipsUpdate:
     """
-    CC-8: updateStatusStrip and updateMarketDot must still be called from
-    updateDashboard after this cycle's changes — regression guard.
+    CC-8: the open/closed indicator must still be refreshed from every poll.
+
+    The status-strip label, the trigger-count chips and the status dot were
+    written by updateStatusStrip and updateMarketDot, which are gone. The
+    nav-rail engine indicator (updateEngineStatus in static/chrome.js, reached
+    from updateDashboard through updateChromeTicker) is the renderer that took
+    over the open/closed state; these tests pin that path.
     """
 
-    def test_update_dashboard_calls_update_status_strip(self):
-        """CC-8a: updateDashboard must call updateStatusStrip."""
+    def test_update_dashboard_refreshes_the_engine_status_indicator(self):
+        """CC-8a: updateDashboard must call updateChromeTicker, which drives the indicator."""
         src = _js()
         body = _update_dashboard_body(src)
 
-        assert "updateStatusStrip" in body, (
-            "CC-8a FAIL: updateDashboard does not call updateStatusStrip. "
-            "The market label + trigger-count chips will not update on the poll."
+        assert "updateChromeTicker" in body, (
+            "CC-8a FAIL: updateDashboard does not call updateChromeTicker. "
+            "The open/closed indicator will not update on the poll."
         )
 
-    def test_update_dashboard_calls_update_market_dot(self):
-        """CC-8b: updateDashboard must call updateMarketDot."""
+    def test_the_removed_strip_and_dot_writers_are_not_called(self):
+        """CC-8b: the deleted strip and dot renderers must not be referenced again."""
         src = _js()
-        body = _update_dashboard_body(src)
 
-        assert "updateMarketDot" in body, (
-            "CC-8b FAIL: updateDashboard does not call updateMarketDot. "
-            "The open/closed dot indicator will not update on the poll."
+        for removed in ("updateStatusStrip", "updateMarketDot", "triggers_today"):
+            assert removed not in src, (
+                f"CC-8b FAIL: static/index.js references the removed {removed}."
+            )
+
+    def test_engine_status_indicator_reads_the_market_state_of_the_poll(self):
+        """CC-8c: updateEngineStatus must derive open/closed from data.market_state."""
+        chrome = (_WORKTREE / "static" / "chrome.js").read_text(encoding="utf-8")
+        start = chrome.find("function updateEngineStatus(")
+        assert start != -1, "function updateEngineStatus not found in static/chrome.js"
+        body = chrome[start : start + 1200]
+
+        assert "data.market_state" in body, (
+            "CC-8c FAIL: updateEngineStatus does not read data.market_state."
         )
-
-    def test_update_status_strip_reads_meta_market_state_label(self):
-        """CC-8c: updateStatusStrip must read meta.market_state_label."""
-        src = _js()
-        start = src.find("function updateStatusStrip(")
-        assert start != -1, "function updateStatusStrip not found in static/index.js"
-        body = src[start : start + 500]
-
-        assert "market_state_label" in body, (
-            "CC-8c FAIL: updateStatusStrip does not read meta.market_state_label."
+        assert "'Closed'" in body, (
+            "CC-8c FAIL: updateEngineStatus has no closed label for a closed market."
         )
 
 
