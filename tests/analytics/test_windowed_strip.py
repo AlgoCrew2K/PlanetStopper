@@ -392,17 +392,21 @@ class TestF018WindowedAlphaBasisConsistency:
             f"{right_consistent_alpha})"
         )
 
-        produced_alpha = strip.get("guard_alpha")
+        # The cumulative row's alpha (cumulative_return.dry_run - if_held) keeps the
+        # F-018 population; the portfolio headline (guard_alpha) is a different quantity,
+        # the compounded gap over every symphony (tests/analytics/test_portfolio_guard_effect.py).
+        cr = strip.get("cumulative_return") or {}
+        produced_alpha = cr.get("dry_run") - cr.get("if_held")
         assert produced_alpha != pytest.approx(wrong_mixed_alpha, abs=1e-6), (
-            f"F-018 FAIL: guard_alpha ({produced_alpha}) matches the WRONG "
-            f"mixed-basis figure ({wrong_mixed_alpha}) — windowed_alpha still "
+            f"F-018 FAIL: the cumulative row's alpha ({produced_alpha}) matches the WRONG "
+            f"mixed-basis figure ({wrong_mixed_alpha}) -- its windowed alpha still "
             "includes the TWR-fallback symphony (twrSymF018) in its "
             "value-weighted average; the old formula's output must be GONE."
         )
         assert produced_alpha == pytest.approx(right_consistent_alpha, abs=1e-6), (
-            f"F-018 FAIL: guard_alpha ({produced_alpha}) != the RIGHT "
-            f"10-symphony-consistent figure ({right_consistent_alpha}) — the "
-            "TWR-fallback symphony must be excluded from windowed_alpha's "
+            f"F-018 FAIL: the cumulative row's alpha ({produced_alpha}) != the RIGHT "
+            f"10-symphony-consistent figure ({right_consistent_alpha}) -- the "
+            "TWR-fallback symphony must be excluded from the cumulative row's "
             "value-weighted average, matching the exclusion "
             "get_portfolio_cumulative_return already applies to if_held "
             "(same condition: simple_return==0.0 AND net_deposits==0.0)."

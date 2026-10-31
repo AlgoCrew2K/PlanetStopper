@@ -982,7 +982,7 @@ class TestRunButton:
         assert button.attrs.get("type") == "button"
         assert button.attrs.get("onclick") == "retRunReview(this)"
         assert "run-trigger-btn" in button.classes()
-        assert "Run review now" in button.text()
+        assert "Run tenure review" in button.text()
         assert "disabled" not in button.attrs
         message = panel.find("tenure-review-run-message")
         assert message is not None
@@ -5428,8 +5428,8 @@ class TestAFigureWithNoValueReadsNotComputable:
 _ZERO_ROUNDING_TARGETS = [
     pytest.param(
         "performance",
-        "max drawdown",
-        "evidence.performance.figures.max_drawdown.value",
+        "total return",
+        "evidence.performance.figures.total_return.value",
         id="a percent figure",
     ),
     pytest.param(

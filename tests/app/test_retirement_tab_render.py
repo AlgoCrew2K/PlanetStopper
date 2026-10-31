@@ -277,7 +277,10 @@ class TestRunTiles:
         html, s = page
         basis = _block(html).find("retirement-last-run-basis")
         assert basis is not None
-        assert s["basis_label"] in basis.text()
+        assert "Composer realized daily returns" in basis.text(), basis.text()
+        assert not re.search(r"composer", basis.text()), (
+            "the internal source word 'composer' is still on the basis line"
+        )
 
     @pytest.mark.parametrize("how", ["absent", "null"])
     @pytest.mark.parametrize(

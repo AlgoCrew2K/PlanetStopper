@@ -287,7 +287,34 @@ def _world_specs() -> dict[str, dict]:
         },
         # a stored exit reason that would break out of a script element.
         "hostile": {"history_offsets": [3, 2, 1], "intraday": False, "hostile_reason": True},
+        # The UX review fixes: the default world plus two more state entries (see EXTRA_SYMPHONIES)
+        # and the engine's top-level execution-mode flag saved with the state (False = simulated).
+        "review-fixes": {
+            "history_offsets": list(range(160, 0, -1)),
+            "intraday": True,
+            "with_next": True,
+            "extra_symphonies": ("standby_no_rows", "no_longer_held"),
+            "state_top_level": {"last_execution_mode": False},
+        },
+        # The same world with the flag True (live execution): the headline says "Bot", not "Simulated".
+        "review-fixes-live": {
+            "history_offsets": list(range(160, 0, -1)),
+            "intraday": True,
+            "state_top_level": {"last_execution_mode": True},
+        },
     }
+
+
+# Extra state entries of the "review-fixes" world: copies of a real captured record with named edits.
+# standby_no_rows: a standby card with held +0.5 today and no shadow row at all today (no Bot figure).
+# no_longer_held: the captured entry of the symphony the PM's droplet check found gone; its rows stop
+#   45 days back while every other symphony's run to yesterday (its rows are synthetic, labelled in
+#   tests/fixtures/no_longer_held/PROVENANCE.md).
+STANDBY_NO_ROWS_ID = "rvwStandbyNoRows0001"
+STANDBY_NO_ROWS_NAME = "Review Standby Without Rows"
+NO_LONGER_HELD_ID = "INfCn3eKsu6i4oTTqdUp"
+NO_LONGER_HELD_NAME = "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060"
+NO_LONGER_HELD_LAST_ROW_OFFSET_DAYS = 45
 
 
 # Worlds built from the refresh-timing card worlds (tests/app/_refresh_timing_card_world.py): the
@@ -465,6 +492,19 @@ def _build_world(name: str) -> dict:
     if spec.get("hostile_reason"):
         # Named-field edit of a real record: the stored exit reason.
         bot_state[TRIGGERED_VWAP_ID]["triggered_reason"] = HOSTILE_REASON
+    extra_rows: dict[str, int | None] = {}  # id -> offset (days back) of its newest row; None = no rows
+    if "standby_no_rows" in spec.get("extra_symphonies", ()):
+        bot_state[STANDBY_NO_ROWS_ID] = {
+            **records[UNTRIGGERED_ID],
+            "name": STANDBY_NO_ROWS_NAME,
+            "current_return": 0.5,
+            "armed": False,
+            "triggered": False,
+        }
+        extra_rows[STANDBY_NO_ROWS_ID] = None
+    if "no_longer_held" in spec.get("extra_symphonies", ()):
+        bot_state[NO_LONGER_HELD_ID] = {**records[NO_LONGER_HELD_ID], "triggered": False, "armed": False}
+        extra_rows[NO_LONGER_HELD_ID] = NO_LONGER_HELD_LAST_ROW_OFFSET_DAYS
 
     work_dir = tempfile.mkdtemp(prefix=f"charts_world_{name}_")
     db_path = os.path.join(work_dir, "world.db")
@@ -491,7 +531,7 @@ def _build_world(name: str) -> dict:
         patch.setattr(database, "load_state", _REAL_DATABASE_LOAD_STATE)
         patch.setattr(_app_module, "get_market_state", lambda *_a, **_k: "open")
         database.init_db()
-        database.save_state(bot_state)
+        database.save_state({**bot_state, **spec.get("state_top_level", {})})
 
         today = _dt_mod.datetime.now().strftime("%Y-%m-%d")  # /api/chart's own "today"
         if "explicit_dates" in spec:
@@ -509,6 +549,16 @@ def _build_world(name: str) -> dict:
                 post = bool(record.get("triggered")) and day_index >= trigger_day_index
                 shadow = 0.0 if post else current
                 _seed_shadow_row(database, sym_id, record, day, "16:00", current, shadow, post)
+        for extra_id, newest_offset in extra_rows.items():
+            if newest_offset is None:
+                continue
+            cutoff_day = (_dt_mod.date.fromisoformat(today) - _dt_mod.timedelta(days=newest_offset)).isoformat()
+            for day_index, day in enumerate(days):
+                if day <= cutoff_day:
+                    # synthetic returns, labelled in tests/fixtures/no_longer_held/PROVENANCE.md
+                    _seed_shadow_row(
+                        database, extra_id, bot_state[extra_id], day, "16:00", 0.4, 0.4, False
+                    )
         if spec.get("intraday"):
             _seed_tape(database, bot_state, spec.get("empty_intraday", set()), _TAPE_MINUTES, today)
 

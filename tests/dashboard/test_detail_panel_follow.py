@@ -268,7 +268,9 @@ class TestAPanelWhoseSymphonyLeavesOrArrives:
             moved=moved,
         )
         assert r["filled"]["live"] == _pct(4.25), "the first poll did not fill the open panel"
-        assert r["empty"]["title"] == "Symphony Detail"
+        assert r["empty"]["title"] != "Symphony Detail", (
+            "a panel opened before the first poll must carry the symphony's own title, not the default"
+        )
         assert r["filled"]["title"] == _world()["bot_state"][UNTRIGGERED]["name"], (
             "the title stayed the default after the first poll named the symphony"
         )

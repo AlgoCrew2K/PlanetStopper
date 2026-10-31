@@ -47,7 +47,7 @@ def test_three_refreshes_with_1y_picked_keep_the_1y_headline_and_ask_for_its_str
         "() => document.getElementById('guard-alpha-window-label').textContent.trim() === '1Y'",
         "the window label never read 1Y after the pick",
     )
-    want = sup.fmt_pct(world["strips"]["1y"]["guard_alpha"])
+    want = sup.fmt_pp(world["strips"]["1y"]["guard_alpha"])
     assert text(probe, "#guard-alpha-headline") == want
 
     since = len(probe.requests)

@@ -283,8 +283,8 @@ class TestOkRunRendersEveryFact:
 
     def test_basis_shows_the_source_and_the_basis_label(self, body):
         text = _sub_text(body, "retirement-last-run-basis")
-        assert "realized daily returns (Composer, deposit-adjusted)" in text
-        assert "composer" in text.lower()
+        assert "Composer realized daily returns" in text, text
+        assert not re.search(r"composer", text), "the internal source word is still shown"
 
     def test_symphonies_shows_analysed_versus_roster(self, body):
         text = _sub_text(body, "retirement-last-run-symphonies")

@@ -2616,3 +2616,11 @@ def compute_never_adopted_streak(rows: list[dict]) -> dict:
         streak_weeks += 1
 
     return {"status": "streak", "streak_weeks": streak_weeks}
+
+
+def no_longer_held_symphony_ids(state, *, db_path=None, conn=None, now=None):
+    """Import stub for the RED round: the ids of state entries that are no longer held.
+
+    Returns a trivially wrong empty set; the implementation replaces this body.
+    """
+    return frozenset()

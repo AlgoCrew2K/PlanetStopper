@@ -50,7 +50,7 @@ def _strip(token: str) -> dict:
 
 
 def _headline(token: str, window_label: str) -> dict:
-    return {"headline": sup.fmt_pct(_strip(token)["guard_alpha"]), "label": window_label}
+    return {"headline": sup.fmt_pp(_strip(token)["guard_alpha"]), "label": window_label}
 
 
 PICK_1Y = "await H.click('[data-testid=\"window-1y\"]');"
@@ -65,8 +65,8 @@ class TestPickedWindowSurvivesEveryRefresh:
     def test_preconditions_the_windows_differ_on_the_headline_and_the_vol_row(self):
         """Without this the scenarios below could not tell the picked window from the default."""
         bodies = _bodies()
-        poll_text = sup.fmt_pct(bodies["pollNew"]["portfolio_strip"]["guard_alpha"])
-        assert poll_text != sup.fmt_pct(_strip("1y")["guard_alpha"]), "poll and 1y headline equal"
+        poll_text = sup.fmt_pp(bodies["pollNew"]["portfolio_strip"]["guard_alpha"])
+        assert poll_text != sup.fmt_pp(_strip("1y")["guard_alpha"]), "poll and 1y headline equal"
         assert sup.vol_texts(_strip("30d")) != sup.vol_texts(_strip("1y")), (
             "30d and 1y vol rows equal"
         )
@@ -394,7 +394,7 @@ def test_a_poll_after_picking_all_time_keeps_the_all_time_headline():
     """
     r = _run(scenario)
     want = _headline("all", "All Time")
-    assert sup.fmt_pct(_bodies()["pollNew"]["portfolio_strip"]["guard_alpha"]) != want["headline"]
+    assert sup.fmt_pp(_bodies()["pollNew"]["portfolio_strip"]["guard_alpha"]) != want["headline"]
     assert r["picked"] == want
     assert r["after"] == want, "the poll replaced the All Time headline"
     assert "/api/strip/all" in r["strips"]

@@ -50,5 +50,12 @@ Autotuner parameters and AI Advisor sections show their values at both widths, i
 - Performance: a symphony with no replay sample has no Replay row; one note names how many lack a sample.
 - Performance risk table: lower-is-better rows use one delta convention and one unit, stated in the header; no meaningless if-held column on reduction rows.
 
+## AC-8 A symphony no longer held is not counted (droplet check)
+Read-only check on 2026-10-31: Composer holds 11 symphonies; `bot_state` holds 12. `INfCn3eKsu6i4oTTqdUp` "(INVEST) Planet of Projected Inflation" has no `shadow_history` row after 2026-09-10 and is not in Composer, yet shows $1,035.09, inflates the tracked total and dilutes portfolio figures. The engine stays frozen and does not prune it.
+- A state entry whose newest `shadow_history` row is older than the two most recent completed sessions that hold rows for other symphonies is "no longer held". It is excluded from dashboard cards, section counts, every portfolio aggregate and weight, the hero series, and the Advisor and Retirement rosters. One shared predicate decides this; no page has its own rule.
+- `/settings` lists it dimmed under "No longer held" so the operator can see it is known. Nothing is deleted from the database.
+- If rows resume, it returns on its own. A symphony newly added with no rows yet is not "no longer held". With fewer than two completed sessions of rows anywhere, nothing is excluded.
+- The frozen branch applies it through the same cut as plan 01, so closed-market figures stay fixed.
+
 ## Testing
 Each assertable item has a failing test first, on the real render or the node harness. Layout-only items are judged by re-capture at the next UX gate; name them in the handoff.

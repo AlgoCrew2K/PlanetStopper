@@ -246,6 +246,14 @@ def fmt_pct(value, decimals: int = 2) -> str:
     return ("+" if value >= 0 else "") + f"{value:.{decimals}f}%"
 
 
+def fmt_pp(value, decimals: int = 2) -> str:
+    """The headline's format: a difference of two returns, signed, fixed decimals, then ``pp``
+    (percentage points); ``--`` for a missing value."""
+    if value is None:
+        return "--"
+    return ("+" if value >= 0 else "") + f"{value:.{decimals}f} pp"
+
+
 def vol_texts(strip: dict) -> dict:
     """The Ann. Vol row text for a strip, formatted as the client formats it (dashes when either side is null)."""
     bot, held = strip.get("vol_bot"), strip.get("vol_held")
