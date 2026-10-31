@@ -953,8 +953,8 @@ class TestTheRetirementTabAgreesWithTheCorrelationsTab:
         as_of = _text(_element_html(body, "correlations-as-of"))
         assert f"Series through {through}" in as_of
 
-    def test_a_summary_that_predates_the_stored_windows_prints_no_series_date(
-        self, client, isolated_db
+    def test_the_series_through_line_follows_the_newest_run_and_never_invents_a_date(
+        self, client, isolated_db, monkeypatch
     ):
         from tests.advisors import _series_captures as captures  # noqa: PLC0415
 
@@ -963,6 +963,11 @@ class TestTheRetirementTabAgreesWithTheCorrelationsTab:
         if 'data-testid="retirement-last-run-series-through"' in block:
             line = _text(_element_html(block, "retirement-last-run-series-through"))
             assert not re.search(r"\d{4}-\d{2}-\d{2}", line), line
+
+        summary = self._seed_real_run(monkeypatch)
+        through = max(w["window_last"] for w in summary["series_windows"].values())
+        line = _element_html(_block_html(_render(client)), "retirement-last-run-series-through")
+        assert f"Series through {through}" in _text(line)
 
     def test_each_excluded_symphony_reads_the_same_sentence_on_both_tabs(
         self, client, isolated_db, monkeypatch

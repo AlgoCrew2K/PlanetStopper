@@ -625,7 +625,10 @@ class TestMatrixStyleContract:
         assert not any(t in body for t in other_tokens), "a band uses only its own token"
 
     def test_the_diversifying_band_never_touches_the_danger_token(self):
-        body = " ".join(_rules_for(".corr-band-diversifying"))
+        bodies = _rules_for(".corr-band-diversifying")
+        assert bodies, "no rule styles .corr-band-diversifying"
+        body = " ".join(bodies)
+        assert "--studio-pos" in body
         assert "--studio-neg" not in body
 
     def test_a_band_sets_no_text_colour_so_the_number_stays_in_the_ink_token(self):
@@ -638,6 +641,7 @@ class TestMatrixStyleContract:
         )
 
     def test_neutral_and_undefined_cells_use_none_of_the_signal_tokens(self):
+        assert _rules_for(".corr-band-danger"), "premise: the filled bands are styled"
         for band in ("neutral", "undefined"):
             body = " ".join(_rules_for(f".corr-band-{band}"))
             assert not any(t in body for t in _TOKEN_FOR_BAND.values()), band
@@ -679,7 +683,14 @@ class TestMatrixStyleContract:
             assert re.search(rf"{re.escape(token)}\s*:", dark), f"{token} missing in dark"
         rule_text = " ".join(body for _sel, body in _matrix_rules())
         referenced = set(re.findall(r"var\((--[\w-]+)", rule_text)) - {"--corr-fill-pct"}
-        assert referenced, "premise: the matrix rules reference tokens"
+        signal_and_ink = {
+            "--studio-neg",
+            "--studio-warn",
+            "--studio-pos",
+            "--studio-ink",
+            "--studio-ink-faint",
+        }
+        assert signal_and_ink <= referenced, "the matrix rules do not use the five tokens"
         for token in referenced:
             assert re.search(rf"{re.escape(token)}\s*:", tokens), f"{token} is not a defined token"
 

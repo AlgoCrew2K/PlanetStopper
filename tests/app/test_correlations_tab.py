@@ -628,6 +628,7 @@ class TestExcludedSymphonies:
         summary = seed_run(monkeypatch, ids=ids)
         assert summary["symphonies_without_series"] == []
         panel = render_panel(client)
+        assert panel.find(testid="correlation-matrix-table") is not None
         assert panel.find(testid="correlations-excluded") is None
         assert panel.find_all(testid="correlations-excluded-item") == []
 

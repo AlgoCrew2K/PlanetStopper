@@ -157,6 +157,9 @@ class TestStoredPairs:
         self, rr, isolated_db, monkeypatch
     ):
         _recs, summary = captures.run_over_captures(monkeypatch)
+        assert summary["status"] == "ok" and summary["pairs_screened"] > 0, (
+            "premise: pairs screened"
+        )
         blocked = sum(
             summary[k]
             for k in (
