@@ -217,6 +217,7 @@ def run(
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=NODE_TIMEOUT_SECONDS,
     )
     assert result.returncode == 0, f"chrome.js harness crashed:\n{result.stderr}"
