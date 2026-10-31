@@ -1,4 +1,4 @@
-<div data-testid="market-prism-block" class="prism-block">
+<div data-testid="market-prism-block" class="hero-section prism-block">
 {# Determine the sentiment value and CSS modifier once for the block #}
 {% if market_prism_summary %}
 {% set _raw = market_prism_summary.get('raw_response', {}) %}
@@ -8,7 +8,7 @@
 {% set _created = market_prism_summary.get('created_at', '') %}
 {% endif %}
 <div class="prism-block-header">
-<span class="prism-block-title">Market Prism</span>
+<span class="section-header prism-block-title">Market Prism</span>
 <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
 {% if market_prism_summary %}
 <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>

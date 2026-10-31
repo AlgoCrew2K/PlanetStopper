@@ -173,6 +173,12 @@ through `tests/_advisor_overview_prism.py`.
 - Capture: `python tests/fixtures/ai_advisor/ux_overhaul_02/capture_prism_block_source.py`, run on the
   unmodified template at lane/ux-02 commit 9f0cc091f109f0b9cb17410f1654663c5af71e55 (the commit before this
   round's RED; its template is that of e854c73c). Time of record: 2026-10-30. Nothing edited.
+- Re-captured 2026-10-31 at 6fdc1fb7 (same script, nothing edited) after the app-shell skeleton work (dd532212)
+  added shared shell classes to two elements of the block: the block's root `div` gained `hero-section`
+  (`class="hero-section prism-block"`) and the title span gained `section-header`
+  (`class="section-header prism-block-title"`). A line diff of the old and new baseline shows exactly those
+  two lines changed and no text, attribute other than `class`, testid or Jinja expression changed; the
+  guard still pins every other line of the block.
 
 ### MARKET_PRISM row (case: a stored nightly read the block renders)
 - Source: `rf1_lens_pipeline_row77.json` (captured read-only from the production state database,
