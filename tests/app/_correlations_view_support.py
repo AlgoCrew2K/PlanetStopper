@@ -7,7 +7,8 @@ for the rendered panel (a small HTML tree from ``tests._ux_truth_support``).
 Derived records (suite fixture rule 4) are built here from one real record each, changing only the
 named fields; ``tests/fixtures/retirement/derived/PROVENANCE.md`` lists every one:
 
-* ``with_run_at_removed``: a real producer summary without ``run_at``;
+* ``with_run_at_removed``, ``with_run_at``: a real producer summary without ``run_at``, or with
+  ``run_at`` set to the nightly slot's instant;
 * ``with_unmapped_exclusion_reason``: a real producer summary whose one exclusion reason is replaced;
 * ``with_pair_correlations``: a real producer summary whose named pairs carry another correlation;
 * ``name_override_*``: the live roster with only display names replaced;
@@ -86,6 +87,12 @@ def load_derived_summary(name: str) -> dict:
 def with_run_at_removed(summary: dict) -> dict:
     out = copy.deepcopy(summary)
     del out["run_at"]
+    return out
+
+
+def with_run_at(summary: dict, run_at: str) -> dict:
+    out = copy.deepcopy(summary)
+    out["run_at"] = run_at
     return out
 
 

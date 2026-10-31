@@ -66,6 +66,7 @@ from tests.app._correlations_view_support import (  # noqa: F401  (fixtures)
     seed_state_only,
     stored_pairs,
     tree_of,
+    with_run_at,
     with_run_at_removed,
     with_unmapped_exclusion_reason,
 )
@@ -253,6 +254,7 @@ class TestRenderIsReadOnlyAndLocal:
     ):
         monkeypatch.setattr(analytics, "list_available_symphonies", lambda _h: ["swap-a", "swap-b"])
         monkeypatch.setattr(analytics, "get_history_with_cache_invalidation", lambda **_kw: {})
+        monkeypatch.setattr("advisors.asset_swap_engine._has_composer_key", lambda: True)
         seed_run(monkeypatch)
         before = _row_snapshot(db_module._db_file())
 
@@ -391,6 +393,17 @@ class TestAsOf:
         assert stored["window_last"] == windows[slow]["window_last"]
         for cell in grid.cells_of_pair(slow, other):
             assert f"{stored['window_first']} to {stored['window_last']}" in cell.attrs["title"]
+
+    def test_the_nightly_slots_utc_instant_reads_as_the_previous_evenings_eastern_time(
+        self, client, isolated_db, monkeypatch
+    ):
+        """03:45 UTC on 2026-10-22 is 23:45 EDT on 2026-10-21."""
+        _recs, produced = captures.run_over_captures(monkeypatch)
+        summary = with_run_at(produced, "2026-10-22T03:45:00Z")
+        seed_state_only(summary)
+        text = collapse(render_panel(client).find(testid="correlations-as-of").text)
+        assert text == _expected_as_of(summary)
+        assert text.endswith("run 2026-10-21 23:45 ET"), text
 
     def test_a_run_without_a_recorded_time_says_so(self, client, isolated_db, monkeypatch):
         _recs, produced = captures.run_over_captures(monkeypatch)
@@ -759,4 +772,6 @@ class TestCrisisCaveatInEveryState:
         monkeypatch.setattr(
             "advisors.correlation_diagnostic.CRISIS_CAVEAT", "Stress changes everything here."
         )
-        assert self._banner_text(client) == "Stress changes everything here."
+        text = self._banner_text(client)
+        assert "Stress changes everything here." in text
+        assert "destabilize" not in text, "the banner still shows the old fixed sentence"
