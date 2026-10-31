@@ -183,6 +183,13 @@ class TestAppendOnly:
         assert ROLE not in app_module._ADVISOR_ROLES
 
 
+def last_run_body(client):
+    response = client.get(LAST)
+    assert response.status_code != 404, f"GET {LAST} is not registered"
+    assert response.status_code == 200
+    return response.get_json()
+
+
 class TestLastRunRead:
     def test_none_before_any_run(self, client):
         response = client.get(LAST)
@@ -193,19 +200,19 @@ class TestLastRunRead:
     def test_the_newest_runs_summary(self, client):
         start(client, built=(1, 1))
         newest = start(client, built=(0, 0))
-        body = client.get(LAST).get_json()
+        body = last_run_body(client)
         assert body["last_run"]["run_id"] == newest["run_id"]
         assert body["last_run"]["status"] == "completed" and body["last_run"]["proposals"] == 0
 
     def test_a_failed_run_is_read_with_its_code(self, client):
         start(client, built=(RuntimeError("x"), RuntimeError("y")))
-        assert client.get(LAST).get_json()["last_run"]["error_code"] == "all_symphonies_failed"
+        assert last_run_body(client)["last_run"]["error_code"] == "all_symphonies_failed"
 
     def test_behind_the_auth_gate_and_read_only(self, client, monkeypatch):
         assert "frontrunner_build_last_run" not in app_module._AUTH_EXEMPT_ENDPOINTS
         spy = MagicMock(side_effect=AssertionError("the read opened a read-write connection"))
         monkeypatch.setattr(database, "get_connection", spy)
-        assert client.get(LAST).status_code == 200
+        last_run_body(client)
         spy.assert_not_called()
         monkeypatch.setenv("DASHBOARD_PASSWORD", "placeholder-password")
         monkeypatch.setenv("SECRET_KEY", "placeholder-secret-key")

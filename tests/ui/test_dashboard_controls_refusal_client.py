@@ -48,6 +48,12 @@ COMMON = """
   const post = (re) => H.fetchLog.filter((e) => e.method === 'POST' && re.test(e.url));
   const surfaced = () => alerts.join(' | ') + ' | ' + H.sandbox.document.body.textContent;
   const tokenGets = () => H.fetchLog.filter((e) => e.url === '/api/csrf-token').length;
+  let serverToken = 'tok';
+  // The daemon restarted after the page loaded: the token route answers the new token from now on.
+  const restart = () => {
+    serverToken = H.bodies.tokenB.body.csrf_token;
+    H.route('/api/csrf-token', {fn: () => ({body: {csrf_token: serverToken}})});
+  };
   const refused = H.bodies.refused, tokenB = H.bodies.tokenB;
   const newButton = () => {
     const b = H.sandbox.document.createElement('button');
@@ -87,7 +93,7 @@ def run(scenario, **extra):
     }
     out = run_scenario(
         world,
-        COMMON + "\nawait H.boot({extras: true});\n" + scenario,
+        COMMON + "\nawait H.boot({extras: true});\nrestart();\n" + scenario,
         extra_bodies=bodies,
         scripts=SCRIPTS,
     )
@@ -129,7 +135,6 @@ class TestCashNow:
             CASH
             + """
             H.route('/api/sell_account', {fn: seq([{status: 403, text: H.bodies.refused.text}])});
-            H.route('/api/csrf-token', {fn: seq([{body: {csrf_token: 'tok'}}, H.bodies.tokenB])});
             await click();
             await H.runTimers(60000);
             return {text: card.textContent, disabled: btn.hasAttribute('disabled'),
@@ -194,7 +199,6 @@ class TestFleetDismiss:
             self.DISMISS
             + """
             H.route('/api/fleet-alert/dismiss', {fn: seq([{status: 403, text: H.bodies.refused.text}])});
-            H.route('/api/csrf-token', {fn: seq([{body: {csrf_token: 'tok'}}, H.bodies.tokenB])});
             await dismiss();
             await H.runTimers(60000);
             return {banner: banner.hasAttribute('hidden'), notice: notice.textContent,
@@ -230,7 +234,7 @@ class TestFleetDismiss:
             """
         )
         assert result["banner"] is True
-        assert result["p"]["headers"] == {"X-CSRF-Token": "tok"} and result["p"]["body"] is None
+        assert result["p"]["headers"] == {"X-CSRF-Token": "tok"} and result["p"].get("body") is None
 
 
 class TestManagedSleeves:
@@ -245,7 +249,6 @@ class TestManagedSleeves:
         result = run(
             f"""
             H.route(/\\/api\\/sleeves\\//, {{fn: seq([{{status: 403, text: H.bodies.refused.text}}])}});
-            H.route('/api/csrf-token', {{fn: seq([{{body: {{csrf_token: 'tok'}}}}, H.bodies.tokenB])}});
             const btn = newButton();
             {self.CALLS[which]};
             await H.settle();
@@ -267,7 +270,6 @@ class TestRestartSeenOnTheStatePoll:
             const first = Object.assign({}, H.bodies.state, {daemon_started_at: '2026-10-22T09:00:00Z'});
             const second = Object.assign({}, H.bodies.state, {daemon_started_at: '2026-10-22T10:43:30Z'});
             H.route('/api/state', {fn: seq([{body: first}, {body: second}])});
-            H.route('/api/csrf-token', {fn: seq([{body: {csrf_token: 'tok'}}, H.bodies.tokenB])});
             await H.sandbox.loadState();
             await H.settle();
             const afterFirst = tokenGets();

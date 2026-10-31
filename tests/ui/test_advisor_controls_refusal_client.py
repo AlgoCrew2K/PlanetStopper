@@ -110,15 +110,18 @@ CASES = {
 def on_advisor(scenario, *routes_):
     return run_page(
         render_page("/ai-advisor"),
-        "await H.boot();\n" + scenario,
+        "await H.boot();\n" + RESTART + scenario,
         routes=list(routes_),
         pathname="/ai-advisor",
     )
 
 
-def token_sequence(*, rotated=True):
-    second = answers.token_answer() if rotated else {"reject": True}
-    return route(TOKEN_URL, {"json": {"csrf_token": DEFAULT_TOKEN}}, second, method="GET")
+# The daemon restarted after the page loaded: from now on the token route answers the new token.
+RESTART = "H.setToken('" + answers.TOKEN_B + "');\n"
+
+
+def token_down():
+    return route(TOKEN_URL, {"json": {"csrf_token": DEFAULT_TOKEN}}, {"reject": True}, method="GET")
 
 
 @pytest.mark.parametrize("name", list(CASES))
@@ -133,7 +136,6 @@ class TestEveryControl:
             return H.surfaced();
             """,
             route(case["url"], answers.csrf_refused(), method="POST"),
-            token_sequence(),
         )
         assert len(out.posts(case["url"].removesuffix("$"))) == 1, (
             f"{name}: a refused POST was sent again"
@@ -157,7 +159,6 @@ class TestEveryControl:
             return 1;
             """,
             route(case["url"], answers.csrf_refused(), ok, method="POST", strict=True),
-            token_sequence(),
         )
         first, second = out.posts(case["url"].removesuffix("$"))
         assert first["headers"]["x-csrf-token"] == DEFAULT_TOKEN
@@ -195,7 +196,6 @@ class TestChat:
             return {surfaced: H.surfaced(), input: H.value('#chat-input'), posts: H.posts('/ai-advisor/chat/send').length};
             """,
             route(r"/ai-advisor/chat/send$", answers.csrf_refused(), method="POST"),
-            token_sequence(),
         )
         assert out.result["posts"] == 1
         assert NOT_SENT.search(out.result["surfaced"]) and "Send again" in out.result["surfaced"]
@@ -218,7 +218,6 @@ class TestChat:
                 method="POST",
                 strict=True,
             ),
-            token_sequence(),
         )
         first, second = out.posts("/ai-advisor/chat/send")
         assert second["headers"]["x-csrf-token"] == answers.TOKEN_B

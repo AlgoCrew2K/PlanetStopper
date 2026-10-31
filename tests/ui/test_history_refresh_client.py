@@ -43,7 +43,7 @@ PAGE_STATE = """
     hero: H.text('[data-testid="history-hero"]'),
     bars: H.$('#daily-chart-svg').innerHTML,
     reasons: H.$('[data-testid="by-reason-section"]').innerHTML,
-    stamp: H.text('#history-data-as-of'),
+    stamp: H.text('#history-data-as-of') || '',
   });
 """
 

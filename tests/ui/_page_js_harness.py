@@ -153,6 +153,7 @@ const unrouted = [];
 const held = {};
 let currentAction = null;
 let actionSeq = 0;
+let currentToken = input.token;
 const routes = input.routes.map(function (r) { return Object.assign({ n: 0, queue: (r.responses || []).slice() }, r); });
 function headersOf(init) {
   const h = {};
@@ -193,6 +194,7 @@ globalThis.fetch = function (url, init) {
     let spec;
     if (r.strict) { if (!r.queue.length) break; spec = r.queue.shift(); }
     else { spec = r.responses[Math.min(r.n, r.responses.length - 1)]; r.n += 1; }
+    if (spec.token_dynamic) spec = { json: { csrf_token: currentToken } };
     const finish = function (resolve, reject) {
       if (spec.reject) reject(new TypeError(spec.reject === true ? 'Failed to fetch' : String(spec.reject)));
       else resolve(makeResponse(spec));
@@ -289,6 +291,8 @@ const H = {
   // Both clocks jump and no timer runs (a closed laptop); the next advance runs what is overdue.
   sleep: function (ms) { currentAction = null; step(ms); },
   release: async function (name) { held[name](); await settle(); },
+  // The daemon restarted: from now on GET /api/csrf-token answers `token` (a route given {token_dynamic: true}).
+  setToken: function (token) { currentToken = token; },
   fireWindow: async function (type, props) { globalThis.dispatchEvent(Object.assign({ type: type }, props || {})); await settle(); },
   fireDocument: async function (type, props) {
     (doc._listeners[type] || []).slice().forEach(function (fn) { fn.call(doc, Object.assign(mkEvent(type, doc), props || {})); });
@@ -365,10 +369,14 @@ def route(pattern: str, *responses: dict, method: str | None = None, strict: boo
     return {"pattern": pattern, "method": method, "responses": list(responses), "strict": strict}
 
 
-def default_routes(token: str = DEFAULT_TOKEN) -> list[dict]:
-    """Answers for the requests every page makes on load that a scenario is not about."""
+def default_routes() -> list[dict]:
+    """Answers for the requests every page makes on load that a scenario is not about.
+
+    The token route answers whatever token the daemon holds now: the start token until a scenario
+    calls ``H.setToken(...)`` (a restart), the new one after.
+    """
     return [
-        route(r"/api/csrf-token$", {"json": {"csrf_token": token}}, method="GET"),
+        route(r"/api/csrf-token$", {"token_dynamic": True}, method="GET"),
         route(
             r"/api/candidate-alert$",
             {"json": {"new_valid_count": 0, "last_run": None}},
@@ -414,6 +422,7 @@ def run_page(
     wall: str = DEFAULT_WALL,
     mono_ms: float = DEFAULT_MONO_MS,
     confirm: bool = True,
+    token: str = DEFAULT_TOKEN,
 ) -> PageRun:
     """Run ``scenario`` (an async function body taking ``H``) over the page; return what happened.
 
@@ -434,6 +443,7 @@ def run_page(
         "wall": wall,
         "mono_ms": mono_ms,
         "confirm": confirm,
+        "token": token,
     }
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)

@@ -125,8 +125,11 @@ class TestDismissAnswersAfterItsWriteLands:
             write_may_proceed.wait(timeout=5)
 
         def _post():
+            import app as flask_app
+
             answered["thread"] = threading.current_thread().ident
-            answered["response"] = flask_client.post("/api/fleet-alert/dismiss")
+            # A client of its own: the fixture's client keeps its request context for its thread.
+            answered["response"] = flask_app.app.test_client().post("/api/fleet-alert/dismiss")
 
         with (
             patch("database.read_fleet_alert", return_value=_active_row()),

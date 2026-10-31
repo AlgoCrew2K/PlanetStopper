@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -35,7 +36,6 @@ A, B = "symphony_a", "symphony_b"
 NAME_A, NAME_B = "Copper Ridge Rotation", "Granite Bay Momentum"
 GET_A = rf"/api/symphony-settings/{A}$"
 GET_B = rf"/api/symphony-settings/{B}$"
-TOKEN_URL = r"/api/csrf-token$"
 SAVE = "#sym-settings-save"
 TOGGLE = "#sym-settings-live-toggle"
 NOT_SENT = re.compile(r"not sent", re.I)
@@ -64,11 +64,15 @@ def run(scenario, *routes_):
     scripts = [s for s in page_scripts(html) if s != "history.js"] + ["settings-modal.js"]
     return run_page(
         html,
-        "await H.boot();\n" + scenario,
+        "await H.boot();\n" + RESTART + scenario,
         routes=list(routes_),
         scripts=scripts,
         pathname="/history",
     )
+
+
+# The daemon restarted after the page loaded: from now on the token route answers the new token.
+RESTART = "H.setToken('" + answers.TOKEN_B + "');\n"
 
 
 OPEN_B = f"""
@@ -211,12 +215,6 @@ class TestRefusedSave:
                 method="POST",
                 strict=True,
             ),
-            route(
-                TOKEN_URL,
-                {"json": {"csrf_token": DEFAULT_TOKEN}},
-                answers.token_answer(),
-                method="GET",
-            ),
         )
         after = out.result["after"]
         assert after["posts"] == 1, "the refused save was sent again"
@@ -249,14 +247,54 @@ class TestRefusedSave:
                 {"json": {"status": "ok"}, "hold": "save-lands"},
                 method="POST",
             ),
-            route(
-                TOKEN_URL,
-                {"json": {"csrf_token": DEFAULT_TOKEN}},
-                answers.token_answer(),
-                method="GET",
-            ),
         )
         assert out.result["duringFlight"] == {"posts": 1, "gets": 2}
         assert "Couldn't save" not in out.result["text"], (
             "the save's own (good) answer was not rendered"
+        )
+
+
+class TestADashboardPollLeavesTheOpenModalAlone:
+    """The real ``index.js`` and ``settings-modal.js`` together, in the whole-file harness."""
+
+    def test_the_symphony_values_and_edits_survive_a_poll(self, symphonies):
+        from tests.dashboard._index_js_harness import get_world, run_scenario
+
+        static = Path(__file__).resolve().parents[2] / "static"
+        scripts = tuple(
+            f"static/{name}"
+            for name in ("request_guard.js", "chrome.js", "index.js", "settings-modal.js")
+            if (static / name).exists()
+        )
+        result = run_scenario(
+            get_world("cards-open"),
+            f"""
+            await H.boot({{extras: true}});
+            H.route('/api/symphony-settings/{B}', {{body: H.bodies.symB}});
+            const doc = H.sandbox.document;
+            H.sandbox.openSymphonySettings(null, '{B}');
+            await H.settle();
+            doc.getElementById('sym-settings-live-toggle').click();
+            await H.settle();
+            const view = () => ({{
+              modal: doc.getElementById('sym-settings-modal').textContent,
+              pending: doc.getElementById('sym-settings-live-toggle').getAttribute('aria-checked'),
+            }});
+            const before = view();
+            await H.sandbox.loadState();
+            await H.runTimers(30000);
+            const after = view();
+            doc.getElementById('sym-settings-save').click();
+            await H.settle();
+            return {{before, after, confirm: !!doc.getElementById('sym-settings-confirm'),
+                    posts: H.fetchLog.filter((e) => e.method === 'POST').length}};
+            """,
+            extra_bodies={"symB": symphonies[B]},
+            scripts=scripts,
+        )["result"]
+        assert result["after"] == result["before"], "a poll changed the open modal"
+        assert NAME_B in result["after"]["modal"]
+        assert result["after"]["pending"] == "true", "the operator's live edit was lost"
+        assert result["confirm"] is True and result["posts"] == 0, (
+            "the save after a poll must still ask the go-live confirmation first"
         )

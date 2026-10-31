@@ -120,7 +120,10 @@ class TestExpiredLoginForm:
 
 
 class TestOtherRefusalsAreUntouched:
-    def test_another_post_refused_for_its_token_keeps_the_hooks_403_page(self, guarded):
+    def test_another_post_refused_for_its_token_keeps_the_hooks_403_page(
+        self, guarded, monkeypatch
+    ):
+        monkeypatch.setattr(app_module, "_auth_check_enabled", False)  # reach the CSRF hook
         response = guarded.post("/api/trigger", headers={"X-CSRF-Token": "stale"})
         body = response.get_data(as_text=True)
         assert response.status_code == 403

@@ -89,6 +89,7 @@ class TestMarkup:
     def test_dashboard_keeps_its_own_header_driver(self):
         html = render_page("/")
         assert 'data-header-poll="1"' not in html, "/ is driven by its /api/state poll"
+        assert "/static/request_guard.js" in html, "request_guard.js is not loaded by the page"
         assert html.find("/static/request_guard.js") < html.find("/static/chrome.js")
 
     @pytest.mark.parametrize("path", [*FOUR_PAGES, "/"])

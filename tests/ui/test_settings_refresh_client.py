@@ -42,17 +42,15 @@ def seeded():
     return page.seed_state(flags=True)
 
 
-def token_sequence():
-    return route(
-        TOKEN_URL, {"json": {"csrf_token": DEFAULT_TOKEN}}, answers.token_answer(), method="GET"
-    )
+# The daemon restarted after the page loaded: from now on the token route answers the new token.
+RESTART = "H.setToken('" + answers.TOKEN_B + "');\n"
 
 
 def run(scenario, *routes_, wall=None):
     kw = {"wall": wall} if wall else {}
     return run_page(
         render_page("/settings"),
-        "await H.boot();\n" + scenario,
+        "await H.boot();\n" + RESTART + scenario,
         routes=list(routes_),
         pathname="/settings",
         **kw,
@@ -84,7 +82,6 @@ class TestSaveAfterARestart:
                 header_answer(at, daemon_started_at="2026-10-22T10:43:30Z"),
                 method="GET",
             ),
-            token_sequence(),
             wall=wall_of(at),
         )
         assert out.result == 2, "the restart must fetch one new token before the click"
@@ -109,7 +106,6 @@ class TestSaveAfterARestart:
                 method="POST",
                 strict=True,
             ),
-            token_sequence(),
         )
         after = out.result
         assert NOT_SAVED in after["surfaced"]
@@ -137,7 +133,6 @@ class TestSaveAfterARestart:
                 header_answer(at, daemon_started_at="2026-10-22T10:43:30Z"),
                 method="GET",
             ),
-            token_sequence(),
             wall=wall_of(at),
         )
         assert out.result == 1
@@ -195,7 +190,6 @@ class TestFlush:
             route(SETTINGS, page.settings_get_answer(), method="GET"),
             route(r"/api/armed-symphonies$", page.armed_answer(), method="GET"),
             route(r"/api/settings/flush-resync$", answers.csrf_refused(), method="POST"),
-            token_sequence(),
         )
         assert len(out.posts("flush-resync")) == 1
         text = out.result.lower()

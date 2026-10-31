@@ -45,13 +45,19 @@ OPEN_AND_CONFIRM = """
 """
 
 
-def token_sequence(*, rotated=True):
-    second = answers.token_answer() if rotated else {"reject": True}
-    return route(TOKEN_URL, {"json": {"csrf_token": DEFAULT_TOKEN}}, second, method="GET")
+# The daemon restarted after the page loaded: from now on the token route answers the new token.
+RESTART = "H.setToken('" + answers.TOKEN_B + "');\n"
+
+
+def token_down():
+    """The token route works at load and fails after the restart."""
+    return route(TOKEN_URL, {"json": {"csrf_token": DEFAULT_TOKEN}}, {"reject": True}, method="GET")
 
 
 def on_history(scenario, *routes_):
-    return run_page(render_page("/history"), "await H.boot();\n" + scenario, routes=list(routes_))
+    return run_page(
+        render_page("/history"), "await H.boot();\n" + RESTART + scenario, routes=list(routes_)
+    )
 
 
 class TestForceRun:
@@ -66,7 +72,6 @@ class TestForceRun:
             return {{shown, early, late, gets: H.to('/api/csrf-token').length}};
             """,
             route(r"/api/trigger$", answers.csrf_refused(), method="POST"),
-            token_sequence(),
         )
         assert out.result["shown"]["text"] == "Not sent: click again"
         assert out.result["early"]["text"] == "Not sent: click again"
@@ -78,7 +83,7 @@ class TestForceRun:
         out = on_history(
             f"await H.click('{FORCE}'); return H.text('{FORCE}');",
             route(r"/api/trigger$", answers.csrf_refused(), method="POST"),
-            token_sequence(rotated=False),
+            token_down(),
         )
         assert NOT_SENT.search(out.result) and CONNECTION.search(out.result), out.result
         assert len(out.posts("/api/trigger")) == 1
@@ -104,7 +109,6 @@ class TestEmergencyLiquidate:
         return [
             route(r"/api/accounts$", answers.accounts([ACCOUNT]), method="GET"),
             route(r"/api/sell_account$", sell, method="POST"),
-            token_sequence(),
         ]
 
     def test_refusal_sends_one_request_and_tells_the_operator_to_confirm_again(self):
@@ -125,7 +129,7 @@ class TestEmergencyLiquidate:
         accepted = answers.accepted_sell(ACCOUNT)
         out = run_page(
             render_page("/history"),
-            "await H.boot();\n" + OPEN_AND_CONFIRM + OPEN_AND_CONFIRM + "return 1;",
+            "await H.boot();\n" + RESTART + OPEN_AND_CONFIRM + OPEN_AND_CONFIRM + "return 1;",
             routes=[
                 route(r"/api/accounts$", answers.accounts([ACCOUNT]), method="GET"),
                 route(
@@ -135,7 +139,6 @@ class TestEmergencyLiquidate:
                     method="POST",
                     strict=True,
                 ),
-                token_sequence(),
             ],
         )
         first, second = out.posts("/api/sell_account")
@@ -159,7 +162,7 @@ class TestEmergencyLiquidate:
             OPEN_AND_CONFIRM + "return 1;",
             route(r"/api/accounts$", answers.accounts([ACCOUNT]), method="GET"),
             route(r"/api/sell_account$", answers.csrf_refused(), method="POST"),
-            token_sequence(rotated=False),
+            token_down(),
         )
         (alert,) = out.alerts
         assert NOT_SENT.search(alert) or "nothing was liquidated" in alert
@@ -179,7 +182,6 @@ class TestMarkViewed:
                 method="GET",
             ),
             route(r"/api/candidate-alert/mark-viewed$", mark, method="POST"),
-            token_sequence(),
         ]
 
     def test_refused_keeps_the_badge_and_the_next_click_sends_one_post_with_the_new_token(self):

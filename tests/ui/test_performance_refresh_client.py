@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
 
+import analytics
 from tests.ui import _performance_page as perf
 from tests.ui._header_status_answers import lapsed_session_answer
 from tests.ui._page_js_harness import render_page, route
@@ -58,7 +60,9 @@ PANELS = """
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
+    # analytics reads the shadow table through its own DB_FILE; point it at this test's database.
+    monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
     return perf.seed_world()
 
 
@@ -133,10 +137,16 @@ class TestExitTurnoverKeepsLastGoodRows:
         good = {sid: perf.get_real(f"/api/exit-turnover?symphony_id={sid}") for sid in ids}
         flaky = {sid: [good[sid], {"status": 500, "json": {}}, good[sid]] for sid in ids}
         out = run(
-            "await H.advance(60000); await H.advance(60000); return panels().turnoverPanel;",
+            """
+            await H.advance(60000);
+            const lost = panels().turnoverPanel;
+            await H.advance(60000);
+            return {lost, recovered: panels().turnoverPanel};
+            """,
             perf.real_routes(turnover_overrides=flaky),
         )
-        assert "connection lost" not in out.result.lower()
+        assert "connection lost" in out.result["lost"].lower()
+        assert "connection lost" not in out.result["recovered"].lower()
 
 
 class TestSession:

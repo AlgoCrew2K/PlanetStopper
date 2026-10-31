@@ -15,11 +15,13 @@ stamp is read for. ``days`` is an integer row count so no calendar cutoff makes 
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+import analytics
 import app as app_module
 import database
 
@@ -28,6 +30,12 @@ ROWS = json.loads(
         Path(__file__).resolve().parents[1] / "fixtures" / "prod_droplet" / "shadow_last_rows.json"
     ).read_text(encoding="utf-8")
 )
+
+
+@pytest.fixture(autouse=True)
+def _analytics_reads_the_test_database(monkeypatch):
+    """analytics reads the shadow table through its own DB_FILE; point it at this test's database."""
+    monkeypatch.setattr(analytics, "DB_FILE", os.environ["DB_PATH"])
 
 
 @pytest.fixture

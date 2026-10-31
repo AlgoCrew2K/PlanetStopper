@@ -40,11 +40,8 @@ def on_history(scenario, *, routes=()):
     return run_page(render_page("/history"), "await H.boot();\n" + scenario, routes=list(routes))
 
 
-def token_sequence():
-    """The token route as a daemon restart leaves it: the old token at load, the new one after."""
-    return route(
-        TOKEN_URL, {"json": {"csrf_token": DEFAULT_TOKEN}}, answers.token_answer(), method="GET"
-    )
+# The daemon restarted after the page loaded: from now on the token route answers the new token.
+RESTART = f"H.setToken('{answers.TOKEN_B}');\n"
 
 
 PRESENT = "if (!window.PSRequest) throw new Error('window.PSRequest is not defined');\n"
@@ -166,9 +163,9 @@ class TestTokenHolder:
     def test_concurrent_refreshes_share_one_request(self):
         out = on_history(
             PRESENT
+            + RESTART
             + "const both = await Promise.all([PSRequest.refreshCsrf(), PSRequest.refreshCsrf()]);"
             "return {both, gets: H.to('/api/csrf-token').length, token: PSRequest.csrfToken()};",
-            routes=[token_sequence()],
         )
         assert out.result["both"] == [True, True]
         assert out.result["gets"] == 2, "one fetch at load plus exactly one shared refresh"
@@ -199,16 +196,14 @@ class TestPostAction:
     def test_a_refused_post_refreshes_the_token_and_is_never_repeated(self):
         out = on_history(
             PRESENT
+            + RESTART
             + f"""
             let res;
             await H.act('click', async () => {{ res = await PSRequest.postAction('{POST_URL}', {self.INIT}); }});
             await H.advance(60000);
             return {{res, token: PSRequest.csrfToken(), posts: H.posts().length, gets: H.to('/api/csrf-token').length}};
             """,
-            routes=[
-                route(POST_URL + "$", answers.csrf_refused(), method="POST"),
-                token_sequence(),
-            ],
+            routes=[route(POST_URL + "$", answers.csrf_refused(), method="POST")],
         )
         res = out.result["res"]
         assert res["refused"] == "csrf" and res["tokenRefreshed"] is True and res["ok"] is False
@@ -316,6 +311,7 @@ class TestRestartDetection:
     def test_a_changed_start_stamp_refreshes_the_token_once_and_an_unchanged_one_never(self):
         out = on_history(
             PRESENT
+            + RESTART
             + """
             const gets = () => H.to('/api/csrf-token').length;
             PSRequest.noteDaemonStart('2026-10-22T14:00:00Z');
@@ -330,7 +326,6 @@ class TestRestartDetection:
             await H.advance(10 * 60 * 1000);
             return {afterFirst, afterSame, afterChange, afterTenMinutes: gets(), token: PSRequest.csrfToken()};
             """,
-            routes=[token_sequence()],
         )
         r = out.result
         assert (r["afterFirst"], r["afterSame"]) == (1, 1), (
@@ -347,7 +342,8 @@ class TestRestartDetection:
         at = et(10, 43, 5)
         out = run_page(
             render_page("/history"),
-            "await H.boot(); await H.advance(30000); return {token: PSRequest.csrfToken(), gets: H.to('/api/csrf-token').length};",
+            "await H.boot(); H.setToken('" + answers.TOKEN_B + "'); await H.advance(30000);"
+            " return {token: PSRequest.csrfToken(), gets: H.to('/api/csrf-token').length};",
             routes=[
                 route(
                     r"/api/header-status$",
@@ -356,7 +352,6 @@ class TestRestartDetection:
                     method="GET",
                     strict=True,
                 ),
-                token_sequence(),
             ],
             wall=wall_of(at),
         )
@@ -367,12 +362,10 @@ class TestTabsAreIndependent:
     def test_one_tabs_refusal_leaves_the_other_tab_untouched(self):
         refused_tab = on_history(
             PRESENT
+            + RESTART
             + f"await H.act('click', async () => {{ await PSRequest.postAction('{POST_URL}', {TestPostAction.INIT}); }});"
             "return PSRequest.csrfToken();",
-            routes=[
-                route(POST_URL + "$", answers.csrf_refused(), method="POST"),
-                token_sequence(),
-            ],
+            routes=[route(POST_URL + "$", answers.csrf_refused(), method="POST")],
         )
         other_tab = on_history(
             PRESENT
