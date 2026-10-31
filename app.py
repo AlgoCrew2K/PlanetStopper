@@ -5125,7 +5125,8 @@ def get_windowed_strip(window):
         bot_state = _without_symphonies(bot_state, gone)
         trading_day = snapshot.get("trading_day") or trading_day
     else:
-        bot_state = _without_symphonies(bot_state, _no_longer_held_ids(bot_state, None, now_et))
+        gone = _no_longer_held_ids(bot_state, None, now_et)
+        bot_state = _without_symphonies(bot_state, gone)
         symphony_keys = [k for k, v in bot_state.items() if isinstance(v, dict) and "name" in v]
         symphonies_list = []
         for k in symphony_keys:
@@ -5145,8 +5146,12 @@ def get_windowed_strip(window):
 
     try:
         if frozen_conn is None:
+            # The series reads the saved state for its value weights. It is handed this one only
+            # when a no-longer-held entry has to be left out of them; otherwise the call is the
+            # one the route has always made.
+            weights_state = {"state": bot_state} if gone else {}
             strip = analytics.compute_windowed_portfolio_strip(
-                symphonies_list, bot_state, window=token, state=bot_state
+                symphonies_list, bot_state, window=token, **weights_state
             )
         else:
             strip = analytics.compute_windowed_portfolio_strip(

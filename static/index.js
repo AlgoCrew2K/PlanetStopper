@@ -146,9 +146,14 @@
         return (value >= 0 ? '+' : '') + value.toFixed(decimals) + '%';
     }
 
-    // A difference of two returns, in percentage points: signed, two decimals, then "pp".
+    // A difference of two returns, in percentage points: signed, two decimals, then "pp". The
+    // compact number format applies as it does to every other figure (1234.5 reads "1.2k pp").
     function fmtPp(value) {
         if (value == null || isNaN(value)) return '--';
+        var numFormat = document.documentElement.dataset.numFormat || 'full';
+        if (numFormat === 'compact' && Math.abs(value) >= 1000) {
+            return (value / 1000).toFixed(1) + 'k pp';
+        }
         return (value >= 0 ? '+' : '') + value.toFixed(2) + ' pp';
     }
 

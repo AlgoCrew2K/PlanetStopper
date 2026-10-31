@@ -38,7 +38,15 @@ textarea {
   font-family: inherit;
 }
 
-/* On a phone the page uses its width: a smaller inset at the page edge and in each panel. */
+.page-wrap {
+  box-sizing: border-box;
+  max-width: var(--studio-page-max-width);
+  margin: 0 auto;
+  padding: 24px var(--studio-page-inset) 48px;
+}
+
+/* On a phone the page uses its width: a smaller inset at the page edge and in each panel. The
+   top inset follows the base rule above, whose padding shorthand would otherwise override it. */
 @media (max-width: 700px) {
   :root {
     --studio-page-inset: 14px;
@@ -49,12 +57,21 @@ textarea {
   }
 }
 
-.page-wrap {
-  box-sizing: border-box;
-  max-width: var(--studio-page-max-width);
-  margin: 0 auto;
-  padding: 24px var(--studio-page-inset) 48px;
+/* Rules beside the shared primitives, kept above them: the primitives below stay the sheet's
+   closing run. */
+
+/* A stat tile's one-line statement of what the number is (basis, window, unit). */
+.mini-stat-note {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--studio-ink-faint);
+  margin-top: 4px;
 }
+
+/* The shared stat labels, section headers and chips are upper-case. A Greek alpha or rho in
+   one would turn into the Latin A or P and read as another word, so the glyph carries this
+   class: lower-case, whatever its parent does. The one rule for every page. */
+.alpha-glyph { text-transform: none; }
 
 /* ---- Shared dashboard primitives (SC-5) ----
    Moved byte-for-byte, in order, from the inline style block of
@@ -103,19 +120,6 @@ textarea {
   letter-spacing: 0.06em;
   color: var(--studio-ink-faint);
 }
-
-/* A stat tile's one-line statement of what the number is (basis, window, unit). */
-.mini-stat-note {
-  font-size: 10px;
-  line-height: 1.35;
-  color: var(--studio-ink-faint);
-  margin-top: 4px;
-}
-
-/* The shared stat labels, section headers and chips are upper-case. A Greek alpha or rho in
-   one would turn into the Latin A or P and read as another word, so the glyph carries this
-   class: lower-case, whatever its parent does. The one rule for every page. */
-.alpha-glyph { text-transform: none; }
 
 @media (max-width: 700px) {
   .hero-section {

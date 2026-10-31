@@ -581,7 +581,8 @@
         /* A proposal card is a column whose action row sits at its foot, so the Approve buttons of
            cards side by side line up whatever the length of the text above them. */
         .sym-card.proposal-card { display: flex; flex-direction: column; }
-        .sym-card.proposal-card .proposal-actions { margin-top: auto; padding-top: 0.75rem; }
+        .sym-card.proposal-card .proposal-actions { margin-top: auto; }
+        .proposal-card .proposal-actions { padding-top: 0.75rem; }
 
         /* One labelled line each: identity, what Approve does, what the overlay adds. */
         .fr-line { font-size: 0.8125rem; margin: 0.25rem 0; line-height: 1.4; }
@@ -1001,12 +1002,12 @@
         .retirement-tiles { flex-wrap: wrap; margin-bottom: 0.5rem; }
         .retirement-tiles > * { min-width: 7.5rem; }
         .retirement-pointer-row { margin-bottom: 1rem; }
-        .retirement-pointer-row a { text-decoration: none; }
-        .retirement-pointer-row a .mini-stat-label {
-            color: var(--studio-accent);
+        .retirement-pointer-row a {
             text-decoration: underline;
             text-underline-offset: 0.2em;
+            color: var(--studio-accent);
         }
+        .retirement-pointer-row a > span { color: var(--studio-accent); }
         .retirement-last-run-state {
             color: var(--studio-ink);
             font-weight: 700;
