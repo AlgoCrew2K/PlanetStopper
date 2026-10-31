@@ -240,8 +240,9 @@ def pytest_runtest_protocol(item, nextitem):
     for leak in _FUNCTION_LEAK_GUARD.restore():
         message = (
             f"{item.nodeid} left a stand-in on the module: {leak.describe()}. "
-            "The real function was put back; patch it with a context manager that is "
-            "undone before the suite's own stub, or request the stub fixture so it is."
+            "The recorded value was put back; patch a function with a context manager that is "
+            "undone before the suite's own stub, or request the stub fixture so it is; a test "
+            "that reloads a module restores its DB_PATH-derived paths before it deletes the file."
         )
         item.config.hook.pytest_warning_recorded.call_historic(
             kwargs={
