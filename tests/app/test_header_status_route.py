@@ -210,7 +210,10 @@ class TestLiveness:
         for key, value in health.items():
             assert body[key] == value, f"{key} must be the health helper's value"
 
-    def test_a_healthy_daemon_reports_no_reasons(self, client, at):
+    def test_a_healthy_daemon_reports_no_reasons(self, client, at, monkeypatch):
+        # A daemon that ticked just now. With no tick stamped the check counts from the process
+        # start, and a test process that has run for minutes would read as a stalled scheduler.
+        monkeypatch.setattr(app_module, "_scheduler_last_tick_mono", app_module._monotonic())
         body = get_ok(client)
         assert body["degraded_reasons"] == []
         assert body["status"] == "ok"

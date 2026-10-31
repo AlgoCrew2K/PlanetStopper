@@ -203,7 +203,8 @@ class TestLabels:
             ),
             wall=wall_of(before),
         )
-        assert out.result["first"] == "Live"
+        # 15:59:30 ET is inside the scheduled pause that starts seven minutes before the bell.
+        assert out.result["first"] == "Rebalance pause"
         assert out.result["last"] == "Closed"
         assert out.result["countdown"] == "none"
 

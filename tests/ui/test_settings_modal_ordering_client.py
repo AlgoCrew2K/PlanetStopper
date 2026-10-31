@@ -30,7 +30,18 @@ import pytest
 import app as app_module
 import database
 from tests.ui import _refusal_answers as answers
-from tests.ui._page_js_harness import DEFAULT_TOKEN, page_scripts, render_page, route, run_page
+from tests.ui._page_js_harness import (
+    DEFAULT_TOKEN,
+    answer,
+    page_scripts,
+    render_page,
+    route,
+    run_page,
+)
+from tests.ui._shell_support import (  # noqa: F401  (autouse overrides: the page needs the real state)
+    _stub_database_load_state_for_advisor_routes,
+    _stub_get_api_state_dict,
+)
 
 A, B = "symphony_a", "symphony_b"
 NAME_A, NAME_B = "Copper Ridge Rotation", "Granite Bay Momentum"
@@ -255,43 +266,48 @@ class TestRefusedSave:
 
 
 class TestADashboardPollLeavesTheOpenModalAlone:
-    """The real ``index.js`` and ``settings-modal.js`` together, in the whole-file harness."""
+    """The dashboard page's own scripts (``index.js`` polling, ``settings-modal.js``) over its real markup."""
 
     def test_the_symphony_values_and_edits_survive_a_poll(self, symphonies):
-        from tests.dashboard._index_js_harness import get_world, run_scenario
-
-        static = Path(__file__).resolve().parents[2] / "static"
-        scripts = tuple(
-            f"static/{name}"
-            for name in ("request_guard.js", "chrome.js", "index.js", "settings-modal.js")
-            if (static / name).exists()
+        html = render_page("/")
+        with app_module.app.test_client() as client:
+            state = client.get("/api/state")
+        assert state.status_code == 200
+        scripts = page_scripts(html)
+        assert "settings-modal.js" in scripts and "index.js" in scripts, (
+            "the dashboard page must load both scripts for this scenario to mean anything"
         )
-        result = run_scenario(
-            get_world("cards-open"),
+        out = run_page(
+            html,
             f"""
-            await H.boot({{extras: true}});
-            H.route('/api/symphony-settings/{B}', {{body: H.bodies.symB}});
-            const doc = H.sandbox.document;
-            H.sandbox.openSymphonySettings(null, '{B}');
-            await H.settle();
-            doc.getElementById('sym-settings-live-toggle').click();
-            await H.settle();
+            await H.boot();
+            await H.act('open B', async () => {{ window.openSymphonySettings(null, '{B}'); }});
+            await H.click('{TOGGLE}');
             const view = () => ({{
-              modal: doc.getElementById('sym-settings-modal').textContent,
-              pending: doc.getElementById('sym-settings-live-toggle').getAttribute('aria-checked'),
+              modal: H.text('#sym-settings-modal'),
+              pending: H.attr('{TOGGLE}', 'aria-checked'),
             }});
             const before = view();
-            await H.sandbox.loadState();
-            await H.runTimers(30000);
+            const stateReadsBefore = H.to('/api/state$', 'GET').length;
+            await H.advance(30000);
+            const stateReadsAfter = H.to('/api/state$', 'GET').length;
             const after = view();
-            doc.getElementById('sym-settings-save').click();
-            await H.settle();
-            return {{before, after, confirm: !!doc.getElementById('sym-settings-confirm'),
-                    posts: H.fetchLog.filter((e) => e.method === 'POST').length}};
+            await H.click('{SAVE}');
+            return {{before, after, stateReadsBefore, stateReadsAfter,
+                     confirm: !!H.$('#sym-settings-confirm'),
+                     posts: H.posts('/api/symphony-settings').length}};
             """,
-            extra_bodies={"symB": symphonies[B]},
+            routes=[
+                route(r"/api/state$", answer(state), method="GET"),
+                route(GET_B, spec(symphonies[B]), method="GET"),
+            ],
             scripts=scripts,
-        )["result"]
+            pathname="/",
+        )
+        result = out.result
+        assert result["stateReadsAfter"] > result["stateReadsBefore"], (
+            "the poll never ran, so it could not have been shown to leave the modal alone"
+        )
         assert result["after"] == result["before"], "a poll changed the open modal"
         assert NAME_B in result["after"]["modal"]
         assert result["after"]["pending"] == "true", "the operator's live edit was lost"

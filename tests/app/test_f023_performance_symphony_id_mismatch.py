@@ -513,16 +513,19 @@ def test_performance_aggregate_scope_response_shape_unchanged(client, monkeypatc
     # The calendar-window contract adds `window_start`; an integer `days` means trailing rows,
     # so it is present and null.
     window_boundary_keys = {"window_start"}
+    # The page's data-age stamp: the newest shadow observation the response uses (or "--").
+    data_age_keys = {"data_as_of"}
     assert baseline_keys <= set(body.keys()), (
         f"aggregate scope response is MISSING baseline keys -- a genuine "
         f"regression, not the AC-5 addition. Missing: "
         f"{baseline_keys - set(body.keys())}. Got keys: {sorted(body.keys())}"
     )
     assert (
-        set(body.keys()) == baseline_keys | ac5_coverage_disclosure_keys | window_boundary_keys
+        set(body.keys())
+        == baseline_keys | ac5_coverage_disclosure_keys | window_boundary_keys | data_age_keys
     ), (
         f"aggregate scope response shape changed by more than AC-5's 3 "
-        f"named coverage-disclosure fields and the window boundary -- unexpected "
+        f"named coverage-disclosure fields, the window boundary and the data-age stamp -- unexpected "
         f"extra/missing keys. Got keys: {sorted(body.keys())}"
     )
     assert body["window_start"] is None, "an integer days value carries no calendar cutoff"

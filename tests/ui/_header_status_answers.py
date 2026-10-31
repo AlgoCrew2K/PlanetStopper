@@ -77,20 +77,23 @@ def header_answer(
         stack.enter_context(
             patch.object(app_module._dotenv_module, "dotenv_values", lambda *_a, **_k: dict(env))
         )
-        if reasons is not None:
-            stack.enter_context(
-                patch.object(
-                    app_module,
-                    "_health_status",
-                    lambda: {
-                        "status": "degraded" if reasons else "ok",
-                        "degraded_reasons": list(reasons),
-                        "scheduler_last_tick_at": at.isoformat(),
-                        "engine_running_since": None,
-                        "last_cycle": None,
-                    },
-                )
+        # The route's liveness fields are pinned: the real helper reads this process's uptime, and a
+        # test process that has run for two minutes (with no scheduler ticking) would answer "stalled"
+        # whatever the scenario is about. A scenario that is about degradation names its reasons.
+        reasons = [] if reasons is None else reasons
+        stack.enter_context(
+            patch.object(
+                app_module,
+                "_health_status",
+                lambda: {
+                    "status": "degraded" if reasons else "ok",
+                    "degraded_reasons": list(reasons),
+                    "scheduler_last_tick_at": at.isoformat(),
+                    "engine_running_since": None,
+                    "last_cycle": None,
+                },
             )
+        )
         if daemon_started_at is not None:
             stack.enter_context(patch.object(app_module, "_DAEMON_STARTED_AT", daemon_started_at))
         app_module.app.config["TESTING"] = True

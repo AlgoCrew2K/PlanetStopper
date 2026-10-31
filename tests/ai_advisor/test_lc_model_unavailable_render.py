@@ -21,6 +21,7 @@ import pytest
 from tests.advisors import logic_change_http_support as support
 
 _JS = pathlib.Path(__file__).resolve().parents[2] / "static" / "ai_advisor_logic_changes.js"
+_REQUEST_GUARD_JS = _JS.with_name("request_guard.js")
 _PROVENANCE_TESTID = 'data-testid="lc-live-generation-provenance"'
 
 _HARNESS = """
@@ -51,7 +52,11 @@ function fetchStub(url) {
     ok: true, status: 200, json: () => Promise.resolve(data), text: () => Promise.resolve(""),
   });
 }
-const ctx = vm.createContext({ document, fetch: fetchStub, console, Promise, JSON });
+const window = {};
+const ctx = vm.createContext({ document, window, fetch: fetchStub, console, Promise, JSON });
+// The page loads the token holder before the panel script (templates/_chrome.html).
+vm.runInContext(fs.readFileSync(process.argv[3], "utf8"), ctx);
+ctx.PSRequest = window.PSRequest;
 vm.runInContext(fs.readFileSync(jsPath, "utf8"), ctx);
 if (docHandlers["DOMContentLoaded"]) { docHandlers["DOMContentLoaded"](); }
 els["tweak-symphony-select"].value = "sym";
@@ -69,7 +74,7 @@ setTimeout(() => {
 def _render(route_json: dict) -> str:
     assert shutil.which("node"), "node is required to run the real panel script"
     result = subprocess.run(
-        ["node", "-e", _HARNESS, json.dumps(route_json), str(_JS)],
+        ["node", "-e", _HARNESS, json.dumps(route_json), str(_JS), str(_REQUEST_GUARD_JS)],
         capture_output=True,
         text=True,
         encoding="utf-8",

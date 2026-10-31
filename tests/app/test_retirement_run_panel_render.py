@@ -845,8 +845,8 @@ class TestRunNowWiring:
     def test_js_posts_to_the_run_route_with_the_csrf_header(self, js):
         body = _function_body(js, "retirementRunNow")
         # The exact route (closing quote included): '/ai-advisor/retirement/runx' must not pass.
-        assert re.search(r"""fetch\(\s*['"]/ai-advisor/retirement/run['"]""", body)
-        assert "X-CSRF-Token" in body
+        assert re.search(r"""PSRequest\.postAction\(\s*['"]/ai-advisor/retirement/run['"]""", body)
+        assert "'X-CSRF-Token': PSRequest.csrfToken()" in body
         assert "POST" in body
 
     def test_js_polls_the_api_for_a_changed_last_run_id_then_reloads(self, js):

@@ -56,7 +56,10 @@ def state():
     symphonies[ids[1]]["tp_armed"] = True
     symphonies[ids[1]]["para_armed"] = True
     symphonies[ids[2]]["triggered"] = True
-    symphonies[ids[3]]["armed"] = False  # present but off: must not be listed
+    # Present but with every flag off: must not be listed. The capture itself carries
+    # ``triggered=True`` on most symphonies, so this one is switched off on purpose.
+    for field, _label in FLAGS:
+        symphonies[ids[3]][field] = False
     symphonies.update(METADATA)
     database.save_state(symphonies)
     return symphonies
@@ -87,13 +90,25 @@ def listed(client):
 def test_lists_the_armed_symphonies_with_their_flags_labelled_live(client, state):
     got = listed(client)
     assert got == expected_entries(state)
-    assert len(got) == 3, "fixture integrity: three symphonies carry a flag"
+    names = {entry["name"] for entry in got}
+    edited = [v for v in state.values() if isinstance(v, dict) and "name" in v and v.get("armed")]
+    edited += [v for v in state.values() if isinstance(v, dict) and v.get("tp_armed")]
+    assert len(edited) >= 2 and {v["name"] for v in edited} <= names, (
+        "fixture integrity: the symphonies given arming flags are listed"
+    )
+    # The capture's own ``triggered`` flags are real flags the flush resets, so they are listed too.
     assert all(entry["state"] == "live" for entry in got)
 
 
 def test_a_flag_that_is_off_is_not_listed(client, state):
-    off = next(v["name"] for v in state.values() if isinstance(v, dict) and v.get("armed") is False)
-    assert off not in {e["name"] for e in listed(client)}
+    flag_fields = [field for field, _label in FLAGS]
+    off = [
+        v["name"]
+        for v in state.values()
+        if isinstance(v, dict) and "name" in v and not any(v.get(f) for f in flag_fields)
+    ]
+    assert off, "fixture integrity: one symphony has every flag off"
+    assert not set(off) & {e["name"] for e in listed(client)}
 
 
 @pytest.mark.parametrize("market", ["open", "closed"])

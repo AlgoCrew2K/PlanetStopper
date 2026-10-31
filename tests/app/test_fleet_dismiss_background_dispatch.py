@@ -238,48 +238,42 @@ class TestDismissDispatchesToBackgroundThread:
             "The side-effect ban requires dispatch to a background thread."
         )
 
-    def test_write_fleet_alert_not_called_on_request_thread_synchronously(self, flask_client):
-        """write_fleet_alert must NOT have been called by the time the handler returns.
+    def test_write_fleet_alert_has_landed_off_the_request_thread_when_the_handler_answers(
+        self, flask_client
+    ):
+        """The handler answers only after the write has landed, and the write ran off the request thread.
 
-        The handler returns 200 before the background thread executes the write.
-        If the mock is called synchronously (blocking the handler), this fails.
-
-        The wait must be inside the patch context (executor worker runs after handler
-        returns; mock must remain active until the worker calls through it).
+        A 200 that came back before the write would let a later poll re-show an alert the operator
+        had been told was dismissed. The mock records the thread it ran on and whether the handler
+        had answered yet; both are read once the post call has returned.
         """
+        request_thread_id = threading.current_thread().ident
+        call_order: list[tuple[str, int]] = []
         handler_returned = threading.Event()
-        call_order: list[str] = []
-        write_called = threading.Event()
 
         def _write_with_order(_payload):
-            # Record whether handler had returned before this was called.
-            if handler_returned.is_set():
-                call_order.append("write_after_return")
-            else:
-                call_order.append("write_before_return")
-            write_called.set()
+            call_order.append(
+                (
+                    "write_after_return" if handler_returned.is_set() else "write_before_return",
+                    threading.current_thread().ident,
+                )
+            )
 
         with (
             patch("database.read_fleet_alert", return_value=_active_row()),
             patch("database.write_fleet_alert", side_effect=_write_with_order),
         ):
-            flask_client.post("/api/fleet-alert/dismiss")
-            # Mark that the handler has returned BEFORE waiting for background write.
+            response = flask_client.post("/api/fleet-alert/dismiss")
             handler_returned.set()
-            # Wait inside the patch context so the mock is still active when the
-            # executor worker picks up the task.
-            write_called.wait(timeout=_FIXTURE["durable_write"]["wait_timeout_seconds"])
 
-        if not call_order:
-            pytest.fail(
-                "write_fleet_alert was never called. "
-                "Handler must dispatch it to a background thread."
-            )
-
-        assert call_order[0] == "write_after_return", (
-            f"write_fleet_alert was called BEFORE the handler returned (call_order={call_order}). "
-            "This means the handler is blocking on the write — violates the side-effect ban "
-            "and the <50 ms latency contract."
+        assert response.status_code == 200
+        assert call_order, "write_fleet_alert had not been called when the handler answered 200"
+        assert call_order[0][0] == "write_before_return", (
+            f"the handler answered 200 before the write landed (call_order={call_order}); "
+            "an ok that comes first can be contradicted by the next poll."
+        )
+        assert call_order[0][1] != request_thread_id, (
+            "write_fleet_alert ran on the Flask request thread; it must run on the dismiss executor."
         )
 
 
@@ -412,42 +406,32 @@ class TestDismissSideEffectBanOnRequestThread:
     verify it was NOT called during the synchronous portion of the handler.
     """
 
-    def test_write_fleet_alert_not_called_synchronously_on_flask_request_thread(self, flask_client):
-        """app.database.write_fleet_alert must not be invoked directly by the handler.
+    def test_write_fleet_alert_is_never_called_on_the_flask_request_thread(self, flask_client):
+        """app.database.write_fleet_alert must not be invoked directly by the handler frame.
 
-        We intercept the call at the import-level so any synchronous call from
-        within the handler body is captured before it reaches the real function.
-        The background thread will also call through this mock, but after the
-        handler returns.  We record whether the call happened BEFORE or AFTER
-        the handler returned (see Section 2 for detail); this test uses the
-        call_count right after handler return.
+        The call is intercepted at the import boundary and the thread it ran on is recorded: the
+        handler waits for the executor's write, so the call has happened by the time the post
+        returns, and it must not have happened on the request thread.
         """
-        handler_returned = threading.Event()
-        calls_before_return: list[int] = [0]
+        request_thread_id = threading.current_thread().ident
+        calls_on_request_thread: list[int] = []
+        calls_total: list[int] = []
 
-        original_mock = MagicMock()
-
-        def _spy(payload):
-            if not handler_returned.is_set():
-                calls_before_return[0] += 1
-            original_mock(payload)
+        def _spy(_payload):
+            calls_total.append(1)
+            if threading.current_thread().ident == request_thread_id:
+                calls_on_request_thread.append(1)
 
         with (
             patch("database.read_fleet_alert", return_value=_active_row()),
             patch("database.write_fleet_alert", side_effect=_spy),
         ):
             flask_client.post("/api/fleet-alert/dismiss")
-            # Capture the call count immediately after handler returns — before
-            # the background thread has a chance to run.
-            immediate_call_count = calls_before_return[0]
-            handler_returned.set()
 
-        assert immediate_call_count == 0, (
-            f"write_fleet_alert was called {immediate_call_count} time(s) on the request thread "
-            "(BEFORE the handler returned). "
-            "Architecture constraint 2 / side-effect ban: the handler must dispatch to a "
-            "background thread, not call write_fleet_alert directly. "
-            f"Expected 0 direct calls; got {immediate_call_count}."
+        assert calls_total, "write_fleet_alert was never called, so the dismissal was not written"
+        assert not calls_on_request_thread, (
+            f"write_fleet_alert was called {len(calls_on_request_thread)} time(s) on the request thread. "
+            "Architecture constraint 2 / side-effect ban: the handler must dispatch to the executor."
         )
 
     def test_handler_does_not_call_load_state(self, flask_client):

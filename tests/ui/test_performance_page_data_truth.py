@@ -156,7 +156,12 @@ def _symphony_payload(client, sid: str, days: int = 125) -> dict:
 
 
 def _perf_page(client, routes, scenario):
-    return run_page(page_html(client, "/performance"), ["performance.js"], routes, _READ + scenario)
+    return run_page(
+        page_html(client, "/performance"),
+        ["request_guard.js", "performance.js"],
+        routes,
+        _READ + scenario,
+    )
 
 
 ANY_PERFORMANCE = r"^/api/performance\?"

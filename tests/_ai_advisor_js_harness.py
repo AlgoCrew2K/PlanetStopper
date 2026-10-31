@@ -19,6 +19,7 @@ import shutil
 import subprocess
 
 AI_ADVISOR_JS = pathlib.Path(__file__).resolve().parents[1] / "static" / "ai_advisor.js"
+REQUEST_GUARD_JS = AI_ADVISOR_JS.with_name("request_guard.js")
 
 _HARNESS = r"""
 const fs = require("fs");
@@ -50,14 +51,18 @@ function fetchStub(url) {
   if (route && route.__reject__) { return Promise.reject(new Error(route.__reject__)); }
   return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(route) });
 }
+const win = {};
 const ctx = vm.createContext({
-  document, fetch: fetchStub, console, Promise, JSON, window: {},
+  document, fetch: fetchStub, console, Promise, JSON, window: win, performance: { now: () => Date.now() },
   setTimeout, clearTimeout, setInterval: (fn) => { intervals.push(fn); return intervals.length; },
   getComputedStyle: () => ({ getPropertyValue: () => "" }),
   sessionStorage: { setItem() {}, getItem() { return null; } },
 });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 (async () => {
+  // The page loads the token holder before ai_advisor.js (templates/_chrome.html); its global is bare in a browser.
+  vm.runInContext(fs.readFileSync(cfg.guard_path, "utf8"), ctx, { filename: "request_guard.js" });
+  ctx.PSRequest = win.PSRequest;
   vm.runInContext(fs.readFileSync(cfg.js_path, "utf8"), ctx);
   const renders = [];
   docHandlers.forEach((fn) => fn());
@@ -80,7 +85,14 @@ def render_autotune_list(routes: dict, polls: int = 0) -> list[str]:
     ``{"__reject__": "<message>"}`` makes that fetch reject.
     """
     assert shutil.which("node"), "node is required to run the real advisor script"
-    payload = json.dumps({"routes": routes, "polls": polls, "js_path": str(AI_ADVISOR_JS)})
+    payload = json.dumps(
+        {
+            "routes": routes,
+            "polls": polls,
+            "js_path": str(AI_ADVISOR_JS),
+            "guard_path": str(REQUEST_GUARD_JS),
+        }
+    )
     result = subprocess.run(
         ["node", "-e", _HARNESS],
         input=payload,

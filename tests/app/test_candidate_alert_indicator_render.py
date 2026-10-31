@@ -155,10 +155,8 @@ class TestCandidateAlertJsWiring:
         )
 
     def test_mark_viewed_post_present_in_chrome_js(self):
-        """AC-5: a click must POST /api/candidate-alert/mark-viewed with the
-        existing CSRF token (_chromeCsrfToken, already fetched by chrome.js on
-        DOMContentLoaded — same pattern as forceRun() and
-        submitPanicLiquidation())."""
+        """AC-5: a click must POST /api/candidate-alert/mark-viewed with the page's one CSRF token
+        (PSRequest.csrfToken(), the shared holder's), as every other control's POST does."""
         js = _chrome_js()
         if "/api/candidate-alert" not in js:
             pytest.skip("candidate-alert fetch not yet present — prior test covers this.")
@@ -167,11 +165,10 @@ class TestCandidateAlertJsWiring:
             "AC-5 FAIL: static/chrome.js does not POST /api/candidate-alert/mark-viewed. "
             "The badge will never clear after the operator views the candidates."
         )
-        assert "_chromeCsrfToken" in js.split("/api/candidate-alert/mark-viewed")[0][-600:] or (
-            "_chromeCsrfToken" in js
-        ), (
-            "AC-5 FAIL: the mark-viewed POST does not appear to use the existing "
-            "_chromeCsrfToken — a CSRF-protected POST without a token will 403."
+        around_post = js.split("/api/candidate-alert/mark-viewed")[1][:400]
+        assert "'X-CSRF-Token': PSRequest.csrfToken()" in around_post, (
+            "AC-5 FAIL: the mark-viewed POST does not carry the shared holder's CSRF token — "
+            "a CSRF-protected POST without a token will 403."
         )
 
     def test_js_handles_non_ok_response_without_throwing(self):

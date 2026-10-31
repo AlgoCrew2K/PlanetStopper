@@ -72,10 +72,10 @@ def _post_response_segment(src: str) -> str:
     the initial POST itself.
     """
     body = _sb_run_analysis_body(src)
-    marker = "var data = await resp.json();"
+    marker = "var data = res.body;"
     idx = body.find(marker)
     assert idx != -1, (
-        "Could not find 'var data = await resp.json();' in sbRunAnalysis — "
+        "Could not find 'var data = res.body;' in sbRunAnalysis — "
         "the response-parsing statement must stay present for this contract to "
         "be checkable at all."
     )
@@ -254,7 +254,7 @@ class TestRunScopedNoRefetch:
         """FAILS if the fix re-fetches history instead of rendering `data` directly.
 
         The only network call in this function must be the original POST
-        (already issued above the `var data = await resp.json();` marker) —
+        (already issued above the `var data = res.body;` marker) —
         nothing after the response resolves may call fetch(...) again.
         """
         segment = _post_response_segment(_js())

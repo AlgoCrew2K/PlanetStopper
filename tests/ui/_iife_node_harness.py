@@ -144,6 +144,8 @@ const ctx = { document, fetch: fakeFetch, console, setTimeout, clearTimeout, enc
 ctx.window = ctx;
 vm.createContext(ctx);
 
+// The page loads the token holder before any page script (templates/_chrome.html).
+vm.runInContext(input.guardSource, ctx, { filename: 'request_guard.js' });
 vm.runInContext(input.source, ctx, { filename: 'settings-modal.js' });
 (docListeners['DOMContentLoaded'] || []).forEach((fn) => fn());
 
@@ -231,7 +233,12 @@ def run_modal_scenario(routes: dict, steps: list[dict]) -> dict:
     ``routes`` maps ``"<METHOD> <url>"`` to ``{"json": ...}``, ``{"status": n, "json": ...}``
     or ``{"reject": true}``. ``/api/csrf-token`` is always answered.
     """
-    payload = {"source": _read_source("settings-modal.js"), "routes": routes, "steps": steps}
+    payload = {
+        "guardSource": _read_source("request_guard.js"),
+        "source": _read_source("settings-modal.js"),
+        "routes": routes,
+        "steps": steps,
+    }
     out = json.loads(_node(_MODAL_RUNNER, payload))
     assert not out["errors"], f"modal scenario could not find a control: {out['errors']}"
     return out

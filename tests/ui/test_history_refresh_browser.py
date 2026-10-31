@@ -12,12 +12,14 @@ overflows at 375 px. Screenshots go to ``REFRESH_TIMING_SHOTS`` for the ux-exper
 
 from __future__ import annotations
 
+import datetime
 import os
 import pathlib
 import re
 
 import pytest
 
+import analytics
 from tests.ui._shell_support import (  # noqa: F401
     NARROW,
     WIDE,
@@ -39,6 +41,24 @@ pytestmark = pytest.mark.browser
 STAMP = re.compile(r"^data as of \d{4}-\d{2}-\d{2} \d{2}:\d{2} ET$")
 
 
+def pin_window_clock_after(monkeypatch, days: list[str]) -> None:
+    """Resolve a day-count window against the day after the newest captured day, not the host's date.
+
+    The captured days are fixed in the past, so a 30-day window read on a later host date holds none
+    of them and the page has no newest exit to stamp. Only a day-count window is pinned (the History page sends
+    those); every other token resolves through the production function.
+    """
+    pinned_today = datetime.date.fromisoformat(max(days)) + datetime.timedelta(days=1)
+    production_cutoff = analytics._window_cutoff_date
+
+    def cutoff(window):
+        if isinstance(window, int):
+            return pinned_today - datetime.timedelta(days=window)
+        return production_cutoff(window)
+
+    monkeypatch.setattr(analytics, "_window_cutoff_date", cutoff)
+
+
 def shots_dir(tmp_path) -> pathlib.Path:
     target = pathlib.Path(os.environ.get("REFRESH_TIMING_SHOTS", str(tmp_path)))
     target.mkdir(parents=True, exist_ok=True)
@@ -49,6 +69,7 @@ def shots_dir(tmp_path) -> pathlib.Path:
 def test_stamp_drill_and_return(firefox, advisor_server, tmp_path, monkeypatch, size):  # noqa: F811
     seed_dashboard_state()
     days = seed_history_exits(tmp_path, monkeypatch.setattr)
+    pin_window_clock_after(monkeypatch, days)
     with open_probe(firefox, advisor_server, width=size[0], height=size[1]) as probe:
         open_page(probe, "/history", fragment="")
         wait_until(

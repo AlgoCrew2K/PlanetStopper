@@ -3366,7 +3366,8 @@ _HEADER_READ_BASE_HITS = frozenset({"LIVE_EXECUTION via _build_meta"})
 
 
 def _header_read_hits(tree: ast.Module, fn_name: str) -> list[str]:
-    return [h for h in _exec_seam_hits(tree, fn_name) if h not in _HEADER_READ_BASE_HITS]
+    """The panels scan's hits (Group E's set plus an order cancel and the bench note's webhook post)."""
+    return [h for h in _panels_hits(tree, fn_name) if h not in _HEADER_READ_BASE_HITS]
 
 
 class TestTheHeaderAndOutcomeReadsNeverReachAnOrderOrACreation:
