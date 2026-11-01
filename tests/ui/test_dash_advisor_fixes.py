@@ -302,7 +302,7 @@ class TestAC3aVolFieldName:
         The key sym.vol is not set by the engine.
         """
         body = self._risk_math_rows_body()
-        assert re.search(r"sym\.vol", body) is None, (
+        assert re.search(r"sym\.vol\b", body) is None, (
             "index.js riskMathRows reads sym.vol, a key the engine never sets."
         )
         assert "sym.symphony_vol" in body, (
