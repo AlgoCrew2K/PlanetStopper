@@ -114,7 +114,7 @@ def worlds(monkeypatch, tmp_path) -> Worlds:
     return Worlds(monkeypatch, tmp_path)
 
 
-def assert_closed_wording(found: dict, session: str, where: str, *) -> None:
+def assert_closed_wording(found: dict, session: str, where: str) -> None:
     hero = found["heroToday"]
     assert session in hero and not TODAY_OR_LIVE.search(hero), f"{where}: hero row reads {hero!r}"
     assert found["cardFooters"], f"{where}: the page has no card footer"
@@ -155,6 +155,10 @@ def assert_open_wording(found: dict, where: str) -> None:
     )
 
 
+def without_if_held(found: dict) -> dict:
+    return {k: v for k, v in found.items() if k != "ifHeld"}
+
+
 class TestFirstPaint:
     def test_a_closed_render_names_the_session_in_every_label(self, worlds):
         found = worlds.run(worlds.closed, "return labels();")
@@ -188,7 +192,9 @@ class TestAfterThePoll:
             "await poll(H.bodies.other.state); return labels();",
             worlds.closed["state"],
         )
-        assert after == fresh
+        # The if-held headings belong to each card's own triggered state, which differs between the
+        # two captured worlds; they are judged on the word alone.
+        assert without_if_held(after) == without_if_held(fresh)
         assert_closed_wording(after, worlds.session, "open page, closed poll")
 
     def test_a_closed_page_polled_with_an_open_body_reads_as_an_open_render_does(self, worlds):
@@ -198,5 +204,7 @@ class TestAfterThePoll:
             "await poll(H.bodies.other.state); return labels();",
             worlds.opened["state"],
         )
-        assert after == fresh
-        assert_open_wording(after, "closed page, open poll")
+        assert without_if_held(after) == without_if_held(fresh)
+        for name, want in OPEN_WORDING.items():
+            assert after[name] == want, f"closed page, open poll: {name} reads {after[name]!r}"
+        assert set(after["ifHeld"]) <= {"If held", "If held · live"}, after["ifHeld"]
