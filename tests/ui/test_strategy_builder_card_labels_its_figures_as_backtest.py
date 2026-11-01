@@ -31,6 +31,11 @@ import database
 from tests.dashboard._index_js_harness import find_all, parse_html, tree_text
 from tests.ui._page_js_harness import render_page
 from tests.ui._shell_support import seed_dashboard_state
+from tests.ui.test_frontrunner_card_labels_its_figures_as_backtest import (
+    _parent_of,
+    _says_backtest,
+    _text,
+)
 
 # Synthetic: the keys strategy_builder_engine persists on a survivor and on a withheld candidate.
 SHARPE = 0.0421
@@ -74,16 +79,6 @@ def _tables(html: str | None = None) -> tuple[dict, list[dict]]:
     return panels[0], tables
 
 
-def _parent_of(root, target):
-    for node in find_all(root, lambda n: target in n["c"]):
-        return node
-    return None
-
-
-def _text(node) -> str:
-    return " ".join(tree_text(node).split())
-
-
 def _labels_near(panel: dict, table: dict) -> list[str]:
     near = [_text(table)]
     parent = _parent_of(panel, table)
@@ -94,10 +89,6 @@ def _labels_near(panel: dict, table: dict) -> list[str]:
         if 0 <= neighbour < len(elements):
             near.append(_text(elements[neighbour]))
     return near
-
-
-def _says_backtest(text: str) -> bool:
-    return bool(re.search(r"back-?test", text, re.I))
 
 
 @pytest.mark.parametrize("kind", list(KINDS))

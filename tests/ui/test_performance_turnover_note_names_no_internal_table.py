@@ -19,6 +19,7 @@ import re
 
 from tests.dashboard._index_js_harness import find_all, parse_html, tree_text
 from tests.ui._page_js_harness import render_page
+from tests.ui.test_frontrunner_card_labels_its_figures_as_backtest import _text
 
 SNAKE_CASE = re.compile(r"\b[A-Za-z]+(?:_[A-Za-z0-9]+)+\b")
 LIMIT_WORDS = re.compile(r"retain|kept|keep|stored|pruned|deleted|removed|older|limited", re.I)
@@ -29,10 +30,6 @@ def _panel():
     panels = find_all(tree, lambda n: n["a"].get("data-testid") == "exit-turnover-panel")
     assert panels, "the render holds no exit-turnover panel"
     return panels[0]
-
-
-def _text(node) -> str:
-    return " ".join(tree_text(node).split())
 
 
 def _note() -> str:
