@@ -85,6 +85,19 @@ class Moment:
     def trading_day(self) -> str:
         return self.instant.strftime("%Y-%m-%d")
 
+    @property
+    def session_day(self) -> str:
+        """The ET trading day a page served at this instant reads its figures from: today's
+        session while it is open or has closed, the session that last closed before the open."""
+        import market_calendar
+
+        day = self.instant.date()
+        if self.market_state == "pre_market":
+            day -= timedelta(days=1)
+            while not market_calendar.is_trading_day(day):
+                day -= timedelta(days=1)
+        return day.isoformat()
+
 
 # The close snapshot of the seeded closed worlds is stamped after the newest seeded shadow row
 # (16:04:01 ET), so every seeded row belongs to the close the snapshot describes. The record's

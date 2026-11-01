@@ -42,7 +42,7 @@ regenerate it to make a failing test pass.
 No schema migration: also guarded by the migration-file-count pin below,
 mirroring database.py's own _MIGRATION_FILES ordering-guard convention
 (project CLAUDE.md's ARCH-002 gotcha) -- this cycle adds zero new migration
-files (037 remains the highest-numbered migration).
+files (the baseline 001 to 038 stays as it was).
 """
 
 from __future__ import annotations
@@ -132,16 +132,14 @@ class TestAC7NoNewExecutionPrimitive:
 
 
 class TestAC7NoNewSchemaMigration:
-    def test_migration_directory_highest_number_unchanged_at_037(self):
-        """AC-7: 'No schema migration.' database.py's docstring row in project
-        CLAUDE.md documents migration 037 (strategy_incubation) as the highest
-        applied migration at cycle start. This guard fails loudly if a new
-        038+ migration file appears -- catching an accidental schema change
-        smuggled into a nominally display-only cycle. (Migration 038,
-        retirement_decisions, was added AFTER the CLAUDE.md table's migration-
-        count prose was last updated but IS present on disk -- the guard uses
-        the real on-disk state as the pinned baseline, not the stale prose.)
-        """
+    # The migrations on disk when this display-only cycle started: 001 to 038, the last being
+    # retirement_decisions. The cycle added none, so each of these exists exactly once and none
+    # was renumbered or replaced. A migration a later cycle adds takes the next number and
+    # leaves this baseline intact, so the guard names the baseline and never "the last one".
+    _BASELINE_HIGHEST = 38
+    _BASELINE_LAST_NAME = "038_retirement_decisions.sql"
+
+    def _numbered_files(self) -> dict[int, list[str]]:
         migrations_dir = _REPO_ROOT / "migrations"
         if not migrations_dir.is_dir():
             migrations_dir = _REPO_ROOT / "migration"
@@ -150,19 +148,38 @@ class TestAC7NoNewSchemaMigration:
             "if migrations live elsewhere, update this test's search path "
             "(do not just delete the guard)."
         )
-        numbers = []
+        by_number: dict[int, list[str]] = {}
         for f in migrations_dir.glob("*.sql"):
             m = re.match(r"^0*(\d+)_", f.name)
             if m:
-                numbers.append(int(m.group(1)))
-        assert numbers, f"no numbered *.sql migration files found under {migrations_dir}"
-        highest = max(numbers)
-        assert highest == 38, (
-            f"AC-7 VIOLATION (or baseline drift): highest migration number is "
-            f"{highest}, expected 38 (retirement_decisions, the last migration "
-            f"before this cycle started). A new migration file means a schema "
-            f"change was introduced -- AC-7 explicitly forbids this for a "
-            f"display/aggregation-only fix. If migration 038 is not what you "
-            f"expected either, this baseline itself may need PM verification "
-            f"(do not just bump the pinned number to make this pass)."
+                by_number.setdefault(int(m.group(1)), []).append(f.name)
+        assert by_number, f"no numbered *.sql migration files found under {migrations_dir}"
+        return by_number
+
+    def test_baseline_migrations_are_each_present_once_and_unrenumbered(self):
+        """AC-7: 'No schema migration.' The baseline 001..038 is on disk exactly once per number,
+        and 038 is still retirement_decisions, so no file was added, renumbered or swapped in
+        among them to smuggle a schema change into a display-only cycle."""
+        by_number = self._numbered_files()
+        missing = [n for n in range(1, self._BASELINE_HIGHEST + 1) if n not in by_number]
+        assert not missing, f"baseline migration numbers missing from disk: {missing}"
+        duplicated = {n: names for n, names in by_number.items() if len(names) > 1}
+        assert not duplicated, f"a migration number is used by two files: {duplicated}"
+        assert by_number[self._BASELINE_HIGHEST] == [self._BASELINE_LAST_NAME], (
+            f"AC-7 VIOLATION (or baseline drift): migration {self._BASELINE_HIGHEST} is "
+            f"{by_number[self._BASELINE_HIGHEST]}, expected {self._BASELINE_LAST_NAME}. Do not "
+            "just edit the pinned name to make this pass; get a PM ruling first."
+        )
+
+    def test_baseline_last_migration_follows_its_neighbour_in_the_wired_order(self):
+        """The wired list keeps 038 directly after 037, asserted against its neighbour and not
+        as the list's last entry, which every later migration would break."""
+        import database
+
+        files = database._MIGRATION_FILES
+        assert self._BASELINE_LAST_NAME in files
+        position = files.index(self._BASELINE_LAST_NAME)
+        assert position > 0 and files[position - 1] == "037_strategy_incubation.sql", (
+            f"038 is wired after {files[position - 1] if position else None!r}, "
+            "expected 037_strategy_incubation.sql"
         )

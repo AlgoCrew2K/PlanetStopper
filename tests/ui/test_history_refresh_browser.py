@@ -100,8 +100,8 @@ def test_stamp_drill_and_return(firefox, advisor_server, tmp_path, monkeypatch, 
         probe.page.click('[data-testid="history-todays-exits-btn"]')
         wait_until(
             probe,
-            "() => (document.querySelector('#todays-exits-heading') || {}).textContent.startsWith(\"Today's exits\")",
-            "the Today's exits button did not return to today",
+            "() => (document.querySelector('#todays-exits-heading') || {}).textContent.startsWith(\"Exits on \")",
+            "the exits button did not return to the closed session's exits",
         )
         scroll, inner = document_scroll_width(probe)
         assert scroll <= inner, f"/history scrolls sideways at {size[0]} px"

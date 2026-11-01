@@ -53,6 +53,20 @@ from zoneinfo import ZoneInfo
 
 import database
 
+# Set around a build a caller holds (app's closed-market hold): a read that fails and is swallowed
+# here records itself so the holder answers the degraded result without keeping it. A read that
+# finds no row is an absence, not a failure, and records nothing. Outside a hold it does nothing.
+BUILD_FAILURES: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar(
+    "closed_build_failures", default=None
+)
+
+
+def note_build_failure() -> None:
+    failures = BUILD_FAILURES.get()
+    if failures is not None:
+        failures.append(True)
+
+
 # ---------------------------------------------------------------------------
 # Producer -> internal field-name mapping (single source of truth)
 # ---------------------------------------------------------------------------
@@ -642,6 +656,12 @@ def request_reads() -> Iterator[None]:
         _REQUEST_READS.reset(token)
 
 
+def _is_missing_epoch_column(exc: sqlite3.OperationalError) -> bool:
+    """True when *exc* says the table has no ``position_epoch`` column (a legacy schema, an
+    absence); any other operational error (a locked database) is a failed read."""
+    return "no such column" in str(exc).lower()
+
+
 def _read_once(conn: sqlite3.Connection | None, key: tuple, read: Callable[[], object]) -> object:
     """read(), made once per (connection, key) inside request_reads(), every time otherwise."""
     reads = _REQUEST_READS.get()
@@ -695,6 +715,7 @@ def _load_latest_shadow_row_for_analytics(
         # A copy: the first read's dict is the memo's, and a caller may keep or change its own.
         return dict(result) if result is not None else None
     except Exception:
+        note_build_failure()
         return None
 
 
@@ -744,7 +765,9 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
             ).fetchone()
             has_epoch_column = True
             current_epoch = epoch_row[0] if epoch_row is not None else None
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if not _is_missing_epoch_column(exc):
+                raise
             has_epoch_column = False
             current_epoch = None
 
@@ -794,6 +817,7 @@ def _get_shadow_cumulative_trajectory(symphony_id: str, db_file: str) -> list[fl
             ).fetchall()
         conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if len(rows) < 2:
@@ -864,6 +888,7 @@ def get_shadow_current_return_daily_series(symphony_id: str, db_file: str) -> li
         ).fetchall()
         conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if not rows:
@@ -944,7 +969,9 @@ def _get_shadow_divergence_trajectory(
                     "ORDER BY trading_day ASC",
                     (symphony_id,),
                 ).fetchall()
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as exc:
+                if not _is_missing_epoch_column(exc):
+                    raise
                 # Legacy schema with no position_epoch column — one implicit epoch.
                 return [
                     (r[0], r[1], r[2], None)
@@ -964,6 +991,7 @@ def _get_shadow_divergence_trajectory(
         if _owns_conn:
             _conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if len(rows) < 2:
@@ -1737,6 +1765,7 @@ def get_portfolio_daily_returns_from_shadow(
         if _owns_conn:
             _conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if not rows:
@@ -1854,6 +1883,7 @@ def get_portfolio_bot_and_held_daily_returns(
         if _owns_conn:
             _conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if not rows:
@@ -1975,6 +2005,7 @@ def get_symphony_bot_and_held_daily_returns(
         if _owns_conn:
             _conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if not rows:
@@ -2037,6 +2068,7 @@ def get_single_day_shadow_returns(
         if _owns_conn:
             _conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     if not rows:
@@ -2186,6 +2218,7 @@ def _get_windowed_divergence_trajectory(
         if _owns_conn:
             _conn.close()
     except Exception:
+        note_build_failure()
         return None
 
     cutoff_iso = cutoff.isoformat() if cutoff is not None else None
@@ -2555,7 +2588,12 @@ def format_et_stamp(value: object, *, naive_is_utc: bool = True, date_only: bool
     return f"{day_text} {moment.hour:02d}:{moment.minute:02d}{ET_STAMP_SUFFIX}"
 
 
-def get_history_summary(days: int = 30, base_dir: str = ".", anchor: date | None = None) -> dict:
+def get_history_summary(
+    days: int = 30,
+    base_dir: str = ".",
+    anchor: date | None = None,
+    exits_day: date | None = None,
+) -> dict:
     """Aggregate guard-alpha history for the History tab.
 
     Returns the same envelope the /api/history/<days> route emits, derived
@@ -2564,6 +2602,7 @@ def get_history_summary(days: int = 30, base_dir: str = ".", anchor: date | None
 
     anchor: the ET trading day of the session the figures belong to; the window counts back from
     it (window_cutoff). Omitted, it counts back from today's UTC date.
+    exits_day: the session whose post-mortem file ``todays_exits`` reads; omitted, today (ET).
     """
     import glob as _glob
     import json as _json
@@ -2660,7 +2699,7 @@ def get_history_summary(days: int = 30, base_dir: str = ".", anchor: date | None
 
     # "Today" is the Eastern trading date, not the host's: the host runs on UTC, whose date moves on
     # at 20:00 EDT, which would switch "Today's exits" to a file that does not exist yet.
-    today_str = datetime.now(_ET_STAMP_ZONE).date().isoformat()
+    today_str = (exits_day or datetime.now(_ET_STAMP_ZONE).date()).isoformat()
     today_file = os.path.join(base_dir, "post_mortem_" + today_str + ".json")
     todays_exits: list = []
     try:
@@ -2848,4 +2887,5 @@ def no_longer_held_symphony_ids(
             symphony_id for symphony_id, days in days_by_symphony.items() if days[0] < cut
         )
     except Exception:
+        note_build_failure()
         return frozenset()
