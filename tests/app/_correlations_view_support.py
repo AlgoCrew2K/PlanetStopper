@@ -39,7 +39,7 @@ DERIVED_DIR = REPO_ROOT / "tests" / "fixtures" / "retirement" / "derived"
 
 NEVER_RUN_TEXT = (
     "No realized series yet: the matrix fills after the next retirement run "
-    "(nightly at 03:45 UTC, or Run now on the Retirement tab)."
+    "(nightly at 03:45 UTC, or Run recommender on the Retirement tab)."
 )
 MARKUP_SUFFIX = ' <b>bold</b> & Co "q"'
 UNMAPPED_REASON = "retired_by_operator"

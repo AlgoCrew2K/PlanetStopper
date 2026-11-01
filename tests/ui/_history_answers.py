@@ -22,6 +22,13 @@ ET = ZoneInfo("America/New_York")
 NOW_ET = _datetime_module.datetime(2026, 7, 25, 12, 0, tzinfo=ET)
 
 
+def day_label(iso_day: str) -> str:
+    """How the page writes a day in a heading: the English month abbreviation and the day without a
+    leading zero (``2026-06-25`` reads ``Jun 25``). Built from the ISO digits, not from a zone."""
+    day = _datetime_module.date.fromisoformat(iso_day)
+    return f"{day.strftime('%b')} {day.day}"
+
+
 @contextmanager
 def frozen_host_clock(instant=NOW_ET, *, stdlib=True):
     """The host clock reads ``instant`` for every date the app and analytics take.

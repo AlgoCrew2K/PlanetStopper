@@ -189,7 +189,9 @@ def _base_with_the_review_fix_changes(base: list) -> list:
     * the headline's label is followed by a hidden notice the window picker fills when the picked
       window's strip could not be loaded;
     * the sleeve rule row names its session in a span of its own (see
-      ``_base_with_the_sleeve_rule_session_label``).
+      ``_base_with_the_sleeve_rule_session_label``);
+    * the hero's Today row and each card's Today label hold their day word in a span of its own,
+      and the dollar panel holds a hidden notice (see ``_base_with_the_session_day_words``).
 
     A card's alpha badge that has no figure to show loses its sign class; that one is judged by
     ``_without_a_sign_class`` and by the badge test below, since which badges that is depends on
@@ -206,7 +208,43 @@ def _base_with_the_review_fix_changes(base: list) -> list:
     label = out.index(["div", ["guard-alpha-label"]])
     assert out[label + 1] == ["span", []], "the base's headline label does not hold the window span"
     out.insert(label + 2, ["div", ["legend-as-of"]])
-    return _base_with_the_sleeve_rule_session_label(out)
+    return _base_with_the_sleeve_rule_session_label(_base_with_the_session_day_words(out))
+
+
+def _base_with_the_session_day_words(base: list) -> list:
+    """The base plus the elements that let a closed page name its session where it read "Today".
+
+    Exactly three kinds of element are added, so any other change to the body still fails:
+
+    * a class-less span holding the day word, ahead of the footnote marker in the hero's Today
+      row (the first ``.vs-row-label``);
+    * a class-less span holding the day word, ahead of the alpha badge in the Today label of
+      each of the 11 cards (the first ``.cfg-label`` after each ``.card-footer-grid``);
+    * the dollar panel's hidden window notice, a class-less div after its basis label (the panel
+      is the ``.hero-section`` followed by five class-less spans and then a class-less div).
+    """
+    out = list(base)
+    label = out.index(["span", ["vs-row-label"]])
+    assert out[label + 1] == ["span", []], "the hero's Today label is not followed by its marker"
+    out.insert(label + 1, ["span", []])
+
+    grids = [i for i, element in enumerate(out) if element == ["div", ["card-footer-grid"]]]
+    assert len(grids) == 11, "the capture no longer renders 11 cards"
+    for grid in reversed(grids):
+        assert out[grid + 1] == ["div", ["cfg-cell"]], "a card footer does not open with a cell"
+        assert out[grid + 2] == ["span", ["cfg-label"]], "a card cell does not open with its label"
+        out.insert(grid + 3, ["span", []])
+
+    panels = [
+        i
+        for i, element in enumerate(out)
+        if element == ["div", ["hero-section"]]
+        and out[i + 1 : i + 6] == [["span", []]] * 5
+        and out[i + 6] == ["div", []]
+    ]
+    assert len(panels) == 1, "the dollar panel is not found exactly once"
+    out.insert(panels[0] + 7, ["div", []])
+    return out
 
 
 def _base_with_the_sleeve_rule_session_label(base: list) -> list:
@@ -235,10 +273,24 @@ def _without_a_sign_class(base_element: list, element: list) -> bool:
     )
 
 
+def _unknown_drawdown_without_neg(base_element: list, element: list) -> bool:
+    """Whether ``element`` is the base's Max DD figure minus its ``neg`` class.
+
+    An unknown drawdown reads as a dash with no negative colour, so the capture's Max DD row
+    (no drawdown on that state) renders ``vs-val`` where the base wrote ``neg vs-val``. The
+    figures' own text and class are judged by the Max DD dash test under ``tests/dashboard``.
+    """
+    return base_element == ["span", ["neg", "vs-val"]] and element == ["span", ["vs-val"]]
+
+
 def _first_difference(structure: list, expected: list) -> int | None:
     """Index of the first element that differs from the expectation, None when none does."""
     for index, (now, want) in enumerate(zip(structure, expected, strict=False)):
-        if now != want and not _without_a_sign_class(want, now):
+        if (
+            now != want
+            and not _without_a_sign_class(want, now)
+            and not _unknown_drawdown_without_neg(want, now)
+        ):
             return index
     return None if len(structure) == len(expected) else min(len(structure), len(expected))
 

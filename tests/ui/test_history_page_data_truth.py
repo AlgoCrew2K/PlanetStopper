@@ -17,6 +17,7 @@ import pytest
 
 import analytics
 import app as app_module
+from tests.ui._history_answers import day_label
 from tests.ui.test_static_js_page_harness import (
     page_html,
     pm_capture,
@@ -356,7 +357,7 @@ def test_three_exits_written_out_of_order_list_by_time_with_their_names(client, 
     expected = _by_time(in_file_order)
     assert [r[0] for r in result["rows"]] == [t["time_triggered"] for t in expected]
     assert [r[1] for r in result["rows"]] == [t["symphony_name"] for t in expected]
-    assert result["heading"] == f"{day} exits (3)"
+    assert result["heading"] == f"{day_label(day)} exits (3)"
 
 
 def test_an_exit_with_no_symphony_name_reads_name_not_recorded(client, pm_dir_factory):
@@ -417,7 +418,7 @@ def test_a_day_with_a_bar_but_no_valid_exit_shows_zero_and_the_placeholder_row(
     )
 
     assert payload["daily_exits"].get(unstamped_day) in (None, [])
-    assert result["heading"] == f"{unstamped_day} exits (0)"
+    assert result["heading"] == f"{day_label(unstamped_day)} exits (0)"
     assert result["rows"] == [["No exit records for this window."]]
 
 
@@ -441,7 +442,7 @@ def test_opening_a_second_day_shows_only_that_days_exits(client, pm_dir_factory)
     )
 
     expected = _by_time(second_triggers)
-    assert result["heading"] == f"{second_day} exits ({len(expected)})"
+    assert result["heading"] == f"{day_label(second_day)} exits ({len(expected)})"
     assert [(r[0], r[1]) for r in result["rows"]] == [
         (t["time_triggered"], t["symphony_name"]) for t in expected
     ]

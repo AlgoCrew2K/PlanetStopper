@@ -16,8 +16,8 @@ real ``static/ai_advisor.js`` source read for string literals; the real
 captured earlier (tests/fixtures/composer/backtest_response_v1.json) parsed by the real client parser.
 
 Contract pinned
-* No operator-visible text on the Advisor page, no string literal of ``static/ai_advisor.js`` and not
-  the Correlations note says "Run now"; the never-run line, the market-hours hint and the Correlations
+* No operator-visible text on the Advisor page (the header's distinct "Force run now" button aside), no
+  string literal of ``static/ai_advisor.js`` and not the Correlations note says "Run now"; the never-run line, the market-hours hint and the Correlations
   note each say "Run recommender".
 * When the redundancy, backtest and marginal items give no figure but another item holds figures, the
   verdict is still None but its text does not say there is no evidence. With every item without a
@@ -64,7 +64,18 @@ def test_precondition_the_run_button_is_labelled_run_recommender():
 
 class TestTheControlIsNamedByItsLabel:
     def test_no_visible_text_on_the_advisor_page_says_run_now(self):
-        text = _visible_text(render_page("/ai-advisor"))
+        # The header's own "Force run now" button is a different control, on every page; the
+        # Retirement copy is what must not call its button "Run now".
+        page = re.sub(
+            r'<button[^>]*data-testid="force-run-btn".*?</button>',
+            " ",
+            render_page("/ai-advisor"),
+            flags=re.S,
+        )
+        assert "force-run-btn" in render_page("/ai-advisor"), (
+            "precondition: the header's button exists"
+        )
+        text = _visible_text(page)
         found = [m.start() for m in RUN_NOW.finditer(text)]
         assert not found, [text[max(0, i - 60) : i + 60] for i in found]
 

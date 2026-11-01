@@ -941,7 +941,8 @@ def test_a_comparison_over_fewer_shared_days_than_the_floor_is_unavailable_and_d
             assert fig["value"] is None, sid
         assert "marginal" in entry["missing_items"], sid
         assert entry["verdict"] is None, sid
-        assert entry["verdict_text"] == "no verdict: no evidence available", sid
+        # the composite is available (fixture sanity above), so the chip names the comparison
+        assert entry["verdict_text"] == "no verdict: the comparison has no figures yet", sid
         assert entry["verdict_reasons"] == [], sid
 
 

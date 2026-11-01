@@ -4544,7 +4544,18 @@ class TestEveryMissingItemIsListedWithItsReason:
             node = pb.entry_node(panel, stored["symphony_id"])
             chip = node.find("tenure-review-verdict-chip")
             assert stored["verdict"] is None, where
-            assert "no verdict: no evidence available" in chip.text(), (where, chip.text())
+            # The chip names the comparison when a panel below it (performance, composite or
+            # long-VIX) holds figures, and says no evidence is available only when all are empty.
+            holds_figures = any(
+                evidence[n]["status"] == "available"
+                for n in ("performance", "composite", "long_vix")
+            )
+            expected = (
+                "no verdict: the comparison has no figures yet"
+                if holds_figures
+                else "no verdict: no evidence available"
+            )
+            assert expected in chip.text(), (where, chip.text())
             assert "tenure-verdict-chip--none" in chip.classes(), where
             approve, reject = _lifecycle_buttons(node)
             assert approve == [] and reject == [], where
