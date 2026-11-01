@@ -172,8 +172,8 @@
         /* On a phone the four columns share the table's width and long cells wrap, so no column is
            cut at the scroll box's edge (the drilled-day table, like the closed-day table). */
         @media (max-width: 480px) {
-            .triggers-tbl { table-layout: fixed; }
-            .triggers-tbl th, .triggers-tbl td { padding: 0.375rem 0.4rem; overflow-wrap: anywhere; }
+            .triggers-tbl { table-layout: auto; font-size: 0.6875rem; }
+            .triggers-tbl th, .triggers-tbl td { padding: 0.375rem 0.2rem; }
         }
 
         @media (max-width: 700px) {

@@ -119,10 +119,10 @@
   .shell-nav-status { display:flex; align-items:center; gap:clamp(6px,0.8vw,14px); flex-shrink:0; min-width:0; }
   /* The wordmark never wraps: a wrapped brand makes the header taller on every page. */
   .shell-nav > div:first-child { white-space:nowrap; flex-shrink:0; }
-  /* From 1401 to 1500 the ET clock and workspace chip give way (tokens.css hides them at 1400 and
+  /* From 1401 to 1500 the ET clock and workspace chip give way only while the long engine label shows (chrome.js sets engine-label-long; tokens.css hides them at 1400 and
      below), so the longest engine label (Rebalance pause) leaves the countdown whole. */
   @media (min-width: 1401px) and (max-width: 1500px) {
-    .studio-nav-wide { display:none !important; }
+    .engine-label-long .studio-nav-wide { display:none !important; }
   }
   @media (max-width: 1400px) {
     .shell-nav { flex-wrap:wrap; row-gap:16px; }

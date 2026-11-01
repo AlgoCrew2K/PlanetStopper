@@ -382,6 +382,7 @@ function renderEngineLabel() {
   if (dot) dot.style.background = colour;
   label.style.color = colour;
   label.textContent = state.text;
+  document.documentElement.classList.toggle('engine-label-long', state.text === 'Rebalance pause');
   if (wrap) wrap.title = state.title;
   if (countdown) countdown.style.display = state.countdown ? '' : 'none';
 }

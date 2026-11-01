@@ -775,7 +775,7 @@
                 </div>
               </div>
               {# "Simulated" is bound to the engine's flag (last_execution_mode False; the poll's bot_state carries it). #}
-              <div class="guard-alpha-descriptor" data-testid="guard-alpha-descriptor"><span id="guard-alpha-simulated">{% if execution_simulated %}Simulated {% endif %}</span>Bot return minus If-held return over this window: the gap between the chart's two lines. All symphonies at today's values, before exit friction.</div>
+              <div class="guard-alpha-descriptor" data-testid="guard-alpha-descriptor"><span id="guard-alpha-simulated">{% if execution_simulated %}Simulated {% endif %}</span>Bot return minus If-held return over this window: the gap between the chart's two lines. All symphonies at their latest values, before exit friction.</div>
               {# Option A: the account-lifetime CR is a SEPARATE, fixed "Account · all-time"
                  reference — NOT windowed, carries no window label. Distinct from the windowed
                  guard-alpha hero above so the ~67% is never mislabeled "30d". #}
@@ -1222,7 +1222,7 @@
             <span data-field="verdict-text">{{ sym.get('_verdict_text', '—') }}</span>
             <span data-testid="guard-alpha-basis" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;"{% if not sym.get('_verdict_has_value') %} hidden{% endif %}>{{ verdict_basis_label }}</span>
           </div>
-          <div style="min-height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
+          <div style="height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
           <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-top:0.375rem;">
             <svg data-testid="mc-dial" class="mc-dial" data-sym-id="{{ sym.get('id', '') }}"
                  viewBox="0 0 40 40" width="40" height="40" style="display:block;">
@@ -1344,7 +1344,7 @@
               <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;opacity:0.6;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
           </div>
-          <div style="min-height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
+          <div style="height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
           {% set cr = sym.get("_cr") or {} %}
           {% set tc_d = sym.get("_tc") or {} %}
           {% set mdd_d = sym.get("_mdd") or {} %}
@@ -1478,7 +1478,7 @@
         </div>
         <!-- Chart legend -->
         <div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--studio-ink-dim);flex-wrap:wrap;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-pos)" stroke-width="2"/></svg>Live (if held)</span>
+          <span data-field="if-held-legend" style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-pos)" stroke-width="2"/></svg>{{ 'If held' if session_day else 'Live (if held)' }}</span>
           <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-ink-dim)" stroke-width="2" stroke-dasharray="3,3"/></svg>Shadow (booked)</span>
           <span id="legend-stop"      style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-neg)" stroke-width="2" stroke-dasharray="4,3"/></svg>Trailing stop</span>
           <span id="legend-breakeven" style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-accent)" stroke-width="2"/></svg>Breakeven lock</span>

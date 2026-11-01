@@ -728,7 +728,10 @@
     // day. A body naming either date less (a store that records no date) names no session.
     // The date is written as text; the span is cleared by the next tape that is today's.
     function setSparkSessionCaption(canvas, chartBody) {
-        var parent = canvas.parentNode;
+        var box = canvas.parentNode;
+        // The caption lives beside the fixed-height box, never inside it: the responsive
+        // chart sizes itself to the box and would grow it.
+        var parent = box && box.parentNode;
         if (!parent) return;
         var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
         var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
@@ -743,10 +746,13 @@
             el.style.display = 'block';
             el.style.textAlign = 'left';
             el.style.marginLeft = '2px';
-            parent.insertBefore(el, canvas);
+            // The caption takes over the box's top gap so the card grows by the caption alone.
+            el.style.marginTop = '0.5rem';
+            parent.insertBefore(el, box);
         }
         el.textContent = text;
         el.hidden = !text;
+        box.style.marginTop = text ? '0' : '0.5rem';
     }
 
     function sparkHeldDataset(data) {
@@ -2359,6 +2365,11 @@
         });
         setTextIfChanged(document.querySelector('[data-field="live-return-label"]'),
             _sessionDay ? 'Return' : 'Live Return');
+        // the legend's text follows its swatch, so it is the span's last child node
+        var legend = document.querySelector('[data-field="if-held-legend"]');
+        var legendText = _sessionDay ? 'If held' : 'Live (if held)';
+        var legendNode = legend && legend.childNodes[legend.childNodes.length - 1];
+        if (legendNode && legendNode.data !== legendText) legendNode.data = legendText;
         setTextIfChanged(document.querySelector('[data-field="hwm-label"]'),
             _sessionDay ? 'HWM ' + _sessionDay : 'HWM today');
         setTextIfChanged(document.querySelector('[data-field="events-heading"]'),
