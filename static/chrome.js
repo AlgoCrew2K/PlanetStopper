@@ -353,7 +353,7 @@ function _engineLabelState() {
   var body = _engineBody;
   if (body === null) return null;
   if (body.degradedReasons.length) {
-    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons), countdown: true };
+    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons), countdown: body.isOpen };
   }
   if (!body.isOpen) {
     return { text: 'Closed', token: 'ink-dim', title: '', countdown: false };

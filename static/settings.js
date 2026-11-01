@@ -143,6 +143,7 @@
         setTimeout(() => load(false), 400);
       } else {
         // The retry failed too: say so, with a button, and bind nothing to empty data.
+        blankMaster();
         showLoadError(true);
       }
     });
@@ -165,6 +166,19 @@
 
     const startInput = document.getElementById('execution-start-time');
     startInput.value = data.globals.EXECUTION_START_TIME != null ? data.globals.EXECUTION_START_TIME : '';
+    startInput.disabled = false;
+  }
+
+  // Until the server has answered (and again after a failed load) the master section states no
+  // mode and offers no time to edit, so nothing is bound to data the server never confirmed.
+  function blankMaster() {
+    const pill = document.getElementById('live-pill');
+    pill.textContent = '—';
+    pill.dataset.live = 'false';
+    document.getElementById('live-banner').hidden = true;
+    const startInput = document.getElementById('execution-start-time');
+    startInput.value = '';
+    startInput.disabled = true;
   }
 
   // ── Render algorithm params ────────────────────────────────────────────────

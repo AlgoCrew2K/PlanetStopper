@@ -1000,6 +1000,11 @@
             btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
             if (isActive) {
                 btn.classList.add('active');
+                // The row scrolls sideways on a narrow screen; 'nearest' moves it only as far as
+                // needed and never scrolls the page itself.
+                if (typeof btn.scrollIntoView === 'function') {
+                    btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                }
             } else {
                 btn.classList.remove('active');
             }
@@ -1089,6 +1094,12 @@
      * and key figure are different things, so they are made here from it. Nothing is invented: a
      * figure the artifact lacks is left out of the key line.
      */
+    var GATE_OBJECTIVE_LINES = {
+        ADOPT_CANDIDATE: 'Why this candidate cleared the statistical gate',
+        KEEP_INCUMBENT: 'Why the gate withheld this candidate against the incumbent',
+        REJECT_VETO_FAILED: 'Why the gate rejected this candidate'
+    };
+
     function chatPanelDataFromArtifact(artifact) {
         var source = artifact.template_id === 'atlas-suggested' ? 'Atlas-suggested'
             : (artifact.template_id === 'built-new' ? 'Built from scratch' : 'Strategy proposal');
@@ -1102,7 +1113,7 @@
             artifactType: artifact.artifact_type,
             title: 'Discuss: ' + source + ' candidate',
             contextLabel: 'Strategy Builder' + (tickers ? ' \u00b7 ' + tickers : ''),
-            objective: 'Why this candidate cleared the statistical gate',
+            objective: GATE_OBJECTIVE_LINES[artifact.gate_verdict] || 'How the gate judged this candidate',
             gateDecision: artifact.gate_verdict,
             keyStat: figures.join(' \u00b7 '),
             artifactContext: artifact

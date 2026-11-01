@@ -648,6 +648,7 @@
 
         /* Stats table */
         .stats-table { width: 100%; border-collapse: collapse; margin-bottom: 0.875rem; font-size: 0.8125rem; }
+        .stats-table .stats-caption { caption-side: top; text-align: left; font-size: 0.6875rem; font-weight: 600; color: var(--studio-ink-dim); padding-bottom: 0.25rem; }
         .stats-table th { font-size: 0.5625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-muted); padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--studio-border); text-align: left; }
         .stats-table td { padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--studio-border); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
         .stats-table td:first-child { font-size: 0.6875rem; color: var(--studio-ink-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
@@ -3142,6 +3143,8 @@
                         </span>
                     </div>
                     <table class="stats-table" data-testid="stats-table">
+                        {#- The figures are backtest figures, not what the symphony earned. A window is named only when both of its dates are stored. -#}
+                        <caption class="stats-caption" data-testid="stats-backtest-label">Backtest figures{% if m.backtest_start and m.backtest_end %}, {{ m.backtest_start | e }} to {{ m.backtest_end | e }}{% endif %}</caption>
                         <thead>
                             <tr>
                                 <th>Metric</th>

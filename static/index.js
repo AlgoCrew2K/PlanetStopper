@@ -2789,6 +2789,49 @@
     var _summaryRequestSeq = 0;
     var _summaryPendingSeq = 0;      // the request in flight, 0 when the newest has settled
     var _summaryPendingToken = null; // the window that request is for
+    var _summaryAnsweredToken = null; // the window whose summary last answered well; null before the first
+
+    // The panel's figures read as dashes (no digit) while a window's own answer is awaited or
+    // could not be had, so another window's figures never stay under the picked one.
+    var SUMMARY_FIGURE_IDS = [
+        'dollar-saved-headline', 'guard-event-count', 'dollar-saved-net-of-friction-headline',
+        'dollar-saved-realized-headline', 'dollar-saved-realized-coverage',
+        'dollar-saved-realized-net-of-friction-headline'
+    ];
+    var SUMMARY_TEXT_IDS = [
+        'dollar-saved-verb', 'dollar-saved-basis-label', 'dollar-saved-net-of-friction-verb',
+        'dollar-saved-realized-verb', 'dollar-saved-realized-net-of-friction-verb'
+    ];
+    function blankSummaryFigures() {
+        SUMMARY_FIGURE_IDS.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = '—';
+            el.style.color = cs('--studio-ink-dim');
+        });
+        SUMMARY_TEXT_IDS.forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.textContent = '';
+        });
+    }
+    function setSummaryNotice(token) {
+        var el = document.getElementById('dollar-saved-window-notice');
+        if (!el) return;
+        if (token) {
+            el.textContent = 'Could not load the ' + (WINDOW_LABELS[token] || token) + ' figures; trying again.';
+            el.hidden = false;
+        } else {
+            el.textContent = '';
+            el.hidden = true;
+        }
+    }
+    function failSummary(seq, windowToken) {
+        if (seq !== _summaryRequestSeq) return;
+        if (windowToken && windowToken !== _heroWindow) return;
+        _summaryAnsweredToken = null;
+        blankSummaryFigures();
+        setSummaryNotice(windowToken || 'all');
+    }
     function fetchGuardAlphaSummary(windowToken) {
         var seq = ++_summaryRequestSeq;
         _summaryPendingSeq = seq;
@@ -2796,14 +2839,19 @@
         var url = '/api/guard-alpha-summary' + (windowToken ? '?window=' + encodeURIComponent(windowToken) : '');
         fetch(url)
             .then(function (response) {
-                if (!response.ok) return;
+                if (!response.ok) return null;
                 return response.json();
             })
             .then(function (data) {
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
                 if (seq !== _summaryRequestSeq) return;
                 if (windowToken && windowToken !== _heroWindow) return;
-                if (!data || typeof data !== 'object' || typeof data.guard_event_count !== 'number') return;
+                if (!data || typeof data !== 'object' || typeof data.guard_event_count !== 'number') {
+                    failSummary(seq, windowToken);
+                    return;
+                }
+                _summaryAnsweredToken = windowToken || null;
+                setSummaryNotice(null);
                 var headlineEl = document.getElementById('dollar-saved-headline');
                 var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
@@ -2872,6 +2920,7 @@
             })
             .catch(function (err) {
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
+                failSummary(seq, windowToken);
                 console.error('guard-alpha-summary load failed', err);
             });
     }
@@ -2882,7 +2931,8 @@
     // (with a stream open, events do). A request for that window already in flight is not
     // sent twice: the page's first poll meets the one the load sent.
     function refreshPanelWithoutStream() {
-        if (streamIsOpen()) return;
+        // With a stream open, events move the panel; a window still unanswered is asked again.
+        if (streamIsOpen() && _summaryAnsweredToken === _heroWindow) return;
         if (_summaryPendingSeq !== 0 && _summaryPendingToken === _heroWindow) return;
         fetchGuardAlphaSummary(_heroWindow);
     }
@@ -2961,6 +3011,9 @@
                 _stripFiguresBlank = true;
                 blankWindowedFigures();
                 clearStripNotice();
+                _summaryAnsweredToken = null;
+                blankSummaryFigures();
+                setSummaryNotice(null);
                 // The picker drives the chart lines (latest click wins) and the
                 // headline value, its window label and the Ann. Vol row (windowed
                 // strip) -- NOT the Today/Cumulative/Max DD rows, which stay on genuine
