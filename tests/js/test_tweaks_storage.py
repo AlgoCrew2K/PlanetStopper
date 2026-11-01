@@ -46,7 +46,10 @@ function makePage(initialStorage) {
   const root = {
     setAttribute: function (k, v) { attrs[k] = String(v); },
     getAttribute: function (k) { return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null; },
-    style: { setProperty: function (k, v) { attrs['style:' + k] = String(v); } }
+    style: {
+      setProperty: function (k, v) { attrs['style:' + k] = String(v); },
+      removeProperty: function (k) { delete attrs['style:' + k]; }
+    }
   };
   const on = function (where) { return function (type, fn) { (listeners[where][type] = listeners[where][type] || []).push(fn); }; };
   const doc = { documentElement: root, getElementById: function () { return null; }, addEventListener: on('document') };
