@@ -425,6 +425,7 @@ class TestAStalledRequestGivesUpWhenTheStatePollDoes:
             + f"""
         await H.runTimers({STATE_TIMEOUT_MS} + 1000);
         H.route('/api/state', {{ body: H.bodies.stateNew }});
+        H.route({ROUTE_90D}, {{ body: H.bodies.sum90 }});
         await H.runTimers(30000);
         const settled = snap('90d');
         stalled[0]();

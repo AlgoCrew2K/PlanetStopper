@@ -468,8 +468,18 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
         els['engine-status'] = wrap; els['next-run-countdown'] = countdown;
         var serverNow = Date.now();
         var perf = 5000;
+        var rootClasses = {{}};
         var sandbox = {{
             document: {{
+                documentElement: {{
+                    classList: {{
+                        toggle: function (name, force) {{
+                            if (force === undefined) force = !rootClasses[name];
+                            if (force) rootClasses[name] = true; else delete rootClasses[name];
+                            return force;
+                        }}
+                    }}
+                }},
                 getElementById: function (id) {{ return els[id] || null; }},
                 querySelector: function () {{ return null; }},
                 querySelectorAll: function () {{ return []; }},
@@ -496,7 +506,8 @@ def _run_header(sequences: dict[str, list[dict]]) -> dict[str, list[dict]]:
             sandbox.window.updateChromeTicker(data, timing);
             __out[name].push({{
                 text: label.textContent, title: wrap.title,
-                dot: dot.style.background, color: label.style.color
+                dot: dot.style.background, color: label.style.color,
+                longLabel: rootClasses['engine-label-long'] === true
             }});
         }});
     }});
@@ -610,3 +621,22 @@ class TestUpdateEngineStatusScheduledPauses:
             if (got["text"], got["title"], got["color"], got["dot"]) != (text, title, color, color):
                 wrong.append(f"{name}: expected {(text, title, color)}, got {got}")
         assert not wrong, "\n".join(wrong)
+
+    def test_the_long_label_class_is_set_exactly_while_the_label_reads_rebalance_pause(self):
+        blackout = {**_OPEN, "engine_phase": "blackout", "__ageMs": _FOUR_MIN}
+        opening = {**_OPEN, "engine_phase": "opening", "__ageMs": _TWO_HOURS}
+        fresh = {**_OPEN, "engine_phase": "running", "__ageMs": _TEN_S}
+        out = _run_header({"poll sequence": [fresh, blackout, blackout, opening, blackout, fresh]})
+        steps = out["poll sequence"]
+        assert [s["text"] for s in steps] == [
+            "Live",
+            "Rebalance pause",
+            "Rebalance pause",
+            "Opening",
+            "Rebalance pause",
+            "Live",
+        ]
+        assert [s["longLabel"] for s in steps] == [False, True, True, False, True, False], (
+            "the long-label class must be set exactly while the label reads 'Rebalance pause' "
+            "and cleared on the next other label"
+        )
