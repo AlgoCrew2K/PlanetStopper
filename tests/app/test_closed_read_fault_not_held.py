@@ -28,6 +28,7 @@ view must fail), and reads of the state database (`database.load_state`), which 
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -43,6 +44,7 @@ from tests.app.test_closed_poll_hold import (
     DATABASE_LOCKED,
     read_closed_routes,
 )
+from tests.app.test_history_exits_hold_while_closed import seed_exit_trigger
 
 # Routes whose held result is shared: a poll of one is answered from the other's build.
 SHARED_HOLD = {"/api/state": ("/",), "/": ("/api/state",)}
@@ -245,3 +247,197 @@ def test_a_symphony_with_no_history_rows_is_a_complete_build_and_is_held(
         f"ran {len(faults.reads)} shadow_history statements instead of answering the held result"
     )
     assert first == second == third
+
+
+# ---------------------------------------------------------------------------
+# The day-1 exit estimate: a fault on the day-filtered `exit_triggers` read
+# ---------------------------------------------------------------------------
+# A window with fewer than two shadow days has no windowed guard alpha, so the strip (and the
+# dollar-saved summary, when no post-mortem file exists) estimates it from `exit_triggers` rows
+# paired with each symphony's latest `current_return`. The estimate is day-filtered to the session
+# the page shows. A table with no `ts_et` column cannot express the session, so that one case
+# still reads every row; a fault is not that case. The rule: a read that fails is a failure of the
+# build (never a different, wider question answered in its place), and the strip's answer is then
+# not kept.
+#
+# The world: one shadow day (the session's), `exit_triggers` rows on the session and on an earlier
+# day with different `at_return`, so the unfiltered figure differs from the filtered one. The
+# fault is injected at the SQL statement, as above. The legacy schema is the same database with the
+# column renamed, so the unfiltered figure is read from this very world, never typed in.
+
+EXIT_ESTIMATE_STATEMENT = "from exit_triggers t where substr(t.ts_et, 1, 10) = ?"
+EARLIER_EXIT_DAY = "2026-09-15"
+STRIP_PATH = "/api/strip/30d"
+SUMMARY_PATH = "/api/guard-alpha-summary"
+SUMMARY_MONEY = ("cumulative_saved_dollars", "cumulative_saved_dollars_net_of_friction")
+
+
+def exit_estimate_world(monkeypatch, tmp_path, *, post_mortems: bool, instant: str):
+    """A closed world whose window holds one shadow day and whose exits sit on two days."""
+    cw, faults = world(monkeypatch, tmp_path)
+    cw.at(*CLOSED_INSTANTS[instant])
+    session_day = cw.session.session_day
+    with sqlite3.connect(app_module.database._db_file()) as conn:
+        conn.execute("DELETE FROM shadow_history WHERE trading_day <> ?", (session_day,))
+    if not post_mortems:
+        for record in cw.post_mortem_dir.glob("post_mortem_*.json"):
+            record.unlink()
+    seed_exit_trigger(session_day, "10:00:00", 0, "Trailing-Stop", 5.0)
+    seed_exit_trigger(EARLIER_EXIT_DAY, "10:00:00", 1, "Trailing-Stop", 40.0)
+    app_module._CLOSED_HOLD.clear()
+    return cw, faults
+
+
+def rename_ts_et(column_from: str, column_to: str) -> None:
+    """The legacy shape: an `exit_triggers` table that has no `ts_et` column."""
+    with sqlite3.connect(app_module.database._db_file()) as conn:
+        conn.execute(f"ALTER TABLE exit_triggers RENAME COLUMN {column_from} TO {column_to}")
+
+
+def estimate_read(faults: ReadFaults) -> tuple[str, str]:
+    """The day-filtered estimate statement (with its parameters) of the last build, found among
+    the reads that build ran."""
+    found = [read for read in faults.distinct_reads() if EXIT_ESTIMATE_STATEMENT in read[0].lower()]
+    assert len(found) == 1, (
+        f"fixture sanity: expected the build to run the day-filtered exit estimate once, ran "
+        f"{len(found)} ({[short(read[0]) for read in found]})"
+    )
+    return found[0]
+
+
+def strip_that_met_a_failed_exit_read(monkeypatch, tmp_path, market_state, lock):
+    """(the fault-free strip body, the strip answered by the build that met the failed day-filtered
+    exit read, the strip answered by the next poll with no fault)."""
+    cw, faults = exit_estimate_world(monkeypatch, tmp_path, post_mortems=True, instant=market_state)
+    faults.begin()
+    reference_body = cw.raw(STRIP_PATH)
+    reference = json.loads(reference_body)
+    read = estimate_read(faults)
+    assert reference.get("insufficient_history") and reference.get("guard_alpha") is not None, (
+        "fixture sanity: the window must hold too few days for a windowed figure and the day "
+        f"estimate must answer one: {reference.get('insufficient_history')!r}, "
+        f"{reference.get('guard_alpha')!r}"
+    )
+    app_module._CLOSED_HOLD.clear()
+    faults.begin(read, LOCKS[lock])
+    answered = cw.world.client.get(STRIP_PATH)
+    fired = list(faults.failed)
+    faults.begin()
+    assert fired, "the fault was not reached: the day-filtered exit read did not run"
+    assert answered.status_code == 200
+    again = cw.world.client.get(STRIP_PATH)
+    assert again.status_code == 200
+    return reference_body, answered, again
+
+
+@pytest.mark.parametrize("lock", sorted(LOCKS))
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_a_failed_day_filtered_exit_read_is_not_kept_for_the_next_poll(
+    monkeypatch, tmp_path, market_state, lock
+):
+    reference_body, _answered, again = strip_that_met_a_failed_exit_read(
+        monkeypatch, tmp_path, market_state, lock
+    )
+    assert again.get_data() == reference_body, (
+        f"{market_state}: the next poll of {STRIP_PATH} did not answer a fault-free build's "
+        f"bytes (guard_alpha {again.get_json().get('guard_alpha')!r}, fault-free "
+        f"{json.loads(reference_body)['guard_alpha']!r}), so the build that met the fault was kept"
+    )
+
+
+@pytest.mark.parametrize("lock", sorted(LOCKS))
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_a_failed_day_filtered_exit_read_does_not_answer_the_guard_alpha_of_every_exit(
+    monkeypatch, tmp_path, market_state, lock
+):
+    reference_body, answered, _again = strip_that_met_a_failed_exit_read(
+        monkeypatch, tmp_path, market_state, lock
+    )
+    expected = json.loads(reference_body)["guard_alpha"]
+    figure = answered.get_json().get("guard_alpha")
+    assert figure is None or figure == expected, (
+        f"{market_state}: the poll that met a locked day-filtered exit read answered a guard "
+        f"alpha of {figure!r}, neither the session's estimate ({expected!r}) nor an absent one: "
+        "it answered the figure of every exit ever recorded"
+    )
+
+
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_an_exit_table_without_a_session_column_still_reads_every_row_and_is_held(
+    monkeypatch, tmp_path, market_state
+):
+    cw, faults = exit_estimate_world(monkeypatch, tmp_path, post_mortems=True, instant=market_state)
+    filtered = cw.poll(STRIP_PATH)["guard_alpha"]
+    rename_ts_et("ts_et", "ts_et_legacy")
+    app_module._CLOSED_HOLD.clear()
+    faults.begin()
+    first = cw.raw(STRIP_PATH)
+    figure = json.loads(first)["guard_alpha"]
+    faults.begin()
+    second = cw.raw(STRIP_PATH)
+    assert figure is not None and figure != filtered, (
+        f"{market_state}: with no ts_et column the estimate must read every exit row "
+        f"(answered {figure!r}; the session-filtered figure is {filtered!r})"
+    )
+    assert second == first
+    assert not faults.reads, (
+        "a legacy schema is a complete build: the next poll must be a lookup, but it ran "
+        f"{len(faults.reads)} shadow_history statements"
+    )
+
+
+@pytest.mark.parametrize("lock", sorted(LOCKS))
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_a_failed_day_filtered_exit_read_does_not_answer_the_dollar_saved_of_every_exit(
+    monkeypatch, tmp_path, market_state, lock
+):
+    """The summary's day-1 estimate (no post-mortem file yet) has the same fallback. Its answer is
+    not held, so what must not happen is that the poll that met the fault answers the dollar
+    figure of every exit ever recorded, a figure that reads as the session's."""
+    cw, faults = exit_estimate_world(
+        monkeypatch, tmp_path, post_mortems=False, instant=market_state
+    )
+    faults.begin()
+    reference_body = cw.raw(SUMMARY_PATH)
+    reference = json.loads(reference_body)
+    read = estimate_read(faults)
+    rename_ts_et("ts_et", "ts_et_legacy")
+    unfiltered = cw.poll(SUMMARY_PATH)
+    rename_ts_et("ts_et_legacy", "ts_et")
+    assert reference["source"] == "exit_triggers_intraday"
+    assert all(reference[key] != unfiltered[key] for key in SUMMARY_MONEY), (
+        "fixture sanity: the unfiltered dollar figures must differ from the session's "
+        f"({[(key, reference[key], unfiltered[key]) for key in SUMMARY_MONEY]})"
+    )
+
+    faults.begin(read, LOCKS[lock])
+    answered = cw.world.client.get(SUMMARY_PATH)
+    fired = list(faults.failed)
+    faults.begin()
+    assert fired, "the fault was not reached: the day-filtered exit read did not run"
+    assert answered.status_code == 200
+    body = answered.get_json()
+    for key in SUMMARY_MONEY:
+        assert body[key] != unfiltered[key], (
+            f"{market_state}: the poll that met a locked day-filtered exit read answered "
+            f"{key} {body[key]!r}, the figure of every exit ever recorded"
+        )
+    again = cw.world.client.get(SUMMARY_PATH)
+    assert again.status_code == 200 and again.get_data() == reference_body
+
+
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_the_dollar_saved_estimate_on_an_exit_table_without_a_session_column_reads_every_row(
+    monkeypatch, tmp_path, market_state
+):
+    cw, _faults = exit_estimate_world(
+        monkeypatch, tmp_path, post_mortems=False, instant=market_state
+    )
+    filtered = cw.poll(SUMMARY_PATH)["cumulative_saved_dollars"]
+    rename_ts_et("ts_et", "ts_et_legacy")
+    body = cw.poll(SUMMARY_PATH)
+    assert body["source"] == "exit_triggers_intraday"
+    assert body["cumulative_saved_dollars"] != filtered, (
+        f"{market_state}: with no ts_et column the estimate must read every exit row, but it "
+        f"answered the session-filtered {filtered!r}"
+    )

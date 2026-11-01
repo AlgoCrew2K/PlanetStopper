@@ -6182,7 +6182,9 @@ def _build_windowed_strip(
                             "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
                             (trading_day,),
                         ).fetchall()
-                    except Exception:
+                    except Exception as _exc:
+                        if "no such column" not in str(_exc).lower():
+                            raise  # a read fault is a failed build, never the wider answer
                         # A minimal/legacy exit_triggers table without a ts_et column
                         # cannot express "today" at all — degrade to the unfiltered
                         # query (the pre-AC-8 behavior) rather than silently zeroing
@@ -6644,7 +6646,9 @@ def guard_alpha_summary():
                         "FROM exit_triggers t WHERE substr(t.ts_et, 1, 10) = ?",
                         (_today_et,),
                     ).fetchall()
-                except Exception:
+                except Exception as _exc:
+                    if "no such column" not in str(_exc).lower():
+                        raise  # a read fault answers "no guard events yet" via the outer except
                     # A minimal/legacy exit_triggers table without a ts_et column
                     # cannot express "today" at all — degrade to the unfiltered
                     # query (the pre-AC-8 behavior) rather than silently zeroing

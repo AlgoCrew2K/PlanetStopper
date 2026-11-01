@@ -1576,10 +1576,15 @@
   {# the poll's new rows come from one markup. A real card's buttons carry inline handlers; the #}
   {# template's do not (the poll wires its clones). #}
   {% macro sleeve_rule_row(sleeve_id, rule, template=false) -%}
+  {# While the market is closed the fire count belongs to the anchor session: name its date from the ISO digits. #}
+  {% set _rule_months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+  {% set _rule_anchor = (meta.portfolio.get('window_anchor') if not template and meta is defined and meta is mapping and meta.portfolio is defined and meta.portfolio is mapping else none) %}
+  {% set _rule_closed = (meta is defined and meta is mapping and meta.get('system_online') is sameas false) %}
+  {% set _rule_today_label = ((_rule_months[_rule_anchor[5:7]|int - 1] ~ ' ' ~ (_rule_anchor[8:10]|int)) if _rule_closed and _rule_anchor is string and _rule_anchor|length == 10 and 1 <= _rule_anchor[5:7]|int <= 12 else 'today') %}
   <div data-testid="sleeve-rule-row" data-rule-id="{{ rule.id }}" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
     <span><span data-field="rule-name">{{ rule.name }}</span> <span data-field="rule-mode" style="color:var(--studio-ink-faint);">({{ rule.mode }})</span></span>
     <span data-field="rule-actions" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
-      <span style="color:var(--studio-ink-dim);">today <span data-field="rule-today">{{ rule.today_fires }}</span> &middot; lifetime <span data-field="rule-lifetime">{{ rule.lifetime_fires }}</span> &middot; realized <span data-field="rule-realized">{{ rule.realized_text }}</span></span>
+      <span style="color:var(--studio-ink-dim);"><span data-field="rule-today-label">{{ _rule_today_label }}</span> <span data-field="rule-today">{{ rule.today_fires }}</span> &middot; lifetime <span data-field="rule-lifetime">{{ rule.lifetime_fires }}</span> &middot; realized <span data-field="rule-realized">{{ rule.realized_text }}</span></span>
       {% if rule.mode == 'SHADOW' or template %}
       <button
         type="button"
