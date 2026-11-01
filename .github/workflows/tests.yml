@@ -25,3 +25,6 @@ jobs:
       - name: Run default suite
         # Project defaults (pyproject addopts) exclude live/slow tests and run xdist-parallel.
         run: python -m pytest -q --no-header
+      - name: Disk use after the suite
+        if: always()
+        run: df -h / /tmp; du -sh /tmp/pytest-of-* 2>/dev/null || true

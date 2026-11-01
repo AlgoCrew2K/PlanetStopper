@@ -79,6 +79,9 @@ ignore = []
 quote-style = "double"
 
 [tool.pytest.ini_options]
+# Keep a test's temp directory only if it failed: each holds a ~380 KB database, and keeping all
+# of them for ~25,000 tests is about 9.5 GB on a CI runner.
+tmp_path_retention_policy = "failure"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = """
