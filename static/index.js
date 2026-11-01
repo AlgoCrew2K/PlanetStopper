@@ -1286,6 +1286,7 @@
         var switched = _detailSymId !== null && symId !== _detailSymId;
         _detailSymId = symId || null;
         var seq = ++_detailRequestSeq;
+        _detailChartReading = null;
         if (switched) clearDetailPanelBody();
         var rpEl = document.getElementById('detail-risk-profile');
         if (rpEl) rpEl.innerHTML = '';
@@ -1298,7 +1299,7 @@
 
         var kept = writeDetailFigures(sym);
         // Populate Risk Math from bot state eagerly (B-04); chart fetch will overwrite with live data.
-        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak);
+        populateRiskMathFromState(sym);
         startDetailRequests(symId, sym, seq);
     }
 
@@ -1329,36 +1330,60 @@
         }
         writeDetailTitle(sym, _detailSymId);
         var kept = writeDetailFigures(sym);
-        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak, true);
+        populateRiskMathFromState(sym, true);
         if (_detailNeedsFetch) {
             _detailNeedsFetch = false;
             startDetailRequests(_detailSymId, sym, _detailRequestSeq);
         }
     }
 
-    // The risk rows a state entry can fill. The VWAP row is the tape's (the chart path writes it),
-    // so a poll passes keepVwap and leaves the text the chart gave it.
-    function populateRiskMathFromState(sym, stopLevel, shadowPeak, keepVwap) {
-        // stopLevel and shadowPeak are already sentinel-guarded by the caller
-        var stopDist = (shadowPeak != null && stopLevel != null)
-            ? ((shadowPeak - stopLevel).toFixed(2) + '%') : '--';
-        var beVal = sym.breakeven_locked ? 'Active' : 'Off';
-        var rawMc = sentinelToNull(typeof sym.mc_prob === 'number' ? sym.mc_prob : null);
-        var mcVal = rawMc != null ? rawMc.toFixed(1) + '%' : '--';
-        var rawVol = sentinelToNull(typeof sym.symphony_vol === 'number' ? sym.symphony_vol : null);
-        var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
-        var rawPara = sentinelToNull(typeof sym.para_velocity === 'number' ? sym.para_velocity : null);
-        var paraVal = rawPara != null ? rawPara.toFixed(2) + '%' : '--';
+    // The chart's answer for the open symphony, kept so a poll's rows read the same as the chart's.
+    // Taken off on every open: nothing of another symphony's tape may carry across.
+    var _detailChartReading = null;
+
+    // The Risk Math rows and hints, one rule for every writer. Vol and MC are the state's value when
+    // it is a usable number, else the chart's reading; MC is no reading for a triggered symphony; the
+    // stop level is the state's, else the chart's last stop, against the state's peak.
+    function riskMathRows(sym) {
+        var chart = _detailChartReading || {};
+        var usable = function (v) { return sentinelToNull(typeof v === 'number' ? v : null); };
+        var pick = function (own, fallback) { var v = usable(own); return v != null ? v : fallback; };
+        var mc = sym.triggered ? null : pick(sym.mc_prob, chart.mc != null ? chart.mc : null);
+        var vol = pick(sym.symphony_vol, chart.vol != null ? chart.vol : null);
+        var stopLevel = pick(sym.stop_trigger, chart.stop != null ? chart.stop : null);
+        var peak = usable(sym.shadow_hwm);
+        var para = usable(sym.para_velocity);
+        return {
+            mc: mc,
+            stop: (peak != null && stopLevel != null) ? (peak - stopLevel).toFixed(2) + '%' : '--',
+            vol: vol != null ? vol.toFixed(3) : '--',
+            para: para != null ? para.toFixed(2) + '%' : '--',
+            paraHint: para != null ? 'active ratchet velocity' : 'threshold —',
+            be: sym.breakeven_locked ? 'Active · floor 0.00%' : 'Off',
+            beHint: sym.breakeven_locked ? '5 confirm ticks @ lock threshold' : 'not yet activated'
+        };
+    }
+
+    // Writes the rows a state entry (with the chart's reading, once it has answered) can fill. The
+    // VWAP row is the tape's alone, so a poll passes keepVwap and leaves what the chart gave it.
+    function populateRiskMathFromState(sym, keepVwap) {
+        var rows = riskMathRows(sym);
+        var mcVal = rows.mc != null ? rows.mc.toFixed(1) + '%' : '--';
         var fields = [
             { id: 'dp-rm-mc',   val: mcVal },
-            { id: 'dp-rm-stop', val: stopDist },
-            { id: 'dp-rm-vol',  val: volVal },
-            { id: 'dp-rm-para', val: paraVal },
-            { id: 'dp-rm-be',   val: beVal }
+            { id: 'dp-rm-stop', val: rows.stop },
+            { id: 'dp-rm-vol',  val: rows.vol },
+            { id: 'dp-rm-para', val: rows.para },
+            { id: 'dp-rm-para-hint', val: rows.paraHint },
+            { id: 'dp-rm-be',   val: rows.be },
+            { id: 'dp-rm-be-hint', val: rows.beHint }
         ];
         // vwap_pct does not exist on bot_state; the chart path fills this in via
         // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
-        if (!keepVwap) fields.push({ id: 'dp-rm-vwap', val: '--' });
+        if (!keepVwap) {
+            fields.push({ id: 'dp-rm-vwap', val: '--' });
+            fields.push({ id: 'dp-rm-vwap-hint', val: '—' });
+        }
         fields.forEach(function (f) {
             var el = document.getElementById(f.id);
             if (el) el.textContent = f.val;
@@ -1366,9 +1391,9 @@
         // The reading's bar follows its text.
         var mcBar = document.getElementById('dp-rm-mc-bar');
         if (mcBar) {
-            if (rawMc != null) {
-                mcBar.style.width = Math.max(0, Math.min(100, rawMc)) + '%';
-                mcBar.style.background = rawMc < 15 ? cs('--studio-warn') : (rawMc > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+            if (rows.mc != null) {
+                mcBar.style.width = Math.max(0, Math.min(100, rows.mc)) + '%';
+                mcBar.style.background = rows.mc < 15 ? cs('--studio-warn') : (rows.mc > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
             } else {
                 mcBar.style.width = '0%';
                 mcBar.style.background = cs('--studio-ink-faint');
@@ -1524,66 +1549,26 @@
         var last = data.slice(-1)[0] || {};
         sym = sym || {};
 
-        // mc_prob: for a TRIGGERED (exited) symphony, never scan history for a
-        // stale pre-trigger reading -- once post-trigger rows carry the honest
-        // None sentinel (AC-1), a backward null-scan cannot tell "no data yet"
-        // from "exited" and would resurrect the last real pre-trigger value as
-        // if it were current. Short-circuit on trigger STATE before the scan.
-        var mcProb = null;
-        if (!sym.triggered) {
-            // mc_prob: scan data array backwards (top-level is null); skip sentinels
-            for (var i = data.length - 1; i >= 0; i--) {
-                var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
-                if (candidate != null) { mcProb = candidate; break; }
-            }
+        // The chart's reading: the last row's vol and stop, and the newest MC reading found scanning
+        // backwards (the top level is null; sentinels skipped). Whether it applies to a triggered
+        // symphony is riskMathRows' rule, so a stale pre-trigger reading is never resurrected.
+        var chartMc = null;
+        for (var i = data.length - 1; i >= 0; i--) {
+            var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
+            if (candidate != null) { chartMc = candidate; break; }
         }
-
-        // stop distance = shadow_hwm - current stop level (sentinel-guard both)
-        var shadowHwm = sentinelToNull(typeof sym.shadow_hwm === 'number' ? sym.shadow_hwm : null);
-        var rawStopChart = last.stop != null ? last.stop : null;
-        var stopLevel = sentinelToNull(typeof sym.stop_trigger === 'number' ? sym.stop_trigger : rawStopChart);
-        var stopDist = (shadowHwm != null && stopLevel != null) ? (shadowHwm - stopLevel).toFixed(2) + '%' : '--';
-
-        // vol from last chart point
-        var rawVol = sentinelToNull(last.vol != null ? last.vol : null);
-        var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
-
-        // breakeven locked from sym state
-        var beVal = sym.breakeven_locked ? 'Active' : 'Off';
+        _detailChartReading = {
+            mc: chartMc,
+            vol: sentinelToNull(last.vol != null ? last.vol : null),
+            stop: sentinelToNull(last.stop != null ? last.stop : null)
+        };
+        populateRiskMathFromState(sym, true);
 
         // vwap_diff from last chart point as a proxy for VWAP state
         var rawVwapDiff = sentinelToNull(last.vwap_diff != null ? last.vwap_diff : null);
         var vwapVal = rawVwapDiff != null ? (rawVwapDiff >= 0 ? 'Above' : 'Below') + ' (' + rawVwapDiff.toFixed(2) + '%)' : '--';
 
         function setEl(id, text) { var e = document.getElementById(id); if (e) e.textContent = text; }
-
-        // MC probability + bar
-        var mcText = mcProb != null ? mcProb.toFixed(1) + '%' : '—';
-        setEl('dp-rm-mc', mcText);
-        var mcBar = document.getElementById('dp-rm-mc-bar');
-        if (mcBar) {
-            if (mcProb != null) {
-                var pct = Math.max(0, Math.min(100, mcProb));
-                mcBar.style.width = pct + '%';
-                mcBar.style.background = mcProb < 15 ? cs('--studio-warn') : (mcProb > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
-            } else {
-                // Neutral reset -- never leave the bar showing a stale
-                // width/color from a previous (possibly pre-trigger) render.
-                mcBar.style.width = '0%';
-                mcBar.style.background = cs('--studio-ink-faint');
-            }
-        }
-
-        setEl('dp-rm-stop', stopDist);
-        setEl('dp-rm-vol', volVal);
-        var paraVel = (sym.para_velocity != null) ? sym.para_velocity.toFixed(2) + '%' : '--';
-        setEl('dp-rm-para', paraVel);
-        setEl('dp-rm-para-hint', sym.para_velocity != null ? 'active ratchet velocity' : 'threshold —');
-
-        // Breakeven lock with hint
-        var beText = sym.breakeven_locked ? 'Active · floor 0.00%' : 'Off';
-        setEl('dp-rm-be', beText);
-        setEl('dp-rm-be-hint', sym.breakeven_locked ? '5 confirm ticks @ lock threshold' : 'not yet activated');
 
         // VWAP state with hint.
         // bleed mult lives in /api/settings response (settingsData.symphonies[name].params.VWAP_BLEED_MULTIPLIER);
