@@ -31,6 +31,7 @@ from datetime import date
 import pytest
 
 from tests.app._closed_session_world import build_history_world, utc_of
+from tests.app._refresh_timing_frozen_world import SYMPHONY_IDS
 from tests.app.test_closed_market_numbers_never_move import local, write_engine_cycle
 from tests.app.test_history_exits_hold_while_closed import MONDAY, anchor_of
 from tests.app.test_sleeve_rule_fires_names_the_closed_session import session_label
@@ -90,6 +91,13 @@ class Worlds:
         self.anchor = anchor_of(cw)
         self.session = session_label(self.anchor)
         self.closed = capture(cw)
+        self.symphony_id = SYMPHONY_IDS[0]
+        # The real route's answer for the first card's Risk Profile, read at the closed instant.
+        performance = cw.world.client.get(
+            f"/api/performance?scope=symphony&symphony_id={self.symphony_id}&days=60"
+        )
+        assert performance.status_code == 200, f"/api/performance answered {performance.status_code}"
+        self.closed_performance = performance.get_json()
         self.closed_now = utc_of(*SATURDAY).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         write_engine_cycle(cw.world, local(MONDAY, "10:00:20"), 1)
         cw.at(*MONDAY_OPEN)
