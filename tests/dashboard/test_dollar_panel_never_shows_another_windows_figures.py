@@ -40,7 +40,9 @@ DIGIT = re.compile(r"\d")
 
 # The page's give-up time for its /api/state poll; the summary request must give up at the same time.
 STATE_TIMEOUT_MS = int(
-    re.search(r"var STATE_REQUEST_TIMEOUT_MS = (\d+);", hx.INDEX_JS.read_text(encoding="utf-8")).group(1)
+    re.search(
+        r"var STATE_REQUEST_TIMEOUT_MS = (\d+);", hx.INDEX_JS.read_text(encoding="utf-8")
+    ).group(1)
 )
 
 # Totals chosen by the test (not producer values): the default window reads a loss, 90d a gain.
@@ -523,7 +525,9 @@ def follows_theme(colour: str | None) -> bool:
 
 
 class TestNoElementKeepsAColourResolvedForTheOtherTheme:
-    def test_after_the_load_answers_the_count_and_coverage_follow_the_theme_in_both_directions(self):
+    def test_after_the_load_answers_the_count_and_coverage_follow_the_theme_in_both_directions(
+        self,
+    ):
         body = (
             COLOURS
             + r"""

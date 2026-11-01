@@ -212,7 +212,9 @@ class TestAPickEqualToTheEarlierVersionsSeedIsARealPick:
                  afterReady: second.attrs['__KEY__'] === undefined ? null : second.attrs['__KEY__'],
                  picked: second.tools().get('accent'), thirdLoad: third.attrs['__KEY__'] === undefined ? null : third.attrs['__KEY__'],
                  theme: second.root.getAttribute('data-theme') };
-        """.replace("__THEME__", theme).replace("__PICK__", LIGHT_DEFAULT).replace("__KEY__", INLINE)
+        """.replace("__THEME__", theme)
+            .replace("__PICK__", LIGHT_DEFAULT)
+            .replace("__KEY__", INLINE)
         )
         assert r["afterPick"] == LIGHT_DEFAULT, (
             "a click on swatch 1 removed the inline accent, so the theme's own accent shows"
@@ -258,7 +260,9 @@ class TestAPickEqualToTheEarlierVersionsSeedIsARealPick:
             .replace("__KEY__", INLINE)
         )
         assert r["afterPick"] == LIGHT_DEFAULT
-        assert r["atRun"] == LIGHT_DEFAULT, "a swatch 1 pick made after the one-time clearing is lost"
+        assert r["atRun"] == LIGHT_DEFAULT, (
+            "a swatch 1 pick made after the one-time clearing is lost"
+        )
         assert r["afterReady"] == LIGHT_DEFAULT
 
     def test_the_one_time_clearing_leaves_a_stored_pick_of_another_accent_alone(self):

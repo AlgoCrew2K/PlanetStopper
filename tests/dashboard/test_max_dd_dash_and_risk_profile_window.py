@@ -231,7 +231,9 @@ class TestTheRiskProfileStatesTheDepthOfItsFigures:
     def test_a_response_with_no_count_names_no_number(self, worlds):
         performance = _with_depth(worlds.closed_performance, None)
         line = _window_line(_risk_profile(worlds, performance)["text"])
-        assert not re.search(r"\d", line), f"the line names a number the response never gave: {line!r}"
+        assert not re.search(r"\d", line), (
+            f"the line names a number the response never gave: {line!r}"
+        )
 
     def test_a_response_with_no_rows_does_not_claim_the_asked_days(self, worlds):
         performance = _with_depth(worlds.closed_performance, 0)
