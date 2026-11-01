@@ -486,7 +486,12 @@ def _excused_by(use: Declarations, entry: tuple[str, str, bool, str]) -> bool:
 
 def test_precondition_the_sweep_finds_the_faint_text_colours_the_pages_use():
     uses = declarations_matching(FAINT_TEXT)
-    assert len(uses) >= 20, f"the sweep found only {len(uses)} uses; its patterns have drifted"
+    # Once every non-excused use has moved, the allowlisted ones are what is left: the sweep must
+    # still see all of them, or its patterns have drifted.
+    assert len(uses) >= len(SWEEP_ALLOWLIST), (
+        f"the sweep found only {len(uses)} uses for {len(SWEEP_ALLOWLIST)} allowlist entries; "
+        "its patterns have drifted"
+    )
     assert {u.kind for u in uses} == {"rule", "inline"}
 
 
