@@ -181,7 +181,7 @@ def stylesheet_texts() -> tuple[tuple[str, str], ...]:
 
 def class_rules(class_name: str) -> list[tuple[str, str, dict[str, str]]]:
     """(source, selector, properties) of every rule whose subject is ``.class_name``, with the
-    ``color`` and ``opacity`` it sets (a rule setting neither is left out). A rule on a state
+    ``color``, ``opacity`` and ``background`` it sets (a rule setting none is left out). A rule on a state
     (``:hover``, ``:focus``, ``:disabled``) is not the resting text."""
     subject = re.compile(r"\." + re.escape(class_name) + r"(?![\w-])")
     found: list[tuple[str, str, dict[str, str]]] = []
@@ -195,7 +195,7 @@ def class_rules(class_name: str) -> list[tuple[str, str, dict[str, str]]]:
                 if not subject.search(last) or re.search(r":(hover|focus|active|disabled)", last):
                     continue
                 props = style_properties(body)
-                kept = {k: v for k, v in props.items() if k in ("color", "opacity")}
+                kept = {k: v for k, v in props.items() if k in ("color", "opacity", "background", "background-color")}
                 if kept:
                     found.append((source, selector, kept))
     return found
