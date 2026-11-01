@@ -56,6 +56,7 @@ import subprocess
 import tempfile
 from html.parser import HTMLParser
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -64,6 +65,7 @@ STATIC_DIR = _REPO / "static"
 INDEX_JS = STATIC_DIR / "index.js"
 TOKENS_CSS = STATIC_DIR / "tokens.css"
 _BOT_STATE_CAPTURE = _REPO / "tests" / "fixtures" / "prod_droplet" / "bot_state_positions.json"
+_ET_ZONE = ZoneInfo("America/New_York")
 
 import app as _app_module  # noqa: E402
 import database as _database_module  # noqa: E402
@@ -559,7 +561,11 @@ def _build_world(name: str) -> dict:
         database.init_db()
         database.save_state({**bot_state, **spec.get("state_top_level", {})})
 
-        today = _dt_mod.datetime.now().strftime("%Y-%m-%d")  # /api/chart's own "today"
+        # The ET date: the day the app stamps as the poll's window anchor and as /api/chart's
+        # et_date, and the date the engine stamps in the chart store. The host's local date is
+        # the next day for part of every evening on a UTC host, so seeding by it dates the tape
+        # and the series a day past the anchor the page cuts its windows from.
+        today = _dt_mod.datetime.now(_ET_ZONE).strftime("%Y-%m-%d")
         if "explicit_dates" in spec:
             days = list(spec["explicit_dates"])
         else:
@@ -592,11 +598,10 @@ def _build_world(name: str) -> dict:
 
         _app_module.app.config["TESTING"] = True
         client = _app_module.app.test_client()
-        # The rows are seeded by the host-local date (/api/chart reads local "today") but the
-        # calendar windows cut by the UTC date, and the two dates differ for part of every
-        # day on a host away from UTC. Every capture is therefore taken as if the UTC date
-        # were the seeded day, and ``seeded_now_iso`` pins the page's clock to that same day,
-        # so the series, the captures and the script share one date at every hour.
+        # The rows are seeded by the ET date, the day the app anchors the poll's windows on while
+        # the market reads open. The analytics clock the captures read is frozen to that day and
+        # ``seeded_now_iso`` pins the page's clock to it, so the series, the captures and the
+        # script share one date whatever the host's zone and hour.
         seeded_today = spec.get("frozen_today") or _dt_mod.date.fromisoformat(today)
         world = _capture(client, seeded_today)
         if spec.get("frozen_today"):
@@ -860,10 +865,10 @@ def run_scenario(
 def seeded_now_iso(world: dict) -> str:
     """A UTC instant on the day the world's rows were seeded for, for ``now_iso``.
 
-    The calendar cutoffs take the UTC date and a world is seeded by the host-local date.
+    A world is seeded by the ET date, the anchor the page cuts its calendar windows from.
     Pinning the page's clock to the seeded day (``_build_world`` captures as of that day too)
     keeps both on one date at every hour, where the real UTC now is a day past the newest row
-    for part of each evening west of UTC."""
+    for part of each evening."""
     return world.get("now_iso") or f"{world['seeded_today']}T12:00:00.000Z"
 
 

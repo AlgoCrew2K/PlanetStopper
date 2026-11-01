@@ -51,8 +51,9 @@ RULE_ROW_KEYS = {
 
 
 def fire_at(world, clock: str = "14:30:00") -> str:
-    """A UTC fire time inside the branch's ET trading day (14:30 UTC is 10:30 ET)."""
-    return f"{world.moment.trading_day} {clock}"
+    """A UTC fire time inside the ET session the branch's page reads (14:30 UTC is 10:30 ET): the
+    session of the day while it is open or closed, the previous session before the open."""
+    return f"{world.moment.session_day} {clock}"
 
 
 def seed_sleeves(world) -> dict:
