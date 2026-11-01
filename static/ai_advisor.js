@@ -409,7 +409,7 @@
                         'border-top:1px solid var(--studio-border);display:flex;flex-wrap:wrap;gap:0.5rem;">' +
                         '<button class="chat-about-btn" data-testid="chat-about-this-btn"' +
                         ' data-artifact-json=\'' + escHtml(cfgArtifactJson) + '\'' +
-                        ' style="padding:0.375rem 0.875rem;background:var(--studio-accent);color:var(--studio-white);' +
+                        ' style="padding:0.375rem 0.875rem;background:var(--studio-accent);color: var(--studio-paper);' +
                         'border:none;border-radius:0.5rem;font-size:0.8125rem;font-weight:600;cursor:pointer;' +
                         'white-space:nowrap;"' +
                         ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +

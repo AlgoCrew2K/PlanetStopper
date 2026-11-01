@@ -95,7 +95,7 @@
   </div>
 
   <!-- Right-rail: force run now button (FP-T3-02, FP-T5-07) -->
-  <button data-testid="force-run-btn" type="button" style="padding:5px 14px;border-radius:6px;background:var(--studio-accent);color:var(--studio-white);font-size:12px;font-weight:600;cursor:pointer;border:none;white-space:nowrap;flex-shrink:0;">
+  <button data-testid="force-run-btn" type="button" style="padding:5px 14px;border-radius:6px;background:var(--studio-accent);color: var(--studio-paper);font-size:12px;font-weight:600;cursor:pointer;border:none;white-space:nowrap;flex-shrink:0;">
     Force run now
   </button>
 
@@ -133,6 +133,10 @@
   /* The floating gear sits above the open detail panel (z-index) and covers a value there, so it
      steps aside while that panel is open. */
   body:has(#detail-panel.open) [data-testid="tweaks-btn"] { display:none !important; }
+  /* The open chat panel fills a phone screen, and the gear would sit on top of it. */
+  @media (max-width: 700px) {
+    body:has(.chat-panel--open) [data-testid="tweaks-btn"] { display:none !important; }
+  }
   @media (max-width: 700px) {
     /* On a phone it is smaller and tucked into the corner, so it covers as little as it can.
        The button's inline style sets its place, so !important. */

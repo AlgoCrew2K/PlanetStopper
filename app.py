@@ -8098,7 +8098,15 @@ def exit_turnover():
 
     _zeroed_windows = {w: {"exit_count": 0, "coverage_days": 0} for w in (30, 90, 365)}
     try:
-        stats = database.get_exit_turnover_stats(symphony_id)
+        # A closed market counts back from the close of the session its figures belong to, so the
+        # counts hold still while nothing is trading; an open one counts back from now.
+        session_anchor = _current_session()[0].cutoff_anchor
+        if session_anchor is None:
+            stats = database.get_exit_turnover_stats(symphony_id)
+        else:
+            stats = database.get_exit_turnover_stats(
+                symphony_id, now_utc=_session_close_moment(session_anchor).astimezone(UTC)
+            )
         drag_pct = database.compute_est_annual_friction_drag_pct(
             stats, autotuner.SIM_EXIT_FRICTION_PCT
         )

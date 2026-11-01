@@ -1375,6 +1375,12 @@
     // The Risk Math rows and hints, one rule for every writer. Vol and MC are the state's value when
     // it is a usable number, else the chart's reading; MC is no reading for a triggered symphony; the
     // stop level is the state's, else the chart's last stop, against the state's peak.
+    // toFixed that never prints a minus sign for a value that rounds to zero ("-0.00").
+    function fixedNoNegZero(value, digits) {
+        var text = value.toFixed(digits);
+        return /^-0(\.0+)?$/.test(text) ? text.slice(1) : text;
+    }
+
     function riskMathRows(sym) {
         var chart = _detailChartReading || {};
         var usable = function (v) { return sentinelToNull(typeof v === 'number' ? v : null); };
@@ -1386,9 +1392,9 @@
         var para = usable(sym.para_velocity);
         return {
             mc: mc,
-            stop: (peak != null && stopLevel != null) ? (peak - stopLevel).toFixed(2) + '%' : '--',
+            stop: (peak != null && stopLevel != null) ? fixedNoNegZero(peak - stopLevel, 2) + '%' : '--',
             vol: vol != null ? vol.toFixed(3) : '--',
-            para: para != null ? para.toFixed(2) + '%' : '--',
+            para: para != null ? fixedNoNegZero(para, 2) + '%' : '--',
             paraHint: para != null ? 'active ratchet velocity' : 'threshold —',
             be: sym.breakeven_locked ? 'Active · floor 0.00%' : 'Off',
             beHint: sym.breakeven_locked ? '5 confirm ticks @ lock threshold' : 'not yet activated'
@@ -1597,7 +1603,7 @@
 
         // vwap_diff from last chart point as a proxy for VWAP state
         var rawVwapDiff = sentinelToNull(last.vwap_diff != null ? last.vwap_diff : null);
-        var vwapVal = rawVwapDiff != null ? (rawVwapDiff >= 0 ? 'Above' : 'Below') + ' (' + rawVwapDiff.toFixed(2) + '%)' : '--';
+        var vwapVal = rawVwapDiff != null ? (rawVwapDiff >= 0 ? 'Above' : 'Below') + ' (' + fixedNoNegZero(rawVwapDiff, 2) + '%)' : '--';
 
         function setEl(id, text) { var e = document.getElementById(id); if (e) e.textContent = text; }
 
@@ -1646,7 +1652,7 @@
         if (!items.length) {
             var empty = document.createElement('div');
             empty.setAttribute('data-field', 'events-empty');
-            empty.setAttribute('style', 'font-size:11px;color:var(--studio-ink-faint);');
+            empty.setAttribute('style', 'font-size:11px;color:var(--studio-ink-dim);');
             empty.textContent = eventsEmptyText();
             container.textContent = '';
             container.appendChild(empty);
