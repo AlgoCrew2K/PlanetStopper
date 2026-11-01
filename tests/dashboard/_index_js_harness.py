@@ -599,6 +599,11 @@ def _build_world(name: str) -> dict:
         # so the series, the captures and the script share one date at every hour.
         seeded_today = spec.get("frozen_today") or _dt_mod.date.fromisoformat(today)
         world = _capture(client, seeded_today)
+        if spec.get("frozen_today"):
+            # The frozen clock reaches analytics (it reads datetime.datetime at call time) but not
+            # the app's own ET clock, which stamps the poll's window anchor with the host's date.
+            # A world that models another date states that date as the day its figures belong to.
+            world["state"]["meta"]["portfolio"]["window_anchor"] = seeded_today.isoformat()
         world["seeded_today"] = seeded_today.isoformat()
         world["spec_name"] = name
         world["ids"] = list(SYMPHONY_IDS)

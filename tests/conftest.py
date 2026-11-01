@@ -445,6 +445,106 @@ def unresolved_models(_seed_model_registry):
     model_config._reset_registry()
 
 
+class _EndedEngine:
+    """An engine process that has already ended: what a `subprocess.run` double leaves behind.
+
+    The daemon starts the engine with `subprocess.Popen` (through `app._start_engine_process`) so
+    it can end a run that hangs. A test that replaced `subprocess.run` with a stand-in has already
+    run its whole call by the time the handle is returned, so every wait answers at once."""
+
+    pid = 0
+    stdout = None
+    stderr = None
+
+    def __init__(self, args, returncode: int) -> None:
+        self.args = args
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def communicate(self, input=None, timeout=None):
+        return (None, None)
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+    def send_signal(self, _sig) -> None:
+        return None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _engine_spawn_never_starts_the_real_engine(monkeypatch):
+    """No test ever starts the real `alpha_bot_execution.py`.
+
+    The daemon's one engine spawn is `app._start_engine_process`. Where a test installed a
+    `subprocess.Popen` stand-in, the spawn calls it. Where a test replaced `subprocess.run` (every
+    engine stand-in written before the engine run bound did), the spawn runs that stand-in with the
+    arguments `subprocess.run` used to get and hands back the process it ended as. With neither,
+    the spawn would start the real engine, so it fails the test instead."""
+    import subprocess
+
+    import app as _app_module
+
+    real_popen, real_run = subprocess.Popen, subprocess.run
+
+    def start_engine_process(cmd, env, log_fh):
+        if subprocess.Popen is not real_popen:
+            return subprocess.Popen(cmd, env=env, stdout=log_fh, stderr=log_fh)
+        if subprocess.run is not real_run:
+            try:
+                subprocess.run(cmd, check=True, env=env, stdout=log_fh, stderr=log_fh)
+            except subprocess.CalledProcessError as exc:
+                return _EndedEngine(cmd, exc.returncode)
+            return _EndedEngine(cmd, 0)
+        raise AssertionError(
+            "a test reached the real engine spawn: install an engine stand-in "
+            "(StubEngine / FakeEngines) before it runs the daemon"
+        )
+
+    monkeypatch.setattr(_app_module, "_start_engine_process", start_engine_process)
+
+
+@pytest.fixture(autouse=True)
+def _reset_closed_market_holds(monkeypatch):
+    """Start every test with no held closed-market result and no warm-up in flight.
+
+    A closed market's results are held per snapshot identity (app._CLOSED_HOLD), and the worlds the
+    tests build re-create different rows under the SAME identity (the same snapshot day and capture
+    time), so a result held by one test would be served to the next as its own. The warm-up thread
+    (app._warm_closed_results) reads the test database, so any still running is joined before the
+    next test replaces that database.
+    """
+    import threading
+
+    import app as _app_module
+
+    def _drain_warmups():
+        for t in threading.enumerate():
+            if t.name == "closed-warmup" and t.is_alive():
+                t.join(timeout=10.0)
+
+    _drain_warmups()
+    _app_module._CLOSED_HOLD.clear()
+    monkeypatch.setattr(_app_module, "_closed_warmup_checked_mono", None)
+    monkeypatch.setattr(_app_module, "_CLOSED_WARMUP_FLIGHT", threading.Lock())
+    yield
+    _drain_warmups()
+    _app_module._CLOSED_HOLD.clear()
+
+
 @pytest.fixture(autouse=True)
 def _reset_account_totals_cache():
     """Reset app._account_totals_cache to a clean state before and after every test.

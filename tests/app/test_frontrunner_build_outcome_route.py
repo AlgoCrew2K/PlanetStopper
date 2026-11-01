@@ -37,7 +37,6 @@ from advisors import frontrunner_builder
 ROLE = "FRONTRUNNER_BUILD_SUMMARY"
 RUN = "/ai-advisor/frontrunner-builder/run"
 LAST = "/api/frontrunner-build/last-run"
-BASE_MIGRATION_FILE_COUNT = 39  # migrations/*.sql at the plan's base: this work adds none
 
 
 class InlineExecutor:
@@ -175,9 +174,16 @@ class TestAppendOnly:
         assert summaries() == []
 
     def test_no_schema_change(self):
+        # The summary is an advisor_observations row of its own role: no migration names the role
+        # or makes a table for it. A count of migration files is not pinned here, because every
+        # later migration would break it.
         migrations = Path(app_module.__file__).parent / "migrations"
-        assert len(list(migrations.glob("*.sql"))) == BASE_MIGRATION_FILE_COUNT
-        assert not any(ROLE in p.read_text(encoding="utf-8") for p in migrations.glob("*.sql"))
+        names_summary = [
+            p.name
+            for p in migrations.glob("*.sql")
+            if ROLE.lower() in p.read_text(encoding="utf-8").lower()
+        ]
+        assert not names_summary, f"a migration stores the build summary: {names_summary}"
 
     def test_the_role_stays_out_of_the_overview_list(self):
         assert ROLE not in app_module._ADVISOR_ROLES

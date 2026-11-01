@@ -22,12 +22,12 @@ From the close until today's snapshot is stored, the frozen branch must not serv
 ## AC-3 A hung engine run cannot stop the session (PIPE-3, PIPE-9)
 This reverses plan 02 S-5.3 and changes `tests/app/test_scheduler_single_flight.py:195` accordingly. Single flight stays, with a bound:
 - At 09:25 ET on a trading day, a run that started on an earlier ET date is ended and the slot freed, so the open is never blocked. Autotune on Friday is not touched by this before then.
-- A run that starts during the regular session and is still alive after 600 s is ended and the slot freed, unless it is an explicitly forced EOD run. Verify which paths start long runs; a long run must not be cut by this.
+- On a trading day, a run that started before that day's close and is alive over 600 s is ended and the slot freed, unless forced. Autotune starts only after the close, so this does not cut it.
 - Ending means terminate, then kill after 10 s. The run's outcome is `terminated`; it is logged and shows as a `/health` reason. The next minute spawns normally: confirm the engine's own lock does not then block it for more than one minute.
 - The print at `app.py:1185` goes inside the try, so it cannot leak the slot.
 
 ## AC-4 A restart while closed moves nothing (PIPE-4)
-The account-totals latch survives a restart: Today, Cumulative and account value read the same before a restart, after it, and after the first refresh, until the next session. Store it durably in a table the daemon owns. `bot_state` is rewritten by the engine, so do not rely on a key there surviving. An additive migration is allowed if no existing table fits. Initialize from the stored close snapshot's own totals if it holds them, so the first restart after this deploy moves as little as possible; state in the handoff exactly what the first start after deploy does.
+The account-totals latch survives a restart: Today, Cumulative and account value read the same before a restart, after it, and after the first refresh, until the next session. Store it durably in a table the daemon owns. `bot_state` is rewritten by the engine, so do not rely on a key there surviving. An additive migration is allowed if no existing table fits. The stored close snapshot holds no account totals, so the first start after deploy latches the first refresh after the capture; state that in the handoff.
 
 ## AC-5 Performance and sparklines hold after the close (PIPE-5)
 `/api/performance` and `/api/chart` cut rows at the snapshot's capture while closed, the same way the `/` routes do, so rows written 16:01 to 16:05 do not move them. Reproduction: `repro_perf.py`.
@@ -48,7 +48,7 @@ On a window click the headline, Max DD row and Ann. Vol row show the dash until 
 - Every drawdown figure in tenure evidence prints as a positive magnitude, including `realized_`, `backtest_`, `with_` and `without_`; a gap between drawdowns reads correctly in that convention. Verdict logic stays on the signed values.
 
 ## AC-9 The missed morning start is visible (PIPE-10)
-A `/health` reason `no_cycle_since_open`, also driving the header's Degraded state: the market has been open 3 minutes or more and no cycle has committed since the open. It clears on the next commit, and never fires while closed or in the Opening state.
+A `/health` reason `no_cycle_since_open`, also driving the header's Degraded state: the market has been open 3 minutes or more and no cycle has committed since the open. It clears on the next commit, fires from 09:35 ET when Opening ends, and never fires while closed.
 
 ## AC-10 Security (S-1, S-2, S-3, S-4, S-5, S-6, S-8, S-12, S-13, S-14, S-16)
 - S-1, S-13: `renderDetailLogs` and `renderDetailVars` render text as text. A symphony name carrying markup shows literally.

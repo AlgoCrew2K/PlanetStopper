@@ -13,6 +13,7 @@
     var _pollCap = null;
     var _heroWindow = '30d';
     var _pollSeries = null;   // the latest poll's dated hero series (fallback source)
+    var _windowAnchor = null; // the ET trading day the latest poll's figures belong to (meta.portfolio.window_anchor)
     var _pollTail = null;     // what the last poll's series ended with (change detection)
     var _heroDrawnWindow = '30d';  // window the hero holds; the server render is the 30d series
     var _heroRequestSeq = 0;  // only the latest hero-window request may draw
@@ -157,13 +158,22 @@
 
     var _WINDOW_TRAILING_DAYS = { '30d': 30, '60d': 60, '90d': 90, '125d': 125, '1y': 365 };
 
-    // Mirrors analytics._window_cutoff_date: UTC today, inclusive lower bound (ISO date), null = lifetime.
+    // Mirrors analytics.window_cutoff: the inclusive lower bound (ISO date) of a window counted back
+    // from the day the poll's figures belong to (meta.portfolio.window_anchor: the session that closed
+    // while the market is closed, today's session while it is open); null = lifetime. The browser's
+    // own clock never decides a cutoff: a laptop that woke days later, or a page left open into the
+    // next year, draws the window the server would. A body that states no anchor falls back to the
+    // newest day of its own series.
     function windowCutoffIso(token) {
-        var today = new Date().toISOString().slice(0, 10);
-        if (token === 'ytd') return today.slice(0, 4) + '-01-01';
+        var anchor = _windowAnchor;
+        if (!anchor && _pollSeries && _pollSeries.dates.length) {
+            anchor = _pollSeries.dates[_pollSeries.dates.length - 1];
+        }
+        if (!anchor) return null;
+        if (token === 'ytd') return anchor.slice(0, 4) + '-01-01';
         var days = _WINDOW_TRAILING_DAYS[token];
         if (!days) return null;
-        return new Date(Date.parse(today + 'T00:00:00Z') - days * 86400000).toISOString().slice(0, 10);
+        return new Date(Date.parse(anchor + 'T00:00:00Z') - days * 86400000).toISOString().slice(0, 10);
     }
 
     function showHeroEmpty() {
@@ -328,6 +338,7 @@
     function renderHeroChart(meta) {
         var portfolio = (meta || {}).portfolio;
         if (!portfolio || typeof portfolio !== 'object') return;
+        _windowAnchor = typeof portfolio.window_anchor === 'string' ? portfolio.window_anchor : null;
         var dates = portfolio.hist_dates;
         var bot = portfolio.hist_bot;
         var held = portfolio.hist_held;

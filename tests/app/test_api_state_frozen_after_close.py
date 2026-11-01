@@ -182,6 +182,9 @@ class TestRowsWrittenAfterTheCaptureCannotMoveAFigure:
         )
 
         world.seed_rows(in_row)
+        # The closed poll is held per snapshot identity, and the row lands under the identity
+        # already held; this test pins where the cut falls, so each scenario is read cold.
+        app_module._CLOSED_HOLD.clear()
         with_capture_second = world.poll()
 
         # The row in the capture second is part of the close: the untriggered symphony's
@@ -205,6 +208,7 @@ class TestRowsWrittenAfterTheCaptureCannotMoveAFigure:
             cycle_id="20261021_1600c",
         )
         world.seed_rows(out_row)
+        app_module._CLOSED_HOLD.clear()
         with_next_second = world.poll()
 
         changed = differences(with_capture_second, with_next_second)
@@ -212,12 +216,13 @@ class TestRowsWrittenAfterTheCaptureCannotMoveAFigure:
             f"a row one second after the capture moved shown numbers: {describe(changed)}"
         )
 
-    def test_the_earlier_sessions_figures_stay_until_the_next_snapshot_is_stored(
+    def test_the_closed_sessions_figures_stay_until_its_snapshot_is_stored(
         self, monkeypatch, tmp_path
     ):
         # 16:00:20 on D: the engine has written D's rows through 16:04, but D's snapshot is not
-        # stored yet. The page keeps showing the earlier session's close, unchanged, until the
-        # close step stores D's snapshot; that storing is the one event that moves it.
+        # stored yet. The page serves D's last committed state, cut at the close (never the
+        # earlier session's snapshot), unchanged, until the close step stores D's snapshot; that
+        # storing is the one event that moves it.
         world = clocked_world(monkeypatch, tmp_path, et(CAPTURE_DAY, "16:00:20"))
         world.seed_rows(world.previous_day_rows())
         earlier = snapshot_variant(
@@ -225,6 +230,7 @@ class TestRowsWrittenAfterTheCaptureCannotMoveAFigure:
         )
         save_state(world, "m", snapshot=earlier)
         before = world.poll()
+        assert before.get("trading_day") == CAPTURE_DAY, "the closed session, not the earlier one"
 
         close_rows = retime_rows(
             world.cycle_rows("m_minus_1"),
@@ -234,14 +240,18 @@ class TestRowsWrittenAfterTheCaptureCannotMoveAFigure:
         )
         world.seed_rows(close_rows)
         seed_after_close_cycles(world)
-        still_earlier = world.poll()
+        # The held figures are keyed by the session, so these rows land under a key already held;
+        # this test pins the cut at the close, so the second read is cold.
+        app_module._CLOSED_HOLD.clear()
+        still_held = world.poll()
 
-        changed = differences(before, still_earlier)
+        changed = differences(before, still_held)
         assert not changed, (
-            "the earlier session's figures moved before the next snapshot was stored: "
+            "the closed session's figures moved before its snapshot was stored: "
             f"{describe(changed)}"
         )
-        assert still_earlier.get("trading_day") == PREVIOUS_DAY
+        assert still_held.get("trading_day") == CAPTURE_DAY
+        assert still_held.get("snapshot_is_previous_session") is False
 
         store_snapshot(
             world,
@@ -257,7 +267,7 @@ class TestRowsWrittenAfterTheCaptureCannotMoveAFigure:
         )
         assert (
             taken_over["portfolio_strip"]["hist_dates"]
-            != (still_earlier["portfolio_strip"]["hist_dates"])
+            != (still_held["portfolio_strip"]["hist_dates"])
         ), "the stored snapshot is what moves the figures"
 
     @pytest.mark.parametrize("branch", CLOSED_BRANCHES)
@@ -526,11 +536,41 @@ class TestFrozenFiguresDoNotDriftWithAccountRefreshes:
         assert fresh["account_value"] == pytest.approx(composer_body(2)["portfolio_value"])
         assert not fresh.get("account_basis_stale")
 
-    def test_after_a_restart_the_first_successful_read_latches_again(self, monkeypatch, tmp_path):
+    def test_after_a_restart_the_stored_latch_is_served_and_no_later_read_replaces_it(
+        self, monkeypatch, tmp_path
+    ):
+        # The latch is stored when taken, so a restart (which empties every in-memory total)
+        # finds it again: the figures before the restart, right after it and after each later
+        # read are the same, and are the totals of the first read taken after the capture.
         world, composer = latched_world(monkeypatch, tmp_path, et(CAPTURE_DAY, "18:00:00"))
         refresh_at(monkeypatch, et(CAPTURE_DAY, "18:00:00"))
-        # A restart empties every in-memory total.
+        before_restart = world.poll()
         clean_account_totals(monkeypatch)
+        after_restart = world.poll()
+        composer.version = 3
+        refresh_at(monkeypatch, et(CAPTURE_DAY, "21:00:00"))
+        first = world.poll()
+        composer.version = 4
+        refresh_at(monkeypatch, et(CAPTURE_DAY, "21:30:00"))
+        second = world.poll()
+
+        assert before_restart["portfolio_strip"]["account_value"] == pytest.approx(
+            composer_body(0)["portfolio_value"]
+        ), "fixture sanity: the figures rest on the first read taken after the capture"
+        assert after_restart["portfolio_strip"].get("basis") != "value_weighted", (
+            "the stored totals are totals: the strip is not on the value-weighted floor"
+        )
+        assert account_figures(after_restart) == account_figures(before_restart)
+        assert account_figures(first) == account_figures(before_restart)
+        assert account_figures(second) == account_figures(before_restart)
+
+    def test_with_no_totals_and_no_stored_latch_the_first_successful_read_latches(
+        self, monkeypatch, tmp_path
+    ):
+        # The first start after a deploy: nothing stored and nothing in memory. The strip says it
+        # is value weighted until a read lands; the first read after the capture is then latched
+        # and held.
+        world, composer = latched_world(monkeypatch, tmp_path, et(CAPTURE_DAY, "18:00:00"))
         no_totals = world.poll()["portfolio_strip"]
         composer.version = 3
         refresh_at(monkeypatch, et(CAPTURE_DAY, "21:00:00"))
