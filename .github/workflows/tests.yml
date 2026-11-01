@@ -24,7 +24,9 @@ jobs:
         run: ruff check .
       - name: Run default suite
         # Project defaults (pyproject addopts) exclude live/slow tests and run xdist-parallel.
-        run: python -m pytest -q --no-header
-      - name: Disk use after the suite
+        run: |
+          (while sleep 60; do echo "RES $(date -u +%T) mem=$(free -m | awk 'NR==2{print $3"/"$2}') tmp=$(df -h /tmp | awk 'NR==2{print $5}') procs=$(ps -e | wc -l) fds=$(ls /proc/*/fd 2>/dev/null | wc -l)"; done) &
+          python -m pytest -q --no-header
+      - name: Resources after the suite
         if: always()
-        run: df -h / /tmp; du -sh /tmp/pytest-of-* 2>/dev/null || true
+        run: free -m; df -h /tmp; df -i /tmp; du -sh /tmp/pytest-of-* 2>/dev/null || true
