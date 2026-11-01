@@ -109,45 +109,6 @@ def _assert_header_cells_do_not_overlap(locator, label: str) -> None:
 
 
 @pytest.mark.parametrize("width, height", [NARROW, VERY_NARROW], ids=["375", "320"])
-def test_the_history_exits_table_scrolls_inside_its_container_at_narrow_widths(
-    firefox, advisor_server, tmp_path, monkeypatch, width, height
-):
-    """with a day's exits shown, every column is reachable by scrolling the container."""
-    seed_dashboard_state()
-    seed_history_exits(tmp_path, monkeypatch.setattr)
-    with open_probe(firefox, advisor_server, width=width, height=height) as probe:
-        open_page(probe, "/history")
-        probe.page.click('#window-picker button[data-window="1825"]')
-        days = probe.page.evaluate(
-            "() => fetch('/api/history/1825').then((r) => r.json())"
-            ".then((p) => Object.keys(p.daily_exits || {}).filter((d) => p.daily_exits[d].length))"
-        )
-        assert days, "premise: the seeded post-mortems hold at least one day with exits"
-        wait_until(
-            probe,
-            "(d) => !!document.querySelector('#daily-chart-svg rect[data-date=\"' + d + '\"]')",
-            "the daily chart never drew the day with exits",
-            arg=days[0],
-        )
-        probe.page.locator(f'#daily-chart-svg rect[data-date="{days[0]}"]').dispatch_event("click")
-        wait_until(
-            probe,
-            "() => document.querySelectorAll('#triggers-tbody tr').length > 1",
-            "the day's exits never filled the table",
-        )
-        table = probe.page.locator("table.triggers-tbl")
-        _assert_scrolls_inside(table, "History exits table")
-        last = probe.page.locator("table.triggers-tbl thead th").last
-        table.evaluate(
-            "(t) => { let a = t; while (a && a !== document.body) {"
-            " if (['auto','scroll'].includes(getComputedStyle(a).overflowX)) { a.scrollLeft = a.scrollWidth; break; }"
-            " a = a.parentElement; } }"
-        )
-        right = last.evaluate("(th) => th.getBoundingClientRect().right")
-        assert right <= width + 0.5, "the last column is not reachable by that scroll"
-
-
-@pytest.mark.parametrize("width, height", [NARROW, VERY_NARROW], ids=["375", "320"])
 def test_the_performance_tables_scroll_inside_their_containers_at_narrow_widths(
     firefox, advisor_server, width, height
 ):

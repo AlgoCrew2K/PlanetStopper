@@ -148,7 +148,9 @@ def test_the_advisor_basis_and_stamp_lines_use_only_classes_and_inline_colours_t
 CAPTION_SCENARIO = r"""
 await H.boot({ extras: true, charts: H.bodies.charts, state: H.bodies.same });
 const canvas = H.sandbox.document.querySelector('[data-testid="card-spark"][data-sym-id="__ID__"]');
-const el = canvas && canvas.parentNode ? canvas.parentNode.querySelector('.spark-session') : null;
+let card = canvas;
+while (card && card.getAttribute && card.getAttribute('data-testid') !== 'sym-card') card = card.parentNode;
+const el = card ? card.querySelector('.spark-session') : null;
 return el ? { text: el.textContent.trim(), classes: el.className, color: el.style.color || null,
               opacity: el.style.opacity || null, tokens: H.tokens } : null;
 """
