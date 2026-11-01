@@ -305,11 +305,9 @@ def estimate_read(faults: ReadFaults) -> tuple[str, str]:
     return found[0]
 
 
-@pytest.mark.parametrize("lock", sorted(LOCKS))
-@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
-def test_a_failed_day_filtered_exit_read_does_not_leave_the_unfiltered_estimate_held(
-    monkeypatch, tmp_path, market_state, lock
-):
+def strip_that_met_a_failed_exit_read(monkeypatch, tmp_path, market_state, lock):
+    """(the fault-free strip body, the strip answered by the build that met the failed day-filtered
+    exit read, the strip answered by the next poll with no fault)."""
     cw, faults = exit_estimate_world(monkeypatch, tmp_path, post_mortems=True, instant=market_state)
     faults.begin()
     reference_body = cw.raw(STRIP_PATH)
@@ -320,7 +318,6 @@ def test_a_failed_day_filtered_exit_read_does_not_leave_the_unfiltered_estimate_
         f"estimate must answer one: {reference.get('insufficient_history')!r}, "
         f"{reference.get('guard_alpha')!r}"
     )
-
     app_module._CLOSED_HOLD.clear()
     faults.begin(read, LOCKS[lock])
     answered = cw.world.client.get(STRIP_PATH)
@@ -328,17 +325,40 @@ def test_a_failed_day_filtered_exit_read_does_not_leave_the_unfiltered_estimate_
     faults.begin()
     assert fired, "the fault was not reached: the day-filtered exit read did not run"
     assert answered.status_code == 200
-    figure = answered.get_json().get("guard_alpha")
-    assert figure is None or figure == reference["guard_alpha"], (
-        f"{market_state}: the poll that met a locked day-filtered exit read answered a guard "
-        f"alpha of {figure!r}, neither the session's estimate ({reference['guard_alpha']!r}) nor "
-        "an absent one: it answered the figure of every exit ever recorded"
-    )
     again = cw.world.client.get(STRIP_PATH)
-    assert again.status_code == 200 and again.get_data() == reference_body, (
+    assert again.status_code == 200
+    return reference_body, answered, again
+
+
+@pytest.mark.parametrize("lock", sorted(LOCKS))
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_a_failed_day_filtered_exit_read_is_not_kept_for_the_next_poll(
+    monkeypatch, tmp_path, market_state, lock
+):
+    reference_body, _answered, again = strip_that_met_a_failed_exit_read(
+        monkeypatch, tmp_path, market_state, lock
+    )
+    assert again.get_data() == reference_body, (
         f"{market_state}: the next poll of {STRIP_PATH} did not answer a fault-free build's "
         f"bytes (guard_alpha {again.get_json().get('guard_alpha')!r}, fault-free "
-        f"{reference['guard_alpha']!r}), so the build that met the fault was kept"
+        f"{json.loads(reference_body)['guard_alpha']!r}), so the build that met the fault was kept"
+    )
+
+
+@pytest.mark.parametrize("lock", sorted(LOCKS))
+@pytest.mark.parametrize("market_state", sorted(CLOSED_INSTANTS))
+def test_a_failed_day_filtered_exit_read_does_not_answer_the_guard_alpha_of_every_exit(
+    monkeypatch, tmp_path, market_state, lock
+):
+    reference_body, answered, _again = strip_that_met_a_failed_exit_read(
+        monkeypatch, tmp_path, market_state, lock
+    )
+    expected = json.loads(reference_body)["guard_alpha"]
+    figure = answered.get_json().get("guard_alpha")
+    assert figure is None or figure == expected, (
+        f"{market_state}: the poll that met a locked day-filtered exit read answered a guard "
+        f"alpha of {figure!r}, neither the session's estimate ({expected!r}) nor an absent one: "
+        "it answered the figure of every exit ever recorded"
     )
 
 

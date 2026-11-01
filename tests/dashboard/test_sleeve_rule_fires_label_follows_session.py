@@ -124,7 +124,7 @@ class Worlds:
         now = self.open_now if page is self.opened else self.closed_now
         return hx.run_scenario(
             page,
-            PRELUDE + scenario,
+            PRELUDE + "await H.boot({ extras: true });" + scenario,
             scripts=sup.CHROME_AND_INDEX,
             extra_bodies={"other": {"state": other_state}},
             now_iso=now,
