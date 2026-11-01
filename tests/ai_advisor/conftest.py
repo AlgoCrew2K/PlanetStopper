@@ -26,9 +26,10 @@ are unaffected.
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 import requests.exceptions
 
 # ---------------------------------------------------------------------------
@@ -63,7 +64,7 @@ _SENTINEL_FUNDAMENTALS = {
 
 
 @pytest.fixture(autouse=True)
-def _stub_live_lens_seams():
+def _stub_live_lens_seams(monkeypatch):
     """Autouse: stub live-network seams for ALL tests in tests/ai_advisor/.
 
     Three seams are stubbed here because all are always reachable in
@@ -107,21 +108,27 @@ def _stub_live_lens_seams():
       behaviour patch ``ai_advisor.time.sleep`` themselves, which overrides
       the autouse no-op for their duration.
     """
+    import ai_advisor
     from advisors import lens_technicals
 
-    with (
-        patch.object(lens_technicals, "_get_bars", return_value={}),
-        # Fail all HTTP GETs instantly (GDELT artlist/tone, FRED, SEC EDGAR).
-        # Inner patches on requests.get in producer-body tests override this.
-        patch(
-            "requests.get",
-            side_effect=requests.exceptions.ConnectionError("unit-test-stub — offline"),
-        ),
-        # No-op backoff sleeps on ai_advisor._fetch_with_backoff so retries
-        # exhaust in < 1 ms instead of sleeping up to 8 s total.
-        patch("ai_advisor.time.sleep"),
-    ):
-        yield
+    # Every stub goes through the one `monkeypatch` of the test, never a `patch(...)` context: a
+    # test that patches the same seam through `monkeypatch` is undone in the opposite order of
+    # their setup, and `monkeypatch` is created by an outer autouse fixture before this one. A
+    # context manager here would be exited first and put the real function back, then the test's
+    # own undo would put back the stub it found, leaving `time.sleep` a MagicMock for every later
+    # test of the worker (a polling loop of a later file then spins and records each call).
+    monkeypatch.setattr(lens_technicals, "_get_bars", MagicMock(return_value={}))
+    # Fail all HTTP GETs instantly (GDELT artlist/tone, FRED, SEC EDGAR).
+    # Inner patches on requests.get in producer-body tests override this.
+    monkeypatch.setattr(
+        requests,
+        "get",
+        MagicMock(side_effect=requests.exceptions.ConnectionError("unit-test-stub — offline")),
+    )
+    # No-op backoff sleeps on ai_advisor._fetch_with_backoff so retries
+    # exhaust in < 1 ms instead of sleeping up to 8 s total.
+    monkeypatch.setattr(ai_advisor.time, "sleep", MagicMock())
+    yield
 
 
 @pytest.fixture()

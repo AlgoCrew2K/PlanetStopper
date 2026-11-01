@@ -55,6 +55,14 @@ SESSION_BOUND_S = 600
 TERMINATE_GRACE_S = 10
 TERMINATED = "terminated"
 REAL_WAIT_S = 25.0
+SETTLE_REAL_S = 5.0
+
+# A real pause that no patch of `time.sleep` (another test's, left behind) can turn into a spin.
+_PAUSE = threading.Event()
+
+
+def pause(seconds: float) -> None:
+    _PAUSE.wait(seconds)
 
 
 @dataclass
@@ -76,15 +84,26 @@ class Stage:
             self.tick(moment)
             moment += timedelta(seconds=every_s)
 
+    def settle(self) -> None:
+        """Hold until the engine thread of every process still alive has looked at the clock as it
+        stands and decided what to do at it (bounded by SETTLE_REAL_S in all)."""
+        now, deadline = self.host.monotonic(), time.monotonic() + SETTLE_REAL_S
+        for process in list(self.engines.runs):
+            while not process.has_seen(now) and time.monotonic() < deadline:
+                pause(0.001)
+
     def advance_until(self, done, start: datetime, last: datetime) -> datetime | None:
-        """One virtual second and one real pause per step, until `done()` or `last`; returns the
-        virtual instant at which `done()` held, else None."""
+        """One virtual second per step, the daemon given time to act on it before the next, until
+        `done()` or `last`; returns the virtual instant at which `done()` held, else None. The
+        pace is the daemon's, not the machine's: a slow machine takes longer, it does not let
+        the virtual clock run past what the engine thread has had the chance to decide."""
         moment, deadline = start, time.monotonic() + REAL_WAIT_S
         while moment <= last and time.monotonic() < deadline:
             self.tick(moment)
+            self.settle()
             if done():
                 return moment
-            time.sleep(0.01)
+            pause(0.005)
             moment += timedelta(seconds=1)
         return moment if done() else None
 
@@ -127,7 +146,7 @@ def wait_for(condition, seconds: float = 5.0) -> bool:
     while time.monotonic() < deadline:
         if condition():
             return True
-        time.sleep(0.01)
+        pause(0.01)
     return bool(condition())
 
 
@@ -276,7 +295,7 @@ def test_a_forced_run_in_the_session_is_not_ended_by_the_bound(monkeypatch, tmp_
     thread.start()
     deadline = time.monotonic() + 10
     while not st.engines.runs and time.monotonic() < deadline:
-        time.sleep(0.01)
+        pause(0.01)
     assert st.engines.runs, "the forced run never started"
     forced = st.engines.runs[0]
     assert "--force" in forced.args, "fixture sanity: the process is the forced one"

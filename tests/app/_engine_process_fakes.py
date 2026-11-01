@@ -18,6 +18,14 @@ How long a process lives is virtual time, the clock the daemon reads (`app._mono
 
 The engine's exit status is the only thing a crash gives the daemon, and that is all these fakes
 give it (SIGTERM / SIGKILL statuses); nothing here aborts or faults a real process.
+
+A process never calls `time.sleep`: its polling pause is a real wait on its own event. Another
+test's patch of `time.sleep` that outlived that test would otherwise turn the poll of every hung
+process into a busy spin (and, when the patch is a `MagicMock`, into an unbounded record of calls).
+
+`has_seen(virtual_mono)` says whether the engine thread watching the process has, at or after that
+virtual instant, come back to waiting for it, so a test that moves the virtual clock can hold the
+next move until the daemon has decided what to do at this one.
 """
 
 from __future__ import annotations
@@ -33,6 +41,9 @@ import app as app_module
 
 # A wait with no timeout that never ends is a hung test, not a hung engine.
 HANG_GUARD_S = 60.0
+
+# The real pause between two looks of a waiter at the clocks.
+POLL_PAUSE_S = 0.002
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,8 @@ class FakeProcess:
         self.terminate_calls: list[Signal] = []
         self.kill_calls: list[Signal] = []
         self._ended = threading.Event()
+        self._waiting = False
+        self._seen_virtual = self.started_virtual
 
     # -- state ----------------------------------------------------------
 
@@ -90,19 +103,31 @@ class FakeProcess:
         self._apply_natural_exit()
         return self.returncode
 
+    def has_seen(self, virtual_mono: float) -> bool:
+        """True once the process has ended, or its waiter is back in `wait` having read the
+        virtual clock at or after `virtual_mono` (so what it does at that instant is done)."""
+        return self.returncode is not None or (self._waiting and self._seen_virtual >= virtual_mono)
+
     def wait(self, timeout: float | None = None) -> int:
         virtual_start, real_start = app_module._monotonic(), time.monotonic()
-        while True:
-            self._apply_natural_exit()
-            if self.returncode is not None:
-                return self.returncode
-            waited_virtual = app_module._monotonic() - virtual_start
-            waited_real = time.monotonic() - real_start
-            if timeout is not None and (waited_virtual >= timeout or waited_real >= timeout):
-                raise subprocess.TimeoutExpired(self.args, timeout)
-            if timeout is None and waited_real > HANG_GUARD_S:
-                raise AssertionError(f"fake process {self.index} was waited on with no timeout")
-            time.sleep(0.002)
+        self._seen_virtual = virtual_start
+        self._waiting = True
+        try:
+            while True:
+                self._apply_natural_exit()
+                if self.returncode is not None:
+                    return self.returncode
+                virtual_now = app_module._monotonic()
+                self._seen_virtual = virtual_now
+                waited_virtual = virtual_now - virtual_start
+                waited_real = time.monotonic() - real_start
+                if timeout is not None and (waited_virtual >= timeout or waited_real >= timeout):
+                    raise subprocess.TimeoutExpired(self.args, timeout)
+                if timeout is None and waited_real > HANG_GUARD_S:
+                    raise AssertionError(f"fake process {self.index} was waited on with no timeout")
+                self._ended.wait(POLL_PAUSE_S)
+        finally:
+            self._waiting = False
 
     def communicate(self, input=None, timeout: float | None = None):
         self.wait(timeout)
