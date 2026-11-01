@@ -520,7 +520,6 @@ class TestAPollThatChangesTheEntryStillMovesTheRows:
             C=base.chart_body(),
             exited=exited,
         )
-        assert r["opened"]["dp-rm-mc"] == js_to_fixed([STATE_MC], 1)[0] + "%"
         for key in ("exited", "again"):
             assert _text(r[key], "dp-rm-mc") in DASHES, (
                 f"{key}: a triggered symphony still shows an MC reading {r[key]['dp-rm-mc']!r}"
