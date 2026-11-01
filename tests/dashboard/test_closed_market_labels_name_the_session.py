@@ -21,6 +21,13 @@ Contract pinned
   today., If held · live on a triggered card.
 * The labels follow the state: an open page polled with a closed body reads as a closed render does,
   and a closed page polled with an open body reads as an open render does.
+* Before any poll has answered (the first poll still in flight, or failing) a panel opened on a closed
+  page already names the session in its empty events line, as the server render does; an open page
+  keeps "No events yet today.".
+* The stat under the panel's return reads "at close" while the market is not open and the symphony is
+  not triggered, "frozen at exit" when it is triggered, and "real-time" only while open and not
+  triggered; it is set when the panel opens and on every poll, with no change between the open and the
+  first poll.
 """
 
 from __future__ import annotations
@@ -79,6 +86,8 @@ const poll = async function (body) {
   await H.tick(); await H.completeAnimations();
 };
 const openFirstCard = async function () { await H.press('.sym-card'); await H.settle(); };
+const openCard = async function (id) { await H.press('.sym-card[data-sym-id="' + id + '"]'); await H.settle(); };
+const liveSub = function () { return norm(D.getElementById('dp-live-ret-sub').textContent); };
 """
 
 
@@ -108,11 +117,17 @@ class Worlds:
         assert self.closed["state"]["market_state"] != "open"
         assert self.opened["state"]["market_state"] == "open"
 
-    def run(self, page: dict, scenario: str, other_state: dict | None = None) -> dict:
+    def run(
+        self,
+        page: dict,
+        scenario: str,
+        other_state: dict | None = None,
+        boot: str = "{ extras: true }",
+    ) -> dict:
         now = self.open_now if page is self.opened else self.closed_now
         return hx.run_scenario(
             page,
-            PRELUDE + "await H.boot({ extras: true });" + scenario,
+            PRELUDE + f"await H.boot({boot});" + scenario,
             scripts=sup.CHROME_AND_INDEX,
             extra_bodies={"other": {"state": other_state}},
             now_iso=now,
@@ -228,3 +243,115 @@ class TestAfterThePoll:
         for name, want in OPEN_WORDING.items():
             assert after[name] == want, f"closed page, open poll: {name} reads {after[name]!r}"
         assert set(after["ifHeld"]) <= {"If held", "If held · live"}, after["ifHeld"]
+
+
+FIRST_POLL_NOT_ANSWERED = [
+    "{ extras: true, statePending: true }",
+    "{ extras: true, stateReject: true }",
+]
+FIRST_POLL_IDS = ["first poll in flight", "first poll failing"]
+
+
+class TestBeforeTheFirstPollAnswers:
+    @pytest.mark.parametrize("boot", FIRST_POLL_NOT_ANSWERED, ids=FIRST_POLL_IDS)
+    def test_a_panel_opened_on_a_closed_page_names_the_session_in_its_empty_events_line(
+        self, worlds, boot
+    ):
+        found = worlds.run(worlds.closed, "await openFirstCard(); return labels();", boot=boot)
+        assert_closed_wording(found, worlds.session, "panel opened before the first poll, closed")
+
+    @pytest.mark.parametrize("boot", FIRST_POLL_NOT_ANSWERED, ids=FIRST_POLL_IDS)
+    def test_the_empty_events_line_does_not_change_when_the_first_poll_answers(self, worlds, boot):
+        found = worlds.run(
+            worlds.closed,
+            "await openFirstCard(); const before = labels();"
+            " H.route('/api/state', { body: H.bodies.state }); await H.tick(); await H.completeAnimations();"
+            " return { before: before, after: labels() };",
+            boot=boot,
+        )
+        assert found["after"]["eventsEmpty"] == found["before"]["eventsEmpty"], (
+            "the empty events line flipped when the first poll answered"
+        )
+
+    @pytest.mark.parametrize("boot", FIRST_POLL_NOT_ANSWERED, ids=FIRST_POLL_IDS)
+    def test_an_open_page_keeps_its_wording_before_the_first_poll(self, worlds, boot):
+        found = worlds.run(worlds.opened, "await openFirstCard(); return labels();", boot=boot)
+        assert found["eventsEmpty"] == OPEN_WORDING["eventsEmpty"]
+        assert found["eventsHeading"] == OPEN_WORDING["eventsHeading"]
+
+
+NOT_TRIGGERED, TRIGGERED = SYMPHONY_IDS[1], SYMPHONY_IDS[0]
+AT_CLOSE, REAL_TIME, FROZEN = "at close", "real-time", "frozen at exit"
+
+
+def closed_untriggered(worlds: Worlds) -> dict:
+    """The closed body with the untriggered card's ``triggered`` flag cleared (one named field).
+
+    The captured Saturday body holds both cards as triggered (the frozen snapshot of the Friday
+    session), so a closed, untriggered symphony is the real body with that one field changed.
+    """
+    return sup.with_entry(worlds.closed["state"], NOT_TRIGGERED, triggered=False)
+
+
+class TestTheStatUnderTheReturnNamesWhereTheFigureIsFrom:
+    def test_the_captured_worlds_hold_the_cards_this_class_needs(self, worlds):
+        assert sup.card_entry(worlds.opened["state"], TRIGGERED)["triggered"] is True
+        assert not sup.card_entry(worlds.opened["state"], NOT_TRIGGERED)["triggered"]
+        assert sup.card_entry(worlds.closed["state"], TRIGGERED)["triggered"] is True
+        assert not sup.card_entry(closed_untriggered(worlds), NOT_TRIGGERED)["triggered"]
+
+    def test_a_closed_untriggered_symphony_reads_at_close_on_open_and_on_every_poll(self, worlds):
+        found = worlds.run(
+            worlds.closed,
+            f"await openCard('{NOT_TRIGGERED}'); const opened = liveSub();"
+            " await poll(H.bodies.other.state); const first = liveSub();"
+            " await poll(H.bodies.other.state); return { opened: opened, first: first, second: liveSub() };",
+            closed_untriggered(worlds),
+            boot="{ extras: true, state: H.bodies.other.state }",
+        )
+        assert found == {"opened": AT_CLOSE, "first": AT_CLOSE, "second": AT_CLOSE}
+
+    @pytest.mark.parametrize("boot", FIRST_POLL_NOT_ANSWERED, ids=FIRST_POLL_IDS)
+    def test_before_the_first_poll_answers_the_stat_claims_nothing_live_then_reads_at_close(
+        self, worlds, boot
+    ):
+        found = worlds.run(
+            worlds.closed,
+            f"await openCard('{NOT_TRIGGERED}'); const opened = liveSub();"
+            " await poll(H.bodies.other.state); return { opened: opened, polled: liveSub() };",
+            closed_untriggered(worlds),
+            boot=boot,
+        )
+        assert found["opened"] in ("", AT_CLOSE), f"the closed panel says {found['opened']!r}"
+        assert found["polled"] == AT_CLOSE
+
+    @pytest.mark.parametrize("page_name", ["closed", "opened"])
+    def test_a_triggered_symphony_reads_frozen_at_exit_in_either_state(self, worlds, page_name):
+        found = worlds.run(
+            getattr(worlds, page_name),
+            f"await openCard('{TRIGGERED}'); const opened = liveSub();"
+            " await poll(H.bodies.state); return { opened: opened, polled: liveSub() };",
+        )
+        assert found == {"opened": FROZEN, "polled": FROZEN}
+
+    def test_an_open_untriggered_symphony_still_reads_real_time(self, worlds):
+        found = worlds.run(
+            worlds.opened,
+            f"await openCard('{NOT_TRIGGERED}'); const opened = liveSub();"
+            " await poll(H.bodies.state); return { opened: opened, polled: liveSub() };",
+        )
+        assert found == {"opened": REAL_TIME, "polled": REAL_TIME}
+
+    def test_the_stat_follows_the_state_a_poll_reports(self, worlds):
+        closed_poll_on_open_page = worlds.run(
+            worlds.opened,
+            f"await openCard('{NOT_TRIGGERED}'); await poll(H.bodies.other.state); return liveSub();",
+            closed_untriggered(worlds),
+        )
+        open_poll_on_closed_page = worlds.run(
+            worlds.closed,
+            f"await openCard('{NOT_TRIGGERED}'); await poll(H.bodies.other.state); return liveSub();",
+            worlds.opened["state"],
+        )
+        assert closed_poll_on_open_page == AT_CLOSE, "an open page polled with a closed body"
+        assert open_poll_on_closed_page == REAL_TIME, "a closed page polled with an open body"

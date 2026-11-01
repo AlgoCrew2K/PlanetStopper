@@ -18,13 +18,17 @@ Contract pinned
   figure, while a picked window's strip is pending, and after a strip whose legs are unknown.
 * A Max DD span that reads a figure keeps the class it had (the fix is not to drop the colour from every
   figure).
-* After the panel's Risk Profile loads, the section names the number of days the page asked for (read
-  from the request it sent, not typed here) with the word days, and still prints its four rows.
+* After the panel's Risk Profile loads, the section names the number of days its figures cover with
+  the word days, and still prints its four rows: the number of days the page asked for (read from the
+  request it sent, not typed here) when the response's own observation count reaches it, the response's
+  count when it is under that; with no count in the response the line names no number.
 """
 
 from __future__ import annotations
 
+import copy
 import re
+from datetime import date, timedelta
 from html import unescape
 
 import pytest
@@ -133,11 +137,7 @@ def worlds(monkeypatch, tmp_path) -> Worlds:
     return Worlds(monkeypatch, tmp_path)
 
 
-def test_the_risk_profile_names_the_window_the_page_asked_for(worlds):
-    result = hx.run_scenario(
-        worlds.closed,
-        SNAP
-        + r"""
+RISK_PROFILE_SCENARIO = r"""
         await H.boot({ extras: true });
         H.route(/^\/api\/performance\?/, { body: H.bodies.perf });
         await H.press('.sym-card[data-sym-id="__ID__"]');
@@ -148,17 +148,94 @@ def test_the_risk_profile_names_the_window_the_page_asked_for(worlds):
         const asked = H.fetchLog.map(function (e) { return e.url; })
           .filter(function (u) { return /^\/api\/performance\?scope=symphony/.test(u); });
         return { text: shown.replace(/\s+/g, ' ').trim(), asked: asked };
-        """.replace("__ID__", worlds.symphony_id),
+"""
+
+
+def _risk_profile(worlds, performance: dict) -> dict:
+    return hx.run_scenario(
+        worlds.closed,
+        SNAP + RISK_PROFILE_SCENARIO.replace("__ID__", worlds.symphony_id),
         scripts=sup.CHROME_AND_INDEX,
-        extra_bodies={"perf": worlds.closed_performance},
+        extra_bodies={"perf": performance},
         now_iso=worlds.closed_now,
     )["result"]
+
+
+def _window_line(text: str) -> str:
+    """The Risk Profile's window line: everything before the first metric row."""
+    return text.split("Sharpe", 1)[0]
+
+
+def _with_depth(performance: dict, depth: int | None) -> dict:
+    """The response with one named fact changed: how many rows it covers (``None`` removes the count).
+
+    The count fields, the date list and the return series are kept consistent with each other so the
+    line cannot read the depth from a field the test left at its captured value.
+    """
+    out = copy.deepcopy(performance)
+    if depth is None:
+        for key in ("observation_count", "actual_days", "coverage_days", "dates"):
+            out.pop(key, None)
+        return out
+    out["observation_count"] = depth
+    out["actual_days"] = depth
+    out["coverage_days"] = depth
+    out["dates"] = [(date(2026, 1, 1) + timedelta(days=i)).isoformat() for i in range(depth)]
+    out["live_returns"] = [0.0] * depth
+    out["shadow_returns"] = [0.0] * depth
+    return out
+
+
+def _days_in(line: str) -> list[int]:
+    return [int(n) for n in re.findall(r"\b(\d+)\b[\s-]*(?:trading[\s-]*)?days?\b", line, re.I)]
+
+
+def test_the_risk_profile_names_the_window_its_figures_cover(worlds):
+    performance = worlds.closed_performance
+    result = _risk_profile(worlds, performance)
     assert result["asked"], "the panel asked for no risk profile"
     days = re.search(r"[?&]days=(\d+)", result["asked"][0])
     assert days, f"the request names no window: {result['asked'][0]}"
+    asked = int(days.group(1))
+    count = performance.get("observation_count")
+    covered = asked if not isinstance(count, int) or count >= asked else count
     text = result["text"]
     for label in ("Sharpe", "Sortino", "Max drawdown", "Ann. volatility"):
         assert label in text, f"the Risk Profile lost its {label} row: {text!r}"
-    assert re.search(rf"\b{days.group(1)}\b[\s-]*(trading[\s-]*)?days?\b", text, re.I), (
-        f"the Risk Profile does not name its {days.group(1)}-day window: {text!r}"
+    assert re.search(rf"\b{covered}\b[\s-]*(trading[\s-]*)?days?\b", text, re.I), (
+        f"the Risk Profile does not name its {covered}-day window: {text!r}"
     )
+
+
+class TestTheRiskProfileStatesTheDepthOfItsFigures:
+    @pytest.mark.parametrize("depth", [1, 22, 59])
+    def test_a_response_covering_fewer_days_than_asked_names_its_own_count(self, worlds, depth):
+        performance = _with_depth(worlds.closed_performance, depth)
+        result = _risk_profile(worlds, performance)
+        line = _window_line(result["text"])
+        assert result["asked"], "the panel asked for no risk profile"
+        asked = int(re.search(r"[?&]days=(\d+)", result["asked"][0]).group(1))
+        assert depth < asked, "precondition: the response covers fewer days than were asked for"
+        assert depth in _days_in(line), f"a {depth}-row response is described as {line!r}"
+        assert asked not in _days_in(line), f"a {depth}-row response claims {asked} days: {line!r}"
+
+    @pytest.mark.parametrize("depth", [60, 75])
+    def test_a_response_covering_the_asked_days_or_more_names_the_asked_days(self, worlds, depth):
+        performance = _with_depth(worlds.closed_performance, depth)
+        result = _risk_profile(worlds, performance)
+        asked = int(re.search(r"[?&]days=(\d+)", result["asked"][0]).group(1))
+        line = _window_line(result["text"])
+        assert asked in _days_in(line), f"a {depth}-row response is described as {line!r}"
+        assert depth not in _days_in(line) or depth == asked, line
+
+    def test_a_response_with_no_count_names_no_number(self, worlds):
+        performance = _with_depth(worlds.closed_performance, None)
+        line = _window_line(_risk_profile(worlds, performance)["text"])
+        assert not re.search(r"\d", line), f"the line names a number the response never gave: {line!r}"
+
+    def test_a_response_with_no_rows_does_not_claim_the_asked_days(self, worlds):
+        performance = _with_depth(worlds.closed_performance, 0)
+        result = _risk_profile(worlds, performance)
+        asked = int(re.search(r"[?&]days=(\d+)", result["asked"][0]).group(1))
+        line = _window_line(result["text"])
+        assert asked not in _days_in(line), f"a response with no rows claims {asked} days: {line!r}"

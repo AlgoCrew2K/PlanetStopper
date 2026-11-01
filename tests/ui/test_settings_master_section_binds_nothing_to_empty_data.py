@@ -199,3 +199,108 @@ class TestRetry:
         assert retried.result == first_try.result
         assert retried.result["pillText"].upper() == "LIVE"
         assert retried.result["saveDisabled"] is False
+
+
+SAVE_ROUTE = r"/api/settings$"
+PARAM = ".param-input"
+
+RELOAD_SNAPSHOT = f"""
+const postsToSave = function () {{
+  return H.posts('{SAVE_ROUTE}').map(function (r) {{ return JSON.parse(r.body); }});
+}};
+const failedReload = async function () {{
+  const retry = H.$('#btn-settings-retry');
+  if (!retry) throw new Error('there is no Retry button');
+  await H.click('#btn-settings-retry');
+  await H.advance(500);
+}};
+"""
+
+
+def _run_with_save(scenario: str, *routes_):
+    return _run(
+        RELOAD_SNAPSHOT + scenario,
+        *routes_,
+        route(SAVE_ROUTE, page.settings_save_answer(), method="POST"),
+    )
+
+
+class TestAfterAFailedReload:
+    def test_a_discarded_start_time_edit_cannot_be_saved_after_the_reads_fail(self, seeded):
+        good = page.settings_get_answer()
+        out = _run_with_save(
+            """
+            await H.advance(500);
+            await H.set('#execution-start-time', '10:00');
+            const edited = view();
+            await H.click('#btn-discard');
+            await H.advance(500);
+            const failed = { errorVisible: H.isVisible('#settings-load-error'), view: view() };
+            await H.click('#btn-save');
+            return { edited: edited, failed: failed, posts: postsToSave() };
+            """,
+            route(SETTINGS, good, DOWN, DOWN, method="GET"),
+        )
+        r = out.result
+        assert r["edited"]["saveDisabled"] is False, "precondition: the edit enabled Save"
+        assert r["failed"]["errorVisible"], "precondition: the reload failed on screen"
+        assert r["failed"]["view"]["saveDisabled"], (
+            "Save stays enabled after the reload that dropped the edit failed"
+        )
+        assert r["failed"]["view"]["discardDisabled"]
+        assert r["posts"] == [], f"a click on Save after a failed reload posted {r['posts']}"
+
+    @pytest.mark.parametrize("failure", FAILURES, ids=FAILURE_IDS)
+    def test_editing_a_rendered_input_after_a_failed_reload_does_not_enable_save_or_queue_a_post(
+        self, seeded, failure
+    ):
+        good = page.settings_get_answer()
+        out = _run_with_save(
+            """
+            await H.advance(500);
+            const rendered = H.$$('__PARAM__').length;
+            await failedReload();
+            const failed = { errorVisible: H.isVisible('#settings-load-error'), view: view() };
+            await H.set('__PARAM__', '7');
+            const edited = view();
+            await H.click('#btn-save');
+            return { rendered: rendered, failed: failed, edited: edited, posts: postsToSave() };
+            """.replace("__PARAM__", PARAM),
+            route(SETTINGS, good, failure, failure, method="GET"),
+        )
+        r = out.result
+        assert r["rendered"] > 0, "precondition: the page rendered algorithm inputs"
+        assert r["failed"]["errorVisible"], "precondition: the reload failed on screen"
+        assert r["edited"]["saveDisabled"] and r["edited"]["discardDisabled"], (
+            f"an edit of a rendered input after a failed reload reached Save: {r['edited']}"
+        )
+        assert r["posts"] == [], f"Save posted {r['posts']} after a failed reload"
+
+    def test_a_later_good_load_restores_normal_saving_without_the_dropped_edits(self, seeded):
+        good = page.settings_get_answer()
+        out = _run_with_save(
+            """
+            await H.advance(500);
+            const key = H.$('__PARAM__').dataset.key;
+            await H.set('#execution-start-time', '10:00');
+            await H.click('#btn-discard');
+            await H.advance(500);
+            const failed = view();
+            await H.click('#btn-settings-retry');
+            await H.advance(500);
+            const reloaded = view();
+            await H.set('__PARAM__', '7');
+            const edited = view();
+            await H.click('#btn-save');
+            return { key: key, failed: failed, reloaded: reloaded, edited: edited, posts: postsToSave() };
+            """.replace("__PARAM__", PARAM),
+            route(SETTINGS, good, DOWN, DOWN, good, method="GET"),
+        )
+        r = out.result
+        assert r["failed"]["saveDisabled"], "Save was enabled while the reads were failing"
+        assert r["reloaded"]["saveDisabled"] and r["reloaded"]["editable"]
+        assert r["edited"]["saveDisabled"] is False, "a good load did not restore saving"
+        assert len(r["posts"]) == 1, r["posts"]
+        sent = r["posts"][0]["globals"]
+        assert sent.get(r["key"]) == "7"
+        assert "EXECUTION_START_TIME" not in sent, f"the discarded start time was posted: {sent}"
