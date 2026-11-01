@@ -23,6 +23,7 @@
 
   let _state = null;   // full API response
   let _dirty = false;
+  let _loadFailed = false; // a failed reload leaves nothing to save
   let _pendingGlobals = {};
   let _pendingOverrides = {};  // { sym_id: { params: {}, locked_vars: [] } }
   let _selectedSym = null;
@@ -93,6 +94,7 @@
 
   // ── Dirty tracking ─────────────────────────────────────────────────────────
   function markDirty() {
+    if (_loadFailed) return;
     _dirty = true;
     _editSeq += 1;
     document.getElementById('btn-save').disabled = false;
@@ -124,6 +126,7 @@
       if (res.ok && isSettingsBody(res.body)) {
         try {
           _state = res.body;
+          _loadFailed = false;
           // Pending edits are dropped before rendering: the detail pane reads them, so
           // clearing afterwards would leave a discarded edit on screen.
           clearDirty();
@@ -144,6 +147,8 @@
       } else {
         // The retry failed too: say so, with a button, and bind nothing to empty data.
         blankMaster();
+        clearDirty();
+        _loadFailed = true;
         showLoadError(true);
       }
     });

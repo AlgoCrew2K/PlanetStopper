@@ -186,3 +186,92 @@ class TestAPickedAccentStillApplies:
         """.replace("__STORED__", stored).replace("__KEY__", INLINE)
         )
         assert r == PICKED
+
+
+class TestAPickEqualToTheEarlierVersionsSeedIsARealPick:
+    """Swatch 1 is the very value the earlier version seeded, so only a marker can tell them apart."""
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_swatch_one_is_applied_at_once_persists_across_reloads_and_reads_as_the_pick(
+        self, theme
+    ):
+        r = _node(
+            r"""
+        const first = makePage({}).run();
+        first.domReady();
+        first.tools().set('theme', '__THEME__');
+        first.tools().set('accent', '__PICK__');
+        const afterPick = first.attrs['__KEY__'] === undefined ? null : first.attrs['__KEY__'];
+        const carried = Object.fromEntries(first.store);
+        const second = makePage(carried).run();
+        const atRun = second.attrs['__KEY__'] === undefined ? null : second.attrs['__KEY__'];
+        second.domReady();
+        const third = makePage(Object.fromEntries(second.store)).run();
+        third.domReady();
+        return { afterPick: afterPick, atRun: atRun,
+                 afterReady: second.attrs['__KEY__'] === undefined ? null : second.attrs['__KEY__'],
+                 picked: second.tools().get('accent'), thirdLoad: third.attrs['__KEY__'] === undefined ? null : third.attrs['__KEY__'],
+                 theme: second.root.getAttribute('data-theme') };
+        """.replace("__THEME__", theme)
+            .replace("__PICK__", LIGHT_DEFAULT)
+            .replace("__KEY__", INLINE)
+        )
+        assert r["afterPick"] == LIGHT_DEFAULT, (
+            "a click on swatch 1 removed the inline accent, so the theme's own accent shows"
+        )
+        assert r["atRun"] == LIGHT_DEFAULT, "the swatch 1 pick is lost on reload"
+        assert r["afterReady"] == LIGHT_DEFAULT
+        assert r["picked"] == LIGHT_DEFAULT, "no swatch reads active: the stored pick reads as none"
+        assert r["thirdLoad"] == LIGHT_DEFAULT, "the pick did not survive a second reload"
+        assert r["theme"] == theme
+
+    def test_a_store_from_before_the_marker_is_cleared_once_and_rewritten_on_its_first_read(self):
+        r = _node(
+            r"""
+        const first = makePage({ studioTweaks: __STORED__ }).run();
+        const rewritten = JSON.parse(first.store.get('studioTweaks'));
+        return { rewrittenAccent: rewritten.accent, inline: first.attrs['__KEY__'] === undefined ? null : first.attrs['__KEY__'],
+                 read: first.tools().get('accent') };
+        """.replace("__STORED__", _store()).replace("__KEY__", INLINE)
+        )
+        assert r["inline"] in NO_INLINE
+        assert r["read"] in NO_INLINE
+        assert r["rewrittenAccent"] in NO_INLINE, (
+            "the earlier version's stored accent was not rewritten on its first read, so it would "
+            "read as a pick once the marker exists"
+        )
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_after_the_one_time_clearing_a_pick_of_swatch_one_persists(self, theme):
+        r = _node(
+            r"""
+        const legacy = makePage({ studioTweaks: __STORED__ }).run();
+        legacy.domReady();
+        legacy.tools().set('theme', '__THEME__');
+        legacy.tools().set('accent', '__PICK__');
+        const afterPick = legacy.attrs['__KEY__'] === undefined ? null : legacy.attrs['__KEY__'];
+        const reloaded = makePage(Object.fromEntries(legacy.store)).run();
+        const atRun = reloaded.attrs['__KEY__'] === undefined ? null : reloaded.attrs['__KEY__'];
+        reloaded.domReady();
+        return { afterPick: afterPick, atRun: atRun, afterReady: reloaded.attrs['__KEY__'] === undefined ? null : reloaded.attrs['__KEY__'] };
+        """.replace("__STORED__", _store())
+            .replace("__THEME__", theme)
+            .replace("__PICK__", LIGHT_DEFAULT)
+            .replace("__KEY__", INLINE)
+        )
+        assert r["afterPick"] == LIGHT_DEFAULT
+        assert r["atRun"] == LIGHT_DEFAULT, (
+            "a swatch 1 pick made after the one-time clearing is lost"
+        )
+        assert r["afterReady"] == LIGHT_DEFAULT
+
+    def test_the_one_time_clearing_leaves_a_stored_pick_of_another_accent_alone(self):
+        r = _node(
+            r"""
+        const page = makePage({ studioTweaks: __STORED__ }).run();
+        const stored = JSON.parse(page.store.get('studioTweaks'));
+        return { inline: page.attrs['__KEY__'], stored: stored.accent };
+        """.replace("__STORED__", _store({"accent": PICKED})).replace("__KEY__", INLINE)
+        )
+        assert r["inline"] == PICKED
+        assert r["stored"] == PICKED

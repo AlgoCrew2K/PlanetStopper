@@ -39,16 +39,24 @@
 
   function set(key, value) {
     var stored = load() || Object.assign({}, TWEAK_DEFAULTS);
+    stored[ACCENT_MIGRATED_KEY] = true;
     stored[key] = value;
     save(stored);
     window.dispatchEvent(new CustomEvent('tweakchange', { detail: { key: key, value: value } }));
   }
 
+  // Set once the earlier version's accent has been cleared, so a later pick of that same
+  // colour is a real pick.
+  var ACCENT_MIGRATED_KEY = 'accentMigrated';
+
   function getAll() {
     var stored = load();
-    var values = Object.assign({}, TWEAK_DEFAULTS, stored || {});
-    if (values.accent === EARLIER_VERSION_DEFAULT_ACCENT) values.accent = '';
-    return values;
+    if (stored && !stored[ACCENT_MIGRATED_KEY]) {
+      if (stored.accent === EARLIER_VERSION_DEFAULT_ACCENT) stored.accent = '';
+      stored[ACCENT_MIGRATED_KEY] = true;
+      save(stored);
+    }
+    return Object.assign({}, TWEAK_DEFAULTS, stored || {});
   }
 
   function seed() {
