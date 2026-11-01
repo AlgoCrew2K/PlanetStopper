@@ -1178,7 +1178,7 @@
                 : (liveRet >= 0 ? cs('--studio-pos') : cs('--studio-neg'));
         }
         var elLiveSub = document.getElementById('dp-live-ret-sub');
-        if (elLiveSub) elLiveSub.textContent = sym.triggered ? 'frozen at exit' : 'real-time';
+        if (elLiveSub) elLiveSub.textContent = sym.triggered ? 'frozen at exit' : (_sessionDay ? 'at close' : 'real-time');
 
         var elStop = document.getElementById('dp-stop-level');
         if (elStop) elStop.textContent = stopLevel != null ? fmtPct(stopLevel) : '--';
@@ -1234,6 +1234,19 @@
     // on the panel so its figures are not read against the card's different window.
     var RISK_PROFILE_DAYS = 60;
 
+    // The window line names the days the figures cover: the response's own count, capped at the
+    // days asked for; no digit when the response reports none.
+    function riskProfileWindowText(p) {
+        var n = null;
+        ['observation_count', 'actual_days', 'coverage_days'].forEach(function (k) {
+            if (n === null && typeof p[k] === 'number' && isFinite(p[k])) n = p[k];
+        });
+        if (n === null && Array.isArray(p.dates)) n = p.dates.length;
+        if (n === null) return 'Window length not reported';
+        if (n <= 0) return 'No trading days in this window';
+        return 'Last ' + Math.min(n, RISK_PROFILE_DAYS) + ' trading days';
+    }
+
     function startDetailRequests(symId, sym, seq) {
         fetchDetailChart(sym.id || symId, sym, seq);
 
@@ -1284,7 +1297,7 @@
                         + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
                         + '</div>';
                 }).join('');
-                rpEl.innerHTML = '<div class="math-row-hint">Last ' + RISK_PROFILE_DAYS + ' trading days</div>' + html;
+                rpEl.innerHTML = '<div class="math-row-hint">' + riskProfileWindowText(p) + '</div>' + html;
             })
             .catch(function () {
                 // Graceful: leave the section empty on fetch failure — no JS error surfaced.
@@ -2625,10 +2638,11 @@
             function () { updateSectionMeta(); },
             // The header's mode pill and the hero legend's mode word follow the body.
             function () { if (typeof window.updateModeIndicators === 'function') window.updateModeIndicators(meta); },
+            // The session wording first: the open detail panel's sub-line reads it.
+            function () { applySessionWording(meta); },
             // The open detail panel follows the body.
             function () { refreshOpenDetailPanel(botState); },
             // The Sleeves and CVaR panels and the Edit Vars badge.
-            function () { applySessionWording(meta); },
             function () { renderDashboardPanels(data); },
             // The headline descriptor's "Simulated" word.
             function () { renderExecutionDescriptor(data); },
@@ -2849,25 +2863,41 @@
     var _summaryPendingToken = null; // the window that request is for
     // Another window's figures never stay under a pick: dash() (below, inside the function)
     // dashes them until the picked window's own answer lands; a failed answer says so in the panel.
+    var _summaryNoticeToken = null;   // the window the visible failure notice is about
     var _summaryAnsweredToken = null; // the window whose summary last answered well; null before the first
 
     function fetchGuardAlphaSummary(windowToken) {
         var seq = ++_summaryRequestSeq;
         _summaryPendingSeq = seq;
         _summaryPendingToken = windowToken;
-        if (windowToken !== _summaryAnsweredToken) dash();
+        if (windowToken !== _summaryAnsweredToken) {
+            var keptNotice = windowToken === _summaryNoticeToken
+                ? (document.getElementById('dollar-saved-window-notice') || {}).textContent : '';
+            dash(0, keptNotice);
+        }
         var url = '/api/guard-alpha-summary' + (windowToken ? '?window=' + encodeURIComponent(windowToken) : '');
-        fetch(url)
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var timedOut = false;
+        var timer = controller
+            ? setTimeout(function () { timedOut = true; controller.abort(); }, STATE_REQUEST_TIMEOUT_MS)
+            : null;
+        fetch(url, controller ? { signal: controller.signal } : undefined)
             .then(function (response) {
                 if (!response.ok) return;
                 return response.json();
             })
             .then(function (data) {
+                if (timer !== null) clearTimeout(timer);
+                if (timedOut) return;
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
                 if (seq !== _summaryRequestSeq) return;
                 if (windowToken && windowToken !== _heroWindow) return;
                 if (!data || typeof data.guard_event_count !== 'number') return fail();
-                _summaryAnsweredToken = windowToken; dash(1);
+                _summaryAnsweredToken = windowToken; _summaryNoticeToken = null; dash(1);
+                ['guard-event-count', 'dollar-saved-realized-coverage'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) el.style.color = '';
+                });
                 var headlineEl = document.getElementById('dollar-saved-headline');
                 var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
@@ -2935,6 +2965,7 @@
                 }
             })
             .catch(function (err) {
+                if (timer !== null) clearTimeout(timer);
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
                 fail();
                 console.error('guard-alpha-summary load failed', err);
@@ -2946,6 +2977,7 @@
             if (seq !== _summaryRequestSeq) return;
             if (windowToken && windowToken !== _heroWindow) return;
             if (windowToken === _summaryAnsweredToken) return; // own figures, one refresh old
+            _summaryNoticeToken = windowToken;
             dash(0, 'Could not load the ' + (windowToken || 'all') + ' figures; trying again.');
         }
 
@@ -2958,7 +2990,7 @@
                  'dollar-saved-realized-headline', 'dollar-saved-realized-coverage',
                  'dollar-saved-realized-net-of-friction-headline'].forEach(function (id) {
                     var el = document.getElementById(id);
-                    if (el) { el.textContent = '—'; el.style.color = cs('--studio-ink-dim'); }
+                    if (el) { el.textContent = '—'; el.style.color = 'var(--studio-ink-dim)'; }
                 });
                 ['dollar-saved-verb', 'dollar-saved-basis-label', 'dollar-saved-net-of-friction-verb',
                  'dollar-saved-realized-verb', 'dollar-saved-realized-net-of-friction-verb'].forEach(function (id) {
