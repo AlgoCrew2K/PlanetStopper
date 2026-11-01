@@ -9578,10 +9578,14 @@ _SETTINGS_WRITE_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-# EXECUTION_START_TIME is read by the engine as "HH:MM" (alpha_bot_execution.py splits it on ":"
-# and converts both halves to int).  fullmatch, never match with "$": "$" also matches before a
-# trailing newline, which is how a second line reaches the file.
-_SETTINGS_START_TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]")
+# EXECUTION_START_TIME is accepted as "H:MM" or "HH:MM": hours 0-23, minutes exactly two digits
+# 00-59.  The engine splits the value on ":" and converts both halves to int
+# (alpha_bot_execution.py), so a one-digit hour reads correctly there, and the production .env
+# already holds '9:35'; refusing that form would make the operator retype a value the engine
+# accepts.  A one-digit minute, 24:00, 9:60, an empty value and any surrounding text stay refused.
+# fullmatch, never match with "$": "$" also matches before a trailing newline, which is how a
+# second line reaches the file.
+_SETTINGS_START_TIME = re.compile(r"(?:[01]?[0-9]|2[0-3]):[0-5][0-9]")
 # The two values engine/exit_authority.py recognizes; anything else degrades the badge.
 _SETTINGS_EXIT_AUTHORITIES = frozenset({"per_symphony", "port_level"})
 

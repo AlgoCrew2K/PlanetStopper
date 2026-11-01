@@ -7,7 +7,8 @@ next quote in the file close it, and a second allowlisted key can then carry a w
 
 Contract pinned
 * Algorithm parameters (the ``_ALGO_PARAM_META`` keys) take a finite number; ``EXECUTION_START_TIME`` takes
-  exactly ``HH:MM``; ``EXIT_AUTHORITY`` takes one of the two values the engine knows.
+  ``H:MM`` or ``HH:MM`` (hours 0-23, two-digit minutes 00-59, nothing around it); ``EXIT_AUTHORITY``
+  takes one of the two values the engine knows.
 * One bad value anywhere in the payload (a global or a symphony parameter) is a 400 and nothing is
   written: the ``.env`` file stays byte-identical and no symphony strategy is saved.
 * The payload that injected ``LIVE_EXECUTION=True`` is a 400 and leaves ``.env`` as it was.
@@ -101,8 +102,19 @@ class TestTheInjectionPayload:
 
 
 BAD_START_TIMES = [
-    "9:30",
+    "9:5",
+    "09:5",
+    "24:00",
+    "9:60",
+    "09:60",
+    "009:30",
+    "-1:30",
     "09:30\n",
+    "9:35\n",
+    " 9:35",
+    "9:35 ",
+    "x9:35",
+    "9:35x",
     "09:30\\",
     "09:30'",
     "09:30:00",
@@ -113,6 +125,19 @@ BAD_START_TIMES = [
     ["09:30"],
     None,
     True,
+]
+# One- and two-digit hours both reach the engine intact (it splits on ":" and int()s each half).
+GOOD_START_TIMES = [
+    "0:00",
+    "00:00",
+    "9:30",
+    "9:35",
+    "9:40",
+    "09:30",
+    "09:35",
+    "10:31",
+    "19:05",
+    "23:59",
 ]
 BAD_AUTHORITIES = [
     "LIVE",
@@ -185,7 +210,7 @@ class TestAllOrNothing:
     ):
         response = _post(
             client,
-            {"EXECUTION_START_TIME": "9:30"},
+            {"EXECUTION_START_TIME": "24:00"},
             {"alpha": {"params": {ALGO_KEY: "30"}, "locked_vars": []}},
         )
         _assert_refused_and_untouched(response, env_file, database_stub)
@@ -234,10 +259,12 @@ class TestValidPayloadsStillWork:
         assert float(written["MAX_SQUEEZE_FLOOR"]) == 0.25
         assert written["LIVE_EXECUTION"] == "False", "an unrelated key moved"
 
-    @pytest.mark.parametrize("time", ["00:00", "09:30", "23:59"])
-    def test_the_edges_of_the_clock_are_accepted(self, client, env_file, database_stub, time):
+    @pytest.mark.parametrize("time", GOOD_START_TIMES, ids=repr)
+    def test_a_one_or_two_digit_hour_start_time_is_accepted_and_written_as_typed(
+        self, client, env_file, database_stub, time
+    ):
         response = _post(client, {"EXECUTION_START_TIME": time})
-        assert response.status_code == 200
+        assert response.status_code == 200, response.get_data(as_text=True)
         assert dotenv_values(env_file)["EXECUTION_START_TIME"] == time
 
     @pytest.mark.parametrize("value", ["-1.5", "0", 0, 12, "1e-3", 3.75])
