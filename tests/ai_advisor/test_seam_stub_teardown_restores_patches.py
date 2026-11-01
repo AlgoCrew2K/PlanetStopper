@@ -29,7 +29,7 @@ import advisors.lens_technicals as lens_technicals
 DIRECTORY_CONFTEST = pathlib.Path(__file__).with_name("conftest.py")
 
 # What a test that patches the seams through monkeypatch looks like.
-PATCHING_TESTS = '''
+PATCHING_TESTS = """
 import time
 
 import requests
@@ -45,7 +45,7 @@ def test_a_test_patches_each_seam_through_monkeypatch(monkeypatch):
 
 def test_the_next_test_runs_on_the_directory_stubs():
     assert callable(time.sleep)
-'''
+"""
 
 # Stands in for the outer autouse fixture of tests/conftest.py that requests monkeypatch.
 OUTER_CONFTEST = """
