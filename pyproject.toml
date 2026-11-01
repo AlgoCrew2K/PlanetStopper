@@ -79,6 +79,10 @@ ignore = []
 quote-style = "double"
 
 [tool.pytest.ini_options]
+# Keep a test's temp directory only if it failed. Each holds a ~380 KB database, and some CI runner
+# images mount /tmp as a 7.7 GB tmpfs, which ~17,000 kept directories fill: SQLite then answers
+# 'disk I/O error' to every later test.
+tmp_path_retention_policy = "failed"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = """
