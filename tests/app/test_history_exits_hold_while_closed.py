@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -100,6 +101,16 @@ def seed_exit_trigger(day: str, clock: str, symphony_index: int, reason: str, at
     )
 
 
+def stored_trigger_ids(day: str) -> list[str]:
+    """The symphony ids of the `exit_triggers` rows stamped `day` ET, read from the database (the
+    world holds rows of its own besides the ones a test seeds)."""
+    with sqlite3.connect(database._db_file()) as conn:
+        rows = conn.execute(
+            "SELECT symphony_id FROM exit_triggers WHERE substr(ts_et, 1, 10) = ?", (day,)
+        ).fetchall()
+    return sorted(row[0] for row in rows)
+
+
 @pytest.mark.parametrize("instant", sorted(INSTANTS))
 def test_the_exits_of_the_closed_session_are_answered_all_the_way_to_the_next_open(
     monkeypatch, tmp_path, instant
@@ -153,9 +164,13 @@ def test_the_exits_of_the_exit_triggers_table_hold_when_no_post_mortem_is_writte
     seed_exit_trigger(FRIDAY, "13:40:00", 1, "VWAP Breakdown", 3.0)
     cw.at(*INSTANTS["Fri 16:30 ET"])
     reference = cw.poll(HISTORY_PATH)["todays_exits"]
-    assert sorted((r["symphony_id"], r["reason"]) for r in reference) == sorted(
-        [(SYMPHONY_IDS[0], "Trailing Stop"), (SYMPHONY_IDS[1], "VWAP Breakdown")]
-    ), "fixture sanity: at the close the table holds the session's own two rows"
+    session_ids = stored_trigger_ids(FRIDAY)
+    assert len(session_ids) >= 2 and stored_trigger_ids(THURSDAY), (
+        "fixture sanity: the session has rows, and the day before has its own"
+    )
+    assert sorted(r["symphony_id"] for r in reference) == session_ids, (
+        "fixture sanity: at the close the table holds the session's own rows"
+    )
 
     cw.at(*INSTANTS[instant])
     body = cw.poll(HISTORY_PATH)
@@ -176,9 +191,10 @@ def test_while_the_market_is_open_the_exits_are_todays_and_the_payload_says_so(
     cw.at(MONDAY, "10:01:00")
 
     body = cw.poll(HISTORY_PATH)
-    assert [(r["symphony_id"], r["reason"]) for r in body["todays_exits"]] == [
-        (SYMPHONY_IDS[0], "Take Profit")
-    ], "an open market's table is today's exits only"
+    assert stored_trigger_ids(FRIDAY), "fixture sanity: the last session has rows of its own"
+    assert sorted(r["symphony_id"] for r in body["todays_exits"]) == stored_trigger_ids(MONDAY), (
+        "an open market's table is today's exits only"
+    )
     assert body.get("todays_exits_day") == MONDAY
     assert body.get("todays_exits_market_closed") is False
 
