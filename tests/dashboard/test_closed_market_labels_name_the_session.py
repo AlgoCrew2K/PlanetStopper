@@ -115,23 +115,31 @@ def worlds(monkeypatch, tmp_path) -> Worlds:
 
 
 def assert_closed_wording(found: dict, session: str, where: str) -> None:
+    """Every label is checked and every miss is reported together."""
+    problems: list[str] = []
     hero = found["heroToday"]
-    assert session in hero and not TODAY_OR_LIVE.search(hero), f"{where}: hero row reads {hero!r}"
-    assert found["cardFooters"], f"{where}: the page has no card footer"
+    if session not in hero or TODAY_OR_LIVE.search(hero):
+        problems.append(f"hero Today row reads {hero!r}")
+    if not found["cardFooters"]:
+        problems.append("the page has no card footer")
     for text in found["cardFooters"]:
-        assert session in text and not TODAY_OR_LIVE.search(text), (
-            f"{where}: a card footer reads {text!r}"
-        )
+        if session not in text or TODAY_OR_LIVE.search(text):
+            problems.append(f"a card footer reads {text!r}")
     for name in ("eventsHeading", "hwm", "eventsEmpty"):
         text = found[name]
-        assert session in text and not TODAY_WORD.search(text), f"{where}: {name} reads {text!r}"
-    assert not LIVE_WORD.search(found["liveReturn"]) and re.search(
-        r"return", found["liveReturn"], re.I
-    ), f"{where}: the figure's heading reads {found['liveReturn']!r}"
-    assert found["ifHeld"], f"{where}: no card has an if-held heading"
+        if session not in text or TODAY_WORD.search(text):
+            problems.append(f"{name} reads {text!r}")
+    heading = found["liveReturn"]
+    if LIVE_WORD.search(heading) or not re.search(r"return", heading, re.I):
+        problems.append(f"the figure's heading reads {heading!r}")
+    if not found["ifHeld"]:
+        problems.append("no card has an if-held heading")
     for text in found["ifHeld"]:
-        assert not LIVE_WORD.search(text), f"{where}: an if-held heading reads {text!r}"
-        assert re.match(r"if held", text, re.I), f"{where}: the if-held heading was removed: {text!r}"
+        if LIVE_WORD.search(text):
+            problems.append(f"an if-held heading reads {text!r}")
+        if not re.match(r"if held", text, re.I):
+            problems.append(f"the if-held heading was removed: {text!r}")
+    assert not problems, f"{where} (session label {session!r}): " + "; ".join(problems)
 
 
 OPEN_WORDING = {
