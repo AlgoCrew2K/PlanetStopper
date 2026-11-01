@@ -477,3 +477,18 @@ def test_an_open_poll_after_a_failed_part_is_computed_again(monkeypatch, tmp_pat
 
     cw.world.client.get("/api/state")  # the poll that meets the fault: any answer
     assert cw.raw("/api/state") == reference
+
+
+def test_a_complete_build_with_no_history_is_held(monkeypatch, tmp_path):
+    """No shadow rows at all is a complete (empty) build, not a failed one: it is held, so the
+    weekend does not recompute it on every poll."""
+    cw, trace = world(monkeypatch, tmp_path)
+    cw.at(*CLOSED_INSTANTS["closed_frozen"])
+    with sqlite3.connect(app_module.database._db_file()) as conn:
+        conn.execute("DELETE FROM shadow_history")
+    for path in JSON_ROUTES:
+        assert cw.world.client.get(path).status_code == 200
+    mark = trace.mark()
+    for path in JSON_ROUTES:
+        assert cw.world.client.get(path).status_code == 200
+    assert not request_queries(trace, mark), "an empty but complete build was not held"

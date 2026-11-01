@@ -4111,6 +4111,19 @@ _HOLD_MAX_IDENTITIES = 4  # snapshot identities kept: today's, plus the few befo
 _HOLD_MAX_RESULTS = 40  # results kept per identity: the poll, and two per window token
 _NOTHING = object()
 
+# Set around a build the hold runs: a build that catches its own fault and answers without the
+# failed part records it here, and the hold then answers it without storing it. A part that is
+# merely absent (a closed session with no history) is a complete build and is held.
+_BUILD_FAILURES: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar(
+    "closed_build_failures", default=None
+)
+
+
+def _note_build_failure() -> None:
+    failures = _BUILD_FAILURES.get()
+    if failures is not None:
+        failures.append(True)
+
 
 class _ClosedHold:
     def __init__(self, max_identities: int, max_results: int) -> None:
@@ -4153,8 +4166,14 @@ class _ClosedHold:
                 found = self._get(identity, name)
                 if found is not _NOTHING:
                     return copy.deepcopy(found)
-                value = build()
-                self._put(identity, name, copy.deepcopy(value))
+                failures: list[bool] = []
+                token = _BUILD_FAILURES.set(failures)
+                try:
+                    value = build()
+                finally:
+                    _BUILD_FAILURES.reset(token)
+                if not failures:
+                    self._put(identity, name, copy.deepcopy(value))
                 return value
         finally:
             with self._lock:
@@ -4434,6 +4453,7 @@ def _frozen_strip_rows(snapshot: dict, conn: sqlite3.Connection | None) -> dict:
             state=snap_bot_state,
         )
     except Exception:
+        _note_build_failure()
         return rows
     rows["ok"] = True
 
@@ -4451,11 +4471,13 @@ def _frozen_strip_rows(snapshot: dict, conn: sqlite3.Connection | None) -> dict:
         if isinstance(default, dict):
             rows["default"] = default
     except Exception:
+        _note_build_failure()
         _daemon_log.error("closed_frozen default-window strip failed", exc_info=True)
 
     try:
         rows["hist"] = _portfolio_hist_series(conn, snap_bot_state)
     except Exception:
+        _note_build_failure()
         _daemon_log.error("closed_frozen hero series failed", exc_info=True)
     return rows
 
@@ -5945,6 +5967,7 @@ def _hero_chart_body(
                 "available_days": len(dates),
             }
     except Exception as exc:
+        _note_build_failure()
         # Exception text can carry paths and data, so only the type reaches the ERROR line.
         _daemon_log.error("get_hero_chart bot/held series failed: %s", type(exc).__name__)
         _daemon_log.debug("get_hero_chart bot/held series detail", exc_info=True)
