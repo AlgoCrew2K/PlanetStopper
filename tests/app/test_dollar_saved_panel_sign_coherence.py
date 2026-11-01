@@ -42,6 +42,8 @@ import re
 
 import pytest
 
+from tests.app.test_dollar_saved_panel_friction_disclosure import _extract_function_with_signature
+
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _PROJECT_ROOT / "templates" / "index.html"
 _INDEX_JS = _PROJECT_ROOT / "static" / "index.js"
@@ -96,7 +98,7 @@ class TestTemplateVerbElementsExist:
 
 class TestSnapshotHeadlineNoNakedMinus:
     def test_fetch_guard_alpha_summary_does_not_prefix_naked_minus(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary")
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "'-$'" not in block, (
             "fetchGuardAlphaSummary must not prepend a literal '-$' for a negative "
             "value -- the magnitude must be ABS with no sign character at all; "
@@ -104,7 +106,7 @@ class TestSnapshotHeadlineNoNakedMinus:
         )
 
     def test_fetch_guard_alpha_summary_sets_the_verb_element_by_sign(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary")
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "dollar-saved-verb" in block, (
             "fetchGuardAlphaSummary must reference the new dollar-saved-verb element "
             "to swap the word by sign"
@@ -118,7 +120,7 @@ class TestSnapshotHeadlineNoNakedMinus:
         # A wider span than the other assertions in this file -- the realized
         # branch sits near the END of fetchGuardAlphaSummary's ~50-line body,
         # past the default 2500-char window.
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=5000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         # Scope to the realized-basis branch specifically -- both branches live
         # in the same function, so re-derive the sub-block via its own anchor.
         realized_idx = block.find("realizedSaved")
@@ -130,7 +132,7 @@ class TestSnapshotHeadlineNoNakedMinus:
         )
 
     def test_realized_headline_sets_its_own_verb_element_by_sign(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=5000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "dollar-saved-realized-verb" in block, (
             "fetchGuardAlphaSummary must reference dollar-saved-realized-verb to "
             "drive the realized headline's word by sign, independent of the "
@@ -173,7 +175,7 @@ class TestDollarSavedPanelJoinsWindowPicker:
         )
 
     def test_fetch_guard_alpha_summary_includes_window_in_its_request_url(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary")
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "/api/guard-alpha-summary" in block
         assert "window" in block, (
             "fetchGuardAlphaSummary must include a `window=` query parameter in its "

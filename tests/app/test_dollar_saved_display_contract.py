@@ -43,6 +43,7 @@ import pytest
 
 import analytics
 import app as app_module
+from tests.app.test_dollar_saved_panel_friction_disclosure import _extract_function_with_signature
 
 _FIXTURE_DIR = pathlib.Path(__file__).parent.parent / "fixtures" / "prod_droplet"
 _PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent
@@ -141,7 +142,7 @@ class TestHeadlineColorReflectsSign:
 
         RED today: the renderer does '$' + value.toFixed(2) with no sign handling.
         """
-        block = _js_block(_js(), "function fetchGuardAlphaSummary")
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "--studio-neg" in block, (
             "fetchGuardAlphaSummary must reference the negative token so a negative "
             "cumulative is not rendered in the positive color"
