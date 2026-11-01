@@ -611,8 +611,10 @@ class TestRefreshShowsTheSelectedCalendarWindow:
 
     def test_window_click_and_unchanged_poll_send_the_requests_they_sent_before(self):
         world = hx.get_world("default")
+        # The world's own strip and $-saved answers are routed: an unanswered picked window is asked
+        # again by the next poll, so the poll's requests are judged once the click's were answered.
         scenario = r"""
-        await H.boot({});
+        await H.boot({ extras: true });
         const a = H.fetchLog.length;
         await H.click('[data-testid="window-60d"]');
         const clickUrls = H.fetchLog.slice(a).map(function (e) { return e.url; });
