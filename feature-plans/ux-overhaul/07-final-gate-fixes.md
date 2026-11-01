@@ -53,7 +53,7 @@ A `/health` reason `no_cycle_since_open`, also driving the header's Degraded sta
 ## AC-10 Security (S-1, S-2, S-3, S-4, S-5, S-6, S-8, S-12, S-13, S-14, S-16)
 - S-1, S-13: `renderDetailLogs` and `renderDetailVars` render text as text. A symphony name carrying markup shows literally.
 - S-2: `_validate_csrf` reads the form field only on the login endpoint; other routes need the header. POSTs with `Sec-Fetch-Site: same-site` or `cross-site` are refused.
-- S-3: `POST /api/settings` validates every value before any write, all or nothing: finite float for algorithm parameters, `^\d{2}:\d{2}$` for `EXECUTION_START_TIME`, the enum for `EXIT_AUTHORITY`. The payload in the finding returns 400 and leaves `.env` byte-identical.
+- S-3: `POST /api/settings` validates every value before any write, all or nothing: finite float for algorithm parameters, `H:MM or HH:MM, hours 0-23` for `EXECUTION_START_TIME`, the enum for `EXIT_AUTHORITY`. The payload in the finding returns 400 and leaves `.env` byte-identical.
 - S-4: suggestion Apply and Dismiss use data attributes and a listener. A name with an apostrophe works. This is a live bug on 2 of 6 captured names.
 - S-5: security headers in `deploy/caddy/Caddyfile`; the app's own inline scripts and CDN must keep working, so no CSP that breaks them. S-6: the CDN script is pinned with SRI, or vendored. S-8: `.gitignore` covers the real backups. S-12: a non-ASCII token is a clean 403. S-14: Panic Confirm has an in-flight guard and the request bytes stay identical. S-16: `composer_series_client` does not follow redirects.
 - Not in scope, for the operator: S-7 (real account id in the public repo), S-15 (credentials in the local stash), S-9, S-10, S-11, S-17.
