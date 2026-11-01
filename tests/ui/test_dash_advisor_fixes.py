@@ -270,49 +270,43 @@ class TestAC3aVolFieldName:
             "Fix: replace sym.volatility / sym.vol with sym.symphony_vol at line ~500."
         )
 
+    def _risk_math_rows_body(self) -> str:
+        """The text of riskMathRows, the one rule every Risk Math row writer shares,
+        up to the next sibling function declaration."""
+        src = self._read_index_js()
+        start = src.find("function riskMathRows(")
+        assert start != -1, (
+            "Could not locate 'function riskMathRows(' in index.js. "
+            "The vol-field rule must live in the shared Risk Math rows function."
+        )
+        end = src.find("\n    function ", start + 1)
+        assert end != -1, "riskMathRows has no following sibling function; slice is unbounded."
+        return src[start:end]
+
     def test_index_js_does_not_use_bare_sym_volatility_for_vol_row(self):
-        """index.js must not read sym.volatility as the source for the vol row.
+        """riskMathRows must not read sym.volatility as the source for the vol row.
 
         The key sym.volatility is not set by the engine.  If it appears in the
-        vol-reading expression (rawVol assignment), the row will always show '--'.
+        vol-reading rule, the row will always show '--'.
         """
-        src = self._read_index_js()
-        # Locate the rawVol assignment block (within populateRiskMathFromState).
-        # The fix replaces the sym.volatility / sym.vol chain with sym.symphony_vol.
-        # A correct fix should NOT have `sym.volatility` in the rawVol expression.
-        raw_vol_match = re.search(
-            r"var rawVol\s*=.*?;",
-            src,
-            re.DOTALL,
-        )
-        assert raw_vol_match is not None, (
-            "Could not locate 'var rawVol = ...' in index.js. "
-            "The vol-field fix must be in populateRiskMathFromState."
-        )
-        raw_vol_expr = raw_vol_match.group(0)
-        assert "sym.volatility" not in raw_vol_expr, (
-            f"index.js rawVol expression still reads sym.volatility: {raw_vol_expr!r}. "
-            "Replace with sym.symphony_vol — the engine does not set sym.volatility."
+        body = self._risk_math_rows_body()
+        assert "sym.volatility" not in body, (
+            "index.js riskMathRows still reads sym.volatility. "
+            "Replace with sym.symphony_vol: the engine does not set sym.volatility."
         )
 
     def test_index_js_does_not_use_bare_sym_vol_for_vol_row(self):
-        """index.js must not read sym.vol as the source for the vol row.
+        """riskMathRows must not read sym.vol as the source for the vol row, and
+        must read sym.symphony_vol as the primary source.
 
         The key sym.vol is not set by the engine.
         """
-        src = self._read_index_js()
-        raw_vol_match = re.search(
-            r"var rawVol\s*=.*?;",
-            src,
-            re.DOTALL,
+        body = self._risk_math_rows_body()
+        assert re.search(r"sym\.vol", body) is None, (
+            "index.js riskMathRows reads sym.vol, a key the engine never sets."
         )
-        if raw_vol_match is None:
-            pytest.skip("rawVol expression not found — cannot check sym.vol usage")
-        raw_vol_expr = raw_vol_match.group(0)
-        # After the fix, sym.vol must not appear as the primary source.
-        # (It's acceptable as a final fallback only if symphony_vol is checked first.)
-        assert "sym.symphony_vol" in raw_vol_expr, (
-            f"index.js rawVol expression does not read sym.symphony_vol: {raw_vol_expr!r}. "
+        assert "sym.symphony_vol" in body, (
+            "index.js riskMathRows does not read sym.symphony_vol. "
             "Fix: read sym.symphony_vol as the primary source for the vol row."
         )
 

@@ -248,10 +248,15 @@ def test_render_risk_math_panel_mc_bar_resets_on_null_not_left_stale() -> None:
     surface is already correct in the GREEN implementation; this test
     locks it in."""
     content = _read_index_js()
-    body = _slice_function(content, "function renderRiskMathPanel(")
+    panel = _slice_function(content, "function renderRiskMathPanel(")
+    assert re.search(r"populateRiskMathFromState\(", panel), (
+        "renderRiskMathPanel no longer calls populateRiskMathFromState, which owns the "
+        "MC bar's reset: the chart path would leave the bar showing a previous render."
+    )
+    body = _slice_function(content, "function populateRiskMathFromState(", max_len=3000)
 
     mc_bar_match = re.search(r"getElementById\(\s*['\"]dp-rm-mc-bar['\"]\s*\)", body)
-    assert mc_bar_match, "dp-rm-mc-bar element lookup not found in renderRiskMathPanel."
+    assert mc_bar_match, "dp-rm-mc-bar element lookup not found in populateRiskMathFromState."
 
     # The reset must appear textually AFTER the mcBar lookup (i.e. inside its
     # null-handling branch), and must touch BOTH width and background --
@@ -259,13 +264,13 @@ def test_render_risk_math_panel_mc_bar_resets_on_null_not_left_stale() -> None:
     # wrong color, or vice versa).
     tail = body[mc_bar_match.end() :]
     width_reset = re.search(r"mcBar\.style\.width\s*=\s*['\"]0%['\"]", tail)
-    background_reset = re.search(r"mcBar\.style\.background\s*=", tail)
     assert width_reset, (
         "AC-2 FAIL: no reset of mcBar.style.width to a neutral value found "
         "after the dp-rm-mc-bar lookup -- an exited symphony's Risk Math "
         "bar can be left showing a stale pre-trigger width."
     )
-    assert background_reset and background_reset.start() != width_reset.start(), (
+    background_reset = re.search(r"mcBar\.style\.background\s*=", tail[width_reset.end() :])
+    assert background_reset, (
         "AC-2 FAIL: mcBar.style.background is not reset alongside the width "
         "-- resetting only the width still leaves a stale color on the bar."
     )
@@ -280,14 +285,18 @@ def test_populate_risk_math_from_state_keeps_existing_sentinel_guard() -> None:
     is a regression pin, not a fix expectation. If a future change ever
     removes this guard, this test must catch it."""
     content = _read_index_js()
-    body = _slice_function(content, "function populateRiskMathFromState(", max_len=1200)
+    populate = _slice_function(content, "function populateRiskMathFromState(", max_len=3000)
+    assert "riskMathRows(" in populate, (
+        "Regression: populateRiskMathFromState no longer reads its rows from riskMathRows, "
+        "the one rule shared by every writer of the Risk Math rows."
+    )
+    body = _slice_function(content, "function riskMathRows(", max_len=3000)
     assert "sentinelToNull" in body, (
-        "Regression: populateRiskMathFromState no longer calls "
-        "sentinelToNull on sym.mc_prob -- this was the existing None-safe "
-        "guard for the eager-populate path; do not remove it while fixing "
-        "the OTHER (chart-driven) surface."
+        "Regression: riskMathRows no longer calls sentinelToNull on sym.mc_prob -- this was "
+        "the existing None-safe guard for the eager-populate path; do not remove it while "
+        "fixing the OTHER (chart-driven) surface."
     )
     assert "sym.mc_prob" in body, (
-        "Regression: populateRiskMathFromState no longer reads sym.mc_prob "
-        "at all -- has the eager-populate wiring been removed?"
+        "Regression: riskMathRows no longer reads sym.mc_prob at all -- has the "
+        "eager-populate wiring been removed?"
     )
