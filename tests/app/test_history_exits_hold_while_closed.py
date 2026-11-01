@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -40,6 +40,7 @@ import database
 from tests.app._closed_session_world import ClosedWorld, build_history_world, utc_of
 from tests.app._refresh_timing_frozen_world import SYMPHONY_IDS
 from tests.app.test_closed_market_numbers_never_move import local, write_engine_cycle
+from tests.app.test_health_no_cycle_since_open import world
 
 ET = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -57,10 +58,6 @@ INSTANTS = {
 
 # One writer-shaped answer row of the table: what the page prints.
 EXIT_KEYS = ("ts", "symphony_id", "reason", "detail")
-
-
-def world(monkeypatch, tmp_path) -> ClosedWorld:
-    return build_history_world(monkeypatch, tmp_path, first_history_day=date(2026, 9, 1))
 
 
 def anchor_of(cw: ClosedWorld) -> str:

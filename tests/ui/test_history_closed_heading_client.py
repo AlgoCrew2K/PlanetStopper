@@ -84,7 +84,7 @@ def label(day: str) -> str:
     return f"{MONTHS[int(month) - 1]} {int(dom)}"
 
 
-def history_body(*, day: str, closed: bool, exits=EXITS) -> dict:
+def closed_session_answer(*, day: str, closed: bool, exits=EXITS) -> dict:
     body = hist.history_answer(30)
     body["json"] = copy.deepcopy(body["json"])
     body["json"]["todays_exits"] = copy.deepcopy(exits)
@@ -101,7 +101,9 @@ def run(scenario: str, *routes):
 
 @pytest.mark.parametrize("day", ["2026-10-30", "2026-11-02", "2026-01-05"])
 def test_a_closed_heading_names_the_session_date_with_the_count(days, day):
-    out = run("return state();", route(HISTORY, history_body(day=day, closed=True), method="GET"))
+    out = run(
+        "return state();", route(HISTORY, closed_session_answer(day=day, closed=True), method="GET")
+    )
     heading = out.result["heading"]
     assert heading == f"Exits on {label(day)} ({len(EXITS)})", (
         f"the closed table's heading is {heading!r}"
@@ -110,14 +112,17 @@ def test_a_closed_heading_names_the_session_date_with_the_count(days, day):
 
 
 def test_a_closed_session_with_no_exits_still_names_its_date(days):
-    body = history_body(day="2026-10-30", closed=True, exits=[])
+    body = closed_session_answer(day="2026-10-30", closed=True, exits=[])
     out = run("return state();", route(HISTORY, body, method="GET"))
     assert out.result["heading"] == "Exits on Oct 30 (0)"
 
 
 @pytest.mark.parametrize("day", ["2026-11-02", "2026-12-31"])
 def test_an_open_market_heading_stays_todays_exits(days, day):
-    out = run("return state();", route(HISTORY, history_body(day=day, closed=False), method="GET"))
+    out = run(
+        "return state();",
+        route(HISTORY, closed_session_answer(day=day, closed=False), method="GET"),
+    )
     assert out.result["heading"] == f"Today's exits ({len(EXITS)})"
     assert label(day) not in out.result["heading"]
 
@@ -128,8 +133,8 @@ def test_the_date_is_the_sessions_calendar_day_in_every_browser_zone(days, zone)
         f"process.env.TZ = '{zone}';\nawait H.advance(30000);\nreturn state();",
         route(
             HISTORY,
-            history_body(day="2026-10-30", closed=True),
-            history_body(day="2026-10-30", closed=True),
+            closed_session_answer(day="2026-10-30", closed=True),
+            closed_session_answer(day="2026-10-30", closed=True),
             method="GET",
         ),
     )
@@ -139,7 +144,7 @@ def test_the_date_is_the_sessions_calendar_day_in_every_browser_zone(days, zone)
 
 
 def test_the_date_is_written_as_text_not_markup(days):
-    body = history_body(day="<b>2026-10-30</b>", closed=True)
+    body = closed_session_answer(day="<b>2026-10-30</b>", closed=True)
     out = run("return state();", route(HISTORY, body, method="GET"))
     assert out.result["headingChildren"] == 0
     assert "<b>" not in out.result["headingHtml"]
@@ -156,9 +161,9 @@ def test_the_heading_follows_a_poll_from_closed_to_open_and_back(days):
         """,
         route(
             HISTORY,
-            history_body(day="2026-10-30", closed=True),
-            history_body(day="2026-11-02", closed=False, exits=EXITS[:1]),
-            history_body(day="2026-11-02", closed=True, exits=EXITS),
+            closed_session_answer(day="2026-10-30", closed=True),
+            closed_session_answer(day="2026-11-02", closed=False, exits=EXITS[:1]),
+            closed_session_answer(day="2026-11-02", closed=True, exits=EXITS),
             method="GET",
         ),
     )
@@ -177,7 +182,7 @@ def drill_day(body: dict) -> str:
     ("closed", "button"), [(True, "Exits on Oct 30"), (False, "Today's exits")]
 )
 def test_the_button_back_from_a_drilled_day_names_the_session_when_closed(days, closed, button):
-    body = history_body(day="2026-10-30", closed=closed)
+    body = closed_session_answer(day="2026-10-30", closed=closed)
     day = drill_day(body)
     out = run(
         f"""
