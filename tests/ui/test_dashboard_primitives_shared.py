@@ -187,7 +187,9 @@ def _base_with_the_review_fix_changes(base: list) -> list:
     * the detail panel holds a loading line ahead of its stats row;
     * the Guard stat's label holds the alpha glyph helper;
     * the headline's label is followed by a hidden notice the window picker fills when the picked
-      window's strip could not be loaded.
+      window's strip could not be loaded;
+    * the sleeve rule row names its session in a span of its own (see
+      ``_base_with_the_sleeve_rule_session_label``).
 
     A card's alpha badge that has no figure to show loses its sign class; that one is judged by
     ``_without_a_sign_class`` and by the badge test below, since which badges that is depends on
@@ -204,7 +206,24 @@ def _base_with_the_review_fix_changes(base: list) -> list:
     label = out.index(["div", ["guard-alpha-label"]])
     assert out[label + 1] == ["span", []], "the base's headline label does not hold the window span"
     out.insert(label + 2, ["div", ["legend-as-of"]])
-    return out
+    return _base_with_the_sleeve_rule_session_label(out)
+
+
+def _base_with_the_sleeve_rule_session_label(base: list) -> list:
+    """The base plus the span that names the session a sleeve rule row's fire count belongs to.
+
+    A closed page names the anchor session's date where an open one reads "today", so the rule
+    row holds one more class-less span ahead of its fire-count span. Only the inert rule-row
+    template renders on the capture's state (no sleeve is seeded), and it is the last
+    ``<template>`` of the body: its row is a div, then five spans (the name and mode holder, the
+    name, the mode, the actions wrapper and the count wrapper) before the new one.
+    """
+    template = max(i for i, element in enumerate(base) if element == ["template", []])
+    row = template + 1
+    assert base[row] == ["div", []], "the rule-row template does not open with the row div"
+    wrapper_spans = row + 1 + 5
+    assert base[row + 1 : wrapper_spans] == [["span", []]] * 5, "the rule row's span run changed"
+    return [*base[:wrapper_spans], ["span", []], *base[wrapper_spans:]]
 
 
 def _without_a_sign_class(base_element: list, element: list) -> bool:
