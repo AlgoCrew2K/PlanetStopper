@@ -25,6 +25,7 @@ Contract pinned
 from __future__ import annotations
 
 import re
+from html import unescape
 
 import pytest
 
@@ -71,7 +72,7 @@ class TestAnUnknownMaxDdFigureHasNoSignColour:
         for testid in MDD:
             match = re.search(rf'data-testid="{testid}"[^>]*class="([^"]*)"[^>]*>(.*?)</span>', html, re.S)
             assert match, f"the render holds no {testid}"
-            text = re.sub(r"<[^>]+>", "", match.group(2)).strip()
+            text = unescape(re.sub(r"<[^>]+>", "", match.group(2))).strip()
             assert _is_dash(text), f"precondition: {testid} reads {text!r}"
             assert not _signed(match.group(1).split()), (
                 f"{testid} reads a dash but carries {match.group(1)!r}"
@@ -138,11 +139,13 @@ def test_the_risk_profile_names_the_window_the_page_asked_for(worlds):
         await H.boot({ extras: true });
         H.route(/^\/api\/performance\?/, { body: H.bodies.perf });
         await H.press('.sym-card[data-sym-id="__ID__"]');
-        await H.settle();
-        const section = D.getElementById('detail-risk-profile').parentNode;
+        await H.settle(); await H.settle();
+        const rp = D.getElementById('detail-risk-profile');
+        const label = rp.parentNode.querySelector('.section-label');
+        const shown = (label ? label.textContent : '') + ' ' + rp.innerHTML.replace(/<[^>]+>/g, ' ');
         const asked = H.fetchLog.map(function (e) { return e.url; })
           .filter(function (u) { return /^\/api\/performance\?scope=symphony/.test(u); });
-        return { text: section.textContent.replace(/\s+/g, ' ').trim(), asked: asked };
+        return { text: shown.replace(/\s+/g, ' ').trim(), asked: asked };
         """.replace("__ID__", worlds.symphony_id),
         scripts=sup.CHROME_AND_INDEX,
         extra_bodies={"perf": worlds.closed_performance},
