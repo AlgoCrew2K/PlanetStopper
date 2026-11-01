@@ -338,6 +338,25 @@
     // Recent triggers
     // ---------------------------------------------------------------------------
 
+    var MONTH_ABBREVIATIONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    // "Oct 30" from the ISO digits of the session day, so the browser's zone plays no part; a
+    // value that is not an ISO date is shown as sent (as text, never markup).
+    function sessionDayLabel(isoDay) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDay));
+        if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return String(isoDay);
+        return MONTH_ABBREVIATIONS[Number(m[2]) - 1] + ' ' + Number(m[3]);
+    }
+
+    // While the market is closed the exits are the closed session's, and the label says which day;
+    // while it is open they are today's.
+    function exitsLabel(payload) {
+        if (payload && payload.todays_exits_market_closed === true && payload.todays_exits_day) {
+            return 'Exits on ' + sessionDayLabel(payload.todays_exits_day);
+        }
+        return 'Today\'s exits';
+    }
+
     function renderTriggers(payload) {
         var tbody = document.getElementById('triggers-tbody');
         if (!tbody) return;
@@ -346,7 +365,7 @@
 
         var heading = document.getElementById('todays-exits-heading');
         if (heading) {
-            heading.textContent = 'Today\'s exits (' + todays_exits.length + ')';
+            heading.textContent = exitsLabel(payload) + ' (' + todays_exits.length + ')';
         }
 
         if (todays_exits.length === 0) {
@@ -394,6 +413,7 @@
         var btn = document.querySelector('[data-testid="history-todays-exits-btn"]');
         if (!btn) return;
         if (visible) btn.removeAttribute('hidden'); else btn.setAttribute('hidden', '');
+        if (lastPayload) btn.textContent = exitsLabel(lastPayload);
     }
 
     function clearDrilledDay() {
@@ -486,6 +506,7 @@
             if (!isHistoryBody(payload)) { writeDataStamp(true); return; }
             try {
                 lastPayload = payload; // F-020: source for the day drill-down
+                setTodaysExitsButtonVisible(drilledDay !== null);
                 renderHero(payload);
                 renderDailyChart(payload.daily_alpha || [], payload.daily_dates || []);
                 // V-28: canonicalize before rendering to enforce 4-card design spec.

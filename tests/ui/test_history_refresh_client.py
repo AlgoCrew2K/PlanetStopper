@@ -164,7 +164,7 @@ class TestDrilledDay:
             route(r"/api/history/90$", body90, method="GET"),
         )
         assert out.result["drilled"].startswith(day)
-        assert out.result["after"].startswith("Today's exits")
+        assert out.result["after"].startswith("Exits on ")
 
 
 class TestNewestRequestWins:

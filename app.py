@@ -2783,7 +2783,9 @@ def _sleeve_status_badge_class(status: str) -> str:
     return _SLEEVE_STATUS_BADGE_CLASSES.get(status, "standby")
 
 
-def _build_sleeves_panel_context(*, raise_on_read_failure: bool = False) -> list[dict]:
+def _build_sleeves_panel_context(
+    *, raise_on_read_failure: bool = False, session_day: date | None = None
+) -> list[dict]:
     """Assemble per-sleeve panel rows for dashboard() (AC-16): status,
     capital, ledger cash (vs the static capital_usd -- "cash ledger vs
     broker truth"; the broker-truth-mismatch signal itself is the existing
@@ -2818,6 +2820,9 @@ def _build_sleeves_panel_context(*, raise_on_read_failure: bool = False) -> list
     A failed read of the sleeves table answers an empty list, which reads as "no
     sleeves"; a caller that must tell the two apart (the state poll's panels) passes
     ``raise_on_read_failure=True`` and gets the exception instead.
+
+    ``session_day`` is the ET session whose fires the "today" count states (the session a closed
+    page shows); omitted, it is today's ET date.
     """
     from sleeves import ledger as sleeve_ledger  # noqa: PLC0415
     from sleeves.rules import limits as sleeve_limits  # noqa: PLC0415
@@ -2831,7 +2836,7 @@ def _build_sleeves_panel_context(*, raise_on_read_failure: bool = False) -> list
         return panel_sleeves
 
     now_utc = datetime.now(UTC)
-    today_str = datetime.now(_ET).strftime("%Y-%m-%d")
+    today_str = (session_day or datetime.now(_ET).date()).isoformat()
     for sleeve in sleeve_rows:
         sleeve_id = sleeve.get("id")
         capital_usd = sleeve.get("capital_usd") or 0.0
@@ -3012,7 +3017,7 @@ def _panels_unreadable() -> dict:
     return {"sleeves": None, "cvar": {"ok": False, "diagnostic": None}, "vars_locked_count": None}
 
 
-def _dashboard_panels_payload(bot_state: dict) -> dict:
+def _dashboard_panels_payload(bot_state: dict, session_day: date | None = None) -> dict:
     """The panels of ``/`` that the page render and the poll both print, read from the database.
 
     ``sleeves`` is the Managed Sleeves rows (``None`` when the read failed, ``[]`` for no sleeves),
@@ -3025,7 +3030,7 @@ def _dashboard_panels_payload(bot_state: dict) -> dict:
     symphony_keys = [k for k, v in state.items() if _is_symphony_state_entry(v)]
 
     try:
-        sleeves = _build_sleeves_panel_context(raise_on_read_failure=True)
+        sleeves = _build_sleeves_panel_context(raise_on_read_failure=True, session_day=session_day)
     except Exception:
         sleeves = None
 
@@ -3292,7 +3297,8 @@ def _render_dashboard(
     # The same read the state poll carries (``dashboard_panels``), so the render and the poll agree.
     try:
         panels = _dashboard_panels_payload(
-            _without_symphonies(live_state, view.get("no_longer_held", frozenset()))
+            _without_symphonies(live_state, view.get("no_longer_held", frozenset())),
+            trading_session.anchor,
         )
     except Exception:
         panels = _panels_unreadable()
@@ -3869,6 +3875,7 @@ def _no_longer_held_ids(
         ids = analytics.no_longer_held_symphony_ids(state, conn=conn, now=now_et)
     except Exception:
         _daemon_log.debug("no-longer-held read failed", exc_info=True)
+        _note_build_failure()
         return frozenset()
     return frozenset(ids) if isinstance(ids, (set, frozenset, list, tuple)) else frozenset()
 
@@ -3947,6 +3954,7 @@ def _portfolio_hist_series(
                 hist_held.append(round((level_held - 1.0) * 100.0, 4))
     except Exception:
         _daemon_log.error("_compute_portfolio_strip bot/held series failed", exc_info=True)
+        _note_build_failure()
     return hist_dates, hist_bot, hist_held, vol_bot
 
 
@@ -4171,15 +4179,10 @@ _NOTHING = object()
 # Set around a build the hold runs: a build that catches its own fault and answers without the
 # failed part records it here, and the hold then answers it without storing it. A part that is
 # merely absent (a closed session with no history) is a complete build and is held.
-_BUILD_FAILURES: contextvars.ContextVar[list[bool] | None] = contextvars.ContextVar(
-    "closed_build_failures", default=None
-)
-
-
-def _note_build_failure() -> None:
-    failures = _BUILD_FAILURES.get()
-    if failures is not None:
-        failures.append(True)
+# The variable and recorder live in analytics (which cannot import app) so its own swallowed reads
+# can record too.
+_BUILD_FAILURES = analytics.BUILD_FAILURES
+_note_build_failure = analytics.note_build_failure
 
 
 class _ClosedHold:
@@ -4486,6 +4489,7 @@ def _frozen_strip_rows(snapshot: dict, conn: sqlite3.Connection | None) -> dict:
                     sym[key] = reader(sym_dict, sym, trading_day=trading_day, conn=conn)
                 except (KeyError, TypeError, ValueError):
                     sym[key] = {"if_held": None, "dry_run": None}
+                    _note_build_failure()
 
     symphonies_list, snap_bot_state = _frozen_symphony_inputs(snapshot)
     rows: dict = {"ok": False, "default": None, "hist": None}
@@ -5305,6 +5309,7 @@ def _hist_fallback(conn: sqlite3.Connection | None, state: dict | None) -> dict 
             hist_exc,
             exc_info=True,
         )
+        _note_build_failure()
     return None
 
 
@@ -5432,7 +5437,8 @@ def get_state():
         # and the page keeps its own.
         try:
             _additive["dashboard_panels"] = _dashboard_panels_payload(
-                _without_symphonies(state_data or {}, view.get("no_longer_held", frozenset()))
+                _without_symphonies(state_data or {}, view.get("no_longer_held", frozenset())),
+                trading_session.anchor,
             )
         except Exception as panels_exc:
             _daemon_log.warning("dashboard panels read failed: %s", type(panels_exc).__name__)
@@ -6216,6 +6222,7 @@ def _build_windowed_strip(
                     strip["intraday_only"] = True
             except Exception:
                 _daemon_log.debug("strip intraday fallback failed", exc_info=True)
+                _note_build_failure()
         return strip
     finally:
         if frozen_conn is not None and owns_frozen_conn:
@@ -8395,11 +8402,17 @@ def get_history(days):
     # `days` is a calendar-day count or the token "ytd" (1 January through today,
     # resolved by analytics._window_cutoff_date like every other window token).
     # The window counts back from the session the figures belong to, never the wall clock.
+    session = _current_session()[0]
     stats = analytics.get_history_summary(
         days=days,
         base_dir=analytics._POST_MORTEMS_DIR,
-        **_current_session()[0].anchor_kwargs,
+        exits_day=session.anchor,
+        **session.anchor_kwargs,
     )
+    # The exits are the anchor session's: today's while open, the closed session's all the way to
+    # the next open (the anchor is the one window_anchor of /api/state names).
+    stats["todays_exits_day"] = session.anchor.isoformat()
+    stats["todays_exits_market_closed"] = session.market_state != "open"
     stats["window_days"] = days
     # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
     # "requested window" meaning (not redefined) -- these three fields are
@@ -8436,7 +8449,7 @@ def get_history(days):
                 _data_instants.append(_instant)
     if not stats.get("todays_exits"):
         try:
-            _today_et = datetime.now(_ET).date().isoformat()
+            _today_et = session.anchor.isoformat()
             _conn = database.get_connection()
             try:
                 # AC-6 (MAPERF-06): the Detail column has ONE semantic across both
