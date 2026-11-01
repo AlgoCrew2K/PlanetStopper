@@ -21,10 +21,13 @@ as the route writes it), and every expected heading is built from those inputs.
 from __future__ import annotations
 
 import copy
+from datetime import date, datetime
 
 import pytest
 
+import market_calendar
 from tests.ui import _history_answers as hist
+from tests.ui._history_answers import ET
 from tests.ui._page_js_harness import render_page, route, run_page
 from tests.ui._shell_support import (  # noqa: F401
     _empty_post_mortem_directory,
@@ -67,6 +70,11 @@ PAGE_STATE = """
 
 @pytest.fixture
 def days(tmp_path, monkeypatch):
+    # The XNYS calendar builds its holiday tables on first use; built under the frozen host clock
+    # of `_history_answers` they fail, so a test that runs first in a process must warm them here.
+    market_calendar.get_market_state(datetime(2026, 7, 24, 12, 0, tzinfo=ET))
+    market_calendar.is_trading_day(date(2026, 7, 24))
+    market_calendar.most_recent_completed_session(datetime(2026, 7, 25, 12, 0, tzinfo=ET))
     return seed_history_exits(tmp_path, monkeypatch.setattr)
 
 
