@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cache, lru_cache
 
 import pytest
 
@@ -193,8 +193,8 @@ CASES = [
     ),
     Case(
         "neither_has_a_reading",
-        state={"symphony_vol": None, "mc_prob": None},
-        chart={"vol": None, "mc": None},
+        state={"symphony_vol": None, "mc_prob": None, "shadow_hwm": None, "stop_trigger": None},
+        chart={"vol": None, "mc": None, "stop": None},
     ),
     Case(
         "chart_mc_found_by_backward_scan",
@@ -220,6 +220,8 @@ CASES = [
             "para_velocity": 0.75,
             "symphony_vol": STATE_VOL,
             "mc_prob": STATE_MC,
+            "shadow_hwm": 3.5,
+            "stop_trigger": -1.25,
         },
         chart={"vol": CHART_VOL, "mc": CHART_MC},
     ),
@@ -268,7 +270,7 @@ return { opened: opened, polls: polls };
 """
 
 
-@lru_cache(maxsize=None)
+@cache
 def _answered(name: str) -> dict:
     """Open on a symphony, let the chart answer, then poll three times with the same entry."""
     case = BY_NAME[name]
@@ -279,7 +281,7 @@ def _answered(name: str) -> dict:
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _poll_only(name: str) -> dict:
     """The same open and polls with the chart request never answered: the state path alone."""
     case = BY_NAME[name]
@@ -321,8 +323,12 @@ class TestNoRowMovesOnAPollThatCarriesTheSameEntry:
             "the chart answer did not reach the panel; the scenario proves nothing"
         )
         for index, after in enumerate(r["polls"], start=1):
-            moved = {k: (r["opened"][k], after[k]) for k in r["opened"] if r["opened"][k] != after[k]}
-            assert not moved, f"poll {index} moved rows the market being closed gave no reason to move: {moved}"
+            moved = {
+                k: (r["opened"][k], after[k]) for k in r["opened"] if r["opened"][k] != after[k]
+            }
+            assert not moved, (
+                f"poll {index} moved rows the market being closed gave no reason to move: {moved}"
+            )
 
     @pytest.mark.parametrize("name", [case.name for case in CASES])
     def test_the_rows_follow_the_contracts_source_rule_after_the_chart_and_after_polls(self, name):
@@ -350,14 +356,20 @@ class TestTheStatePathAndTheChartPathWriteTheSameText:
 
     def test_a_symphony_whose_state_has_every_value_reads_the_same_with_or_without_the_chart(self):
         name = "breakeven_locked_with_ratchet"
-        with_chart = _answered(name)["polls"][0]
-        state_only = _poll_only(name)["polls"][0]
-        differing = {
-            k: (with_chart[k], state_only[k])
-            for k in self.STATE_ONLY_ROWS
-            if with_chart[k] != state_only[k]
-        }
-        assert not differing, f"chart path vs state path wrote different text: {differing}"
+        chart_answer = _answered(name)["opened"]
+        state_only = _poll_only(name)
+        for where, state_rows in (
+            ("at open", state_only["opened"]),
+            ("after a poll", state_only["polls"][0]),
+        ):
+            differing = {
+                k: (chart_answer[k], state_rows[k])
+                for k in self.STATE_ONLY_ROWS
+                if chart_answer[k] != state_rows[k]
+            }
+            assert not differing, (
+                f"chart answer vs state path {where} wrote different text: {differing}"
+            )
 
     def test_a_locked_breakeven_is_one_text_on_every_path(self):
         name = "breakeven_locked_with_ratchet"
@@ -408,9 +420,15 @@ class TestTheStatePathAndTheChartPathWriteTheSameText:
 
     def test_the_value_rows_with_no_reading_share_one_dash(self):
         name = "neither_has_a_reading"
-        panel = _answered(name)["polls"][0]
-        dashes = {panel[k] for k in ("dp-rm-mc", "dp-rm-vol", "dp-rm-stop", "dp-rm-para")}
-        assert dashes <= DASHES and len(dashes) == 1, f"value rows show different dashes: {panel}"
+        for where, panel in (
+            ("chart answer", _answered(name)["opened"]),
+            ("poll after chart", _answered(name)["polls"][0]),
+            ("state path", _poll_only(name)["polls"][0]),
+        ):
+            dashes = {panel[k] for k in ("dp-rm-mc", "dp-rm-vol", "dp-rm-stop", "dp-rm-para")}
+            assert dashes <= DASHES and len(dashes) == 1, (
+                f"{where}: value rows show different dashes: {panel}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +437,9 @@ class TestTheStatePathAndTheChartPathWriteTheSameText:
 
 
 class TestAPollThatChangesTheEntryStillMovesTheRows:
-    def test_new_state_values_replace_the_rows_and_a_state_without_values_falls_back_to_the_chart(self):
+    def test_new_state_values_replace_the_rows_and_a_state_without_values_falls_back_to_the_chart(
+        self,
+    ):
         base = BY_NAME["state_and_chart_disagree"]
         changed = _state(
             base.symphony,
@@ -431,9 +451,9 @@ class TestAPollThatChangesTheEntryStillMovesTheRows:
             drop=("symphony_vol", "mc_prob"),
         )
         r = _run(
-            FLOW.split("const opened")[0].replace("__ID__", repr(base.symphony)).replace(
-                "__CHART__", "{ body: H.bodies.C }"
-            )
+            FLOW.split("const opened")[0]
+            .replace("__ID__", repr(base.symphony))
+            .replace("__CHART__", "{ body: H.bodies.C }")
             + r"""
         const opened = rows();
         await poll(H.bodies.changed);
@@ -453,10 +473,16 @@ class TestAPollThatChangesTheEntryStillMovesTheRows:
             valueless=valueless,
         )
         fmt = js_to_fixed
-        assert r["changed"]["dp-rm-vol"] == fmt([NEW_STATE_VOL], 3)[0], "an open-market vol change froze"
-        assert r["changed"]["dp-rm-mc"] == fmt([NEW_STATE_MC], 1)[0] + "%", "an open-market MC change froze"
+        assert r["changed"]["dp-rm-vol"] == fmt([NEW_STATE_VOL], 3)[0], (
+            "an open-market vol change froze"
+        )
+        assert r["changed"]["dp-rm-mc"] == fmt([NEW_STATE_MC], 1)[0] + "%", (
+            "an open-market MC change froze"
+        )
         assert r["changed"]["bar"] == f"{NEW_STATE_MC}%"
-        assert r["changed"]["dp-rm-be"] != r["opened"]["dp-rm-be"], "a breakeven that locked did not show"
+        assert r["changed"]["dp-rm-be"] != r["opened"]["dp-rm-be"], (
+            "a breakeven that locked did not show"
+        )
         assert r["changedAgain"] == r["changed"], "a repeated poll moved a row"
         assert r["valueless"]["dp-rm-vol"] == fmt([CHART_VOL], 3)[0], (
             "a poll whose entry has no state value blanked or replaced the chart's reading"
@@ -480,9 +506,9 @@ class TestAPollThatChangesTheEntryStillMovesTheRows:
             },
         )
         r = _run(
-            FLOW.split("const opened")[0].replace("__ID__", repr(base.symphony)).replace(
-                "__CHART__", "{ body: H.bodies.C }"
-            )
+            FLOW.split("const opened")[0]
+            .replace("__ID__", repr(base.symphony))
+            .replace("__CHART__", "{ body: H.bodies.C }")
             + r"""
         const opened = rows();
         await poll(H.bodies.exited);
@@ -511,9 +537,9 @@ class TestReopeningThePanelRepeatsTheSameRows:
     def test_close_and_reopen_gives_the_same_rows_before_and_after_a_poll(self):
         base = BY_NAME["state_and_chart_disagree"]
         r = _run(
-            FLOW.split("const opened")[0].replace("__ID__", repr(base.symphony)).replace(
-                "__CHART__", "{ body: H.bodies.C }"
-            )
+            FLOW.split("const opened")[0]
+            .replace("__ID__", repr(base.symphony))
+            .replace("__CHART__", "{ body: H.bodies.C }")
             + r"""
         const first = rows();
         await poll(H.bodies.S);
@@ -529,7 +555,9 @@ class TestReopeningThePanelRepeatsTheSameRows:
             C=base.chart_body(),
         )
         for key in ("polled", "reopened", "reopenedPolled"):
-            moved = {k: (r["first"][k], r[key][k]) for k in r["first"] if r["first"][k] != r[key][k]}
+            moved = {
+                k: (r["first"][k], r[key][k]) for k in r["first"] if r["first"][k] != r[key][k]
+            }
             assert not moved, f"{key} differs from the first view of the same panel: {moved}"
 
 
@@ -547,8 +575,9 @@ class TestSwitchingSymphonyCarriesNothingOver:
             "breakeven_locked": True,
         }
         body = _state(UNTRIGGERED, a_state, drop=("symphony_vol", "mc_prob"))
-        body = sup.with_entry(body, OTHER, triggered=False, status="armed", para_velocity=None,
-                              breakeven_locked=False)
+        body = sup.with_entry(
+            body, OTHER, triggered=False, status="armed", para_velocity=None, breakeven_locked=False
+        )
         for key in ("symphony_vol", "mc_prob"):
             body = sup.without_entry_key(body, OTHER, key)
         a_chart = _chart(UNTRIGGERED, vol=CHART_VOL, mc=CHART_MC, vwap_diff=0.37)
@@ -579,9 +608,18 @@ class TestSwitchingSymphonyCarriesNothingOver:
         assert a["dp-rm-mc"] == js_to_fixed([CHART_MC], 1)[0] + "%"
         for stage in ("bOpened", "bPolled"):
             b = r[stage]
-            for key in ("dp-rm-vol", "dp-rm-mc", "dp-rm-vwap", "bar", "dp-rm-para-hint",
-                        "dp-rm-be-hint", "dp-rm-vwap-hint"):
-                assert b[key] != a[key], f"{stage}: {key} still shows the previous symphony's {a[key]!r}"
+            for key in (
+                "dp-rm-vol",
+                "dp-rm-mc",
+                "dp-rm-vwap",
+                "bar",
+                "dp-rm-para-hint",
+                "dp-rm-be-hint",
+                "dp-rm-vwap-hint",
+            ):
+                assert b[key] != a[key], (
+                    f"{stage}: {key} still shows the previous symphony's {a[key]!r}"
+                )
             assert b["dp-rm-vol"] in DASHES and b["dp-rm-mc"] in DASHES
             assert b["bar"] == "0%"
         final = r["bFinal"]
