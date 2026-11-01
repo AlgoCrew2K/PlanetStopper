@@ -78,6 +78,23 @@
             font-family: var(--studio-sans);
         }
 
+        /* The way back from a drilled day: the picker's look, as a standalone control. */
+        .history-exits-btn {
+            padding: 4px 10px;
+            border: 1px solid var(--studio-rule);
+            border-radius: 6px;
+            background: var(--studio-chip-bg);
+            color: var(--studio-ink-dim);
+            font-size: 11.5px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: var(--studio-sans);
+        }
+
+        .history-exits-btn:hover {
+            color: var(--studio-ink);
+        }
+
         .window-selector button.active {
             background: var(--studio-paper-hi);
             color: var(--studio-ink);
@@ -151,6 +168,13 @@
         .triggers-tbl th { padding: 0.375rem 0.75rem; text-align: left; }
         .triggers-tbl td { padding: 0.375rem 0.75rem; color: var(--studio-ink-dim); }
         .triggers-tbl tbody tr { border-bottom: 1px solid var(--studio-border-dim, var(--studio-border)); }
+
+        /* On a phone the four columns share the table's width and long cells wrap, so no column is
+           cut at the scroll box's edge (the drilled-day table, like the closed-day table). */
+        @media (max-width: 480px) {
+            .triggers-tbl { table-layout: fixed; }
+            .triggers-tbl th, .triggers-tbl td { padding: 0.375rem 0.4rem; overflow-wrap: anywhere; }
+        }
 
         @media (max-width: 700px) {
             .mini-stats { flex-wrap: wrap; }
@@ -267,9 +291,9 @@
 
         <!-- Recent triggers -->
         <div data-testid="recent-triggers" class="hero-section">
-            <div class="section-header" id="todays-exits-heading">Today's exits</div>
-            <button type="button" data-testid="history-todays-exits-btn" hidden
-                    onclick="historyShowTodaysExits()">Today's exits</button>
+            <div class="section-header" id="todays-exits-heading">{{ exits_label }}</div>
+            <button type="button" class="history-exits-btn" data-testid="history-todays-exits-btn" hidden
+                    onclick="historyShowTodaysExits()">{{ exits_label }}</button>
             <div style="overflow-x:auto;">
                 <table class="triggers-tbl">
                     <thead>

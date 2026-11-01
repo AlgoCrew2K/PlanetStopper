@@ -439,8 +439,15 @@
         var supplied = bot !== null && held !== null && strip.insufficient_history !== true;
         var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
         var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
-        if (botText) botText.textContent = bot !== null ? 'Bot ' + bot.toFixed(2) + '%' : '\u2014';
-        if (heldText) heldText.textContent = held !== null ? 'Held ' + held.toFixed(2) + '%' : '\u2014';
+        // A dash carries no sign colour: an unknown drawdown must not read as a bad one.
+        if (botText) {
+            botText.textContent = bot !== null ? 'Bot ' + bot.toFixed(2) + '%' : '\u2014';
+            if (bot !== null) botText.classList.add('neg'); else botText.classList.remove('neg');
+        }
+        if (heldText) {
+            heldText.textContent = held !== null ? 'Held ' + held.toFixed(2) + '%' : '\u2014';
+            if (held !== null) heldText.classList.add('neg'); else heldText.classList.remove('neg');
+        }
         var maxAbs = Math.max(bot === null ? 0 : bot, held === null ? 0 : held, 0.01);
         var botBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
         var heldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
@@ -478,8 +485,9 @@
         }
         var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
         var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
-        if (botText) botText.textContent = '—';
-        if (heldText) heldText.textContent = '—';
+        // A dash carries no sign colour: an unknown drawdown must not read as a bad one.
+        if (botText) { botText.textContent = '—'; botText.classList.remove('neg'); }
+        if (heldText) { heldText.textContent = '—'; heldText.classList.remove('neg'); }
         var mddBotBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
         var mddHeldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
         mddBotBars.forEach(function (bar) { bar.style.width = '0%'; });
@@ -728,14 +736,14 @@
         var el = parent.querySelector('.spark-session');
         if (!el) {
             if (!text) return;
-            parent.style.position = 'relative';
+            // On its own line above the tape, not laid over it: the tape's line never runs
+            // through the text.
             el = document.createElement('span');
             el.className = 'spark-session legend-as-of';
-            el.style.position = 'absolute';
-            el.style.top = '0';
-            el.style.left = '2px';
-            el.style.pointerEvents = 'none';
-            parent.appendChild(el);
+            el.style.display = 'block';
+            el.style.textAlign = 'left';
+            el.style.marginLeft = '2px';
+            parent.insertBefore(el, canvas);
         }
         el.textContent = text;
         el.hidden = !text;
@@ -1216,6 +1224,10 @@
 
     // The panel's own requests: the tape, the events, the variables and the risk profile. Each
     // answer applies only while this is still the newest open, on a panel that is still open.
+    // The Risk Profile's window: the trailing rows (trading days) the request asks for, also named
+    // on the panel so its figures are not read against the card's different window.
+    var RISK_PROFILE_DAYS = 60;
+
     function startDetailRequests(symId, sym, seq) {
         fetchDetailChart(sym.id || symId, sym, seq);
 
@@ -1226,7 +1238,7 @@
         var rpEl = document.getElementById('detail-risk-profile');
         if (!rpEl) return;
         function current() { return seq === _detailRequestSeq && detailPanelIsOpen(); }
-        fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
+        fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=' + RISK_PROFILE_DAYS)
             .then(function (r) { return r.json(); })
             .then(function (p) {
                 if (!current()) return;
@@ -1266,7 +1278,7 @@
                         + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
                         + '</div>';
                 }).join('');
-                rpEl.innerHTML = html;
+                rpEl.innerHTML = '<div class="math-row-hint">Last ' + RISK_PROFILE_DAYS + ' trading days</div>' + html;
             })
             .catch(function () {
                 // Graceful: leave the section empty on fetch failure — no JS error surfaced.
@@ -1613,7 +1625,12 @@
         if (!container) return;
         var items = Array.isArray(logs) ? logs : (logs.events || []);
         if (!items.length) {
-            container.innerHTML = '<div style="font-size:11px;color:var(--studio-ink-faint);">No events yet today.</div>';
+            var empty = document.createElement('div');
+            empty.setAttribute('data-field', 'events-empty');
+            empty.setAttribute('style', 'font-size:11px;color:var(--studio-ink-faint);');
+            empty.textContent = eventsEmptyText();
+            container.textContent = '';
+            container.appendChild(empty);
             return;
         }
         var kindColorMap = {
@@ -2327,6 +2344,35 @@
     }
     var _ruleTodayLabel = 'today';
 
+    // While the market is not open the figures are the last session's: the labels that said
+    // today or live name the session day ("Oct 30") instead, as the server render does, so a
+    // label never changes between the first paint and the first poll. null while open.
+    var _sessionDay = null;
+    function eventsEmptyText() {
+        return _sessionDay ? 'No events on ' + _sessionDay + '.' : 'No events yet today.';
+    }
+    function applySessionWording(meta) {
+        var label = ruleTodayLabel(meta);
+        _sessionDay = label === 'today' ? null : label;
+        document.querySelectorAll('[data-field="day-word"]').forEach(function (el) {
+            setTextIfChanged(el, _sessionDay || 'Today');
+        });
+        setTextIfChanged(document.querySelector('[data-field="live-return-label"]'),
+            _sessionDay ? 'Return' : 'Live Return');
+        setTextIfChanged(document.querySelector('[data-field="hwm-label"]'),
+            _sessionDay ? 'HWM ' + _sessionDay : 'HWM today');
+        setTextIfChanged(document.querySelector('[data-field="events-heading"]'),
+            _sessionDay ? _sessionDay + ' events' : 'Today’s events');
+        setTextIfChanged(document.querySelector('[data-field="events-empty"]'), eventsEmptyText());
+        if (_sessionDay) {
+            document.querySelectorAll('.dv-label').forEach(function (el) {
+                if (/^If held · live$/.test(el.textContent.replace(/\s+/g, ' ').trim())) {
+                    setTextIfChanged(el, 'If held');
+                }
+            });
+        }
+    }
+
     function syncRuleRow(rowEl, sleeveId, rule) {
         setTextIfChanged(fieldOf(rowEl, 'rule-today-label'), _ruleTodayLabel);
         setTextIfChanged(fieldOf(rowEl, 'rule-name'), String(rule.name));
@@ -2571,6 +2617,7 @@
             // The open detail panel follows the body.
             function () { refreshOpenDetailPanel(botState); },
             // The Sleeves and CVaR panels and the Edit Vars badge.
+            function () { applySessionWording(meta); },
             function () { renderDashboardPanels(data); },
             // The headline descriptor's "Simulated" word.
             function () { renderExecutionDescriptor(data); },
@@ -2789,69 +2836,27 @@
     var _summaryRequestSeq = 0;
     var _summaryPendingSeq = 0;      // the request in flight, 0 when the newest has settled
     var _summaryPendingToken = null; // the window that request is for
+    // Another window's figures never stay under a pick: dash() (below, inside the function)
+    // dashes them until the picked window's own answer lands; a failed answer says so in the panel.
     var _summaryAnsweredToken = null; // the window whose summary last answered well; null before the first
 
-    // The panel's figures read as dashes (no digit) while a window's own answer is awaited or
-    // could not be had, so another window's figures never stay under the picked one.
-    var SUMMARY_FIGURE_IDS = [
-        'dollar-saved-headline', 'guard-event-count', 'dollar-saved-net-of-friction-headline',
-        'dollar-saved-realized-headline', 'dollar-saved-realized-coverage',
-        'dollar-saved-realized-net-of-friction-headline'
-    ];
-    var SUMMARY_TEXT_IDS = [
-        'dollar-saved-verb', 'dollar-saved-basis-label', 'dollar-saved-net-of-friction-verb',
-        'dollar-saved-realized-verb', 'dollar-saved-realized-net-of-friction-verb'
-    ];
-    function blankSummaryFigures() {
-        SUMMARY_FIGURE_IDS.forEach(function (id) {
-            var el = document.getElementById(id);
-            if (!el) return;
-            el.textContent = '—';
-            el.style.color = cs('--studio-ink-dim');
-        });
-        SUMMARY_TEXT_IDS.forEach(function (id) {
-            var el = document.getElementById(id);
-            if (el) el.textContent = '';
-        });
-    }
-    function setSummaryNotice(token) {
-        var el = document.getElementById('dollar-saved-window-notice');
-        if (!el) return;
-        if (token) {
-            el.textContent = 'Could not load the ' + (WINDOW_LABELS[token] || token) + ' figures; trying again.';
-            el.hidden = false;
-        } else {
-            el.textContent = '';
-            el.hidden = true;
-        }
-    }
-    function failSummary(seq, windowToken) {
-        if (seq !== _summaryRequestSeq) return;
-        if (windowToken && windowToken !== _heroWindow) return;
-        _summaryAnsweredToken = null;
-        blankSummaryFigures();
-        setSummaryNotice(windowToken || 'all');
-    }
     function fetchGuardAlphaSummary(windowToken) {
         var seq = ++_summaryRequestSeq;
         _summaryPendingSeq = seq;
         _summaryPendingToken = windowToken;
+        if (windowToken !== _summaryAnsweredToken) dash();
         var url = '/api/guard-alpha-summary' + (windowToken ? '?window=' + encodeURIComponent(windowToken) : '');
         fetch(url)
             .then(function (response) {
-                if (!response.ok) return null;
+                if (!response.ok) return;
                 return response.json();
             })
             .then(function (data) {
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
                 if (seq !== _summaryRequestSeq) return;
                 if (windowToken && windowToken !== _heroWindow) return;
-                if (!data || typeof data !== 'object' || typeof data.guard_event_count !== 'number') {
-                    failSummary(seq, windowToken);
-                    return;
-                }
-                _summaryAnsweredToken = windowToken || null;
-                setSummaryNotice(null);
+                if (!data || typeof data.guard_event_count !== 'number') return fail();
+                _summaryAnsweredToken = windowToken; dash(1);
                 var headlineEl = document.getElementById('dollar-saved-headline');
                 var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
@@ -2920,9 +2925,42 @@
             })
             .catch(function (err) {
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
-                failSummary(seq, windowToken);
+                fail();
                 console.error('guard-alpha-summary load failed', err);
             });
+
+        // A failed or malformed answer for the picked window: its figures stay dashes and the
+        // panel says so; the next poll asks again (the window is still unanswered).
+        function fail() {
+            if (seq !== _summaryRequestSeq) return;
+            if (windowToken && windowToken !== _heroWindow) return;
+            if (windowToken === _summaryAnsweredToken) return; // own figures, one refresh old
+            dash(0, 'Could not load the ' + (windowToken || 'all') + ' figures; trying again.');
+        }
+
+        // Dashes (no digit) for every figure and the notice text; noticeOnly writes the notice
+        // alone (an answer that landed clears it).
+        function dash(noticeOnly, notice) {
+            if (!noticeOnly) {
+                _summaryAnsweredToken = null;
+                ['dollar-saved-headline', 'guard-event-count', 'dollar-saved-net-of-friction-headline',
+                 'dollar-saved-realized-headline', 'dollar-saved-realized-coverage',
+                 'dollar-saved-realized-net-of-friction-headline'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) { el.textContent = '—'; el.style.color = cs('--studio-ink-dim'); }
+                });
+                ['dollar-saved-verb', 'dollar-saved-basis-label', 'dollar-saved-net-of-friction-verb',
+                 'dollar-saved-realized-verb', 'dollar-saved-realized-net-of-friction-verb'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) el.textContent = '';
+                });
+            }
+            var note = document.getElementById('dollar-saved-window-notice');
+            if (note) {
+                note.textContent = notice || '';
+                note.hidden = !notice;
+            }
+        }
     }
 
     window.loadState = loadState;
@@ -3011,9 +3049,6 @@
                 _stripFiguresBlank = true;
                 blankWindowedFigures();
                 clearStripNotice();
-                _summaryAnsweredToken = null;
-                blankSummaryFigures();
-                setSummaryNotice(null);
                 // The picker drives the chart lines (latest click wins) and the
                 // headline value, its window label and the Ann. Vol row (windowed
                 // strip) -- NOT the Today/Cumulative/Max DD rows, which stay on genuine

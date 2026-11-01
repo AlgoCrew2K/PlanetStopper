@@ -220,6 +220,13 @@ _NOT_COMPUTABLE = "not computable"
 # Verdict text when no evidence item is available.
 _NO_EVIDENCE_TEXT = "no verdict: no evidence available"
 
+# Verdict text when the three items the verdict rests on hold no figures but the panels
+# below the chip do: the chip names what is missing, the comparison, not evidence in general.
+_NO_COMPARISON_TEXT = "no verdict: the comparison has no figures yet"
+
+# Items shown beside the verdict that hold figures without taking part in it.
+_CONTEXT_ITEMS = ("performance", "composite", "long_vix")
+
 # Prefix of the reason a symphony is left out of the marginal comparison.
 _EXCLUDED_PREFIX = "excluded: "
 
@@ -317,7 +324,7 @@ _REDUNDANCY_SOURCE = "pairwise return correlation across live symphonies"
 _BACKTEST_SUBJECT = "today's definition against the realized history"
 
 # Where the backtest item's figures come from.
-_BACKTEST_SOURCE = "Composer backtest (POST /api/v0.1/backtest)"
+_BACKTEST_SOURCE = "Composer backtest"
 
 # What the marginal item measures; the review prefixes the symphony's name.
 _MARGINAL_SUBJECT = "portfolio of eligible symphonies with and without this symphony"
@@ -1161,7 +1168,11 @@ def decide_verdict(evidence: Mapping) -> dict:
     if redundancy is None and backtest is None and marginal is None:
         return {
             "verdict": None,
-            "verdict_text": _NO_EVIDENCE_TEXT,
+            "verdict_text": (
+                _NO_COMPARISON_TEXT
+                if any(_available(evidence, name) is not None for name in _CONTEXT_ITEMS)
+                else _NO_EVIDENCE_TEXT
+            ),
             "verdict_reasons": [],
             "missing_items": missing,
         }

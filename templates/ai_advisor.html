@@ -57,6 +57,8 @@
             display: flex;
             flex-direction: column;
             gap: 0.25rem;
+            min-width: 0;
+            max-width: 100%;
         }
 
         .ctrl-label {
@@ -74,7 +76,9 @@
             padding: 0.4rem 0.75rem;
             font-size: 0.875rem;
             color: var(--studio-ink);
-            min-width: 16rem;
+            min-width: min(16rem, 100%);
+            max-width: 100%;
+            box-sizing: border-box;
         }
 
         .ctrl-select:focus { outline: none; border-color: var(--studio-accent); }
@@ -468,9 +472,11 @@
             background: var(--studio-paper, var(--studio-surface));
             border-left: 1px solid var(--studio-rule-hi, var(--studio-border));
             z-index: 200; display: flex; flex-direction: column;
-            transition: right 0.25s ease; overflow: hidden;
+            transition: right 0.25s ease, visibility 0s linear 0.25s; overflow: hidden;
+            /* Closed, the panel is out of the page: it cannot be reached by sideways scroll or focus. */
+            visibility: hidden;
         }
-        .chat-panel.chat-panel--open { right: 0; }
+        .chat-panel.chat-panel--open { right: 0; visibility: visible; transition: right 0.25s ease; }
         .chat-panel-header {
             display: flex; justify-content: space-between; align-items: flex-start;
             padding: 1rem 1.25rem; border-bottom: 1px solid var(--studio-border); flex-shrink: 0;
@@ -2278,7 +2284,7 @@
                     </div>
                     {% endif %}
                 {% else %}
-                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45 UTC, or use Run now.</div>
+                    <div class="retirement-last-run-line">Not run yet — runs nightly at 03:45 UTC, or use Run recommender.</div>
                 {% endif %}
             </div>
             <div class="retirement-run-now-row">
@@ -2297,7 +2303,7 @@
             {# market is open because Composer's rate limit is shared with the    #}
             {# live engine.                                                       #}
             <div class="retirement-run-now-hint" data-testid="retirement-run-now-hint">
-                Run now is available outside market hours only &mdash; the Composer API is shared with the live engine.
+                Run recommender is available outside market hours only &mdash; the Composer API is shared with the live engine.
             </div>
 
             </section>

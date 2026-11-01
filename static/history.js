@@ -453,7 +453,7 @@
         });
         var heading = document.getElementById('todays-exits-heading');
         if (heading) {
-            heading.textContent = dateStr + ' exits (' + exits.length + ')';
+            heading.textContent = sessionDayLabel(dateStr) + ' exits (' + exits.length + ')';
         }
     }
 

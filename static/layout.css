@@ -64,7 +64,7 @@ textarea {
 .mini-stat-note {
   font-size: 10px;
   line-height: 1.35;
-  color: var(--studio-ink-faint);
+  color: var(--studio-ink-dim);
   margin-top: 4px;
 }
 
@@ -88,7 +88,7 @@ textarea {
 .legend-as-of {
   margin-left: auto;
   font-size: 10px;
-  color: var(--studio-ink-faint);
+  color: var(--studio-ink-dim);
 }
 
 /* Mini-stats */

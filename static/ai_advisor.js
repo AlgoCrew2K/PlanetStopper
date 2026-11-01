@@ -369,7 +369,7 @@
                       'Blocked by OOS gate</button>'
                     : '<button class="suggestion-apply-btn" data-card-index="' + i + '" ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-pos') + ';' +
-                      'color:' + cssVar('--studio-white') + ';border:none;border-radius:0.5rem;' +
+                      'color:' + cssVar('--studio-paper-hi') + ';border:none;border-radius:0.5rem;' +
                       'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
                       'Apply suggestion</button>'
                 ) +
@@ -1671,7 +1671,7 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Retirement "Run now" (Cycle 2e, AC-7).
+    // Retirement "Run recommender" (Cycle 2e, AC-7).
     //
     // Poll cadence. This is NOT a background auto-refresh: it only ever runs
     // after an explicit operator click, is bounded to RETIREMENT_POLL_TIMEOUT_MS
@@ -1736,7 +1736,7 @@
             if (resp.networkError) { throw new Error('network error'); }
             if (resp.refused === 'csrf') {
                 // Nothing started and nothing is sent again: the next click sends one request.
-                setStatus(PSRequest.notSentText(resp, 'Click Run now again.'));
+                setStatus(PSRequest.notSentText(resp, 'Click Run recommender again.'));
                 if (btnEl) { btnEl.disabled = false; }
                 return;
             }
@@ -1745,7 +1745,7 @@
             // The route answers 409 for BOTH market_open and already_running, so
             // this check must come first or the generic 409 branch swallows it.
             if (data && data.status === 'market_open') {
-                setStatus('Run now is available outside market hours: the Composer API is shared with the live engine.');
+                setStatus('Run recommender is available outside market hours: the Composer API is shared with the live engine.');
                 if (btnEl) { btnEl.disabled = false; }
                 return;
             }
