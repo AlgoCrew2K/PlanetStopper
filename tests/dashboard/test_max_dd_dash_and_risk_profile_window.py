@@ -157,6 +157,6 @@ def test_the_risk_profile_names_the_window_the_page_asked_for(worlds):
     text = result["text"]
     for label in ("Sharpe", "Sortino", "Max drawdown", "Ann. volatility"):
         assert label in text, f"the Risk Profile lost its {label} row: {text!r}"
-    assert re.search(rf"{days.group(1)}[\s-]*(trading[\s-]*)?days?", text, re.I), (
+    assert re.search(rf"\b{days.group(1)}\b[\s-]*(trading[\s-]*)?days?\b", text, re.I), (
         f"the Risk Profile does not name its {days.group(1)}-day window: {text!r}"
     )
