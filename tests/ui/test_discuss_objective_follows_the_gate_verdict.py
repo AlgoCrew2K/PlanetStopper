@@ -85,7 +85,7 @@ def claims_to_have_cleared(text: str) -> bool:
     return not NEGATION.search(text)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def lines():
     run = run_page(
         render_page("/ai-advisor"),
