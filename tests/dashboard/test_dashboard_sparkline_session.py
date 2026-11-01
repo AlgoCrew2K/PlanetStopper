@@ -7,7 +7,7 @@ return for a seeded database. Charts are requested by the page's own first paint
 answers are released by hand when order matters.
 
 The dial's expected text is the server render's for the same card (the render and the poll print one
-text); a caption is judged by the span the card's sparkline wrapper holds. Derived bodies change one
+text); a caption is judged by the span the card holds (outside the box the chart sizes itself to). Derived bodies change one
 named field of a real body: tests/fixtures/refresh_timing/03-c4/PROVENANCE.md.
 """
 
@@ -96,7 +96,9 @@ const chartRequests = function (n0) {
 };
 const caption = function (id) {
   const canvas = H.sandbox.document.querySelector('[data-testid="card-spark"][data-sym-id="' + id + '"]');
-  const e = canvas && canvas.parentNode ? canvas.parentNode.querySelector('.spark-session') : null;
+  let card = canvas;
+  while (card && card.getAttribute && card.getAttribute('data-testid') !== 'sym-card') card = card.parentNode;
+  const e = card ? card.querySelector('.spark-session') : null;
   if (!e) return null;
   return { text: e.textContent.trim(), hidden: e.hasAttribute('hidden') || e.style.display === 'none',
            classes: e.className };

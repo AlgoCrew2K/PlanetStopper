@@ -204,14 +204,27 @@ def test_dashboard_hero_has_vs_rows(dashboard_client):
     )
 
 
-def test_dashboard_vs_rows_have_labels(dashboard_client):
-    """Bot-vs-Held rows must include Today, Cumulative, Max DD labels."""
-    html = dashboard_client.get("/").data.decode("utf-8")
-    for label in ["Today", "Cumulative", "Max DD"]:
+@pytest.mark.parametrize("market_state", ["open", "closed"])
+def test_dashboard_vs_rows_have_labels(dashboard_client, market_state):
+    """The rows are Today, Cumulative and Max DD while the market is open. While it is not open the
+    first row names the session its figures belong to (a month abbreviation and the day) where it
+    read Today, so the label never claims the last session's figures are today's."""
+    import app as app_module
+
+    with patch.object(app_module, "get_market_state", return_value=market_state):
+        html = dashboard_client.get("/").data.decode("utf-8")
+    word = re.search(r'data-field="day-word">([^<]*)<', html)
+    assert word, "the hero's first row has no day word"
+    for label in ["Cumulative", "Max DD"]:
         assert label in html, (
             f"Hero Bot-vs-Held section must include '{label}' row label. "
             "Design: studio.jsx VsRow labels."
         )
+    if market_state == "open":
+        assert word.group(1) == "Today"
+    else:
+        assert word.group(1) != "Today"
+        assert re.fullmatch(r"[A-Z][a-z]{2} \d{1,2}", word.group(1)), word.group(1)
 
 
 # ---------------------------------------------------------------------------

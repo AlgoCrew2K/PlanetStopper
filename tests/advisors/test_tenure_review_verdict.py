@@ -9,7 +9,9 @@ The rule, in order:
      portfolio's total return and leave its max drawdown the same or shallower;
   3. otherwise keep;
   4. no verdict when redundancy, backtest and marginal are all without an available
-     figure.
+     figure. The chip then names what is missing: "the comparison has no figures yet" when
+     the performance, composite or long-VIX item holds figures (the panels below the chip
+     show them), "no evidence available" only when all three are empty too.
 Long-VIX co-firing and the composite never enter the rule directly.
 
 decide_verdict takes the six evidence items as build_review builds them and returns
@@ -28,8 +30,17 @@ import advisors.tenure_review as tr
 from advisors import retirement_recommender
 from tests.advisors import _tenure_review_builders as b
 
+NO_COMPARISON = "no verdict: the comparison has no figures yet"
+NO_EVIDENCE = "no verdict: no evidence available"
+CONTEXT_ITEMS = ("performance", "composite", "long_vix")
 TRAILS = "trails its own backtest"
 DRAGS = "drags portfolio return and drawdown"
+
+
+def _context_holds_figures(entry):
+    """Whether a row's performance, composite or long-VIX item holds figures (what makes the chip
+    name the comparison rather than evidence in general)."""
+    return any(b.item_of(entry, name)["status"] == "available" for name in CONTEXT_ITEMS)
 
 
 def _fig(value, unit="percent"):
@@ -219,7 +230,7 @@ def test_with_redundancy_backtest_and_marginal_all_unavailable_there_is_no_verdi
         )
     )
     assert got["verdict"] is None
-    assert got["verdict_text"] == "no verdict: no evidence available"
+    assert got["verdict_text"] == NO_COMPARISON
     assert got["verdict_reasons"] == []
     assert got["missing_items"] == ["redundancy", "backtest", "marginal"]
 
@@ -248,9 +259,52 @@ def test_an_item_that_does_not_apply_gives_no_evidence_and_is_listed_missing():
         )
     )
     assert got["verdict"] is None
-    assert got["verdict_text"] == "no verdict: no evidence available"
+    assert got["verdict_text"] == NO_COMPARISON
     assert got["verdict_reasons"] == []
     assert got["missing_items"] == ["redundancy", "backtest", "marginal"]
+
+
+def test_the_chip_names_the_comparison_when_a_panel_below_it_holds_figures():
+    """With the three deciding items empty, the chip must not say there is no evidence while the
+    performance, composite or long-VIX panel beside it shows figures: it says the comparison has
+    none yet. Each of the three alone is enough. Rejects the old text above a panel with figures."""
+    for name in CONTEXT_ITEMS:
+        quiet = {other: _unavailable("no history") for other in CONTEXT_ITEMS}
+        quiet[name] = _item()
+        got = tr.decide_verdict(
+            evidence(
+                redundancy=redundancy_item(status="unavailable"),
+                backtest=backtest_item(),
+                marginal=marginal_item(),
+                **quiet,
+            )
+        )
+        assert got["verdict"] is None, name
+        assert got["verdict_text"] == NO_COMPARISON, name
+
+
+def test_the_chip_keeps_the_no_evidence_text_when_every_item_is_empty():
+    """Nothing at all holds figures, so the original wording stays. Rejects the new text where
+    there is no panel with figures to contrast it with."""
+    empty = {name: _unavailable("no history") for name in CONTEXT_ITEMS}
+    got = tr.decide_verdict(
+        evidence(
+            redundancy=redundancy_item(status="unavailable"),
+            backtest=backtest_item(),
+            marginal=marginal_item(),
+            **empty,
+        )
+    )
+    assert got["verdict"] is None
+    assert got["verdict_text"] == NO_EVIDENCE
+    assert got["missing_items"] == [
+        "performance",
+        "composite",
+        "redundancy",
+        "backtest",
+        "marginal",
+        "long_vix",
+    ]
 
 
 @pytest.mark.parametrize("name", ["redundancy", "marginal"])
@@ -368,7 +422,7 @@ def test_an_unused_redundancy_item_is_listed_missing_and_gives_no_evidence_whate
     snapshot = copy.deepcopy(ev)
     got = tr.decide_verdict(ev)
     assert got["verdict"] is None
-    assert got["verdict_text"] == "no verdict: no evidence available"
+    assert got["verdict_text"] == NO_COMPARISON
     assert got["verdict_reasons"] == []
     assert got["missing_items"] == ["redundancy", "backtest", "marginal"]
     assert ev == snapshot
@@ -554,7 +608,8 @@ def test_a_fallback_basis_sibling_is_never_paired_and_nobody_is_retired():
         assert item["retire_candidate"] is False, sid
         # redundancy, backtest and marginal give no evidence, so there is no verdict
         assert entry["verdict"] is None, sid
-        assert entry["verdict_text"] == "no verdict: no evidence available", sid
+        assert _context_holds_figures(entry), "fixture sanity: a panel below the chip holds figures"
+        assert entry["verdict_text"] == NO_COMPARISON, sid
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +680,8 @@ def test_a_symphony_whose_only_pair_is_with_a_sibling_that_has_no_composite_has_
     assert b.item_of(lead, "backtest")["status"] == "unavailable"  # fixture sanity
     assert "redundancy" in lead["missing_items"]
     assert lead["verdict"] is None
-    assert lead["verdict_text"] == "no verdict: no evidence available"
+    assert _context_holds_figures(lead), "fixture sanity: a panel below the chip holds figures"
+    assert lead["verdict_text"] == NO_COMPARISON
     assert lead["verdict_reasons"] == []
 
 
@@ -674,7 +730,8 @@ def test_a_pair_with_a_sibling_that_has_no_composite_is_never_evidence_whatever_
     assert NO_PEER_COMPOSITE in item["reason"]
     assert "redundancy" in lead["missing_items"]
     assert lead["verdict"] is None
-    assert lead["verdict_text"] == "no verdict: no evidence available"
+    assert _context_holds_figures(lead), "fixture sanity: a panel below the chip holds figures"
+    assert lead["verdict_text"] == NO_COMPARISON
     assert lead["verdict_reasons"] == []
 
 
@@ -788,7 +845,8 @@ def test_a_lone_eligible_symphony_has_no_verdict_and_lists_every_item_that_gave_
     assert b.item_of(lone, "backtest")["status"] == "unavailable"  # fixture sanity
     assert b.item_of(lone, "redundancy")["status"] in ("unavailable", "not_applicable")
     assert lone["verdict"] is None
-    assert lone["verdict_text"] == "no verdict: no evidence available"
+    assert _context_holds_figures(lone), "fixture sanity: a panel below the chip holds figures"
+    assert lone["verdict_text"] == NO_COMPARISON
     assert lone["verdict_reasons"] == []
     listed = [
         name for name in lone["missing_items"] if name in ("redundancy", "backtest", "marginal")
@@ -808,5 +866,6 @@ def test_a_symphony_on_the_fallback_basis_has_no_verdict_beside_a_composer_symph
     assert entry["basis"]["kind"] == "shadow"  # fixture sanity
     assert b.item_of(entry, "marginal")["status"] == "unavailable"
     assert entry["verdict"] is None
-    assert entry["verdict_text"] == "no verdict: no evidence available"
+    assert _context_holds_figures(entry), "fixture sanity: a panel below the chip holds figures"
+    assert entry["verdict_text"] == NO_COMPARISON
     assert {"redundancy", "backtest", "marginal"} <= set(entry["missing_items"])

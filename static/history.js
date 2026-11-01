@@ -393,10 +393,10 @@
                 : cssVar('--studio-ink-dim');
             return (
                 '<tr style="border-bottom:1px solid ' + cssVar('--studio-border') + ';">' +
-                '<td style="padding:0.375rem 0.75rem;color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(rec.ts || '—')) + '</td>' +
-                '<td style="padding:0.375rem 0.75rem;color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(symDisplay)) + '</td>' +
-                '<td style="padding:0.375rem 0.75rem;font-weight:700;letter-spacing:0.04em;color:' + reasonColor + ';">' + escHtml(rawReason) + '</td>' +
-                '<td style="padding:0.375rem 0.75rem;color:' + detailColor + ';">' + escHtml((function(d) {
+                '<td style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(rec.ts || '—')) + '</td>' +
+                '<td style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(symDisplay)) + '</td>' +
+                '<td style="font-weight:700;letter-spacing:0.04em;color:' + reasonColor + ';">' + escHtml(rawReason) + '</td>' +
+                '<td style="color:' + detailColor + ';">' + escHtml((function(d) {
                     if (typeof d !== 'number') return String(d || '—');
                     return (d >= 0 ? '+' : '') + d.toFixed(2) + '%';
                 })(rec.detail)) + '</td>' +
@@ -453,7 +453,7 @@
         });
         var heading = document.getElementById('todays-exits-heading');
         if (heading) {
-            heading.textContent = dateStr + ' exits (' + exits.length + ')';
+            heading.textContent = sessionDayLabel(dateStr) + ' exits (' + exits.length + ')';
         }
     }
 

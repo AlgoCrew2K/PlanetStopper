@@ -369,7 +369,7 @@
                       'Blocked by OOS gate</button>'
                     : '<button class="suggestion-apply-btn" data-card-index="' + i + '" ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-pos') + ';' +
-                      'color:' + cssVar('--studio-white') + ';border:none;border-radius:0.5rem;' +
+                      'color:' + cssVar('--studio-paper-hi') + ';border:none;border-radius:0.5rem;' +
                       'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
                       'Apply suggestion</button>'
                 ) +
@@ -1000,6 +1000,11 @@
             btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
             if (isActive) {
                 btn.classList.add('active');
+                // The row scrolls sideways on a narrow screen; 'nearest' moves it only as far as
+                // needed and never scrolls the page itself.
+                if (typeof btn.scrollIntoView === 'function') {
+                    btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                }
             } else {
                 btn.classList.remove('active');
             }
@@ -1089,6 +1094,12 @@
      * and key figure are different things, so they are made here from it. Nothing is invented: a
      * figure the artifact lacks is left out of the key line.
      */
+    var GATE_OBJECTIVE_LINES = {
+        ADOPT_CANDIDATE: 'Why this candidate cleared the statistical gate',
+        KEEP_INCUMBENT: 'Why the gate withheld this candidate against the incumbent',
+        REJECT_VETO_FAILED: 'Why the gate rejected this candidate'
+    };
+
     function chatPanelDataFromArtifact(artifact) {
         var source = artifact.template_id === 'atlas-suggested' ? 'Atlas-suggested'
             : (artifact.template_id === 'built-new' ? 'Built from scratch' : 'Strategy proposal');
@@ -1102,7 +1113,7 @@
             artifactType: artifact.artifact_type,
             title: 'Discuss: ' + source + ' candidate',
             contextLabel: 'Strategy Builder' + (tickers ? ' \u00b7 ' + tickers : ''),
-            objective: 'Why this candidate cleared the statistical gate',
+            objective: GATE_OBJECTIVE_LINES[artifact.gate_verdict] || 'How the gate judged this candidate',
             gateDecision: artifact.gate_verdict,
             keyStat: figures.join(' \u00b7 '),
             artifactContext: artifact
@@ -1660,7 +1671,7 @@
     }
 
     // ---------------------------------------------------------------------------
-    // Retirement "Run now" (Cycle 2e, AC-7).
+    // Retirement "Run recommender" (Cycle 2e, AC-7).
     //
     // Poll cadence. This is NOT a background auto-refresh: it only ever runs
     // after an explicit operator click, is bounded to RETIREMENT_POLL_TIMEOUT_MS
@@ -1725,7 +1736,7 @@
             if (resp.networkError) { throw new Error('network error'); }
             if (resp.refused === 'csrf') {
                 // Nothing started and nothing is sent again: the next click sends one request.
-                setStatus(PSRequest.notSentText(resp, 'Click Run now again.'));
+                setStatus(PSRequest.notSentText(resp, 'Click Run recommender again.'));
                 if (btnEl) { btnEl.disabled = false; }
                 return;
             }
@@ -1734,7 +1745,7 @@
             // The route answers 409 for BOTH market_open and already_running, so
             // this check must come first or the generic 409 branch swallows it.
             if (data && data.status === 'market_open') {
-                setStatus('Run now is available outside market hours: the Composer API is shared with the live engine.');
+                setStatus('Run recommender is available outside market hours: the Composer API is shared with the live engine.');
                 if (btnEl) { btnEl.disabled = false; }
                 return;
             }

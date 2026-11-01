@@ -549,7 +549,8 @@ class TestTheLabelFollowsTheServersClock:
             "without a server time the browser clock must not decide Stale"
         )
 
-    # (name, setup, expected label, title, colour token, countdown shown)
+    # (name, setup, expected label, title, colour token, countdown shown); a Degraded label
+    # outranks Closed but shows a countdown only while the market is open
     CASES = [
         ("closed", dict(closed=True, phase="closed"), "Closed", "", DIM, False),
         (
@@ -586,7 +587,9 @@ class TestTheLabelFollowsTheServersClock:
             "Degraded",
             DEGRADED_TEXT["scheduler_stalled"],
             NEG,
-            True,
+            # Closed: the market is not counting down to anything, so the label stays and the
+            # countdown does not show (the open cases below keep theirs).
+            False,
         ),
         (
             "degraded outranks a rebalance pause",

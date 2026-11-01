@@ -340,17 +340,18 @@
         }).join('');
 
         // AI advisor cards — DISPLAY-ONLY, no action controls (AC-8)
+        var advisorCards = (advisorList || []).map(function (obs) {
+            return _advisorCard(obs);
+        }).filter(function (card) { return card !== ''; });
         var advisorHtml;
-        if (!advisorList || advisorList.length === 0) {
+        if (advisorCards.length === 0) {
             advisorHtml = '<div style="padding:22px 16px;text-align:center;' +
                 'background:var(--studio-bg);border:1px dashed var(--studio-rule-hi);border-radius:10px;' +
                 'font-size:12.5px;color:var(--studio-ink-faint);">' +
                 'No advisor suggestions for this symphony yet.' +
                 '</div>';
         } else {
-            advisorHtml = advisorList.map(function (obs) {
-                return _advisorCard(obs);
-            }).join('');
+            advisorHtml = advisorCards.join('');
         }
 
         // Save-error state (AC-12)
@@ -739,76 +740,31 @@
             '</button>';
     }
 
+    var ADVISOR_VERDICT_KIND = { CLEAR: 'pass', BREACH: 'fail' };
+
+    // One card per stored observation row (advisor_role, verdict, raw_response, created_at).
+    // A row with neither a verdict nor prose has nothing to show and draws no card ('').
     function _advisorCard(obs) {
-        // Display-only — operators act by locking a variable and letting the optimizer converge (AC-8).
-        var variable = obs.variable || '';
-        var current = obs.current_value;
-        var suggested = obs.suggested;
-        var rationale = obs.rationale || '';
-        var confidence = obs.confidence || '';
-        var oos = obs.oos_status || obs.oos || '';
-        var gates = obs.gate_results || obs.gates || [];
-
-        var oosPass = typeof oos === 'string' && oos.toLowerCase().indexOf('pass') !== -1;
-        var oosColor = oosPass ? 'var(--studio-pos)' : 'var(--studio-neg)';
-        var confColor = {
-            high:   'var(--studio-pos)',
-            medium: 'var(--studio-warn)',
-            low:    'var(--studio-ink-faint)',
-        }[confidence] || 'var(--studio-ink-dim)';
-
-        var gateBadges = Array.isArray(gates) ? gates.map(function (g) {
-            return _badge(g.pass ? 'pass' : 'fail', _esc(g.label) + ' ' + (g.pass ? '✓' : '✕'));
-        }).join('') : '';
-
-        var currentToSuggested = '';
-        if (current !== undefined && current !== null && suggested !== undefined && suggested !== null) {
-            currentToSuggested =
-                '<span style="font-variant-numeric:tabular-nums;color:var(--studio-ink-dim);">' +
-                Number(current).toFixed(2) + '</span>' +
-                '<span style="color:' + confColor + ';margin:0 6px;font-weight:700;">→</span>' +
-                '<strong style="color:var(--studio-ink);">' + Number(suggested).toFixed(2) + '</strong>';
-        } else if (suggested !== undefined && suggested !== null) {
-            currentToSuggested = '<strong style="color:var(--studio-ink);">→ ' +
-                Number(suggested).toFixed(2) + '</strong>';
-        }
-
-        var confRow = confidence
-            ? '<div style="display:flex;align-items:center;gap:12px;">' +
-              '<span style="font-size:9px;font-weight:700;color:var(--studio-ink-dim);' +
-              'letter-spacing:0.1em;text-transform:uppercase;">' +
-              _esc(confidence) + ' confidence</span>' +
-              (currentToSuggested
-                  ? '<span style="width:1px;height:12px;background:var(--studio-rule);"></span>' +
-                    '<span style="font-size:13px;font-variant-numeric:tabular-nums;">' +
-                    currentToSuggested + '</span>'
-                  : '') +
-              '</div>'
-            : (currentToSuggested
-                ? '<div style="font-size:13px;font-variant-numeric:tabular-nums;">' +
-                  currentToSuggested + '</div>'
-                : '');
-
-        var rationaleRow = rationale
+        // Display-only: operators act by locking a variable and letting the optimizer converge.
+        var verdict = typeof obs.verdict === 'string' ? obs.verdict : '';
+        var body = obs.raw_response;
+        var note = body && typeof body === 'object' && typeof body.note === 'string' ? body.note : '';
+        if (!verdict && !note) return '';
+        var role = typeof obs.advisor_role === 'string'
+            ? obs.advisor_role.toLowerCase().replace(/_/g, ' ') : '';
+        var badge = verdict
+            ? _badge(ADVISOR_VERDICT_KIND[verdict.toUpperCase()] || 'neutral', _esc(verdict))
+            : '';
+        var noteRow = note
             ? '<div style="font-size:12px;color:var(--studio-ink-dim);line-height:1.5;">' +
-              _esc(rationale) + '</div>'
+              _esc(note) + '</div>'
             : '';
-
-        var oosRow = oos
-            ? '<div style="display:flex;align-items:center;gap:7px;font-size:11px;' +
-              'color:' + oosColor + ';font-weight:600;">' +
-              '<span style="width:6px;height:6px;border-radius:6px;background:' + oosColor + ';"></span>' +
-              _esc(oos) + '</div>'
-            : '';
-
         return '<div data-testid="sym-settings-advisor-card" style="background:var(--studio-bg);border:1px solid var(--studio-rule);' +
             'border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;flex-shrink:0;">' +
             '<div style="display:flex;align-items:center;justify-content:space-between;' +
             'gap:10px;flex-wrap:wrap;">' +
-            '<span style="font-size:13px;font-weight:700;color:var(--studio-ink);' +
-            'font-variant-numeric:tabular-nums;">' + _esc(variable) + '</span>' +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap;">' + gateBadges + '</div></div>' +
-            confRow + rationaleRow + oosRow +
+            '<span style="font-size:13px;font-weight:700;color:var(--studio-ink);">' +
+            _esc(role) + '</span>' + badge + '</div>' + noteRow +
             '</div>';
     }
 

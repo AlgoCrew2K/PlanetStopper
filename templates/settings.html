@@ -460,13 +460,12 @@
       font-weight: 700;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      color: var(--studio-ink-faint);
+      color: var(--studio-ink-dim);
     }
     .sym-gone-row {
       padding: 4px 14px 8px;
       font-size: 12px;
-      color: var(--studio-ink-faint);
-      opacity: 0.75;
+      color: var(--studio-ink-dim);
       overflow-wrap: anywhere;
     }
 
@@ -899,7 +898,7 @@
             <div class="live-card-body">
               <div class="live-heading-row">
                 <span class="live-heading">Live execution</span>
-                <span class="live-pill" id="live-pill" data-live="false">DRY RUN</span>
+                <span class="live-pill" id="live-pill" data-live="false">&mdash;</span>
               </div>
               <div class="live-desc">
                 When <strong>LIVE</strong>, the bot fires real
@@ -922,7 +921,7 @@
         <div class="setting-row">
           <div class="field-label">Execution start time (ET)</div>
           <div class="text-input-wrap">
-            <input type="text" class="text-input" id="execution-start-time" value="09:30" autocomplete="off">
+            <input type="text" class="text-input" id="execution-start-time" value="" autocomplete="off" disabled>
             <span class="input-suffix">ET</span>
           </div>
           <div class="field-hint">The minute the scheduler begins monitoring stops. Market opens 09:30; earlier values stage state pre-open.</div>

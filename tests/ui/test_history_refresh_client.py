@@ -6,7 +6,7 @@ body is the real route's over the captured post-mortem days at a frozen host clo
 
 CONTRACT PINNED
 * A module-level drilled day, set by a bar click, makes each poll re-render THAT day's exits from
-  the new payload (heading ``<date> exits (<n>)``) instead of today's exits.
+  the new payload (heading ``<Mon D> exits (<n>)``) instead of today's exits.
 * The ``[data-testid="history-todays-exits-btn"]`` button, and any window-picker click, clear it
   and return the table to ``Today's exits (<n>)``.
 * The newest issued ``loadHistory`` request wins: an older response that lands last is dropped.
@@ -88,7 +88,7 @@ class TestDrilledDay:
             route(HISTORY, first, second, method="GET"),
         )
         r = out.result
-        assert r["drilled"]["heading"] == f"{day} exits ({count})"
+        assert r["drilled"]["heading"] == f"{hist.day_label(day)} exits ({count})"
         assert r["polls"] >= 3, "the page stopped polling"
         for later in (r["afterPoll"], r["afterTwo"]):
             assert later["heading"] == r["drilled"]["heading"], "the poll erased the drilled day"
@@ -108,7 +108,7 @@ class TestDrilledDay:
             """,
             route(HISTORY, first, changed, method="GET", strict=False),
         )
-        assert out.result["heading"] == f"{day} exits ({count - 1})", (
+        assert out.result["heading"] == f"{hist.day_label(day)} exits ({count - 1})", (
             "the drilled day must be re-rendered from the poll's payload, not kept stale"
         )
 
@@ -141,7 +141,7 @@ class TestDrilledDay:
             route(HISTORY, body, method="GET"),
         )
         r = out.result
-        assert r["drilled"]["heading"].startswith(day)
+        assert r["drilled"]["heading"].startswith(hist.day_label(day))
         assert (
             r["back"]["heading"] == r["today"]["heading"]
             and r["back"]["rows"] == r["today"]["rows"]
@@ -163,7 +163,7 @@ class TestDrilledDay:
             route(r"/api/history/30$", body30, method="GET"),
             route(r"/api/history/90$", body90, method="GET"),
         )
-        assert out.result["drilled"].startswith(day)
+        assert out.result["drilled"].startswith(hist.day_label(day))
         assert out.result["after"].startswith("Exits on ")
 
 

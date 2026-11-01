@@ -195,6 +195,8 @@ def test_the_button_back_from_a_drilled_day_names_the_session_when_closed(days, 
     )
     r = out.result
     assert r["drilled"]["button"] == button, f"the button reads {r['drilled']['button']!r}"
-    assert r["drilled"]["heading"].startswith(day), "fixture sanity: a day is drilled"
+    assert r["drilled"]["heading"].startswith(hist.day_label(day)), (
+        "fixture sanity: a day is drilled"
+    )
     expected = f"Exits on Oct 30 ({len(EXITS)})" if closed else f"Today's exits ({len(EXITS)})"
     assert r["back"]["heading"] == expected, f"the way back reads {r['back']['heading']!r}"

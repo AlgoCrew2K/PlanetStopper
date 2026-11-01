@@ -27,7 +27,7 @@ REPO = Path(__file__).resolve().parents[2]
 # AC-1 descriptor, from the audit's label table. "Simulated" is bound to the engine's flag.
 DESCRIPTOR_SIMULATED = (
     "Simulated Bot return minus If-held return over this window: the gap between the chart's "
-    "two lines. All symphonies at today's values, before exit friction."
+    "two lines. All symphonies at their latest values, before exit friction."
 )
 DESCRIPTOR_LIVE = DESCRIPTOR_SIMULATED.replace("Simulated Bot", "Bot")
 HEADLINE_SHAPE = re.compile(r"^[+-]\d+\.\d{2} pp$")

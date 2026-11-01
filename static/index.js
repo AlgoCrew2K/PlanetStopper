@@ -439,8 +439,15 @@
         var supplied = bot !== null && held !== null && strip.insufficient_history !== true;
         var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
         var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
-        if (botText) botText.textContent = bot !== null ? 'Bot ' + bot.toFixed(2) + '%' : '\u2014';
-        if (heldText) heldText.textContent = held !== null ? 'Held ' + held.toFixed(2) + '%' : '\u2014';
+        // A dash carries no sign colour: an unknown drawdown must not read as a bad one.
+        if (botText) {
+            botText.textContent = bot !== null ? 'Bot ' + bot.toFixed(2) + '%' : '\u2014';
+            if (bot !== null) botText.classList.add('neg'); else botText.classList.remove('neg');
+        }
+        if (heldText) {
+            heldText.textContent = held !== null ? 'Held ' + held.toFixed(2) + '%' : '\u2014';
+            if (held !== null) heldText.classList.add('neg'); else heldText.classList.remove('neg');
+        }
         var maxAbs = Math.max(bot === null ? 0 : bot, held === null ? 0 : held, 0.01);
         var botBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
         var heldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
@@ -478,8 +485,9 @@
         }
         var botText = document.querySelector('[data-testid="comp-mdd-bot-text"]');
         var heldText = document.querySelector('[data-testid="comp-mdd-held-text"]');
-        if (botText) botText.textContent = '—';
-        if (heldText) heldText.textContent = '—';
+        // A dash carries no sign colour: an unknown drawdown must not read as a bad one.
+        if (botText) { botText.textContent = '—'; botText.classList.remove('neg'); }
+        if (heldText) { heldText.textContent = '—'; heldText.classList.remove('neg'); }
         var mddBotBars = document.querySelectorAll('[data-testid="comp-bar-bot"][data-row="mdd"]');
         var mddHeldBars = document.querySelectorAll('[data-testid="comp-bar-held"][data-row="mdd"]');
         mddBotBars.forEach(function (bar) { bar.style.width = '0%'; });
@@ -720,7 +728,10 @@
     // day. A body naming either date less (a store that records no date) names no session.
     // The date is written as text; the span is cleared by the next tape that is today's.
     function setSparkSessionCaption(canvas, chartBody) {
-        var parent = canvas.parentNode;
+        var box = canvas.parentNode;
+        // The caption lives beside the fixed-height box, never inside it: the responsive
+        // chart sizes itself to the box and would grow it.
+        var parent = box && box.parentNode;
         if (!parent) return;
         var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
         var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
@@ -728,17 +739,20 @@
         var el = parent.querySelector('.spark-session');
         if (!el) {
             if (!text) return;
-            parent.style.position = 'relative';
+            // On its own line above the tape, not laid over it: the tape's line never runs
+            // through the text.
             el = document.createElement('span');
             el.className = 'spark-session legend-as-of';
-            el.style.position = 'absolute';
-            el.style.top = '0';
-            el.style.left = '2px';
-            el.style.pointerEvents = 'none';
-            parent.appendChild(el);
+            el.style.display = 'block';
+            el.style.textAlign = 'left';
+            el.style.marginLeft = '2px';
+            // The caption takes over the box's top gap so the card grows by the caption alone.
+            el.style.marginTop = '0.5rem';
+            parent.insertBefore(el, box);
         }
         el.textContent = text;
         el.hidden = !text;
+        box.style.marginTop = text ? '0' : '0.5rem';
     }
 
     function sparkHeldDataset(data) {
@@ -1216,6 +1230,10 @@
 
     // The panel's own requests: the tape, the events, the variables and the risk profile. Each
     // answer applies only while this is still the newest open, on a panel that is still open.
+    // The Risk Profile's window: the trailing rows (trading days) the request asks for, also named
+    // on the panel so its figures are not read against the card's different window.
+    var RISK_PROFILE_DAYS = 60;
+
     function startDetailRequests(symId, sym, seq) {
         fetchDetailChart(sym.id || symId, sym, seq);
 
@@ -1226,7 +1244,7 @@
         var rpEl = document.getElementById('detail-risk-profile');
         if (!rpEl) return;
         function current() { return seq === _detailRequestSeq && detailPanelIsOpen(); }
-        fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=60')
+        fetch('/api/performance?scope=symphony&symphony_id=' + encodeURIComponent(symId) + '&days=' + RISK_PROFILE_DAYS)
             .then(function (r) { return r.json(); })
             .then(function (p) {
                 if (!current()) return;
@@ -1266,7 +1284,7 @@
                         + '<div class="math-row-hint">Bot ' + fmt(bv) + ' · Held ' + fmt(hv) + '</div>'
                         + '</div>';
                 }).join('');
-                rpEl.innerHTML = html;
+                rpEl.innerHTML = '<div class="math-row-hint">Last ' + RISK_PROFILE_DAYS + ' trading days</div>' + html;
             })
             .catch(function () {
                 // Graceful: leave the section empty on fetch failure — no JS error surfaced.
@@ -1286,6 +1304,7 @@
         var switched = _detailSymId !== null && symId !== _detailSymId;
         _detailSymId = symId || null;
         var seq = ++_detailRequestSeq;
+        _detailChartReading = null;
         if (switched) clearDetailPanelBody();
         var rpEl = document.getElementById('detail-risk-profile');
         if (rpEl) rpEl.innerHTML = '';
@@ -1298,7 +1317,7 @@
 
         var kept = writeDetailFigures(sym);
         // Populate Risk Math from bot state eagerly (B-04); chart fetch will overwrite with live data.
-        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak);
+        populateRiskMathFromState(sym);
         startDetailRequests(symId, sym, seq);
     }
 
@@ -1329,36 +1348,60 @@
         }
         writeDetailTitle(sym, _detailSymId);
         var kept = writeDetailFigures(sym);
-        populateRiskMathFromState(sym, kept.stopLevel, kept.shadowPeak, true);
+        populateRiskMathFromState(sym, true);
         if (_detailNeedsFetch) {
             _detailNeedsFetch = false;
             startDetailRequests(_detailSymId, sym, _detailRequestSeq);
         }
     }
 
-    // The risk rows a state entry can fill. The VWAP row is the tape's (the chart path writes it),
-    // so a poll passes keepVwap and leaves the text the chart gave it.
-    function populateRiskMathFromState(sym, stopLevel, shadowPeak, keepVwap) {
-        // stopLevel and shadowPeak are already sentinel-guarded by the caller
-        var stopDist = (shadowPeak != null && stopLevel != null)
-            ? ((shadowPeak - stopLevel).toFixed(2) + '%') : '--';
-        var beVal = sym.breakeven_locked ? 'Active' : 'Off';
-        var rawMc = sentinelToNull(typeof sym.mc_prob === 'number' ? sym.mc_prob : null);
-        var mcVal = rawMc != null ? rawMc.toFixed(1) + '%' : '--';
-        var rawVol = sentinelToNull(typeof sym.symphony_vol === 'number' ? sym.symphony_vol : null);
-        var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
-        var rawPara = sentinelToNull(typeof sym.para_velocity === 'number' ? sym.para_velocity : null);
-        var paraVal = rawPara != null ? rawPara.toFixed(2) + '%' : '--';
+    // The chart's answer for the open symphony, kept so a poll's rows read the same as the chart's.
+    // Taken off on every open: nothing of another symphony's tape may carry across.
+    var _detailChartReading = null;
+
+    // The Risk Math rows and hints, one rule for every writer. Vol and MC are the state's value when
+    // it is a usable number, else the chart's reading; MC is no reading for a triggered symphony; the
+    // stop level is the state's, else the chart's last stop, against the state's peak.
+    function riskMathRows(sym) {
+        var chart = _detailChartReading || {};
+        var usable = function (v) { return sentinelToNull(typeof v === 'number' ? v : null); };
+        var pick = function (own, fallback) { var v = usable(own); return v != null ? v : fallback; };
+        var mc = sym.triggered ? null : pick(sym.mc_prob, chart.mc != null ? chart.mc : null);
+        var vol = pick(sym.symphony_vol, chart.vol != null ? chart.vol : null);
+        var stopLevel = pick(sym.stop_trigger, chart.stop != null ? chart.stop : null);
+        var peak = usable(sym.shadow_hwm);
+        var para = usable(sym.para_velocity);
+        return {
+            mc: mc,
+            stop: (peak != null && stopLevel != null) ? (peak - stopLevel).toFixed(2) + '%' : '--',
+            vol: vol != null ? vol.toFixed(3) : '--',
+            para: para != null ? para.toFixed(2) + '%' : '--',
+            paraHint: para != null ? 'active ratchet velocity' : 'threshold —',
+            be: sym.breakeven_locked ? 'Active · floor 0.00%' : 'Off',
+            beHint: sym.breakeven_locked ? '5 confirm ticks @ lock threshold' : 'not yet activated'
+        };
+    }
+
+    // Writes the rows a state entry (with the chart's reading, once it has answered) can fill. The
+    // VWAP row is the tape's alone, so a poll passes keepVwap and leaves what the chart gave it.
+    function populateRiskMathFromState(sym, keepVwap) {
+        var rows = riskMathRows(sym);
+        var mcVal = rows.mc != null ? rows.mc.toFixed(1) + '%' : '--';
         var fields = [
             { id: 'dp-rm-mc',   val: mcVal },
-            { id: 'dp-rm-stop', val: stopDist },
-            { id: 'dp-rm-vol',  val: volVal },
-            { id: 'dp-rm-para', val: paraVal },
-            { id: 'dp-rm-be',   val: beVal }
+            { id: 'dp-rm-stop', val: rows.stop },
+            { id: 'dp-rm-vol',  val: rows.vol },
+            { id: 'dp-rm-para', val: rows.para },
+            { id: 'dp-rm-para-hint', val: rows.paraHint },
+            { id: 'dp-rm-be',   val: rows.be },
+            { id: 'dp-rm-be-hint', val: rows.beHint }
         ];
         // vwap_pct does not exist on bot_state; the chart path fills this in via
         // last.vwap_diff in renderRiskMathPanel. Eager render shows '--' until chart loads.
-        if (!keepVwap) fields.push({ id: 'dp-rm-vwap', val: '--' });
+        if (!keepVwap) {
+            fields.push({ id: 'dp-rm-vwap', val: '--' });
+            fields.push({ id: 'dp-rm-vwap-hint', val: '—' });
+        }
         fields.forEach(function (f) {
             var el = document.getElementById(f.id);
             if (el) el.textContent = f.val;
@@ -1366,9 +1409,9 @@
         // The reading's bar follows its text.
         var mcBar = document.getElementById('dp-rm-mc-bar');
         if (mcBar) {
-            if (rawMc != null) {
-                mcBar.style.width = Math.max(0, Math.min(100, rawMc)) + '%';
-                mcBar.style.background = rawMc < 15 ? cs('--studio-warn') : (rawMc > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
+            if (rows.mc != null) {
+                mcBar.style.width = Math.max(0, Math.min(100, rows.mc)) + '%';
+                mcBar.style.background = rows.mc < 15 ? cs('--studio-warn') : (rows.mc > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
             } else {
                 mcBar.style.width = '0%';
                 mcBar.style.background = cs('--studio-ink-faint');
@@ -1524,66 +1567,26 @@
         var last = data.slice(-1)[0] || {};
         sym = sym || {};
 
-        // mc_prob: for a TRIGGERED (exited) symphony, never scan history for a
-        // stale pre-trigger reading -- once post-trigger rows carry the honest
-        // None sentinel (AC-1), a backward null-scan cannot tell "no data yet"
-        // from "exited" and would resurrect the last real pre-trigger value as
-        // if it were current. Short-circuit on trigger STATE before the scan.
-        var mcProb = null;
-        if (!sym.triggered) {
-            // mc_prob: scan data array backwards (top-level is null); skip sentinels
-            for (var i = data.length - 1; i >= 0; i--) {
-                var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
-                if (candidate != null) { mcProb = candidate; break; }
-            }
+        // The chart's reading: the last row's vol and stop, and the newest MC reading found scanning
+        // backwards (the top level is null; sentinels skipped). Whether it applies to a triggered
+        // symphony is riskMathRows' rule, so a stale pre-trigger reading is never resurrected.
+        var chartMc = null;
+        for (var i = data.length - 1; i >= 0; i--) {
+            var candidate = sentinelToNull(data[i].mc_prob != null ? data[i].mc_prob : null);
+            if (candidate != null) { chartMc = candidate; break; }
         }
-
-        // stop distance = shadow_hwm - current stop level (sentinel-guard both)
-        var shadowHwm = sentinelToNull(typeof sym.shadow_hwm === 'number' ? sym.shadow_hwm : null);
-        var rawStopChart = last.stop != null ? last.stop : null;
-        var stopLevel = sentinelToNull(typeof sym.stop_trigger === 'number' ? sym.stop_trigger : rawStopChart);
-        var stopDist = (shadowHwm != null && stopLevel != null) ? (shadowHwm - stopLevel).toFixed(2) + '%' : '--';
-
-        // vol from last chart point
-        var rawVol = sentinelToNull(last.vol != null ? last.vol : null);
-        var volVal = rawVol != null ? rawVol.toFixed(3) : '--';
-
-        // breakeven locked from sym state
-        var beVal = sym.breakeven_locked ? 'Active' : 'Off';
+        _detailChartReading = {
+            mc: chartMc,
+            vol: sentinelToNull(last.vol != null ? last.vol : null),
+            stop: sentinelToNull(last.stop != null ? last.stop : null)
+        };
+        populateRiskMathFromState(sym, true);
 
         // vwap_diff from last chart point as a proxy for VWAP state
         var rawVwapDiff = sentinelToNull(last.vwap_diff != null ? last.vwap_diff : null);
         var vwapVal = rawVwapDiff != null ? (rawVwapDiff >= 0 ? 'Above' : 'Below') + ' (' + rawVwapDiff.toFixed(2) + '%)' : '--';
 
         function setEl(id, text) { var e = document.getElementById(id); if (e) e.textContent = text; }
-
-        // MC probability + bar
-        var mcText = mcProb != null ? mcProb.toFixed(1) + '%' : '—';
-        setEl('dp-rm-mc', mcText);
-        var mcBar = document.getElementById('dp-rm-mc-bar');
-        if (mcBar) {
-            if (mcProb != null) {
-                var pct = Math.max(0, Math.min(100, mcProb));
-                mcBar.style.width = pct + '%';
-                mcBar.style.background = mcProb < 15 ? cs('--studio-warn') : (mcProb > 80 ? cs('--studio-ink-dim') : cs('--studio-accent'));
-            } else {
-                // Neutral reset -- never leave the bar showing a stale
-                // width/color from a previous (possibly pre-trigger) render.
-                mcBar.style.width = '0%';
-                mcBar.style.background = cs('--studio-ink-faint');
-            }
-        }
-
-        setEl('dp-rm-stop', stopDist);
-        setEl('dp-rm-vol', volVal);
-        var paraVel = (sym.para_velocity != null) ? sym.para_velocity.toFixed(2) + '%' : '--';
-        setEl('dp-rm-para', paraVel);
-        setEl('dp-rm-para-hint', sym.para_velocity != null ? 'active ratchet velocity' : 'threshold —');
-
-        // Breakeven lock with hint
-        var beText = sym.breakeven_locked ? 'Active · floor 0.00%' : 'Off';
-        setEl('dp-rm-be', beText);
-        setEl('dp-rm-be-hint', sym.breakeven_locked ? '5 confirm ticks @ lock threshold' : 'not yet activated');
 
         // VWAP state with hint.
         // bleed mult lives in /api/settings response (settingsData.symphonies[name].params.VWAP_BLEED_MULTIPLIER);
@@ -1628,7 +1631,12 @@
         if (!container) return;
         var items = Array.isArray(logs) ? logs : (logs.events || []);
         if (!items.length) {
-            container.innerHTML = '<div style="font-size:11px;color:var(--studio-ink-faint);">No events yet today.</div>';
+            var empty = document.createElement('div');
+            empty.setAttribute('data-field', 'events-empty');
+            empty.setAttribute('style', 'font-size:11px;color:var(--studio-ink-faint);');
+            empty.textContent = eventsEmptyText();
+            container.textContent = '';
+            container.appendChild(empty);
             return;
         }
         var kindColorMap = {
@@ -2342,6 +2350,40 @@
     }
     var _ruleTodayLabel = 'today';
 
+    // While the market is not open the figures are the last session's: the labels that said
+    // today or live name the session day ("Oct 30") instead, as the server render does, so a
+    // label never changes between the first paint and the first poll. null while open.
+    var _sessionDay = null;
+    function eventsEmptyText() {
+        return _sessionDay ? 'No events on ' + _sessionDay + '.' : 'No events yet today.';
+    }
+    function applySessionWording(meta) {
+        var label = ruleTodayLabel(meta);
+        _sessionDay = label === 'today' ? null : label;
+        document.querySelectorAll('[data-field="day-word"]').forEach(function (el) {
+            setTextIfChanged(el, _sessionDay || 'Today');
+        });
+        setTextIfChanged(document.querySelector('[data-field="live-return-label"]'),
+            _sessionDay ? 'Return' : 'Live Return');
+        // the legend's text follows its swatch, so it is the span's last child node
+        var legend = document.querySelector('[data-field="if-held-legend"]');
+        var legendText = _sessionDay ? 'If held' : 'Live (if held)';
+        var legendNode = legend && legend.childNodes[legend.childNodes.length - 1];
+        if (legendNode && legendNode.data !== legendText) legendNode.data = legendText;
+        setTextIfChanged(document.querySelector('[data-field="hwm-label"]'),
+            _sessionDay ? 'HWM ' + _sessionDay : 'HWM today');
+        setTextIfChanged(document.querySelector('[data-field="events-heading"]'),
+            _sessionDay ? _sessionDay + ' events' : 'Today’s events');
+        setTextIfChanged(document.querySelector('[data-field="events-empty"]'), eventsEmptyText());
+        if (_sessionDay) {
+            document.querySelectorAll('.dv-label').forEach(function (el) {
+                if (/^If held · live$/.test(el.textContent.replace(/\s+/g, ' ').trim())) {
+                    setTextIfChanged(el, 'If held');
+                }
+            });
+        }
+    }
+
     function syncRuleRow(rowEl, sleeveId, rule) {
         setTextIfChanged(fieldOf(rowEl, 'rule-today-label'), _ruleTodayLabel);
         setTextIfChanged(fieldOf(rowEl, 'rule-name'), String(rule.name));
@@ -2586,6 +2628,7 @@
             // The open detail panel follows the body.
             function () { refreshOpenDetailPanel(botState); },
             // The Sleeves and CVaR panels and the Edit Vars badge.
+            function () { applySessionWording(meta); },
             function () { renderDashboardPanels(data); },
             // The headline descriptor's "Simulated" word.
             function () { renderExecutionDescriptor(data); },
@@ -2804,10 +2847,15 @@
     var _summaryRequestSeq = 0;
     var _summaryPendingSeq = 0;      // the request in flight, 0 when the newest has settled
     var _summaryPendingToken = null; // the window that request is for
+    // Another window's figures never stay under a pick: dash() (below, inside the function)
+    // dashes them until the picked window's own answer lands; a failed answer says so in the panel.
+    var _summaryAnsweredToken = null; // the window whose summary last answered well; null before the first
+
     function fetchGuardAlphaSummary(windowToken) {
         var seq = ++_summaryRequestSeq;
         _summaryPendingSeq = seq;
         _summaryPendingToken = windowToken;
+        if (windowToken !== _summaryAnsweredToken) dash();
         var url = '/api/guard-alpha-summary' + (windowToken ? '?window=' + encodeURIComponent(windowToken) : '');
         fetch(url)
             .then(function (response) {
@@ -2818,7 +2866,8 @@
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
                 if (seq !== _summaryRequestSeq) return;
                 if (windowToken && windowToken !== _heroWindow) return;
-                if (!data || typeof data !== 'object' || typeof data.guard_event_count !== 'number') return;
+                if (!data || typeof data.guard_event_count !== 'number') return fail();
+                _summaryAnsweredToken = windowToken; dash(1);
                 var headlineEl = document.getElementById('dollar-saved-headline');
                 var verbEl = document.getElementById('dollar-saved-verb');
                 var countEl = document.getElementById('guard-event-count');
@@ -2887,8 +2936,42 @@
             })
             .catch(function (err) {
                 if (seq === _summaryPendingSeq) _summaryPendingSeq = 0;
+                fail();
                 console.error('guard-alpha-summary load failed', err);
             });
+
+        // A failed or malformed answer for the picked window: its figures stay dashes and the
+        // panel says so; the next poll asks again (the window is still unanswered).
+        function fail() {
+            if (seq !== _summaryRequestSeq) return;
+            if (windowToken && windowToken !== _heroWindow) return;
+            if (windowToken === _summaryAnsweredToken) return; // own figures, one refresh old
+            dash(0, 'Could not load the ' + (windowToken || 'all') + ' figures; trying again.');
+        }
+
+        // Dashes (no digit) for every figure and the notice text; noticeOnly writes the notice
+        // alone (an answer that landed clears it).
+        function dash(noticeOnly, notice) {
+            if (!noticeOnly) {
+                _summaryAnsweredToken = null;
+                ['dollar-saved-headline', 'guard-event-count', 'dollar-saved-net-of-friction-headline',
+                 'dollar-saved-realized-headline', 'dollar-saved-realized-coverage',
+                 'dollar-saved-realized-net-of-friction-headline'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) { el.textContent = '—'; el.style.color = cs('--studio-ink-dim'); }
+                });
+                ['dollar-saved-verb', 'dollar-saved-basis-label', 'dollar-saved-net-of-friction-verb',
+                 'dollar-saved-realized-verb', 'dollar-saved-realized-net-of-friction-verb'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) el.textContent = '';
+                });
+            }
+            var note = document.getElementById('dollar-saved-window-notice');
+            if (note) {
+                note.textContent = notice || '';
+                note.hidden = !notice;
+            }
+        }
     }
 
     window.loadState = loadState;
@@ -2897,7 +2980,8 @@
     // (with a stream open, events do). A request for that window already in flight is not
     // sent twice: the page's first poll meets the one the load sent.
     function refreshPanelWithoutStream() {
-        if (streamIsOpen()) return;
+        // With a stream open, events move the panel; a window still unanswered is asked again.
+        if (streamIsOpen() && _summaryAnsweredToken === _heroWindow) return;
         if (_summaryPendingSeq !== 0 && _summaryPendingToken === _heroWindow) return;
         fetchGuardAlphaSummary(_heroWindow);
     }

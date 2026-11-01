@@ -503,6 +503,15 @@
       font-variant-numeric: tabular-nums;
     }
 
+    /* On a phone the four figures take two columns, so none is cut at the panel's edge. */
+    @media (max-width: 520px) {
+      .detail-stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .detail-stat { padding: 12px 14px; border-bottom: 1px solid var(--studio-rule); min-width: 0; }
+      .detail-stat:nth-child(2n) { border-right: none; }
+      .detail-stat:nth-last-child(-n+2) { border-bottom: none; }
+      .detail-stat-value { font-size: 22px; }
+    }
+
     .detail-stat-sub {
       font-size: 10.5px;
       color: var(--studio-ink-faint);
@@ -766,7 +775,7 @@
                 </div>
               </div>
               {# "Simulated" is bound to the engine's flag (last_execution_mode False; the poll's bot_state carries it). #}
-              <div class="guard-alpha-descriptor" data-testid="guard-alpha-descriptor"><span id="guard-alpha-simulated">{% if execution_simulated %}Simulated {% endif %}</span>Bot return minus If-held return over this window: the gap between the chart's two lines. All symphonies at today's values, before exit friction.</div>
+              <div class="guard-alpha-descriptor" data-testid="guard-alpha-descriptor"><span id="guard-alpha-simulated">{% if execution_simulated %}Simulated {% endif %}</span>Bot return minus If-held return over this window: the gap between the chart's two lines. All symphonies at their latest values, before exit friction.</div>
               {# Option A: the account-lifetime CR is a SEPARATE, fixed "Account · all-time"
                  reference — NOT windowed, carries no window label. Distinct from the windowed
                  guard-alpha hero above so the ~67% is never mislabeled "30d". #}
@@ -899,7 +908,7 @@
                    the row explains that the If Held value is account-level (Composer
                    todays_percent_change) and includes uninvested cash, unlike the
                    per-card held figure which is symphony-scoped. #}
-                <span class="vs-row-label">Today <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
+                <span class="vs-row-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
                 <span data-testid="comp-today-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_held_raw is not none %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none and _hero_tc_held_raw is not none %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }} pp{% else %}&mdash;{% endif %}</span>
@@ -964,13 +973,16 @@
               </div>
             </div>
 
+            {# An unknown drawdown reads as a dash with no sign colour. #}
+            {% set _mdd_bot_known = has_live_data and _mdd_bot_raw is not none %}
+            {% set _mdd_held_known = has_live_data and _mdd_held_raw is not none %}
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
                 {# F-2: when insufficient_history, label row with annotation instead of alpha delta #}
                 <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-faint);font-weight:400;font-style:italic;"{% if not mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
                 {# A drawdown is a magnitude: no sign is printed (the poll's text reads the same). #}
-                <span data-testid="comp-mdd-bot-text" class="vs-val neg">{% if has_live_data and _mdd_bot_raw is not none %}Bot {{ "%.2f"|format(mdd_bot|abs) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-mdd-held-text" class="vs-val neg">{% if has_live_data and _mdd_held_raw is not none %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-bot-text" class="vs-val{{ ' neg' if _mdd_bot_known }}">{% if _mdd_bot_known %}Bot {{ "%.2f"|format(mdd_bot|abs) }}%{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-held-text" class="vs-val{{ ' neg' if _mdd_held_known }}">{% if _mdd_held_known %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
                 {# F-2: hide the alpha delta when insufficient history — comparison is misleading.
                    Both the label and the delta are rendered, one hidden, so a poll can swap them. #}
                 <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if mdd_insufficient %} hidden{% endif %}>{% if has_live_data and _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }} pp{% else %}&mdash;{% endif %}</span>
@@ -1057,7 +1069,7 @@
              key, matching the mdd_d.get(...) pattern already used for the
              per-card lifetime fields a few lines below. #}
           {% set mdd_lifetime = (meta.portfolio.get('mdd_if_held_lifetime') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
-          <div data-testid="mdd-lifetime-scalar" style="font-size:10px;color:var(--studio-ink-faint);margin:2px 0 6px;">
+          <div data-testid="mdd-lifetime-scalar" style="font-size:10px;color:var(--studio-ink-dim);margin:2px 0 6px;">
             Lifetime Max Drawdown &middot; since inception: <strong style="color:var(--studio-ink-dim);">{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
           </div>
 
@@ -1105,6 +1117,7 @@
       <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
       <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>
       <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label" style="font-size:11px;color:var(--studio-ink-dim);margin-top:6px;"></div>
+      <div data-testid="dollar-saved-window-notice" id="dollar-saved-window-notice" role="status" hidden style="font-size:11px;color:var(--studio-ink);margin-top:4px;"></div>
       <!-- BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): static
            caveat qualifying the gross headline(s) above — never JS-injected,
            so a JS bug (or a future refactor) can never silently drop this
@@ -1195,7 +1208,7 @@
               <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
             <div class="dv-block" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
-              <span class="dv-label">If held{% if sym.get("triggered") %} &middot; live{% endif %}</span>
+              <span class="dv-label">If held{% if sym.get("triggered") and not session_day %} &middot; live{% endif %}</span>
               <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;opacity:0.6;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
           </div>
@@ -1249,7 +1262,7 @@
             {% set mdd_alpha = mdd_held - mdd_bot %}
             <div class="card-footer-grid">
               <div class="cfg-cell">
-                <span class="cfg-label">Today {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
+                <span class="cfg-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
                 <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span></div>
                 <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span></div>
               </div>
@@ -1282,8 +1295,8 @@
                .card-footer-grid (a fixed 3-column grid) rather than as a 4th
                grid cell, which would wrap awkwardly onto its own row. #}
             {% set _mdd_lifetime_raw = mdd_d.get("if_held_lifetime") if mdd_d is mapping else None %}
-            <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-faint);padding-left:10px;margin-top:2px;">
-              Lifetime MDD: <span data-field="mdd-lifetime" style="opacity:0.7;">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
+            <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-dim);padding-left:10px;margin-top:2px;">
+              Lifetime MDD: <span data-field="mdd-lifetime">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
             </div>
           </div>
         </div>
@@ -1362,7 +1375,7 @@
           {% set mdd_alpha = mdd_held - mdd_bot %}
           <div class="card-footer-grid" style="margin-top:0.375rem;">
             <div class="cfg-cell">
-              <span class="cfg-label">Today {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
+              <span class="cfg-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span></div>
               <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span></div>
             </div>
@@ -1395,8 +1408,8 @@
              .card-footer-grid (a fixed 3-column grid) rather than as a 4th
              grid cell, which would wrap awkwardly onto its own row. #}
           {% set _mdd_lifetime_raw = mdd_d.get("if_held_lifetime") if mdd_d is mapping else None %}
-          <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-faint);padding-left:10px;margin-top:2px;">
-            Lifetime MDD: <span data-field="mdd-lifetime" style="opacity:0.7;">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
+          <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-dim);padding-left:10px;margin-top:2px;">
+            Lifetime MDD: <span data-field="mdd-lifetime">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
           </div>
         </div>
         {% endfor %}
@@ -1425,7 +1438,7 @@
       <!-- Sticky stats row -->
       <div data-testid="detail-stats-row" class="detail-stats-row">
         <div class="detail-stat">
-          <div class="detail-stat-label">Live Return</div>
+          <div class="detail-stat-label" data-field="live-return-label">{{ 'Return' if session_day else 'Live Return' }}</div>
           <div class="detail-stat-value" id="dp-live-ret">--</div>
           <div class="detail-stat-sub" id="dp-live-ret-sub"></div>
         </div>
@@ -1437,7 +1450,7 @@
         <div class="detail-stat">
           <div class="detail-stat-label">Shadow Peak</div>
           <div class="detail-stat-value" id="dp-shadow-peak">--</div>
-          <div class="detail-stat-sub">HWM today</div>
+          <div class="detail-stat-sub" data-field="hwm-label">{% if session_day %}HWM {{ session_day }}{% else %}HWM today{% endif %}</div>
         </div>
         <div class="detail-stat">
           <div class="detail-stat-label">Guard <span class="alpha-glyph">&alpha;</span></div>
@@ -1465,7 +1478,7 @@
         </div>
         <!-- Chart legend -->
         <div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--studio-ink-dim);flex-wrap:wrap;">
-          <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-pos)" stroke-width="2"/></svg>Live (if held)</span>
+          <span data-field="if-held-legend" style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-pos)" stroke-width="2"/></svg>{{ 'If held' if session_day else 'Live (if held)' }}</span>
           <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-ink-dim)" stroke-width="2" stroke-dasharray="3,3"/></svg>Shadow (booked)</span>
           <span id="legend-stop"      style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-neg)" stroke-width="2" stroke-dasharray="4,3"/></svg>Trailing stop</span>
           <span id="legend-breakeven" style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-accent)" stroke-width="2"/></svg>Breakeven lock</span>
@@ -1479,9 +1492,9 @@
 
         <!-- Events timeline -->
         <div style="padding:18px 20px 20px;border-right:1px solid var(--studio-rule);">
-          <div style="font-size:16px;font-weight:500;color:var(--studio-ink);letter-spacing:-0.005em;margin-bottom:14px;">Today&rsquo;s events</div>
+          <div style="font-size:16px;font-weight:500;color:var(--studio-ink);letter-spacing:-0.005em;margin-bottom:14px;" data-field="events-heading">{% if session_day %}{{ session_day }} events{% else %}Today&rsquo;s events{% endif %}</div>
           <div data-testid="events-timeline" id="events-timeline">
-            <div style="font-size:11px;color:var(--studio-ink-faint);">No events yet today.</div>
+            <div data-field="events-empty" style="font-size:11px;color:var(--studio-ink-faint);">{% if session_day %}No events on {{ session_day }}.{% else %}No events yet today.{% endif %}</div>
           </div>
         </div>
 
@@ -1511,7 +1524,7 @@
               <span class="math-row-label">Vol (20d)</span>
               <span class="math-row-value" id="dp-rm-vol">—</span>
             </div>
-            <div class="math-row-hint">annualised</div>
+            <div class="math-row-hint">daily standard deviation, in percent</div>
           </div>
           <!-- Parabolic velocity -->
           <div class="math-row">

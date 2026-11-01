@@ -5492,7 +5492,7 @@
   "||.legend-as-of": {
    "margin-left": "auto",
    "font-size": "10px",
-   "color": "var(--studio-ink-faint)"
+   "color": "var(--studio-ink-dim)"
   },
   "||.mini-stats": {
    "display": "flex",
@@ -5653,7 +5653,7 @@
     ],
     [
      "color",
-     "var(--studio-ink-faint)"
+     "var(--studio-ink-dim)"
     ]
    ]
   },
@@ -6127,11 +6127,11 @@
   }
  ],
  "rules_revision": {
-  "head_sha": "38b0cbe8007ec7442cfb127114a8ff58d79b2a24",
-  "captured_at_utc": "2026-10-31T16:19:21Z",
-  "resolved_before": 23,
+  "head_sha": "2e114278e95ccb8235fc94e84664242bbf7a499b",
+  "captured_at_utc": "2026-11-01T12:09:56Z",
+  "resolved_before": 24,
   "resolved_after": 24,
-  "ordered_before": 23,
+  "ordered_before": 24,
   "ordered_after": 24
  }
 }

@@ -5,14 +5,17 @@
   var TWEAK_DEFAULTS = {
     theme: 'light',
     density: 'balanced',
-    // Derive from CSS token so the default tracks tokens.css --studio-accent; hex is a fallback only.
-    accent: (typeof getComputedStyle !== 'undefined'
-      ? getComputedStyle(document.documentElement).getPropertyValue('--studio-accent').trim()
-      : '') || '#1f7a4d',
+    // Empty means no accent was picked: the theme's own --studio-accent token applies, so the
+    // dark theme keeps its own accent. Only a pick is written inline on the root.
+    accent: '',
     typeface: 'Manrope',
     mathOverlays: true,
     numFormat: 'full',
   };
+
+  // An earlier version persisted the light theme's accent token as if it were a pick. A store
+  // holding exactly that value is read as no pick.
+  var EARLIER_VERSION_DEFAULT_ACCENT = '#1f7a4d';
 
   function load() {
     try {
@@ -31,10 +34,7 @@
 
   function get(key) {
     var stored = load();
-    if (stored && Object.prototype.hasOwnProperty.call(stored, key)) {
-      return stored[key];
-    }
-    return TWEAK_DEFAULTS[key];
+    return getAll()[key];
   }
 
   function set(key, value) {
@@ -46,7 +46,9 @@
 
   function getAll() {
     var stored = load();
-    return Object.assign({}, TWEAK_DEFAULTS, stored || {});
+    var values = Object.assign({}, TWEAK_DEFAULTS, stored || {});
+    if (values.accent === EARLIER_VERSION_DEFAULT_ACCENT) values.accent = '';
+    return values;
   }
 
   function seed() {
@@ -59,7 +61,11 @@
     var root = document.documentElement;
     root.setAttribute('data-theme', values.theme);
     root.setAttribute('data-density', values.density);
-    root.style.setProperty('--studio-accent', values.accent);
+    if (values.accent) {
+      root.style.setProperty('--studio-accent', values.accent);
+    } else if (typeof root.style.removeProperty === 'function') {
+      root.style.removeProperty('--studio-accent');
+    }
     root.style.setProperty('--studio-sans', values.typeface + ', system-ui, sans-serif');
     root.setAttribute('data-math-overlays', values.mathOverlays ? 'true' : 'false');
     root.setAttribute('data-num-format', values.numFormat);
@@ -101,7 +107,9 @@
     swatches.forEach(function (btn) {
       var swatchColor = getComputedStyle(document.documentElement)
         .getPropertyValue(btn.dataset.swatchVar).trim();
-      var isActive = swatchColor === values.accent;
+      var shown = values.accent || getComputedStyle(document.documentElement)
+        .getPropertyValue('--studio-accent').trim();
+      var isActive = swatchColor === shown;
       btn.setAttribute('aria-checked', String(isActive));
       btn.style.border = isActive ? '2px solid var(--studio-ink)' : '2px solid transparent';
     });

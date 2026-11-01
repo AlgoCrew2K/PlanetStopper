@@ -59,3 +59,11 @@ The UX review fixes change two primitives on purpose, so `dashboard.resolved` wa
 - Producer call: `python tests/fixtures/dashboard/shell_baseline/capture_shell_baseline.py --resolved-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `38b0cbe8007ec7442cfb127114a8ff58d79b2a24` (templates, static and `app.py` clean). The flag runs the script's own render and reading code (twice, as always), replaces only `dashboard.resolved`, and records `resolved_revision` (head, time, selector counts before and after: 23 to 24).
 - What differs from the base, read from `git diff` of the file: a new rule `@media (max-width: 700px) .hero-section { padding: 18px 16px 16px; margin-bottom: 16px }`, and `.status-pill` gains `white-space: nowrap`. No other selector's declarations changed.
 - Sign-off: not needed (producer output; the two differences are the fixes' own).
+
+## Revision: `dashboard.resolved` for the contrast fix (UX review fix batch)
+
+`.legend-as-of` text carries a stamp, so its colour moved from `--studio-ink-faint` to `--studio-ink-dim` to clear 4.5:1 in both themes. `base_sha`, `dashboard.structure_outside_top_bar` and `pages_1440` are untouched.
+
+- Producer call: `python tests/fixtures/dashboard/shell_baseline/capture_shell_baseline.py --resolved-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `2e114278e95ccb8235fc94e84664242bbf7a499b` (templates, static and `app.py` clean). `resolved_revision` now records this run (24 to 24 selectors).
+- What differs, read from `git diff` of the file: `.legend-as-of` `color` only.
+- Sign-off: not needed (producer output; the one difference is the fix's own).

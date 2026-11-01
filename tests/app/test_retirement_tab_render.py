@@ -5,11 +5,11 @@ droplet row or from the real recommender and writers (``tests/app/_retirement_ta
 which); the cards come from the real tick worker and the real approve and reject routes.
 
 * The tab bar carries a Retirement tab right after Correlations, with its own panel; the
-  Retirement section (the tenure review, the last-run block, Run now, the cards) lives in that
+  Retirement section (the tenure review, the last-run block, Run recommender, the cards) lives in that
   panel and nowhere in the Overview panel.
 * The last run reads as stat tiles in the dashboard's ``.mini-stats`` form with an ET stamp; every
   value is derived from the stored summary; an absent value reads the dash, never 0.
-* Each recommendation is a ``.sym-card`` with a ``.status-pill``; Run now is a ``.run-btn``.
+* Each recommendation is a ``.sym-card`` with a ``.status-pill``; Run recommender is a ``.run-btn``.
 * Excluded symphonies read their display name and a sentence.
 * The Overview carries one pointer line.
 * Every test id the section had on the Overview is still present, state by state.
@@ -34,7 +34,7 @@ from tests.app import _retirement_tab_world as w
 from tests.app import _tenure_review_panel_builders as pb
 
 _RUN_AT_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-_NEVER_RUN_TEXT = "Not run yet \u2014 runs nightly at 03:45 UTC, or use Run now."
+_NEVER_RUN_TEXT = "Not run yet \u2014 runs nightly at 03:45 UTC, or use Run recommender."
 
 
 @pytest.fixture()

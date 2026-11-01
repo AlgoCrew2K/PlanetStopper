@@ -3446,8 +3446,15 @@ def _render_dashboard(
         bot_state.get("last_successful_cycle_at"),
     )
 
+    # While the market is not open the figures are the last session's, so the labels name that day
+    # ("Oct 30") instead of saying today or live; static/index.js writes the same words on a poll.
+    session_day = None
+    if market_state != "open" and trading_session.anchor is not None:
+        session_day = f"{trading_session.anchor.strftime('%b')} {trading_session.anchor.day}"
+
     return render_template(
         "index.html",
+        session_day=session_day,
         engine_phase=engine_phase,
         # The headline's descriptor says "Simulated" while the engine's last cycle placed no real
         # orders; the poll's bot_state carries the same flag (last_execution_mode).
@@ -7104,7 +7111,7 @@ def _build_retirement_pointer(
     reads only what the page already holds, issues no request.
     """
     if not isinstance(last_run, dict):
-        return {"text": "Retirement: not run yet"}
+        return {"text": "Retirement: not run yet (use Run recommender)"}
     stamp = analytics.format_et_stamp(last_run.get("run_at"))
     status = last_run.get("status")
     if status != "ok":
@@ -7215,7 +7222,7 @@ _CORRELATION_FILL_PCT_MAX = 45.0
 
 _CORRELATION_UNDEFINED_TEXT = "undefined"
 _CORRELATION_FILLED_BANDS = ("danger", "warn", "diversifying")
-_CORRELATION_NEXT_RUN_TEXT = "nightly at 03:45 UTC, or Run now on the Retirement tab"
+_CORRELATION_NEXT_RUN_TEXT = "nightly at 03:45 UTC, or Run recommender on the Retirement tab"
 _CORRELATION_NEVER_RUN_TEXT = (
     "No realized series yet: the matrix fills after the next retirement run "
     f"({_CORRELATION_NEXT_RUN_TEXT})."
@@ -8536,9 +8543,16 @@ def get_history(days):
 @app.route("/history")
 def history_page():
     """Render the Guard Alpha History tab (read-only operator surface)."""
+    # While the market is closed the exits are the closed session's, so the first paint names that
+    # day (as static/history.js does once /api/history answers) instead of reading "Today's exits".
+    session = _current_session()[0]
+    exits_label = "Today's exits"
+    if session.market_state != "open":
+        exits_label = f"Exits on {session.anchor.strftime('%b')} {session.anchor.day}"
     return render_template(
         "history.html",
         active_route="history",
+        exits_label=exits_label,
         meta=_build_meta({}, market_state=get_market_state(datetime.now(_ET))),
     )
 

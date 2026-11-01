@@ -36,3 +36,11 @@ The UX review fixes change two primitives on purpose, so the base's rule records
 - Producer call: `python tests/fixtures/dashboard/primitives_baseline/capture_baseline.py --rules-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `38b0cbe8007ec7442cfb127114a8ff58d79b2a24` (templates, static and `app.py` clean). The flag runs the script's own render and reading code (twice, as always), replaces only `resolved` (from the rendered page) and `ordered` (read from `static/layout.css`, where the rules live since the move), and records `rules_revision` (head, time, counts before and after: 23 to 24 each).
 - What differs from the base, read from `git diff` of the file: (1) a new rule `@media (max-width: 700px) .hero-section { padding: 18px 16px 16px; margin-bottom: 16px }`, a smaller hero box on a phone; (2) `.status-pill` gains `white-space: nowrap`, after `align-items`. No other selector's declarations changed, none was removed, and the order of the other 22 rules is unchanged.
 - Sign-off: not needed (producer output; the two differences are the fixes' own).
+
+## Revision: `resolved` and `ordered` for the contrast fix (UX review fix batch)
+
+`.legend-as-of` text carries a stamp, so its colour moved from `--studio-ink-faint` to `--studio-ink-dim` to clear 4.5:1 in both themes. `structure` and `base_sha` are untouched.
+
+- Producer call: `python tests/fixtures/dashboard/primitives_baseline/capture_baseline.py --rules-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `2e114278e95ccb8235fc94e84664242bbf7a499b` (templates and static clean). `rules_revision` now records this run (24 to 24 selectors and rules); the earlier phone-layout revision above is the one before it.
+- What differs, read from `git diff` of the file: `.legend-as-of` `color` only, in `resolved` and in `ordered`. `.mini-stat-note` also changed colour in `static/layout.css` but is not one of the primitive selectors this record holds.
+- Sign-off: not needed (producer output; the one difference is the fix's own).

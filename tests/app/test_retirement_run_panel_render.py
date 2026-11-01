@@ -21,7 +21,7 @@ Pinned data-testids (.claude/tdd-handoff.md "templates/ai_advisor.html"):
   retirement-run-now-status           status text element JS writes via textContent
 
 Pinned copy (case-insensitive substrings; the surrounding words are free):
-  never run          "Not run yet — runs nightly at 03:45 UTC, or use Run now."  (the schedule names its zone)
+  never run          "Not run yet — runs nightly at 03:45 UTC, or use Run recommender."  (the schedule names its zone)
   series_unavailable "series unavailable"
   insufficient_symphonies "insufficient symphonies"
   internal_error     "internal error" + the summary's error_type
@@ -45,7 +45,7 @@ from tests.app._retirement_run_summary_stub import make_summary
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-_NEVER_RUN_TEXT = "Not run yet — runs nightly at 03:45 UTC, or use Run now."
+_NEVER_RUN_TEXT = "Not run yet — runs nightly at 03:45 UTC, or use Run recommender."
 _SUMMARY_ROLE = "RETIREMENT_RUN_SUMMARY"
 _REC_ROLE = "RETIREMENT_RECOMMENDATION"
 
@@ -782,7 +782,7 @@ def _function_body(source: str, name: str) -> str:
 
 
 class TestRunNowMarketHoursHint:
-    """AC-7b: a STATIC hint in the panel that Run now is available outside market
+    """AC-7b: a STATIC hint in the panel that Run recommender is available outside market
     hours (rendered in every state, whatever the market state at render time)."""
 
     def _hint_text(self, body: str) -> str:
@@ -910,7 +910,7 @@ class TestRunNowWiring:
             and "shared" in m.lower()
             for m in messages
         ), (
-            "the market_open message must say Run now is available outside market hours "
+            "the market_open message must say Run recommender is available outside market hours "
             f"because the Composer API is shared with the live engine; literals: {messages}"
         )
 

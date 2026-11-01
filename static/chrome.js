@@ -353,7 +353,7 @@ function _engineLabelState() {
   var body = _engineBody;
   if (body === null) return null;
   if (body.degradedReasons.length) {
-    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons), countdown: true };
+    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons), countdown: body.isOpen };
   }
   if (!body.isOpen) {
     return { text: 'Closed', token: 'ink-dim', title: '', countdown: false };
@@ -382,6 +382,7 @@ function renderEngineLabel() {
   if (dot) dot.style.background = colour;
   label.style.color = colour;
   label.textContent = state.text;
+  document.documentElement.classList.toggle('engine-label-long', state.text === 'Rebalance pause');
   if (wrap) wrap.title = state.title;
   if (countdown) countdown.style.display = state.countdown ? '' : 'none';
 }

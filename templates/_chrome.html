@@ -116,14 +116,27 @@
      mobile layout is a separate design). */
   .shell-nav { display:flex; align-items:center; gap:clamp(8px,1.2vw,20px); min-width:0; }
   .shell-nav-links { display:flex; gap:2px; margin-left:8px; flex-shrink:0; }
-  .shell-nav-status { display:flex; align-items:center; gap:clamp(6px,0.8vw,14px); flex-shrink:1; min-width:0; overflow:hidden; }
+  .shell-nav-status { display:flex; align-items:center; gap:clamp(6px,0.8vw,14px); flex-shrink:0; min-width:0; }
+  /* The wordmark never wraps: a wrapped brand makes the header taller on every page. */
+  .shell-nav > div:first-child { white-space:nowrap; flex-shrink:0; }
+  /* From 1401 to 1500 the ET clock and workspace chip give way only while the long engine label shows (chrome.js sets engine-label-long; tokens.css hides them at 1400 and
+     below), so the longest engine label (Rebalance pause) leaves the countdown whole. */
+  @media (min-width: 1401px) and (max-width: 1500px) {
+    .engine-label-long .studio-nav-wide { display:none !important; }
+  }
   @media (max-width: 1400px) {
     .shell-nav { flex-wrap:wrap; row-gap:16px; }
     /* row-gap leaves room for the active link's underline (bottom:-14px) between wrapped rows */
     .shell-nav-links { flex-wrap:wrap; flex-shrink:1; row-gap:16px; }
     .shell-nav-status { flex-wrap:wrap; overflow:visible; }
   }
+  /* The floating gear sits above the open detail panel (z-index) and covers a value there, so it
+     steps aside while that panel is open. */
+  body:has(#detail-panel.open) [data-testid="tweaks-btn"] { display:none !important; }
   @media (max-width: 700px) {
+    /* On a phone it is smaller and tucked into the corner, so it covers as little as it can.
+       The button's inline style sets its place, so !important. */
+    [data-testid="tweaks-btn"] { width:26px !important; height:26px !important; bottom:6px !important; right:6px !important; font-size:12px !important; opacity:0.6; }
     /* Force run now shows the route's answer (a sentence) for a few seconds; on a phone it
        wraps inside the screen instead of widening the page. The button's own inline style
        says nowrap, so only !important can override it here. */
