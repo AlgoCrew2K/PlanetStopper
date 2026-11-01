@@ -2328,7 +2328,22 @@
         }
     }
 
+    var RULE_LABEL_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    // "Oct 30" from the ISO digits of the session day (no Date, so the browser zone plays no
+    // part) while the market is closed; "today" while open or when the day is unknown.
+    function ruleTodayLabel(meta) {
+        var anchor = meta && meta.portfolio && meta.portfolio.window_anchor;
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(anchor));
+        if (!meta || meta.system_online !== false || !m || Number(m[2]) < 1 || Number(m[2]) > 12) {
+            return 'today';
+        }
+        return RULE_LABEL_MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]);
+    }
+    var _ruleTodayLabel = 'today';
+
     function syncRuleRow(rowEl, sleeveId, rule) {
+        setTextIfChanged(fieldOf(rowEl, 'rule-today-label'), _ruleTodayLabel);
         setTextIfChanged(fieldOf(rowEl, 'rule-name'), String(rule.name));
         setTextIfChanged(fieldOf(rowEl, 'rule-mode'), '(' + rule.mode + ')');
         setTextIfChanged(fieldOf(rowEl, 'rule-today'), String(rule.today_fires));
@@ -2490,6 +2505,7 @@
     function renderDashboardPanels(data) {
         var panels = data && data.dashboard_panels;
         if (!panels || typeof panels !== 'object') return;
+        _ruleTodayLabel = ruleTodayLabel(data.meta);
         if (Array.isArray(panels.sleeves)) updateSleevesPanel(panels.sleeves);
         if (panels.cvar && typeof panels.cvar === 'object' && panels.cvar.ok === true) {
             renderCvarPanel(panels.cvar.diagnostic);
