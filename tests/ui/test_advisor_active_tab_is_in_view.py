@@ -33,8 +33,7 @@ TAB_WIDTH = 120
 ROW_WIDTH = 375
 FIRST_HIDDEN_INDEX = ROW_WIDTH // TAB_WIDTH + 1
 
-GEOMETRY = (
-    r"""
+GEOMETRY = r"""
 const tabs = H.$$('[role="tab"][data-tab]');
 const row = tabs[0].parentNode;
 const W = __W__, VIEW = __VIEW__;
@@ -69,7 +68,6 @@ const inView = function (name) {
 };
 const pageJumps = function () { return calls.filter(function (c) { return c.block !== 'nearest'; }); };
 """.replace("__W__", str(TAB_WIDTH)).replace("__VIEW__", str(ROW_WIDTH))
-)
 
 RUNS = route(r"/api/autotune-runs$", {"json": []}, method="GET")
 

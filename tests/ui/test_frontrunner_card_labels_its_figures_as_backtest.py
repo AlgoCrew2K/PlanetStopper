@@ -112,7 +112,9 @@ def test_a_stored_window_is_named_in_the_label(source):
     near = " | ".join(_labels_near_the_table(card))
     assert _says_backtest(near)
     for key, date in WINDOW.items():
-        assert date in near, f"{source}: the stored {key} {date} is not shown beside the table: {near}"
+        assert date in near, (
+            f"{source}: the stored {key} {date} is not shown beside the table: {near}"
+        )
 
 
 @pytest.mark.parametrize("source", list(SOURCES))

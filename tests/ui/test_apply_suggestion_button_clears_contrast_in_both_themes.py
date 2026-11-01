@@ -32,9 +32,7 @@ def _colours() -> tuple[str, str]:
     source = JS.read_text(encoding="utf-8")
     start = source.index(f'class="{CLASS_NAME}"')
     segment = source[start : source.index("Apply suggestion", start)]
-    inline = dict(
-        re.findall(r"(background|color):'\s*\+\s*(cssVar\('--[\w-]+'\)|[^;']+)", segment)
-    )
+    inline = dict(re.findall(r"(background|color):'\s*\+\s*(cssVar\('--[\w-]+'\)|[^;']+)", segment))
     text = inline.get("color")
     fill = inline.get("background")
     for _src, _sel, props in contrast.class_rules(CLASS_NAME):

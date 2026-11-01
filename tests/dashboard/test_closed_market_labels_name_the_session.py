@@ -96,7 +96,9 @@ class Worlds:
         performance = cw.world.client.get(
             f"/api/performance?scope=symphony&symphony_id={self.symphony_id}&days=60"
         )
-        assert performance.status_code == 200, f"/api/performance answered {performance.status_code}"
+        assert performance.status_code == 200, (
+            f"/api/performance answered {performance.status_code}"
+        )
         self.closed_performance = performance.get_json()
         self.closed_now = utc_of(*SATURDAY).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         write_engine_cycle(cw.world, local(MONDAY, "10:00:20"), 1)
@@ -191,7 +193,9 @@ class TestAfterThePoll:
             worlds.closed,
             "const first = labels(); await poll(H.bodies.state); return { first: first, after: labels() };",
         )
-        assert result["after"] == result["first"], "a label changed between first paint and the poll"
+        assert result["after"] == result["first"], (
+            "a label changed between first paint and the poll"
+        )
         assert_closed_wording(result["after"], worlds.session, "after the closed poll")
 
     def test_a_panel_opened_while_closed_names_the_session_in_its_events_line(self, worlds):

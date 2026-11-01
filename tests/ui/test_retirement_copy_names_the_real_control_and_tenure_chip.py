@@ -38,6 +38,7 @@ import pytest
 import advisors.tenure_review as tr
 import app as app_module
 from advisors import composer_backtest_client as client
+from tests.advisors.test_tenure_review_verdict import _fig, _item, _unavailable
 from tests.ui._page_js_harness import render_page
 
 REPO = Path(__file__).resolve().parents[2]
@@ -97,18 +98,6 @@ class TestTheControlIsNamedByItsLabel:
 # ---------------------------------------------------------------------------
 
 
-def _fig(value, unit="percent"):
-    return {"value": value, "unit": unit}
-
-
-def _item(status="available", reason=None, figures=None, **extra):
-    return {"status": status, "reason": reason, "figures": figures or {}, **extra}
-
-
-def _unavailable(reason="bases differ", **extra):
-    return _item("unavailable", reason, **extra)
-
-
 def _evidence(**overrides):
     base = {
         "performance": _item(figures={"total_return": _fig(12.0)}),
@@ -146,9 +135,7 @@ class TestTheChipDoesNotContradictThePanelsBelowIt:
         assert not re.search(r"no evidence", text, re.I), (holding, text)
 
     def test_with_every_item_empty_the_chip_still_says_something(self):
-        evidence = {
-            name: _unavailable("no history") for name in tr.EVIDENCE_ITEM_ORDER
-        }
+        evidence = {name: _unavailable("no history") for name in tr.EVIDENCE_ITEM_ORDER}
         got = tr.decide_verdict(evidence)
         assert got["verdict"] is None
         assert got["verdict_text"] and got["verdict_text"].strip()

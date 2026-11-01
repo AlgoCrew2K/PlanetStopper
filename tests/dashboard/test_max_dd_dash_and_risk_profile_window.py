@@ -70,7 +70,9 @@ class TestAnUnknownMaxDdFigureHasNoSignColour:
             cumulative_return={"dry_run": None, "if_held": None},
         )
         for testid in MDD:
-            match = re.search(rf'data-testid="{testid}"[^>]*class="([^"]*)"[^>]*>(.*?)</span>', html, re.S)
+            match = re.search(
+                rf'data-testid="{testid}"[^>]*class="([^"]*)"[^>]*>(.*?)</span>', html, re.S
+            )
             assert match, f"the render holds no {testid}"
             text = unescape(re.sub(r"<[^>]+>", "", match.group(2))).strip()
             assert _is_dash(text), f"precondition: {testid} reads {text!r}"

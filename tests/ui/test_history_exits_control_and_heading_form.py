@@ -35,18 +35,12 @@ from tests.ui._shell_support import (  # noqa: F401
     _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
     _stub_get_api_state_dict,
-    seed_history_exits,
 )
-from tests.ui.test_history_refresh_client import drill_target
+from tests.ui.test_history_refresh_client import days, drill_target  # noqa: F401
 
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 HISTORY = r"/api/history/(\d+|ytd)$"
 ISO_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
-
-
-@pytest.fixture
-def days(tmp_path, monkeypatch):
-    return seed_history_exits(tmp_path, monkeypatch.setattr)
 
 
 def _button_and_ancestors():
@@ -61,10 +55,7 @@ def _button_and_ancestors():
         if node is button:
             chain.extend(path)
             return True
-        for child in node["c"]:
-            if isinstance(child, dict) and walk(child, path + [node]):
-                return True
-        return False
+        return any(isinstance(child, dict) and walk(child, path + [node]) for child in node["c"])
 
     assert walk(tree, [])
     return button, chain

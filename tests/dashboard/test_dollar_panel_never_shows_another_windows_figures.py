@@ -50,8 +50,7 @@ PANEL_FIELDS = {
 }
 FIGURE_FIELDS = tuple(PANEL_FIELDS)
 
-SNAPSHOT = (
-    r"""
+SNAPSHOT = r"""
 const D = H.sandbox.document;
 const FIELDS = __FIELDS__;
 const panelNode = function () { return D.querySelector('[data-testid="dollar-saved-panel"]'); };
@@ -84,7 +83,6 @@ const snap = function (name) {
 };
 const asked = function (token) { return H.requests(new RegExp('^/api/guard-alpha-summary\\?window=' + token + '$')).length; };
 """.replace("__FIELDS__", json.dumps(PANEL_FIELDS))
-)
 
 
 def _bodies() -> dict:
@@ -99,7 +97,9 @@ def _bodies() -> dict:
         ),
         "sum1y": sup.summary_with(base["1y"], saved=-77.0, events=3, coverage=(3, 3)),
         "empty90": {**base["90d"], "guard_event_count": 0},
-        "stateNew": sup.with_stamp(world["next"]["state"], sup.later_stamp(sup.render_stamp(world))),
+        "stateNew": sup.with_stamp(
+            world["next"]["state"], sup.later_stamp(sup.render_stamp(world))
+        ),
     }
 
 
@@ -160,7 +160,9 @@ class TestUntilThePickedWindowAnswers:
         self, stream_down
     ):
         body = (
-            "H.route(" + ROUTE_90D + ", { pending: true });\n"
+            "H.route("
+            + ROUTE_90D
+            + ", { pending: true });\n"
             + PICK_90D
             + r"""
         const during = snap('90d');
@@ -174,7 +176,9 @@ class TestUntilThePickedWindowAnswers:
 
     def test_a_held_pick_is_not_called_a_failure(self):
         body = (
-            "H.route(" + ROUTE_90D + ", { pending: true });\n"
+            "H.route("
+            + ROUTE_90D
+            + ", { pending: true });\n"
             + PICK_90D
             + r"""
         return { during: snap('90d') };
@@ -208,7 +212,12 @@ FAILURES = [
     "{ status: 200, body: { error: 'no summary' } }",
     "{ status: 200, badJson: true }",
 ]
-FAILURE_IDS = ["server error", "connection lost", "answer that is not a summary", "unparseable answer"]
+FAILURE_IDS = [
+    "server error",
+    "connection lost",
+    "answer that is not a summary",
+    "unparseable answer",
+]
 
 
 class TestWhenTheSummaryCannotBeLoaded:
@@ -218,7 +227,11 @@ class TestWhenTheSummaryCannotBeLoaded:
         self, spec, stream_down
     ):
         body = (
-            "H.route(" + ROUTE_90D + ", " + spec + ");\n"
+            "H.route("
+            + ROUTE_90D
+            + ", "
+            + spec
+            + ");\n"
             + PICK_90D
             + r"""
         const failed = snap('90d');
@@ -240,7 +253,11 @@ class TestWhenTheSummaryCannotBeLoaded:
         self, spec, stream_down
     ):
         body = (
-            "H.route(" + ROUTE_90D + ", " + spec + ");\n"
+            "H.route("
+            + ROUTE_90D
+            + ", "
+            + spec
+            + ");\n"
             + PICK_90D
             + r"""
         const askedAtFailure = asked('90d');
@@ -261,7 +278,9 @@ class TestWhenTheSummaryCannotBeLoaded:
 
     def test_a_pick_of_another_window_clears_the_notice_and_writes_that_windows_figures(self):
         body = (
-            "H.route(" + ROUTE_90D + ", { status: 500, body: { status: 'error' } });\n"
+            "H.route("
+            + ROUTE_90D
+            + ", { status: 500, body: { status: 'error' } });\n"
             + PICK_90D
             + r"""
         const failed = snap('90d');
@@ -277,7 +296,9 @@ class TestWhenTheSummaryCannotBeLoaded:
 
     def test_an_answer_with_no_guard_events_is_a_good_answer_without_a_failure_notice(self):
         body = (
-            "H.route(" + ROUTE_90D + ", { body: H.bodies.empty90 });\n"
+            "H.route("
+            + ROUTE_90D
+            + ", { body: H.bodies.empty90 });\n"
             + PICK_90D
             + r"""
         return { shown: snap('90d') };

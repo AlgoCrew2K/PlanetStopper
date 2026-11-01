@@ -84,7 +84,9 @@ def test_every_rule_that_colours_the_shared_class_uses_a_token_that_clears_the_b
     colouring = [r for r in rules if "color" in r[2]]
     assert colouring, f".{class_name} has no colour rule; the test cannot read what it resolves to"
     for source, selector, props in colouring:
-        assert_clears_bar(props["color"], f"{source}: {selector}", opacity=_opacity(props.get("opacity")))
+        assert_clears_bar(
+            props["color"], f"{source}: {selector}", opacity=_opacity(props.get("opacity"))
+        )
 
 
 @pytest.mark.parametrize("class_name", SHARED_CLASSES)
@@ -119,12 +121,16 @@ ADVISOR_ELEMENTS = {
 
 
 @pytest.mark.parametrize("name", list(ADVISOR_ELEMENTS))
-def test_the_advisor_basis_and_stamp_lines_use_only_classes_and_inline_colours_that_clear_the_bar(name):
+def test_the_advisor_basis_and_stamp_lines_use_only_classes_and_inline_colours_that_clear_the_bar(
+    name,
+):
     source = (TEMPLATES / "ai_advisor.html").read_text(encoding="utf-8")
     for attrs in _tag_attributes(source, ADVISOR_ELEMENTS[name]):
         inline = contrast.style_properties(attrs.get("style"))
         if "color" in inline:
-            assert_clears_bar(inline["color"], f"{name}: inline colour", opacity=_opacity(inline.get("opacity")))
+            assert_clears_bar(
+                inline["color"], f"{name}: inline colour", opacity=_opacity(inline.get("opacity"))
+            )
         for class_name in attrs.get("class", "").split():
             for source_file, selector, props in contrast.class_rules(class_name):
                 if "color" in props:
@@ -177,9 +183,9 @@ def test_the_sessions_caption_over_a_standby_tape_is_built_with_text_that_clears
         assert candidates, (
             f"the caption's inline colour {result['color']!r} is not any design token's value"
         )
-        assert any(
-            contrast.weakest(t, opacity=inline_opacity)[1] >= BAR for t in candidates
-        ), f"the caption's inline colour is one of {candidates}; none clears {BAR}:1"
+        assert any(contrast.weakest(t, opacity=inline_opacity)[1] >= BAR for t in candidates), (
+            f"the caption's inline colour is one of {candidates}; none clears {BAR}:1"
+        )
     for class_name in result["classes"].split():
         for source_file, selector, props in contrast.class_rules(class_name):
             if "color" in props:
@@ -223,11 +229,11 @@ def test_the_hero_lifetime_mdd_line_and_its_figure_clear_the_bar():
         inline = contrast.style_properties(attrs.get("style"))
         assert "color" in inline, "the hero Lifetime MDD line carries no colour of its own"
         assert_clears_bar(inline["color"], "the hero Lifetime MDD line")
-    strong = re.search(
-        r'data-testid="mdd-lifetime-scalar".*?<strong([^>]*)>', source, flags=re.S
-    )
+    strong = re.search(r'data-testid="mdd-lifetime-scalar".*?<strong([^>]*)>', source, flags=re.S)
     assert strong, "the hero Lifetime MDD line has no figure element"
-    inline = contrast.style_properties(dict(re.findall(r'([\w-]+)="([^"]*)"', strong.group(1))).get("style"))
+    inline = contrast.style_properties(
+        dict(re.findall(r'([\w-]+)="([^"]*)"', strong.group(1))).get("style")
+    )
     if "color" in inline:
         assert_clears_bar(inline["color"], "the hero Lifetime MDD figure")
 

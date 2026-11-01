@@ -35,9 +35,7 @@ SURFACES: dict[str, tuple[str, ...]] = {
 }
 
 _HEX = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
-_RGBA = re.compile(
-    r"^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$"
-)
+_RGBA = re.compile(r"^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$")
 _VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*(?:,[^)]*)?\)$")
 _BLOCK = re.compile(r"([^{}]+)\{([^{}]*)\}")
 _COMMENT = re.compile(r"/\*.*?\*/", re.S)
@@ -195,7 +193,11 @@ def class_rules(class_name: str) -> list[tuple[str, str, dict[str, str]]]:
                 if not subject.search(last) or re.search(r":(hover|focus|active|disabled)", last):
                     continue
                 props = style_properties(body)
-                kept = {k: v for k, v in props.items() if k in ("color", "opacity", "background", "background-color")}
+                kept = {
+                    k: v
+                    for k, v in props.items()
+                    if k in ("color", "opacity", "background", "background-color")
+                }
                 if kept:
                     found.append((source, selector, kept))
     return found

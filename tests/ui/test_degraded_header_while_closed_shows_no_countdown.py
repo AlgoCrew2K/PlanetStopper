@@ -54,7 +54,9 @@ def _header_run(path: str, answers: list[dict], scenario: str, at):
 
 @pytest.mark.parametrize("path", HEADER_PAGES)
 class TestHeaderPages:
-    def test_closed_and_degraded_hides_the_countdown_at_first_read_and_after_a_later_one(self, path):
+    def test_closed_and_degraded_hides_the_countdown_at_first_read_and_after_a_later_one(
+        self, path
+    ):
         result = _header_run(
             path,
             [
@@ -130,16 +132,14 @@ class TestDashboard:
         return {"closed": closed, "opened": opened, "recovered": recovered}
 
     def test_closed_and_degraded_hides_the_countdown(self):
-        result = _dashboard(
-            "await poll(H.bodies.closed); return read();", **self._bodies()
-        )
+        result = _dashboard("await poll(H.bodies.closed); return read();", **self._bodies())
         assert result["label"] == "Degraded", result
-        assert result["countdownHidden"], "the dashboard's degraded header shows a countdown while closed"
+        assert result["countdownHidden"], (
+            "the dashboard's degraded header shows a countdown while closed"
+        )
 
     def test_open_and_degraded_keeps_the_countdown(self):
-        result = _dashboard(
-            "await poll(H.bodies.opened); return read();", **self._bodies()
-        )
+        result = _dashboard("await poll(H.bodies.opened); return read();", **self._bodies())
         assert result["label"] == "Degraded", result
         assert not result["countdownHidden"], "an open degraded dashboard header lost its countdown"
 

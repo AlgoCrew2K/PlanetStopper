@@ -72,7 +72,9 @@ class TestNothingPicked:
         assert r["thrown"] is None
         assert r["theme"] == theme
         assert r["atRun"] in NO_INLINE, f"an accent nobody picked was written inline: {r['atRun']}"
-        assert r["afterReady"] in NO_INLINE, f"written once the document was ready: {r['afterReady']}"
+        assert r["afterReady"] in NO_INLINE, (
+            f"written once the document was ready: {r['afterReady']}"
+        )
 
     def test_changing_the_theme_without_a_pick_still_leaves_the_accent_to_the_theme(self):
         r = _node(
@@ -89,7 +91,9 @@ class TestNothingPicked:
         """.replace("__KEY__", INLINE)
         )
         for name, value in r.items():
-            assert value in NO_INLINE, f"{name}: an accent nobody picked was written inline: {value}"
+            assert value in NO_INLINE, (
+                f"{name}: an accent nobody picked was written inline: {value}"
+            )
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_a_store_written_by_the_earlier_version_is_not_taken_for_a_pick(self, theme):
@@ -117,7 +121,9 @@ class TestAPickedAccentStillApplies:
         page.tools().set('theme', '__THEME__');
         page.tools().set('accent', '__PICK__');
         return { inline: page.attrs['__KEY__'], theme: page.root.getAttribute('data-theme') };
-        """.replace("__THEME__", theme).replace("__PICK__", PICKED).replace("__KEY__", INLINE)
+        """.replace("__THEME__", theme)
+            .replace("__PICK__", PICKED)
+            .replace("__KEY__", INLINE)
         )
         assert r["theme"] == theme
         assert r["inline"] == PICKED
@@ -162,7 +168,9 @@ class TestAPickedAccentStillApplies:
         page.tools().set('accent', '__A__');
         page.tools().set('accent', '__B__');
         return page.attrs['__KEY__'];
-        """.replace("__A__", PICKED).replace("__B__", OTHER_PICK).replace("__KEY__", INLINE)
+        """.replace("__A__", PICKED)
+            .replace("__B__", OTHER_PICK)
+            .replace("__KEY__", INLINE)
         )
         assert r == OTHER_PICK
 

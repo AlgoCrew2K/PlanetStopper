@@ -57,13 +57,6 @@ def _breach_run() -> dict:
     return {**_clear_run(), "id": 702, "spec_bundle_id": "bundle-breach", "s_count": 80}
 
 
-@pytest.fixture
-def client():
-    app_module.app.config["TESTING"] = True
-    with app_module.app.test_client() as c:
-        yield c
-
-
 @pytest.fixture(autouse=True)
 def _no_developer_env(tmp_path):
     with patch.object(app_module, "ENV_FILE_PATH", str(tmp_path / "no.env")):
@@ -127,7 +120,9 @@ class TestRowsWithText:
         note = rows[0]["raw_response"][NOTE_KEY]
         html = _render(body)
         cards = _cards(html)
-        assert len(cards) == 2, f"expected one card per row with something to say, drew {len(cards)}"
+        assert len(cards) == 2, (
+            f"expected one card per row with something to say, drew {len(cards)}"
+        )
         assert "CLEAR" in cards[0].upper() and note in cards[0], cards[0]
         assert "BREACH" in cards[1].upper(), cards[1]
 
@@ -181,9 +176,9 @@ class TestRowsWithNothingToSay:
     def test_when_no_row_has_anything_to_say_the_section_says_so_in_words(self, client):
         self._empty_row()
         text = _section_text(_render(_answer(client)))
-        assert re.search(r"no (advisor )?(suggestions|observations|notes|findings|detail)", text, re.I), (
-            "the section drew nothing and said nothing"
-        )
+        assert re.search(
+            r"no (advisor )?(suggestions|observations|notes|findings|detail)", text, re.I
+        ), "the section drew nothing and said nothing"
 
     def test_an_empty_card_never_sits_beside_a_real_one(self, client):
         run_overfitting_conscience(_clear_run(), ledger_rows=[])

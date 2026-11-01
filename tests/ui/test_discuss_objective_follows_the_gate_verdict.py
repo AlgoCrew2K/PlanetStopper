@@ -50,8 +50,7 @@ ARTIFACT = {
     "calmar": 1.1,
 }
 
-SCENARIO = (
-    r"""
+SCENARIO = r"""
 await H.boot();
 const artifact = __ARTIFACT__;
 const out = {};
@@ -68,7 +67,6 @@ await H.settle();
 out.missing = { objective: H.text('#artifact-objective'), pill: H.text('#artifact-gate-pill') };
 return out;
 """.replace("__ARTIFACT__", json.dumps(ARTIFACT)).replace("__VERDICTS__", json.dumps(VERDICTS))
-)
 
 CLAIM = re.compile(r"\b(cleared|passed|survived)\b", re.I)
 NEGATION = re.compile(
