@@ -179,21 +179,21 @@ class TestNetOfFrictionTemplateElementsExist:
 
 class TestFetchGuardAlphaSummaryRendersNetOfFrictionLines:
     def test_references_the_snapshot_net_of_friction_response_field(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "cumulative_saved_dollars_net_of_friction" in block, (
             "AC-5: fetchGuardAlphaSummary must read "
             "data.cumulative_saved_dollars_net_of_friction from the route response"
         )
 
     def test_references_the_realized_net_of_friction_response_field(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "saved_dollars_realized_net_of_friction" in block, (
             "AC-5: fetchGuardAlphaSummary must read "
             "data.saved_dollars_realized_net_of_friction from the route response"
         )
 
     def test_writes_the_new_snapshot_headline_element(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "dollar-saved-net-of-friction-headline" in block, (
             "fetchGuardAlphaSummary must getElementById the new snapshot "
             "net-of-friction headline element to write into it"
@@ -201,7 +201,7 @@ class TestFetchGuardAlphaSummaryRendersNetOfFrictionLines:
         assert "dollar-saved-net-of-friction-verb" in block
 
     def test_writes_the_new_realized_headline_element(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         assert "dollar-saved-realized-net-of-friction-headline" in block
         assert "dollar-saved-realized-net-of-friction-verb" in block
 
@@ -210,7 +210,7 @@ class TestFetchGuardAlphaSummaryRendersNetOfFrictionLines:
         never the pre-existing headlineEl (dollar-saved-headline) or
         realizedHeadlineEl (dollar-saved-realized-headline) variables that
         already carry the gross figures."""
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         net_idx = block.find("net-of-friction")
         assert net_idx != -1, "no net-of-friction render code found at all"
         # The gross headline's own getElementById call must not be the SAME
@@ -230,7 +230,7 @@ class TestFetchGuardAlphaSummaryRendersNetOfFrictionLines:
     def test_no_naked_minus_sign_on_the_net_of_friction_lines(self):
         """Reuses the DE-GAS-COHERENCE-001 display contract already enforced
         for the gross/realized lines: ABS magnitude, no '-$' literal."""
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         net_idx = block.find("cumulative_saved_dollars_net_of_friction")
         assert net_idx != -1
         # A window around the net-of-friction read/render logic -- wide enough
@@ -242,7 +242,7 @@ class TestFetchGuardAlphaSummaryRendersNetOfFrictionLines:
         )
 
     def test_sign_conditional_word_and_color_present_for_snapshot_net_line(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         net_idx = block.find("cumulative_saved_dollars_net_of_friction")
         assert net_idx != -1
         net_render_block = block[net_idx : net_idx + 600]
@@ -262,7 +262,7 @@ class TestFetchGuardAlphaSummaryRendersNetOfFrictionLines:
         )
 
     def test_sign_conditional_word_and_color_present_for_realized_net_line(self):
-        block = _js_block(_js(), "function fetchGuardAlphaSummary", span=6000)
+        block = _extract_function_with_signature(_js(), "fetchGuardAlphaSummary")
         net_idx = block.find("saved_dollars_realized_net_of_friction")
         assert net_idx != -1
         net_render_block = block[net_idx : net_idx + 600]
@@ -333,6 +333,12 @@ def _run_fetch_guard_alpha_summary(fake_data: dict) -> dict:
         re.findall(r"^[ \t]*var\s+_summary\w+\s*=[^;\n]*;", _js(), re.MULTILINE)
     )
     assert "_summaryRequestSeq" in state_decls, "the request-sequence declaration was not found"
+    # The request timeout the function arms its AbortController with, declared at page scope in
+    # the real file; taken from there so the harness never carries its own copy of the number.
+    timeout_decl = re.search(
+        r"^[ \t]*var\s+STATE_REQUEST_TIMEOUT_MS\s*=[^;\n]*;", _js(), re.MULTILINE
+    )
+    assert timeout_decl is not None, "the request-timeout declaration was not found"
     el_ids_js = json.dumps(_PANEL_ELEMENT_IDS)
 
     harness = f"""
@@ -340,6 +346,7 @@ def _run_fetch_guard_alpha_summary(fake_data: dict) -> dict:
     // The picked window, defined elsewhere in the page script: the answer applies only while
     // the window it was asked for is still the picked one.
     var _heroWindow = 'all';
+    {timeout_decl.group(0)}
     {state_decls}
 
     var __els = {{}};
