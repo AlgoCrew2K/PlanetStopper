@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import database
-from tests.app._closed_session_world import ClosedWorld, build_history_world
+from tests.app._closed_session_world import ClosedWorld, build_history_world, utc_of
 from tests.app._refresh_timing_frozen_world import SYMPHONY_IDS
 from tests.app.test_closed_market_numbers_never_move import local, write_engine_cycle
 
@@ -148,13 +148,13 @@ def test_the_exits_of_the_exit_triggers_table_hold_when_no_post_mortem_is_writte
     """exit_triggers source: the session's own rows, never the day before's, until the next open."""
     cw = world(monkeypatch, tmp_path)
     (cw.post_mortem_dir / f"post_mortem_{FRIDAY}.json").unlink()
-    seed_exit_trigger(THURSDAY, "11:15:00", 1, "Take Profit", 4.0)
+    seed_exit_trigger(THURSDAY, "11:15:00", 0, "Take Profit", 4.0)
     seed_exit_trigger(FRIDAY, "10:05:00", 0, "Trailing Stop", 2.0)
-    seed_exit_trigger(FRIDAY, "13:40:00", 2, "VWAP Breakdown", 3.0)
+    seed_exit_trigger(FRIDAY, "13:40:00", 1, "VWAP Breakdown", 3.0)
     cw.at(*INSTANTS["Fri 16:30 ET"])
     reference = cw.poll(HISTORY_PATH)["todays_exits"]
     assert sorted((r["symphony_id"], r["reason"]) for r in reference) == sorted(
-        [(SYMPHONY_IDS[0], "Trailing Stop"), (SYMPHONY_IDS[2], "VWAP Breakdown")]
+        [(SYMPHONY_IDS[0], "Trailing Stop"), (SYMPHONY_IDS[1], "VWAP Breakdown")]
     ), "fixture sanity: at the close the table holds the session's own two rows"
 
     cw.at(*INSTANTS[instant])
@@ -170,14 +170,14 @@ def test_while_the_market_is_open_the_exits_are_todays_and_the_payload_says_so(
     monkeypatch, tmp_path
 ):
     cw = world(monkeypatch, tmp_path)
-    seed_exit_trigger(FRIDAY, "13:40:00", 2, "VWAP Breakdown", 3.0)
-    seed_exit_trigger(MONDAY, "09:50:00", 1, "Take Profit", 5.0)
+    seed_exit_trigger(FRIDAY, "13:40:00", 1, "VWAP Breakdown", 3.0)
+    seed_exit_trigger(MONDAY, "09:50:00", 0, "Take Profit", 5.0)
     write_engine_cycle(cw.world, local(MONDAY, "10:00:20"), 1)
     cw.at(MONDAY, "10:01:00")
 
     body = cw.poll(HISTORY_PATH)
     assert [(r["symphony_id"], r["reason"]) for r in body["todays_exits"]] == [
-        (SYMPHONY_IDS[1], "Take Profit")
+        (SYMPHONY_IDS[0], "Take Profit")
     ], "an open market's table is today's exits only"
     assert body.get("todays_exits_day") == MONDAY
     assert body.get("todays_exits_market_closed") is False
@@ -192,7 +192,7 @@ SLEEVE_FIRES = (
     "2026-10-29 15:00:00",  # Thursday 11:00 ET
     "2026-10-30 14:30:00",  # Friday 10:30 ET
     "2026-10-30 19:45:00",  # Friday 15:45 ET
-    "2026-11-02 14:45:00",  # Monday 09:45 ET
+    "2026-11-02 13:30:00",  # Monday 08:30 ET
 )
 
 
@@ -200,10 +200,16 @@ def et_day_of(fired_at: str) -> str:
     return datetime.fromisoformat(fired_at).replace(tzinfo=UTC).astimezone(ET).date().isoformat()
 
 
-def seed_sleeve_with_fires() -> int:
+def fires_by(day: str, clock: str) -> list[str]:
+    """The seeded fires that had happened by the ET instant (no fire is in the clock's future)."""
+    now = utc_of(day, clock)
+    return [f for f in SLEEVE_FIRES if datetime.fromisoformat(f).replace(tzinfo=UTC) <= now]
+
+
+def seed_sleeve_with_fires(fired: list[str]) -> int:
     sleeve = database.create_sleeve("Income sleeve", 1000.0, envelope_json="{}")
     rule = database.create_sleeve_rule(sleeve, "Trim on drawdown", json_doc="{}")
-    for fired_at in SLEEVE_FIRES:
+    for fired_at in fired:
         database.insert_sleeve_rule_fire(rule, sleeve, "buy", "ENTRY", "SHADOW", fired_at=fired_at)
     return rule
 
@@ -221,10 +227,11 @@ def test_the_rule_fire_count_of_the_closed_session_holds_until_the_next_open(
     monkeypatch, tmp_path, instant
 ):
     cw = world(monkeypatch, tmp_path)
-    seed_sleeve_with_fires()
+    fired = fires_by(*INSTANTS[instant])
+    seed_sleeve_with_fires(fired)
     cw.at(*INSTANTS[instant])
     anchor = anchor_of(cw)
-    expected = sum(1 for fired_at in SLEEVE_FIRES if et_day_of(fired_at) == anchor)
+    expected = sum(1 for fired_at in fired if et_day_of(fired_at) == anchor)
     assert expected >= 2, "fixture sanity: the session has fires, and other days have their own"
 
     polled, printed = polled_today_fires(cw)
@@ -239,10 +246,11 @@ def test_the_rule_fire_count_of_the_closed_session_holds_until_the_next_open(
 
 def test_while_the_market_is_open_the_rule_fire_count_is_todays(monkeypatch, tmp_path):
     cw = world(monkeypatch, tmp_path)
-    seed_sleeve_with_fires()
+    fired = fires_by(MONDAY, "10:01:00")
+    seed_sleeve_with_fires(fired)
     write_engine_cycle(cw.world, local(MONDAY, "10:00:20"), 1)
     cw.at(MONDAY, "10:01:00")
-    expected = sum(1 for fired_at in SLEEVE_FIRES if et_day_of(fired_at) == MONDAY)
+    expected = sum(1 for fired_at in fired if et_day_of(fired_at) == MONDAY)
     assert expected == 1, "fixture sanity: one fire today, others on earlier days"
 
     polled, printed = polled_today_fires(cw)
