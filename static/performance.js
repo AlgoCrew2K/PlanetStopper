@@ -929,9 +929,13 @@
     }
 
     function drawExitTurnoverFromLastGood() {
-        renderExitTurnover(_turnoverOrder
-            .filter(function (id) { return Object.prototype.hasOwnProperty.call(_lastGoodTurnover, id); })
-            .map(function (id) { return { symphony_id: id, turnover: _lastGoodTurnover[id] }; }));
+        // A symphony whose read failed and has no earlier good row gets a row of dashes.
+        renderExitTurnover(_turnoverOrder.map(function (id) {
+            return {
+                symphony_id: id,
+                turnover: Object.prototype.hasOwnProperty.call(_lastGoodTurnover, id) ? _lastGoodTurnover[id] : null
+            };
+        }));
     }
 
     // AC-8 fetch chain: sources the symphony-id list from

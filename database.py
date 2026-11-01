@@ -4042,17 +4042,15 @@ def get_exit_turnover_stats(symphony_id: str, *, now_utc: "datetime | None" = No
     Finding C). Re-entry legs are not counted -- exit_triggers only ever
     records exit events (documented limitation, not a bug).
 
-    Never raises -- an empty table or any DB error degrades to
-    {"exit_count": 0, "coverage_days": 0} for every window.
+    An empty table reads as {"exit_count": 0, "coverage_days": 0} for every window. A database
+    error is raised, never read as that zero: a failed read cannot be told from a symphony with no
+    exits, so the caller states the failure.
     """
     if now_utc is None:
         now_utc = datetime.now(UTC)
 
-    zero_result = {
-        window: {"exit_count": 0, "coverage_days": 0} for window in _TURNOVER_WINDOWS_DAYS
-    }
+    conn = get_connection()
     try:
-        conn = get_connection()
         earliest_row = conn.execute(
             "SELECT MIN(ts_utc) FROM exit_triggers WHERE symphony_id = ?",
             (symphony_id,),
@@ -4076,11 +4074,12 @@ def get_exit_turnover_stats(symphony_id: str, *, now_utc: "datetime | None" = No
                 "exit_count": exit_count,
                 "coverage_days": min(window, actual_days),
             }
-        conn.close()
         return result
     except Exception as exc:
-        logging.error("get_exit_turnover_stats failed for %s: %s", symphony_id, exc)
-        return zero_result
+        logging.error("get_exit_turnover_stats failed: %s", type(exc).__name__)
+        raise
+    finally:
+        conn.close()
 
 
 def compute_est_annual_friction_drag_pct(turnover_stats: dict, friction_pct: float) -> float:
