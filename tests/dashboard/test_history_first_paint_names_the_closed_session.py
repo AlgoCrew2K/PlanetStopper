@@ -15,7 +15,7 @@ heading tests use (``session_label``). ``static/history.js`` runs unmodified ove
 Contract pinned
 * Closed first paint: the exits heading and the (hidden) return button name the session date and do not
   say "Today".
-* Open first paint: both read "Today's exits", unchanged.
+* Open first paint, once a cycle has committed since the open: both read "Today's exits", unchanged.
 * After the load on the closed day, the heading is the first paint's text plus the count, so no label
   changes after load.
 """
@@ -28,6 +28,7 @@ from datetime import date
 import pytest
 
 from tests.app._closed_session_world import build_history_world
+from tests.app.test_closed_market_numbers_never_move import local, write_engine_cycle
 from tests.app.test_history_exits_hold_while_closed import anchor_of
 from tests.app.test_sleeve_rule_fires_names_the_closed_session import session_label
 from tests.dashboard._index_js_harness import find_all, find_by_id, parse_html, tree_text
@@ -45,6 +46,9 @@ class Pages:
         self.anchor = anchor_of(cw)
         self.closed_html = self._page(cw)
         self.closed_body = cw.poll("/api/history/30")
+        # A normal open morning: the engine has committed a cycle since the open. Without one the
+        # morning is stalled and the page names the last session (the closed first paint above).
+        write_engine_cycle(cw.world, local(MONDAY_OPEN[0], "09:40:20"), 1)
         cw.at(*MONDAY_OPEN)
         self.open_html = self._page(cw)
         assert self.closed_body["todays_exits_market_closed"] is True
