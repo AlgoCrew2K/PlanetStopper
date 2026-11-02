@@ -33,7 +33,7 @@ Never raises — all failure paths return `ChatResponse(answer=None, error=<mess
 
 **Returns:** `ChatResponse` — `answer` is a plain-language explanation string on success, `None` on failure; `error` is `None` on success, an operator-safe error string on failure.
 
-**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=1024`, 30-second timeout. Read at call time — override via `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). `_CHAT_MODEL` was removed at 46a6bc4 (dead-constant cleanup); inline `os.environ.get()` at the `model=` argument is the canonical pattern.
+**Model:** sent through `llm_request.send` on `model_config.Knob.SYNTHESIS` (the newest active `opus` line model from the Models API listing, or the `ADVISOR_SYNTHESIS_MODEL` override used verbatim), `effort="high"`, `max_tokens=_CHAT_MAX_TOKENS`, a 30-second timeout, a free-form text reply (no tools). A refusal, truncation or unavailable model is reported as a reason code in the chat error, never as an answer. See `docs/generated/model_config.md` and `docs/generated/llm_request.md`.
 
 ---
 

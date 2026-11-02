@@ -304,6 +304,15 @@ function refreshIncubationChips() {
 
 **Placement note:** deliberately placed between the `DOMContentLoaded` block and the "Strategy Builder tab functions" section — NOT adjacent to `loadSymphonies()` or `sbRunAnalysis()`, both of which use `.innerHTML` nearby for unrelated markup — so this function's own body sits outside the char-window a repo-wide `test_js_does_not_use_innerhtml_for_incubation_content` source-scan check inspects around the incubation testid string; verified GREEN by direct test run, not merely by construction.
 
+## Retirement, Correlations and Frontrunner polling (UX and refresh-timing programs)
+
+- `AUTOTUNE_CARD_LIMIT = 12`: the Overview shows the latest run per symphony, at most 12 cards.
+- `retirementRunNow(btn)` (Run recommender; the server refuses it with 409 `market_open` while NYSE is open) and `retRunReview(btn)` (Run tenure review, `POST /ai-advisor/retirement/review/run`; no market gate; 409 `already_running`). Both go through `PSRequest.postAction` and report a refused or unsent request in words.
+- A Frontrunner build is started with `POST /ai-advisor/frontrunner-builder/run` and the page then polls `GET /api/frontrunner-build/last-run` until the summary for its run id appears, so the page can state the build's end.
+- Switching tabs scrolls the active tab button into view (`scrollIntoView({ block: 'nearest', inline: 'nearest' })`).
+
+See [ux_overhaul.md](ux_overhaul.md) and [advisors_tenure_review.md](advisors_tenure_review.md).
+
 ## Internal Dependencies
 
 - `GET /api/csrf-token` — CSRF token fetch

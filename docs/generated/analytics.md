@@ -192,6 +192,22 @@ Returns the RAW per-day `current_return` values from `shadow_history`, in tradin
 
 **Deliberately does NOT use `database._shadow_cr_cache`.** That shared dict is keyed `(symphony_id, today, db_file, resolved_epoch)` regardless of which `shadow_history` column is cached under that key, and `_get_shadow_cumulative_trajectory` already populates it for `shadow_return` under that exact key shape -- reusing it here for a different column (`current_return`) risked one accessor silently serving the other's cached series for the same key. This route is off-execution-path and advisory-only, so the correctness risk outweighed the caching win; the cache's key-shape gap is tracked as a follow-on in `feature-plans/BACKLOG.md`.
 
+## Session-anchored windows, shared rules and request memo
+
+Added by the refresh-timing and UX programs. See [refresh_timing.md](refresh_timing.md) and [ux_overhaul.md](ux_overhaul.md).
+
+| Symbol | Behaviour |
+|--------|-----------|
+| `window_cutoff(window, anchor) -> date or None` | pure resolver: the inclusive lower bound of a window counted back from `anchor`, the ET trading day of the session the figures belong to (the close's session while the market is closed, today during a session); `None` for `all`; reads no clock. `_window_cutoff_date(window)` is the wall-clock form for callers with no anchor. Tokens: `30d`, `60d`, `90d`, `125d`, `ytd`, `1y`, `all`, and `5y` (`_WINDOW_TRAILING_DAYS` has 1825 days for it); a bare int is a trailing day count; `ytd` starts on 1 January of the anchor's year |
+| `get_history_summary(days=30, base_dir=".", anchor=None, exits_day=None)` | `anchor` is passed to `window_cutoff`; omitted, the window counts back from today's UTC date. `exits_day` names the session whose post-mortem file `todays_exits` reads (the route passes the session the page's figures belong to); omitted, today (ET) |
+| `_compounded_gap_pct(bot_pct, held_pct) -> float` | Bot return minus If-held return in points, each daily-percent series compounded independently; the portfolio "Guard effect" headline. `compute_windowed_portfolio_strip` computes it only with at least `_PORTFOLIO_GUARD_EFFECT_MIN_DAYS = 2` days in the window, else `None` |
+| `no_longer_held_symphony_ids(state, *, db_path=None, conn=None, now=None) -> frozenset[str]` | the one shared rule for symphonies the engine still records but Composer no longer reports: an entry with `shadow_history` rows whose newest trading day is older than the second most recent completed session; never raises, excludes nothing on a read failure |
+| `format_et_stamp(value, *, naive_is_utc=True, date_only=False) -> str` | the single Python implementation of the operator-facing time `YYYY-MM-DD HH:MM ET` (minutes truncated); a naive time is UTC unless `naive_is_utc=False`, in which case only its date prints; blank, non-text or impossible values read `ET_STAMP_MISSING`; never raises and never echoes its input. Registered as the Jinja filter `et_stamp` |
+| `js_to_fixed(value, places) -> str` | rounds as the browser's `Number.prototype.toFixed` (ties away from zero over the exact binary value) so server-rendered first-paint text equals what `static/index.js` writes on the next poll; `JS_TO_FIXED_EXPONENT_FROM = 1e21` |
+| `request_reads()` | context manager: within it a per-symphony `shadow_history` read made through a passed-in connection is made once and later callers on that connection are answered from the first; reads without a connection are never remembered |
+| `BUILD_FAILURES`, `note_build_failure()` | a context variable the closed-market hold sets around a build; a reader that swallowed a fault calls `note_build_failure()` so the hold does not store the incomplete result |
+| `_is_missing_epoch_column(exc)` | a wider-query fallback runs only on a missing `position_epoch` column, never on any other `OperationalError` |
+
 ## Internal Dependencies
 
 - `database` -- consulted by other (undocumented-in-this-entry) parts of this module for live state.

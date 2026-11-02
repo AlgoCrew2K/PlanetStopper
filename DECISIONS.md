@@ -11329,3 +11329,167 @@ Commit chain. Every commit carries the shared `Claude` git author identity. The 
 - the proposed `.claude/CLAUDE.md` Key Files edits in `.claude/claude-md-draft-retirement-visibility.md`, awaiting PM approval.
 
 ---
+
+## model-unpin: no Claude model version is named in production source (2026-11-02)
+
+Branch `lane/docs-final` documents the integrated tree `assembly/all` at `8b421ff4` (base `37c8e983`). Plan `feature-plans/model-unpin.md` (with `.source.md`, `.audit.md`, `.review.md`). The ids in this section and the five that follow are the plan slugs; the plans supply no decision ids, so none is minted here.
+
+### The defect and its evidence
+
+The production droplet still called Claude Opus 4.8 and Claude Fable 5 while newer models of both families were current. Versioned model ids were named in `model_config.py`, `ai_advisor.py`, `advisors/advisor_chat.py`, `advisors/lens_pipeline.py`, `advisors/frontrunner_builder.py` (a `FABLE_MODEL` constant) and `prism_scheduler.py` (`--model claude-opus-4-8`), and in several docs. The Messages API accepts no generic family tag (a live read against the droplet's key, recorded in the plan, got HTTP 404 for `opus`, `fable`, `sonnet` and `claude-opus-latest`), so the family has to be resolved from the Models API listing.
+
+### The fix
+
+- `model_config.py` resolves each of two knobs (`SUGGESTION`, family `fable`; `SYNTHESIS`, family `opus`) to an operator override (`ADVISOR_SUGGESTION_MODEL`, `ADVISOR_SYNTHESIS_MODEL`, used verbatim and never replaced) or else the newest active model of the family from the Models API listing, cached for 24 hours, re-listed when a resolved model returns 404, and pinned per run by `pin_run`. The accessors that returned versioned defaults were removed.
+- `llm_request.py` is the one place a Messages request is made (`send`, the only `messages.create` call in production source). It sends strict tools with `tool_choice` auto, explicit `effort` ("high" at every site), none of the rejected parameters, and the server-side fallback beta header for classifier refusals, and returns a classified `Reply` with a reason code (`model_unavailable`, `override_model_not_found`, `override_request_rejected`, `refusal`, `max_tokens`, `no_tool_call`) instead of raising. Tool-emitting generators retry a missing tool call up to `NO_TOOL_CALL_ATTEMPTS = 3`.
+- Panels say that nothing was generated and why (`empty_run_message`), not that the gate rejected a candidate. Run provenance and the accept and reject audit rows record the model that served the reply (`adopt_reply`, `app._audit_model_id`).
+- The nightly council launches `claude -p --model opus` (the CLI's own tag).
+
+### Tests and review
+
+Tests were written first per cycle (C1 to C12). This documentation pass ran no tests, and no test count was supplied for any head. Review record: `feature-plans/model-unpin.review.md`.
+
+### Files changed
+
+`model_config.py`, `llm_request.py` (new), `ai_advisor.py`, `app.py`, `prism_scheduler.py`, `.env.example`, and `advisors/{advisor_chat,asset_swap_engine,build_plan_generator,frontrunner_builder,lens_pipeline,logic_change_engine,retirement_explainer,strategy_builder_engine,strategy_builder_scheduler,weekly_suggestions_scheduler}.py`. New generated pages: `docs/generated/model_config.md`, `docs/generated/llm_request.md`.
+
+### Reference
+
+Unconfirmed from code: which model each family resolves to on the droplet. Read-only check: list the Models API with the droplet key and compare with the badge on the AI Advisor page.
+
+---
+
+## symphony-tenure-review: tenure-gated keep, watch or retire-candidate review (2026-11-02)
+
+Plan `feature-plans/symphony-tenure-review.md` (with `.findings.md`, `.review.md`; approach `feature-plans/approach/symphony-tenure-review.md`).
+
+### The need
+
+The retirement recommender judges redundancy only. The operator wanted every live symphony reviewed on its realized history once it has been live long enough, with evidence and a verdict, inside the existing Retirement tab and approve and reject lifecycle.
+
+### What was built
+
+`advisors/tenure_review.py` (pure compute), `advisors/tenure_review_runner.py` (Composer reads, shadow fallback, backtests) and `advisors/composer_portfolio_client.py` (four read-only GETs, 6 second spacing). Six evidence items and one verdict per eligible symphony; below `TENURE_REVIEW_MIN_TRADING_DAYS` (default 126 NYSE trading days) a symphony shows "not yet eligible" with the days remaining and no verdict. `app.py` runs the review at the existing 03:45 slot (the review first, then the recommender run, each independent of the other) and through `POST /ai-advisor/retirement/review/run`. The run record is an append-only `TENURE_REVIEW_RUN` advisor row; recommendation rows carry `review_run_id`; readers show only the newest readable run. `GET /api/retirement-recommendations` gains `review_run`, `review_entries`, `review_status` and `review_read_failed`. Detail: `docs/generated/advisors_tenure_review.md`.
+
+### Rulings made without the operator [PM-ASSUMED]
+
+- The retirement recommender and the tenure review both run nightly, in one tick, the review first.
+- The on-demand tenure review route has no market-hours gate (plan criterion S-1.21: a run during market hours counts tenure through the previous session). The recommender's own Run now stays refused while NYSE is open.
+- A "not applicable" evidence item gives no evidence, exactly like an unavailable one (plan D-13). A redundancy comparison that could not have flagged a pair (below 181 aligned days, an undefined gate, a peer without a composite) is listed as unused, never as "no redundant sibling".
+- The tenure threshold is not dashboard-writable (it is not in `_SETTINGS_WRITE_ALLOWLIST`).
+
+### Tests and review
+
+No count supplied; this pass ran no tests. The no-trade scans in `tests/security/` were extended to the new modules and paths per the plan (AC-10). Explanation reuse compares a row only to the newest row from the same producer (`_retirement_row_producer`), so the review and the recommender do not defeat each other's reuse.
+
+### Boundary
+
+`alpha_bot_execution.py` has a one-line diff in this program (see `refresh-timing`); `math_engine.py` has none. The LF-normalized sha256 of both files at `8b421ff4` equals the pins in `tests/test_mdd_window_truth_zero_diff_guard.py` (computed with Python `hashlib`; the test itself was not run). No Composer write, deploy, invest or liquidation path was added.
+
+### Reference
+
+Unconfirmed from code: the live behaviour of the symphony-statistics and holdings endpoints and the 25 requests a minute limit. Read-only check: the daemon's `composer` timing lines in the droplet journal during a review.
+
+---
+
+## ux-overhaul: one shell, true labels, one guard number (2026-11-02)
+
+Plans `feature-plans/ux-overhaul/00-overview.md`, `01-data-truth` to `05-dashboard-charts`, `06-review-fixes` and `07-final-gate-fixes` (each with `.review.md` where one exists; approaches under `feature-plans/ux-overhaul/approach/`). Visual tokens (`static/tokens.css`) are unchanged. Current page behaviour: `docs/generated/ux_overhaul.md`.
+
+### What changed
+
+01 data truth (labels, windows, display names, settings controls), 02 the advisor Overview and a Retirement tab, 03 Correlations as a realized-series heat map, 04 one app shell and phone width, 05 dashboard charts from first paint, 06 findings from the assembled-build review, 07 final gate fixes (clock, security, spend, flush). Chart.js 4.6.1 is served from `static/vendor/` instead of a CDN.
+
+### Rulings made without the operator [PM-ASSUMED]
+
+- The dashboard Guard Alpha headline is the compounded Bot minus If-held return over the window (`analytics._compounded_gap_pct`), equal to the Performance tab's figure for the same window. For that figure this overrides the epoch-additive convention and F-018; per-symphony cards keep their epoch-additive figures. History relabels its total "Sum of exit alpha", in points, unweighted, not a portfolio return.
+- The ghost symphony `INfCn3eKsu6i4oTTqdUp` (no `shadow_history` row after 2026-09-10, not in Composer, still $1,035.09 in `bot_state` on the 2026-10-31 read-only check) is excluded by one shared predicate, `analytics.no_longer_held_symphony_ids`, from dashboard cards, aggregates, weights, the hero series, the Advisor and Retirement rosters and the preconditions route. `/settings` lists it dimmed under "No longer held". Nothing is deleted, the engine stays frozen, and it returns by itself if rows resume.
+- Plan 07 AC-3 reverses refresh-timing plan 02 S-5.3: a hung engine run is ended by the daemon (see `refresh-timing`).
+- PIPE-14, settle once just after the close: the account totals a closed market shows are latched once, from the first successful read at or after the close snapshot's capture, and stored durably (`close_account_totals`, migration 039). The first start after deploy latches the first refresh after the capture, because the stored close snapshot holds no totals.
+- PIPE-D2, PIPE-D3, PIPE-D4 and QR2-1 are rulings named in the program brief. Their text was not in the artifacts available to this documentation pass. The fixes found in those artifacts are PIPE-D1 (a fault on the strip's day-filtered exit read no longer falls to an unfiltered statement), the PIPE-D3 family (a wider-query fallback runs only on a missing column) and PIPE-D5 (a sleeve row on a closed page no longer says "today").
+- The CI workflow keeps `python -m pytest -v` and a once a minute `RES` resource line, and also gains a resources step after the suite, a 45 minute timeout, runs on `assembly/**` branches, and `tmp_path_retention_policy = "failed"`.
+- Security items taken in plan 07: text rendered as text for symphony names, the form-field CSRF channel on login only, `Sec-Fetch-Site` refusal, all-or-nothing settings validation, a Panic Confirm in-flight guard, no redirect following in the series client, Caddy security headers, a vendored Chart.js, and a flush that keeps post-mortems from the go-live day on. Left for the operator: S-7, S-15, S-9, S-10, S-11, S-17.
+
+### Tests and review
+
+No count supplied; this pass ran no tests. Browser tests carry the `browser` marker, which the default addopts deselect.
+
+### Reference
+
+Known defects left unfixed, stated where they belong. After a settings reset the engine reads the literals 1.5 and 10 for `VWAP_BLEED_MULTIPLIER` and `VWAP_BLEED_TICKS` (the `acc_params.get(...)` defaults in `alpha_bot_execution.py`) instead of `.env`; the engine is frozen. Cash Now posts only `symphony_id` and `POST /api/sell_account` answers 400; this predates the work and the route is unchanged.
+
+---
+
+## refresh-timing: every page shows the newest data, dated, through every refresh (2026-11-02)
+
+Plans `feature-plans/refresh-timing/00-overview.md` and `01` to `05` (each with `.review.md`; approaches under `feature-plans/refresh-timing/approach/`). Current behaviour: `docs/generated/refresh_timing.md`.
+
+### Defects the operator named
+
+"Wonky updates and / or no updates to data on the poll", a number updating while the market is closed, and the refresh cycle not starting in the morning. The audit found, among others: the close snapshot nesting every earlier one, windows sliding with the wall clock (a UTC date at 00:00 UTC), a closed-market poll recomputing everything (13 to 14 seconds on the production snapshot per the plan 07 measurement), account totals lost on restart, stdout block-buffered, and no way to see a hung or missed engine run.
+
+### What changed
+
+- Server state: `_SessionView` anchors every window, held closed-market results (`_ClosedHold`) with a background warm-up, the close totals latch, ET stamps, one portfolio computation per response (plan 01).
+- Scheduler, events and health: a single-flight engine run with a bound, `cycle-complete` events with id, outcome and `changed`, an event stream that opens at once, `/health` reasons, a guarded scheduler loop (plan 02).
+- Pages: newest-request-wins, error responses never drawn as data, catch-up on return, a CSRF refresh that never re-sends a POST, `GET /api/header-status` (plans 03 and 04).
+- Observability and transport: line-buffered stdout, `timing_log.py` lines, Caddy gzip (plan 05).
+- `alpha_bot_execution.py`: one line in the close-snapshot builder (the account-map loop keeps only entries that carry `name`); `database.repair_close_snapshot_chain()` flattens the stored chain once at start, after a backup. `math_engine.py` is unchanged.
+
+### Rulings made without the operator [PM-ASSUMED]
+
+- A Degraded header outranks Closed (PM-2), so the long engine run of the Friday autotune reads as `engine_overrun` instead of Closed. A Degraded header while the market is closed shows no countdown and no clause about the next minute.
+- A hung engine run is ended by the daemon: terminate, then kill after 10 seconds. A run begun on an earlier ET date is ended from 09:25 ET on a trading day; a run begun before the close and alive 600 seconds is ended unless forced. The outcome is `terminated` and the health reason `engine_terminated` reads until the next run finishes.
+- `no_cycle_since_open` fires once the market is past the five minute Opening phase and no cycle has committed since the open (from 09:35 ET), and clears on the next commit. The plan text says three minutes; the code uses `_OPENING_PHASE_MINUTES = 5`.
+- While the market is closed, `GET /api/exit-turnover` counts its windows back from the close of the session the page's other figures belong to; a failed read answers 500 and the Performance page draws a dash row, never zeros (fix batch 2, G1 and G11).
+
+### Tests and review
+
+No count supplied; this pass ran no tests. The hash check of the two engine files against the zero-diff pin is stated under `symphony-tenure-review`.
+
+### Reference
+
+Unconfirmed from code: measured request times and sizes after deploy, and whether the droplet's stored close snapshot is already flat. Read-only checks are listed in `docs/generated/refresh_timing.md`.
+
+---
+
+## ux-fix-batch-1: final UX fix batch (2026-11-02)
+
+Source: the six judge artifacts `ux-expert-{timing,refresh,uxr1,uxr2,advisor,dash}.json` and `FIX-BATCH.md` in the UX review folder `6515ee90747c`. The rulings are [PM-ASSUMED].
+
+### Fixed (F2 to F23, summarized)
+
+After a window pick the dollar panel never shows another window's figures. The active advisor tab is scrolled into view. Text carrying a figure, basis, stamp or failure cue clears 4.5:1 in both themes. With no accent picked, no inline accent is written. The standby card sparkline does not cross the caption. Rebalance pause at 1440 px keeps the countdown whole. A failed settings load binds no control to empty data, and the settings modal's advisor section renders real text. Discuss on a rejected candidate never says it cleared the gate. The detail stat row and the drilled History table fit 375 px, the floating gear covers no value, and choosing a symphony on a phone does not widen the page. Frontrunner figures are labelled as backtest figures. While the market is not open, labels name the session date instead of "today" or "live". A Degraded closed header shows no countdown. First paint of `/history` on a closed day never reads "Today's exits". The preconditions note states all position epochs. The Vol (20d) hint says daily standard deviation in percent, not annualised. The pointer names the button by its real label, and an unknown Max DD dash has no negative colour. The Exits button uses the page's button class.
+
+### Accepted, no change
+
+UXA-4 (the no-longer-held symphony in Retirement and Correlations comes from a stored run and clears on the recommender run triggered at deploy); UX-RF-8 and UXA-17 (the History stamp reads the newest exit's time, which is true of that exit); UX-RF-7 and UXD-N6 (the warn token is 3.63:1 in light, an app-wide token in a frozen file); UX-RF-9 failure-state layout shift; UX-RF-10 and UXA-12 phone tables scroll with no cue; UX2-4 pill wrap at 1440; UX2-5 and UXD-N1 hover states; UX2-9, UX2-11, UX2-13, UX2-14; UXD-N2, UXD-N3, UXD-N4, UXD-N9; UX-UXR1-7, 8, 9, 10, 15; UXA-13, 14, 15; D4; UX-RF-4; UX-T6 to T11; UX-RF-6 and UX-RF-12; UX-UXR1-16 and UXA-13 `model unavailable` (a capture instance condition, read on the droplet at deploy).
+
+### Tests and review
+
+Layout items were judged by re-capture and assertable items have tests. No count supplied; this pass ran no tests.
+
+---
+
+## ux-fix-batch-2: second UX re-judge batch G1 to G11 (2026-11-02)
+
+Source: the six re-judge artifacts in the UX review folder `129900ebcfe6` and `129900ebcfe6-FIX-BATCH-2.md`. Frozen: `alpha_bot_execution.py`, `math_engine.py`, `static/tokens.css`. The rulings are [PM-ASSUMED].
+
+### Fixed
+
+- G1 (UX-T12): while the market is closed `GET /api/exit-turnover` returns the same counts, retained days and friction drag at any later instant on the same data, across a UTC and an ET date change. Its windows count back from the close of the session the page's other figures belong to, using `_SessionView.cutoff_anchor`. Open market behaves as before. G11: a failed read answers 500 and the Performance page draws a dash row, never zeros.
+- G2: the Performance note about retained exit history names no internal table.
+- G3, G4 and G6: text carrying a basis, stamp, data cue or threshold, the card's IF HELD figure, and labels on accent-filled buttons clear 4.5:1 in both themes with existing tokens (`--studio-ink-dim`).
+- G5: after a failed settings load the Live execution switch shows no position and cannot be operated until a later good load.
+- G7: at phone width the floating gear is hidden while the chat panel is open, as it is for the detail panel.
+- G8: a Degraded closed header has no tooltip clause about the next minute.
+- G9: Strategy cards label Sharpe as a backtest figure; no window is invented.
+- G10: an unknown parabolic velocity dash has no warning colour, and a value that rounds to zero prints without a minus sign.
+
+### Accepted, no change
+
+UX-RF-14 (the If held suffix is not restored on a page left open into the next session; the label stays true); UX-RF-15 (Rebalance pause hides the clock and workspace switcher from 1401 to 1500 px); UXD-R3 (after a live theme change with no reload, hero and dollar figures keep the old theme's colour; predates this work); UXA2-2 (nothing stores a Frontrunner backtest window; backlog); UX2R-2 (the seeded tenure row holds old stored text, a seed artifact); UX-UXR1-4 (modal advisor rows are repeated and undated); UX-UXR1-5 (a stub in the Max DD tracks); UX-T13 (`No events on Oct 30` on the capture instance, whose snapshot has no `symphony_logs.json`; the droplet's file holds Oct 30 entries, read 2026-11-01).
+
+### Tests and review
+
+No count supplied; this pass ran no tests.

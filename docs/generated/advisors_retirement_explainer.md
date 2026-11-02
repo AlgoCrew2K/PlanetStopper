@@ -52,7 +52,7 @@ The user message is `_build_explain_messages`'s JSON-embedded evidence block plu
 
 ## Model
 
-`model_config.get_advisor_suggestion_model()` -- the lightweight config-suggestion model knob (env var `ADVISOR_SUGGESTION_MODEL`, default `claude-fable-5`), NOT the heavier opus synthesis knob the Market Prism council uses. A one-off 2-4-sentence explanation over a small, well-scoped evidence dict does not need the heavier model.
+`llm_request.send` on `model_config.Knob.SUGGESTION` -- the config-suggestion knob (newest active `fable` line model, or the `ADVISOR_SUGGESTION_MODEL` override), NOT the opus synthesis knob the Market Prism council uses. A one-off 2-4-sentence explanation over a small, well-scoped evidence dict does not need the heavier model.
 
 ## No DB write, no trade path
 
@@ -61,7 +61,7 @@ This module contains zero references to `database`, `sqlite3`, `insert_advisor_o
 ## Internal Dependencies
 
 - `ai_advisor` -- `_build_client()` (the single sanctioned Anthropic client factory seam in this codebase; see [ai_advisor](ai_advisor.md) if present, or `app.py`'s AI Advisor section for the seam's broader usage pattern).
-- `model_config` -- `get_advisor_suggestion_model()` (fable-5 default; see the `ADVISOR_SUGGESTION_MODEL` env var).
+- `model_config`, `llm_request` -- model resolution and the classified request (see `docs/generated/model_config.md`).
 - No import of `database`, `alpha_bot_execution`, `math_engine`, or `composer_draft_client` anywhere in this module.
 
 **Caller:** `app.py`'s `_retirement_recommender_tick_worker()` -- see [app](app.md)'s "`_run_retirement_recommender_tick()` / `_retirement_recommender_tick_worker()`" section for the full producer-orchestration wiring (per-rec try/except, defense-in-depth against a D-1 contract violation, never blocks persistence of the rest of the batch on one recommendation's explainer failure).

@@ -182,6 +182,16 @@ Two update paths coexist. Both call `loadState()` → `updateDashboard(data)`:
 
 The SSE path is always attempted first. The poll continues running as an unconditional safety net — it is NOT disabled when SSE is active. On auth failure, SSE silently degrades to poll-only with no visible disruption.
 
+## Refresh and first-paint behaviour (refresh-timing and UX programs)
+
+- `loadState()` keeps the last good values on an error, refused or timed-out poll (`STATE_REQUEST_TIMEOUT_MS = 20000`), shows a cue, and sends a 401 to the login page; an error-shaped body is never drawn as data. Only the newest issued request is drawn (`PSRequest.issue` / `isLatest`).
+- The `EventSource('/api/events')` subscription refetches on every `cycle-complete` event except one whose payload states `changed: false`; it re-opens after it closes; the page also catches up on `visibilitychange`, `pageshow` and `online`.
+- A window pick shows dashes in the headline, Max DD and Ann. Vol rows and in the dollar panel until that window's own answer arrives; a failed or held answer shows a notice and a later poll asks again. `windowCutoffIso(token)` is not used to decide a cutoff from the browser's clock: the anchor comes from the server.
+- While the market is not open, `applySessionWording(meta)` renders labels that name the session date instead of "today" or "live"; the server renders the same words on first paint (`app._first_paint_verdict`, `_first_paint_dial`, `analytics.js_to_fixed` produce the text this file writes on a poll, so nothing flickers).
+- Cash Now posts `{symphony_id}` to `/api/sell_account` through `PSRequest.postAction`; the route requires `account_id`, `confirm_account_id` and `confirm_phrase`, so it answers 400 (a defect that predates the program, not fixed).
+
+See [refresh_timing.md](refresh_timing.md) and [ux_overhaul.md](ux_overhaul.md).
+
 ## Internal Dependencies
 
 - `GET /api/state` — primary state source for `loadState()`; its `portfolio_strip` object is the source of `ps.basis`/`ps.account_basis_stale`/`ps.account_basis_as_of` consumed by `renderAccountBasisChip`/`renderAccountBasisFreshness` (`DE-AUDIT-BL4-001`)

@@ -278,7 +278,7 @@ Route/UI surfacing (AC-5) shipped the same cycle — see `DE-SB-DEGRADE-001` in 
 ```python
 run_id = run_id or str(uuid.uuid4())
 provenance: dict = {
-    "generation_model": model_config.get_advisor_suggestion_model(),
+    "generation_model": llm_request.default_generation_model(),
     "mode": "build-new",
     "evidence_injected": reasoning_manifest or ai_advisor._EMPTY_MANIFEST,
     "run_id": run_id,
@@ -365,7 +365,7 @@ Pure function extracted from the inline `abs(...) * 100.0 if ... else 0.0` expre
 ## Internal Dependencies
 
 - `ai_advisor` — `_EMPTY_MANIFEST` (R2-1, module-level `import ai_advisor` at `strategy_builder_engine.py:21` — NOT a lazy/CC-2 import like the other `advisors.*` dependencies below; used only as the `provenance["evidence_injected"]` fallback default when `reasoning_manifest` is omitted). This module does NOT call `ai_advisor.build_reasoning_context` itself — that call happens at the route layer (see [app](app.md)); the engine only consumes the already-assembled `reasoning_context` string and `reasoning_manifest` dict as plain parameters.
-- `model_config` — `get_advisor_suggestion_model()` (R2-1, `provenance["generation_model"]` source — read at call time, never a hardcoded literal)
+- `llm_request` — `default_generation_model()` (R2-1, `provenance["generation_model"]` seed — read at call time, never a hardcoded literal; the value is replaced by the serving model of the last generation reply when one arrived)
 - `advisors.universe_provider` — `get_tradeable_set()` (C1, CC-2 lazy import inside `_generate_candidate_trees`)
 - `advisors.build_plan_generator` — `generate_build_plans`, `Objective` (C2, CC-2 lazy import); `load_atlas_candidates` is the canonical community-admission path for both route and scheduler callers
 - `advisors.plan_tree_compiler` — `compile_plan` (C3, CC-2 lazy import)

@@ -141,6 +141,10 @@ Build cells/rows via **DOM APIs only** (`createElement`/`textContent`) -- sympho
 
 **`exitTurnoverRowEl`'s drag-column render:** `Number(turnover.est_annual_friction_drag_pct).toFixed(3) + '%'`, or `'--'` when the field is `null`/`undefined`.
 
+## Panels, windows and failure states (refresh-timing and UX programs)
+
+Each panel renders independently (`drawPanel(name, render, payload)`), so a failed panel does not blank the others, and the page writes a data stamp with its age (`writeDataStamp`). The window buttons send `30d`, `60d`, `90d`, `125d`, `ytd`, `1y` or `5y`; the page opens on 60d. The headline reads "Guard effect on portfolio" (or "Guard effect on symphony" in symphony scope), the same compounded figure the dashboard shows for the window. A failed `GET /api/exit-turnover` draws a dash row, never zeros. See [ux_overhaul.md](ux_overhaul.md).
+
 ## Types
 
 - **`METRIC_LABELS`** -- array of `[key, label, kind, isPrimary, invert?]` tuples driving `renderMetrics()`'s row order and formatting; order defines rendering order, with risk-adjusted metrics leading per `ux-design-deliverable.md` §2.1 (capital preservation ranks above return).

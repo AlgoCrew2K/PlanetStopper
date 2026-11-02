@@ -194,7 +194,7 @@ Step 5: evaluate_acceptance_gate per candidate (pbo=_batch_pbo, default_oos_alph
 
 **Atlas parity (AC-26):**
 
-Atlas community candidates and built-new (accessor-driven, currently Fable per AC-16, `model_config.get_advisor_suggestion_model()`) candidates flow through the SAME call, receive the SAME batch PBO, the SAME SPY-fold baseline, and the SAME BHY/Yekutieli FDR correction. Advertised community `oos_metrics` are structurally inert in the gate (parameter stability scoring only float-coerces shared param keys; dict metrics never influence survival). Identical fresh return series produce identical gate verdicts regardless of provenance.
+Atlas community candidates and built-new (generation model resolved through `model_config.Knob.SUGGESTION`) candidates flow through the SAME call, receive the SAME batch PBO, the SAME SPY-fold baseline, and the SAME BHY/Yekutieli FDR correction. Advertised community `oos_metrics` are structurally inert in the gate (parameter stability scoring only float-coerces shared param keys; dict metrics never influence survival). Identical fresh return series produce identical gate verdicts regardless of provenance.
 
 ## Bug Fix — Order-Dependent Bootstrap Seed (AC-D3, 2026-07-12)
 

@@ -59,7 +59,9 @@ Module-level thread-safety constructs:
 |----------|----------|-------------|
 | `DISABLE_DAEMON_LENS_PIPELINE` | optional | When set to any non-empty value, `_run_lens_pipeline()` returns immediately without running. Set to `1` on the production droplet so `prism_scheduler.py` is the SOLE nightly `MARKET_PRISM` producer. Set BEFORE registering the council systemd timer (no idempotency guard between the two paths). See DE-PRISM-GATE-001. |
 | `PORT` | optional | Flask listen port. Default: `5000`. Set to `8090` on the production droplet (behind a reverse proxy). |
-| `ADVISOR_SYNTHESIS_MODEL` | optional | Claude model for AI Advisor synthesis calls. Default: `claude-opus-4-8`. Overridable at runtime without a code change. |
+| `ADVISOR_SYNTHESIS_MODEL` | optional | Operator override for the model of the synthesis knob (advisor chat explanations, lens pipeline synthesis). Unset, the newest active `opus` line model from the Models API listing is used; see `docs/generated/model_config.md`. A set value is used verbatim and is never replaced if the API does not serve it. |
+| `ADVISOR_SUGGESTION_MODEL` | optional | Operator override for the suggestion knob (config suggestions, build plans, swap and logic reasoning, frontrunner overlay, retirement explainer). Unset, the newest active `fable` line model is used. |
+| `TENURE_REVIEW_MIN_TRADING_DAYS` | optional | Minimum tenure, in NYSE trading days, before a symphony gets a tenure review verdict. A whole number of 1 or more; anything else uses 126 and the panel says so. Read from the env file by the review; not dashboard-writable. |
 
 ## API Reference
 
@@ -121,7 +123,9 @@ Returns a fresh CSRF token for the current session. Required for all CSRF-protec
 #### `_validate_csrf() → None`
 Validates the CSRF token from two acceptance channels:
 - **`X-CSRF-Token` request header** — used by `fetch()`/XHR callers (JSON POSTs from dashboard JS). Browsers block cross-site scripts from setting arbitrary request headers, so the header itself provides same-origin enforcement.
-- **`csrf_token` form field** — used by the native browser form POST on the login page (which cannot set custom headers). The form embeds the server-minted token in a hidden input; a cross-site page cannot read or guess it. **Content-type-gated (dc6b8c7):** `request.form` is accessed only when `Content-Type` is `application/x-www-form-urlencoded` or `multipart/form-data`; JSON/XHR POSTs never touch the form parser. This preserves the CSRF-check-before-body-size guard ordering (accessing `request.form` on a JSON POST triggers Werkzeug body parsing, which enforces `MAX_CONTENT_LENGTH` before the 403 can fire).
+- **`csrf_token` form field**: read on the `login` endpoint ONLY (the native browser form POST on the login page cannot set custom headers; any other route that read the field would let a form posted from a sibling-host page through, since the token is public via `GET /api/csrf-token`). The form embeds the server-minted token in a hidden input; a cross-site page cannot read or guess it. **Content-type-gated (dc6b8c7):** `request.form` is accessed only when `Content-Type` is `application/x-www-form-urlencoded` or `multipart/form-data`; JSON/XHR POSTs never touch the form parser. This preserves the CSRF-check-before-body-size guard ordering (accessing `request.form` on a JSON POST triggers Werkzeug body parsing, which enforces `MAX_CONTENT_LENGTH` before the 403 can fire).
+
+A POST whose `Sec-Fetch-Site` is `same-site` or `cross-site` (`_REFUSED_FETCH_SITES`) is refused with `403` whatever the token; `same-origin`, `none` and an absent header are not refused by that rule. The token is compared as bytes, so a non-ASCII token is a clean `403`, not a `500`.
 
 Raises `403` when neither channel provides the correct token. Called at the top of every CSRF-protected route. See `8a34de6` for the original dual-channel docstring fix; `dc6b8c7` for the content-type gating fix.
 
@@ -513,7 +517,7 @@ Per-symphony exit-trigger turnover stats (30/90/365-day exit counts, each with i
 
 **Query parameter:** `symphony_id` (required). Missing or empty (after `.strip()`) -> `400` with `{"error": "symphony_id is required"}` -- never a silent empty `200`.
 
-Delegates to `database.get_exit_turnover_stats(symphony_id)` (30/90/365-day `exit_count` + `coverage_days` per window -- see `docs/generated/database.md` for the retention-honesty contract, RULING C) and `database.compute_est_annual_friction_drag_pct(stats, autotuner.SIM_EXIT_FRICTION_PCT)` (pure arithmetic). `autotuner` is lazy-imported (`# noqa: PLC0415`, CC-2 precedent -- keeps Optuna deps off module load, matching the existing lazy-import pattern at `app.py:3119`).
+Delegates to `database.get_exit_turnover_stats(symphony_id, now_utc=...)` (while the market is closed the windows count back from the close of the session the page's other figures belong to, `_session_close_moment(_current_session()[0].cutoff_anchor)`; while a session is open, from now; 30/90/365-day `exit_count` + `coverage_days` per window -- see `docs/generated/database.md` for the retention-honesty contract, RULING C) and `database.compute_est_annual_friction_drag_pct(stats, autotuner.SIM_EXIT_FRICTION_PCT)` (pure arithmetic). `autotuner` is lazy-imported (`# noqa: PLC0415`, CC-2 precedent -- keeps Optuna deps off module load, matching the existing lazy-import pattern at `app.py:3119`).
 
 **Response shape:**
 | Field | Type | Description |
@@ -524,10 +528,10 @@ Delegates to `database.get_exit_turnover_stats(symphony_id)` (30/90/365-day `exi
 
 **Key properties:**
 - **Read-only.** Not in `_SETTINGS_WRITE_ALLOWLIST`, no `LIVE_EXECUTION` interaction.
-- **Never a 500.** An unexpected lookup failure inside the try/except degrades to the same zeroed-window shape (`{"exit_count": 0, "coverage_days": 0}` per window, `est_annual_friction_drag_pct: 0.0`) rather than raising -- logged at `debug` level via `_daemon_log`. A symphony with genuinely zero `exit_triggers` rows is a valid, honest `200` empty-state, not a `404`.
+- **A failed read is stated, never answered as zero.** An unexpected lookup failure answers `500` with `{"error": "exit turnover unavailable", "symphony_id": ...}` (the exception type is logged at `warning`). A symphony with genuinely zero `exit_triggers` rows is a valid, honest `200` with zeroed windows, not a `404`. The Performance page draws a dash row for a failed read.
 - **Auth-gated.** Covered by the global `_auth_before_request` hook, same as `guard_alpha_summary()` -- no additional decorator.
 
-See `DE-EXIT-FRICTION-REALIZED-001` in `DECISIONS.md`.
+See `DE-EXIT-FRICTION-REALIZED-001` and `ux-fix-batch-2` in `DECISIONS.md`.
 
 **Consumed by:** `fetchExitTurnover()` in `static/performance.js` -- fetches the symphony list from `/api/performance/symphonies` first, then fans out one `/api/exit-turnover` call per symphony. Renders into `templates/performance.html`'s `data-testid="exit-turnover-panel"` -- see `docs/generated/static_performance_js.md`.
 
@@ -697,7 +701,7 @@ All 6 panels (Overview, Correlations, Asset Swaps, Logic Changes, Chat, Strategy
 
 #### `GET /ai-advisor` — `ai_advisor_tab()`
 
-Unified single-page render for all 6 in-place tab panels. Server-side assembles all data needed for every panel in one request:
+Unified single-page render for all in-place tab panels (eight: Overview, Correlations, Retirement, Asset Swaps, Logic Changes, Chat, Strategy Builder, Frontrunner Builder). Server-side assembles all data needed for every panel in one request:
 
 **Template context:**
 | Key | Source | Panel |
@@ -787,7 +791,7 @@ Never runs a live trade; never calls Composer write endpoints (AC-X1). Persisten
 
 - **Objective-only REASONED mode (AC-2/AC-12).** `_pair_kwargs = {"incumbent_asset": from_ticker, "candidate_asset": to_ticker} if explicit_pair else {}` — omitting both lets `propose_operator_swap`'s engine-internal branch fire the reasoned generator. The exactly-one-ticker honest-error check runs BEFORE hash resolution (see above).
 - **Context injection (AC-1), called unconditionally for BOTH modes:** `reasoning_context, reasoning_manifest = ai_advisor.build_reasoning_context(symphony_id, objective, composer_symphony_id=composer_hash)` — same call shape as the SB/Logic-Changes routes. EXPLICIT-PAIR mode also threads `reasoning_context` through as an optional steering hint even though the pair is fixed — this is additive context only, it cannot change which pair gets evaluated.
-- **Route-minted default provenance on EVERY return path (AC-8) — the SAME stricter shape R2-2 established, not R2-1's success-only shape.** Immediately after the docstring, the route builds `_default_provenance = {generation_model: model_config.get_advisor_suggestion_model(), mode: "asset-swap", evidence_injected: dict(ai_advisor._EMPTY_MANIFEST), run_id: str(uuid.uuid4())}` and returns it on every early-exit branch — no Composer key, exactly-one-ticker, missing `symphony_id`, hash-resolution failure, tree-fetch failure, and the engine-call exception handler — none of which carried a `provenance` key at all before this cycle.
+- **Route-minted default provenance on EVERY return path (AC-8) — the SAME stricter shape R2-2 established, not R2-1's success-only shape.** Immediately after the docstring, the route builds `_default_provenance = {generation_model: llm_request.default_generation_model(), mode: "asset-swap", evidence_injected: dict(ai_advisor._EMPTY_MANIFEST), run_id: str(uuid.uuid4())}` and returns it on every early-exit branch — no Composer key, exactly-one-ticker, missing `symphony_id`, hash-resolution failure, tree-fetch failure, and the engine-call exception handler — none of which carried a `provenance` key at all before this cycle.
 - **Success-path provenance reads the ENGINE's own value, not the route default.** `provenance = getattr(run_result, "provenance", None)`, guarded by the same `isinstance(provenance, dict)` MagicMock-safety idiom R2-1/R2-2 established (`getattr(...,default)` alone does not fire against a `MagicMock`'s auto-vivified attributes) — falls back to `_default_provenance` rather than `None`, consistent with this route's never-absent contract.
 - **Two response shapes, one unified renderer.** `explicit_pair == False` → array-shaped JSON (`{message, survivors, no_api_key, survivors_detail, rejected_detail, provenance}`), no single top-level `candidate_id`/`from_ticker`/`to_ticker` — mirrors the logic-changes route. `explicit_pair == True` → the pre-R2-3 flat single-candidate shape, byte-preserved, additively gaining `provenance`/`survivors_detail`/`rejected_detail` (AC-12) alongside the existing top-level fields.
 - **`_swap_proposal_to_dict`** — the swap-flavored per-candidate serializer mirroring the logic-changes route's `_proposal_to_dict`; carries `incumbent_asset`/`candidate_asset` (not `tweak_*`, since `SwapProposalResult` already exposes them as top-level attributes) plus `objective_type`, `objective_rationale`, gate metrics, `low_power`, `rejection_reason`, `caveats` (N=1-honest), `apply_guidance`, `backtest_error`, `data_warnings`.
@@ -807,7 +811,7 @@ Accepts JSON: `{ symphony_id, objective_type?, change_description }`. Same name�
 
 - **`change_description` is no longer deterministically parsed.** The route passes `change_description=` straight through to `propose_operator_logic_change`, which now routes it through the LLM-reasoned `generate_reasoned_logic_candidates` (see [advisors/logic_change_engine](advisors_logic_change_engine.md)) rather than the deleted `_parse_change_description_to_tweak`.
 - **Context injection (AC-1):** for a resolved `symphony_id`, the route calls `ai_advisor.build_reasoning_context(symphony_id, objective, composer_symphony_id=composer_hash)` — same call shape as the SB route above — and threads both return values into `propose_operator_logic_change(reasoning_context=, reasoning_manifest=)`. **Known cost, logged as a follow-up, not fixed this cycle:** `build_reasoning_context` re-fetches the tree internally (`symphony_logic.get_condensed_logic` → `fetch_symphony_score`) — a second `/score` read beyond the `raw_value` this route already fetched earlier in the same request for the tweak-apply step.
-- **Route-minted default provenance on EVERY return path (AC-5) — deliberately STRICTER than the SB route above.** Immediately after the docstring, the route builds `_default_provenance = {generation_model: model_config.get_advisor_suggestion_model(), mode: "logic-change", evidence_injected: dict(ai_advisor._EMPTY_MANIFEST), run_id: str(uuid.uuid4())}` and returns it on every early-exit branch — import failure, no Composer key, missing `symphony_id`/`change_description`, hash-resolution failure, tree-fetch failure, and the engine-call exception handler — none of which carried a `provenance` key at all before this cycle. This is a team-lead-ruled divergence from the SB route above, which only carries `provenance` on its success path and OMITS the key entirely on error branches.
+- **Route-minted default provenance on EVERY return path (AC-5) — deliberately STRICTER than the SB route above.** Immediately after the docstring, the route builds `_default_provenance = {generation_model: llm_request.default_generation_model(), mode: "logic-change", evidence_injected: dict(ai_advisor._EMPTY_MANIFEST), run_id: str(uuid.uuid4())}` and returns it on every early-exit branch — import failure, no Composer key, missing `symphony_id`/`change_description`, hash-resolution failure, tree-fetch failure, and the engine-call exception handler — none of which carried a `provenance` key at all before this cycle. This is a team-lead-ruled divergence from the SB route above, which only carries `provenance` on its success path and OMITS the key entirely on error branches.
 - **Success-path provenance reads the ENGINE's own value, not the route default.** `provenance = getattr(run_result, "provenance", None)`, guarded by the same `isinstance(provenance, dict)` MagicMock-safety idiom `DE-ADVISOR-R2-1-001` established for the SB route (`getattr(...).default` alone does not fire against a `MagicMock`'s auto-vivified attributes) — but here the guard falls back to `_default_provenance` rather than `None`, consistent with this route's never-absent contract.
 - **Route docstring/comment RESOLVED this cycle (`f8361f46`):** the route's docstring and one inline comment previously read "the route parses [`change_description`] ... via a simple heuristic" and "the engine's own `_parse_change_description_to_tweak` runs internally" — stale, since that parser was deleted (a doc-writer finding flagged mid-cycle). Both are now fixed: the docstring describes `change_description` as an LLM-reasoning steering hint (real-tree resolution + `validate_tree` before backtest, honest degradation on LLM unavailability), and the inline comment names `generate_reasoned_logic_candidates`. No behavior change — docs-only, brings the source comments into agreement with the actual runtime behavior this doc already described.
 - **AC-X4 billing-order re-gate fix (`6e1eabcd`, engine-internal — no `app.py` diff):** `advisors.logic_change_engine.propose_operator_logic_change` now checks the Composer API key BEFORE the billed LLM seam, not after — this route's own call sequence (build context, call the engine) is unaffected; see [advisors/logic_change_engine](advisors_logic_change_engine.md) for the fix detail.
@@ -853,7 +857,7 @@ CSRF-protected. Accepts JSON: `{ objective, universe, symphony_id? }`. Lazy-impo
 1. Parse `objective` → `Objective` enum (default `diversify` on unknown values, `app.py:3800`).
 2. Call `build_plan_generator.load_atlas_candidates(objective)` — objective-matched Atlas community injection (AC-12/AC-13, `app.py:3807`). D-1 (never raises); bill-protected (`force_refresh=False` inside). Atlas failure → `community_candidates=[]`, template-only run proceeds.
 3. **R2-1 (symphony-scoped runs only):** when `symphony_id` is truthy, resolve the Composer hash the same way the asset-swap route does (NAME→hash lookup over `bot_state`), then call `ai_advisor.build_reasoning_context(symphony_id, objective, composer_symphony_id=<resolved hash>)` — see the dedicated R2-1 subsection below.
-4. Call `propose_strategies(objective, universe, screen_config=ScreenConfig(), live_returns=[], symphony_id=..., community_candidates=..., reasoning_context=..., reasoning_manifest=...)` (`app.py:3813`). Built-new (accessor-driven generation model — currently Fable via `model_config.get_advisor_suggestion_model()`, AC-16 — C1→C2→C3) AND atlas-suggested candidates flow into ONE FDR batch (AC-21).
+4. Call `propose_strategies(objective, universe, screen_config=ScreenConfig(), live_returns=[], symphony_id=..., community_candidates=..., reasoning_context=..., reasoning_manifest=...)` (`app.py:3813`). Built-new (generation model resolved through `model_config.Knob.SUGGESTION` — C1→C2→C3) AND atlas-suggested candidates flow into ONE FDR batch (AC-21).
 
 **F-030 invocation attribution (`DE-OPS-CLUSTER-001`, 2026-07-21):** this call additionally passes `invocation_source="http-route:/ai-advisor/strategy-builder/run"` — see `docs/generated/advisors_strategy_builder_engine.md`'s F-030 section for the full contract (the register finding this closes: 3 production `STRATEGY_BUILDER` advisory-DB rows had no reconstructable origin because they were written via a direct off-HTTP engine call).
 5. Serialize survivors and rejected candidates from `run.gated_batch` + `run.screened_survivors` (`app.py:3852–3879`); each entry carries `template_id` (provenance: `"built-new"` or `"atlas-suggested"`), gate metrics, and candidate params.
@@ -1248,10 +1252,38 @@ Builds impact dict with `before`, `after`, `delta`, `metric` fields from the sug
 #### `_normalize_autotune_row(row: dict) → dict`
 Normalizes an `autotune_runs` DB row for the `/api/autotune-runs` JSON response.
 
+
+## Refresh-timing, UX and tenure-review additions
+
+These changes are documented in their own pages; this section lists the `app.py` symbols and routes they added so a reader of this page finds them.
+
+- **Session anchoring, held closed-market results, close totals latch, engine run slot, `/health` reasons, event payload, `GET /api/header-status`:** [refresh_timing.md](refresh_timing.md). Symbols: `_SessionView`, `_session_view`, `_current_session`, `_ClosedHold`, `_held_closed`, `_warm_closed_results`, `_close_totals_for`, `_begin_engine_run`, `_engine_run_overdue`, `trigger_alpha_bot`, `CycleRecord`, `_health_view`, `_state_degraded_reasons`, `_engine_phase`, `header_status`.
+- **Symphonies no longer held:** `_no_longer_held_ids` over `analytics.no_longer_held_symphony_ids`; applied by `_without_symphonies` and `_snapshot_without_symphonies`.
+- **UX behaviour of each page:** [ux_overhaul.md](ux_overhaul.md). Template filters `advisor_words` and `et_stamp`; `retirement_basis`; the Correlations matrix builders `_retirement_correlation_matrix_view` and helpers.
+- **Model resolution:** [model_config.md](model_config.md), [llm_request.md](llm_request.md). `_model_warmup_worker` resolves both knobs once at start; the accept and reject audit rows record the model that served the suggestion (`_audit_model_id`: the posted `model` when it matches `[A-Za-z0-9._:/+-]{1,128}`, else `llm_request.default_generation_model()`).
+- **Tenure review:** [advisors_tenure_review.md](advisors_tenure_review.md). Symbols: `_tenure_review_job`, `_nightly_review_already_done`, `_retirement_nightly_tick_body`, `_run_retirement_recommender_tick` (03:45: the review first, then the recommender run), `_fetch_tenure_review`, route `ai_advisor_retirement_review_run`.
+
+### New or changed routes
+
+| Route | Behaviour |
+|-------|-----------|
+| `GET /api/header-status` | light header read for the four pages other than `/`; see refresh_timing.md |
+| `GET /api/armed-symphonies` | `{"armed": [{name, flags, state: "live"}]}` from live `bot_state` (never the frozen snapshot), real symphony entries only; 500 with a generic body on failure |
+| `GET /api/frontrunner-build/last-run` | `{"last_run": <newest FRONTRUNNER_BUILD_SUMMARY raw_response or null>}`; 500 generic on failure |
+| `GET /api/history/ytd` (`/api/history/<any(ytd):days>`) | the History summary from 1 January; the integer form `/api/history/<days>` is unchanged |
+| `POST /ai-advisor/retirement/review/run` | starts one tenure review in the background: 202 `started`, 409 `already_running`; no market gate; reads no body |
+| `GET /api/retirement-recommendations` | additionally returns `review_run`, `review_entries`, `review_status`, `review_read_failed` (seven keys in all) |
+| `GET /api/exit-turnover` | session-anchored while closed; 500 on a failed read |
+| `GET /api/performance` | accepts the `5y` window token |
+| `POST /api/settings` | all-or-nothing value validation; 400 leaves `.env` unchanged |
+| `POST /api/settings/flush-resync` | keeps post-mortem files dated on or after `_PRODUCTION_GO_LIVE_DAY` |
+
+The CSRF check (`_validate_csrf`) accepts the `csrf_token` form field only on the `login` endpoint and refuses a POST whose `Sec-Fetch-Site` is `same-site` or `cross-site`; every other route needs the `X-CSRF-Token` header. This replaces the earlier "form field for any form-encoded POST" rule.
+
 ## Internal Dependencies
 
 - `ai_advisor` — context assembly, Claude call, C2 safety gates, assessment builder; `build_reasoning_context` (R2-1, symphony-scoped Strategy Builder runs; R2-2, symphony-scoped Logic Changes runs — same call shape, two independent call sites); `_EMPTY_MANIFEST` (R2-2, the default `evidence_injected` value inside the Logic Changes route's `_default_provenance`)
-- `model_config` — `get_advisor_suggestion_model()` (R2-2: the Logic Changes route's `_default_provenance["generation_model"]`; also read by the SB route's pipeline, `app.py:3813`)
+- `llm_request`: `default_generation_model()` seeds each route's `_default_provenance["generation_model"]`; `model_config`: `peek`, `resolve` (warm-up) and `Knob`
 - `uuid` — **NEW (R2-2), stdlib.** `str(uuid.uuid4())` mints the Logic Changes route's default `provenance["run_id"]` on every early-exit branch
 - `database` — all state-DB reads and writes for advisor routes, including `get_latest_market_prism_verification_for_run` (DE-PRISM-NUMERIC-VERIFY-001 Overview overlay), `get_candidate_alert_new_valid_count`/`get_candidate_alert_last_run`/`mark_candidate_alert_viewed` (candidate-alert header indicator), `load_state`/`normalize_name` (NAME→hash resolution for `build_reasoning_context`, both the SB and Logic Changes call sites), and `get_pending_frontrunner_proposals`/`update_frontrunner_proposal_status` (frontrunner-builder wave-2)
 - `analytics` — symphony history, correlation data, symphony list; account-basis translation helpers (`get_portfolio_today_change_account_basis`, `get_portfolio_cumulative_return_account_basis`, DE-TODAY-BASIS-001) consumed by both the live and frozen portfolio-strip paths

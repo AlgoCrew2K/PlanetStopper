@@ -87,6 +87,10 @@ Renders `payload.todays_exits` (an array of `{ts, symphony_id, symphony_name, re
 
 This file implements its own PER-FILE-LOCAL abs+no-sign+word logic inline across `renderHero`/`renderReasonCards`/`renderTriggers` (rather than importing a shared JS module -- this repo has no bundler, and its established JS-behavior-test idiom inspects each function's own source text for the literal tokens it asserts). `static/index.js` implements the IDENTICAL contract independently for its own dollar surfaces (`fetchGuardAlphaSummary`); DRY across the two files is enforced by parallel body-extraction tests, not a shared import. The shared Python-side equivalent, `analytics.format_dollar_saved`, is documented in `docs/generated/analytics.md`.
 
+## Windows, drilldown and closed-market heading (UX program)
+
+History opens on a 30 day window (`currentWindow = '30'`) and `GET /api/history/<days>` also accepts `ytd`. The day drilldown (`renderDayDrilldown`) names each symphony, lists exits in time order and keeps the drilled day through polls. While the market is closed `renderTriggers` headings use the session date the server states (`todays_exits_day`, `todays_exits_market_closed`) from the first paint. The total reads "Sum of exit alpha" in points (not a portfolio return), and the exits table fits a 375 px screen with every column whole. See [ux_overhaul.md](ux_overhaul.md).
+
 ## Internal Dependencies
 
 - `GET /api/history/<days>` -- primary data fetch; response fields consumed: `total_alpha`, `total_saved`, `trigger_count`, `win_rate`, `by_reason`, `daily_alpha`, `daily_dates` (F-020, new), `daily_exits` (F-020, new), `todays_exits` -- see `docs/generated/analytics.md`'s `get_history_summary` section.

@@ -157,7 +157,7 @@ Invokes the Market Prism council as a vanilla-primary headless subprocess. Retur
 **Command built:**
 ```
 claude -p --dangerously-skip-permissions
-       --model claude-opus-4-8
+       --model opus
        --max-budget-usd 15.0
        --output-format json
        "<PRISM_RUN_PROMPT> + scheduler-generated run_id suffix"

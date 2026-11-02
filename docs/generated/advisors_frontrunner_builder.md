@@ -9,7 +9,7 @@
 
 `advisors/frontrunner_builder.py` is the orchestration layer of the Frontrunner Builder (feature-plans/frontrunner-builder.md). Per live symphony, the pipeline is:
 
-**detect** (`frontrunner_detector`) → **gather Atlas patterns** (`community_strats`, 7-day cache, once per run) → **generate** a candidate overlay via **Fable** (`claude-fable-5`) → **compile** (`plan_tree_compiler`) → **splice** into the incumbent symphony → **independently re-backtest BOTH incumbent and candidate** (`composer_backtest_client`) → **gate** (`backtest_gate_engine.evaluate_candidate_batch`, mandatory, never bypassed) → **Calmar acceptance** (`frontrunner_acceptance`) → **queue for operator approval** (`database.insert_frontrunner_proposal`).
+**detect** (`frontrunner_detector`) → **gather Atlas patterns** (`community_strats`, 7-day cache, once per run) → **generate** a candidate overlay via the suggestion knob's model (newest active `fable` line model, `model_config.Knob.SUGGESTION`) → **compile** (`plan_tree_compiler`) → **splice** into the incumbent symphony → **independently re-backtest BOTH incumbent and candidate** (`composer_backtest_client`) → **gate** (`backtest_gate_engine.evaluate_candidate_batch`, mandatory, never bypassed) → **Calmar acceptance** (`frontrunner_acceptance`) → **queue for operator approval** (`database.insert_frontrunner_proposal`).
 
 This module is the **backend** (wave-1). The pipeline is wired into the existing **weekly** scheduler (`advisors/strategy_builder_scheduler.run_weekly_build` calls `run_frontrunner_build()` over all live symphonies after the four Strategy-Builder objectives complete, AC-1) and the `propose_strategies` **retrofit** queues its own accepted candidates onto the same `frontrunner_proposals` table (`proposal_source="strategy_builder_retrofit"`, AC-10). The on-demand `POST /ai-advisor/frontrunner-builder/run` route, the `/approve`/`/reject` routes, and the Advisor-tab UI that surfaces pending proposals for the operator to Approve/Reject were shipped in wave-2 (2026-07-11, `eb1b612`) -- see "Wave-2 UI (built, 2026-07-11)" below.
 
@@ -27,7 +27,7 @@ This module never calls `composer_draft_client.save_symphony` from the unattende
 
 | Name | Value | Purpose |
 |------|-------|---------|
-| `FABLE_MODEL` | `"claude-fable-5"` | Model used for candidate generation — operator directive |
+| (no model constant) | | `FABLE_MODEL` was removed; generation resolves its model through `model_config` / `llm_request.send` |
 | `MAX_OUTPUT_TOKENS` | `8192` | SDK call token ceiling; deliberately smaller than `build_plan_generator`'s (a single overlay is a small DSL fragment vs a full-symphony plan) |
 | `MAX_GENERATION_ATTEMPTS` | `3` | Bounded retry for a truncated (`stop_reason="max_tokens"`) or rejected/degenerate candidate (AC-11) |
 | `MAX_CASCADES_PER_SYMPHONY_RUN` | `40` | AC-12 Fable-call budget cap per symphony run. Verified against the 11 real trees (observed cascade counts: `{26, 12, 8, 4, 4, 3, 2, 1, 1, 1, 0}`, max=26); 40 gives ~1.5x headroom above the real max while still bounding a pathological/mis-parsed detection. Cascades beyond the cap are skipped with a logged reason, never silently dropped |
@@ -103,7 +103,7 @@ Build the SDK prompt for candidate overlay generation. Now simply `_build_stable
 
 ### `generate_candidate_overlay(signal_context: dict, *, n_attempts=MAX_GENERATION_ATTEMPTS) -> GenerationResult`
 
-Calls Fable (tool-use, `emit_frontrunner_overlay` tool, forced `tool_choice`) to compose one candidate frontrunner overlay DSL node, enforces AC-4's post-generation hard constraints, and compiles it. Never trusts the model's raw output.
+Calls the suggestion-knob model through `llm_request.send` (tool-use, the `emit_frontrunner_overlay` tool in strict mode, `tool_choice` auto, up to `llm_request.NO_TOOL_CALL_ATTEMPTS` attempts when a reply carries no tool call) to compose one candidate frontrunner overlay DSL node, enforces AC-4's post-generation hard constraints, and compiles it. Never trusts the model's raw output.
 
 **`DE-ADVISOR-CACHE-001` (2026-07-29):** the SDK-call `messages=` payload is now a 2-block content array instead of a bare string — `[{"type":"text","text":stable_prompt,"cache_control":{"type":"ephemeral"}}, {"type":"text","text":hints_section}]`. `stable_prompt` comes from `_build_stable_instructional_prefix()` directly; `hints_section` is derived via `full_prompt[len(stable_prompt):]` where `full_prompt` is `_build_generation_prompt(signal_context)`'s own return value — a byte slice against an independently-computed prefix, never a hand-duplicated section. Real `count_tokens` measurement: 1,730 tokens on the messages block alone (just under the model's 2,048-token floor); combined with the static `_EMIT_OVERLAY_TOOL` schema (which also gains `cache_control` and renders before `messages` in the same cached prefix), approximately 2,650-2,750 tokens — clears the floor via tools+messages together, not messages alone. See "Prompt Caching" under Internal Mechanics for the full mechanics and the mid-cycle regression this change caught.
 

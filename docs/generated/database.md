@@ -7,7 +7,7 @@
 
 ## Overview
 
-`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 38 numbered migration SQL files (001-038), and every public accessor function. `_MIGRATION_FILES` wires 35 active entries (004-038); migrations 001-003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
+`database.py` is the single write layer for `alphabot_state.db`. It owns schema initialization, 39 numbered migration SQL files (001-039), and every public accessor function. `_MIGRATION_FILES` wires 36 active entries (004-039); migrations 001-003 use a separate bootstrap path. The dashboard uses `get_ro_connection()` for all reads; the engine uses `get_connection()` for writes. The two-DB pattern (state DB here; Optuna studies in a separate DB) is an architecture hard rule — no cross-DB joins in application code.
 
 WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads while the engine holds a write lock.
 
@@ -15,11 +15,11 @@ WAL journal mode is enabled at `init_db()` time, allowing concurrent Flask reads
 
 ## Schema Migrations
 
-Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **038** (`038_retirement_decisions.sql`), following **037** (`037_strategy_incubation.sql`) and **036** (`036_sleeve_rule_fires.sql`); see `docs/generated/sleeves.md` for the sleeves schema and the "Strategy Incubation Ledger" / "Retirement Decisions" sections below for 037/038.
+Migrations are listed in `_MIGRATION_FILES` and applied by `run_migrations()`. They are idempotent (tracked in `schema_migrations`). Current highest: **039** (`039_close_account_totals.sql`), following **038** (`038_retirement_decisions.sql`), **037** (`037_strategy_incubation.sql`) and **036** (`036_sleeve_rule_fires.sql`); see `docs/generated/sleeves.md` for the sleeves schema and the "Strategy Incubation Ledger" / "Retirement Decisions" sections below for 037/038.
 
 Notable ordering: 021 is listed before 020 — intentional. See `ARCH-002` inline comment; reordering would corrupt live DBs.
 
-Migrations 026–038:
+Migrations 026 to 039:
 - `026_mc_regime_match_telemetry.sql` — regime match columns on `exit_triggers`
 - `027_regime_label_cache.sql` — `regime_label_cache` table
 - `028_autotune_runs_pbo.sql` — `pbo` column on `autotune_runs`
@@ -32,6 +32,7 @@ Migrations 026–038:
 - `035_sleeves.sql` / `036_sleeve_rule_fires.sql` — Managed Sleeves epic (PR #94); see `docs/generated/sleeves.md`.
 - `037_strategy_incubation.sql` — `strategy_incubation` (per-candidate incubation-ledger status row) + `incubation_daily` (per-candidate-per-day forward-return observations, `UNIQUE(candidate_hash, trading_day)`) tables. Additive-only, no existing table modified. See the "Strategy Incubation Ledger" section below and `docs/generated/advisors_incubation.md`.
 - `038_retirement_decisions.sql` — `retirement_decisions` table (mutable operator approve/reject status for Retirement Recommender candidates, keyed by `candidate_id` UNIQUE). Additive-only, no existing table modified. See the "Retirement Decisions" section below, `docs/generated/advisors_retirement_explainer.md`, `docs/generated/advisors_retirement_checklist.md`, and `DE-RETIRE-APPROVAL-001`.
+- `039_close_account_totals.sql`: `close_account_totals` table: the account totals latched for one close snapshot, primary key `(trading_day, captured_at_et)`, columns `totals_json` (the totals dict as latched), `as_of` (NULLable ET stamp of the Composer read) and `latched_at` (default insert time). Additive-only (`CREATE TABLE IF NOT EXISTS`). Written once per snapshot with `INSERT OR IGNORE` by `save_close_totals_latch`, so the first read taken at or after the capture is the one a daemon restart finds; read by `load_close_totals_latch`; rows beyond the newest `_CLOSE_TOTALS_KEEP_DAYS = 10` sessions are pruned on the next write. The daemon is the only writer. See `docs/generated/refresh_timing.md`.
 
 An earlier migration, `023_autotune_runs_s_count.sql`, added the `s_count` column to `autotune_runs` — but until the advisor-rewire cycle (2026-07-12, Workstream E) no caller ever populated it; see `save_autotune_run` below.
 
@@ -370,7 +371,7 @@ Per-symphony exit-turnover stats from `exit_triggers`, keyed by window (`_TURNOV
 
 Exit-leg-only (documented limitation, not a bug) — `exit_triggers` only ever records exit events; re-entry is implicit in Composer's daily rebalance and not discretely logged (inferring round-trips from `bot_state["triggered"]` transitions is explicitly deferred, per the feature plan's Scope Boundaries).
 
-Never raises — an empty table or any DB error degrades to `{"exit_count": 0, "coverage_days": 0}` for every window.
+An empty table reads as `{"exit_count": 0, "coverage_days": 0}` for every window. A database error is raised, never read as that zero, because a failed read cannot be told from a symphony with no exits; `GET /api/exit-turnover` catches it and answers 500. `now_utc` defaults to the current instant; the route passes the close of the session the page's other figures belong to while the market is closed.
 
 #### `compute_est_annual_friction_drag_pct(turnover_stats: dict, friction_pct: float) → float` (exit-friction-realized-savings, `DE-EXIT-FRICTION-REALIZED-001`, 2026-07-24)
 Pure function, no DB access. Scales the 365-day window's `exit_count` up by `365 / coverage_days` (correcting for a retention-capped window under-counting a true year) and multiplies by `friction_pct` (callers pass `autotuner.SIM_EXIT_FRICTION_PCT` — this function stays decoupled from `autotuner`, no `autotuner`↔`database` import coupling). Returns `0.0` (never raises, never divides by zero) when `coverage_days` is 0.
@@ -641,6 +642,23 @@ All rows, unfiltered — the sole read path for `_join_retirement_approval_statu
 2. **`_isolate_db` autouse fixture** — per-test. Uses `monkeypatch.setenv("DB_PATH", str(tmp_path / "test_alphabot_state.db"))` and calls `init_db()` so each test gets a fresh, fully-migrated schema. Monkeypatch restores the original env after each test.
 
 The `_session_db_guard` autouse session fixture documents and asserts the session guard contract.
+
+
+## Accessors added by the refresh-timing and UX programs
+
+Read-only unless stated. All of them read through `get_ro_connection()` or a connection the caller passes.
+
+| Accessor | Behaviour |
+|----------|-----------|
+| `load_state(*, read_only=False)` | the `bot_state` blob; `read_only=True` opens no write connection (used by `GET /api/armed-symphonies`, header status) |
+| `read_cycle_markers() -> (last_successful_cycle_at, close snapshot trading_day)` | reads only those two engine-written markers with `json_extract`, never the whole blob; `(None, None)` on any failure, which callers treat as an unobservable state |
+| `repair_close_snapshot_chain() -> str` | one-time flatten of the nested close snapshot at daemon start; writes a backup of the pre-repair row first; returns `repaired`, `not_needed`, `not_byte_stable`, `backup_failed`, `engine_busy` (engine lock busy for 65 seconds) or `write_failed`; never raises |
+| `save_close_totals_latch(trading_day, captured_at_et, totals, as_of) -> bool` / `load_close_totals_latch(trading_day, captured_at_et) -> dict or None` | the close totals latch (migration 039); `True` only when this call wrote the row |
+| `get_latest_shadow_ts_utc(trading_day, symphony_id=None, conn=None) -> str or None` | newest stored `ts_utc` among the day's `shadow_history` rows; backs the Performance page's "data as of"; `None` for an unknown day or an unreadable database, never an error |
+| `get_locked_var_counts(symphony_names) -> dict` | locked variable count per normalized name from one query; a symphony with no stored strategy row counts the default locked variables and the read stores nothing |
+| `count_advisor_observations_by_role(roles) -> dict[str, int]` | one `GROUP BY` count over the requested roles, feature-off stubs excluded, so a count next to a list never includes a row the list omits |
+| `objective_kind_for_facets(facets_by_name) -> str` | the rule shared by `autotuner.run_autotuner` and the Advisor's autotune card: a non-empty `objective_kind` facet is used as stored; otherwise `utility_family` `CRRA` selects `crra_eu` and anything else `sortino_loss_aversion` |
+| `get_autotune_run_objectives(run_ids) -> dict[int, str or None]` | the objective each run optimised (via its spec bundle's facets); `None` when no readable objective exists, distinct from a real fall-through answer |
 
 ## Internal Dependencies
 

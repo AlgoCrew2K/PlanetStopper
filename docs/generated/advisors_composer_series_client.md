@@ -15,7 +15,7 @@ The client does five things:
 
 1. Issues one `GET {COMPOSER_BASE_URL}/portfolio/accounts/{account_id}/symphonies/{symphony_id}` with `get_composer_headers()`, an explicit timeout, and a bounded retry.
 2. Reads the parallel arrays `epoch_ms` and `deposit_adjusted_series`. It **never** reads the raw `series`, which jumps on every deposit or withdrawal; one cash deposit would otherwise become a fake multi-hundred-percent "return".
-3. Maps each epoch to its **America/New_York** calendar date. When several points land on one ET date, the last one wins. Every date at or after today's ET date is dropped, so the series never contains a partial day.
+3. Maps each epoch to its **UTC** calendar date (Composer stamps each point at 00:00 UTC of its own calendar date, so reading the stamp in New York would label every point a day early). When several points land on one UTC date, the last one wins. A date is kept when it is before today's America/New_York date, or equals it once the New York clock is at or past the session close (`market_calendar.MARKET_CLOSE_TIME`), so the series never contains a partial day but does include a finished one, including at the 03:45 UTC nightly slot.
 4. Emits close-to-close simple returns `(v_t / v_{t-1} - 1) * 100` between consecutive remaining dates. This is the percent scale `analytics.compute_quantstats_metrics` expects; it divides by 100 itself.
 5. Never raises. Every failure comes back as `SeriesResult(returns={}, error=<short reason>)`.
 
@@ -39,7 +39,7 @@ Fetches one symphony's realized daily returns. The caller passes the Composer **
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `returns` | `dict[str, float]` | ISO `YYYY-MM-DD` America/New_York date → simple daily return in **percent** (10% == `10.0`). Empty on failure, or when fewer than two usable dates exist. |
+| `returns` | `dict[str, float]` | ISO `YYYY-MM-DD` UTC calendar date of the stamp → simple daily return in **percent** (10% == `10.0`). Empty on failure, or when fewer than two usable dates exist. |
 | `points` | `int` | `len(returns)`. |
 | `first_date` / `last_date` | `str \| None` | `min` / `max` of `returns`; `None` when empty. |
 | `error` | `str \| None` | `None` on success; otherwise a short D-1-safe reason, truncated to `_ERROR_MAX_CHARS`. |
@@ -58,18 +58,18 @@ A successful fetch can legitimately return `returns={}` with `error=None`, for e
 | `_RETRYABLE_HTTP_STATUSES` | `{429, 500, 502, 503, 504}` | The same transient set the sibling `composer_backtest_client` retries. |
 | `_MIN_EPOCH_MS` | `1e11` | Epoch-ms sanity floor. 1e11 ms is 1973-03-03, while a present-day epoch in **seconds** is about 1.7e9. A seconds-valued array therefore falls below the floor and the **whole body** is rejected, instead of being misread as 1970. |
 | `_PERCENT_SCALE` | `100.0` | Percent output scale. |
-| `_ET` | `ZoneInfo("America/New_York")` | Composer's trading-day calendar is US-equity. |
+| `_ET` | `ZoneInfo("America/New_York")` | Reads "today" and the session close; point labels are UTC dates. |
 | `_ERROR_MAX_CHARS` | `200` | D-1 length cap on `SeriesResult.error`. |
 | `_ENDPOINT_LOG_NAME` | `"GET /portfolio/accounts/{account}/symphonies/{symphony}"` | A fixed template for INFO logs; the real account and symphony ids never reach a log line. |
 
-## Parsing — `_parse_series_body(body, today_et) -> SeriesResult`
+## Parsing — `_parse_series_body(body, now_et) -> SeriesResult`
 
 The steps run in this order, and the function never raises:
 
 1. **Shape and type validation.** The body must be a dict; `epoch_ms` and `deposit_adjusted_series` must both be lists of equal length; every element must be a real `int`/`float`. `bool` (an `int` subclass) and numeric strings are rejected. Any violation returns `error="malformed response: ..."`.
 2. **Epoch check.** Points are sorted by epoch. Any non-finite epoch, or any epoch below `_MIN_EPOCH_MS`, rejects the whole body. An `OverflowError`, `OSError` or `ValueError` while converting an epoch also returns a malformed-response error.
-3. **ET-date collapse.** Each epoch maps to its America/New_York date, **not** the UTC date; a late-evening ET point lands on the next UTC day. Within one ET date the last point wins, which keeps returns close-to-close.
-4. **Today-drop.** Every date `>= today_et` is discarded. A midday "Run now" therefore never uses a partial day.
+3. **UTC-date collapse.** Each epoch maps to its UTC calendar date, the date Composer means. Within one date the last point wins, which keeps returns close-to-close.
+4. **Finished-session cut.** A date is kept only when `_is_finished_session(d, now_et)`: an earlier date, or today's date once the New York clock is at or past the close. A midday "Run now" therefore never uses a partial day. `_now_et()` is the clock seam.
 5. **Returns.** For consecutive remaining dates, the return is `(value / prev_value - 1.0) * 100`. It is emitted only when **both** endpoints are finite and strictly positive, and the result is itself finite. A non-positive or non-finite value on **either** side skips that return; this is a PM ruling, pinned with a hypothesis invariant in `tests/advisors/test_composer_series_client.py`. A symphony that was emptied and re-funded therefore never yields a fabricated -100% day or a division by zero. `prev_value` still advances past a skipped point, so the next return is measured from the latest mark, never stitched across the gap.
 
 ## Retry and error contract
@@ -111,3 +111,6 @@ The scan is a pure function over source text. `TestSeriesClientScanIsNonVacuous`
 **Callers:** `advisors.retirement_recommender._collect_composer_series`, reached only through `build_recommendations_with_summary(source="composer")`, is the sole caller. In production, `app.py`'s `_retirement_recommender_tick_worker` calls it through the 03:45 tick and `POST /ai-advisor/retirement/run`.
 
 See `DE-RETIRE-VISIBILITY-001` in `DECISIONS.md`.
+
+## Transport changes
+Redirects are refused (`allow_redirects=False`), because a followed redirect would carry the key-id header to whatever host answered. Each HTTP attempt writes one `planetstopper.timing` line naming the route template, never the ids (`_log_attempt`).

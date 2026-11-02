@@ -74,6 +74,12 @@ document.addEventListener('DOMContentLoaded', function () {
 ### `updateClock()`
 Renders `[data-testid="et-clock"]` as `HH:MM:SS` in `America/New_York`. Ticks every second; silently no-ops in browsers lacking `timeZone` support.
 
+## Engine status label and refresh behaviour (refresh-timing and UX programs)
+
+`renderEngineLabel()` is the only writer of `#engine-status-label`, `#engine-status-dot`, the `#engine-status` title and the countdown's visibility, and it reads module state only. Precedence, first that holds: Connection Lost (the newest refresh ended in a handled failure), Not updating (no data for more than `NOT_UPDATING_AFTER_MS = 90000`), Degraded (the last good body lists `degraded_reasons`; the tooltip text comes from `DEGRADED_REASON_TEXT`, with `DEGRADED_REASON_TEXT_CLOSED` while the market is closed and no countdown shown), Closed, Rebalance pause (`engine_phase == "blackout"`), Opening, Stale (last cycle older than `STALE_AFTER_MS = 2 minutes` on the server's clock), Live. Degraded therefore outranks Closed. All ages use `performance.now()` receipts or the response `Date` header (`receiptTiming`), never the browser's wall clock.
+
+The pages other than `/` read `GET /api/header-status` for this data; `/` reads `/api/state`. POSTs from this file (panic liquidation, candidate-alert mark-viewed, and others) go through `PSRequest.postAction` ([static_request_guard_js.md](static_request_guard_js.md)). See [refresh_timing.md](refresh_timing.md) and [ux_overhaul.md](ux_overhaul.md).
+
 ## Constants
 
 | Constant | Value | Description |

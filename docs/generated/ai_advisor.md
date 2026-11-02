@@ -1,6 +1,6 @@
 # ai_advisor
 
-> Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call via ADVISOR_SYNTHESIS_MODEL, safety gates (7-item allowlist, risk-direction check, OOS re-validation), market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks), and the R2-1 `build_reasoning_context` operator-context assembler that feeds Strategy Builder generation (real tree + live stats + lens evidence, with an honest per-source manifest) — now also reused verbatim by R2-2's Logic Changes route.
+> Claude-backed config advisor: context assembly, per-symphony assessment, structured-output Claude call through `llm_request.send` on the suggestion knob (`model_config.Knob.SUGGESTION`), safety gates (7-item allowlist, risk-direction check, OOS re-validation), market-wide lens cache-serve (nightly MARKET_LENS_CACHE bundle; no per-click live lens fetches for the 5 market-wide lens blocks), and the R2-1 `build_reasoning_context` operator-context assembler that feeds Strategy Builder generation (real tree + live stats + lens evidence, with an honest per-source manifest) — now also reused verbatim by R2-2's Logic Changes route.
 
 **Source:** `ai_advisor.py`
 **Last updated:** 2026-07-20 (F-013, `DE-ADVISOR-GATE3-DIRECTION-001` — Gate-3 direction fix + real held-out tail-slice evaluation for `revalidate_suggestion_oos`, honest field rename, see below; prior: 2026-07-14 (R2-2, `DE-ADVISOR-R2-2-001` — confirmed reuse: `build_reasoning_context` is now also called by `app.py`'s Logic Changes evaluate route, zero code change to this file, see below; prior: 2026-07-13 R2-1 -- new `build_reasoning_context` reasoning-context assembler + `_EMPTY_MANIFEST`/`_MAX_TREE_RENDER_CHARS` constants, `DE-ADVISOR-R2-1-001`; AC-9 wording reconciled per r2-review's gate finding -- see below; prior: advisor-suite-fixes AC-4: fundamentals selection loop no longer pre-filters to 10-K-only -- see below; prior: DE-TECH-SMA200-HISTORY-001 technicals lens line-range correction; prior: DE-ADVISOR-LATENCY MARKET_LENS_CACHE cache-serve path; persist_market_lens_cache producer; build_assessment_from_context empty-state reword; prior: DE-FUND-002 vintage-correct fundamentals)
@@ -177,21 +177,9 @@ Assembles operator-context text + a per-source honesty manifest for LLM-reasoned
 
 ### Claude Client
 
-#### `resolve_advisor_model() -> str`
+#### Model selection (no accessor)
 
-Returns the configured advisor synthesis model ID. Reads `ADVISOR_SYNTHESIS_MODEL` at call time — no daemon restart required to pick up a config change.
-
-**Returns:** `str` — the model ID to use for all advisor LLM calls. Default: `"claude-opus-4-8"`.
-
-**Source:** `ai_advisor.py:63-69`
-
-Used by:
-- `request_suggestions` — structured-output Claude call (`ai_advisor.py`)
-- `explain_artifact` — chat explanation Claude call (`advisors/advisor_chat.py`)
-- `_synthesize_via_claude` — nightly Market Prism synthesis (`advisors/lens_pipeline.py`)
-- `app.py:3748` and `app.py:3781` — accept/reject audit-trail `model_id` field
-
-Override: set `ADVISOR_SYNTHESIS_MODEL` in the daemon environment before start. All three call sites pick up the change on the next call without a code deploy.
+`resolve_advisor_model()` no longer exists. No call in this module names a model: `request_suggestions` sends through `llm_request.send` on `model_config.Knob.SUGGESTION` (the newest active `fable` line model from the Models API listing, or the `ADVISOR_SUGGESTION_MODEL` override used verbatim). `advisors/advisor_chat.explain_artifact` and `advisors/lens_pipeline` use `model_config.Knob.SYNTHESIS` (`opus` line, override `ADVISOR_SYNTHESIS_MODEL`). The accept and reject routes record the model that served the suggestion (`app._audit_model_id`). See `docs/generated/model_config.md` and `docs/generated/llm_request.md`.
 
 ---
 
@@ -201,7 +189,7 @@ Calls Claude's structured-output endpoint. Synchronous — blocks until the resp
 
 **Returns:** `(ConfigSuggestionsResponse, None)` on success; `(None, error_message)` on any failure. Never raises.
 
-**Model:** `os.environ.get("ADVISOR_SYNTHESIS_MODEL", "claude-opus-4-8")`, `max_tokens=2048`. The model is read at call time — override via the `ADVISOR_SYNTHESIS_MODEL` env var (see DE-SYNTH-001 in DECISIONS.md). `_CLAUDE_MODEL` was removed at 46a6bc4 (dead-constant cleanup); inline `os.environ.get()` at the `model=` argument is the canonical pattern.
+**Model:** `llm_request.send(client, model_config.Knob.SUGGESTION, effort="high", max_tokens=_MAX_TOKENS, output_schema=anthropic.transform_schema(ConfigSuggestionsResponse), timeout=_REQUEST_TIMEOUT_SECONDS)`. The reply is validated here (`ConfigSuggestionsResponse.model_validate_json(reply.text())`) after `llm_request` has classified it, because the SDK's `parse()` raises on a refusal's or a truncation's partial JSON before the stop reason can be read. A non-null `reply.reason` returns `(None, "Claude advisor unavailable: <reason>. No suggestions this call.")`. The suggestion's `serving_model` property is the model the API reported on the reply.
 
 An empty `suggestions` list is a valid non-error response ("no edit is well-supported"). D-1 security contract: fully honored — all failure paths (`messages.parse` at `ai_advisor.py:631` and client construction) return only `type(exc).__name__` to the browser. Full exception detail is logged server-side via `exc_info=True`; no exception text reaches the JSON response.
 
