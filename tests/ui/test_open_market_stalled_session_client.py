@@ -242,11 +242,12 @@ def test_history_heading_names_the_session_and_counts_its_exits_on_a_stalled_mor
     monkeypatch, tmp_path, clock
 ):
     cw = stalled_world(monkeypatch, tmp_path)
-
-    seen, body = read_history(cw, MONDAY, clock)
-
-    exits = len(body["todays_exits"])
+    cw.at(FRIDAY, "16:30:00")
+    exits = len(cw.poll("/api/history/30")["todays_exits"])
     assert exits >= 1, "fixture: the named session has exits to count"
+
+    seen, _ = read_history(cw, MONDAY, clock)
+
     assert seen["loaded"] == f"Exits on {FRIDAY_LABEL} ({exits})", (
         f"Monday {clock} ET, stalled: the heading after the load reads {seen['loaded']!r}"
     )
