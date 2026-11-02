@@ -21,8 +21,9 @@ What is compared, per route (figures, never whole bodies):
 * `/api/state`: the portfolio strip, each card by id, each state entry's figure keys, `meta.portfolio`,
   the three counts, the divergence, the dashboard panels, the as-of stamp and the trading day.
 * `/api/strip/<w>`, `/api/hero-chart/<w>`, `/api/guard-alpha-summary[?window=<w>]`,
-  `/api/history/<n>`, `/api/exit-turnover`, `/api/performance`, `/api/performance/symphonies`,
-  `/api/sleeves`: the whole body (these carry no clock field).
+  `/api/history/<n>`, `/api/exit-turnover`, `/api/performance`, `/api/performance/symphonies`: the whole body (these carry
+  no clock field). `/api/sleeves`: the rows without their insert and update times (real wall clock),
+  with the Sleeves panel's per-rule counts as the poll and the page print them.
 
 Excluded, each because it describes the clock or the view rather than a figure: `market_state` and
 `meta.market_state*` (the state the clock is in), `meta.clock_et` and `next_run*` (the clock and the
@@ -204,8 +205,23 @@ def read_performance(cw: ClosedWorld) -> dict:
     return out
 
 
+# Insert and update times the database stamps from the real wall clock, which no virtual clock moves.
+SLEEVE_WALL_CLOCK_COLUMNS = ("created_at", "updated_at")
+
+
 def read_sleeves(cw: ClosedWorld) -> dict:
-    return {"rows": cw.poll("/api/sleeves")}
+    """The Managed Sleeves rows, and the panel's per-rule counts as the poll and the page print them
+    (the fire count of the session the figures belong to, lifetime fires, realized)."""
+    rows = cw.poll("/api/sleeves")["sleeves"]
+    panel = cw.poll("/api/state")["dashboard_panels"]["sleeves"]
+    page = _marks(cw.raw("/").decode("utf-8"))
+    return {
+        "rows": [
+            {k: v for k, v in row.items() if k not in SLEEVE_WALL_CLOCK_COLUMNS} for row in rows
+        ],
+        "panel": panel,
+        "page": {k: v for k, v in page.items() if "rule-" in k or "sleeve-" in k},
+    }
 
 
 READERS: dict[str, Callable[[ClosedWorld], dict]] = {
