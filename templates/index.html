@@ -532,7 +532,7 @@
       font-weight: 700;
       letter-spacing: 0.07em;
       text-transform: uppercase;
-      color: var(--studio-ink-faint);
+      color: var(--studio-ink-dim);
       margin-bottom: 10px;
     }
 
@@ -917,7 +917,7 @@
                      floor) directly on the row that depends on it. Hidden by default
                      -- zero visual change on a healthy fetch. Populated by
                      renderAccountBasisChip() in static/index.js. -->
-                <span hidden data-testid="comp-today-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-warn);margin-left:6px;"></span>
+                <span hidden data-testid="comp-today-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn-border);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -955,7 +955,7 @@
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }} pp{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4: see the comp-today-basis-chip comment above -- identical
                      honesty-disclosure chip for the Cumulative row. -->
-                <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-warn);margin-left:6px;"></span>
+                <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn-border);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -1207,7 +1207,7 @@
               <span data-field="dv-label-bot" class="dv-label">Bot{% if sym.get("triggered") %} &middot; frozen{% endif %}</span>
               <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
-            <div class="dv-block" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
+            <div class="dv-block" data-field="dv-block-held" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
               <span class="dv-label">If held{% if sym.get("triggered") and not session_day %} &middot; live{% endif %}</span>
               <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
             </div>
@@ -1652,7 +1652,7 @@
             type="button"
             data-testid="sleeve-delete-control"
             data-sleeve-id="{{ sleeve.id }}"
-            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-ink-faint);font-size:10.5px;font-weight:600;border:1px solid var(--studio-rule);cursor:pointer;"
+            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-ink-dim);font-size:10.5px;font-weight:600;border:1px solid var(--studio-rule);cursor:pointer;"
             {% if not template %}onclick="deleteSleeve({{ sleeve.id }}, this)"{% endif %}
           >Delete</button>
         </div>
@@ -1672,7 +1672,7 @@
     style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"{% if not cvar_diagnostic %}
     hidden{% endif %}
   >
-    <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-faint);margin-bottom:10px;">
+    <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-dim);margin-bottom:10px;">
       CVaR Diagnostic &mdash; 5th-Percentile Expected Shortfall
     </div>
     <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:baseline;">
@@ -1727,7 +1727,7 @@
     {# sibling badge/buttons -- center-aligned wrapping rows degrade gracefully #}
     {# instead of the baseline-aligned single-line assumption breaking at narrow widths. #}
     <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-bottom:12px;">
-      <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-faint);">
+      <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-dim);">
         Managed Sleeves
       </div>
       <span

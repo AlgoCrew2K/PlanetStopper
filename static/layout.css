@@ -133,7 +133,7 @@ textarea {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--studio-ink-faint);
+  color: var(--studio-ink-dim);
   margin: 28px 0 12px;
 }
 
