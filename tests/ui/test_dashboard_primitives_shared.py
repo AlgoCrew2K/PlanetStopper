@@ -38,10 +38,11 @@ SHELL_BASELINE = json.loads(
     )
 )["dashboard"]
 
-# The one change admitted since the base capture: two labels moved from the faint ink token to the
-# dim one for contrast. Only these two colours move; every other declaration stays as captured.
+# The one change admitted since the base capture: three labels moved from the faint ink token to the
+# dim one for contrast. Only these three colours move; every other declaration stays as captured.
 _ADMITTED_COLOUR_CHANGES = {
     ".mini-stat-label": ("var(--studio-ink-faint)", "var(--studio-ink-dim)"),
+    ".section-header": ("var(--studio-ink-faint)", "var(--studio-ink-dim)"),
     ".status-pill.sleeve-stale": ("var(--studio-ink-faint)", "var(--studio-ink-dim)"),
 }
 

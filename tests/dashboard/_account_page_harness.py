@@ -108,11 +108,37 @@ def analytics_mock() -> MagicMock:
     return m
 
 
+def open_morning_clock(bot_state: dict):
+    """A ``datetime`` class whose ``now()`` is half a minute after the state's own last cycle.
+
+    A forced open market means a normal open: a cycle has committed since the open. The app reads
+    the real clock, and a fixture stamped on a past day would then read as a morning on which no
+    cycle has committed (the stalled open, which names the last session and serves its figures).
+    Pinning ``now`` to the fixture's own stamp keeps the open one the fixture describes, whatever
+    day the suite runs. None when the state carries no stamp (nothing to be stalled against).
+    """
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from tests.app._refresh_timing_state_world import frozen_datetime_class
+
+    stamp = bot_state.get("last_successful_cycle_at")
+    if not stamp:
+        return None
+    moment = datetime.fromisoformat(str(stamp))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=ZoneInfo("America/New_York"))
+    return frozen_datetime_class(
+        moment.astimezone(ZoneInfo("America/New_York")) + timedelta(seconds=30)
+    )
+
+
 @contextmanager
 def state_api(monkeypatch, bot_state: dict, market_state: str = "open") -> Iterator[Any]:
     """A Flask test client for /api/state over ``bot_state``. Only database and analytics are mocked.
 
-    Every patch is undone on exit, so a page rendered afterwards sees the real application.
+    Every patch is undone on exit, so a page rendered afterwards sees the real application. A forced
+    open market is a normal open (see ``open_morning_clock``).
     """
     import app as app_module
 
@@ -129,6 +155,9 @@ def state_api(monkeypatch, bot_state: dict, market_state: str = "open") -> Itera
         mp.setattr(app_module, "render_template", lambda *_a, **_k: "")
         mp.setattr(app_module, "analytics", analytics_mock())
         mp.setattr(app_module, "get_market_state", lambda *_a, **_k: market_state)
+        open_clock = open_morning_clock(bot_state) if market_state == "open" else None
+        if open_clock is not None:
+            mp.setattr(app_module, "datetime", open_clock)
         # A cold account-totals cache, so the strip's account value is the sum over the symphonies given.
         mp.setattr(app_module, "_account_totals_cache", app_module._StaleFlagDict())
         mp.setattr(app_module, "_account_totals_last_good", {})
