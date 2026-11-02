@@ -27,8 +27,8 @@ Contract pinned, per element
   its text off the warn token does not leave it reading as plain text.
 * Headings, labels and footnotes: the dashboard's section headings (CVaR Diagnostic, Managed Sleeves,
   ``.section-label``), the page ``.section-header``, the tweaks ``.twk-sect``, the settings nav
-  footnote ``.sn-footnote`` and the settings modal's kicker and caption clear it too. The sweep's
-  allowlist keeps only icons, a disabled control and control labels.
+  footnote ``.sn-footnote`` and the settings modal's kicker and caption clear it too. The enabled sleeve Delete
+  button's label too. The sweep's allowlist keeps only icons and disabled controls.
 
 ``--studio-ink-faint`` is the token this replaces; the first test shows it fails the bar on every
 surface in both themes, so the bar tells a fix from the status quo.
@@ -303,6 +303,7 @@ DASHBOARD_ELEMENTS = {
     "account basis stamp": r'<div[^>]*id="account-basis-as-of"[^>]*>',
     "CVaR Diagnostic heading": r"<div[^>]*>\s*CVaR Diagnostic",
     "Managed Sleeves heading": r"<div[^>]*>\s*Managed Sleeves",
+    "Sleeve Delete button label": r'<button[^>]*data-testid="sleeve-delete-control"[^>]*>',
 }
 
 
@@ -502,15 +503,13 @@ FAINT_TEXT = re.compile(
     r"(?<![\w-])color\s*:\s*var\(\s*--studio-ink-faint\b|\.color\s*=[^;\n]*--studio-ink-faint"
 )
 
-# Text the sweep lets stay on the faint token, each with what it is: an icon glyph, a disabled control
-# or a control label. Headings, labels and footnotes are not on it (they are readable text). An entry
+# Text the sweep lets stay on the faint token, each with what it is: an icon glyph or a disabled control. Headings, labels and footnotes are not on it (they are readable text). An entry
 # that matches no use fails the allowlist test, so it cannot outlive the line it excused. ``exact``
 # entries are a CSS selector, compared whole; the others are a fragment of the element's tag and the
 # words after it.
 SWEEP_ALLOWLIST: tuple[tuple[str, str, bool, str], ...] = (
     ("templates/index.html", "today-held-footnote-marker", False, "footnote marker glyph"),
     ("templates/index.html", "cumulative-cashflow-footnote-marker", False, "footnote marker glyph"),
-    ("templates/index.html", "sleeve-delete-control", False, "control label"),
     ("templates/settings.html", ".btn-discard:disabled", True, "disabled control label"),
     ("templates/settings.html", ".btn-save", True, "control label, replaced when enabled"),
 )
