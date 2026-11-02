@@ -98,7 +98,7 @@
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--studio-ink-faint, rgba(21, 18, 12, 0.36));
+  color: var(--studio-ink-dim);
   padding: 10px 0 0;
 }
 

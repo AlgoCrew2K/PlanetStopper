@@ -393,6 +393,9 @@
     // The tile names what its number is: the guard effect (Bot return minus If-held return,
     // each compounded over the window) for the portfolio, or for the picked symphony, over
     // the picked window; the two returns it is the gap between are stated beside it.
+    // The windows the Dashboard's picker has a button for: the figure is the Dashboard's only there.
+    var DASHBOARD_WINDOW_TOKENS = ['30d', '60d', '90d', '125d', 'ytd', '1y'];
+
     function renderGuardEffectCaption(liveTR, shadowTR) {
         var scope = segValue('scope-toggle');
         var windowToken = segValue('days-picker');
@@ -406,7 +409,8 @@
         if (basisEl) {
             basisEl.textContent = liveTR !== null && shadowTR !== null
                 ? shadowTR.toFixed(2) + '% Bot vs ' + liveTR.toFixed(2) + '% If held, compounded.'
-                    + (scope === 'symphony' ? '' : ' Same figure as the Dashboard.')
+                    + (scope !== 'symphony' && DASHBOARD_WINDOW_TOKENS.indexOf(windowToken) !== -1
+                        ? ' Same figure as the Dashboard at ' + windowName + '.' : '')
                 : '';
         }
     }

@@ -630,7 +630,7 @@
             '<div style="padding:16px 18px;border-bottom:1px solid var(--studio-rule);' +
             'display:flex;align-items:flex-start;gap:12px;flex-shrink:0;">' +
             '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:9.5px;font-weight:700;color:var(--studio-ink-faint);' +
+            '<div style="font-size:9.5px;font-weight:700;color:var(--studio-ink-dim);' +
             'letter-spacing:0.14em;text-transform:uppercase;margin-bottom:4px;">Settings</div>' +
             '<div style="font-size:16px;font-weight:700;color:var(--studio-ink);' +
             'letter-spacing:-0.01em;line-height:1.25;' +
@@ -661,7 +661,7 @@
 
     function _sectionHeader(title, caption, rightHtml) {
         var captionHtml = caption
-            ? '<div style="font-size:11px;color:var(--studio-ink-faint);margin-top:3px;">' +
+            ? '<div style="font-size:11px;color:var(--studio-ink-dim);margin-top:3px;">' +
               _esc(caption) + '</div>'
             : '';
         // One balanced element: the header row. This function used to open a column wrapper it

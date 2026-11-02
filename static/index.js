@@ -985,8 +985,8 @@
 
     // The figure is the exit return minus the card's current return: it moves with the card
     // while the market is open and is fixed at the capture after the close.
-    function verdictBasisLabel(marketState) {
-        return marketState === 'open' ? 'vs held now' : 'at close';
+    function verdictBasisLabel(marketState, sessionWorded) {
+        return marketState === 'open' && !sessionWorded ? 'vs held now' : 'at close';
     }
 
     // From this magnitude toFixed prints exponent text. The server render prints the dash for
@@ -1003,7 +1003,7 @@
     // Writes the text span and the basis label beside it. A usable guard alpha writes its
     // wording and shows the label; any other value writes the dash and hides the label (a label
     // is never shown beside no value), the server render's rule for the same entry.
-    function writeVerdict(verdict, ga, marketState) {
+    function writeVerdict(verdict, ga, marketState, sessionWorded) {
         if (verdict == null) return;
         var usable = usableGuardAlpha(ga);
         var textEl = verdict.querySelector('[data-field="verdict-text"]');
@@ -1011,7 +1011,7 @@
         var qualifier = verdict.querySelector('[data-testid="guard-alpha-basis"]');
         if (qualifier) {
             if (usable) {
-                qualifier.textContent = verdictBasisLabel(marketState);
+                qualifier.textContent = verdictBasisLabel(marketState, sessionWorded);
                 qualifier.removeAttribute('hidden');
             } else {
                 qualifier.setAttribute('hidden', '');
@@ -1019,7 +1019,7 @@
         }
     }
 
-    function updateVerdicts(botState, marketState) {
+    function updateVerdicts(botState, marketState, sessionWorded) {
         var cards = document.querySelectorAll('[data-testid="triggered-verdict"]');
         cards.forEach(function (el) {
             var card = el.closest('[data-testid="sym-card"]');
@@ -1029,7 +1029,7 @@
             if (!symId) return;
             var sym = (botState || {})[symId];
             if (!sym) return;
-            writeVerdict(el, sym.guard_alpha, marketState);
+            writeVerdict(el, sym.guard_alpha, marketState, sessionWorded);
         });
     }
 
@@ -2088,7 +2088,8 @@
                 if (verdict != null) {
                     if (sym.triggered) {
                         verdict.style.display = '';
-                        writeVerdict(verdict, sym.guard_alpha, data.market_state);
+                        writeVerdict(verdict, sym.guard_alpha, data.market_state,
+                            sessionWordingLabel(data.meta) !== 'today');
                     } else {
                         verdict.style.display = 'none';
                     }
@@ -2369,6 +2370,18 @@
     }
     var _ruleTodayLabel = 'today';
 
+    // The label the page's words use: the session day the server worded the page with
+    // (meta.session_wording_day: a closed market's session, or an open market's last session
+    // while no cycle has committed since the open), else the closed-market rule above.
+    function sessionWordingLabel(meta) {
+        var day = meta && meta.session_wording_day;
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day));
+        if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12) {
+            return RULE_LABEL_MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]);
+        }
+        return ruleTodayLabel(meta);
+    }
+
     // While the market is not open the figures are the last session's: the labels that said
     // today or live name the session day ("Oct 30") instead, as the server render does, so a
     // label never changes between the first paint and the first poll. null while open.
@@ -2377,7 +2390,7 @@
         return _sessionDay ? 'No events on ' + _sessionDay + '.' : 'No events yet today.';
     }
     function applySessionWording(meta) {
-        var label = ruleTodayLabel(meta);
+        var label = sessionWordingLabel(meta);
         _sessionDay = label === 'today' ? null : label;
         document.querySelectorAll('[data-field="day-word"]').forEach(function (el) {
             setTextIfChanged(el, _sessionDay || 'Today');
@@ -2394,13 +2407,18 @@
         setTextIfChanged(document.querySelector('[data-field="events-heading"]'),
             _sessionDay ? _sessionDay + ' events' : 'Today’s events');
         setTextIfChanged(document.querySelector('[data-field="events-empty"]'), eventsEmptyText());
-        if (_sessionDay) {
-            document.querySelectorAll('.dv-label').forEach(function (el) {
-                if (/^If held · live$/.test(el.textContent.replace(/\s+/g, ' ').trim())) {
-                    setTextIfChanged(el, 'If held');
-                }
-            });
-        }
+        // Every card's verdict basis label (hidden ones included) follows the same wording.
+        document.querySelectorAll('[data-testid="guard-alpha-basis"]').forEach(function (el) {
+            setTextIfChanged(el, verdictBasisLabel(
+                meta && meta.system_online === false ? 'closed' : 'open', _sessionDay !== null));
+        });
+        // A triggered card's held label says "live" only while today's wording is on the page.
+        document.querySelectorAll('[data-field="dv-block-held"] .dv-label').forEach(function (el) {
+            var botLabel = el.closest('.dual-value-headline')
+                .querySelector('[data-field="dv-label-bot"]');
+            var triggered = !!botLabel && /frozen/.test(botLabel.textContent);
+            setTextIfChanged(el, triggered && !_sessionDay ? 'If held · live' : 'If held');
+        });
     }
 
     function syncRuleRow(rowEl, sleeveId, rule) {
@@ -2628,7 +2646,7 @@
             // The headline, its window label and the Ann. Vol row follow the picked window.
             function () { refreshWindowedStrip(stampChanged); },
             function () { updateComparisonRows(data); },
-            function () { updateVerdicts(botState, data.market_state); },
+            function () { updateVerdicts(botState, data.market_state, sessionWordingLabel(meta) !== 'today'); },
             function () { if (typeof window.updateBanners === 'function') window.updateBanners(data); },
             function () { updateMiniStats(meta); },
             function () { chartsSettled = loadCharts(botState, stampChanged); },

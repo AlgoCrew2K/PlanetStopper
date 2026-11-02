@@ -3291,6 +3291,7 @@ def _render_dashboard(
         market_state=market_state,
         portfolio_strip=portfolio_strip,
         window_anchor=trading_session.anchor,
+        session_wording_day=trading_session.wording_day,
     )
     portfolio_strip = view["portfolio_strip"]
 
@@ -3449,8 +3450,9 @@ def _render_dashboard(
     # While the market is not open the figures are the last session's, so the labels name that day
     # ("Oct 30") instead of saying today or live; static/index.js writes the same words on a poll.
     session_day = None
-    if market_state != "open" and trading_session.anchor is not None:
-        session_day = f"{trading_session.anchor.strftime('%b')} {trading_session.anchor.day}"
+    wording_day = trading_session.wording_day
+    if wording_day is not None:
+        session_day = f"{wording_day.strftime('%b')} {wording_day.day}"
 
     return render_template(
         "index.html",
@@ -3461,7 +3463,7 @@ def _render_dashboard(
         execution_simulated=_execution_is_simulated(live_state),
         # The figure is the exit return minus the card's current return: live while the
         # market is open, fixed at the capture after the close.
-        verdict_basis_label="vs held now" if market_state == "open" else "at close",
+        verdict_basis_label="at close" if session_day else "vs held now",
         vars_locked_count=vars_locked_count,
         active_route="dashboard",
         meta=meta,
@@ -3599,11 +3601,14 @@ def _build_meta(
     market_state=_MARKET_STATE_UNSET,
     portfolio_strip: dict | None = None,
     window_anchor: date | None = None,
+    session_wording_day: date | None = None,
 ) -> dict:
     """Build the meta object for /api/state responses (AC-C1 Foundation).
 
     window_anchor: the ET trading day the portfolio figures belong to (_SessionView.anchor); the
     page cuts its own windows at it, never at the browser's clock.
+    session_wording_day: the session the page's words name (_SessionView.wording_day), so the
+    page script words a poll the way the server worded the first paint.
     """
     # Use module-qualified call so test patches on dotenv.dotenv_values take effect.
     env_vars = _dotenv_module.dotenv_values(ENV_FILE_PATH)
@@ -3714,6 +3719,9 @@ def _build_meta(
     return {
         "mode": "LIVE" if live_mode else "DRY RUN",
         "system_online": market_state == "open",
+        "session_wording_day": (
+            session_wording_day.isoformat() if session_wording_day is not None else None
+        ),
         "tracked": tracked,
         "armed": armed,
         "triggered": triggered,
@@ -4054,6 +4062,8 @@ class _SessionView:
     snapshot: the close snapshot served (stored or built); None for "open" and "live".
     cut_state: the state whose cycle stamp cuts the shadow rows the response reads.
     latest: the newest completed session at the request instant.
+    stalled_day: set only while the market is open and no cycle has committed since today's open:
+    the ET day of the last committed cycle, the session whose figures the page still shows.
     """
 
     market_state: str
@@ -4062,6 +4072,15 @@ class _SessionView:
     snapshot: dict | None
     cut_state: dict | None
     latest: date | None
+    stalled_day: date | None = None
+
+    @property
+    def wording_day(self) -> date | None:
+        """The session the page's words name ("Oct 30" in place of today or live): the closed
+        market's anchor, or an open market's stalled day. None when the figures are today's."""
+        if self.stalled_day is not None:
+            return self.stalled_day
+        return None if self.market_state == "open" else self.anchor
 
     @property
     def cutoff_anchor(self) -> date | None:
@@ -4114,6 +4133,21 @@ def _held_close_snapshot(state: dict, latest: date) -> dict | None:
     }
 
 
+def _stalled_day(state: dict, now_et: datetime) -> date | None:
+    """The ET day of the last committed cycle when it is earlier than today's open, else None.
+
+    No stamp at all is not stalled: there is no session to name. Age plays no part, only whether
+    the stamp is before the open.
+    """
+    stamp = _cycle_stamp_moment(state.get("last_successful_cycle_at"))
+    if stamp is None:
+        return None
+    today_open = _DatetimeType.combine(
+        now_et.date(), market_calendar.session_open(now_et.date()), tzinfo=_ET
+    )
+    return stamp.date() if stamp < today_open else None
+
+
 def _session_view(state: dict | None, market_state: str, now_et: datetime) -> _SessionView:
     """The session a response at *now_et* describes: the one place the window anchor is decided.
 
@@ -4128,7 +4162,9 @@ def _session_view(state: dict | None, market_state: str, now_et: datetime) -> _S
     except Exception:
         latest = None
     if market_state == "open":
-        return _SessionView(market_state, "open", now_et.date(), None, state, latest)
+        return _SessionView(
+            market_state, "open", now_et.date(), None, state, latest, _stalled_day(state, now_et)
+        )
     snapshot = state.get("last_market_close_snapshot")
     if not snapshot:
         return _SessionView(market_state, "live", now_et.date(), None, state, latest)
@@ -5606,6 +5642,7 @@ def get_state():
                             market_state=market_state,
                             portfolio_strip=_meta_strip,
                             window_anchor=trading_session.anchor,
+                            session_wording_day=trading_session.wording_day,
                         ),
                         **_additive,
                     }
@@ -5653,6 +5690,7 @@ def get_state():
                     market_state=market_state,
                     portfolio_strip=_wait_strip,
                     window_anchor=trading_session.anchor,
+                    session_wording_day=trading_session.wording_day,
                 ),
                 **_additive,
             }
@@ -5909,6 +5947,7 @@ def get_state():
                     market_state=market_state,
                     portfolio_strip=_meta_strip,
                     window_anchor=trading_session.anchor,
+                    session_wording_day=trading_session.wording_day,
                 ),
                 **_additive,
             }
@@ -8424,13 +8463,13 @@ def get_history(days):
     stats = analytics.get_history_summary(
         days=days,
         base_dir=analytics._POST_MORTEMS_DIR,
-        exits_day=session.anchor,
+        exits_day=session.wording_day or session.anchor,
         **session.anchor_kwargs,
     )
     # The exits are the anchor session's: today's while open, the closed session's all the way to
     # the next open (the anchor is the one window_anchor of /api/state names).
-    stats["todays_exits_day"] = session.anchor.isoformat()
-    stats["todays_exits_market_closed"] = session.market_state != "open"
+    stats["todays_exits_day"] = (session.wording_day or session.anchor).isoformat()
+    stats["todays_exits_market_closed"] = session.wording_day is not None
     stats["window_days"] = days
     # AC-5 (DE-PERF-WINDOW-TRUTH-001): window_days keeps its EXISTING
     # "requested window" meaning (not redefined) -- these three fields are
@@ -8554,8 +8593,8 @@ def history_page():
     # day (as static/history.js does once /api/history answers) instead of reading "Today's exits".
     session = _current_session()[0]
     exits_label = "Today's exits"
-    if session.market_state != "open":
-        exits_label = f"Exits on {session.anchor.strftime('%b')} {session.anchor.day}"
+    if session.wording_day is not None:
+        exits_label = f"Exits on {session.wording_day.strftime('%b')} {session.wording_day.day}"
     return render_template(
         "history.html",
         active_route="history",
