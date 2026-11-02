@@ -25,6 +25,9 @@ Contract pinned, per element
 * The account-basis chip on the Today and Cumulative rows clears it in both themes and keeps a visible
   warning cue of its own (a border, a background tint or a leading marker in the warn family), so moving
   its text off the warn token does not leave it reading as plain text.
+* The chip's own warning cue, its border or outline, is a non-text boundary: it clears 3:1 (WCAG 1.4.11)
+  against every surface the chip can sit on, in both themes, by a ``--studio-warn*`` token as the
+  tokens stand (``static/tokens.css`` is not edited to make it so).
 * Headings, labels and footnotes: the dashboard's section headings (CVaR Diagnostic, Managed Sleeves,
   ``.section-label``), the page ``.section-header``, the tweaks ``.twk-sect``, the settings nav
   footnote ``.sn-footnote`` and the settings modal's kicker and caption clear it too. The enabled sleeve Delete
@@ -491,6 +494,75 @@ def test_the_account_basis_chip_keeps_a_visible_warning_cue_in_the_warn_family(t
 def test_the_chip_text_assignments_are_found_so_the_marker_alternative_is_read_from_real_code():
     texts = _chip_text_assignments()
     assert len([t for t in texts if t]) == 2, texts
+
+
+# The boundary of a component that is not text: WCAG 1.4.11 asks 3:1 against the adjacent colours.
+NON_TEXT_BAR = 3.0
+_WARN_TOKEN = re.compile(r"var\(\s*(--studio-warn[\w-]*)")
+
+
+def _chip_outline_tokens(test_id: str) -> list[tuple[str, str]]:
+    """(declaration, warn-family token) for every border, outline or shadow of the chip and its
+    classes that names a ``--studio-warn*`` token."""
+    found = []
+    for props in _chip_declarations(test_id):
+        for key, value in props.items():
+            if key == "__selector__":
+                continue
+            if key.startswith("border") or key in ("outline", "box-shadow"):
+                found += [(f"{key}: {value}", token) for token in _WARN_TOKEN.findall(value)]
+    return found
+
+
+@pytest.mark.parametrize("test_id", CHIP_IDS)
+def test_the_chip_outlines_itself_with_a_token_of_the_warn_family(test_id):
+    assert _chip_outline_tokens(test_id), (
+        f"{test_id}: no border, outline or shadow names a {WARN_FAMILY}* token, so the chip has no "
+        "boundary cue whose contrast can be read"
+    )
+
+
+@pytest.mark.parametrize("test_id", CHIP_IDS)
+@pytest.mark.parametrize("theme", list(contrast.THEMES))
+def test_the_account_basis_chips_warning_cue_clears_3_to_1_on_every_surface_it_can_sit_on(
+    test_id, theme
+):
+    outlines = _chip_outline_tokens(test_id)
+    assert outlines, f"{test_id}: the chip has no {WARN_FAMILY}* border, outline or shadow"
+    for declaration, token in outlines:
+        for name, layers in contrast.SURFACES.items():
+            ratio = contrast.text_ratio(token, layers, theme)
+            assert ratio >= NON_TEXT_BAR, (
+                f"{test_id}: the cue `{declaration}` is {token}, {ratio:.2f}:1 on {name} in the "
+                f"{theme} theme, below {NON_TEXT_BAR}:1 (WCAG 1.4.11 non-text contrast)"
+            )
+
+
+def test_precondition_a_token_of_the_warn_family_clears_3_to_1_everywhere_as_it_stands():
+    """The bar is reachable with the tokens as they are: some ``--studio-warn*`` token clears it on
+    every surface in both themes, so the cue needs no edit to ``static/tokens.css``."""
+    light, dark = contrast._token_blocks()
+    warn_tokens = sorted(name for name in {**light, **dark} if name.startswith(WARN_FAMILY))
+    clearing = [
+        token
+        for token in warn_tokens
+        if all(
+            contrast.text_ratio(token, layers, theme) >= NON_TEXT_BAR
+            for theme in contrast.THEMES
+            for layers in contrast.SURFACES.values()
+        )
+    ]
+    assert clearing, (
+        f"no {WARN_FAMILY}* token clears {NON_TEXT_BAR}:1 on every surface: {warn_tokens}"
+    )
+
+
+def test_precondition_the_chips_border_token_as_it_stands_fails_3_to_1_on_the_light_card():
+    """Names the defect the cue tests catch: the translucent border token is a faint line."""
+    assert (
+        contrast.text_ratio("--studio-warn-border", contrast.SURFACES["card"], "light")
+        < NON_TEXT_BAR
+    )
 
 
 # ---------------------------------------------------------------------------

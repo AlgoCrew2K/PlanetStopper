@@ -12,6 +12,8 @@ meta the session wording is derived from is the meta production sends, not a han
 * A page left open across a session boundary (live wording on Monday, polled on Tuesday morning
   before any cycle) switches to the new stalled session's words.
 * The closed market's words, and an open market whose last cycle is after the open, are unchanged.
+* The figures under those words are the last session's: on a stalled open morning first paint, load poll
+  and interval poll print the same numbers the script prints at the pre-market instant of the same state.
 * History: its table heading and the rows follow the payload, and the first paint and the poll agree.
 """
 
@@ -202,6 +204,97 @@ def test_the_closed_markets_words_are_the_same_on_first_paint_and_every_poll(
 
     expected = session_wording(FRIDAY_LABEL)
     assert seen == {"first": expected, "loaded": expected, "polled": expected}
+
+
+# ---------------------------------------------------------------------------
+# The figures under the words
+# ---------------------------------------------------------------------------
+
+FIGURE_FIELDS = (
+    "tc-bot",
+    "tc-held",
+    "tc-alpha-badge",
+    "cr-bot",
+    "cr-held",
+    "cr-alpha-badge",
+    "mdd-bot",
+    "mdd-held",
+    "mdd-alpha-badge",
+    "mdd-lifetime",
+    "verdict-text",
+)
+FIGURE_TESTIDS = (
+    "comp-today-bot-text",
+    "comp-today-held-text",
+    "comp-today-delta",
+    "comp-cumulative-bot-text",
+    "comp-cumulative-held-text",
+    "comp-cumulative-delta",
+    "guard-alpha-headline",
+)
+
+FIGURES_SCENARIO = """
+const clean = function (e) { return e ? e.textContent.replace(/\\s+/g, ' ').trim() : null; };
+const figures = function () {
+  const out = {};
+  %(fields)s.forEach(function (n) {
+    out['field:' + n] = H.$$('[data-field="' + n + '"]').map(clean).sort();
+  });
+  %(testids)s.forEach(function (n) {
+    out['testid:' + n] = H.$$('[data-testid="' + n + '"]').map(clean).sort();
+  });
+  return out;
+};
+const first = figures();
+await H.boot();
+const loaded = figures();
+await H.advance(31000);
+const polled = figures();
+return { first: first, loaded: loaded, polled: polled, stateReads: H.to('/api/state').length };
+""" % {"fields": str(list(FIGURE_FIELDS)), "testids": str(list(FIGURE_TESTIDS))}
+
+
+def read_figures(cw: ClosedWorld, day: str, clock: str) -> dict:
+    """First paint, load poll and interval poll, each as the card and hero figures the script left
+    in the page, for the real page and the real poll body of the world at `day` `clock` ET."""
+    cw.at(day, clock)
+    html, body = render_page("/"), cw.poll("/api/state")
+    out = run_page(
+        html,
+        FIGURES_SCENARIO,
+        routes=[route(STATE, {"json": body}, method="GET")],
+        scripts=[name for name in page_scripts(html) if not name.startswith("vendor/")],
+        pathname="/",
+        wall=wall_of(day, clock),
+    )
+    assert out.result["stateReads"] >= 2, "fixture: the page did not poll after its load"
+    return {key: out.result[key] for key in ("first", "loaded", "polled")}
+
+
+@pytest.mark.parametrize("clock", ["09:30:30", "09:40:00", "13:00:00"])
+def test_a_stalled_open_morning_prints_the_pre_market_figures_on_first_paint_and_every_poll(
+    monkeypatch, tmp_path, clock
+):
+    cw = stalled_world(monkeypatch, tmp_path)
+    pre_market = read_figures(cw, MONDAY, "09:29:00")
+    assert any(
+        text and text != "\u2014"
+        for key in ("field:tc-held", "field:tc-bot")
+        for text in pre_market["first"][key]
+    ), "fixture: the pre-market page prints figures for the cards"
+
+    stalled = read_figures(cw, MONDAY, clock)
+
+    for stage in ("first", "loaded", "polled"):
+        changed = {
+            key: (pre_market[stage][key], stalled[stage][key])
+            for key in pre_market[stage]
+            if pre_market[stage][key] != stalled[stage][key]
+        }
+        assert not changed, (
+            f"Monday {clock} ET, stalled, {stage}: the script prints figures that differ from the "
+            f"pre-market page's: {changed}"
+        )
 
 
 # ---------------------------------------------------------------------------
