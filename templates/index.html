@@ -917,7 +917,7 @@
                      floor) directly on the row that depends on it. Hidden by default
                      -- zero visual change on a healthy fetch. Populated by
                      renderAccountBasisChip() in static/index.js. -->
-                <span hidden data-testid="comp-today-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn-border);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
+                <span hidden data-testid="comp-today-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -955,7 +955,7 @@
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }} pp{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4: see the comp-today-basis-chip comment above -- identical
                      honesty-disclosure chip for the Cumulative row. -->
-                <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn-border);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
+                <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">

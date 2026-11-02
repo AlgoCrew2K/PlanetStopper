@@ -4161,11 +4161,12 @@ def _session_view(state: dict | None, market_state: str, now_et: datetime) -> _S
         latest = market_calendar.most_recent_completed_session(now_et)
     except Exception:
         latest = None
-    if market_state == "open":
-        return _SessionView(
-            market_state, "open", now_et.date(), None, state, latest, _stalled_day(state, now_et)
-        )
+    stalled = _stalled_day(state, now_et) if market_state == "open" else None
     snapshot = state.get("last_market_close_snapshot")
+    if market_state == "open" and (stalled is None or not snapshot):
+        return _SessionView(market_state, "open", now_et.date(), None, state, latest, stalled)
+    # A stalled open (no cycle since today's open) serves the view pre-market serves for the same
+    # stored state: the last session's close snapshot, until the first cycle commits.
     if not snapshot:
         return _SessionView(market_state, "live", now_et.date(), None, state, latest)
     kind = "frozen"
@@ -4180,7 +4181,7 @@ def _session_view(state: dict | None, market_state: str, now_et: datetime) -> _S
         anchor = latest or now_et.date()
     capture = _snapshot_capture_moment(snapshot)
     cut_state = state if capture is None else {"last_successful_cycle_at": capture.isoformat()}
-    return _SessionView(market_state, kind, anchor, snapshot, cut_state, latest)
+    return _SessionView(market_state, kind, anchor, snapshot, cut_state, latest, stalled)
 
 
 def _window_cutoff_of(trading_session: _SessionView, window: object) -> date | None:
