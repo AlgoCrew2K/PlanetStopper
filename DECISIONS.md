@@ -11521,3 +11521,40 @@ On `/settings`, `.settings-section`, `.toggle-btn` and `.flush-confirm-body` set
 ### Tests and review
 
 No count supplied; this pass ran no tests.
+
+---
+
+## ux-fix-batch-4: open-market session wording, Performance caption window, contrast (2026-11-02)
+
+Source: `ux-expert-pages-open.json` in the review folder `8c54b0584daf` and `8c54b0584daf-FIX-BATCH-4.md`. Delta `8c54b058..bbc61631`. Frozen: `alpha_bot_execution.py`, `math_engine.py`, `static/tokens.css`. The rulings are [PM-ASSUMED].
+
+### Fixed
+
+- I1: while the market is open and no cycle has committed since today's open, the page showed last session's figures under words that said today or live. Labels now name the last committed cycle's session: the day word, the card labels, the verdict basis, the History heading `Exits on <Mon D>`, `/api/state` `meta.session_wording_day`, `app._stalled_day`, `_SessionView.stalled_day` and `_SessionView.wording_day`. The client reads the same day through `sessionWordingLabel` in `static/index.js`, so a poll words the page as the first paint did.
+- I2: the Performance guard-effect caption names its window and says "Same figure as the Dashboard" only for a window the Dashboard picker has a button for (`DASHBOARD_WINDOW_TOKENS` in `static/performance.js`).
+- I3: text that carried a figure or a heading in `--studio-ink-faint` moves to `--studio-ink-dim`: the account-basis chip, section headings, `.section-label`, `.sn-footnote`, the settings modal kicker and caption, the tweaks heading, the sleeve Delete label.
+
+### Tests and review
+
+GREEN 7d974a05. The open-market capture at bbc61631 passed the judge (`ux-expert-pages-open-b4.json`). No count supplied; this pass ran no tests.
+
+---
+
+## ux-fix-batch-5: stalled open serves one session, chip border contrast (2026-11-02)
+
+Source: `7d974a05cdc5-FIX-BATCH-5.md` and `code-reviewer.json` CR-1 to CR-4 in the review folder `7d974a05cdc5`. Delta `7d974a05..ba850ea3`. Frozen: `alpha_bot_execution.py`, `math_engine.py`, `static/tokens.css`. The rulings are [PM-ASSUMED].
+
+### Fixed
+
+- J1 (CR-1, CR-2): batch 4 changed the words of a stalled open but its figures still came from the open view, so words and figures came from different sessions. `_session_view` now makes one decision: a stalled open serves the view pre-market serves for the same stored state, so figures and labels come from one session. Only the fields that describe the clock differ, and repeat polls come from the closed-market held results. With no stored close snapshot the view stays `open`.
+- J2: the account-basis chip border is `var(--studio-warn)`, which gives the 3:1 non-text contrast; the text stays `--studio-ink-dim`.
+- The test harness `tests/dashboard/_account_page_harness.py` pins the clock after the served state's stamp when it forces an open market.
+
+### Accepted, no change
+
+- CR-3 and CR-4.
+- Reported to the operator: PO-2, PO-3, PO-8, PO-9, PO-B4-1 (the chip wraps in the Cumulative row) and PO-B4-3 (during a stall the header server render says Live for the fraction of a second before the first header poll).
+
+### Tests and review
+
+GREEN e3033871; stale-test fixes 371e1cef. CI 41509820934 green at ba850ea3 (25559 passed, the PM's supplied run). The open-market capture at ba850ea3 was read by the PM.
