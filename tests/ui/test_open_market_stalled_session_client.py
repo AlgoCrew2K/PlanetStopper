@@ -37,7 +37,7 @@ from tests.app._open_session_wording import (
     stalled_world,
 )
 from tests.app.test_closed_market_numbers_never_move import local, write_engine_cycle
-from tests.ui._page_js_harness import render_page, route, run_page
+from tests.ui._page_js_harness import page_scripts, render_page, route, run_page
 
 STATE = r"/api/state$"
 
@@ -82,6 +82,8 @@ def read_dashboard(html: str, bodies: list[dict], day: str, clock: str) -> dict:
         html,
         POLL_SCENARIO,
         routes=[route(STATE, *[{"json": b} for b in bodies], method="GET")],
+        # The vendored chart library would replace the harness's stub and cannot draw in a node DOM.
+        scripts=[name for name in page_scripts(html) if not name.startswith("vendor/")],
         pathname="/",
         wall=wall_of(day, clock),
     )
