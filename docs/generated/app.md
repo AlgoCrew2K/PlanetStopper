@@ -528,7 +528,7 @@ Delegates to `database.get_exit_turnover_stats(symphony_id, now_utc=...)` (while
 
 **Key properties:**
 - **Read-only.** Not in `_SETTINGS_WRITE_ALLOWLIST`, no `LIVE_EXECUTION` interaction.
-- **A failed read is stated, never answered as zero.** An unexpected lookup failure answers `500` with `{"error": "exit turnover unavailable", "symphony_id": ...}` (the exception type is logged at `warning`). A symphony with genuinely zero `exit_triggers` rows is a valid, honest `200` with zeroed windows, not a `404`. The Performance page draws a dash row for a failed read.
+- **A failed read is stated, never answered as zero (the route docstring states the 500).** An unexpected lookup failure answers `500` with `{"error": "exit turnover unavailable", "symphony_id": ...}` (the exception type is logged at `warning`). A symphony with genuinely zero `exit_triggers` rows is a valid, honest `200` with zeroed windows, not a `404`. The Performance page draws a dash row for a failed read.
 - **Auth-gated.** Covered by the global `_auth_before_request` hook, same as `guard_alpha_summary()` -- no additional decorator.
 
 See `DE-EXIT-FRICTION-REALIZED-001` and `ux-fix-batch-2` in `DECISIONS.md`.

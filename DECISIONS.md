@@ -11493,3 +11493,31 @@ UX-RF-14 (the If held suffix is not restored on a page left open into the next s
 ### Tests and review
 
 No count supplied; this pass ran no tests.
+
+---
+
+## ux-fix-batch-3: delta code review of 8b421ff4, findings CR-1 to CR-5 (2026-11-02)
+
+Source: `code-reviewer.json` in the review folder `8b421ff41c7e` and `8b421ff41c7e-FIX-BATCH-3.md`. Delta `8b421ff4..a2c6a811`. Frozen: `alpha_bot_execution.py`, `math_engine.py`, `static/tokens.css`. The rulings are [PM-ASSUMED].
+
+### Pre-existing defect found by this batch's sweep
+
+On `/settings`, `.settings-section`, `.toggle-btn` and `.flush-confirm-body` set `display`, which beat the `hidden` attribute, so in a real browser every settings section rendered at once and the section switcher in `static/settings.js` had never hidden anything, in production included. The stub-DOM tests read only the `hidden` attribute and inline style, so they passed with the defect present. `templates/settings.html` now gives each of the three classes a `[hidden] { display: none; }` rule, so the page shows one section at a time as its markup intends. H1 (CR-1, CR-2): after a failed settings load the Live execution switch is taken off the screen, at desktop and phone width in both themes, and a later good load shows it again at the server's position; proof is a browser test (`-m browser`), not run by this documentation pass.
+
+### Fixed
+
+- H2 (CR-4): the Exit Turnover note on Performance says "connection lost" only for a read the network never answered. A server error has its own note. A partial failure says rows keep their earlier values only when every failed row had one, otherwise that rows without a value show dashes. Success wording and the dash rows are unchanged.
+- H3 (CR-5): the `exit_turnover()` docstring in `app.py` now states the 500 with an error body and no zeroed windows.
+
+### Accepted, no change
+
+- CR-3: the "Backtest figures" caption also covers the Live Baseline column, but no stored Strategy Builder row carries `live_baseline` (0 of 801 rows on the droplet) and both producers pass `live_returns=[]`, so no card shows that column.
+- Each `/api/exit-turnover` request loads state once through `_current_session()`: a cost per Performance refresh, no wrong figure.
+
+### Ruling on `refresh-timing`
+
+[PM-ASSUMED] `no_cycle_since_open` stands at the code's five minutes (from 09:35 ET), not the plan's three, because a first cycle at 09:32 ET is normal (seen on the droplet on 2026-11-02).
+
+### Tests and review
+
+No count supplied; this pass ran no tests.
