@@ -20,6 +20,10 @@ Contract pinned
   digit); no cell anywhere reads ``0 (0d retained)`` for it; the other symphonies' rows still show the
   numbers their own answers carry.
 * Page: a real symphony with no exits still reads ``0 (0d retained)`` and ``0.00%``.
+* Page, the note beside the table states only what is on screen: a read the server answered with an
+  error is never called a lost connection; a row that shows dashes because it never had a value is
+  never described as showing its last values; a read the network never answered still says the
+  connection was lost. Every failed state carries a non-empty note.
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ import database
 import market_calendar
 from tests.ui import _performance_page as perf
 from tests.ui._history_answers import NOW_ET, frozen_host_clock
-from tests.ui._page_js_harness import answer
+from tests.ui._page_js_harness import answer, route
 from tests.ui._shell_support import (  # noqa: F401
     _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
@@ -187,3 +191,120 @@ class TestPageShowsDashesForAFailedRead:
             ]
             assert row[1:4] == expected, f"{sid}: {row}"
             assert row[4] == f"{body['est_annual_friction_drag_pct']:.2f}%", f"{sid}: {row}"
+
+
+NOTE = """
+const note = () => (H.text('[data-testid="exit-turnover-note"]') || '').trim().toLowerCase();
+"""
+LOST_WORDING = "connection lost"
+LAST_VALUE_WORDING = "last"
+NETWORK_NEVER_ANSWERED = {"reject": True}
+
+
+@pytest.fixture
+def server_error(world):
+    """The route's own answer to a read that failed inside it: an error status with an error body."""
+    ids = perf.symphony_ids()
+    spec = _read(ids[0], patches=[_accessor_raises()])
+    assert spec["status"] >= 400 and spec["json"].get("error"), spec
+    return spec
+
+
+def _is_dash_row(row: list[str]) -> bool:
+    return all(DASH.match(cell) and not re.search(r"\d", cell) for cell in row[1:])
+
+
+class TestNoteStatesOnlyWhatIsOnScreen:
+    def test_every_read_answered_with_an_error_and_no_earlier_rows_is_not_called_a_lost_connection(
+        self, world, server_error
+    ):
+        ids = perf.symphony_ids()
+        out = perf.run_performance(
+            ROWS + NOTE + "return {rows: rows(), note: note()};",
+            perf.real_routes(turnover_overrides={sid: [server_error] for sid in ids}),
+        )
+        rows, text = out.result["rows"], out.result["note"]
+        assert rows and all(_is_dash_row(row) for row in rows), f"fixture integrity: {rows}"
+        assert text, "a failed read left no note beside the table"
+        assert LOST_WORDING not in text, f"the server answered, yet the note says: {text!r}"
+        assert LAST_VALUE_WORDING not in text, (
+            f"every row is a dash (no value was ever received), yet the note says: {text!r}"
+        )
+
+    def test_every_read_answered_with_an_error_after_good_rows_is_not_called_a_lost_connection(
+        self, world, server_error
+    ):
+        ids = perf.symphony_ids()
+        good = {sid: perf.get_real(f"/api/exit-turnover?symphony_id={sid}") for sid in ids}
+        out = perf.run_performance(
+            ROWS + NOTE + "const first = rows(); await H.advance(60000);"
+            " return {first, second: rows(), note: note()};",
+            perf.real_routes(turnover_overrides={sid: [good[sid], server_error] for sid in ids}),
+        )
+        assert out.result["second"] == out.result["first"], "rows must be the last good ones"
+        text = out.result["note"]
+        assert text, "a failed read left no note beside the table"
+        assert LOST_WORDING not in text, f"the server answered, yet the note says: {text!r}"
+
+    @pytest.mark.parametrize(
+        "failure",
+        [pytest.param(None, id="server error"), pytest.param(NETWORK_NEVER_ANSWERED, id="network")],
+    )
+    def test_a_row_that_never_had_a_value_is_not_described_as_showing_its_last_values(
+        self, world, server_error, failure
+    ):
+        ids = perf.symphony_ids()
+        down = server_error if failure is None else failure
+        out = perf.run_performance(
+            ROWS + NOTE + "return {rows: rows(), note: note()};",
+            perf.real_routes(turnover_overrides={ids[0]: [down]}),
+        )
+        rows, text = out.result["rows"], out.result["note"]
+        assert _is_dash_row(rows[0]) and not _is_dash_row(rows[1]), f"fixture integrity: {rows}"
+        assert text, "a failed read left no note beside the table"
+        assert LAST_VALUE_WORDING not in text, (
+            f"row 0 is a dash that never had a value, yet the note says: {text!r}"
+        )
+        if failure is None:
+            assert LOST_WORDING not in text, f"the server answered, yet the note says: {text!r}"
+
+    def test_one_failed_read_after_a_good_tick_keeps_its_row_and_still_carries_a_note(
+        self, world, server_error
+    ):
+        ids = perf.symphony_ids()
+        good = {sid: perf.get_real(f"/api/exit-turnover?symphony_id={sid}") for sid in ids}
+        out = perf.run_performance(
+            ROWS + NOTE + "const first = rows(); await H.advance(60000);"
+            " return {first, second: rows(), note: note()};",
+            perf.real_routes(turnover_overrides={ids[0]: [good[ids[0]], server_error]}),
+        )
+        assert out.result["second"] == out.result["first"]
+        assert out.result["note"], "a failed read left no note beside the table"
+        assert LOST_WORDING not in out.result["note"]
+
+    def test_a_read_the_network_never_answered_still_says_the_connection_was_lost(self, world):
+        ids = perf.symphony_ids()
+        out = perf.run_performance(
+            ROWS + NOTE + "return note();",
+            perf.real_routes(turnover_overrides={sid: [NETWORK_NEVER_ANSWERED] for sid in ids}),
+        )
+        assert LOST_WORDING in out.result, out.result
+
+    def test_a_symphony_list_the_server_answered_with_an_error_is_not_called_a_lost_connection(
+        self, world, server_error
+    ):
+        routes = perf.real_routes()
+        routes.insert(0, route(r"/api/performance/symphonies$", server_error, method="GET"))
+        out = perf.run_performance(ROWS + NOTE + "return note();", routes)
+        assert out.result, "a failed list read left no note beside the table"
+        assert LOST_WORDING not in out.result, out.result
+
+    def test_a_symphony_list_the_network_never_answered_still_says_the_connection_was_lost(
+        self, world
+    ):
+        routes = perf.real_routes()
+        routes.insert(
+            0, route(r"/api/performance/symphonies$", NETWORK_NEVER_ANSWERED, method="GET")
+        )
+        out = perf.run_performance(ROWS + NOTE + "return note();", routes)
+        assert LOST_WORDING in out.result, out.result

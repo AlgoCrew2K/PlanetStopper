@@ -8,8 +8,9 @@ CONTRACT PINNED
 * A panel's failure never blocks another: with ``Chart`` undefined the headline stats, banner and
   metrics table render exactly as they do when the chart draws.
 * The exit-turnover panel keeps a last-good row per symphony: a symphony whose request fails keeps
-  its previous row while the others redraw; when every request fails the panel keeps all its rows and
-  its text says ``connection lost``.
+  its previous row while the others redraw; when the network answers none of them the panel keeps all
+  its rows and its text says ``connection lost`` (a read the server answered with an error is not a
+  lost connection: tests/ui/test_exit_turnover_failure_shows_no_zeros.py).
 * A 401 on the page's refresh navigates to ``/login``.
 * ``#performance-data-as-of`` (class ``legend-as-of``) reads ``data as of <data_as_of>``.
 * The 60-second tick sends the same data requests it sent before this work
@@ -117,7 +118,7 @@ class TestExitTurnoverKeepsLastGoodRows:
 
     def test_every_request_failing_keeps_every_row_and_says_so(self, world):
         ids = perf.symphony_ids()
-        down = [{"status": 500, "json": {"status": "error"}}]
+        down = [{"reject": True}]
         good = {sid: perf.get_real(f"/api/exit-turnover?symphony_id={sid}") for sid in ids}
         out = run(
             """
@@ -135,7 +136,7 @@ class TestExitTurnoverKeepsLastGoodRows:
     def test_a_good_tick_after_a_failed_one_clears_the_cue(self, world):
         ids = perf.symphony_ids()
         good = {sid: perf.get_real(f"/api/exit-turnover?symphony_id={sid}") for sid in ids}
-        flaky = {sid: [good[sid], {"status": 500, "json": {}}, good[sid]] for sid in ids}
+        flaky = {sid: [good[sid], {"reject": True}, good[sid]] for sid in ids}
         out = run(
             """
             await H.advance(60000);

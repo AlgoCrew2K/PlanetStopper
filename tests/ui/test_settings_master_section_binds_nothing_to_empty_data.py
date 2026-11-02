@@ -21,11 +21,17 @@ Contract pinned
 * The Live execution switch states no position once the load failed (hidden, or neutral: neither on nor
   off), whether the page never had a mode or lost the one a good load gave it, and cannot be operated;
   a later good load gives it back the position a first-try good load gives.
+* In a real browser (the stub DOM above cannot see a class rule), after a failed load the switch has no
+  box on screen at desktop and phone width in the light and dark theme, and the pill shows the dash; a
+  later good load shows it again at the server's position. Every element the page's script hides through
+  the ``hidden`` property has no box on screen, whatever its class rule sets: after a failed load,
+  after a good load on each section, and in each state of the flush confirm panel.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 import re
 
 import pytest
@@ -33,8 +39,16 @@ import pytest
 from tests.ui import _settings_page_answers as page
 from tests.ui._page_js_harness import render_page, route, run_page
 from tests.ui._shell_support import (  # noqa: F401
+    NARROW,
+    WIDE,
+    _empty_post_mortem_directory,
     _stub_database_load_state_for_advisor_routes,
     _stub_get_api_state_dict,
+    advisor_server,
+    firefox,
+    open_page,
+    open_probe,
+    wait_until,
 )
 
 SETTINGS = r"/api/settings$"
@@ -426,3 +440,203 @@ class TestTheLiveSwitchAfterAGoodFirstLoad:
         assert view["dataOn"] == ("1" if live else "0")
         assert view["ariaChecked"] == ("true" if live else "false")
         assert not view["operable"], f"the switch became operable: {view}"
+
+
+# ---------------------------------------------------------------------------
+# A real browser: an element the script hides leaves the screen
+# ---------------------------------------------------------------------------
+#
+# The stub DOM above reads the ``hidden`` property and the inline display, never a class rule, so it
+# passes while a rule such as ``.toggle-btn { display: flex }`` keeps a "hidden" element on screen.
+# Only a browser lays the page out. Browser-only (marker ``browser``, deselected by default; run with
+# ``python -m pytest -m browser -n 0 -p no:cacheprovider <this file>``). Requests the page sends to
+# ``/api/settings`` are answered in the browser; nothing is written.
+
+REMOVED_FROM_LAYOUT = 0
+DASH = re.compile(r"^(—|–|-|--)$")
+
+# Records every element the page's script sets ``hidden`` on, so the sweep covers what the script
+# hides without a list kept beside the script.
+_RECORD_SCRIPTED_HIDES = """
+(() => {
+  const own = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'hidden');
+  window.__scriptedHides = new Set();
+  Object.defineProperty(HTMLElement.prototype, 'hidden', {
+    configurable: true,
+    enumerable: own.enumerable,
+    get() { return own.get.call(this); },
+    set(value) { if (value) window.__scriptedHides.add(this); own.set.call(this, value); },
+  });
+})();
+"""
+
+_SCRIPTED_HIDES_STILL_ON_SCREEN = """
+() => {
+  const hiding = [...window.__scriptedHides].filter((e) => e.isConnected && e.hasAttribute('hidden'));
+  return {
+    hiding: hiding.length,
+    onScreen: hiding
+      .filter((e) => e.getClientRects().length > 0)
+      .map((e) => e.id || e.tagName + '.' + e.className),
+  };
+}
+"""
+
+_LOAD_ERROR_SHOWN = "() => document.getElementById('settings-load-error').hidden === false"
+
+_SWITCH_FACTS = """
+() => {
+  const toggle = document.getElementById('live-toggle');
+  return {
+    boxes: toggle.getClientRects().length,
+    ariaChecked: toggle.getAttribute('aria-checked'),
+    dataOn: toggle.getAttribute('data-on'),
+    pill: document.getElementById('live-pill').textContent.trim(),
+    bannerBoxes: document.getElementById('live-banner').getClientRects().length,
+  };
+}
+"""
+
+
+def _settings_answers(mode: dict):
+    """The browser's answer to ``GET /api/settings``: a server error while ``mode["fail"]``, else the
+    real route's body with ``LIVE_EXECUTION`` set to ``mode["live"]`` when that is given."""
+
+    def handler(route_):
+        if route_.request.method != "GET":
+            route_.abort()
+            return
+        if mode["fail"]:
+            route_.fulfill(status=500, content_type="text/html", body="<html>boom</html>")
+            return
+        body = route_.fetch().json()
+        if mode.get("live") is not None:
+            body["globals"]["LIVE_EXECUTION"] = "True" if mode["live"] else "False"
+        route_.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+
+    return handler
+
+
+def _open_settings_with_the_load_failing(probe) -> dict:
+    mode = {"fail": True, "live": None}
+    probe.context.add_init_script(_RECORD_SCRIPTED_HIDES)
+    probe.page.route("**/api/settings", _settings_answers(mode))
+    probe.page.goto(probe.server.base_url + "/settings")
+    wait_until(probe, _LOAD_ERROR_SHOWN, "the settings page never said the load failed")
+    return mode
+
+
+def _assert_nothing_hidden_by_the_script_is_on_screen(probe, step: str) -> None:
+    facts = probe.page.evaluate(_SCRIPTED_HIDES_STILL_ON_SCREEN)
+    assert facts["hiding"] > 0, f"{step}: the script hid nothing, so this check proved nothing"
+    assert facts["onScreen"] == [], (
+        f"{step}: elements the script hid still have a box on screen: {facts['onScreen']}"
+    )
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("theme", [None, "dark"], ids=["light", "dark"])
+@pytest.mark.parametrize("width, height", [WIDE, NARROW], ids=["1440", "375"])
+def test_after_a_failed_load_the_live_switch_is_not_on_screen(
+    firefox, advisor_server, width, height, theme
+):
+    with open_probe(firefox, advisor_server, width=width, height=height, theme=theme) as probe:
+        _open_settings_with_the_load_failing(probe)
+        facts = probe.page.evaluate(_SWITCH_FACTS)
+        assert facts["boxes"] == REMOVED_FROM_LAYOUT, (
+            "the Live execution switch still has a box on screen after the load failed "
+            f"(it rests at data-on={facts['dataOn']!r}, beside the pill {facts['pill']!r})"
+        )
+        assert not probe.page.locator("#live-toggle").is_visible()
+        assert DASH.match(facts["pill"]), f"the pill shows {facts['pill']!r}, not the dash"
+        assert facts["bannerBoxes"] == REMOVED_FROM_LAYOUT
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("live", [False, True], ids=["dry run", "live"])
+def test_a_later_good_load_shows_the_live_switch_again_at_the_servers_position(
+    firefox, advisor_server, live
+):
+    with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
+        mode = _open_settings_with_the_load_failing(probe)
+        mode.update(fail=False, live=live)
+        probe.page.click("#btn-settings-retry")
+        wait_until(
+            probe,
+            "() => document.getElementById('settings-load-error').hidden === true"
+            " && document.getElementById('live-toggle').getClientRects().length > 0",
+            "a good load after a failed one never showed the Live execution switch again",
+        )
+        facts = probe.page.evaluate(_SWITCH_FACTS)
+        assert facts["ariaChecked"] == str(live).lower()
+        assert facts["dataOn"] == ("1" if live else "0")
+        assert facts["pill"] == ("LIVE" if live else "DRY RUN")
+        assert (facts["bannerBoxes"] > 0) is live
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("width, height", [WIDE, NARROW], ids=["1440", "375"])
+def test_after_a_failed_load_everything_the_script_hid_is_off_screen(
+    firefox, advisor_server, width, height
+):
+    with open_probe(firefox, advisor_server, width=width, height=height) as probe:
+        _open_settings_with_the_load_failing(probe)
+        _assert_nothing_hidden_by_the_script_is_on_screen(probe, "after the failed load")
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("width, height", [WIDE, NARROW], ids=["1440", "375"])
+def test_after_a_good_load_every_section_the_script_hid_is_off_screen(
+    firefox, advisor_server, width, height
+):
+    with open_probe(firefox, advisor_server, width=width, height=height) as probe:
+        probe.context.add_init_script(_RECORD_SCRIPTED_HIDES)
+        open_page(probe, "/settings")
+        _assert_nothing_hidden_by_the_script_is_on_screen(probe, "after the good load")
+        for section in ("algorithm", "credentials", "symphonies", "maintenance", "master"):
+            probe.page.click(f'.sn-btn[data-section="{section}"]')
+            probe.page.wait_for_function(
+                "(id) => document.getElementById('sec-' + id).hidden === false", arg=section
+            )
+            _assert_nothing_hidden_by_the_script_is_on_screen(probe, f"on the {section} section")
+
+
+@pytest.mark.browser
+@pytest.mark.parametrize("width, height", [WIDE, NARROW], ids=["1440", "375"])
+def test_the_flush_confirm_panel_leaves_the_screen_in_every_state_the_script_hides_it(
+    firefox, advisor_server, width, height
+):
+    with open_probe(firefox, advisor_server, width=width, height=height) as probe:
+        probe.context.add_init_script(_RECORD_SCRIPTED_HIDES)
+        open_page(probe, "/settings")
+        probe.page.click('.sn-btn[data-section="maintenance"]')
+        probe.page.wait_for_function(
+            "() => document.getElementById('sec-maintenance').hidden === false"
+        )
+        # The trigger's own handler sets the loading state before its request is answered; measure
+        # in the same task so the answer cannot replace that state first.
+        loading = probe.page.evaluate(
+            """
+            () => {
+              document.getElementById('btn-flush-trigger').click();
+              const hiding = [...window.__scriptedHides]
+                .filter((e) => e.isConnected && e.hasAttribute('hidden'));
+              return hiding.filter((e) => e.getClientRects().length > 0)
+                .map((e) => e.id || e.tagName + '.' + e.className);
+            }
+            """
+        )
+        assert loading == [], (
+            f"while the armed list loads, hidden elements are on screen: {loading}"
+        )
+        wait_until(
+            probe,
+            "() => document.getElementById('flush-confirm-body').hidden === false",
+            "the confirm panel never showed its body",
+        )
+        _assert_nothing_hidden_by_the_script_is_on_screen(probe, "with the confirm body shown")
+        probe.page.click("#btn-flush-cancel")
+        probe.page.wait_for_function(
+            "() => document.getElementById('flush-confirm-panel').hidden === true"
+        )
+        _assert_nothing_hidden_by_the_script_is_on_screen(probe, "after cancelling the flush")

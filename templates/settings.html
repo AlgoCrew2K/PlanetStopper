@@ -133,6 +133,7 @@
     }
 
     .settings-section { display: block; }
+    .settings-section[hidden] { display: none; }
 
     /* ── Section header ───────────────────────────────────────────────────── */
     /* The title is a .section-header (shared); only the line under it is local. */
@@ -222,6 +223,7 @@
       border-color: var(--studio-neg);
       justify-content: flex-end;
     }
+    .toggle-btn[hidden] { display: none; }
     .toggle-btn:disabled { cursor: default; }
     .toggle-knob {
       width: 24px;
@@ -679,6 +681,7 @@
     }
 
     .flush-confirm-body { display: flex; flex-direction: column; gap: 10px; }
+    .flush-confirm-body[hidden] { display: none; }
 
     .flush-confirm-desc {
       font-size: 12px;

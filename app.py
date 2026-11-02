@@ -8087,8 +8087,8 @@ def exit_turnover():
     Returns JSON: {"symphony_id": str, "windows": {"30": {...}, "90": {...},
     "365": {...}}, "est_annual_friction_drag_pct": float}. A symphony with zero
     exit_triggers rows is a valid, honest empty-state (200 with zeroed windows),
-    not a 404. An unexpected lookup failure degrades to the same zeroed shape
-    rather than a 500.
+    not a 404. An unexpected lookup failure answers 500 with an error body
+    ({"error", "symphony_id"}) and no zeroed windows.
     """
     import autotuner  # noqa: PLC0415 -- lazy per CC-2 precedent (app.py:3119), keeps Optuna deps off module load
 
