@@ -9,7 +9,9 @@ tests/fixtures/ux_data_truth/PROVENANCE.md). Expected figures come from the body
   "Sum of exit alpha", a descriptor stating 15:54 ET, no size weighting and not a portfolio return;
   the strip and the by-reason cards use the same words.
 * Performance's tile is the same quantity as the dashboard headline: "Guard effect on portfolio",
-  unit `pp`, the window named, the two compounded returns stated.
+  unit `pp`, the window named, the two compounded returns stated. Its caption makes no claim about
+  the Dashboard that is false at the window picked: it names that window, and says nothing about the
+  Dashboard at a window the Dashboard has no button for or at symphony scope.
 * The Performance risk table gives its lower-is-better rows one delta convention (bot minus
   baseline, in pp, stated in the header) and leaves no meaningless if-held value on reduction rows.
 * The preconditions table has no Replay row for a symphony without a replay sample, and one note
@@ -19,6 +21,7 @@ tests/fixtures/ux_data_truth/PROVENANCE.md). Expected figures come from the body
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from tests.ui.test_history_page_data_truth import (  # noqa: F401  (client, pm_dir_factory: fixtures)
     _ago,
@@ -135,12 +138,148 @@ def test_performance_tile_is_the_guard_effect_on_portfolio_in_pp(client):
     assert "60d" in first["label"], "the window must be named on the tile"
     assert "30d" in result["after"]["label"], "the label must follow the picked window"
     stated = re.search(
-        r"(-?\d+\.\d{2})% Bot vs (-?\d+\.\d{2})% If held, compounded\. Same figure as the Dashboard\.",
+        r"(-?\d+\.\d{2})% Bot vs (-?\d+\.\d{2})% If held, compounded\.",
         " ".join(first["tile"].split()),
     )
     assert stated, f"the tile does not state the two compounded returns: {first['tile']!r}"
     assert float(stated.group(1)) == round(bot, 2) or abs(float(stated.group(1)) - bot) < 0.006
     assert abs(float(stated.group(2)) - held) < 0.006
+
+
+# ---------------------------------------------------------------------------
+# Performance caption: true at every window
+# ---------------------------------------------------------------------------
+
+_CAPTION_READ = """
+await H.boot();
+const read = function () {
+  return { label: H.text('#guard-alpha-label'), basis: H.text('#guard-alpha-basis') };
+};
+const buttons = H.$$('#days-picker button').map(function (b) {
+  return { value: b.getAttribute('data-value'), testid: b.getAttribute('data-testid') };
+});
+const first = read();
+const byWindow = {};
+for (const b of buttons) {
+  await H.click('[data-testid="' + b.testid + '"]');
+  byWindow[b.value] = read();
+}
+return { first: first, byWindow: byWindow };
+"""
+
+_SYMPHONY_CAPTION_READ = _CAPTION_READ.replace(
+    "const first = read();",
+    "await H.click('[data-testid=\"scope-btn-symphony\"]');\nconst first = read();",
+)
+
+_DASHBOARD_WINDOW_ATTRIBUTE = re.compile(r'<button[^>]*data-window="([^"]+)"')
+
+
+def _dashboard_window_tokens() -> set[str]:
+    """The windows the Dashboard has a button for, read from the markup that renders them."""
+    source = (Path(__file__).resolve().parents[2] / "templates" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    selector = re.search(r'data-testid="window-selector".*?</div>', source, flags=re.S)
+    assert selector, "the Dashboard's window selector is gone from the template"
+    return set(_DASHBOARD_WINDOW_ATTRIBUTE.findall(selector.group(0)))
+
+
+def _window_named_by(label: str) -> str:
+    """The window the tile's own label names (` · 60d`, ` · YTD`)."""
+    named = re.search(r" · (\S+)$", " ".join(label.split()))
+    assert named, f"the tile's label names no window: {label!r}"
+    return named.group(1)
+
+
+def _names(window: str, text: str) -> bool:
+    return bool(re.search(rf"(?<!\w){re.escape(window)}(?!\w)", text))
+
+
+def _sentence_naming_the_dashboard(basis: str) -> str:
+    return next(x for x in re.split(r"(?<=[.!?])\s+", basis) if "Dashboard" in x)
+
+
+def _caption_world(client, *, with_panels=False):
+    _seed_captured_state_and_shadow_rows()
+    payload = client.get("/api/performance?scope=aggregate&days=60").get_json()
+    return _routes(client, payload, with_panels=with_panels)
+
+
+def test_precondition_the_two_pages_do_not_share_every_window(client):
+    """The caption's claim depends on the window only because the pages differ: the Performance
+    page opens on a window the Dashboard does not open on, and has a window the Dashboard lacks."""
+    dashboard = _dashboard_window_tokens()
+    assert "30d" in dashboard and "5y" not in dashboard, dashboard
+    result = _perf_page(client, _caption_world(client), _CAPTION_READ)
+    assert "5y" in result["byWindow"], "the Performance picker lost its 5Y window"
+    assert _window_named_by(result["first"]["label"]) != "30d", (
+        "the Performance page opens on the window the Dashboard opens on"
+    )
+
+
+def test_the_caption_never_claims_the_dashboard_unconditionally_at_any_window(client):
+    result = _perf_page(client, _caption_world(client), _CAPTION_READ)
+    shown = {"(opening)": result["first"], **result["byWindow"]}
+    for window, tile in shown.items():
+        basis = " ".join(tile["basis"].split())
+        assert re.search(r"-?\d+\.\d{2}% Bot vs -?\d+\.\d{2}% If held, compounded\.", basis), (
+            f"{window}: the caption lost the two compounded returns: {basis!r}"
+        )
+        assert not re.search(r"Dashboard\s*\.", basis), (
+            f"{window}: the caption says 'the Dashboard' with no window, which is false whenever "
+            f"the Dashboard is on another window: {basis!r}"
+        )
+
+
+def test_a_caption_that_mentions_the_dashboard_names_the_window_it_is_stated_at(client):
+    result = _perf_page(client, _caption_world(client), _CAPTION_READ)
+    shown = {"(opening)": result["first"], **result["byWindow"]}
+    for window, tile in shown.items():
+        basis = " ".join(tile["basis"].split())
+        if "Dashboard" not in basis:
+            continue
+        named = _window_named_by(tile["label"])
+        mention = _sentence_naming_the_dashboard(basis)
+        assert _names(named, mention), (
+            f"{window}: the caption mentions the Dashboard without the window the tile is on "
+            f"({named!r}): {basis!r}"
+        )
+
+
+def test_the_caption_follows_the_window_picked_and_never_keeps_another_windows_name(client):
+    result = _perf_page(client, _caption_world(client), _CAPTION_READ)
+    names = {w: _window_named_by(t["label"]) for w, t in result["byWindow"].items()}
+    assert len(set(names.values())) == len(names), f"fixture: windows share a name: {names}"
+    for window, tile in result["byWindow"].items():
+        basis = " ".join(tile["basis"].split())
+        if "Dashboard" not in basis:
+            continue
+        mention = _sentence_naming_the_dashboard(basis)
+        stale = [n for w, n in names.items() if w != window and _names(n, mention)]
+        assert not stale, f"{window}: the caption names {stale} after {names[window]!r}: {basis!r}"
+
+
+def test_a_window_the_dashboard_has_no_button_for_makes_no_dashboard_claim(client):
+    result = _perf_page(client, _caption_world(client), _CAPTION_READ)
+    lacking = set(result["byWindow"]) - _dashboard_window_tokens()
+    assert lacking, "fixture: the Performance picker has no window the Dashboard lacks"
+    for window in lacking:
+        basis = result["byWindow"][window]["basis"]
+        assert "Dashboard" not in basis, f"{window}: no Dashboard figure exists here: {basis!r}"
+
+
+def test_symphony_scope_keeps_no_dashboard_claim_at_any_window(client):
+    result = _perf_page(client, _caption_world(client, with_panels=True), _SYMPHONY_CAPTION_READ)
+    shown = {"(opening)": result["first"], **result["byWindow"]}
+    assert all("symphony" in t["label"] for t in shown.values()), (
+        f"fixture: the tile is not at symphony scope: {[t['label'] for t in shown.values()]}"
+    )
+    for window, tile in shown.items():
+        assert tile["basis"].strip(), f"{window}: the symphony caption is empty"
+        assert "Dashboard" not in tile["basis"], (
+            f"{window}: the Dashboard has no per-symphony figure: {tile['basis']!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

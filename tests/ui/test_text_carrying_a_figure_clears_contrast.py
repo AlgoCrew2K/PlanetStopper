@@ -22,6 +22,13 @@ Contract pinned, per element
   style resolves to. A sweep of every ``--studio-ink-faint`` text colour in ``templates/`` and
   ``static/`` fails on any left that is not on the named allowlist of text that carries none of those.
 * The card headline's If held figure carries no opacity below 1 and clears the bar in both themes.
+* The account-basis chip on the Today and Cumulative rows clears it in both themes and keeps a visible
+  warning cue of its own (a border, a background tint or a leading marker in the warn family), so moving
+  its text off the warn token does not leave it reading as plain text.
+* Headings, labels and footnotes: the dashboard's section headings (CVaR Diagnostic, Managed Sleeves,
+  ``.section-label``), the page ``.section-header``, the tweaks ``.twk-sect``, the settings nav
+  footnote ``.sn-footnote`` and the settings modal's kicker and caption clear it too. The sweep's
+  allowlist keeps only icons, a disabled control and control labels.
 
 ``--studio-ink-faint`` is the token this replaces; the first test shows it fails the bar on every
 surface in both themes, so the bar tells a fix from the status quo.
@@ -100,6 +107,10 @@ SHARED_CLASSES = (
     "mini-stat-label",
     "detail-stat-sub",
     "retirement-rec-basis",
+    "section-label",
+    "section-header",
+    "twk-sect",
+    "sn-footnote",
 )
 
 
@@ -290,6 +301,8 @@ DASHBOARD_ELEMENTS = {
     "hero Max DD 'insufficient history'": r'<span[^>]*data-testid="mdd-insufficient-label"[^>]*>',
     "card Max DD 'insufficient history'": r'<span[^>]*data-testid="card-mdd-insufficient-label"[^>]*>',
     "account basis stamp": r'<div[^>]*id="account-basis-as-of"[^>]*>',
+    "CVaR Diagnostic heading": r"<div[^>]*>\s*CVaR Diagnostic",
+    "Managed Sleeves heading": r"<div[^>]*>\s*Managed Sleeves",
 }
 
 
@@ -354,6 +367,132 @@ def test_the_card_headline_if_held_figure_has_no_opacity_and_clears_the_bar_on_t
 
 
 # ---------------------------------------------------------------------------
+# The account-basis chip: readable text, and still a warning
+# ---------------------------------------------------------------------------
+
+CHIP_IDS = ("comp-today-basis-chip", "comp-cumulative-basis-chip")
+WARN_FAMILY = "--studio-warn"
+_DECLARATION_BLOCK = re.compile(r"([^{}]+)\{([^{}]*)\}")
+
+
+def _chip_attributes(test_id: str) -> dict[str, str]:
+    (attrs,) = _tag_attributes(_index_source(), rf'<span[^>]*data-testid="{test_id}"[^>]*>')
+    return attrs
+
+
+def _class_declarations(class_name: str) -> list[dict[str, str]]:
+    """Every declaration list of a rule whose last compound selector is ``.class_name`` (the resting
+    state and its pseudo-elements), every property kept, unlike ``contrast.class_rules``."""
+    subject = re.compile(r"\." + re.escape(class_name) + r"(?![\w-])")
+    found = []
+    for _source, css in contrast.stylesheet_texts():
+        for group, body in _DECLARATION_BLOCK.findall(css):
+            for selector in group.split(","):
+                last = re.split(r"[\s>+~]+", selector.strip())[-1]
+                if subject.search(last) and not re.search(r":(hover|focus|active|disabled)", last):
+                    props = contrast.style_properties(body)
+                    props["__selector__"] = selector.strip()
+                    found.append(props)
+    return found
+
+
+def _chip_declarations(test_id: str) -> list[dict[str, str]]:
+    """The inline style of the chip, then every rule of each class it carries."""
+    attrs = _chip_attributes(test_id)
+    found = [contrast.style_properties(attrs.get("style"))]
+    for class_name in attrs.get("class", "").split():
+        found += _class_declarations(class_name)
+    return found
+
+
+def _chip_text_color(test_id: str) -> tuple[str, float]:
+    """(colour value, opacity) the chip's text resolves to: the last declaration that names one,
+    inline style winning over a class rule."""
+    declared = [d for d in _chip_declarations(test_id) if "color" in d and "__selector__" not in d]
+    declared += [d for d in _chip_declarations(test_id) if "color" in d and "__selector__" in d]
+    assert declared, f"{test_id}: no inline colour and no class rule gives the chip a text colour"
+    return declared[0]["color"], _opacity(declared[0].get("opacity"))
+
+
+def _chip_background_tokens(test_id: str) -> list[str]:
+    tokens = []
+    for props in _chip_declarations(test_id):
+        if "__selector__" in props and "::" in props["__selector__"]:
+            continue
+        for key in ("background", "background-color"):
+            value = props.get(key, "").strip()
+            if value and value not in ("none", "transparent"):
+                token = primary_token(value)
+                assert token is not None, (
+                    f"{test_id}: background {value!r} is not a design token, so the text's ratio "
+                    "on it cannot be read; name a token (for example --studio-warn-tint)"
+                )
+                tokens.append(token)
+    return tokens
+
+
+@pytest.mark.parametrize("test_id", CHIP_IDS)
+def test_precondition_the_chips_warn_token_text_fails_the_bar_on_the_light_card(test_id):
+    """The chip is 9px text, so the bar is 4.5:1; the warn token on the light card is below it."""
+    assert contrast.text_ratio(WARN_FAMILY, contrast.SURFACES["card"], "light") < BAR
+
+
+@pytest.mark.parametrize("test_id", CHIP_IDS)
+@pytest.mark.parametrize("theme", list(contrast.THEMES))
+def test_the_account_basis_chip_text_clears_the_bar_in_both_themes_on_every_surface_it_can_sit_on(
+    test_id, theme
+):
+    value, opacity = _chip_text_color(test_id)
+    token = primary_token(value)
+    assert token is not None, f"{test_id}: text colour {value!r} is not a design token"
+    backgrounds = _chip_background_tokens(test_id)
+    for name, layers in contrast.SURFACES.items():
+        ratio = contrast.text_ratio(token, (*layers, *backgrounds), theme, opacity=opacity)
+        assert ratio >= BAR, (
+            f"{test_id}: {token} is {ratio:.2f}:1 on {name}"
+            f"{' with ' + ', '.join(backgrounds) if backgrounds else ''} in the {theme} theme, "
+            f"below {BAR}:1"
+        )
+
+
+def _chip_text_assignments() -> list[str]:
+    """The string literals static/index.js assigns to the chip's text."""
+    source = _blank_comments("static/index.js", (STATIC / "index.js").read_text(encoding="utf-8"))
+    body = re.search(r"function renderAccountBasisChip\(.*?\n    }\n", source, flags=re.S)
+    assert body, "renderAccountBasisChip is gone from static/index.js"
+    return re.findall(r"chip\.textContent\s*=\s*'([^']*)'", body.group(0))
+
+
+@pytest.mark.parametrize("test_id", CHIP_IDS)
+def test_the_account_basis_chip_keeps_a_visible_warning_cue_in_the_warn_family(test_id):
+    """Moving the text off the warn token must not leave the chip reading as plain text: a border or
+    a background in the warn family, or a leading marker glyph in the text it is given."""
+    cues = []
+    for props in _chip_declarations(test_id):
+        for key, value in props.items():
+            if key == "__selector__":
+                continue
+            if (
+                key.startswith("border") or key in ("outline", "box-shadow")
+            ) and WARN_FAMILY in value:
+                cues.append(f"{key}: {value}")
+            if key in ("background", "background-color") and WARN_FAMILY in value:
+                cues.append(f"{key}: {value}")
+    texts = [t for t in _chip_text_assignments() if t]
+    marker = bool(texts) and all(not t[0].isalnum() for t in texts)
+    assert cues or marker, (
+        f"{test_id}: no border, outline, shadow or background in the {WARN_FAMILY} family on the "
+        "chip or its classes, and the text it is given does not start with a marker glyph, so a "
+        "degraded account fetch no longer reads as a warning"
+    )
+
+
+def test_the_chip_text_assignments_are_found_so_the_marker_alternative_is_read_from_real_code():
+    texts = _chip_text_assignments()
+    assert len([t for t in texts if t]) == 2, texts
+
+
+# ---------------------------------------------------------------------------
 # Sweep: every text colour left on the faint token
 # ---------------------------------------------------------------------------
 
@@ -363,25 +502,17 @@ FAINT_TEXT = re.compile(
     r"(?<![\w-])color\s*:\s*var\(\s*--studio-ink-faint\b|\.color\s*=[^;\n]*--studio-ink-faint"
 )
 
-# Text the sweep lets stay on the faint token, each with what it is. A heading, a marker glyph, a
-# control label or explanatory prose carries no figure, basis, stamp, cue or threshold. An entry
+# Text the sweep lets stay on the faint token, each with what it is: an icon glyph, a disabled control
+# or a control label. Headings, labels and footnotes are not on it (they are readable text). An entry
 # that matches no use fails the allowlist test, so it cannot outlive the line it excused. ``exact``
 # entries are a CSS selector, compared whole; the others are a fragment of the element's tag and the
 # words after it.
 SWEEP_ALLOWLIST: tuple[tuple[str, str, bool, str], ...] = (
-    ("static/layout.css", ".section-header", True, "page section heading"),
-    ("static/tweaks.css", ".twk-sect", True, "tweaks panel group heading"),
-    ("templates/index.html", ".section-label", True, "detail panel section heading"),
-    ("templates/index.html", "CVaR Diagnostic", False, "panel heading"),
-    ("templates/index.html", "Managed Sleeves", False, "panel heading"),
     ("templates/index.html", "today-held-footnote-marker", False, "footnote marker glyph"),
     ("templates/index.html", "cumulative-cashflow-footnote-marker", False, "footnote marker glyph"),
     ("templates/index.html", "sleeve-delete-control", False, "control label"),
     ("templates/settings.html", ".btn-discard:disabled", True, "disabled control label"),
     ("templates/settings.html", ".btn-save", True, "control label, replaced when enabled"),
-    ("templates/settings.html", ".sn-footnote", True, "explanatory prose, no figure"),
-    ("static/settings-modal.js", ">Settings</div>", False, "modal kicker heading"),
-    ("static/settings-modal.js", "_esc(caption)", False, "section caption, explanatory prose"),
 )
 
 
