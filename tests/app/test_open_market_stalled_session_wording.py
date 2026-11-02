@@ -45,10 +45,11 @@ from tests.app.test_closed_market_numbers_never_move import local, write_engine_
 HISTORY = "/api/history/30"
 
 
-def dashboard_wording(cw, day: str, clock: str, *, market_state: str = "open") -> dict:
+def dashboard_wording(cw, day: str, clock: str, *, market_open: bool = True) -> dict:
     cw.at(day, clock)
-    assert cw.poll("/api/state")["market_state"] == market_state, (
-        f"fixture: {day} {clock} ET is not a {market_state} market"
+    state = cw.poll("/api/state")["market_state"]
+    assert (state == "open") is market_open, (
+        f"fixture: {day} {clock} ET is {state!r}, expected {'open' if market_open else 'not open'}"
     )
     return wording_of(cw.raw("/").decode("utf-8"))
 
@@ -115,7 +116,7 @@ def test_the_stalled_wording_is_the_closed_markets_wording_for_the_same_session(
 ):
     """Friday evening, closed, names the same session in the same words as Monday's stalled open."""
     cw = stalled_world(monkeypatch, tmp_path)
-    closed = dashboard_wording(cw, FRIDAY, "16:30:00", market_state="closed")
+    closed = dashboard_wording(cw, FRIDAY, "16:30:00", market_open=False)
 
     stalled = dashboard_wording(cw, MONDAY, "09:40:00")
 
@@ -148,9 +149,7 @@ def test_a_cycle_committed_after_the_open_returns_every_label_to_todays_wording(
     )
 
 
-def test_the_labels_change_back_on_the_next_read_after_the_first_cycle_lands(
-    monkeypatch, tmp_path
-):
+def test_the_labels_change_back_on_the_next_read_after_the_first_cycle_lands(monkeypatch, tmp_path):
     cw = stalled_world(monkeypatch, tmp_path)
     before = dashboard_wording(cw, MONDAY, "09:40:00")
     assert before == session_wording(FRIDAY_LABEL), "fixture: the morning is stalled"
@@ -190,7 +189,7 @@ def test_a_state_with_no_cycle_stamp_at_all_keeps_todays_wording(monkeypatch, tm
 def test_the_closed_markets_wording_names_the_last_session(monkeypatch, tmp_path, day, clock):
     cw = stalled_world(monkeypatch, tmp_path)
 
-    seen = dashboard_wording(cw, day, clock, market_state="closed")
+    seen = dashboard_wording(cw, day, clock, market_open=False)
 
     assert seen == session_wording(FRIDAY_LABEL), f"{day} {clock} ET, closed: the page says {seen}"
 

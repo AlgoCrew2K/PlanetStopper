@@ -82,7 +82,9 @@ def wording_of(page: str) -> dict:
     return {
         "day": set(days),
         "if_held": {
-            t for t in _texts(r'<span class="dv-label">(.*?)</span>', page) if t.startswith("If held")
+            t
+            for t in _texts(r'<span class="dv-label">(.*?)</span>', page)
+            if t.startswith("If held")
         },
         "basis": set(_texts(r'data-testid="guard-alpha-basis"[^>]*>(.*?)</span>', page)),
         "return": _one(r'data-field="live-return-label"[^>]*>(.*?)</div>', page),
