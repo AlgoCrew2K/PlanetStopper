@@ -225,7 +225,19 @@ def wait_until(probe, expression: str, message: str, arg=None, timeout_ms: int =
         _fail(probe, message)
 
 
-def open_settings(probe, expected_symphonies: int):
+def open_section(probe, section: str):
+    """Open a settings section the way an operator does: its nav button. The page shows one
+    section at a time, so a control in any other section is not visible until then."""
+    probe.page.locator(f'.sn-btn[data-section="{section}"]').click()
+    wait_until(
+        probe,
+        "(id) => { const s = document.getElementById('sec-' + id); return !!s && !s.hidden; }",
+        f"the {section} section did not open",
+        arg=section,
+    )
+
+
+def open_settings(probe, expected_symphonies: int, section: str = "symphonies"):
     probe.page.goto(probe.server.base_url + "/settings")
     wait_until(
         probe,
@@ -233,6 +245,7 @@ def open_settings(probe, expected_symphonies: int):
         f"the symphony list never showed {expected_symphonies} entries",
         arg=expected_symphonies,
     )
+    open_section(probe, section)
 
 
 _ENTRY_INDEX_JS = """
@@ -653,7 +666,7 @@ _LIVE_CARD_JS = """
 
 def _open_master_controls(probe, pill_text: str):
     # The symphony list renders after the master card, so its entry proves the card is rendered.
-    open_settings(probe, 1)
+    open_settings(probe, 1, section="master")
     wait_until(
         probe,
         "(t) => document.getElementById('live-pill').innerText.trim() === t",
@@ -747,7 +760,9 @@ def test_save_body_has_the_documented_shape_and_never_a_live_execution_key(probe
     open_settings(probe, 1)
     norm = _norm(NAME_PARENS_PLUS)
     select_symphony(probe, norm)
+    open_section(probe, "master")
     _click_live_toggle_every_way(probe)
+    open_section(probe, "symphonies")
     edited = "TAKE_PROFIT_MC_PCT"
     probe.page.locator(f'#sym-detail .override-row[data-key="{edited}"] .override-input').fill(
         "12.5"

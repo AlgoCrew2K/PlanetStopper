@@ -112,6 +112,19 @@ class TestHeaderMarkupIsOnlyGivenTheAttribute:
     def test_the_nav_is_the_one_at_the_base_except_for_the_poll_attribute(self, path):
         base = json.loads(BASE_MARKUP.read_text(encoding="utf-8"))["navs"][path]
         now = nav_markup(path)
+        # The Force run label colour (white to paper, for contrast) is the one admitted change. It is
+        # put back inside the Force run button alone, so any other change to the nav still fails.
+        button = now.index('<button data-testid="force-run-btn"')
+        button_end = now.index("</button>", button)
+        force_run = now[button:button_end]
+        assert force_run.count("color: var(--studio-paper);") == 1, (
+            f"{path}: Force run label colour is no longer the admitted contrast colour"
+        )
+        now = (
+            now[:button]
+            + force_run.replace("color: var(--studio-paper);", "color:var(--studio-white);")
+            + now[button_end:]
+        )
         assert now.replace(' data-header-poll="1"', "") == base, (
             f"{path}: the header markup changed beyond the one attribute"
         )

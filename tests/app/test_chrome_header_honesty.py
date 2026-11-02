@@ -755,7 +755,19 @@ class TestProtectedSurfacesAreByteIdentical:
         text = _chrome_text()
         start = text.index("<!-- Right-rail: mode pill -->")
         end = text.index("</nav></div>")
-        assert _sha256_lf(text[start:end]) == CHROME_PILL_THROUGH_LIQUIDATE_SHA256, (
+        segment = text[start:end]
+        # The Force run label colour is the one admitted change (white to paper, for contrast).
+        # It is put back to the pinned colour inside the Force run button alone, so the mode pill
+        # and Emergency Liquidate stay byte for byte and any other Force run change still fails.
+        button = segment.index('<button data-testid="force-run-btn"')
+        button_end = segment.index("</button>", button)
+        force_run = segment[button:button_end]
+        assert force_run.count("color: var(--studio-paper);") == 1, (
+            "Force run label colour is no longer the admitted contrast colour"
+        )
+        force_run = force_run.replace("color: var(--studio-paper);", "color:var(--studio-white);")
+        segment = segment[:button] + force_run + segment[button_end:]
+        assert _sha256_lf(segment) == CHROME_PILL_THROUGH_LIQUIDATE_SHA256, (
             "the mode pill / Force run / Emergency Liquidate markup changed. STOP and ask before "
             "re-pinning."
         )

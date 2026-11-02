@@ -20,6 +20,7 @@ import re
 import pytest
 
 import analytics
+import app as app_module
 from tests.ui._shell_support import (  # noqa: F401
     NARROW,
     WIDE,
@@ -38,6 +39,20 @@ from tests.ui._shell_support import (  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
+_MONTH_ABBREVIATIONS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
 STAMP = re.compile(r"^data as of \d{4}-\d{2}-\d{2} \d{2}:\d{2} ET$")
 
 
@@ -70,6 +85,9 @@ def test_stamp_drill_and_return(firefox, advisor_server, tmp_path, monkeypatch, 
     seed_dashboard_state()
     days = seed_history_exits(tmp_path, monkeypatch.setattr)
     pin_window_clock_after(monkeypatch, days)
+    # The button returns to the closed session's exits, so the market is closed whatever day and
+    # hour the suite runs; left to the host clock the label reads "Today's exits" while it is open.
+    monkeypatch.setattr(app_module, "get_market_state", lambda _now: "closed_frozen")
     with open_probe(firefox, advisor_server, width=size[0], height=size[1]) as probe:
         open_page(probe, "/history", fragment="")
         wait_until(
@@ -89,10 +107,14 @@ def test_stamp_drill_and_return(firefox, advisor_server, tmp_path, monkeypatch, 
         )
         bar = probe.page.query_selector("#daily-chart-svg rect[data-date]")
         day = bar.get_attribute("data-date")
+        # The drilled heading names the day as the page prints a session day: "Oct 30", from the
+        # ISO digits (English month abbreviations, no leading zero), then " exits".
+        drilled_day = datetime.date.fromisoformat(day)
+        label = f"{_MONTH_ABBREVIATIONS[drilled_day.month - 1]} {drilled_day.day}"
         bar.dispatch_event("click")
         wait_until(
             probe,
-            f"() => (document.querySelector('#todays-exits-heading') || {{}}).textContent.startsWith('{day} exits')",
+            f"() => (document.querySelector('#todays-exits-heading') || {{}}).textContent.startsWith('{label} exits')",
             "the bar click did not drill the day",
         )
         probe.page.screenshot(path=str(shots_dir(tmp_path) / f"history-drilled-{size[0]}.png"))

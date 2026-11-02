@@ -415,7 +415,10 @@ class TestAsOf:
         assert "run time not recorded" in text
 
     def test_the_as_of_does_not_follow_the_render_time(self, client, isolated_db, monkeypatch):
-        summary = seed_run(monkeypatch)
+        # A recorded run time fixed in the test, so it never depends on the day the suite runs.
+        _recs, produced = captures.run_over_captures(monkeypatch)
+        summary = with_run_at(produced, "2026-10-22T03:45:00Z")
+        seed_state_only(summary)
         texts = []
         for instant in (
             datetime(2026, 11, 2, 10, 0, tzinfo=_ET),
