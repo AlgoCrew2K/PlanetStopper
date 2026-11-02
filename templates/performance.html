@@ -500,7 +500,7 @@
         </section>
 
         <!-- Exit-turnover panel (AC-8, exit-friction-realized-savings): per-symphony
-             30/90/365-day exit_count + coverage_days (RULING C -- every window cell
+             30/90/365-day exit counts + retained days (RULING C -- every window cell
              names its actual retained-history days, never implies a full nominal
              window the retention policy can't back) + an estimated annual friction
              drag. Populated by fetchExitTurnover() in static/performance.js. -->
@@ -509,7 +509,7 @@
             <p class="metrics-caption">
                 Exit-leg trigger counts per symphony over trailing 30/90/365-day windows,
                 with the actual retained-history days each window's count is based on
-                (older exit_triggers rows are retention-pruned) and an estimated
+                (older exits are no longer kept) and an estimated
                 annualized friction drag from the simulated per-round-trip exit cost.
             </p>
             <div class="metrics-overflow">

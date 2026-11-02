@@ -347,7 +347,7 @@
         if (advisorCards.length === 0) {
             advisorHtml = '<div style="padding:22px 16px;text-align:center;' +
                 'background:var(--studio-bg);border:1px dashed var(--studio-rule-hi);border-radius:10px;' +
-                'font-size:12.5px;color:var(--studio-ink-faint);">' +
+                'font-size:12.5px;color:var(--studio-ink-dim);">' +
                 'No advisor suggestions for this symphony yet.' +
                 '</div>';
         } else {

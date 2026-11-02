@@ -162,6 +162,7 @@
     const banner = document.getElementById('live-banner');
     const card = document.getElementById('live-card');
 
+    toggle.hidden = false;
     toggle.dataset.on = live ? '1' : '0';
     toggle.setAttribute('aria-checked', String(live));
     pill.textContent = live ? 'LIVE' : 'DRY RUN';
@@ -180,6 +181,11 @@
     const pill = document.getElementById('live-pill');
     pill.textContent = '—';
     pill.dataset.live = 'false';
+    // The switch states no position either: it is hidden and neutral, never a stale on or off.
+    const toggle = document.getElementById('live-toggle');
+    toggle.hidden = true;
+    toggle.removeAttribute('data-on');
+    toggle.setAttribute('aria-checked', 'mixed');
     document.getElementById('live-banner').hidden = true;
     const startInput = document.getElementById('execution-start-time');
     startInput.value = '';

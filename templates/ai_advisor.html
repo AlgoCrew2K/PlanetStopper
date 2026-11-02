@@ -86,7 +86,7 @@
         .run-btn {
             padding: 0.5rem 1.25rem;
             background: var(--studio-accent);
-            color: var(--studio-white);
+            color: var(--studio-paper);
             border: none;
             border-radius: 0.5rem;
             font-size: 0.875rem;
@@ -443,7 +443,7 @@
         }
         .form-textarea:focus { outline: none; border-color: var(--studio-accent); }
         .try-swap-btn, .try-tweak-btn {
-            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-white);
+            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-paper);
             border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
             cursor: pointer; white-space: nowrap; font-family: var(--studio-sans, sans-serif);
         }
@@ -521,7 +521,7 @@
         }
         .chat-input:focus { outline: none; border-color: var(--studio-accent); }
         .chat-send-btn {
-            padding: 0.5rem 1rem; background: var(--studio-accent); color: var(--studio-white);
+            padding: 0.5rem 1rem; background: var(--studio-accent); color: var(--studio-paper);
             border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
             cursor: pointer; white-space: nowrap; font-family: var(--studio-sans, sans-serif);
         }
@@ -550,7 +550,7 @@
         /* Run controls panel */
         .run-controls-row { display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap; }
         .run-trigger-btn {
-            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-white);
+            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-paper);
             border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
             cursor: pointer; flex-shrink: 0; white-space: nowrap; align-self: flex-end;
             font-family: var(--studio-sans, sans-serif);
@@ -691,7 +691,7 @@
 
         /* Rejected section */
         .rejected-section { margin-top: 1.5rem; }
-        .rejected-collapsible summary { cursor: pointer; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-faint, var(--studio-ink-dim)); margin-bottom: 0.875rem; user-select: none; }
+        .rejected-collapsible summary { cursor: pointer; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-dim, var(--studio-ink-dim)); margin-bottom: 0.875rem; user-select: none; }
         .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.875rem; margin-top: 0.875rem; }
 
         /* ------------------------------------------------------------------ */
@@ -943,7 +943,7 @@
             margin-bottom: 0.25rem;
         }
         .retirement-rec-basis {
-            color: var(--studio-ink-faint, var(--studio-ink-dim));
+            color: var(--studio-ink-dim, var(--studio-ink-dim));
             font-size: 0.6875rem;
             font-style: italic;
         }
@@ -2844,6 +2844,7 @@
                     {{ render_sb_objective_strip(obs) }}
                     {% set live_baseline = rr.get('live_baseline') %}
                     <table class="stats-table" data-testid="stats-table">
+                        <caption class="stats-caption" data-testid="stats-backtest-label">Backtest figures</caption>
                         <thead>
                             <tr>
                                 <th>Metric</th>
@@ -2991,6 +2992,7 @@
                             {{ render_sb_objective_strip(obs) }}
                             {% set live_baseline = rr.get('live_baseline') %}
                             <table class="stats-table" data-testid="stats-table">
+                                <caption class="stats-caption" data-testid="stats-backtest-label">Backtest figures</caption>
                                 <thead><tr><th>Metric</th><th>Candidate</th>{% if live_baseline %}<th data-testid="baseline-col-header">Live Baseline</th>{% endif %}</tr></thead>
                                 <tbody>
                                     {% set sharpe = rr.get('sharpe') if rr.get('sharpe') is not none else metrics.get('sharpe_ratio') %}

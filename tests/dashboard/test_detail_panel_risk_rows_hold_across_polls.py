@@ -13,7 +13,10 @@ Contract pinned here, with the market closed (no number may move on a poll that 
   triggered symphony on every path, else the state value when usable, else the chart's backward scan;
 * no reading is one dash on every path, and a locked breakeven is one text on every path;
 * the VWAP row stays the chart's, and an open panel still follows a poll whose entry truly changed;
-* a panel opened on another symphony shows nothing of the previous symphony's chart reading.
+* a panel opened on another symphony shows nothing of the previous symphony's chart reading;
+* an unknown reading (a dash) is drawn in plain ink, never a warning or accent colour, also after a poll
+  that took a reading away; a reading that rounds to zero prints without a minus sign, and a real small
+  loss keeps its sign.
 
 Derived bodies change named fields of the real captured ``/api/state`` and ``/api/chart/<id>`` bodies
 (tests/dashboard/_refresh_timing_support.py ``with_entry``, ``without_entry_key``); the chart builder
@@ -24,6 +27,7 @@ texts are recomputed from the fixture values with the client's ``toFixed``.
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass, field
 from functools import cache, lru_cache
 
@@ -624,3 +628,129 @@ class TestSwitchingSymphonyCarriesNothingOver:
         final = r["bFinal"]
         assert final["dp-rm-vol"] == js_to_fixed([NEW_STATE_VOL], 3)[0]
         assert final["dp-rm-mc"] == js_to_fixed([NEW_STATE_MC], 1)[0] + "%"
+
+
+# ---------------------------------------------------------------------------
+# Contract 4: an unknown reading is plain ink; a value that rounds to zero has no minus sign
+# ---------------------------------------------------------------------------
+
+READING_IDS = ("dp-rm-mc", "dp-rm-stop", "dp-rm-vol", "dp-rm-para", "dp-rm-vwap")
+# Colours that say something: a warning, a loss, a gain, an accent. A dash states none of them.
+SEMANTIC_COLOUR = re.compile(
+    r"studio-(warn|neg|pos|accent|plum|cyan)|(^|[\s_-])(warn|warning|neg|pos|alert|error|accent)($|[\s_-])",
+    re.I,
+)
+MINUS_ZERO = re.compile(r"(?<![\d.])[-−]0(?:\.0+)?(?![\d.]|[1-9])")
+
+LOOK = r"""
+const CELLS = __CELLS__;
+const look = function () {
+  const out = {};
+  CELLS.forEach(function (id) {
+    const e = D.getElementById(id);
+    out[id] = e ? { text: e.textContent.trim(), color: (e.style && e.style.color) || '',
+                    cls: String(e.className || '') } : null;
+  });
+  return out;
+};
+const ID = __ID__;
+await H.boot({ extras: true, state: H.bodies.S,
+               overrides: [['/api/chart/' + ID, { body: H.bodies.C }]] });
+await open(ID);
+await H.completeAnimations();
+const opened = look();
+let after = null;
+if (H.bodies.S2) { await poll(H.bodies.S2); await poll(H.bodies.S2); after = look(); }
+return { opened: opened, after: after };
+""".replace("__CELLS__", repr(list(READING_IDS)))
+
+NO_READING = {
+    "para_velocity": None,
+    "symphony_vol": None,
+    "mc_prob": None,
+    "shadow_hwm": None,
+    "stop_trigger": None,
+}
+
+
+def _look(state_fields: dict, chart: dict, next_state_fields: dict | None = None) -> dict:
+    bodies = {"S": _state(UNTRIGGERED, state_fields), "C": _chart(UNTRIGGERED, **chart)}
+    if next_state_fields is not None:
+        bodies["S2"] = _state(UNTRIGGERED, next_state_fields)
+    return _run(LOOK.replace("__ID__", repr(UNTRIGGERED)), **bodies)
+
+
+def _says_something(cell: dict) -> str | None:
+    for part in (cell["color"], cell["cls"]):
+        if SEMANTIC_COLOUR.search(part):
+            return part
+    return None
+
+
+class TestAnUnknownReadingIsPlainInk:
+    UNKNOWN_CHART = {"vol": None, "mc": None, "vwap_diff": None, "stop": None}
+    KNOWN_STATE = {
+        "para_velocity": 0.75,
+        "symphony_vol": STATE_VOL,
+        "mc_prob": STATE_MC,
+        "shadow_hwm": 3.5,
+        "stop_trigger": -1.25,
+    }
+
+    def test_every_dash_on_the_opened_panel_carries_no_warning_or_accent_colour(self):
+        r = _look(NO_READING, self.UNKNOWN_CHART)
+        dashes = {k: v for k, v in r["opened"].items() if v and v["text"] in DASHES}
+        assert "dp-rm-para" in dashes, f"fixture sanity: the velocity row is unknown: {r['opened']}"
+        coloured = {k: _says_something(v) for k, v in dashes.items() if _says_something(v)}
+        assert not coloured, f"unknown readings drawn in a colour that says something: {coloured}"
+
+    def test_a_reading_that_goes_unknown_on_a_poll_loses_the_colour_it_had(self):
+        r = _look(self.KNOWN_STATE, self.UNKNOWN_CHART, NO_READING)
+        assert r["opened"]["dp-rm-para"]["text"] not in DASHES, "fixture sanity: it started known"
+        after = r["after"]
+        assert after["dp-rm-para"]["text"] in DASHES, f"fixture sanity: it went unknown: {after}"
+        assert not _says_something(after["dp-rm-para"]), (
+            f"the velocity dash, after a poll took the reading away, still carries a colour: {after['dp-rm-para']}"
+        )
+
+
+class TestAValueThatRoundsToZeroPrintsNoMinusSign:
+    # Each case is a reading just below zero in the unit the row prints, and a genuine small loss that
+    # must keep its sign, so removing every minus sign cannot pass.
+    TINY = -0.001
+    SMALL_LOSS = -0.04
+
+    def _rows(self, **fields):
+        state = {**NO_READING, **fields.pop("state", {})}
+        return _look(state, {"vol": None, "mc": None, "stop": None, **fields})["opened"]
+
+    @pytest.mark.parametrize(
+        "name, state, chart, row",
+        [
+            ("parabolic velocity", {"para_velocity": TINY}, {"vwap_diff": 0.37}, "dp-rm-para"),
+            (
+                "stop distance",
+                {"shadow_hwm": 1.2345, "stop_trigger": 1.2345 - TINY},
+                {"vwap_diff": 0.37},
+                "dp-rm-stop",
+            ),
+            ("vwap difference", {}, {"vwap_diff": TINY}, "dp-rm-vwap"),
+        ],
+    )
+    def test_a_reading_that_rounds_to_zero_has_no_minus_sign(self, name, state, chart, row):
+        text = self._rows(state=state, **chart)[row]["text"]
+        assert re.search(r"0\.00", text), (
+            f"{name}: fixture sanity, the reading rounds to zero: {text!r}"
+        )
+        assert not MINUS_ZERO.search(text), f"{name}: a negative zero is printed: {text!r}"
+
+    @pytest.mark.parametrize(
+        "state, chart, row",
+        [
+            ({"para_velocity": SMALL_LOSS}, {"vwap_diff": 0.37}, "dp-rm-para"),
+            ({}, {"vwap_diff": SMALL_LOSS}, "dp-rm-vwap"),
+        ],
+    )
+    def test_a_small_real_loss_keeps_its_minus_sign(self, state, chart, row):
+        text = self._rows(state=state, **chart)[row]["text"]
+        assert re.search(r"[-−]0\.04", text), f"a real -0.04 lost its sign: {text!r}"

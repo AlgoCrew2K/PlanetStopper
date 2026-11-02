@@ -118,7 +118,7 @@ textarea {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--studio-ink-faint);
+  color: var(--studio-ink-dim);
 }
 
 @media (max-width: 700px) {
@@ -192,4 +192,4 @@ textarea {
    a mundane fresh SHADOW sleeve. */
 .status-pill.sleeve-benched { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-warn); }
 .status-pill.sleeve-paused { background: color-mix(in srgb, var(--studio-neg) 18%, transparent); color: var(--studio-neg); border: 1px solid var(--studio-neg); font-weight: 800; }
-.status-pill.sleeve-stale { background: color-mix(in srgb, var(--studio-cyan) 12%, transparent); color: var(--studio-ink-faint); border: 1px dashed var(--studio-ink-faint); }
+.status-pill.sleeve-stale { background: color-mix(in srgb, var(--studio-cyan) 12%, transparent); color: var(--studio-ink-dim); border: 1px dashed var(--studio-ink-faint); }

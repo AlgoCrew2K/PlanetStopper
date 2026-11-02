@@ -292,6 +292,10 @@ var DEGRADED_REASON_TEXT = {
   no_cycle_since_open: 'The market is open, but the engine has committed no cycle since the open.',
   close_snapshot_missing: 'The close snapshot was not stored; the figures shown are held at the close.'
 };
+// The same reason while the market is closed: no next minute is coming, so the text must not promise one.
+var DEGRADED_REASON_TEXT_CLOSED = {
+  engine_terminated: 'The last engine run did not finish and was ended.'
+};
 var DEGRADED_UNKNOWN_TEXT = 'The daemon reports a degraded state.';
 var CONNECTION_LOST_TITLE = 'The last refresh failed. The values shown are from the last data received.';
 var BLACKOUT_TITLE = 'Scheduled pause before the close; stops resume at the close.';
@@ -333,8 +337,11 @@ function _cycleIsStale() {
   return _cycleAgeAtReceiptMs + (performance.now() - _cycleAgeAnchorMono) > STALE_AFTER_MS;
 }
 
-function _degradedTitle(reasons) {
+function _degradedTitle(reasons, isOpen) {
   return reasons.map(function (reason) {
+    if (!isOpen && Object.prototype.hasOwnProperty.call(DEGRADED_REASON_TEXT_CLOSED, reason)) {
+      return DEGRADED_REASON_TEXT_CLOSED[reason];
+    }
     return Object.prototype.hasOwnProperty.call(DEGRADED_REASON_TEXT, reason)
       ? DEGRADED_REASON_TEXT[reason] : DEGRADED_UNKNOWN_TEXT;
   }).join(' ');
@@ -353,7 +360,7 @@ function _engineLabelState() {
   var body = _engineBody;
   if (body === null) return null;
   if (body.degradedReasons.length) {
-    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons), countdown: body.isOpen };
+    return { text: 'Degraded', token: 'neg', title: _degradedTitle(body.degradedReasons, body.isOpen), countdown: body.isOpen };
   }
   if (!body.isOpen) {
     return { text: 'Closed', token: 'ink-dim', title: '', countdown: false };

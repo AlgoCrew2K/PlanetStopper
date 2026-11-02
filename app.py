@@ -8096,16 +8096,23 @@ def exit_turnover():
     if not symphony_id:
         return jsonify({"error": "symphony_id is required"}), 400
 
-    _zeroed_windows = {w: {"exit_count": 0, "coverage_days": 0} for w in (30, 90, 365)}
     try:
-        stats = database.get_exit_turnover_stats(symphony_id)
+        # A closed market counts back from the close of the session its figures belong to, so the
+        # counts hold still while nothing is trading; an open one counts back from now.
+        session_anchor = _current_session()[0].cutoff_anchor
+        if session_anchor is None:
+            stats = database.get_exit_turnover_stats(symphony_id)
+        else:
+            stats = database.get_exit_turnover_stats(
+                symphony_id, now_utc=_session_close_moment(session_anchor).astimezone(UTC)
+            )
         drag_pct = database.compute_est_annual_friction_drag_pct(
             stats, autotuner.SIM_EXIT_FRICTION_PCT
         )
-    except Exception:
-        _daemon_log.debug("exit_turnover: stats lookup failed for %s", symphony_id, exc_info=True)
-        stats = _zeroed_windows
-        drag_pct = 0.0
+    except Exception as exc:
+        _daemon_log.warning("exit_turnover: stats lookup failed (%s)", type(exc).__name__)
+        # A failed read is stated, never answered as zero exits.
+        return jsonify({"error": "exit turnover unavailable", "symphony_id": symphony_id}), 500
 
     return jsonify(
         {

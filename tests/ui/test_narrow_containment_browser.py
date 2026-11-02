@@ -1,6 +1,7 @@
 """Wide content fits a 375 px screen: tables scroll inside their own box, the settings page and
 modal are not clipped, the Chat panel opens on screen, Frontrunner cards keep their buttons, and
-the Advisor's chip tints follow the dark theme.
+the Advisor's chip tints follow the dark theme, and the floating gear steps aside for the open Chat
+panel.
 
 Browser-only (marker ``browser``, deselected by default; run with
 ``python -m pytest -m browser -n 0 tests/ui/test_narrow_containment_browser.py``). Firefox
@@ -399,3 +400,66 @@ def test_each_of_the_five_tints_changes_with_the_theme(firefox, advisor_server):
     dark = _tints(firefox, advisor_server, "dark")
     fixed = [name for name in _TINT_CLASSES if light[name] == dark[name]]
     assert fixed == [], f"these tints are identical in light and dark: {fixed}"
+
+
+_GEAR_AGAINST_CHAT_PANEL = """
+() => {
+  const gear = document.querySelector('[data-testid="tweaks-btn"]');
+  const panel = document.querySelector('[data-testid="chat-panel"]');
+  const g = gear.getBoundingClientRect();
+  const p = panel.getBoundingClientRect();
+  const style = getComputedStyle(gear);
+  const rendered = style.display !== 'none' && style.visibility !== 'hidden'
+    && g.width > 0 && g.height > 0;
+  const overlaps = rendered && g.left < p.right && g.right > p.left
+    && g.top < p.bottom && g.bottom > p.top;
+  const top = document.elementFromPoint((g.left + g.right) / 2, (g.top + g.bottom) / 2);
+  const onTop = rendered && !!top && (top === gear || gear.contains(top));
+  return { rendered, overlaps, onTop, gear: [g.left, g.top, g.right, g.bottom],
+           panel: [p.left, p.top, p.right, p.bottom] };
+}
+"""
+
+_OPEN_CHAT = (
+    "() => window.openChatPanel({artifactId: 'gear-check', artifactType: 'asset_swap',"
+    " title: 'Explain', contextLabel: 'Asset Swap', objective: 'check', gateDecision: null,"
+    " keyStat: '', artifactContext: {}})"
+)
+
+
+@pytest.mark.parametrize("width, height", [NARROW, VERY_NARROW], ids=["375", "320"])
+def test_the_floating_gear_does_not_sit_over_the_open_chat_panel_on_a_phone(
+    firefox, advisor_server, width, height
+):
+    """the gear steps aside while the chat panel is open (as it does for the detail panel) and is
+    back, on top and rendered, when the panel closes: hiding it for good would also fail."""
+    with open_probe(firefox, advisor_server, width=width, height=height) as probe:
+        probe.page.goto(probe.server.base_url + "/ai-advisor")
+        wait_until(
+            probe,
+            "() => typeof window.openChatPanel === 'function'",
+            "the Advisor never defined openChatPanel (the function every Discuss button calls)",
+        )
+        closed = probe.page.evaluate(_GEAR_AGAINST_CHAT_PANEL)
+        assert closed["rendered"] and closed["onTop"], (
+            f"precondition: with the panel closed the gear is on screen and on top: {closed}"
+        )
+
+        probe.page.evaluate(_OPEN_CHAT)
+        wait_until(
+            probe,
+            "() => !!document.querySelector('.chat-panel.chat-panel--open')",
+            "the chat panel never opened",
+        )
+        probe.page.wait_for_timeout(600)  # the panel slides in over 0.25 s
+        opened = probe.page.evaluate(_GEAR_AGAINST_CHAT_PANEL)
+        assert not (opened["overlaps"] and opened["onTop"]), (
+            f"the gear sits over the open chat panel at {width} px: {opened}"
+        )
+
+        probe.page.evaluate("() => window.closeChatPanel()")
+        probe.page.wait_for_timeout(600)
+        reclosed = probe.page.evaluate(_GEAR_AGAINST_CHAT_PANEL)
+        assert reclosed["rendered"] and reclosed["onTop"], (
+            f"the gear did not come back when the chat panel closed: {reclosed}"
+        )

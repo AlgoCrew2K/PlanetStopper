@@ -18,6 +18,9 @@ Contract pinned
   hard-coded word fails), the time input holds the body's time and is editable, and an edit enables
   Save.
 * Retry after a failure ends in the same state as a first-try good load.
+* The Live execution switch states no position once the load failed (hidden, or neutral: neither on nor
+  off), whether the page never had a mode or lost the one a good load gave it, and cannot be operated;
+  a later good load gives it back the position a first-try good load gives.
 """
 
 from __future__ import annotations
@@ -304,3 +307,122 @@ class TestAfterAFailedReload:
         sent = r["posts"][0]["globals"]
         assert sent.get(r["key"]) == "7"
         assert "EXECUTION_START_TIME" not in sent, f"the discarded start time was posted: {sent}"
+
+
+# ---------------------------------------------------------------------------
+# The Live execution switch states no position while the mode is unknown
+# ---------------------------------------------------------------------------
+
+TOGGLE = "#live-toggle"
+TOGGLE_VIEW = f"""
+const toggleView = function () {{
+  const el = H.$('{TOGGLE}');
+  const style = el.style || {{}};
+  return {{
+    hiddenFromView: !H.isVisible('{TOGGLE}') || style.visibility === 'hidden'
+      || el.getAttribute('aria-hidden') === 'true' || el.hasAttribute('inert'),
+    dataOn: el.getAttribute('data-on'),
+    ariaChecked: el.getAttribute('aria-checked'),
+    operable: !(el.hasAttribute('disabled') || el.disabled === true
+      || el.getAttribute('aria-disabled') === 'true' || el.hasAttribute('inert')),
+  }};
+}};
+"""
+
+
+def _shows_a_position(view: dict) -> bool:
+    """On or off is stated: the switch is in view and carries a boolean position."""
+    if view["hiddenFromView"]:
+        return False
+    return view["dataOn"] in ("0", "1") or view["ariaChecked"] in ("true", "false")
+
+
+def _run_toggle(scenario: str, *routes_):
+    return _run(RELOAD_SNAPSHOT + TOGGLE_VIEW + scenario, *routes_).result
+
+
+class TestTheLiveSwitchAfterAFailedLoad:
+    """A failed read leaves the page not knowing the mode; a switch resting at off would say DRY RUN
+    beside a daemon that may be live. Hiding it, or a neutral state that is neither on nor off, both
+    pass; dimming it while it stays in the off position does not."""
+
+    @pytest.mark.parametrize("failure", FAILURES, ids=FAILURE_IDS)
+    def test_a_load_that_never_succeeded_leaves_the_switch_stating_no_position(
+        self, seeded, failure
+    ):
+        r = _run_toggle(
+            """
+            await H.advance(500);
+            return { errorVisible: H.isVisible('#settings-load-error'), toggle: toggleView() };
+            """,
+            route(SETTINGS, failure, failure, method="GET"),
+        )
+        assert r["errorVisible"], "precondition: the failure is on screen"
+        assert not _shows_a_position(r["toggle"]), (
+            f"the failed page still shows a position: {r['toggle']}"
+        )
+        assert not r["toggle"]["operable"], f"the switch can be operated: {r['toggle']}"
+
+    @pytest.mark.parametrize("failure", FAILURES, ids=FAILURE_IDS)
+    @pytest.mark.parametrize("live", [True, False], ids=["was live", "was dry run"])
+    def test_a_failed_reload_takes_the_position_a_good_load_gave_it_away(
+        self, seeded, failure, live
+    ):
+        r = _run_toggle(
+            """
+            await H.advance(500);
+            const loaded = toggleView();
+            await failedReload();
+            return { errorVisible: H.isVisible('#settings-load-error'), loaded: loaded,
+                     failed: toggleView() };
+            """,
+            route(SETTINGS, _body_with_live(live), failure, failure, method="GET"),
+        )
+        assert _shows_a_position(r["loaded"]), (
+            f"precondition: the good load states a mode: {r['loaded']}"
+        )
+        assert r["errorVisible"], "precondition: the reload failed on screen"
+        assert not _shows_a_position(r["failed"]), (
+            f"after the reload failed the switch still states a position: {r['failed']}"
+        )
+        assert not r["failed"]["operable"], f"the switch can be operated: {r['failed']}"
+
+
+class TestTheLiveSwitchAfterALaterGoodLoad:
+    @pytest.mark.parametrize("live", [True, False], ids=["live", "dry run"])
+    def test_a_later_good_load_restores_the_position_a_first_try_load_gives(self, seeded, live):
+        good = _body_with_live(live)
+        first_try = _run_toggle("return toggleView();", route(SETTINGS, good, method="GET"))
+        restored = _run_toggle(
+            """
+            await H.advance(500);
+            const failed = toggleView();
+            await H.click('#btn-settings-retry');
+            await H.advance(500);
+            return { failed: failed, restored: toggleView() };
+            """,
+            route(SETTINGS, DOWN, DOWN, good, method="GET"),
+        )
+        assert _shows_a_position(first_try), (
+            f"precondition: a first-try load states a mode: {first_try}"
+        )
+        assert not _shows_a_position(restored["failed"]), (
+            f"precondition: the failed state states no position: {restored['failed']}"
+        )
+        assert restored["restored"] == first_try, (
+            f"a later good load did not restore the switch: {restored['restored']} != {first_try}"
+        )
+        assert restored["restored"]["dataOn"] == ("1" if live else "0")
+        assert restored["restored"]["ariaChecked"] == ("true" if live else "false")
+
+
+class TestTheLiveSwitchAfterAGoodFirstLoad:
+    @pytest.mark.parametrize("live", [True, False], ids=["live", "dry run"])
+    def test_the_switch_states_the_bodys_mode_and_stays_read_only(self, seeded, live):
+        view = _run_toggle(
+            "return toggleView();", route(SETTINGS, _body_with_live(live), method="GET")
+        )
+        assert _shows_a_position(view), view
+        assert view["dataOn"] == ("1" if live else "0")
+        assert view["ariaChecked"] == ("true" if live else "false")
+        assert not view["operable"], f"the switch became operable: {view}"

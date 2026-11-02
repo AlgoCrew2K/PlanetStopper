@@ -16,9 +16,14 @@ Contract pinned
 * Open and degraded: the label reads Degraded and the countdown is shown (a closed market is the only
   case that hides it), so the fix is not a blanket removal.
 * Degraded then recovered while closed: the label reads Closed and the countdown stays hidden.
+* The tooltip of a Degraded header on a closed market has no clause about a next minute or run (for
+  every degraded reason), keeps what the reason says otherwise, and keeps the sentence of a second
+  reason beside it; the open-market sentence is unchanged.
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -150,3 +155,103 @@ class TestDashboard:
         )
         assert result["label"] == "Closed", result
         assert result["countdownHidden"]
+
+
+# ---------------------------------------------------------------------------
+# The tooltip of a closed, degraded header says nothing about a next minute
+# ---------------------------------------------------------------------------
+
+TITLE_HOLDER = "#engine-status"
+READ_TITLE = f"return H.attr('{TITLE_HOLDER}', 'title');"
+NEXT_RUN_CLAUSE = re.compile(r"next\s+(minute|run|cycle)", re.I)
+# The open-market sentence, pinned as written: only its closed-market form may change.
+OPEN_ENGINE_TERMINATED = (
+    "The last engine run did not finish and was ended; the next minute starts normally."
+)
+ENGINE_FAILING = "The last 5 engine runs failed."
+CLOSED_REASONS = [
+    "engine_terminated",
+    "engine_failing",
+    "engine_overrun",
+    "scheduler_stalled",
+    "close_snapshot_missing",
+]
+
+
+@pytest.mark.parametrize("path", HEADER_PAGES)
+class TestHeaderPagesTooltip:
+    @pytest.mark.parametrize("reason", CLOSED_REASONS)
+    def test_closed_and_degraded_has_no_clause_about_the_next_minute(self, path, reason):
+        title = _header_run(
+            path, [header_answer(CLOSED_AT, reasons=[reason])], READ_TITLE, CLOSED_AT
+        )
+        assert title, f"{path} {reason}: the Degraded header lost its tooltip"
+        assert not NEXT_RUN_CLAUSE.search(title), (
+            f"{path} {reason}: the closed-market tooltip still speaks of a next run: {title!r}"
+        )
+
+    def test_a_terminated_run_while_closed_still_says_the_run_did_not_finish(self, path):
+        title = _header_run(
+            path,
+            [header_answer(CLOSED_AT, reasons=["engine_terminated"])],
+            READ_TITLE,
+            CLOSED_AT,
+        )
+        assert re.search(r"did not finish", title or "", re.I), f"{path}: {title!r}"
+
+    def test_the_sentence_of_a_second_reason_survives_beside_it(self, path):
+        title = _header_run(
+            path,
+            [header_answer(CLOSED_AT, reasons=["engine_terminated", "engine_failing"])],
+            READ_TITLE,
+            CLOSED_AT,
+        )
+        assert ENGINE_FAILING in (title or ""), f"{path}: {title!r}"
+        assert not NEXT_RUN_CLAUSE.search(title), f"{path}: {title!r}"
+
+    def test_open_market_text_is_unchanged(self, path):
+        title = _header_run(
+            path, [header_answer(OPEN_AT, reasons=["engine_terminated"])], READ_TITLE, OPEN_AT
+        )
+        assert title == OPEN_ENGINE_TERMINATED, f"{path}: {title!r}"
+
+
+DASH_TITLE = """
+const titleOf = function () {
+  const el = D.getElementById('engine-status');
+  return el ? (el.getAttribute('title') || el.title || '') : null;
+};
+"""
+
+
+class TestDashboardTooltip:
+    def _bodies(self, reason: str):
+        base = hx.get_world("default")["next"]["state"]
+        stamped = sup.with_stamp(base, sup.later_stamp(sup.render_stamp(hx.get_world("default"))))
+        return {
+            "closed": sup.with_top(sup.closed_body(stamped), degraded_reasons=[reason]),
+            "opened": sup.with_top(sup.open_body(stamped), degraded_reasons=[reason]),
+        }
+
+    @pytest.mark.parametrize("reason", CLOSED_REASONS)
+    def test_closed_and_degraded_has_no_clause_about_the_next_minute(self, reason):
+        title = _dashboard_title(
+            "await poll(H.bodies.closed); return titleOf();", **self._bodies(reason)
+        )
+        assert title, f"{reason}: the Degraded header lost its tooltip"
+        assert not NEXT_RUN_CLAUSE.search(title), f"{reason}: {title!r}"
+
+    def test_open_market_text_is_unchanged(self):
+        title = _dashboard_title(
+            "await poll(H.bodies.opened); return titleOf();", **self._bodies("engine_terminated")
+        )
+        assert title == OPEN_ENGINE_TERMINATED, f"{title!r}"
+
+
+def _dashboard_title(scenario: str, **bodies):
+    return sup.run(
+        DASH_READ + DASH_TITLE + "await H.boot({ extras: true });" + scenario,
+        world="default",
+        scripts=sup.CHROME_AND_INDEX,
+        extra_bodies=bodies,
+    )
