@@ -26,6 +26,8 @@ wording (`tests/app/_open_session_wording`), and the day in each is built from t
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 import database as database_module
@@ -56,8 +58,6 @@ def dashboard_wording(cw, day: str, clock: str, *, market_open: bool = True) -> 
 
 def history_heading(cw) -> str:
     """The heading the server renders before any script runs."""
-    import re
-
     page = cw.raw("/history").decode("utf-8")
     found = re.search(r'id="todays-exits-heading">([^<]*)<', page)
     assert found, "the History page has no exits heading"
@@ -169,6 +169,24 @@ def test_a_state_with_no_cycle_stamp_at_all_keeps_todays_wording(monkeypatch, tm
     seen = dashboard_wording(cw, MONDAY, "09:40:00")
 
     assert seen == TODAYS_WORDING, f"a state with no cycle stamp says {seen}"
+
+
+def test_a_stamp_from_before_the_open_does_not_count_as_a_cycle_since_the_open(
+    monkeypatch, tmp_path
+):
+    """The key is the cycle against today's open, not its date: a run at 09:29:30 stamps the state
+    on today's date, and the session has still had no cycle. Which earlier session the figures are
+    is not pinned; that they are no longer called today's is."""
+    cw = stalled_world(monkeypatch, tmp_path)
+    write_engine_cycle(cw.world, local(MONDAY, "09:29:30"), 1)
+
+    seen = dashboard_wording(cw, MONDAY, "09:36:00")
+
+    (day,) = seen["day"]
+    assert day != "Today" and re.fullmatch(r"[A-Z][a-z]{2} \d{1,2}", day), (
+        f"a stamp from 09:29:30 left the page saying {seen}"
+    )
+    assert seen == session_wording(day), f"the page mixes today's and a session's words: {seen}"
 
 
 # ---------------------------------------------------------------------------
