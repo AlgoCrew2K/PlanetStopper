@@ -40,6 +40,22 @@ from tests.app.test_closed_market_numbers_never_move import local, write_engine_
 from tests.ui._page_js_harness import render_page, route, run_page
 
 STATE = r"/api/state$"
+
+
+@pytest.fixture(autouse=True)
+def _stub_get_api_state_dict():
+    """Same name as the autouse stub of tests/ui/conftest.py, which this module overrides: the
+    poll and the page are the real routes over the world's own state, not a stub body."""
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _stub_database_load_state_for_advisor_routes():
+    """Overrides the autouse stub of tests/ui/conftest.py for the same reason: the state the page
+    and the poll read is the world's `bot_state`, with its real cycle stamp."""
+    yield
+
+
 HISTORY = r"/api/history/(\d+|ytd)$"
 
 POLL_SCENARIO = (
