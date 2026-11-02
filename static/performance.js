@@ -889,6 +889,7 @@
     }
 
     var EXIT_TURNOVER_LOST_TEXT = 'connection lost: showing the last rows received';
+    var EXIT_TURNOVER_SERVER_ERROR_TEXT = 'The server could not provide exit turnover; rows without a value show dashes.';
 
     function renderExitTurnover(entries) {
         var tbody = document.getElementById('exit-turnover-tbody');
@@ -950,7 +951,8 @@
             if (!PSRequest.isLatest('exit-turnover', request)) return;
             if (!listing.ok) {
                 if (listing.kind === 'unauthorized') { PSRequest.goLogin(); return; }
-                setExitTurnoverNote(EXIT_TURNOVER_LOST_TEXT);
+                setExitTurnoverNote(listing.kind === 'network'
+                    ? EXIT_TURNOVER_LOST_TEXT : EXIT_TURNOVER_SERVER_ERROR_TEXT);
                 return;
             }
             var symphonies = (listing.body && listing.body.symphonies) || [];
@@ -969,17 +971,26 @@
                             _lastGoodTurnover[sym.id] = res.body;
                             return 'ok';
                         }
-                        return res.kind === 'unauthorized' ? 'unauthorized' : 'failed';
+                        return res.kind === 'unauthorized' || res.kind === 'network' ? res.kind : 'failed';
                     });
             })).then(function (outcomes) {
                 if (!PSRequest.isLatest('exit-turnover', request)) return;
                 if (outcomes.indexOf('unauthorized') !== -1) { PSRequest.goLogin(); return; }
                 drawExitTurnoverFromLastGood();
-                var failed = outcomes.filter(function (o) { return o !== 'ok'; }).length;
-                if (failed === 0) setExitTurnoverNote('');
-                else if (failed === outcomes.length) setExitTurnoverNote(EXIT_TURNOVER_LOST_TEXT);
-                else setExitTurnoverNote('Could not refresh ' + failed + ' of ' + outcomes.length +
-                    ' rows; they show their last values.');
+                var failedIds = [];
+                outcomes.forEach(function (o, i) { if (o !== 'ok') failedIds.push(symphonies[i].id); });
+                var unanswered = outcomes.every(function (o) { return o === 'ok' || o === 'network'; });
+                var keepsEarlier = failedIds.every(function (id) {
+                    return Object.prototype.hasOwnProperty.call(_lastGoodTurnover, id);
+                });
+                if (failedIds.length === 0) setExitTurnoverNote('');
+                else if (failedIds.length === outcomes.length) {
+                    setExitTurnoverNote(unanswered ? EXIT_TURNOVER_LOST_TEXT : EXIT_TURNOVER_SERVER_ERROR_TEXT);
+                } else {
+                    setExitTurnoverNote('Could not refresh ' + failedIds.length + ' of ' + outcomes.length +
+                        (keepsEarlier ? ' rows; they keep their earlier values.'
+                            : ' rows; rows without a value show dashes.'));
+                }
             });
         });
     }
