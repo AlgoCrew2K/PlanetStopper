@@ -9,11 +9,11 @@ tests/fixtures/ux_data_truth/PROVENANCE.md). Expected figures come from the body
   "Sum of exit alpha", a descriptor stating 15:54 ET, no size weighting and not a portfolio return;
   the strip and the by-reason cards use the same words.
 * Performance's tile is the same quantity as the dashboard headline: "Guard effect on portfolio",
-  unit `pp`, the window named, the two compounded returns stated. Its caption makes no claim about
+  unit `%` (a gap between two returns, never `pp`), the window named, the two compounded returns stated. Its caption makes no claim about
   the Dashboard that is false at the window picked: it names that window, and says nothing about the
   Dashboard at a window the Dashboard has no button for or at symphony scope.
 * The Performance risk table gives its lower-is-better rows one delta convention (bot minus
-  baseline, in pp, stated in the header) and leaves no meaningless if-held value on reduction rows.
+  baseline, in %, stated in the header) and leaves no meaningless if-held value on reduction rows.
 * The preconditions table has no Replay row for a symphony without a replay sample, and one note
   names how many lack one.
 """
@@ -89,6 +89,25 @@ def test_history_total_reads_sum_of_exit_alpha_in_points(client, pm_dir_factory)
     assert "Total guard" not in out["tile"]
 
 
+def test_history_keeps_pts_and_does_not_take_the_gap_unit_of_the_other_pages(
+    client, pm_dir_factory
+):
+    """The Dashboard and Performance show a gap between two returns in %. History's total is an
+    unweighted sum across exits, not a return: it stays in "pts", never "%" and never "pp"."""
+    _payload, out = _history_page(client, pm_dir_factory)
+    assert out["value"].endswith(" pts"), out["value"]
+    assert out["strip"].startswith("Daily sum of exit alpha (pts"), out["strip"]
+    assert out["cards"], "the captured days must give at least one reason card"
+    assert not out["value"].endswith("%"), out["value"]
+    for text in [out["value"], out["strip"], *out["cards"]]:
+        assert not re.search(r"\d\s?pp\b", text), f"History states a figure in pp: {text!r}"
+    for card in out["cards"]:
+        assert re.search(r"[+-]\d+\.\d{2} pts", card), f"reason card has no pts unit: {card!r}"
+        assert not re.search(r"[+-]\d+\.\d{2}\s?%", card), (
+            f"reason card states its sum of exit alpha in %: {card!r}"
+        )
+
+
 def test_history_total_carries_the_descriptor(client, pm_dir_factory):
     payload, out = _history_page(client, pm_dir_factory)
     tile = " ".join(out["tile"].split())
@@ -125,7 +144,7 @@ return { first: first, after: read() };
 """
 
 
-def test_performance_tile_is_the_guard_effect_on_portfolio_in_pp(client):
+def test_performance_tile_is_the_guard_effect_on_portfolio_in_percent(client):
     _seed_captured_state_and_shadow_rows()
     payload = client.get("/api/performance?scope=aggregate&days=60").get_json()
     result = _perf_page(client, _routes(client, payload, with_panels=False), _TILE_READ)
@@ -133,7 +152,8 @@ def test_performance_tile_is_the_guard_effect_on_portfolio_in_pp(client):
     held = payload["live_metrics"]["total_return"] * 100
     gap = bot - held
     first = result["first"]
-    assert first["value"] == f"{'+' if gap >= 0 else ''}{gap:.2f} pp", first["value"]
+    assert first["value"] == f"{'+' if gap >= 0 else ''}{gap:.2f}%", first["value"]
+    assert "pp" not in first["value"], first["value"]
     assert first["label"].startswith("Guard effect on portfolio"), first["label"]
     assert "60d" in first["label"], "the window must be named on the tile"
     assert "30d" in result["after"]["label"], "the label must follow the picked window"
@@ -304,12 +324,16 @@ def test_lower_is_better_rows_share_one_delta_convention_and_unit(client):
     payload = client.get("/api/performance?scope=aggregate&days=60").get_json()
     result = _perf_page(client, _routes(client, payload, with_panels=False), _RISK_READ)
     header = result["header"]
-    assert "pp" in header[3], f"the delta column header must state its unit: {header[3]!r}"
+    assert header[3].endswith("in %)"), (
+        f"the delta column header must state its unit: {header[3]!r}"
+    )
+    assert "pp" not in header[3], f"the delta column header still says pp: {header[3]!r}"
     rows = {r[0]: r for r in result["rows"]}
     for label in ("Max DD", "Annualized volatility"):
         cells = rows[label]
         held, bot = _number(cells[1]), _number(cells[2])
-        assert "pp" in cells[3], f"{label}: delta {cells[3]!r} is not in percentage points"
+        assert cells[3].endswith("%"), f"{label}: delta {cells[3]!r} is not a gap in %"
+        assert "pp" not in cells[3], f"{label}: delta {cells[3]!r} still says pp"
         assert abs(_number(cells[3]) - (bot - held)) <= 0.011, (
             f"{label}: delta {cells[3]!r} is not bot minus baseline of the legs {cells[1:3]}"
         )
@@ -321,7 +345,7 @@ def test_reduction_rows_carry_no_if_held_value(client):
     result = _perf_page(client, _routes(client, payload, with_panels=False), _RISK_READ)
     reduction = [r for r in result["rows"] if "reduction" in r[0].lower()]
     for cells in reduction:
-        assert not re.search(r"[+-]?0\.00\s*pp", cells[1]), (
+        assert not re.search(r"[+-]?0\.00\s*(pp|%)", cells[1]), (
             f"{cells[0]}: a meaningless if-held value {cells[1]!r}"
         )
         assert not re.search(r"\d", cells[1]), (

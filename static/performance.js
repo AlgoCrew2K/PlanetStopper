@@ -39,7 +39,7 @@
     // Tuple shape (Phase 2): [key, label, kind, isPrimary, invert].
     // Order defines rendering order; risk-adjusted metrics lead per the design hierarchy
     // (ux-design-deliverable.md §2.1 — capital preservation north star ranks risk above return).
-    // kind 'pp' = fraction-scale delta rendered as percentage points (e.g. +1.70pp).
+    // kind 'pp' = fraction-scale delta of two returns, rendered as a gap in % (e.g. +1.70%).
     // kind 'pct_mag' = a fraction shown as a positive magnitude (the Max DD legs: a
     // drawdown of -0.132 reads 13.20%, as the dashboard shows it); its delta cell is
     // still the signed fraction difference, so the sign says which leg drew down less.
@@ -90,8 +90,8 @@
         if (kind === 'pct_frac') return fixedNoNegZero(value * 100, 2) + '%';
         if (kind === 'pct_mag') return (Math.abs(value) * 100).toFixed(2) + '%';
         if (kind === 'frac') return fixedNoNegZero(value * 100, 2) + '%';
-        // pp: fraction-scale delta shown as percentage points (e.g. 0.017 → +1.70pp)
-        if (kind === 'pp') return signedFixed(value * 100, 2) + 'pp';
+        // pp: fraction-scale delta of two returns, shown as a gap in % (e.g. 0.017 → +1.70%)
+        if (kind === 'pp') return signedFixed(value * 100, 2) + '%';
         return fixedNoNegZero(value, 3);
     }
 
@@ -101,7 +101,7 @@
         if (!isFinite(live) || !isFinite(shadow)) return '—';
         if (Math.abs(live) > 1000 || Math.abs(shadow) > 1000) return '—';
         // The lower-is-better rows (the drawdown and volatility legs) share one convention and
-        // one unit, stated in the column header: bot minus baseline, in percentage points, of
+        // one unit, stated in the column header: bot minus baseline, a gap in %, taken over
         // the magnitudes the legs show. A negative delta is the bot drawing down or swinging less.
         var tallied = kind === 'pct_mag' || lowerIsBetter;
         var delta = tallied
@@ -110,7 +110,7 @@
         var formatted = fmt(delta, tallied ? 'pp' : kind);
         if (formatted === '—') return formatted;
         // A delta that prints as zero has no direction: no arrow, as for an exactly zero delta.
-        if (/^[+-]?0(\.0+)?(pp|%)?$/.test(formatted)) return formatted;
+        if (/^[+-]?0(\.0+)?%?$/.test(formatted)) return formatted;
         // One sign per delta: the 'pp' kind already carries its own '+', the others do not.
         if (delta > 0) return '↑ ' + (formatted.charAt(0) === '+' ? '' : '+') + formatted;
         if (delta < 0) return '↓ ' + formatted;
@@ -348,7 +348,7 @@
             var dc = dcDelta === null ? 'neutral' : (dcGood ? 'pos' : 'neg');
             var primaryAttr = isPrimary ? ' data-primary="true"' : '';
             // A reduction is measured against nothing: the if-held cell of a derived row holds no
-            // value (a "0.00pp" there is a baseline that was never measured).
+            // value (a "0.00%" there is a baseline that was never measured).
             var derivedRow = /_delta$/.test(key);
             var deltaColor = dc === 'pos' ? 'var(--studio-pos)' : dc === 'neg' ? 'var(--studio-neg)' : 'inherit';
             var barFill = key === 'max_drawdown' ? 'var(--studio-neg)' : 'var(--studio-accent)';
@@ -395,7 +395,7 @@
     }
 
     // Set a headline stat value element's text + sign color. delta is in the
-    // metric's native scale; suffix is appended verbatim (e.g. '%', 'pp', '').
+    // metric's native scale; suffix is appended verbatim (e.g. '%', '').
     // higherIsBetter governs which sign is rendered green. A value that rounds to zero at the
     // shown decimals prints without a sign and in neither the good nor the bad colour.
     function setHeadlineStat(id, value, decimals, suffix, higherIsBetter) {
@@ -452,7 +452,7 @@
         var gaEl = document.getElementById('guard-alpha-value');
         if (gaEl) {
             gaEl.textContent = guardAlpha !== null
-                ? signedFixed(guardAlpha, 2) + ' pp'
+                ? signedFixed(guardAlpha, 2) + '%'
                 : '--';
             // A figure that rounds to zero is neither a gain nor a loss: no good/bad colour.
             gaEl.style.color = guardAlpha !== null && roundsToZero(guardAlpha, 2)
@@ -463,7 +463,7 @@
 
         // Phase 2 risk-adjusted headline deltas (ux-design-deliverable.md §Change 1).
         // sharpeDelta / sortinoDelta: bot − held; higher is better.
-        // mddReduction: abs(held_mdd) − abs(bot_mdd) in fraction scale → percentage points;
+        // mddReduction: abs(held_mdd) − abs(bot_mdd) in fraction scale → a gap in %;
         //   positive means the bot suffered a shallower drawdown (capital preserved).
         var bothSharpe = typeof shadow.sharpe === 'number' && typeof live.sharpe === 'number';
         var sharpeDelta = bothSharpe ? shadow.sharpe - live.sharpe : null;
@@ -473,12 +473,12 @@
 
         var bothMdd = typeof shadow.max_drawdown === 'number' && typeof live.max_drawdown === 'number';
         var mddReduction = bothMdd
-            ? (Math.abs(live.max_drawdown) - Math.abs(shadow.max_drawdown)) * 100  // fraction → pp
+            ? (Math.abs(live.max_drawdown) - Math.abs(shadow.max_drawdown)) * 100  // fraction → %
             : null;
 
         setHeadlineStat('sharpe-delta-value', sharpeDelta, 2, '', true);
         setHeadlineStat('sortino-delta-value', sortinoDelta, 2, '', true);
-        setHeadlineStat('mdd-reduction-value', mddReduction, 2, 'pp', true);
+        setHeadlineStat('mdd-reduction-value', mddReduction, 2, '%', true);
     }
 
     function renderObsCount(payload) {

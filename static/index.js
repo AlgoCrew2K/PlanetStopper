@@ -141,15 +141,30 @@
         return (value >= 0 ? '+' : '') + value.toFixed(decimals) + '%';
     }
 
-    // A difference of two returns, in percentage points: signed, two decimals, then "pp". The
-    // compact number format applies as it does to every other figure (1234.5 reads "1.2k pp").
+    // toFixed that never prints a minus sign for a value that rounds to zero ("-0.00").
+    function fixedNoNegZero(value, digits) {
+        var text = value.toFixed(digits);
+        return /^-0(\.0+)?$/.test(text) ? text.slice(1) : text;
+    }
+
+    // A value that rounds to zero at the shown decimals reads as plain zero: no minus sign, and no
+    // plus sign either (which would claim a direction the figure does not have). The server
+    // render's gap_pct macro (templates/index.html) follows the same rule, so the first paint and
+    // the poll print the same text.
+    function signedFixed(value, digits) {
+        var text = fixedNoNegZero(value, digits);
+        return (/^0(\.0+)?$/.test(text) || value < 0 ? '' : '+') + text;
+    }
+
+    // A difference of two returns, shown in %: signed, two decimals, then "%". The compact number
+    // format applies as it does to every other figure (1234.5 reads "1.2k%").
     function fmtPp(value) {
         if (value == null || isNaN(value)) return '--';
         var numFormat = document.documentElement.dataset.numFormat || 'full';
         if (numFormat === 'compact' && Math.abs(value) >= 1000) {
-            return (value / 1000).toFixed(1) + 'k pp';
+            return (value / 1000).toFixed(1) + 'k%';
         }
-        return (value >= 0 ? '+' : '') + value.toFixed(2) + ' pp';
+        return signedFixed(value, 2) + '%';
     }
 
     // ---------------------------------------------------------------------------
@@ -409,7 +424,7 @@
                 volHeldText.className = volHeldText.className.replace(/\bpos\b|\bneg\b/g, '').trim();
             }
             if (volDelta) {
-                volDelta.textContent = 'α ' + (volAlphaPp >= 0 ? '+' : '') + volAlphaPp.toFixed(1) + 'pp';
+                volDelta.textContent = 'α ' + signedFixed(volAlphaPp, 1) + '%';
                 volDelta.className = volDelta.className.replace(/\bpos\b|\bneg\b/g, '').trim();
                 volDelta.classList.add(volAlphaPp >= 0 ? 'pos' : 'neg');
             }
@@ -463,7 +478,7 @@
         if (deltaEl) {
             deltaEl.hidden = !supplied;
             if (supplied) {
-                // Held minus Bot, in percentage points (the unit of the headline beside it).
+                // Held minus Bot, a gap in % (the unit of the headline beside it).
                 var saved = held - bot;
                 deltaEl.textContent = '\u03b1 ' + fmtPp(saved);
                 setPosNeg(deltaEl, saved);
@@ -1286,7 +1301,7 @@
                     var deltaStr = (delta == null) ? '—'
                         : (kind === 'num'
                             ? (delta >= 0 ? '+' : '') + delta.toFixed(2)
-                            : (delta >= 0 ? '+' : '') + (delta * 100).toFixed(1) + 'pp');
+                            : signedFixed(delta * 100, 1) + '%');
                     // Match the existing .math-row pattern (index.html:1223-1258):
                     // label + value share a flex row; hint sits below on its own line.
                     return '<div class="math-row">'
@@ -1375,12 +1390,6 @@
     // The Risk Math rows and hints, one rule for every writer. Vol and MC are the state's value when
     // it is a usable number, else the chart's reading; MC is no reading for a triggered symphony; the
     // stop level is the state's, else the chart's last stop, against the state's peak.
-    // toFixed that never prints a minus sign for a value that rounds to zero ("-0.00").
-    function fixedNoNegZero(value, digits) {
-        var text = value.toFixed(digits);
-        return /^-0(\.0+)?$/.test(text) ? text.slice(1) : text;
-    }
-
     function riskMathRows(sym) {
         var chart = _detailChartReading || {};
         var usable = function (v) { return sentinelToNull(typeof v === 'number' ? v : null); };
@@ -1966,7 +1975,7 @@
             var deltaEl = document.querySelector('[data-testid="' + row.deltaTestid + '"]');
             if (deltaEl) {
                 if (bot !== null && held !== null) {
-                    // Bot minus Held, in percentage points (the unit of the headline above).
+                    // Bot minus Held, a gap in % (the unit of the headline above).
                     var deltaAlpha = bot - held;
                     deltaEl.textContent = 'α ' + fmtPp(deltaAlpha);
                     setPosNeg(deltaEl, deltaAlpha);

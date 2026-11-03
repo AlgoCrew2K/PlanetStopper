@@ -4,8 +4,8 @@ Run with ``python -m pytest -m browser -n 0 tests/ui/test_dashboard_headline_one
 Firefox headless through Playwright; the page and its API answers are the harness world's
 (tests/ui/_dashboard_refresh_browser_support.py). Never skips.
 
-Contract pinned: in the hero block the headline ``#guard-alpha-headline`` (a signed number, a space,
-then ``pp``) is laid out as one line at desktop widths, at widths between the page's breakpoints and
+Contract pinned: in the hero block the headline ``#guard-alpha-headline`` (a signed number
+then ``%``) is laid out as one line at desktop widths, at widths between the page's breakpoints and
 on a phone, for a negative and a positive figure, both for the figure the poll writes and for any
 figure written into the element. Keeping the headline whole must not push the window picker onto the
 chart column, so the picker's box never overlaps the chart column's box at any of those widths.

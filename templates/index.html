@@ -88,8 +88,8 @@
       font-weight: 800;
       letter-spacing: -0.03em;
       line-height: 1;
-      /* The figure and its unit ("-0.73 pp") are one reading: the space between them is not a
-         break opportunity, so a squeezed column never leaves "pp" alone on a second line. */
+      /* The figure and its unit ("-0.73%") are one reading: kept on one line, so a squeezed
+         column never leaves the unit alone on a second line. */
       white-space: nowrap;
     }
 
@@ -715,6 +715,16 @@
 </head>
 
 <body>
+  {#- A gap between two returns, in %: signed, fixed decimals. A value that rounds to zero at the
+      shown decimals prints plain "0.00%" (no sign: neither a gain nor a loss), the same rule as
+      static/index.js's fmtPp, so the first paint and the poll print the same text. -#}
+  {%- macro gap_pct(value, digits=2) -%}
+    {%- set _t = (("%." ~ digits ~ "f")|format(value)) -%}
+    {%- if _t|float == 0 -%}{{ _t|replace('-', '') }}%
+    {%- elif value > 0 -%}+{{ _t }}%
+    {%- else -%}{{ _t }}%
+    {%- endif -%}
+  {%- endmacro %}
   {% include '_chrome.html' %}
 
   <div class="page-wrap">
@@ -783,7 +793,7 @@
               {% set alpha = _ga if _ga is not none else ((_portfolio.get('cr') or 0) - (_portfolio.get('cr_if_held') or 0)) %}
               <div style="display:flex;align-items:baseline;gap:14px;">
                 <div id="guard-alpha-headline" data-testid="guard-alpha-headline" class="guard-alpha-headline {% if alpha >= 0 %}pos{% else %}neg{% endif %}">
-                  {% if alpha >= 0 %}+{% endif %}{{ "%.2f"|format(alpha) }} pp
+                  {{ gap_pct(alpha) }}
                 </div>
               </div>
               {# "Simulated" is bound to the engine's flag (last_execution_mode False; the poll's bot_state carries it). #}
@@ -923,7 +933,7 @@
                 <span class="vs-row-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
                 <span data-testid="comp-today-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_held_raw is not none %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none and _hero_tc_held_raw is not none %}α {% if tc_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(tc_alpha) }} pp{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none and _hero_tc_held_raw is not none %}α {{ gap_pct(tc_alpha) }}{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): discloses a
                      degraded account fetch (stale-cache fallback or value-weighted
                      floor) directly on the row that depends on it. Hidden by default
@@ -961,10 +971,10 @@
                      contract.py's TestCumulativeRowNamesItsBasis regex, which requires the
                      bare "Cumulative · lifetime" text as vs-row-label's only content.
                      Display-only; zero change to the underlying value computation. -->
-                <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5pp when cash flows exist. Excludes symphonies with no Composer cost basis.">&#9432;</span>
+                <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5% when cash flows exist. Excludes symphonies with no Composer cost basis.">&#9432;</span>
                 <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_held_raw is not none %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
-                <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {% if cr_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(cr_alpha) }} pp{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {{ gap_pct(cr_alpha) }}{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4: see the comp-today-basis-chip comment above -- identical
                      honesty-disclosure chip for the Cumulative row. -->
                 <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
@@ -1000,7 +1010,7 @@
                 <span data-testid="comp-mdd-held-text" class="vs-val{{ ' neg' if _mdd_held_known }}">{% if _mdd_held_known %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
                 {# F-2: hide the alpha delta when insufficient history — comparison is misleading.
                    Both the label and the delta are rendered, one hidden, so a poll can swap them. #}
-                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if mdd_insufficient %} hidden{% endif %}>{% if has_live_data and _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {% if mdd_alpha >= 0 %}+{% endif %}{{ "%.2f"|format(mdd_alpha) }} pp{% else %}&mdash;{% endif %}</span>
+                <span data-testid="comp-mdd-delta" class="vs-delta {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}"{% if mdd_insufficient %} hidden{% endif %}>{% if has_live_data and _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ gap_pct(mdd_alpha) }}{% else %}&mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -1029,7 +1039,7 @@
             {% set vol_bot = (_pv.get('window_vol_bot') if 'window_vol_bot' in _pv else _pv.get('vol_bot')) %}
             {% set vol_held = (_pv.get('window_vol_held') if 'window_vol_held' in _pv else _pv.get('vol_held')) %}
             {% set has_vol = vol_bot is not none and vol_held is not none %}
-            {# Inverted winner: bot wins when its vol is <= held's. Delta = held - bot in pp
+            {# Inverted winner: bot wins when its vol is <= held's. Delta = held - bot, a gap in %
                (positive = bot calmer = improvement). Bar widths inverted: lower-vol side
                gets 100%, higher-vol side gets proportional width. #}
             {% set vol_alpha_pp = ((vol_held - vol_bot) * 100) if has_vol else 0 %}
@@ -1043,7 +1053,7 @@
                 <span class="vs-row-label">Ann. Vol</span>
                 <span data-testid="comp-vol-bot-text" class="vs-val">{% if has_vol %}Bot {{ "%.1f"|format(vol_bot * 100) }}%{% else %}Bot &mdash;{% endif %}</span>
                 <span data-testid="comp-vol-held-text" class="vs-val">{% if has_vol %}Held {{ "%.1f"|format(vol_held * 100) }}%{% else %}Held &mdash;{% endif %}</span>
-                <span data-testid="comp-vol-delta" class="vs-delta {% if vol_alpha_pp >= 0 %}pos{% else %}neg{% endif %}">{% if has_vol %}&alpha; {% if vol_alpha_pp >= 0 %}+{% endif %}{{ "%.1f"|format(vol_alpha_pp) }}pp{% else %}&alpha; &mdash;{% endif %}</span>
+                <span data-testid="comp-vol-delta" class="vs-delta {% if vol_alpha_pp >= 0 %}pos{% else %}neg{% endif %}">{% if has_vol %}&alpha; {{ gap_pct(vol_alpha_pp, 1) }}{% else %}&alpha; &mdash;{% endif %}</span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">

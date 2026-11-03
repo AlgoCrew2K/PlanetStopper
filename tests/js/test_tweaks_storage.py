@@ -290,4 +290,4 @@ class TestAChangeInAnotherTabApplies:
             },
             now_iso=hx.seeded_now_iso(world),
         )["result"]
-        assert r["headline"] == "1.2k pp"
+        assert r["headline"] == "1.2k%"

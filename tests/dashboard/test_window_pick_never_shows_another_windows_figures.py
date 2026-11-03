@@ -14,7 +14,7 @@ Contract pinned
   window's own figures.
 * An answer that is a genuine "no figure for this window" (a null guard effect) is a good answer: a
   dash and no failure notice.
-* The deltas beside the headline's ``pp`` print ``pp`` too, never ``%``: the Today, Cumulative and
+* The deltas beside the headline print ``%`` too, never ``pp``: the Today, Cumulative and
   Max DD rows on the first paint, after a poll and after a pick.
 
 Derived bodies change one named field of a real body: tests/fixtures/refresh_timing/03-c1/PROVENANCE.md.
@@ -272,7 +272,7 @@ class TestWhenTheStripCannotBeLoaded:
 
 
 # ---------------------------------------------------------------------------
-# The deltas beside the pp headline
+# The deltas beside the headline (a gap between two returns, in %)
 # ---------------------------------------------------------------------------
 
 DELTA_ROWS = ("today", "cumulative", "mdd")
@@ -296,7 +296,7 @@ def _delta_texts_scenario(after: str) -> str:
     )
 
 
-class TestRowDeltasPrintPercentagePoints:
+class TestRowDeltasPrintPercent:
     @pytest.mark.parametrize(
         "after",
         [
@@ -305,7 +305,7 @@ class TestRowDeltasPrintPercentagePoints:
         ],
         ids=["after a poll", "after a pick"],
     )
-    def test_no_row_delta_prints_a_percent_sign_and_each_prints_pp(self, after):
+    def test_every_row_delta_prints_a_percent_sign_and_none_prints_pp(self, after):
         r = _run(_delta_texts_scenario(after))
         for stage in ("first", "last"):
             for row in DELTA_ROWS:
@@ -313,11 +313,12 @@ class TestRowDeltasPrintPercentagePoints:
                 if not element["exists"] or not element["shown"]:
                     continue
                 text = element["text"]
-                assert "%" not in text, f"{stage}: the {row} delta prints {text!r}"
+                assert "pp" not in text, f"{stage}: the {row} delta prints {text!r}"
                 if DIGIT.search(text):
                     sup.pp_delta_value(text)
+                    assert text.endswith("%"), f"{stage}: the {row} delta prints {text!r}"
 
-    def test_the_max_dd_delta_is_held_minus_bot_in_percentage_points(self):
+    def test_the_max_dd_delta_is_held_minus_bot_as_a_gap_in_percent(self):
         thirty = _strip("30d")["max_drawdown"]
         want = abs(thirty["if_held"]) - abs(thirty["dry_run"])
         r = _run(_delta_texts_scenario("await H.click('[data-testid=\"window-30d\"]');"))
@@ -325,7 +326,9 @@ class TestRowDeltasPrintPercentagePoints:
         got = sup.pp_delta_value(text)
         assert abs(got - want) <= 0.006, f"the delta reads {got}, held minus bot is {want:.4f}"
 
-    def test_the_first_paint_of_the_server_render_prints_no_percent_sign_in_a_row_delta(self):
+    def test_the_first_paint_of_the_server_render_prints_a_percent_sign_and_no_pp_in_a_row_delta(
+        self,
+    ):
         html = _world()["html"]
         for row in DELTA_ROWS:
             match = re.search(
@@ -333,4 +336,6 @@ class TestRowDeltasPrintPercentagePoints:
             )
             assert match, f"the render holds no {row} delta"
             text = re.sub(r"<[^>]+>", "", match.group(1)).strip()
-            assert "%" not in text, f"the first paint of the {row} delta prints {text!r}"
+            assert "pp" not in text, f"the first paint of the {row} delta prints {text!r}"
+            if DIGIT.search(text):
+                assert text.endswith("%"), f"the first paint of the {row} delta prints {text!r}"

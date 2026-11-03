@@ -30,7 +30,7 @@ DESCRIPTOR_SIMULATED = (
     "two lines. All symphonies at their latest values, before exit friction."
 )
 DESCRIPTOR_LIVE = DESCRIPTOR_SIMULATED.replace("Simulated Bot", "Bot")
-HEADLINE_SHAPE = re.compile(r"^[+-]\d+\.\d{2} pp$")
+HEADLINE_SHAPE = re.compile(r"^(?:[+-]\d+\.\d{2}|0\.00)%$")
 LEG_SHAPE = re.compile(r"^(Bot|Held) \d+\.\d{2}%$")
 
 
@@ -106,7 +106,7 @@ class TestHeadlineWordsAndUnit:
         world = hx.get_world(WORLD)
         tree = hx.parse_html(world["html"])
         shown = _norm(hx.tree_text(hx.find_by_id(tree, "guard-alpha-headline")))
-        assert HEADLINE_SHAPE.match(shown), f"headline {shown!r} is not '<sign><n.nn> pp'"
+        assert HEADLINE_SHAPE.match(shown), f"headline {shown!r} is not '<sign><n.nn>%'"
         assert shown == sup.fmt_pp(world["strips"]["30d"]["guard_alpha"]), (
             "first paint and the 30d strip answer disagree"
         )

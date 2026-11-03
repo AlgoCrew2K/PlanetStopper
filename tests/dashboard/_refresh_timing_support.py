@@ -248,11 +248,15 @@ def fmt_pct(value, decimals: int = 2) -> str:
 
 
 def fmt_pp(value, decimals: int = 2) -> str:
-    """The headline's format: a difference of two returns, signed, fixed decimals, then ``pp``
-    (percentage points); ``--`` for a missing value."""
+    """The headline's format: a difference of two returns (a gap between them), signed, fixed
+    decimals, then ``%``; a value that rounds to zero prints plain ``0.00%`` with no sign;
+    ``--`` for a missing value."""
     if value is None:
         return "--"
-    return ("+" if value >= 0 else "") + f"{value:.{decimals}f} pp"
+    text = f"{value:.{decimals}f}"
+    if float(text) == 0:
+        return f"{abs(float(text)):.{decimals}f}%"
+    return ("+" if value > 0 else "") + text + "%"
 
 
 def vol_texts(strip: dict) -> dict:
@@ -260,18 +264,18 @@ def vol_texts(strip: dict) -> dict:
     bot, held = strip.get("vol_bot"), strip.get("vol_held")
     if bot is None or held is None:
         return {"bot": f"Bot {DASH}", "held": f"Held {DASH}", "delta": f"α {DASH}"}
-    pp = (held - bot) * 100
+    gap = (held - bot) * 100
     return {
         "bot": f"Bot {bot * 100:.1f}%",
         "held": f"Held {held * 100:.1f}%",
-        "delta": f"α {'+' if pp >= 0 else ''}{pp:.1f}pp",
+        "delta": f"α {fmt_pp(gap, 1)}",
     }
 
 
 def mdd_texts(strip: dict) -> dict:
     """The Max DD row text for a strip whose window supplies both legs, as the client writes it:
     two magnitudes (a drawdown carries no plus sign). ``delta_pp`` is the saved difference, Held
-    minus Bot, in percentage points: the row's delta prints it in ``pp`` (read it with
+    minus Bot, a gap between two returns: the row's delta prints it in ``%`` (read it with
     ``pp_delta_value``), the unit of the headline beside it."""
     legs = strip["max_drawdown"]
     bot, held = abs(legs["dry_run"]), abs(legs["if_held"])
@@ -282,13 +286,13 @@ def mdd_texts(strip: dict) -> dict:
     }
 
 
-_PP_DELTA = re.compile(r"^α\s*([+\-−]?\d+(?:\.\d+)?)\s*pp$")
+_PP_DELTA = re.compile(r"^α\s*([+\-−]?\d+(?:\.\d+)?)%$")
 
 
 def pp_delta_value(text: str) -> float:
-    """The number in a row delta printed as ``α <signed number> pp`` (no ``%``); fails otherwise."""
+    """The number in a row delta printed as ``α <signed number>%`` (no ``pp``); fails otherwise."""
     match = _PP_DELTA.match(text or "")
-    assert match, f"a row delta must read 'α <signed number> pp', not {text!r}"
+    assert match, f"a row delta must read 'α <signed number>%', not {text!r}"
     return float(match.group(1).replace("−", "-"))
 
 

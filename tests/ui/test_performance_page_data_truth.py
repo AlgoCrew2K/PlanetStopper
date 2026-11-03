@@ -349,7 +349,8 @@ def _reduction_pp(payload) -> float:
 
 
 def _pp(value: float) -> str:
-    return analytics.js_to_fixed(value, 2) + "pp"
+    """A gap between two returns as the page prints it: fixed decimals, then ``%``."""
+    return analytics.js_to_fixed(value, 2) + "%"
 
 
 def test_a_positive_reduction_reads_up_arrow_one_plus_and_the_magnitude(client):
@@ -538,8 +539,8 @@ def test_every_other_metric_cell_and_headline_keeps_its_existing_text(client):
         assert rows[label][1] == _ref_fmt(live[key], kind), label
         assert rows[label][2] == _ref_fmt(shadow[key], kind), label
     guard = (shadow["total_return"] - live["total_return"]) * 100
-    # The headline is a gap between two returns, so its unit is percentage points.
-    assert result["guard"] == f"{'+' if guard >= 0 else ''}{analytics.js_to_fixed(guard, 2)} pp"
+    # The headline is a gap between two returns, shown in % (never pp).
+    assert result["guard"] == f"{'+' if guard >= 0 else ''}{analytics.js_to_fixed(guard, 2)}%"
     assert result["mdd"] == f"+{_pp(_reduction_pp(payload))}"
 
 
@@ -560,6 +561,8 @@ return { metrics: H.rows('#metrics-tbody'),
            return { id: id, text: H.text('#' + id), color: H.$('#' + id).style.color };
          }) };
 """ % list(_HEADLINE_IDS)
+# The tiles that are a gap between two returns: their unit is %, never pp.
+_GAP_IN_PERCENT_IDS = ("guard-alpha-value", "mdd-reduction-value")
 ARROWS = ("↑", "↓")
 # Gaps between the two legs whose every shown figure (2 decimals; the Sharpe and Sortino cells show
 # 3) rounds to zero, on either side of zero and exactly zero.
@@ -597,7 +600,9 @@ def test_a_headline_stat_that_rounds_to_zero_prints_no_sign_and_no_good_or_bad_c
     for stat in _HEADLINE_IDS:
         text = shown[stat]["text"]
         assert "-" not in text and "+" not in text, f"{stat} at gap {gap}: {text!r}"
-        assert re.fullmatch(r"0\.00( ?pp)?", text), f"{stat} at gap {gap}: {text!r}"
+        assert re.fullmatch(r"0\.00%?", text), f"{stat} at gap {gap}: {text!r}"
+        if stat in _GAP_IN_PERCENT_IDS:
+            assert text == "0.00%", f"{stat} at gap {gap}: {text!r}"
         assert shown[stat]["color"] == "inherit", f"{stat} at gap {gap}: {shown[stat]['color']!r}"
 
 
@@ -610,6 +615,8 @@ def test_a_headline_stat_that_survives_the_rounding_keeps_its_sign_and_colour(
     for stat in _HEADLINE_IDS:
         text = shown[stat]["text"]
         assert text.startswith(sign + "0.05"), f"{stat}: {text!r}"
+        if stat in _GAP_IN_PERCENT_IDS:
+            assert text == sign + "0.05%", f"{stat}: {text!r}"
         assert f"studio-{colour}" in shown[stat]["color"], f"{stat}: {shown[stat]['color']!r}"
 
 
@@ -621,7 +628,7 @@ def test_a_table_delta_that_rounds_to_zero_prints_no_sign_and_no_arrow(client, g
         cell = rows[label][3]
         assert "-" not in cell and "+" not in cell, f"{label} at gap {gap}: {cell!r}"
         assert not any(arrow in cell for arrow in ARROWS), f"{label} at gap {gap}: {cell!r}"
-        assert re.fullmatch(r"0\.00(0|pp)", cell), f"{label} at gap {gap}: {cell!r}"
+        assert re.fullmatch(r"0\.00(0|%)", cell), f"{label} at gap {gap}: {cell!r}"
 
 
 def test_a_table_cell_that_rounds_to_zero_never_prints_a_minus_sign(client):
