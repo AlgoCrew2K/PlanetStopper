@@ -792,12 +792,9 @@
         return chip;
     }
 
-    // Each figure cell carries its column's name in data-label: on a phone the header row is hidden
-    // and the label is drawn above the figure (the table's stacked layout).
-    function preconditionNumCell(value, digits, prefix, label) {
+    function preconditionNumCell(value, digits, prefix) {
         var td = document.createElement('td');
         td.style.textAlign = 'right';
-        td.setAttribute('data-label', label);
         td.textContent = (value === null || value === undefined)
             ? '--'
             : (prefix || '') + Number(value).toFixed(digits);
@@ -814,22 +811,19 @@
         tr.appendChild(symphonyLabelCell(symphonyId));
 
         var sampleTd = document.createElement('td');
-        sampleTd.setAttribute('data-label', 'Sample');
         sampleTd.textContent = sampleLabel;
         tr.appendChild(sampleTd);
 
-        tr.appendChild(preconditionNumCell(row.rho, 3, '', 'ρ'));
-        tr.appendChild(preconditionNumCell(row.rho_ci, 3, '±', '95% CI'));
-        tr.appendChild(preconditionNumCell(row.sharpe_daily, 3, '', 'Daily Sharpe'));
+        tr.appendChild(preconditionNumCell(row.rho, 3));
+        tr.appendChild(preconditionNumCell(row.rho_ci, 3, '±'));
+        tr.appendChild(preconditionNumCell(row.sharpe_daily, 3));
 
         var nTd = document.createElement('td');
         nTd.style.textAlign = 'right';
-        nTd.setAttribute('data-label', 'N');
         nTd.textContent = (row.n_obs === null || row.n_obs === undefined) ? '--' : String(row.n_obs);
         tr.appendChild(nTd);
 
         var verdictTd = document.createElement('td');
-        verdictTd.setAttribute('data-label', 'Verdict');
         verdictTd.appendChild(preconditionChipEl(row.verdict));
         tr.appendChild(verdictTd);
 
@@ -911,10 +905,9 @@
 
     // --- Exit-turnover panel (AC-8, exit-friction-realized-savings) ---
 
-    function turnoverWindowCell(windowStats, label) {
+    function turnoverWindowCell(windowStats) {
         var td = document.createElement('td');
         td.style.textAlign = 'right';
-        td.setAttribute('data-label', label);
         if (!windowStats) {
             td.textContent = '--';
             return td;
@@ -925,6 +918,9 @@
         // The count reads first; the days it rests on sit beside it in the quieter ink (the cell's
         // text is still "<count> (<days>d retained)").
         td.appendChild(document.createTextNode(String(windowStats.exit_count)));
+        // The phone layout reads the retained days from here ("15 in 30d") and keeps the longer
+        // words in the cell for screen readers only.
+        td.setAttribute('data-days', String(windowStats.coverage_days));
         var retained = document.createElement('span');
         retained.className = 'hp-muted';
         retained.textContent = ' (' + windowStats.coverage_days + 'd retained)';
@@ -941,13 +937,12 @@
         tr.appendChild(symphonyLabelCell(symphonyId));
 
         var windows = (turnover && turnover.windows) || {};
-        tr.appendChild(turnoverWindowCell(windows['30'], '30d'));
-        tr.appendChild(turnoverWindowCell(windows['90'], '90d'));
-        tr.appendChild(turnoverWindowCell(windows['365'], '365d'));
+        tr.appendChild(turnoverWindowCell(windows['30']));
+        tr.appendChild(turnoverWindowCell(windows['90']));
+        tr.appendChild(turnoverWindowCell(windows['365']));
 
         var dragTd = document.createElement('td');
         dragTd.style.textAlign = 'right';
-        dragTd.setAttribute('data-label', 'Est. annual friction drag');
         var drag = turnover && turnover.est_annual_friction_drag_pct;
         dragTd.textContent = (drag === null || drag === undefined) ? '--' : Number(drag).toFixed(2) + '%';
         tr.appendChild(dragTd);
