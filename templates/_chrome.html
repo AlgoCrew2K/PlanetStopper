@@ -107,7 +107,9 @@
   .shell-nav > [data-testid="mode-pill"] { padding:0 0 0 14px !important; border-radius:0 !important; font-size:12px !important; font-weight:500 !important; letter-spacing:0 !important; background-color:transparent !important; background-image:radial-gradient(circle at 4px 50%, transparent 2px, currentColor 2.5px 4px, transparent 4.5px) !important; background-repeat:no-repeat !important; text-transform:lowercase; }
   .shell-nav > [data-testid="mode-pill"]::first-letter { text-transform:uppercase; }
   .shell-nav > [data-testid="mode-pill"][data-live="true"] { color:var(--studio-neg) !important; font-weight:600 !important; background-image:radial-gradient(circle at 4px 50%, currentColor 3.5px, transparent 4.5px) !important; }
-  .shell-nav > [data-testid="force-run-btn"], .shell-nav > #emergency-liquidate { box-sizing:border-box; min-height:32px; line-height:16px; padding:8px 16px !important; border-radius:8px !important; font-weight:500 !important; letter-spacing:0 !important; transition:background-color 0.15s, opacity 0.15s; }
+  .shell-nav > [data-testid="force-run-btn"], .shell-nav > #emergency-liquidate { box-sizing:border-box; min-height:32px; line-height:16px; padding:7px 16px !important; border-radius:8px !important; font-weight:500 !important; letter-spacing:0 !important; transition:background-color 0.15s, opacity 0.15s; }
+  /* Force run now carries a transparent border so it is as tall as the outlined Emergency Liquidate. */
+  .shell-nav > [data-testid="force-run-btn"] { border:1px solid transparent !important; }
   .shell-nav > [data-testid="force-run-btn"]:hover { opacity:0.9; }
   .shell-nav > [data-testid="force-run-btn"]:disabled { opacity:0.6; }
   .shell-nav > #emergency-liquidate:hover { background:var(--studio-neg-tint) !important; }
@@ -142,18 +144,19 @@
        the mode and the two action buttons; the five links, whose current-page underline sits on the
        header's bottom rule. Every control stays on screen; a row that cannot hold its controls
        wraps them onto the next. The inline styles set some of these values, so !important. */
-    .shell-nav { padding:8px 12px 0; row-gap:8px; column-gap:8px; }
+    .shell-nav { padding:8px 12px 0; row-gap:6px; column-gap:8px; }
     .shell-nav > div[style="flex:1;"] { display:none; }
     .shell-brand { gap:6px; font-size:16px; }
     .shell-brand-sub { font-size:12px; }
     .shell-nav > .shell-nav-status { order:1; margin-left:auto; }
     .shell-nav > .shell-bell { order:2; min-width:24px; height:28px; padding:0 4px; }
     .shell-nav > [data-testid="mode-pill"] { order:3; }
-    .shell-nav > [data-testid="force-run-btn"] { order:4; flex:1 1 auto; padding:8px 8px !important; }
-    .shell-nav > #emergency-liquidate { order:5; flex:1 1 auto; padding:8px 8px !important; }
+    .shell-nav > [data-testid="force-run-btn"] { order:4; flex:1 1 auto; padding:7px 8px !important; }
+    .shell-nav > #emergency-liquidate { order:5; flex:1 1 auto; padding:7px 8px !important; }
     .shell-nav > .shell-nav-links { order:6; flex:1 1 100%; margin-left:0; justify-content:space-between; row-gap:0; }
-    .shell-link { padding:0 6px; font-size:12px; }
-    .shell-link[aria-current="page"]::after { left:6px; right:6px; bottom:0; }
+    /* The five links keep one row down to 320 px: their text and side space shrink with the screen, never below 11 px. */
+    .shell-link { padding:0 clamp(2px,1.2vw,6px); font-size:clamp(11px,3.2vw,12px); }
+    .shell-link[aria-current="page"]::after { left:clamp(2px,1.2vw,6px); right:clamp(2px,1.2vw,6px); bottom:0; }
   }
   /* display:flex must NOT appear as an inline style — it overrides [hidden].
      Gate display on the hidden attribute so setAttribute('hidden','') actually hides. */

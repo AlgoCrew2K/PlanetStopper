@@ -75,7 +75,8 @@ def test_the_header_reads_the_engine_by_itself_and_fits(
         )
         label = probe.page.inner_text("#engine-status-label").strip()
         assert label in LABELS, f"the engine label reads {label!r}"
-        pill = probe.page.inner_text('[data-testid="mode-pill"]').strip()
+        # the tag holds the engine's own value; the page shows it in sentence case
+        pill = (probe.page.text_content('[data-testid="mode-pill"]') or "").strip()
         assert pill in {"LIVE", "DRY RUN"}, f"the mode pill reads {pill!r}"
         for name, selector in HEADER_CONTROLS.items():
             assert_reachable(probe, name, selector, f"{path} at {size[0]} px")

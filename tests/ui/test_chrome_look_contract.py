@@ -251,7 +251,7 @@ class TestHeaderIsQuiet:
             r'\.shell-nav > \[data-testid="force-run-btn"\], \.shell-nav > #emergency-liquidate \{([^}]*)\}',
             self.STYLE,
         ).group(1)
-        assert "min-height:32px" in rule and "padding:8px 16px !important" in rule
+        assert "min-height:32px" in rule and "padding:7px 16px !important" in rule
         assert "border-radius:8px !important" in rule and "font-weight:500 !important" in rule
 
     def test_the_confirm_button_reads_as_disabled_until_the_phrase_is_typed(self):

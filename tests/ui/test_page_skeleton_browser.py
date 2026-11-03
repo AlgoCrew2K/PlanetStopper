@@ -95,16 +95,16 @@ _COMPUTED = """
 # (page, selector, computed property, css property for the token probe, token)
 _PRIMITIVE_COLOURS = [
     ("/history", ".hero-section", "backgroundColor", "background", "--studio-paper"),
-    ("/history", ".section-header", "color", "color", "--studio-ink-dim"),
-    ("/history", ".mini-stat", "backgroundColor", "background", "--studio-chip-bg"),
+    ("/history", ".section-header", "color", "color", "--studio-ink"),
+    ("/history", ".mini-stat", "borderTopColor", "border-top-color", "--studio-rule"),
     ("/history", "#reason-cards > *", "backgroundColor", "background", "--studio-paper"),
     ("/performance", ".hero-section", "backgroundColor", "background", "--studio-paper"),
-    ("/performance", ".section-header", "color", "color", "--studio-ink-dim"),
-    ("/performance", ".mini-stat", "backgroundColor", "background", "--studio-chip-bg"),
+    ("/performance", ".section-header", "color", "color", "--studio-ink"),
+    ("/performance", ".mini-stat", "borderTopColor", "border-top-color", "--studio-rule"),
     ("/settings", ".hero-section", "backgroundColor", "background", "--studio-paper"),
-    ("/settings", ".section-header", "color", "color", "--studio-ink-dim"),
+    ("/settings", ".section-header", "color", "color", "--studio-ink"),
     ("/ai-advisor", ".hero-section", "backgroundColor", "background", "--studio-paper"),
-    ("/ai-advisor", ".section-header", "color", "color", "--studio-ink-dim"),
+    ("/ai-advisor", ".section-header", "color", "color", "--studio-ink"),
 ]
 
 
