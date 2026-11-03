@@ -294,9 +294,9 @@ class TestCardContent:
             assert "Fallback" in card.text()
             assert "Best objective score" in card.text()
             assert "Frozen-eval" in card.text()
-            assert "2 consecutive runs without adopting a tuned config" in card.text()
+            assert "2 runs without adopting a tuned config" in card.text()
         other = _cards(loaded["list"])[1].text()
-        assert "consecutive runs without adopting" not in other
+        assert "runs without adopting" not in other
 
     def test_a_card_prints_the_new_york_stamp_with_no_fraction(self, client):
         stamped = json.loads(_TIME_VALUES.read_text(encoding="utf-8"))["autotune_run_timestamp"]

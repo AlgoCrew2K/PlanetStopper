@@ -52,6 +52,19 @@ def _page(client) -> str:
     return w.get_page(client)
 
 
+def _declared(selector_fragment: str, prop: str) -> str | None:
+    """The last top-level value the page's stylesheet declares for ``prop`` on a rule whose
+    selector contains ``selector_fragment`` (None when no such rule declares it)."""
+    value = None
+    for ctx, selectors, decls in cap.iter_rules(_inline_css()):
+        if ctx or not any(selector_fragment in sel for sel in selectors):
+            continue
+        for name, val in decls:
+            if name == prop:
+                value = val.strip()
+    return value
+
+
 def _inside(node, ancestor) -> bool:
     cursor = node
     while cursor is not None:
@@ -113,7 +126,14 @@ class TestAutotuneRunsAreRows:
             "autotune-run-tstat",
         ):
             assert f'class="{cell}"' in html, cell
-        for header in ("Symphony", "Run time (ET)", "Outcome", "Best score", "Sel t-stat"):
+        for header in (
+            "Symphony",
+            "Run time (ET)",
+            "Outcome",
+            "Runs without adopting a tuned config",
+            "Best CRRA-EU score",
+            "Sel t-stat",
+        ):
             assert f">{header}</span>" in html, header
 
     def test_the_outcome_is_a_dot_and_one_word_with_no_inline_colour(self):
@@ -121,22 +141,119 @@ class TestAutotuneRunsAreRows:
         assert 'class="decision-pill decision-pill--warn">Fallback</span>' in html
         assert "style=" not in html, "an outcome is coloured by its class, never an inline colour"
 
-    def test_the_streak_keeps_its_full_sentence_for_a_reader_of_one_row(self):
-        html = self._list_html([_run_row(1, "alpha")])
-        text = re.sub(r"<[^>]+>", "", html)
-        assert "4 consecutive runs without adopting a tuned config" in text
+    def test_the_header_carries_the_streak_sentence_and_a_cell_carries_the_figure(self):
+        root = parse_html(self._list_html([_run_row(1, "alpha")]))
+        head = root.find_all(cls="autotune-row--head")[0]
+        assert head.find_all(cls="autotune-run-streak")[0].text == (
+            "Runs without adopting a tuned config"
+        )
+        cell = root.find_all(testid="autotune-run-row")[0].find_all(cls="autotune-run-streak")[0]
+        assert cell.find_all(cls="autotune-streak-figure")[0].text == "4"
+        # The row read alone still says the whole sentence; it shows on a phone, which has no header.
+        assert cell.text == "4 runs without adopting a tuned config"
+        tail = cell.find_all(cls="autotune-streak-tail")[0]
+        assert "adv-vh" in tail.classes
 
-    def test_a_run_that_was_never_frozen_evaluated_says_so_without_a_visible_line(self):
-        html = self._list_html([_run_row(1, "alpha")])
-        assert "Frozen-eval not evaluated" in html
-        assert re.search(r'class="autotune-run-frozen adv-vh">Frozen-eval not evaluated', html)
+    def test_a_streak_below_two_runs_renders_an_empty_cell(self):
+        rows = [_run_row(1, "alpha", never_adopted_streak={"status": "streak", "streak_weeks": 1})]
+        root = parse_html(self._list_html(rows))
+        cell = root.find_all(testid="autotune-run-row")[0].find_all(cls="autotune-run-streak")[0]
+        assert cell.text == ""
 
-    def test_the_older_runs_use_the_same_rows_without_a_second_header(self):
+    def test_an_unknown_streak_keeps_its_informative_text(self):
+        rows = [_run_row(1, "alpha", never_adopted_streak={"status": "insufficient_history"})]
+        root = parse_html(self._list_html(rows))
+        cell = root.find_all(testid="autotune-run-row")[0].find_all(cls="autotune-run-streak")[0]
+        assert cell.text == "adoption streak: insufficient history (<2 runs)"
+
+    def test_a_run_that_was_never_frozen_evaluated_says_so_in_visible_dim_ink(self):
+        root = parse_html(self._list_html([_run_row(1, "alpha")]))
+        row = root.find_all(testid="autotune-run-row")[0]
+        frozen = row.find_all(cls="autotune-run-frozen")[0]
+        assert frozen.text == "Frozen-eval not evaluated"
+        assert "adv-vh" not in frozen.classes, "the reason there is no verdict is on screen"
+        assert not [n for n in frozen.iter() if "adv-vh" in n.classes]
+        assert _declared("autotune-run-frozen", "color") == "var(--studio-ink-dim)"
+        for prop, value in (
+            ("display", "none"),
+            ("visibility", "hidden"),
+            ("clip", "rect(0 0 0 0)"),
+        ):
+            assert _declared("autotune-run-frozen", prop) != value, prop
+
+    def test_the_score_column_header_names_the_objective_the_rows_share(self):
+        rows = [_run_row(1, "alpha"), _run_row(2, "beta")]
+        root = parse_html(self._list_html(rows))
+        head = root.find_all(cls="autotune-row--head")[0]
+        score = head.find_all(cls="autotune-run-score")[0]
+        assert score.text == "Best CRRA-EU score"
+        assert not [n for n in score.iter() if "adv-vh" in n.classes], "named on screen"
+        assert score.title and "CRRA expected-utility" in score.title
+        table = root.find_all(cls="autotune-table")[0]
+        assert "autotune-table--row-objectives" not in table.classes
+
+    def test_a_sortino_run_names_its_objective_in_the_header_too(self):
+        rows = [_run_row(1, "alpha", objective="sortino_loss_aversion")]
+        head = parse_html(self._list_html(rows)).find_all(cls="autotune-row--head")[0]
+        assert head.find_all(cls="autotune-run-score")[0].text == "Best Sortino score"
+
+    def test_rows_that_differ_in_objective_each_name_their_own_on_screen(self):
+        rows = [
+            _run_row(1, "alpha"),
+            _run_row(2, "beta", objective="sortino_loss_aversion"),
+            _run_row(3, "gamma", objective=None),
+        ]
+        root = parse_html(self._list_html(rows))
+        table = root.find_all(cls="autotune-table")[0]
+        assert "autotune-table--row-objectives" in table.classes
+        head = root.find_all(cls="autotune-row--head")[0]
+        assert head.find_all(cls="autotune-run-score")[0].text == "Best score"
+        labels = [
+            row.find_all(cls="autotune-score-label")[0].text
+            for row in root.find_all(testid="autotune-run-row")
+        ]
+        assert labels == ["Best CRRA-EU score", "Best Sortino score", "Best objective score"]
+        # That modifier is what un-hides the label above the figure at every width.
+        assert (
+            _declared(
+                "autotune-table--row-objectives .autotune-run-score .autotune-score-label",
+                "position",
+            )
+            == "static"
+        )
+
+    def test_a_phone_row_names_its_score_t_stat_and_streak_on_screen(self):
+        shown = {
+            ".autotune-run-score .autotune-score-label",
+            ".autotune-run-tstat .adv-vh",
+            ".autotune-run-streak .autotune-streak-tail",
+        }
+        css = _inline_css()
+        phone = [
+            (selectors, dict(decls))
+            for ctx, selectors, decls in cap.iter_rules(css)
+            if "max-width: 1000px" in ctx
+        ]
+        for selector in shown:
+            rules = [d for sels, d in phone if selector in sels]
+            assert rules, selector
+            merged = {k: v for d in rules for k, v in d.items()}
+            assert merged.get("position") == "static", selector
+            assert merged.get("display") == "inline", selector
+        assert ".autotune-run-score::before" not in css, "the generic Score prefix is gone"
+        assert 'content: "Score "' not in css
+
+    def test_the_older_runs_table_has_its_own_header_so_a_bare_figure_keeps_its_name(self):
         rows = [_run_row(1, "alpha"), _run_row(2, "alpha", run_timestamp="2026-10-23T22:33:00")]
         snapshots = drive([{"op": "load"}], {"/api/autotune-runs": rows})
-        older = snapshots[-1]["older"]["html"]
-        assert older.count('data-testid="autotune-run-row"') == 1
-        assert "autotune-row--head" not in older
+        older = parse_html(snapshots[-1]["older"]["html"])
+        assert len(older.find_all(testid="autotune-run-row")) == 1
+        head = older.find_all(cls="autotune-row--head")
+        assert len(head) == 1, "the older table names its own columns"
+        assert head[0].find_all(cls="autotune-run-streak")[0].text == (
+            "Runs without adopting a tuned config"
+        )
+        assert head[0].find_all(cls="autotune-run-score")[0].text == "Best CRRA-EU score"
 
 
 # ---------------------------------------------------------------------------
