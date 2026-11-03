@@ -100,7 +100,8 @@ def _assert_header_cells_do_not_overlap(locator, label: str) -> None:
     overlaps = locator.evaluate(
         """
         (table) => {
-          const cells = [...table.querySelectorAll('thead th')];
+          // a header cell the phone layout hides takes no room, so it overlaps nothing
+          const cells = [...table.querySelectorAll('thead th')].filter((c) => c.getClientRects().length > 0);
           const out = [];
           for (let i = 0; i + 1 < cells.length; i++) {
             const a = cells[i].getBoundingClientRect();
@@ -120,28 +121,26 @@ def _assert_header_cells_do_not_overlap(locator, label: str) -> None:
 
 
 @pytest.mark.parametrize("width, height", [NARROW, VERY_NARROW], ids=["375", "320"])
-def test_the_performance_tables_scroll_inside_their_containers_at_narrow_widths(
+def test_the_performance_tables_fit_the_screen_at_narrow_widths(
     firefox, advisor_server, width, height
 ):
     """three tables, none overlapping its columns; headline labels not truncated.
 
-    The risk-metrics table has four columns and fits the screen (its labels and headers wrap), so
-    its container has nothing to scroll; the preconditions and exit-turnover tables are wider than
-    the screen and scroll inside their containers.
+    The risk-metrics table has four columns and fits the screen (its labels and headers wrap). The
+    preconditions and exit-turnover tables stack on a phone (the symphony on a line, its figures
+    on one line under it, under one header row), so they fit as well: nothing waits off-screen in
+    a scroll box.
     """
     with open_probe(firefox, advisor_server, width=width, height=height) as probe:
         open_page(probe, "/performance")
         tables = probe.page.locator("table.metrics-tbl")
         assert tables.count() == 3
-        fits = tables.nth(0).evaluate(
-            "(t) => t.scrollWidth <= t.closest('.metrics-overflow').clientWidth + 1"
-        )
-        assert fits, "Performance table 0 (risk metrics) does not fit the screen"
-        _assert_header_cells_do_not_overlap(tables.nth(0), "Performance table 0")
-        for index in (1, 2):
-            table = tables.nth(index)
-            _assert_scrolls_when_wider(table, f"Performance table {index}")
-            _assert_header_cells_do_not_overlap(table, f"Performance table {index}")
+        for index in (0, 1, 2):
+            fits = tables.nth(index).evaluate(
+                "(t) => t.scrollWidth <= t.closest('.metrics-overflow').clientWidth + 1"
+            )
+            assert fits, f"Performance table {index} does not fit the screen"
+            _assert_header_cells_do_not_overlap(tables.nth(index), f"Performance table {index}")
         truncated = probe.page.evaluate(
             """
             () => [...document.querySelectorAll('[data-testid="headline-strip"] [class*="label"]')]
