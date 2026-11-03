@@ -278,6 +278,14 @@ def test_flush_log_count_reflects_background_thread_iteration(client, caplog):
 
         resp = client.post("/api/settings/flush-resync")
         write_completed.wait(timeout=2)
+        # The background thread logs AFTER save_state returns, so the save event
+        # does not imply the log record exists; wait for the record itself.
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not any(
+            "symphony state entries" in r.getMessage() and "wrote" in r.getMessage()
+            for r in list(caplog.records)
+        ):
+            time.sleep(0.01)
 
     assert resp.status_code == 200
 
