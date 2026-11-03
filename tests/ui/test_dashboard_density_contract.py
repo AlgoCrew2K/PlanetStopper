@@ -196,6 +196,36 @@ class TestOneRowPerSymphony:
         )
         assert hidden, "the other columns still print their row names"
 
+    def test_on_a_phone_each_ledger_heading_has_its_alpha_under_it_not_beside_it(self):
+        """Today, Cum and Max DD each take a line with the alpha under it, right-aligned like the
+        figures, so an alpha never sits next to the next column's heading."""
+        css = _page_css()
+        media = re.search(r"@media \(max-width: 700px\)\s*{(.*?)\n    }\n", css, flags=re.DOTALL)
+        assert media, "no phone (max-width: 700px) layout"
+        rule = re.search(r"\.card-footer-grid \.cfg-label\s*{([^}]*)}", media.group(1))
+        assert rule, "the phone layout does not restyle the ledger headings"
+        declared = _declarations(rule.group(1))
+        assert declared.get("flex-direction") == "column"
+        assert declared.get("align-items") == "flex-end"
+
+    def test_each_section_header_line_has_the_slot_that_states_the_session_once(
+        self, dashboard_html
+    ):
+        slot = '<span data-field="section-session" class="count-note" hidden></span>'
+        assert dashboard_html.count(slot) == 2, "Active and Standby each need the hidden slot"
+        for testid in ("active-section", "standby-section"):
+            block = dashboard_html.split(f'data-testid="{testid}"', 1)[1].split("</section>", 1)[0]
+            header = block.split('<div class="cards-grid', 1)[0]
+            assert slot in header, testid
+
+    def test_a_card_names_its_session_only_when_its_tape_disagrees_with_its_section(
+        self, dashboard_html
+    ):
+        assert "spark-session" not in dashboard_html, "the template draws a per-card session"
+        script = SCRIPT.read_text(encoding="utf-8")
+        assert "function syncSessionCaptions" in script
+        assert '[data-field="section-session"]' in script
+
     def test_the_sections_are_one_list_each(self, dashboard_html):
         assert dashboard_html.count('class="cards-grid sym-list"') == 2
 

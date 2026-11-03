@@ -792,9 +792,12 @@
         return chip;
     }
 
-    function preconditionNumCell(value, digits, prefix) {
+    // Each figure cell carries its column's name in data-label: on a phone the header row is hidden
+    // and the label is drawn above the figure (the table's stacked layout).
+    function preconditionNumCell(value, digits, prefix, label) {
         var td = document.createElement('td');
         td.style.textAlign = 'right';
+        td.setAttribute('data-label', label);
         td.textContent = (value === null || value === undefined)
             ? '--'
             : (prefix || '') + Number(value).toFixed(digits);
@@ -811,19 +814,22 @@
         tr.appendChild(symphonyLabelCell(symphonyId));
 
         var sampleTd = document.createElement('td');
+        sampleTd.setAttribute('data-label', 'Sample');
         sampleTd.textContent = sampleLabel;
         tr.appendChild(sampleTd);
 
-        tr.appendChild(preconditionNumCell(row.rho, 3));
-        tr.appendChild(preconditionNumCell(row.rho_ci, 3, '±'));
-        tr.appendChild(preconditionNumCell(row.sharpe_daily, 3));
+        tr.appendChild(preconditionNumCell(row.rho, 3, '', 'ρ'));
+        tr.appendChild(preconditionNumCell(row.rho_ci, 3, '±', '95% CI'));
+        tr.appendChild(preconditionNumCell(row.sharpe_daily, 3, '', 'Daily Sharpe'));
 
         var nTd = document.createElement('td');
         nTd.style.textAlign = 'right';
+        nTd.setAttribute('data-label', 'N');
         nTd.textContent = (row.n_obs === null || row.n_obs === undefined) ? '--' : String(row.n_obs);
         tr.appendChild(nTd);
 
         var verdictTd = document.createElement('td');
+        verdictTd.setAttribute('data-label', 'Verdict');
         verdictTd.appendChild(preconditionChipEl(row.verdict));
         tr.appendChild(verdictTd);
 
@@ -905,9 +911,10 @@
 
     // --- Exit-turnover panel (AC-8, exit-friction-realized-savings) ---
 
-    function turnoverWindowCell(windowStats) {
+    function turnoverWindowCell(windowStats, label) {
         var td = document.createElement('td');
         td.style.textAlign = 'right';
+        td.setAttribute('data-label', label);
         if (!windowStats) {
             td.textContent = '--';
             return td;
@@ -934,12 +941,13 @@
         tr.appendChild(symphonyLabelCell(symphonyId));
 
         var windows = (turnover && turnover.windows) || {};
-        tr.appendChild(turnoverWindowCell(windows['30']));
-        tr.appendChild(turnoverWindowCell(windows['90']));
-        tr.appendChild(turnoverWindowCell(windows['365']));
+        tr.appendChild(turnoverWindowCell(windows['30'], '30d'));
+        tr.appendChild(turnoverWindowCell(windows['90'], '90d'));
+        tr.appendChild(turnoverWindowCell(windows['365'], '365d'));
 
         var dragTd = document.createElement('td');
         dragTd.style.textAlign = 'right';
+        dragTd.setAttribute('data-label', 'Est. annual friction drag');
         var drag = turnover && turnover.est_annual_friction_drag_pct;
         dragTd.textContent = (drag === null || drag === undefined) ? '--' : Number(drag).toFixed(2) + '%';
         tr.appendChild(dragTd);

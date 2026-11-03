@@ -395,6 +395,45 @@
             .metrics-tbl--fit th:nth-child(2),
             .metrics-tbl--fit th:nth-child(3) { width: 20%; }
             .metrics-tbl--fit tbody tr[data-primary="true"] td { font-size: 13px; }
+
+            /* The two per-symphony ledgers (stop-justification preconditions, exit turnover) have
+               too many columns for a phone: each row stacks into a block, the symphony on a line
+               and its figures under it, each with its own label (the header row is hidden), as the
+               History page's by-reason ledger does. --stack-template is the figures' column
+               tracks. The figures carry an inline right alignment from the script, hence the
+               !important. */
+            .metrics-tbl--stack { table-layout: auto; }
+            .metrics-tbl--stack thead { display: none; }
+            .metrics-tbl--stack tr {
+                display: grid;
+                grid-template-columns: var(--stack-template, repeat(2, minmax(0, 1fr)));
+                gap: 4px 12px;
+                padding: 8px 0;
+                border-bottom: 1px solid var(--studio-rule);
+            }
+            .metrics-tbl--stack tbody tr:last-child { border-bottom: 0; }
+            .metrics-tbl--stack td,
+            .metrics-tbl--stack td:first-child,
+            .metrics-tbl--stack td:last-child {
+                display: block;
+                width: auto;
+                padding: 0;
+                border: 0;
+                text-align: left !important;
+                white-space: normal;
+                min-width: 0;
+            }
+            .metrics-tbl--stack td:first-child { grid-column: 1 / -1; font-weight: 500; }
+            .metrics-tbl--stack td[data-label]::before {
+                content: attr(data-label);
+                display: block;
+                font-size: 11px;
+                line-height: 16px;
+                color: var(--studio-ink-dim);
+                font-weight: 400;
+            }
+            .metrics-tbl--stack .precond-verdict-chip { white-space: normal; align-items: flex-start; }
+            .metrics-tbl--stack .precond-verdict-chip::before { margin-top: 6px; }
         }
     </style>
 </head>
@@ -563,7 +602,7 @@
                 epochs of the symphony.
             </p>
             <div class="metrics-overflow">
-                <table class="metrics-tbl" data-testid="guard-alpha-preconditions-table">
+                <table class="metrics-tbl metrics-tbl--stack" style="--stack-template: minmax(0, .9fr) minmax(0, .8fr) minmax(0, 1.3fr)" data-testid="guard-alpha-preconditions-table">
                     <thead>
                         <tr>
                             <th>Symphony</th>
@@ -607,7 +646,7 @@
                 annualized friction drag from the simulated per-round-trip exit cost.
             </p>
             <div class="metrics-overflow">
-                <table class="metrics-tbl" data-testid="exit-turnover-table">
+                <table class="metrics-tbl metrics-tbl--stack" data-testid="exit-turnover-table">
                     <thead>
                         <tr>
                             <th>Symphony</th>

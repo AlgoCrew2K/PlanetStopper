@@ -144,6 +144,74 @@ def test_the_verdict_word_is_sentence_case():
     assert "verdict.replace(/_/g, ' ')" in body
 
 
+_STACKED_TABLES = {
+    # testid: the header texts after "Symphony", in order (the phone labels repeat them)
+    "guard-alpha-preconditions-table": [
+        "Sample",
+        "\u03c1",
+        "95% CI",
+        "Daily Sharpe",
+        "N",
+        "Verdict",
+    ],
+    "exit-turnover-table": ["30d", "90d", "365d", "Est. annual friction drag"],
+}
+
+
+@pytest.mark.parametrize("testid", list(_STACKED_TABLES))
+def test_a_per_symphony_ledger_stacks_on_a_phone_with_each_figure_labelled(testid):
+    """Too many columns for a phone: each row becomes a block, the symphony on a line and its
+    figures under it with their column names, so no figure waits off-screen in a scroll box."""
+    template = _template("performance")
+    assert re.search(
+        rf'<table class="metrics-tbl metrics-tbl--stack"[^>]*data-testid="{testid}"', template
+    ), f"{testid} does not take the stacked layout"
+    css = _css("performance")
+    assert re.search(
+        r"@media \(max-width: 700px\)\s*{.*\.metrics-tbl--stack thead\s*{\s*display:\s*none",
+        css,
+        re.S,
+    )
+    row = " ".join(_rule_bodies(css, ".metrics-tbl--stack tr"))
+    assert "display: grid" in row
+    first = " ".join(_rule_bodies(css, ".metrics-tbl--stack td:first-child"))
+    assert "grid-column: 1 / -1" in first
+    label = " ".join(_rule_bodies(css, ".metrics-tbl--stack td[data-label]::before"))
+    assert "content: attr(data-label)" in label
+    for size in re.findall(r"font-size:\s*(\d+)px", label):
+        assert int(size) >= 11, "a figure's label is under 11 px"
+    table = re.search(rf'<table[^>]*data-testid="{testid}".*?</thead>', template, re.S).group(0)
+    headers = [
+        re.sub(r"<[^>]+>", "", cell).replace("&rho;", "\u03c1").strip()
+        for cell in re.findall(r"<th[^>]*>(.*?)</th>", table, re.S)
+    ]
+    assert headers[1:] == _STACKED_TABLES[testid], "the header row and the phone labels differ"
+
+
+def test_every_figure_cell_of_the_stacked_ledgers_carries_its_column_name():
+    script = _script("performance")
+    # the script text keeps the JS escape, not the character
+    expected = {
+        "preconditionRowEl": [
+            "'Sample'",
+            "'\u03c1'",
+            "'95% CI'",
+            "'Daily Sharpe'",
+            "'N'",
+            "'Verdict'",
+        ],
+        "exitTurnoverRowEl": ["'30d'", "'90d'", "'365d'", "'Est. annual friction drag'"],
+    }
+    for name, labels in expected.items():
+        body = script[script.index(f"function {name}") :].split("\n    }\n")[0]
+        for label in labels:
+            assert label in body, f"{name}: no cell is labelled {label}"
+        assert "data-label" in body, name
+    for helper in ("preconditionNumCell", "turnoverWindowCell"):
+        body = script[script.index(f"function {helper}") :].split("\n    }\n")[0]
+        assert "setAttribute('data-label', label)" in body, f"{helper} drops the label"
+
+
 def test_a_reason_is_a_coloured_dot_and_its_name_in_both_tables():
     css = _css("history")
     for key, token in (
