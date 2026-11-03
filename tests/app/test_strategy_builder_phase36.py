@@ -72,33 +72,28 @@ import app as app_module
 # ---------------------------------------------------------------------------
 
 
-# Matches the header candidate-alert bell <svg> added by advisor-suite-fixes.md
-# AC-5 (templates/_chrome.html, included on every page via {% include %}) — a
-# design-consistent inline SVG, not this Phase 3.6 cycle's sparkline SVG.
-# Anchored on the stable data-testid wrapper (also used by
-# tests/app/test_candidate_alert_indicator_render.py) rather than any SVG
-# attribute ordering, so it only ever strips THIS one known element.
-_CANDIDATE_ALERT_INDICATOR_RE = re.compile(
-    r'<a data-testid="candidate-alert-indicator".*?</a>', re.DOTALL
-)
+# The shared header (templates/_chrome.html, included on every page) draws its
+# own inline icons: the candidate-alert bell and the account-chip chevron. The
+# whole header sits in one wrapper, so it is stripped as a region instead of
+# icon by icon; a new header icon then needs no change here. The wrapper's
+# data-testid="top-bar" is the stable anchor and its first </nav></div> closes it.
+_HEADER_CHROME_RE = re.compile(r'<div data-testid="top-bar".*?</nav></div>', re.DOTALL)
 
 
 def _without_header_chrome_svg(html: str) -> str:
-    """Strip the header candidate-alert bell <svg> before checking for
-    Phase-3.6-sparkline <svg> presence/count.
+    """Strip the shared header region before checking for sparkline <svg>
+    presence/count.
 
-    This whole-page GET-/ai-advisor test suite predates AC-5 (advisor-suite-fixes.md,
-    2026-07-13), which legitimately added a second, unrelated <svg> to the shared
-    header chrome (templates/_chrome.html) present on EVERY page. The HR-1/HR-4/
-    ADV-7/ADV-8 invariants under test here are about the Strategy Builder
-    observation-card sparkline macro specifically ("no empty <svg> stub for a row
-    with no/empty/invalid points") — they were never about the page as a whole
-    having zero <svg> elements. Scoped removal via the stable
-    data-testid="candidate-alert-indicator" anchor keeps the invariant intact: a
-    stray SECOND sparkline-region <svg> (the actual defect these tests guard
-    against) would still be caught.
+    The HR-1/HR-4/ADV-7/ADV-8 invariants under test are about the Strategy
+    Builder observation-card sparkline macro ("no empty <svg> stub for a row
+    with no/empty/invalid points", exactly one sparkline for a new row). They
+    were never about the page as a whole having zero <svg> elements, and the
+    shared header legitimately carries icon <svg>s of its own, so counting them
+    would tie these tests to header icon changes. Removing the whole header
+    region keeps the invariant intact: a stray <svg> in the page body (the
+    defect these tests guard against) is still counted.
     """
-    return _CANDIDATE_ALERT_INDICATOR_RE.sub("", html, count=1)
+    return _HEADER_CHROME_RE.sub("", html, count=1)
 
 
 def _make_spa_corr_module():

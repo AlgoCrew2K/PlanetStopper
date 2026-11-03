@@ -36,6 +36,7 @@ from __future__ import annotations
 import ast
 import json
 import pathlib
+import re
 from unittest.mock import patch
 
 import pytest
@@ -452,13 +453,52 @@ def test_evaluate_route_provenance_defensive_guard_on_non_dict_engine_result(fla
 _STALE_LABEL = "Deterministic — no AI reasoning"
 
 
-def _tab_button_block(html: str, testid: str) -> str:
-    marker = f'data-testid="{testid}"'
+def _tab_panel(html: str, tab: str) -> str:
+    """The whole panel of one tab: from its data-testid to the next tab panel (or the end).
+
+    The model attribution is rendered in the head of each tab's panel, not on the
+    one-line tab button."""
+    marker = f'data-testid="tab-panel-{tab}"'
     start = html.find(marker)
     assert start != -1, f"self-guard: {marker!r} not found in templates/ai_advisor.html."
-    end = html.find("</button>", start)
-    assert end != -1, f"self-guard: no closing </button> found after {marker!r}."
-    return html[start:end]
+    end = html.find('data-testid="tab-panel-', start + len(marker))
+    return html[start : end if end != -1 else len(html)]
+
+
+def _tab_attribution(html: str, tab: str) -> str:
+    """The text of the panel's cap-tab-attribution line, or "" when the panel has none."""
+    found = re.search(r'<p class="cap-tab-attribution">(.*?)</p>', _tab_panel(html, tab), re.DOTALL)
+    return found.group(1) if found else ""
+
+
+# Tabs that are not the AI-reasoned Asset Swaps / Logic Changes paths and so must not claim
+# the reasoned-path attribution.
+_OTHER_TABS = (
+    "overview",
+    "correlations",
+    "retirement",
+    "chat",
+    "strategy-builder",
+    "frontrunner-builder",
+)
+
+
+def _assert_reasoned_attribution_on(html: str, tab: str, label: str) -> None:
+    attribution = _tab_attribution(html, tab)
+    assert _STALE_LABEL not in _tab_panel(html, tab), (
+        f"{label} panel still contains the stale label {_STALE_LABEL!r} - the reasoned path must retire it."
+    )
+    assert "reasons over your live tree" in attribution, (
+        f"{label} panel head does not carry the reasoned-path attribution copy. "
+        f"Attribution line: {attribution!r}"
+    )
+
+
+def _assert_no_reasoned_attribution_elsewhere(html: str) -> None:
+    for tab in _OTHER_TABS:
+        assert "reasons over your live tree" not in _tab_panel(html, tab), (
+            f"the {tab} tab claims the reasoned-path attribution it does not have."
+        )
 
 
 def test_attribution_label_flips_for_asset_swaps_tab_only():
@@ -471,28 +511,14 @@ def test_attribution_label_flips_for_asset_swaps_tab_only():
     in-source retirement note."""
     html = (_REPO_ROOT / "templates" / "ai_advisor.html").read_text(encoding="utf-8")
 
-    swaps_block = _tab_button_block(html, "tab-asset-swaps")
-    assert _STALE_LABEL not in swaps_block, (
-        f"AC-9 GAP: the Asset Swaps tab button still contains the stale label {_STALE_LABEL!r} — "
-        "the reasoned path must retire it."
-    )
-    # Positive check (not just old-label-absent): the tab must carry the new
-    # honest, reasoned-path attribution — byte-identical phrasing to Logic
-    # Changes' R2-2 flip, same mechanism (reasoning over the live tree).
-    assert "reasons over your live tree" in swaps_block, (
-        "AC-9 GAP: the Asset Swaps tab does not carry the new reasoned-path "
-        f"attribution copy. Element: {swaps_block!r}"
-    )
+    # Positive check (not just old-label-absent): the panel must carry the new
+    # honest, reasoned-path attribution, same phrasing as Logic Changes.
+    _assert_reasoned_attribution_on(html, "asset-swaps", "Asset Swaps")
 
-    # Regression guard: Logic Changes' and Strategy Builder's labels were
-    # already flipped by earlier R2 cycles and must not be re-touched here.
-    lc_block = _tab_button_block(html, "tab-logic-changes")
-    assert _STALE_LABEL not in lc_block, (
-        "REGRESSION: Logic Changes' label reverted to the stale copy — R2-3 must not touch it."
-    )
-    assert "reasons over your live tree" in lc_block, (
-        "REGRESSION: Logic Changes' R2-2 attribution copy changed unexpectedly."
-    )
+    # Regression guard: Logic Changes' label was already flipped by an earlier
+    # cycle and must stay flipped; the other tabs must not claim it.
+    _assert_reasoned_attribution_on(html, "logic-changes", "Logic Changes")
+    _assert_no_reasoned_attribution_elsewhere(html)
 
 
 # ===========================================================================

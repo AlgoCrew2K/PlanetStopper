@@ -36,6 +36,10 @@ FILL = "--studio-accent"
 DARK_THEME_SELECTOR = re.compile(r"data-theme\s*=\s*[\"']?dark")
 RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
 
+# A grouped rule lists many selectors; the precondition names a control by finding it in the label,
+# so the label must be long enough to keep the last selector of the longest group.
+_LABEL_CHARS = 200
+
 
 def _dark_override(label: str) -> str | None:
     """The text colour a dark-theme rule gives the control, if one targets it by class or test id."""
@@ -63,7 +67,7 @@ def _labelled_fills() -> list[tuple[str, str, str | None]]:
     for use in declarations_matching(ACCENT_FILL):
         text = TEXT_COLOUR.search(use.body)
         if text:
-            where = f"{use.name}:{use.line} {use.label[:70]}"
+            where = f"{use.name}:{use.line} {use.label[:_LABEL_CHARS]}"
             found.append((where, text.group(1).strip(), _dark_override(use.label)))
     return found
 
