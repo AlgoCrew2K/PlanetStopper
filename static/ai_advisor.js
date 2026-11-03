@@ -193,7 +193,7 @@
     }
 
     function confidenceBadgeStyle(confidence) {
-        if (confidence === 'high') return 'color:' + cssVar('--studio-pos') + ';font-weight:700;';
+        if (confidence === 'high') return 'color:' + cssVar('--studio-pos') + ';font-weight:500;';
         if (confidence === 'low') return 'color:' + cssVar('--studio-ink-dim') + ';';
         return 'color:' + cssVar('--studio-ink') + ';';
     }
@@ -313,9 +313,7 @@
                 var gc = raw === true || raw === 'pass' ? cssVar('--studio-pos')
                     : raw === false || raw === 'fail' ? cssVar('--studio-neg') : cssVar('--studio-warn');
                 var label = raw === true ? 'pass' : raw === false ? 'fail' : (raw != null ? String(raw) : 'unknown');
-                return '<span data-testid="gate-badge" style="font-size:0.5625rem;font-weight:700;' +
-                    'text-transform:uppercase;letter-spacing:0.06em;padding:0.1rem 0.3rem;' +
-                    'border-radius:0.25rem;border:1px solid ' + gc + ';color:' + gc + ';white-space:nowrap;">' +
+                return '<span class="gate-dot" data-testid="gate-badge" style="--dot:' + gc + ';">' +
                     escHtml(gk.replace(/_/g, ' ')) + ': ' + escHtml(label) + '</span>';
             }).join(' ');
             var gatesRow = '<div style="display:flex;flex-wrap:wrap;gap:0.25rem;margin-bottom:0.5rem;">' + gateBadges + '</div>';
@@ -332,8 +330,8 @@
                 '<div style="flex:1;min-width:0;">' +
                 '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
                 confidenceRing +
-                '<span style="font-size:0.625rem;font-weight:700;text-transform:uppercase;' +
-                'letter-spacing:0.1em;color:' + cssVar('--studio-accent') + ';">' +
+                '<span style="font-size:0.75rem;font-weight:500;' +
+                'color:' + cssVar('--studio-accent') + ';">' +
                 escHtml(s.config_key) + '</span>' +
                 '<span style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';">' +
                 escHtml(s.risk_direction) + '</span>' +
@@ -365,18 +363,18 @@
                     ? '<button disabled ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-chip-bg') + ';' +
                       'color:' + cssVar('--studio-ink-dim') + ';border:none;border-radius:0.5rem;' +
-                      'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:not-allowed;">' +
+                      'font-size:0.75rem;font-weight:500;cursor:not-allowed;">' +
                       'Blocked by OOS gate</button>'
                     : '<button class="suggestion-apply-btn" data-card-index="' + i + '" ' +
                       'style="padding:0.375rem 1rem;background:' + cssVar('--studio-pos') + ';' +
                       'color:' + cssVar('--studio-paper-hi') + ';border:none;border-radius:0.5rem;' +
-                      'font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
+                      'font-size:0.75rem;font-weight:500;cursor:pointer;">' +
                       'Apply suggestion</button>'
                 ) +
                 '<button class="suggestion-dismiss-btn" data-card-index="' + i + '" ' +
                 'style="padding:0.375rem 1rem;background:' + cssVar('--studio-surface-raised') + ';' +
                 'color:' + cssVar('--studio-ink-dim') + ';border:1px solid ' + cssVar('--studio-border') + ';' +
-                'border-radius:0.5rem;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;cursor:pointer;">' +
+                'border-radius:0.5rem;font-size:0.75rem;font-weight:500;cursor:pointer;">' +
                 'Dismiss</button>' +
                 '</div>' +
 
@@ -409,9 +407,6 @@
                         'border-top:1px solid var(--studio-border);display:flex;flex-wrap:wrap;gap:0.5rem;">' +
                         '<button class="chat-about-btn" data-testid="chat-about-this-btn"' +
                         ' data-artifact-json=\'' + escHtml(cfgArtifactJson) + '\'' +
-                        ' style="padding:0.375rem 0.875rem;background:var(--studio-accent);color: var(--studio-paper);' +
-                        'border:none;border-radius:0.5rem;font-size:0.8125rem;font-weight:600;cursor:pointer;' +
-                        'white-space:nowrap;"' +
                         ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +
                         'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d));}' +
                         'else{window.location.href=\'/ai-advisor/chat\';}}' +
@@ -531,7 +526,7 @@
                 var body = res.body || {};
                 if (body.status === 'accepted') {
                     card.innerHTML =
-                        '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                        '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:500;">' +
                         'Accepted — config updated.</p>';
                 } else {
                     card.style.opacity = '1';
@@ -677,18 +672,19 @@
         return DECISION_LABELS[decision] || decision;
     }
 
-    function decisionPillColor(decision) {
-        if (decision === 'apply') return cssVar('--studio-pos');
-        if (decision === 'reject') return cssVar('--studio-neg');
-        // V-25: fallback/hold/pending/unknown all use --studio-warn token
+    // The status dot's colour, as a modifier class on the word (pos, neg or warn).
+    function decisionTone(decision) {
+        if (decision === 'apply') return 'pos';
+        if (decision === 'reject') return 'neg';
+        // V-25: fallback/hold/pending/unknown all use the warn token
         // so saturation stays consistent in light + dark themes.
-        return cssVar('--studio-warn');
+        return 'warn';
     }
 
-    function frozenEvalColor(verdict) {
-        if (verdict === 'passed') return cssVar('--studio-pos');
-        if (verdict === 'failed') return cssVar('--studio-neg');
-        return cssVar('--studio-warn');
+    function frozenEvalTone(verdict) {
+        if (verdict === 'passed') return 'pos';
+        if (verdict === 'failed') return 'neg';
+        return 'warn';
     }
 
     // The run row's `naive_sharpe` is the optimizer's best trial score under the
@@ -721,14 +717,14 @@
             : AUTOTUNE_SCORE_GENERIC;
     }
 
-    // One card per symphony, at most this many; every other returned run is an older run.
+    // One row per symphony, at most this many; every other returned run is an older run.
     var AUTOTUNE_CARD_LIMIT = 12;
     // The number of runs GET /api/autotune-runs returns (get_all_autotune_runs(limit=50)),
     // so the older-runs summary can say how far back the list reaches.
     var AUTOTUNE_ROUTE_ROW_LIMIT = 50;
 
-    // rows arrive newest first. A symphony's card shows its first (newest) row; the first
-    // AUTOTUNE_CARD_LIMIT symphonies, in the order their newest rows arrive, get cards;
+    // rows arrive newest first. A symphony's row shows its first (newest) run; the first
+    // AUTOTUNE_CARD_LIMIT symphonies, in the order their newest runs arrive, get rows;
     // every other row, in the route's order, is an older run.
     function splitAutotuneRuns(rows) {
         var seen = Object.create(null);
@@ -743,66 +739,73 @@
         return { cards: cards, older: older };
     }
 
-    // The markup of one run, used for a card and for a row of the older-runs list.
-    function autotuneRunCardHtml(r) {
+    // The markup of one run: one table row, used for the main list and for the older-runs list. The words
+    // a header names for the whole column stay in the row as visually hidden text (and show on a phone,
+    // where there is no header), so a row read alone says what each figure is.
+    function autotuneRunRowHtml(r) {
         var decision = r.baseline_decision || '';
-        var pillColor = decisionPillColor(decision);
         // B-13: human-readable label instead of raw enum.
         var pillLabel = decisionLabel(decision);
         var frozenVerdict = r.frozen_eval_verdict || '';
-        var frozenColor = frozenEvalColor(frozenVerdict);
         // The display name when the live state holds the symphony, else the
         // stored key; the key itself stays in the title.
         var symLabel = escHtml(r.symphony_name || r.symphony_id || '');
         var symKey = escHtml(r.symphony_id || '');
         var scoreInfo = autotuneScoreInfo(r.objective);
         // A run that never reached the frozen evaluation has no verdict:
-        // say so in dim ink instead of rendering an empty pill.
+        // say so in dim ink instead of rendering an empty word.
         var frozenHtml = frozenVerdict
-            ? '<div class="autotune-run-verdict">Frozen-eval ' +
-              '<span class="frozen-eval-pill" style="color:' + frozenColor + ';border-color:' + frozenColor + ';background:' + frozenColor + '14;">' +
-              escHtml(frozenVerdict) + '</span></div>'
-            : '<div class="autotune-run-verdict" style="color:' + cssVar('--studio-ink-dim') + ';">Frozen-eval not evaluated</div>';
-        // V-23: timestamp muted, best-score / selection t-stat bold mono.
-        // selection_tstat is the Harvey & Liu haircut winner's t-statistic.
+            ? '<span class="autotune-run-frozen">Frozen-eval ' +
+              '<span class="frozen-eval-pill frozen-eval-pill--' + frozenEvalTone(frozenVerdict) + '">' +
+              escHtml(frozenVerdict) + '</span></span>'
+            : '<span class="autotune-run-frozen adv-vh">Frozen-eval not evaluated</span>';
+        // Selection t-stat is the Harvey & Liu haircut winner's t-statistic.
         var selTstat = r.selection_tstat;
-        // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal —
-        // dim one-liner, same idiom as the timestamp span above. status ==
-        // 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
+        // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal.
+        // status == 'streak' with streak_weeks >= 2 (a genuine multi-run pattern, mirrors
         // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
         // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
-        // renders nothing — a single non-adopted run isn't a pattern worth flagging.
+        // renders nothing: a single non-adopted run isn't a pattern worth flagging.
         var streak = r.never_adopted_streak;
         var streakHtml = '';
         if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
-            streakHtml =
-                '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config') + '</div>';
+            streakHtml = escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config');
         } else if (streak && streak.status === 'insufficient_history') {
-            streakHtml =
-                '<div class="autotune-run-streak" style="font-size:0.75rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;">' +
-                'adoption streak: insufficient history (&lt;2 runs)</div>';
+            streakHtml = 'adoption streak: insufficient history (&lt;2 runs)';
         }
         return (
-            '<div class="sym-card autotune-run-card" data-testid="autotune-run-row">' +
-            '<div class="autotune-run-top">' +
-            '<span class="autotune-run-name" title="' + symKey + '">' + symLabel + '</span>' +
-            '<span class="decision-pill" style="color:' + pillColor + ';border-color:' + pillColor + ';background:' + pillColor + '14;">' +
-            escHtml(pillLabel) + '</span>' +
-            '</div>' +
-            '<div class="autotune-run-meta">' +
+            '<div class="autotune-row" role="row" data-testid="autotune-run-row">' +
+            '<span class="autotune-run-name" role="cell" title="' + symKey + '">' + symLabel + '</span>' +
             // The New York stamp (the shared formatter), not the stored string.
-            '<span style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(fmtEtStamp(r.run_timestamp)) + '</span>' +
-            '<span><span class="autotune-run-score" title="' + escHtml(scoreInfo.tip) + '">' +
-            escHtml(scoreInfo.label) + ' <span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
-            ' · Sel t-stat <span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span>' +
-            '</span>' +
-            '</div>' +
-            // V-23: FROZEN-EVAL as colored pill (or the dim not-evaluated line).
+            '<span class="autotune-run-time" role="cell">' + escHtml(fmtEtStamp(r.run_timestamp)) + '</span>' +
+            '<span class="autotune-run-outcome" role="cell">' +
+            '<span class="decision-pill decision-pill--' + decisionTone(decision) + '">' + escHtml(pillLabel) + '</span>' +
             frozenHtml +
-            streakHtml +
+            '</span>' +
+            '<span class="autotune-run-streak" role="cell">' + streakHtml + '</span>' +
+            '<span class="autotune-run-score" role="cell" title="' + escHtml(scoreInfo.tip) + '">' +
+            '<span class="adv-vh">' + escHtml(scoreInfo.label) + ' </span>' +
+            '<span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
+            '<span class="autotune-run-tstat" role="cell">' +
+            '<span class="adv-vh">Sel t-stat </span><span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span></span>' +
             '</div>'
         );
+    }
+
+    // The runs as one table; the header row only above the main list.
+    function autotuneTableHtml(rows, withHeader) {
+        var head = withHeader
+            ? '<div class="autotune-row autotune-row--head" role="row">' +
+              '<span role="columnheader">Symphony</span>' +
+              '<span role="columnheader">Run time (ET)</span>' +
+              '<span role="columnheader">Outcome</span>' +
+              '<span role="columnheader">Adoption streak</span>' +
+              '<span role="columnheader" class="autotune-run-score">Best score</span>' +
+              '<span role="columnheader" class="autotune-run-tstat">Sel t-stat</span>' +
+              '</div>'
+            : '';
+        return '<div class="autotune-table" role="table" aria-label="Autotune runs">' + head +
+            rows.map(autotuneRunRowHtml).join('') + '</div>';
     }
 
     // The older-runs <details> is static page markup: this writes only its rows container,
@@ -812,7 +815,7 @@
         var details = document.getElementById('autotune-older-runs');
         var summary = document.getElementById('autotune-older-summary');
         var olderList = document.getElementById('autotune-older-list');
-        if (olderList) olderList.innerHTML = older.map(autotuneRunCardHtml).join('');
+        if (olderList) olderList.innerHTML = older.length ? autotuneTableHtml(older, false) : '';
         if (summary) {
             summary.textContent = older.length
                 ? older.length + (older.length === 1 ? ' older run' : ' older runs') +
@@ -863,16 +866,14 @@
             try {
                 setRunsNotice(list, '');
                 if (!rows.length) {
-                    list.innerHTML =
-                        '<div style="text-align:center;padding:1rem;' +
-                        'color:' + cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No tuning runs recorded yet.</div>';
+                    list.innerHTML = '<div class="autotune-empty">No tuning runs recorded yet.</div>';
                     renderOlderAutotuneRuns([]);
                     renderAutotuneSparkline([]);
                     return;
                 }
-                // C-16: render card list with all per-run fields per advisor.jsx.
+                // C-16: render the table with all per-run fields per advisor.jsx.
                 var parts = splitAutotuneRuns(rows);
-                list.innerHTML = parts.cards.map(autotuneRunCardHtml).join('');
+                list.innerHTML = autotuneTableHtml(parts.cards, true);
                 renderOlderAutotuneRuns(parts.older);
                 // Last, and on its own: the cards are on screen whatever the chart does.
                 renderAutotuneSparkline(rows);
@@ -948,7 +949,54 @@
 
         initTabSwitcher();
         renderHeatmapDepth();
+        refreshPrismLensClamp();
+        watchPrismLensClamp();
     });
+
+    // ---------------------------------------------------------------------------
+    // Market Prism lens summaries. The stylesheet clamps each summary to a few lines once the lens row
+    // carries data-clamp="on"; a lens whose text is cut gets a More control that opens it in place, and
+    // one whose text fits gets none. Measured while the Overview is on screen (a hidden panel has no
+    // height), so it runs again when that tab opens and when the width changes. Text only.
+    // ---------------------------------------------------------------------------
+
+    function refreshPrismLensClamp() {
+        var grid = document.querySelector('[data-testid="prism-lenses"]');
+        if (!grid) { return; }
+        grid.setAttribute('data-clamp', 'on');
+        grid.querySelectorAll('.prism-lens').forEach(function (lens) {
+            var text = lens.querySelector('.prism-lens-text');
+            var btn = lens.querySelector('.prism-lens-more');
+            if (!text || lens.classList.contains('prism-lens--open')) { return; }
+            if (text.clientHeight === 0) { return; }
+            var cut = text.scrollHeight > text.clientHeight + 1;
+            if (cut && !btn) {
+                btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'prism-lens-more';
+                btn.setAttribute('aria-expanded', 'false');
+                btn.textContent = 'More';
+                btn.addEventListener('click', function () {
+                    var open = lens.classList.toggle('prism-lens--open');
+                    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+                    btn.textContent = open ? 'Less' : 'More';
+                });
+                lens.appendChild(btn);
+            } else if (!cut && btn) {
+                btn.remove();
+            }
+        });
+    }
+
+    // A change of width changes how many lines a summary takes, so the controls are measured again.
+    var _prismResizeTimer = null;
+    function watchPrismLensClamp() {
+        if (typeof window.addEventListener !== 'function') { return; }
+        window.addEventListener('resize', function () {
+            clearTimeout(_prismResizeTimer);
+            _prismResizeTimer = setTimeout(refreshPrismLensClamp, 150);
+        });
+    }
 
     // ---------------------------------------------------------------------------
     // Heatmap depth. Each correlation cell carries the aligned days its number rests on
@@ -1016,6 +1064,7 @@
                 panel.classList.remove('tab-panel--active');
             }
         });
+        if (name === 'overview') { refreshPrismLensClamp(); }
     }
 
     /** Put a rendered tab's name in the URL fragment without adding a history entry. */
@@ -1361,7 +1410,7 @@
                         'Objective: ' + escHtml(objectiveLabel || cardLabels.not_recorded) +
                         ' &nbsp;&middot;&nbsp; ' +
                         'Source: ' + escHtml(sourceLabel || cardLabels.not_recorded) + '</div>';
-                    return '<div class="sym-card proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-name">' +
+                    return '<div class="sym-card adv-card proposal-card proposal-card--' + cls + modifierClass + '"><span class="card-name adv-card-name">' +
                         titleHtml + '</span>' + stripHtml + extra + '</div>';
                 }
                 if (sv.length) {
@@ -1556,7 +1605,7 @@
                     var actionsRow = card.querySelector('.proposal-actions');
                     if (actionsRow) {
                         actionsRow.innerHTML =
-                            '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:700;">' +
+                            '<p style="color:' + cssVar('--studio-pos') + ';font-size:0.875rem;font-weight:500;">' +
                             msg + '</p>';
                     }
                 }
@@ -1649,7 +1698,7 @@
                     var actionsRow = card.querySelector('.retirement-rec-actions');
                     if (actionsRow) {
                         actionsRow.innerHTML =
-                            '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:700;">' +
+                            '<p style="color:' + confirmColor + ';font-size:0.875rem;font-weight:500;">' +
                             msg + '</p>';
                     }
                     // F4: the status pill must reflect the new decision
@@ -1660,7 +1709,7 @@
                     var statusChip = card.querySelector('[data-testid="retirement-rec-status"]');
                     if (statusChip) {
                         statusChip.textContent = newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
-                        statusChip.className = 'status-pill ' + RETIREMENT_PILL_CLASS[newStatus];
+                        statusChip.className = 'status-pill adv-status ' + RETIREMENT_PILL_CLASS[newStatus];
                     }
                 }
             } else {
