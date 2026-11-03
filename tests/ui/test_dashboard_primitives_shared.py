@@ -1,9 +1,10 @@
-"""The dashboard's primitives have one definition, and ``GET /`` is unchanged by the move.
+"""The dashboard's primitives have one shared definition; the dashboard only refines them.
 
 Subject: ``.hero-section``, ``.legend-as-of``, ``.mini-stats`` and its three parts,
 ``.section-header``, ``.sym-card`` (and its hover rule), ``.card-name`` and ``.status-pill`` with
-every modifier are defined once, in ``static/layout.css``, and not in ``templates/index.html``.
-Every other page that links ``layout.css`` can then use them; the dashboard itself must not change.
+every modifier are defined once, in ``static/layout.css``. Every other page that links
+``layout.css`` uses them. The dashboard's own inline block may refine them, and only scoped under
+``.page-dashboard`` (the body class), so a refinement can never reach another page.
 
 Method: the real ``GET /`` is rendered over the captured bot state
 (``tests/fixtures/prod_droplet/bot_state_positions.json``, verbatim) and compared with the
@@ -12,13 +13,14 @@ capture of the same route taken on the branch base before any edit
 ``capture_baseline.py`` and read by ``tests/ui/_dashboard_primitives_capture.py``, the module
 both sides share):
 
-* the tag and class sequence of the body equals the base's;
-* every selector that names a primitive resolves, over the sheets the page loads in document
-  order, to the declarations it had at the base;
-* the rules moved byte for byte (same rules, same declarations, same order), as a suffix of
-  ``layout.css``, and each is defined exactly once.
+* the shared rules are byte for byte what the base moved (same rules, same declarations, same
+  order), as a suffix of ``layout.css``, and each is defined exactly once;
+* the dashboard markup still renders every primitive class;
+* a dashboard rule that names a primitive is scoped under ``.page-dashboard``.
 
-A rendered page is judged on a screenshot at the gate, not here.
+The dashboard's own markup and styling were redesigned on purpose (the unslop pass), so the base's
+tag-and-class sequence and resolved declarations are no longer the dashboard's contract. A rendered
+page is judged on a screenshot at the gate, not here.
 """
 
 from __future__ import annotations
@@ -189,155 +191,18 @@ class TestBaselineCanFail:
 
 
 # ---------------------------------------------------------------------------
-# GET / against the base capture
+# GET / against the shared primitives
 # ---------------------------------------------------------------------------
 
 
-def _base_with_the_request_guard_script(base: list) -> list:
-    """The base capture plus the one element added on purpose since it was taken.
-
-    The shared header now loads ``request_guard.js`` immediately before ``chrome.js``, so the
-    dashboard body gains a second ``<script>`` ahead of ``.page-wrap`` and nothing else. The
-    capture stays as it was written; the expectation says exactly what was added, so any other
-    change to the body still fails the comparison.
-    """
-    wrap = base.index(["div", ["page-wrap"]])
-    assert base[wrap - 1] == ["script", []], "the base has no chrome script ahead of .page-wrap"
-    return [*base[:wrap], ["script", []], *base[wrap:]]
-
-
-def _base_with_the_review_fix_changes(base: list) -> list:
-    """The base plus the body changes the review fixes to the dashboard made on purpose.
-
-    Each is named, so any other change to the body still fails the comparison:
-
-    * the headline's descriptor is a block of its own and its mode word has a span, where it was
-      a span followed by a line break;
-    * the detail panel holds a loading line ahead of its stats row;
-    * the Guard stat's label holds the alpha glyph helper;
-    * the headline's label is followed by a hidden notice the window picker fills when the picked
-      window's strip could not be loaded;
-    * the sleeve rule row names its session in a span of its own (see
-      ``_base_with_the_sleeve_rule_session_label``);
-    * the hero's Today row and each card's Today label hold their day word in a span of its own,
-      and the dollar panel holds a hidden notice (see ``_base_with_the_session_day_words``).
-
-    A card's alpha badge that has no figure to show loses its sign class; that one is judged by
-    ``_without_a_sign_class`` and by the badge test below, since which badges that is depends on
-    the state, not on the markup.
-    """
-    out = _base_with_the_request_guard_script(base)
-    at = out.index(["span", ["guard-alpha-descriptor"]])
-    assert out[at + 1] == ["br", []], "the base's descriptor is not followed by a line break"
-    out[at : at + 2] = [["div", ["guard-alpha-descriptor"]], ["span", []]]
-    stats = out.index(["div", ["detail-stats-row"]])
-    out.insert(stats, ["div", ["math-row-hint"]])
-    labels = [i for i in range(stats + 1, len(out)) if out[i] == ["div", ["detail-stat-label"]]]
-    out.insert(labels[3] + 1, ["span", ["alpha-glyph"]])
-    label = out.index(["div", ["guard-alpha-label"]])
-    assert out[label + 1] == ["span", []], "the base's headline label does not hold the window span"
-    out.insert(label + 2, ["div", ["legend-as-of"]])
-    return _base_with_the_sleeve_rule_session_label(_base_with_the_session_day_words(out))
-
-
-def _base_with_the_session_day_words(base: list) -> list:
-    """The base plus the elements that let a closed page name its session where it read "Today".
-
-    Exactly three kinds of element are added, so any other change to the body still fails:
-
-    * a class-less span holding the day word, ahead of the footnote marker in the hero's Today
-      row (the first ``.vs-row-label``);
-    * a class-less span holding the day word, ahead of the alpha badge in the Today label of
-      each of the 11 cards (the first ``.cfg-label`` after each ``.card-footer-grid``);
-    * the dollar panel's hidden window notice, a class-less div after its basis label (the panel
-      is the ``.hero-section`` followed by five class-less spans and then a class-less div).
-    """
-    out = list(base)
-    label = out.index(["span", ["vs-row-label"]])
-    assert out[label + 1] == ["span", []], "the hero's Today label is not followed by its marker"
-    out.insert(label + 1, ["span", []])
-
-    grids = [i for i, element in enumerate(out) if element == ["div", ["card-footer-grid"]]]
-    assert len(grids) == 11, "the capture no longer renders 11 cards"
-    for grid in reversed(grids):
-        assert out[grid + 1] == ["div", ["cfg-cell"]], "a card footer does not open with a cell"
-        assert out[grid + 2] == ["span", ["cfg-label"]], "a card cell does not open with its label"
-        out.insert(grid + 3, ["span", []])
-
-    panels = [
-        i
-        for i, element in enumerate(out)
-        if element == ["div", ["hero-section"]]
-        and out[i + 1 : i + 6] == [["span", []]] * 5
-        and out[i + 6] == ["div", []]
-    ]
-    assert len(panels) == 1, "the dollar panel is not found exactly once"
-    out.insert(panels[0] + 7, ["div", []])
-    return out
-
-
-def _base_with_the_sleeve_rule_session_label(base: list) -> list:
-    """The base plus the span that names the session a sleeve rule row's fire count belongs to.
-
-    A closed page names the anchor session's date where an open one reads "today", so the rule
-    row holds one more class-less span ahead of its fire-count span. Only the inert rule-row
-    template renders on the capture's state (no sleeve is seeded), and it is the last
-    ``<template>`` of the body: its row is a div, then five spans (the name and mode holder, the
-    name, the mode, the actions wrapper and the count wrapper) before the new one.
-    """
-    template = max(i for i, element in enumerate(base) if element == ["template", []])
-    row = template + 1
-    assert base[row] == ["div", []], "the rule-row template does not open with the row div"
-    wrapper_spans = row + 1 + 5
-    assert base[row + 1 : wrapper_spans] == [["span", []]] * 5, "the rule row's span run changed"
-    return [*base[:wrapper_spans], ["span", []], *base[wrapper_spans:]]
-
-
-def _without_a_sign_class(base_element: list, element: list) -> bool:
-    """Whether ``element`` is the base's alpha badge minus its pos or neg class."""
-    return (
-        base_element[0] == element[0] == "span"
-        and base_element[1][:1] == element[1] == ["cfg-alpha-badge"]
-        and base_element[1][1:] in (["pos"], ["neg"])
-    )
-
-
-def _unknown_drawdown_without_neg(base_element: list, element: list) -> bool:
-    """Whether ``element`` is the base's Max DD figure minus its ``neg`` class.
-
-    An unknown drawdown reads as a dash with no negative colour, so the capture's Max DD row
-    (no drawdown on that state) renders ``vs-val`` where the base wrote ``neg vs-val``. The
-    figures' own text and class are judged by the Max DD dash test under ``tests/dashboard``.
-    """
-    return base_element == ["span", ["neg", "vs-val"]] and element == ["span", ["vs-val"]]
-
-
-def _first_difference(structure: list, expected: list) -> int | None:
-    """Index of the first element that differs from the expectation, None when none does."""
-    for index, (now, want) in enumerate(zip(structure, expected, strict=False)):
-        if (
-            now != want
-            and not _without_a_sign_class(want, now)
-            and not _unknown_drawdown_without_neg(want, now)
-        ):
-            return index
-    return None if len(structure) == len(expected) else min(len(structure), len(expected))
-
-
-class TestDashboardIsUnchanged:
-    def test_the_body_has_the_base_tag_and_class_sequence(self, dashboard_html):
-        # The shared header is excluded: it changes by design (it wraps at narrow widths); the
-        # base is the capture taken before the shell work began.
+class TestDashboardUsesTheSharedPrimitives:
+    def test_the_body_still_renders_every_shared_primitive(self, dashboard_html):
         from tests.ui import _shell_capture as shell
 
         structure = shell.body_structure_outside_top_bar(dashboard_html)
-        base = _base_with_the_review_fix_changes(SHELL_BASELINE["structure_outside_top_bar"])
-        first = _first_difference(structure, base)
-        if first is not None:
-            pytest.fail(
-                f"GET / changed outside the header: {len(structure)} elements against the base's "
-                f"{len(base)}; first difference at index {first}: "
-                f"{structure[first : first + 1]} against {base[first : first + 1]}"
+        for name in cap.PRIMITIVE_CLASSES:
+            assert cap.tags_with_class(structure, name) > 0, (
+                f"GET / renders no element with class {name}"
             )
 
     def test_a_cards_alpha_badge_has_a_sign_class_exactly_when_it_shows_a_figure(
@@ -368,19 +233,11 @@ class TestDashboardIsUnchanged:
                 assert not {"pos", "neg"} & set(tokens), f"a dash badge is coloured: {classes!r}"
         assert with_figure, "no badge shows a figure, so the class of a figure is not exercised"
 
-    def test_every_primitive_selector_resolves_to_its_base_declarations(self, dashboard_html):
+    def test_every_shared_primitive_selector_still_resolves_on_the_dashboard(self, dashboard_html):
+        """The shared rules still reach the page: a base selector that stops resolving is a loss."""
         resolved = cap.resolved_primitive_rules(dashboard_html)
-        base = BASELINE["resolved"]
-        missing = sorted(set(base) - set(resolved))
-        extra = sorted(set(resolved) - set(base))
-        changed = {
-            key: {"base": base[key], "now": resolved[key]}
-            for key in sorted(set(base) & set(resolved))
-            if base[key] != resolved[key]
-        }
+        missing = sorted(set(BASELINE["resolved"]) - set(resolved))
         assert not missing, f"selectors that no longer resolve on GET /: {missing}"
-        assert not extra, f"selectors that newly resolve on GET /: {extra}"
-        assert not changed, f"selectors whose resolved declarations changed: {changed}"
 
     def test_the_page_loads_the_shared_sheet(self, dashboard_html):
         assert "/static/layout.css" in cap.linked_static_sheets(dashboard_html)
@@ -428,8 +285,15 @@ class TestOneDefinition:
         assert set(counts) == set(BASELINE["resolved"])
         assert {k: n for k, n in counts.items() if n != 1} == {}
 
-    def test_the_dashboard_template_defines_none_of_them(self):
-        assert cap.ordered_primitive_rules(_inline_css("index.html")) == []
+    def test_the_dashboard_template_refines_them_only_under_the_page_class(self):
+        """A dashboard rule that names a primitive is scoped under .page-dashboard."""
+        offenders = [
+            selector
+            for rule in cap.ordered_primitive_rules(_inline_css("index.html"))
+            for selector in rule["selectors"]
+            if cap.names_primitive(selector) and not selector.startswith(".page-dashboard ")
+        ]
+        assert offenders == [], offenders
 
     def test_no_other_stylesheet_or_template_defines_one(self):
         """A page rule that names a primitive sets layout properties only."""
@@ -487,13 +351,3 @@ class TestShellBaseCanFail:
             f"<html><body>{header_markup}</a></nav></div><main class='kept'></main></body></html>"
         )
         assert shell.body_structure_outside_top_bar(page) == [["main", ["kept"]]]
-
-
-class TestDashboardOutsideTheHeaderIsUnchanged:
-    def test_every_primitive_resolves_on_the_dashboard_as_at_the_plan_base(self, dashboard_html):
-        """The dashboard uses the same shared definitions, unchanged."""
-        resolved = cap.resolved_primitive_rules(dashboard_html)
-        base = SHELL_BASELINE["resolved"]
-        assert sorted(resolved) == sorted(base)
-        changed = {k: {"base": base[k], "now": resolved[k]} for k in base if base[k] != resolved[k]}
-        assert not changed, f"selectors whose resolved declarations changed: {changed}"

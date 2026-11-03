@@ -42,7 +42,7 @@ from tests.app._refresh_timing_state_world import (
 from tests.dashboard._first_paint_dom import js_to_fixed
 
 CARD_LEG_KEYS = ("tc_bot", "tc_held", "cr_bot", "cr_held", "mdd_bot", "mdd_held")
-TRIGGERED_PILLS = {"TAKE-PROFIT", "VWAP BLEED", "VWAP", "TRAILING STOP"}
+TRIGGERED_PILLS = {"Take-profit", "VWAP bleed", "VWAP", "Trailing stop"}
 ACTIVE_STATUSES = {"triggered", "para_armed", "tp_armed", "armed"}
 
 

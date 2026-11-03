@@ -6,7 +6,7 @@ both sides are held to one table of expected words.
 
 The words a page can say about its day come in two forms:
 
-* today's: `Today`, `If held · live` on a triggered card, `vs held now`, `Live Return`,
+* today's: `Today`, `If held · live` on a triggered card, `vs held now`, `Live return`,
   `Live (if held)`, `HWM today`, `Today's events`, `No events yet today.`;
 * a session's: its day (`Oct 30`) in place of `Today`, `If held` with no `live`, `at close`,
   `Return`, `If held`, `HWM Oct 30`, `Oct 30 events`, `No events on Oct 30.`
@@ -39,7 +39,7 @@ TODAYS_WORDING = {
     "day": {"Today"},
     "if_held": {"If held", "If held · live"},
     "basis": {"vs held now"},
-    "return": "Live Return",
+    "return": "Live return",
     "legend": "Live (if held)",
     "hwm": "HWM today",
     "events": "Today’s events",

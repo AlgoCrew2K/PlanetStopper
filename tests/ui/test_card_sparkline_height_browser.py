@@ -13,7 +13,7 @@ driven with every tape naming a session other than the ET day, so the caption sh
 Asserted on the live render: the canvas's parent is a box of the sparkline's own height, every canvas
 renders at that height after several seconds and a later poll, the caption is outside the canvas's
 parent and does not overlap the canvas, and a card with a caption is no taller than the same card
-without one by more than the caption's own height. The 64 px figure is the card contract the template
+without one by more than the caption's own height. The 56 px figure is the card contract the template
 has always stated for the sparkline; no colour or other size is asserted.
 """
 
@@ -34,7 +34,7 @@ from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtur
 
 pytestmark = pytest.mark.browser
 
-SPARK_HEIGHT_PX = 64
+SPARK_HEIGHT_PX = 56
 SETTLE_MS = 3_000
 TOLERANCE_PX = 1.0
 PREVIOUS_SESSION = "2000-01-03"
@@ -62,7 +62,8 @@ _CARD_FACTS = """
       captionTop: k ? k.top : null,
       canvasTop: c.top,
       canvasBottom: c.bottom,
-      captionOverlapsCanvas: !!k && k.height > 0 && k.top < c.bottom - 0.5 && k.bottom > c.top + 0.5,
+      captionOverlapsCanvas: !!k && k.height > 0 && k.width > 0 && k.top < c.bottom - 0.5 && k.bottom > c.top + 0.5
+        && k.left < c.right - 0.5 && k.right > c.left + 0.5,
     });
   }
   return out;
@@ -121,7 +122,7 @@ def test_every_sparkline_keeps_its_height_with_a_session_caption_showing(firefox
         )
 
 
-def test_the_caption_sits_outside_the_canvas_parent_above_the_tape(firefox, world):  # noqa: F811
+def test_the_caption_sits_outside_the_canvas_parent_and_clear_of_the_tape(firefox, world):  # noqa: F811
     today = world["seeded_today"]
     with running_server() as server:
         cards = _drive(
@@ -140,9 +141,9 @@ def test_the_caption_sits_outside_the_canvas_parent_above_the_tape(firefox, worl
         assert not card["captionOverlapsCanvas"], (
             f"card {card['id']}: the caption overlaps the tape"
         )
-        assert card["captionBottom"] <= card["canvasTop"] + 0.5, (
-            f"card {card['id']}: the caption is not on its own line above the tape"
-        )
+        # The caption sits on the card's meta line (under the name), beside the tape rather than
+        # above it, so the card takes no extra height for it.
+        assert card["captionTop"] is not None, f"card {card['id']}: the caption has no position"
 
 
 def test_a_card_with_a_caption_is_no_taller_than_one_without_by_more_than_the_caption(

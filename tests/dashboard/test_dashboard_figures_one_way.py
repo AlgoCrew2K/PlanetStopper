@@ -131,7 +131,7 @@ class TestHeadlineWordsAndUnit:
         assert marker, "the cumulative row's footnote marker is gone"
         assert "Excludes symphonies with no Composer cost basis." in marker.group(1)
 
-    @pytest.mark.parametrize("token, label", [("1y", "1Y"), ("all", "All Time")])
+    @pytest.mark.parametrize("token, label", [("1y", "1Y"), ("all", "All time")])
     def test_a_picked_window_writes_the_unit_and_the_label_together(self, token, label):
         r = _run(
             """
@@ -442,7 +442,7 @@ def test_a_card_opened_before_the_first_state_shows_its_name_and_a_loading_state
     assert r["waiting"]["title"] == " ".join(r["waiting"]["card"].split()), (
         f"the panel is titled {r['waiting']['title']!r}, the card {r['waiting']['card']!r}"
     )
-    assert r["waiting"]["title"] != "Symphony Detail"
+    assert r["waiting"]["title"] != "Symphony detail"
     assert r["waiting"]["loadingShown"] is True, (
         "no loading state while the first answer is awaited"
     )

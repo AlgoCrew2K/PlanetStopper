@@ -3,7 +3,7 @@
 Contract under test:
   * Clicking a card opens the panel and its title reads the symphony's display name, never the
     lowercase internal key that the state poll stamps next to it.
-  * An entry without a usable name gives the default title "Symphony Detail", never the internal key;
+  * An entry without a usable name gives the default title "Symphony detail", never the internal key;
     opening a symphony the state does not hold also resets the title instead of keeping the last one.
   * The name is written as text, so markup in a name shows literally.
   * Everything else the panel shows for the symphony is unchanged by the title fix.
@@ -20,7 +20,7 @@ import pytest
 
 from tests.dashboard import _account_page_harness as harness
 
-DEFAULT_TITLE = "Symphony Detail"
+DEFAULT_TITLE = "Symphony detail"
 UNKNOWN_ID = "zzzzzzzzzzzzzzzzzzzz"
 
 
@@ -182,7 +182,7 @@ class TestRestOfThePanelIsUnchanged:
             "dp-live-ret": _pct(live),
             "dp-live-ret-sub": "frozen at exit" if triggered else "real-time",
             "dp-stop-level": _pct(_number(entry, "stop_trigger")),
-            "dp-stop-sub": "◆ breakeven lock" if entry.get("breakeven_locked") else "vol-scaled",
+            "dp-stop-sub": "breakeven lock" if entry.get("breakeven_locked") else "vol-scaled",
             "dp-shadow-peak": _pct(_number(entry, "shadow_hwm")),
             "dp-alpha": _pct(guard_alpha),
             "dp-alpha-sub": (

@@ -23,7 +23,7 @@ from tests.dashboard import _index_js_harness as hx
 from tests.dashboard import _refresh_timing_support as sup
 
 WORLD = "review-fixes"
-SPARK_HEIGHT_PX = 64
+SPARK_HEIGHT_PX = 56
 PREVIOUS_SESSION = "2000-01-03"
 
 

@@ -407,7 +407,7 @@ def test_a_poll_after_picking_all_time_keeps_the_all_time_headline():
     return { picked: picked, after: H.guardAlpha(), strips: H.requests(/^\/api\/strip\//) };
     """
     r = _run(scenario)
-    want = _headline("all", "All Time")
+    want = _headline("all", "All time")
     assert sup.fmt_pp(_bodies()["pollNew"]["portfolio_strip"]["guard_alpha"]) != want["headline"]
     assert r["picked"] == want
     assert r["after"] == want, "the poll replaced the All Time headline"

@@ -268,7 +268,7 @@ class TestAPanelWhoseSymphonyLeavesOrArrives:
             moved=moved,
         )
         assert r["filled"]["live"] == _pct(4.25), "the first poll did not fill the open panel"
-        assert r["empty"]["title"] != "Symphony Detail", (
+        assert r["empty"]["title"] != "Symphony detail", (
             "a panel opened before the first poll must carry the symphony's own title, not the default"
         )
         assert r["filled"]["title"] == _world()["bot_state"][UNTRIGGERED]["name"], (
@@ -396,7 +396,7 @@ class TestThePanelShowsOnlyItsOwnSymphony:
         assert "SECOND_ONLY_EVENT" in r["logs"] and "FIRST_ONLY_EVENT" not in r["logs"]
         assert "ONLY_SECOND_PARAM" in r["vars"] and "ONLY_FIRST_PARAM" not in r["vars"]
         assert "2.22" in r["risk"] and "1.11" not in r["risk"]
-        assert r["title"] != "Symphony Detail"
+        assert r["title"] != "Symphony detail"
 
     def test_the_symphony_the_panel_shows_is_the_one_opened_last(self):
         r = _run(
