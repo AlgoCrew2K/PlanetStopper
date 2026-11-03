@@ -363,6 +363,13 @@
                 border-bottom: 1px solid var(--studio-rule);
             }
             .hp-fig:nth-child(2) { padding-left: 0; border-left: 0; }
+            /* The three figures under the headline stretch to one height, label on top and value
+               at the bottom, so their values sit on one line whatever their labels wrap to. */
+            .hp-fig:not(:first-child) {
+                display: flex;
+                flex-direction: column;
+                justify-content: space-between;
+            }
             .hp-fig-value { font-size: 20px; line-height: 28px; }
             .seg-control { flex-wrap: wrap; }
             .seg-control button { height: 30px; padding: 0 10px; }
