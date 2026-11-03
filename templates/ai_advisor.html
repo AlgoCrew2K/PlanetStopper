@@ -402,6 +402,9 @@
                 white-space: normal;
             }
         }
+        .autotune-spark { position: relative; height: 60px; margin-bottom: 12px; }
+        /* No chart (no scored run, or no chart library): the box takes no space either. */
+        .autotune-spark:has(> canvas[style*="display: none"]) { display: none; }
         .autotune-notice { color: var(--studio-neg); margin: 0 0 8px; font-size: 12px; }
         .autotune-empty { padding: 16px 0; color: var(--studio-ink-dim); font-size: 13px; text-align: left; }
 
@@ -1218,7 +1221,9 @@
                 <div data-testid="autotune-panel-header" class="section-header autotune-header adv-heading">
                     Recent autotune runs
                 </div>
-                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:12px;width:100%;height:60px;"></canvas>
+                {# The chart sits in a box of its own with a set height: a responsive chart sizes itself from its
+                   parent, and a parent that also holds the table would feed its own height back into the chart. #}
+                <div class="autotune-spark"><canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;width:100%;height:100%;"></canvas></div>
                 <div id="autotune-runs-list" data-testid="autotune-runs-list">
                     <div class="autotune-empty">Loading…</div>
                 </div>

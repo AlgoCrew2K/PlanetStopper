@@ -470,7 +470,8 @@ def test_the_observations_note_is_caption_size(firefox, advisor_server):
             () => {
               const note = document.querySelector('.obs-framing-note');
               const probe = document.createElement('span');
-              probe.className = 'legend-as-of';
+              // The page's caption as this page renders it: the shared caption with its advisor modifier.
+              probe.className = 'legend-as-of adv-note';
               document.body.appendChild(probe);
               const caption = parseFloat(getComputedStyle(probe).fontSize);
               probe.remove();
