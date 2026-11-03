@@ -718,7 +718,7 @@ def test_all_replay_samples_cold_and_one_shadow_usable_gives_one_panel_note_and_
     assert not any("replay sample unavailable" in c for r in result["rows"] for c in r["cells"])
     shadow_rows = [r for r in result["rows"] if r["cells"][1] == "Shadow"]
     assert any(
-        r["cells"][-1] != "INSUFFICIENT DATA" and r["cells"][2][0] in "-0123456789"
+        r["cells"][-1] != "Insufficient data" and r["cells"][2][0] in "-0123456789"
         for r in shadow_rows
     ), f"the usable shadow sample of {usable} must render as a data row"
 

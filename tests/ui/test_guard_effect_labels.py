@@ -60,9 +60,11 @@ await H.boot();
 await H.click(%r);
 return {
   value: H.text('#val-total-alpha'),
-  label: H.text('[data-testid="stat-total-alpha"] .mini-stat-label'),
+  label: H.text('[data-testid="stat-total-alpha"] .hp-fig-label'),
   tile: H.text('[data-testid="stat-total-alpha"]'),
+  hero: H.text('[data-testid="history-hero"]'),
   strip: H.text('[data-testid="daily-strip-header"]'),
+  reasonHeaders: H.$$('[data-testid="by-reason-section"] thead th').map(function (e) { return e.textContent.trim(); }),
   cards: H.$$('[data-testid="reason-card"]').map(function (e) { return e.textContent.replace(/\\s+/g, ' ').trim(); }),
 };
 """
@@ -109,10 +111,12 @@ def test_history_keeps_pts_and_does_not_take_the_gap_unit_of_the_other_pages(
 
 
 def test_history_total_carries_the_descriptor(client, pm_dir_factory):
+    """The basis sentence sits under the row of headline figures (inside the hero, which holds
+    the total), spanning the row rather than wrapping inside the first figure."""
     payload, out = _history_page(client, pm_dir_factory)
-    tile = " ".join(out["tile"].split())
-    assert _history_descriptor(payload["trigger_count"]) in tile, (
-        f"the tile must state its basis: {tile!r}"
+    hero = " ".join(out["hero"].split())
+    assert _history_descriptor(payload["trigger_count"]) in hero, (
+        f"the headline figures must state their basis: {hero!r}"
     )
 
 
@@ -120,12 +124,12 @@ def test_history_strip_and_reason_cards_use_the_same_words(client, pm_dir_factor
     payload, out = _history_page(client, pm_dir_factory)
     assert out["strip"] == HISTORY_STRIP_HEADER, out["strip"]
     assert out["cards"], "the captured days must give at least one reason card"
+    # The ledger names the quantity once, in its header row; each row carries the figure in pts.
+    assert HISTORY_LABEL in out["reasonHeaders"], out["reasonHeaders"]
     for card in out["cards"]:
-        assert HISTORY_LABEL in card, f"reason card still names the old quantity: {card!r}"
-        assert re.search(r"[+-]\d+\.\d{2} pts", card), (
-            f"reason card value has no pts unit: {card!r}"
-        )
+        assert re.search(r"[+-]\d+\.\d{2} pts", card), f"reason row value has no pts unit: {card!r}"
         assert "cumulative" not in card.lower()
+    assert not any("cumulative" in h.lower() for h in out["reasonHeaders"])
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +140,7 @@ _TILE_READ = """
 await H.boot();
 const read = function () {
   return { value: H.text('#guard-alpha-value'), tile: H.text('[data-testid="guard-alpha-stat"]'),
-           label: H.text('[data-testid="guard-alpha-stat"] .mini-stat-label') };
+           label: H.text('[data-testid="guard-alpha-stat"] .hp-fig-label') };
 };
 const first = read();
 await H.click('[data-testid="window-btn-30"]');

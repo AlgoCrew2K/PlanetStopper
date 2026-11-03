@@ -344,13 +344,17 @@
         /* Narrow screens: the headline leads on its own line with the other three figures under
            it, and each table keeps its columns' own widths so its container scrolls instead of the
            columns overlapping. Layout properties only. */
+        @media (max-width: 380px) {
+            .hp-fig-label { font-size: 11px; }
+        }
+
         @media (max-width: 700px) {
             .hp-panel { padding: 16px 12px; margin-bottom: 12px; }
             .hp-toolbar { gap: 8px; }
             .hp-toolbar .hp-note.hp-asof { margin-left: 0; }
             .hp-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 0; }
-            .hp-fig { padding: 0 12px; }
-            .hp-fig:nth-child(odd) { padding-left: 12px; border-left: 1px solid var(--studio-rule); }
+            .hp-fig { padding: 0 8px; }
+            .hp-fig:nth-child(odd) { padding-left: 8px; border-left: 1px solid var(--studio-rule); }
             .hp-fig:first-child {
                 grid-column: 1 / -1;
                 padding: 0 0 12px;

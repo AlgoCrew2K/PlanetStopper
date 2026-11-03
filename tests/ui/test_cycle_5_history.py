@@ -963,120 +963,46 @@ def test_history_js_triggers_empty_state_no_individual_records():
 
 
 # ===========================================================================
-# AC-C5.UX-BLOCK-3 — ByReason card anatomy
+# AC-C5.UX-BLOCK-3 — ByReason ledger row anatomy
 #
-# Design: each card has a 2px colored top-strip, a short-code badge (TP/STOP/
-# VWAP/BLEED), a large sign-colored cumulative alpha, dollar-saved sub-label,
-# and a 3-column mini-stat grid (Triggers / Wins / Win rate %).
-# Current impl renders a single text block — no structural anatomy.
+# Each exit reason is one table row: a status dot coloured per reason and the
+# reason's name, the sign-coloured sum of exit alpha, the dollar result, the
+# triggers, wins and win rate (with a thin win-rate bar) and the average per
+# exit, under one header row. The earlier card (coloured top strip, TP/STOP/
+# VWAP/BLEED pill, three-column mini grid) was replaced by this row in the
+# unslop pass; the dot-and-word signature replaces the pill.
 # ===========================================================================
 
 
-def test_history_js_reason_card_has_top_strip():
-    """renderReasonCards must include a 2px colored top-strip per card.
-
-    Design: each card has a top border strip colored per reason
-    (plum for take-profit, neg for stop-loss, cyan for VWAP, warn for bleed).
-    Current impl uses only a uniform border — no top-strip element. RED.
-    """
-    js_path = PROJECT_ROOT / "static" / "history.js"
-    if not js_path.exists():
-        pytest.skip("history.js not yet created")
-    content = js_path.read_text(encoding="utf-8")
+def _render_reason_cards_body_from_source() -> str:
+    content = (PROJECT_ROOT / "static" / "history.js").read_text(encoding="utf-8")
     stripped = re.sub(r"//[^\n]*", "", content)
     stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
+    return _extract_render_reason_cards_body(stripped)
 
-    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
-    assert start is not None, "renderReasonCards not found in history.js"
-    brace_start = stripped.index("{", start.end())
-    depth = 0
-    i = brace_start
-    while i < len(stripped):
-        if stripped[i] == "{":
-            depth += 1
-        elif stripped[i] == "}":
-            depth -= 1
-            if depth == 0:
-                body = stripped[brace_start + 1 : i]
-                break
-        i += 1
-    else:
-        pytest.fail("Could not extract renderReasonCards body")
 
-    # Must have a top-strip element with a --studio-* background token
-    has_top_strip = (
-        "border-top" in body
-        or "top-strip" in body
-        or "borderTop" in body
-        or "border-radius" in body
-        and "border-top" in body
+def test_history_js_reason_row_has_a_reason_coloured_dot_and_no_top_strip():
+    """Each reason is a ledger row led by a status dot whose colour names the reason (plum for
+    take-profit, neg for stop-loss, cyan for VWAP, warn for bleed); the card's coloured top strip
+    is gone, and the colour tokens stay the same four."""
+    body = _render_reason_cards_body_from_source()
+    assert "reasonDotHtml(reason)" in body, "the reason row has no status dot"
+    assert "position:absolute" not in body and "top-strip" not in body, (
+        "the coloured strip across the top of the card is back"
     )
-    has_studio_token = "--studio-" in body
-    assert has_studio_token, (
-        "renderReasonCards does not reference any --studio-* token for strip color — "
-        "each card must have a reason-specific top-strip using a design token"
-    )
-    # Check that at minimum one reason-specific color token is used
-    reason_tokens = [
-        "--studio-plum",
-        "--studio-neg",
-        "--studio-cyan",
-        "--studio-warn",
-        "--studio-pos",
-        "--studio-accent",
-    ]
-    has_any_reason_token = any(tok in body for tok in reason_tokens)
-    assert has_any_reason_token, (
-        "renderReasonCards uses no reason-specific color tokens — "
-        "design requires per-reason top-strip colors (plum/neg/cyan/warn)"
-    )
+    content = (PROJECT_ROOT / "static" / "history.js").read_text(encoding="utf-8")
+    for token in ("--studio-plum", "--studio-neg", "--studio-cyan", "--studio-warn"):
+        assert token in content, f"{token} no longer colours a reason"
+    for key in ("tp", "stop", "vwap", "bleed"):
+        assert f"'{key}'" in content, f"the dot class for {key} is missing"
 
 
-def test_history_js_reason_card_has_short_code_badge():
-    """renderReasonCards must include a short-code badge per card.
-
-    Design shows TP / STOP / VWAP / BLEED as compact labels on each card.
-    Current impl renders only the raw reason key string — no badge. RED.
-    """
-    js_path = PROJECT_ROOT / "static" / "history.js"
-    if not js_path.exists():
-        pytest.skip("history.js not yet created")
-    content = js_path.read_text(encoding="utf-8")
-    stripped = re.sub(r"//[^\n]*", "", content)
-    stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL)
-
-    start = re.search(r"function\s+renderReasonCards\s*\(", stripped)
-    assert start is not None
-    brace_start = stripped.index("{", start.end())
-    depth = 0
-    i = brace_start
-    while i < len(stripped):
-        if stripped[i] == "{":
-            depth += 1
-        elif stripped[i] == "}":
-            depth -= 1
-            if depth == 0:
-                body = stripped[brace_start + 1 : i]
-                break
-        i += 1
-    else:
-        pytest.fail("Could not extract renderReasonCards body")
-
-    # Must have the abbreviated codes somewhere (as a map or inline)
-    has_short_codes = (
-        "'TP'" in body
-        or '"TP"' in body
-        or "STOP" in body
-        or "VWAP" in body
-        or "BLEED" in body
-        or "short" in body.lower()
-        or "badge" in body.lower()
-        or "code" in body.lower()
-    )
-    assert has_short_codes, (
-        "renderReasonCards has no short-code badge (TP/STOP/VWAP/BLEED) — "
-        "design requires a compact reason badge on each card"
-    )
+def test_history_js_reason_row_has_no_short_code_pill():
+    """A state is a dot and one word: the TP / STOP / VWAP / BLEED pill is not drawn."""
+    content = (PROJECT_ROOT / "static" / "history.js").read_text(encoding="utf-8")
+    body = _render_reason_cards_body_from_source()
+    assert "status-pill" not in content and "status-pill" not in body
+    assert "'TP'" not in content and "BLEED" not in content, "the short-code badges are back"
 
 
 def test_history_js_reason_card_has_win_rate_element():

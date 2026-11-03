@@ -86,6 +86,16 @@ def _assert_scrolls_inside(locator, label: str) -> None:
     assert facts["moved"], f"{label}: the container cannot be scrolled to its last column"
 
 
+def _assert_scrolls_when_wider(locator, label: str) -> None:
+    """The table sits in a sideways-scrolling container, and wherever its columns are wider than
+    the container the container can be scrolled to the last one (an empty table may fit)."""
+    facts = _scroller(locator)
+    assert not facts["isTable"], f"{label}: no container around the table scrolls it"
+    assert facts["scrolls"], f"{label}: its container {facts['box']} does not scroll sideways"
+    if facts["wider"]:
+        assert facts["moved"], f"{label}: the container cannot be scrolled to its last column"
+
+
 def _assert_header_cells_do_not_overlap(locator, label: str) -> None:
     overlaps = locator.evaluate(
         """
@@ -113,14 +123,24 @@ def _assert_header_cells_do_not_overlap(locator, label: str) -> None:
 def test_the_performance_tables_scroll_inside_their_containers_at_narrow_widths(
     firefox, advisor_server, width, height
 ):
-    """three tables, none overlapping its columns; headline labels not truncated."""
+    """three tables, none overlapping its columns; headline labels not truncated.
+
+    The risk-metrics table has four columns and fits the screen (its labels and headers wrap), so
+    its container has nothing to scroll; the preconditions and exit-turnover tables are wider than
+    the screen and scroll inside their containers.
+    """
     with open_probe(firefox, advisor_server, width=width, height=height) as probe:
         open_page(probe, "/performance")
         tables = probe.page.locator("table.metrics-tbl")
         assert tables.count() == 3
-        for index in range(3):
+        fits = tables.nth(0).evaluate(
+            "(t) => t.scrollWidth <= t.closest('.metrics-overflow').clientWidth + 1"
+        )
+        assert fits, "Performance table 0 (risk metrics) does not fit the screen"
+        _assert_header_cells_do_not_overlap(tables.nth(0), "Performance table 0")
+        for index in (1, 2):
             table = tables.nth(index)
-            _assert_scrolls_inside(table, f"Performance table {index}")
+            _assert_scrolls_when_wider(table, f"Performance table {index}")
             _assert_header_cells_do_not_overlap(table, f"Performance table {index}")
         truncated = probe.page.evaluate(
             """
