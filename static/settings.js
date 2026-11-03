@@ -165,8 +165,9 @@
     toggle.hidden = false;
     toggle.dataset.on = live ? '1' : '0';
     toggle.setAttribute('aria-checked', String(live));
-    pill.textContent = live ? 'LIVE' : 'DRY RUN';
+    pill.textContent = live ? 'Live' : 'Dry run';
     pill.dataset.live = String(live);
+    pill.dataset.known = 'true';
     banner.hidden = !live;
     card.dataset.live = String(live);
 
@@ -181,6 +182,7 @@
     const pill = document.getElementById('live-pill');
     pill.textContent = '—';
     pill.dataset.live = 'false';
+    pill.dataset.known = 'false';
     // The switch states no position either: it is hidden and neutral, never a stale on or off.
     const toggle = document.getElementById('live-toggle');
     toggle.hidden = true;
@@ -205,7 +207,7 @@
       const card = document.createElement('div');
       card.className = 'param-card';
       card.innerHTML = `
-        <div class="param-name">${escHtml(key)}</div>
+        <div class="param-name">${escHtml(key).replace(/_/g, '_<wbr>')}</div>
         <div class="param-input-row">
           <input type="text" class="param-input" data-key="${escHtml(key)}" value="${escHtml(String(val))}" autocomplete="off">
           ${m.unit ? `<span class="param-unit">${escHtml(m.unit)}</span>` : ''}
@@ -235,11 +237,11 @@
       const btn = wrap.querySelector('.cred-toggle-vis');
       if (btn) btn.textContent = 'show';
       const statusEl = wrap.querySelector('.cred-status');
-      if (statusEl) { statusEl.textContent = 'unchanged'; statusEl.dataset.ready = '0'; }
+      if (statusEl) { statusEl.textContent = ''; statusEl.dataset.ready = '0'; }
       inp.value = '';
       inp.addEventListener('input', () => {
         if (statusEl) {
-          statusEl.textContent = inp.value ? '↑ ready to save' : 'unchanged';
+          statusEl.textContent = inp.value ? 'Ready to save' : '';
           statusEl.dataset.ready = inp.value ? '1' : '0';
         }
         if (inp.value) {
@@ -298,6 +300,13 @@
 
     // Render the confirm panel from the armed-symphonies route's entries, {name, flags, state}:
     // each is listed with the flags it carries and its state ("live"). unreadable = the read failed.
+    // The route's labels are upper case; the list names each flag in sentence case.
+    var FLAG_WORDS = { ARMED: 'Armed', TP: 'TP-armed', PARA: 'Para-armed', TRIGGERED: 'Triggered' };
+    function flagWord(label) {
+      var key = String(label);
+      return FLAG_WORDS[key] || (key.charAt(0).toUpperCase() + key.slice(1).toLowerCase());
+    }
+
     function renderConfirmPanel(armedSymphonies, unreadable) {
       // Clear and rebuild the armed list
       armedList.innerHTML = '';
@@ -305,13 +314,13 @@
         armedHeading.textContent = 'Could not read which symphonies are armed. The flush resets them regardless.';
         armedCallout.hidden = false;
       } else if (armedSymphonies.length) {
-        armedHeading.textContent = '⚠ ' + armedSymphonies.length +
+        armedHeading.textContent = armedSymphonies.length +
           ' ' + (armedSymphonies.length === 1 ? 'symphony is' : 'symphonies are') +
           ' currently armed — flushing will reset their guard state.';
         armedSymphonies.forEach(function (sym) {
           var li = document.createElement('li');
           li.className = 'flush-armed-item';
-          var flags = (Array.isArray(sym.flags) ? sym.flags : []).concat([sym.state || 'live']);
+          var flags = (Array.isArray(sym.flags) ? sym.flags : []).map(flagWord).concat([sym.state || 'live']);
           li.innerHTML = escHtml(sym.name) +
             ' <span class="flush-armed-flags">' + escHtml(flags.join(' · ')) + '</span>';
           armedList.appendChild(li);
@@ -513,13 +522,13 @@
       parts += '<span class="sym-uses-globals">uses globals</span>';
     } else {
       parts += overrideCount
-        ? `<span class="sym-has-override">&#9670; ${overrideCount} override${overrideCount > 1 ? 's' : ''}</span>`
+        ? `<span class="sym-has-override">${overrideCount} override${overrideCount > 1 ? 's' : ''}</span>`
         : '<span class="sym-no-override">0 overrides</span>';
       if (pinnedCount) {
-        parts += `<span class="sym-pinned-count" title="These stored values equal the global value today. They are stored for this symphony and will not follow a later global change.">${pinnedCount} pinned at the global value</span>`;
+        parts += `<span class="sym-pinned-count" title="These stored values equal the global value today. They are stored for this symphony and will not follow a later global change.">${pinnedCount} pinned</span>`;
       }
     }
-    if (lockedCount) parts += `<span class="sym-locked-count">&middot; ${lockedCount} locked</span>`;
+    if (lockedCount) parts += `<span class="sym-locked-count">${lockedCount} locked</span>`;
     return parts;
   }
 
@@ -550,7 +559,11 @@
         </div>
         <button type="button" class="btn-reset-globals">Reset to globals</button>
       </div>
-      <div class="override-grid"></div>
+      <div class="override-grid">
+        <div class="override-colhead" aria-hidden="true">
+          <span>Parameter</span><span>Global</span><span>Override</span><span></span>
+        </div>
+      </div>
     `;
 
     const grid = detail.querySelector('.override-grid');
@@ -567,8 +580,8 @@
       row.dataset.key = key;
       row.innerHTML = `
         <div class="override-row-header">
-          <span class="override-key">${escHtml(key)}</span>
-          <button type="button" class="lock-btn${locked ? ' lock-btn-on' : ''}" data-locked="${locked ? '1' : '0'}">${locked ? '&#9670; locked' : 'lock'}</button>
+          <span class="override-key">${escHtml(key).replace(/_/g, '_<wbr>')}</span>
+          <button type="button" class="lock-btn${locked ? ' lock-btn-on' : ''}" data-locked="${locked ? '1' : '0'}">${locked ? 'locked' : 'lock'}</button>
         </div>
         <div class="override-global-row">
           <span class="override-label">global</span>
@@ -585,7 +598,7 @@
         const isLocked = this.dataset.locked === '1';
         this.dataset.locked = isLocked ? '0' : '1';
         this.classList.toggle('lock-btn-on', !isLocked);
-        this.innerHTML = !isLocked ? '&#9670; locked' : 'lock';
+        this.textContent = !isLocked ? 'locked' : 'lock';
         toggleLock(symId, key, !isLocked, data);
         refreshSymListEntry(symId);
         markDirty();

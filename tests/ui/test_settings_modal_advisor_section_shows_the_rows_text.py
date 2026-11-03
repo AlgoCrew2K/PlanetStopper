@@ -187,6 +187,41 @@ class TestRowsWithNothingToSay:
         assert len(cards) == 1 and "CLEAR" in cards[0].upper(), cards
 
 
+class TestRowsThatSayTheSameThingAreOneRowWithACount:
+    """Weekly runs store the same verdict and note again and again; the modal states it once.
+
+    A card is one distinct (role, verdict, note) with how many stored observations say it, so a
+    symphony with many runs does not draw the same sentence a dozen times.
+    """
+
+    def test_identical_observations_draw_one_card_with_their_count_and_the_note_once(self, client):
+        for _ in range(5):
+            run_overfitting_conscience(_clear_run(), ledger_rows=[])
+        body = _answer(client)
+        rows = body["advisor_observations"]
+        assert len(rows) == 5, "precondition: five stored observations"
+        note = rows[0]["raw_response"][NOTE_KEY]
+        html = _render(body)
+        cards = _cards(html)
+        assert len(cards) == 1, f"five identical observations drew {len(cards)} cards"
+        assert "5 observations" in cards[0], cards[0]
+        assert _section_text(html).count(note) == 1, "the note is stated once"
+
+    def test_a_different_verdict_is_its_own_card_in_first_seen_order(self, client):
+        run_overfitting_conscience(_clear_run(), ledger_rows=[])
+        run_overfitting_conscience(_breach_run(), ledger_rows=[])
+        run_overfitting_conscience(_clear_run(), ledger_rows=[])
+        cards = _cards(_render(_answer(client)))
+        assert len(cards) == 2
+        assert "CLEAR" in cards[0].upper() and "2 observations" in cards[0], cards[0]
+        assert "BREACH" in cards[1].upper() and "observations" not in cards[1], cards[1]
+
+    def test_a_card_for_one_observation_shows_no_count(self, client):
+        run_overfitting_conscience(_clear_run(), ledger_rows=[])
+        cards = _cards(_render(_answer(client)))
+        assert len(cards) == 1 and "observations" not in cards[0], cards
+
+
 class TestNoRowsAtAll:
     def test_the_empty_line_is_kept_and_no_card_is_drawn(self, client):
         body = _answer(client)

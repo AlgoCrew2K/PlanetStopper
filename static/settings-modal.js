@@ -9,7 +9,8 @@
  *   .design-handoff/persymph-modal/claude-design/alphabotpm/project/settings-modal.jsx
  *
  * Rules enforced here:
- *   - All colors via --studio-* CSS custom properties; NO bare hex values.
+ *   - All colors via --studio-* CSS custom properties; NO bare hex values. The modal's look is
+ *     one stylesheet (MODAL_CSS, added once to the page head), so hover and focus states exist.
  *   - Autotuner parameters section: read-only spans/divs ONLY — no input elements.
  *   - AI advisor section: display-only cards, no action controls.
  *   - Live toggle OFF→ON requires ConfirmGoLive dialog; a bare click never persists live.
@@ -66,6 +67,143 @@
     // the toggle click has immediate visual effect without persisting (AC-3).
     var _pendingLiveMode = undefined;
 
+    // ── Modal stylesheet ──────────────────────────────────────────────────────
+    // One sheet, scoped under #sym-settings-modal, added to the head the first time the modal is
+    // built. Type is 12 / 13 / 14 / 16 px at weight 400 or 500, spacing is on a 4 px grid, and a
+    // status is a dot plus one word. Text on a filled control is the paper token: white on the
+    // dark theme's lighter green and red is below 4.5:1.
+    var MODAL_STYLE_ID = 'sym-settings-modal-style';
+    var MODAL_CSS = [
+        '#sym-settings-modal .ssm-surface{position:relative;z-index:1;width:560px;max-width:calc(100vw - 32px);',
+        'max-height:calc(100vh - 56px);background:var(--studio-paper);border:1px solid var(--studio-rule-hi);',
+        'border-radius:16px;box-shadow:0 24px 64px rgba(0,0,0,0.32);display:flex;flex-direction:column;overflow:hidden}',
+        '#sym-settings-modal .ssm-head{display:flex;align-items:flex-start;gap:12px;flex-shrink:0;',
+        'padding:16px 20px 12px;border-bottom:1px solid var(--studio-rule)}',
+        '#sym-settings-modal .ssm-head-main{flex:1;min-width:0}',
+        '#sym-settings-modal .ssm-kicker{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;',
+        'font-size:12px;line-height:16px;color:var(--studio-ink-dim);margin-bottom:4px}',
+        '#sym-settings-modal .ssm-title{font-size:16px;line-height:24px;font-weight:500;color:var(--studio-ink);',
+        'white-space:normal;overflow-wrap:anywhere}',
+        '#sym-settings-modal .ssm-close{flex-shrink:0;width:32px;height:32px;background:transparent;',
+        'border:1px solid var(--studio-rule-hi);border-radius:6px;color:var(--studio-ink-dim);font-size:16px;',
+        'line-height:1;cursor:pointer}',
+        '#sym-settings-modal .ssm-close:hover{background:var(--studio-chip-bg);color:var(--studio-ink)}',
+        '#sym-settings-modal .ssm-body{flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;',
+        'flex-direction:column;gap:8px}',
+        '#sym-settings-modal .ssm-body>*{flex-shrink:0}',
+        '#sym-settings-modal .ssm-foot{flex-shrink:0;border-top:1px solid var(--studio-rule);padding:12px 20px;',
+        'display:flex;flex-direction:column;gap:8px;background:var(--studio-paper)}',
+        '#sym-settings-modal .ssm-state{padding:32px;text-align:center;font-size:13px;line-height:20px;',
+        'color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-state--err{text-align:left;color:var(--studio-neg)}',
+        '#sym-settings-modal .ssm-sec{display:flex;align-items:baseline;justify-content:space-between;gap:12px;',
+        'margin-top:12px}',
+        '#sym-settings-modal .ssm-sec:first-child{margin-top:0}',
+        '#sym-settings-modal .ssm-sec-title{font-size:13px;line-height:20px;font-weight:500;color:var(--studio-ink)}',
+        '#sym-settings-modal .ssm-sec-cap{font-size:12px;line-height:16px;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-note{flex:none;font-size:12px;line-height:16px;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-dot{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;',
+        'background:currentColor}',
+        '#sym-settings-modal .ssm-dot--pos{color:var(--studio-pos)}',
+        '#sym-settings-modal .ssm-dot--neg{color:var(--studio-neg)}',
+        '#sym-settings-modal .ssm-dot--warn{color:var(--studio-warn)}',
+        '#sym-settings-modal .ssm-dot--accent{color:var(--studio-accent)}',
+        '#sym-settings-modal .ssm-dot--muted{color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-status{display:inline-flex;align-items:center;gap:6px;font-size:12px;',
+        'line-height:16px;font-weight:500;color:var(--studio-ink);white-space:nowrap}',
+        '#sym-settings-modal .ssm-banner{display:flex;align-items:flex-start;gap:8px;padding:8px 12px;',
+        'border:1px solid var(--studio-rule);border-radius:8px;font-size:12px;line-height:16px;color:var(--studio-ink)}',
+        '#sym-settings-modal .ssm-banner .ssm-dot{margin-top:4px}',
+        '#sym-settings-modal .ssm-banner strong{font-weight:500}',
+        '#sym-settings-modal .ssm-banner--caution{background:var(--studio-warn-tint);border-color:var(--studio-warn-border)}',
+        '#sym-settings-modal .ssm-banner--danger{background:var(--studio-neg-tint);border-color:var(--studio-neg-border)}',
+        '#sym-settings-modal .ssm-banner--danger strong{color:var(--studio-neg)}',
+        '#sym-settings-modal .ssm-exec{display:flex;align-items:center;gap:16px;padding:12px 16px;',
+        'background:var(--studio-bg);border:1px solid var(--studio-rule);border-radius:8px}',
+        '#sym-settings-modal .ssm-exec--live{background:var(--studio-neg-tint);border-color:var(--studio-neg-border)}',
+        '#sym-settings-modal .ssm-exec--prearmed{background:var(--studio-warn-tint);border-color:var(--studio-warn-border)}',
+        '#sym-settings-modal .ssm-exec-main{flex:1;min-width:0}',
+        '#sym-settings-modal .ssm-exec-label{font-size:14px;line-height:20px;font-weight:500;color:var(--studio-ink)}',
+        '#sym-settings-modal .ssm-prearmed{margin-left:8px;font-size:12px;font-weight:500;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-exec-sub{font-size:12px;line-height:16px;color:var(--studio-ink-dim);margin-top:2px}',
+        '#sym-settings-modal .ssm-switch{flex-shrink:0;width:52px;height:30px;padding:2px;display:flex;',
+        'align-items:center;justify-content:flex-start;background:var(--studio-rule-hi);',
+        'border:1px solid var(--studio-rule-hi);border-radius:999px;cursor:pointer;',
+        'transition:background-color .15s,border-color .15s}',
+        '#sym-settings-modal .ssm-switch--on{justify-content:flex-end;background:var(--studio-neg);border-color:var(--studio-neg)}',
+        '#sym-settings-modal .ssm-switch--prearmed{background:var(--studio-warn);border-color:var(--studio-warn)}',
+        '#sym-settings-modal .ssm-knob{width:24px;height:24px;border-radius:999px;background:var(--studio-white);',
+        'box-shadow:0 1px 2px rgba(0,0,0,0.2)}',
+        '#sym-settings-modal .ssm-locks{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:4px}',
+        '#sym-settings-modal .sym-settings-locked-var-btn{display:flex;align-items:center;gap:8px;padding:6px 8px;',
+        'min-width:0;width:100%;text-align:left;cursor:pointer;background:transparent;',
+        'border:1px solid var(--studio-rule);border-radius:6px;font-family:inherit}',
+        '#sym-settings-modal .sym-settings-locked-var-btn:hover{background:var(--studio-chip-bg)}',
+        '#sym-settings-modal .sym-settings-locked-var-btn[data-locked="1"]{background:var(--studio-accent-tint);',
+        'border-color:var(--studio-accent-border)}',
+        '#sym-settings-modal .ssm-box{flex:none;width:16px;height:16px;border-radius:4px;',
+        'border:1.5px solid var(--studio-rule-hi);display:flex;align-items:center;justify-content:center;',
+        'color:var(--studio-paper);font-size:12px;line-height:1}',
+        '#sym-settings-modal [data-locked="1"] .ssm-box{background:var(--studio-accent);border-color:var(--studio-accent)}',
+        '#sym-settings-modal .ssm-lockname{flex:1;min-width:0;font-size:12px;line-height:16px;font-weight:500;',
+        'color:var(--studio-ink);font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}',
+        '#sym-settings-modal .ssm-lockedtag{flex:none;font-size:12px;line-height:16px;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-params{background:var(--studio-bg);border:1px solid var(--studio-rule);',
+        'border-radius:8px;overflow:hidden}',
+        '#sym-settings-modal .ssm-param{display:flex;align-items:center;justify-content:space-between;gap:12px;',
+        'min-height:28px;padding:2px 12px;border-top:1px solid var(--studio-rule)}',
+        '#sym-settings-modal .ssm-param:first-child{border-top:none}',
+        '#sym-settings-modal .ssm-param-key{font-size:12px;line-height:16px;color:var(--studio-ink-dim);',
+        'font-variant-numeric:tabular-nums;overflow-wrap:anywhere}',
+        '#sym-settings-modal .ssm-param-key .ssm-dot{margin-left:8px}',
+        '#sym-settings-modal .ssm-param-val{flex:none;font-size:13px;line-height:20px;font-weight:500;',
+        'color:var(--studio-ink);font-variant-numeric:tabular-nums}',
+        '#sym-settings-modal .ssm-adv-list{display:flex;flex-direction:column}',
+        '#sym-settings-modal .ssm-adv{padding:8px 0;border-top:1px solid var(--studio-rule)}',
+        '#sym-settings-modal .ssm-adv-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px}',
+        '#sym-settings-modal .ssm-adv-role{font-size:12px;line-height:16px;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-adv-count{margin-left:auto;font-size:12px;line-height:16px;',
+        'color:var(--studio-ink-dim);font-variant-numeric:tabular-nums}',
+        '#sym-settings-modal .ssm-adv-note{margin-top:2px;font-size:12px;line-height:16px;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-empty{padding:8px 0;font-size:12px;line-height:16px;color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-err{display:flex;align-items:center;gap:8px;font-size:12px;line-height:16px;',
+        'font-weight:500;color:var(--studio-neg)}',
+        '#sym-settings-modal .ssm-actions{display:flex;justify-content:flex-end;gap:8px}',
+        '#sym-settings-modal .ssm-btn{height:32px;padding:0 16px;border:1px solid transparent;border-radius:6px;',
+        'font-family:inherit;font-size:13px;font-weight:500;cursor:pointer}',
+        '#sym-settings-modal .ssm-btn--ghost{background:transparent;border-color:var(--studio-rule-hi);color:var(--studio-ink-dim)}',
+        '#sym-settings-modal .ssm-btn--ghost:hover{background:var(--studio-chip-bg);color:var(--studio-ink)}',
+        '#sym-settings-modal .ssm-btn--primary{background:var(--studio-accent);color:var(--studio-paper)}',
+        '#sym-settings-modal .ssm-btn--primary:hover:not(:disabled){background:color-mix(in srgb,var(--studio-accent) 86%,var(--studio-ink))}',
+        '#sym-settings-modal .ssm-btn--danger{background:var(--studio-neg);color:var(--studio-paper)}',
+        '#sym-settings-modal .ssm-btn--danger:hover:not(:disabled){background:color-mix(in srgb,var(--studio-neg) 86%,var(--studio-ink))}',
+        '#sym-settings-modal .ssm-btn:disabled{opacity:.6;cursor:default}',
+        '#sym-settings-modal .ssm-confirm{position:absolute;inset:0;z-index:5;display:flex;align-items:center;',
+        'justify-content:center;padding:24px;background:rgba(0,0,0,0.5)}',
+        '#sym-settings-modal .ssm-confirm-card{position:relative;z-index:1;width:420px;max-width:100%;',
+        'background:var(--studio-paper);border:1px solid color-mix(in srgb,var(--studio-neg) 40%,transparent);',
+        'border-radius:12px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.4)}',
+        '#sym-settings-modal .ssm-confirm-head{display:flex;align-items:center;gap:8px;padding:12px 16px;',
+        'font-size:14px;line-height:20px;font-weight:500;color:var(--studio-neg);background:var(--studio-neg-tint);',
+        'border-bottom:1px solid var(--studio-neg-border)}',
+        '#sym-settings-modal .ssm-confirm-body{padding:16px;font-size:13px;line-height:20px;color:var(--studio-ink)}',
+        '#sym-settings-modal .ssm-confirm-foot{display:flex;justify-content:flex-end;gap:8px;padding:0 16px 16px}',
+        '#sym-settings-modal :focus-visible{outline:2px solid var(--studio-accent);outline-offset:2px}',
+        '@media (max-width:480px){',
+        '#sym-settings-modal .ssm-head,#sym-settings-modal .ssm-foot{padding-left:16px;padding-right:16px}',
+        '#sym-settings-modal .ssm-body{padding:12px 16px}',
+        '#sym-settings-modal .ssm-state{padding:24px 16px}',
+        '}'
+    ].join('\n');
+
+    function _ensureStyle() {
+        if (document.getElementById(MODAL_STYLE_ID)) { return; }
+        var style = document.createElement('style');
+        style.id = MODAL_STYLE_ID;
+        style.textContent = MODAL_CSS;
+        (document.head || document.body).appendChild(style);
+    }
+
     // ── Entry point: called by gear icon onclick ───────────────────────────────
     window.openSymphonySettings = function (evt, symphonyId) {
         if (evt) { evt.stopPropagation(); }
@@ -105,6 +243,7 @@
     // ── Modal DOM helpers ──────────────────────────────────────────────────────
 
     function _getOrCreateModalEl() {
+        _ensureStyle();
         var el = document.getElementById('sym-settings-modal');
         if (!el) {
             el = document.createElement('div');
@@ -192,7 +331,7 @@
     function _renderLoadingModal() {
         var el = _getOrCreateModalEl();
         el.innerHTML = _surfaceHtml(
-            '<div style="padding:32px;text-align:center;color:var(--studio-ink-dim);font-size:13px;">Loading…</div>',
+            '<div class="ssm-state">Loading…</div>',
             '',
             '',
             false,
@@ -204,7 +343,7 @@
     function _renderErrorModal(msg) {
         var el = _getOrCreateModalEl();
         el.innerHTML = _surfaceHtml(
-            '<div style="padding:32px;color:var(--studio-neg);font-size:13px;">' + _esc(msg) + '</div>',
+            '<div class="ssm-state ssm-state--err">' + _esc(msg) + '</div>',
             '',
             '',
             false,
@@ -227,45 +366,38 @@
         var advisorList = data.advisor_observations || data.advisor || [];
         var parameters = data.parameters || data.params || {};
 
-        // Effective-mode badge (AC-2: 3-way truth table)
+        // Effective-mode status (AC-2: 3-way truth table): a dot and the mode's words.
         var modeBadge;
         if (!globalOn) {
-            modeBadge = _badge('caution', 'Dry-run (global off)');
+            modeBadge = _status('warn', 'Dry-run (global off)');
         } else if (liveToggle) {
-            modeBadge = _badge('live', '&#9679; Live');
+            modeBadge = _status('neg', 'Live');
         } else {
-            modeBadge = _badge('dry', 'Dry-run');
+            modeBadge = _status('muted', 'Dry-run');
         }
 
         // Banners
         var bannerHtml = '';
         if (!globalOn) {
             bannerHtml = _banner('caution',
-                '<strong style="color:var(--studio-warn);">Global live execution is OFF.</strong> ' +
+                '<strong>Global live execution is off.</strong> ' +
                 'This symphony will not trade live regardless of the toggle below — ' +
                 'the system master-switch must be enabled first. This toggle pre-arms the symphony ' +
                 'so it goes live automatically when the global switch is turned on.');
         } else if (liveToggle) {
             bannerHtml = _banner('danger',
-                '<strong style="color:var(--studio-neg);">Real money is at stake.</strong> ' +
+                '<strong>Real money is at stake.</strong> ' +
                 'This symphony will execute live sell orders via the connected brokerage account ' +
                 '(Composer · Alpaca).');
         }
 
         // Execution mode row
-        var execBg, execBorder;
+        var execClass = 'ssm-exec';
         if (liveToggle && globalOn) {
-            execBg = 'background:color-mix(in srgb,var(--studio-neg) 6%,transparent)';
-            execBorder = 'border:1px solid color-mix(in srgb,var(--studio-neg) 27%,transparent)';
+            execClass += ' ssm-exec--live';
         } else if (liveToggle && !globalOn) {
-            execBg = 'background:color-mix(in srgb,var(--studio-warn) 6%,transparent)';
-            execBorder = 'border:1px solid color-mix(in srgb,var(--studio-warn) 27%,transparent)';
-        } else {
-            execBg = 'background:var(--studio-bg)';
-            execBorder = 'border:1px solid var(--studio-rule)';
+            execClass += ' ssm-exec--prearmed';
         }
-        var execRowStyle = 'display:flex;align-items:center;gap:14px;padding:13px 15px;' +
-            execBg + ';' + execBorder + ';border-radius:10px';
 
         var subtext;
         if (!liveToggle) {
@@ -277,8 +409,7 @@
         }
 
         var prearmedLabel = (!globalOn && liveToggle)
-            ? '<span style="margin-left:8px;font-size:9.5px;font-weight:700;color:var(--studio-warn);' +
-              'letter-spacing:0.08em;text-transform:uppercase;">· pre-armed</span>'
+            ? '<span class="ssm-prearmed">· pre-armed</span>'
             : '';
 
         var toggleHtml = _toggleHtml(liveToggle, !globalOn);
@@ -286,72 +417,34 @@
         // Locked-vars checklist (AC-6: editable)
         var lockedVarsRows = TUNING_ORDER.map(function (key) {
             var isLocked = locked.indexOf(key) !== -1;
-            var btnBg = isLocked
-                ? 'background:color-mix(in srgb,var(--studio-accent) 8%,transparent)'
-                : 'background:transparent';
-            var btnBorder = isLocked
-                ? 'border:1px solid color-mix(in srgb,var(--studio-accent) 25%,transparent)'
-                : 'border:1px solid var(--studio-rule)';
-            var boxBg = isLocked ? 'background:var(--studio-accent)' : 'background:transparent';
-            var boxBorder = isLocked
-                ? 'border:1.5px solid var(--studio-accent)'
-                : 'border:1.5px solid var(--studio-rule-hi)';
-            var lockedTag = isLocked
-                ? '<span style="font-size:8.5px;font-weight:700;color:var(--studio-accent);' +
-                  'letter-spacing:0.1em;padding:1px 5px;' +
-                  'border:1px solid color-mix(in srgb,var(--studio-accent) 33%,transparent);' +
-                  'border-radius:4px;">LOCKED</span>'
-                : '';
+            var lockedTag = isLocked ? '<span class="ssm-lockedtag">locked</span>' : '';
             return '<button type="button" class="sym-settings-locked-var-btn"' +
-                ' data-key="' + _esc(key) + '"' +
-                ' style="display:flex;align-items:center;gap:9px;padding:8px 10px;cursor:pointer;' +
-                'text-align:left;width:100%;min-width:0;' + btnBg + ';' + btnBorder + ';' +
-                'border-radius:8px;font-family:var(--studio-sans,Manrope),sans-serif;">' +
-                '<span style="width:16px;height:16px;border-radius:4px;flex-shrink:0;' +
-                'display:flex;align-items:center;justify-content:center;' +
-                boxBg + ';' + boxBorder + ';color:#fff;font-size:11px;font-weight:800;">' +
-                (isLocked ? '✓' : '') + '</span>' +
-                '<span style="flex:1;min-width:0;font-size:12px;font-weight:500;color:var(--studio-ink);' +
-                'font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere;">' +
+                ' data-key="' + _esc(key) + '" data-locked="' + (isLocked ? '1' : '0') + '"' +
+                ' aria-pressed="' + (isLocked ? 'true' : 'false') + '">' +
+                '<span class="ssm-box">' + (isLocked ? '✓' : '') + '</span>' +
                 // A name breaks after an underscore when it must wrap; it is never cut.
-                _esc(key).replace(/_/g, '_<wbr>') + '</span>' +
+                '<span class="ssm-lockname">' + _esc(key).replace(/_/g, '_<wbr>') + '</span>' +
                 lockedTag +
                 '</button>';
         }).join('');
 
         // Autotuner parameters — READ-ONLY (AC-7: no input elements ever)
-        var paramsRows = TUNING_ORDER.map(function (key, i) {
+        var paramsRows = TUNING_ORDER.map(function (key) {
             var val = parameters[key];
             var formatted = (val !== undefined && val !== null) ? Number(val).toFixed(2) : '—';
             var isLocked = locked.indexOf(key) !== -1;
-            var borderBottom = (i < TUNING_ORDER.length - 1)
-                ? 'border-bottom:1px solid var(--studio-rule);'
-                : '';
-            var lockedDot = isLocked
-                ? '<span style="color:var(--studio-accent);margin-left:6px;font-size:10px;">◆</span>'
-                : '';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;' +
-                'padding:9px 14px;' + borderBottom + '">' +
-                '<span style="font-size:12px;color:var(--studio-ink-dim);font-variant-numeric:tabular-nums;">' +
-                _esc(key) + lockedDot + '</span>' +
-                '<span style="font-size:13px;font-weight:600;color:var(--studio-ink);font-variant-numeric:tabular-nums;">' +
-                _esc(formatted) + (TUNING_UNITS[key] || '') + '</span>' +
+            var lockedDot = isLocked ? '<span class="ssm-dot ssm-dot--accent"></span>' : '';
+            return '<div class="ssm-param">' +
+                '<span class="ssm-param-key">' + _esc(key) + lockedDot + '</span>' +
+                '<span class="ssm-param-val">' + _esc(formatted) + (TUNING_UNITS[key] || '') + '</span>' +
                 '</div>';
         }).join('');
 
-        // AI advisor cards — DISPLAY-ONLY, no action controls (AC-8)
-        var advisorCards = (advisorList || []).map(function (obs) {
-            return _advisorCard(obs);
-        }).filter(function (card) { return card !== ''; });
-        var advisorHtml;
-        if (advisorCards.length === 0) {
-            advisorHtml = '<div style="padding:22px 16px;text-align:center;' +
-                'background:var(--studio-bg);border:1px dashed var(--studio-rule-hi);border-radius:10px;' +
-                'font-size:12.5px;color:var(--studio-ink-dim);">' +
-                'No advisor suggestions for this symphony yet.' +
-                '</div>';
-        } else {
-            advisorHtml = advisorCards.join('');
+        // AI advisor rows — DISPLAY-ONLY, no action controls (AC-8). Observations that say the
+        // same thing (same role, verdict and note) are one row with a count.
+        var advisorHtml = _advisorRows(advisorList);
+        if (advisorHtml === '') {
+            advisorHtml = '<div class="ssm-empty">No advisor suggestions for this symphony yet.</div>';
         }
 
         // Save-error state (AC-12)
@@ -359,60 +452,49 @@
             ? saveError
             : "Couldn't save — symphony state is locked by a running EOD cycle. Retry in a moment.";
         var footerExtra = saveError
-            ? '<div role="alert" style="display:flex;align-items:center;gap:8px;font-size:12px;' +
-              'color:var(--studio-neg);font-weight:600;margin-bottom:6px;">' +
-              '<span style="font-size:13px;">✕</span>' +
-              _esc(saveErrorText) +
+            ? '<div role="alert" class="ssm-err">' +
+              '<span class="ssm-dot ssm-dot--neg"></span>' +
+              '<span>' + _esc(saveErrorText) + '</span>' +
               '</div>'
             : '';
         // A save that was not sent is clicked again as it was; only a failed one is a retry.
         var saveLabel = saveError === true ? 'Retry save' : 'Save settings';
-        var saveBg = saveError === true ? 'var(--studio-neg)' : 'var(--studio-accent)';
+        var saveClass = saveError === true ? 'ssm-btn ssm-btn--danger' : 'ssm-btn ssm-btn--primary';
 
         var footer = footerExtra +
-            '<div style="display:flex;justify-content:flex-end;gap:10px;">' +
-            '<button type="button" id="sym-settings-cancel"' +
-            ' style="padding:9px 16px;background:transparent;' +
-            'border:1px solid var(--studio-rule);border-radius:8px;cursor:pointer;' +
-            'font-family:var(--studio-sans,Manrope),sans-serif;' +
-            'font-size:12.5px;font-weight:600;color:var(--studio-ink-dim);">Cancel</button>' +
-            '<button type="button" id="sym-settings-save"' +
-            ' style="padding:9px 18px;background:' + saveBg + ';color:#fff;' +
-            'border:none;border-radius:8px;cursor:pointer;' +
-            'font-family:var(--studio-sans,Manrope),sans-serif;' +
-            'font-size:12.5px;font-weight:700;letter-spacing:0.02em;">' +
+            '<div class="ssm-actions">' +
+            '<button type="button" id="sym-settings-cancel" class="ssm-btn ssm-btn--ghost">Cancel</button>' +
+            '<button type="button" id="sym-settings-save" class="' + saveClass + '">' +
             saveLabel + '</button>' +
             '</div>';
 
         var body = bannerHtml +
             _sectionHeader('Execution mode', '') +
-            '<div style="' + execRowStyle + '">' +
-            '<div style="flex:1;">' +
-            '<div style="font-size:13.5px;font-weight:700;color:var(--studio-ink);">' +
+            '<div class="' + execClass + '">' +
+            '<div class="ssm-exec-main">' +
+            '<div class="ssm-exec-label">' +
             'Live trading' + prearmedLabel + '</div>' +
-            '<div style="font-size:11.5px;color:var(--studio-ink-dim);margin-top:3px;line-height:1.45;">' +
+            '<div class="ssm-exec-sub">' +
             _esc(subtext) + '</div>' +
             '</div>' +
             toggleHtml +
             '</div>' +
 
-            _sectionHeader('Locked tuning variables', 'Checked vars the autotuner may NOT change.') +
+            _sectionHeader('Locked tuning variables', 'Checked variables the autotuner may not change') +
             // Columns of at least 13rem: on a phone the controls stack one to a row, each with room
-            // for its full name. flex-shrink:0 keeps every block of the body at its own height (the
-            // body scrolls), so a block with overflow hidden is never squashed to its first line.
-            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:8px;flex-shrink:0;' +
-            'background:var(--studio-bg);border:1px solid var(--studio-rule);border-radius:10px;padding:12px;">' +
+            // for its full name. Every block of the body keeps its own height (the body scrolls),
+            // so a block with overflow hidden is never squashed to its first line.
+            '<div class="ssm-locks">' +
             lockedVarsRows + '</div>' +
 
             _sectionHeader('Autotuner parameters', 'Read-only, autotuner-owned.') +
-            '<div style="background:var(--studio-bg);border:1px solid var(--studio-rule);' +
-            'border-radius:10px;overflow:hidden;flex-shrink:0;">' +
+            '<div class="ssm-params">' +
             paramsRows + '</div>' +
 
             _sectionHeader(
                 'AI advisor — this symphony',
                 'Display-only. Act by locking a variable and letting the optimizer converge.',
-                _badge('neutral', 'Advisory only')
+                '<span class="ssm-note">Advisory only</span>'
             ) +
             advisorHtml;
 
@@ -443,35 +525,18 @@
             : '<strong>this symphony</strong>';
 
         var html = '<div id="sym-settings-confirm" role="dialog" aria-modal="true"' +
-            ' aria-label="Confirm live trading"' +
-            ' style="position:absolute;inset:0;z-index:5;display:flex;align-items:center;' +
-            'justify-content:center;padding:28px;background:rgba(0,0,0,0.5);">' +
-            '<div style="position:relative;z-index:1;width:420px;max-width:100%;' +
-            'background:var(--studio-paper);' +
-            'border:1px solid color-mix(in srgb,var(--studio-neg) 40%,transparent);' +
-            'border-radius:16px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.4);">' +
-            '<div style="padding:16px 18px 14px;' +
-            'background:color-mix(in srgb,var(--studio-neg) 6%,transparent);' +
-            'border-bottom:1px solid color-mix(in srgb,var(--studio-neg) 20%,transparent);">' +
-            '<div style="font-size:15px;font-weight:700;color:var(--studio-neg);' +
-            'display:flex;align-items:center;gap:8px;">' +
-            '<span>⚠</span> Confirm live trading</div></div>' +
-            '<div style="padding:16px 18px;font-size:13px;color:var(--studio-ink);line-height:1.55;">' +
+            ' aria-label="Confirm live trading" class="ssm-confirm">' +
+            '<div class="ssm-confirm-card">' +
+            '<div class="ssm-confirm-head">' +
+            '<span class="ssm-dot ssm-dot--neg"></span><span>Confirm live trading</span></div>' +
+            '<div class="ssm-confirm-body">' +
             'You are about to enable real-money live trading for ' +
             symphonyLabel + '. ' +
             'This symphony will execute live sell orders via your connected brokerage account ' +
             'the next time an exit signal fires.</div>' +
-            '<div style="padding:12px 18px 16px;display:flex;justify-content:flex-end;gap:10px;">' +
-            '<button type="button" id="sym-confirm-cancel"' +
-            ' style="padding:9px 16px;background:transparent;' +
-            'border:1px solid var(--studio-rule);border-radius:8px;cursor:pointer;' +
-            'font-family:var(--studio-sans,Manrope),sans-serif;' +
-            'font-size:12.5px;font-weight:600;color:var(--studio-ink-dim);">Cancel</button>' +
-            '<button type="button" id="sym-confirm-go-live"' +
-            ' style="padding:9px 18px;background:var(--studio-neg);color:#fff;' +
-            'border:none;border-radius:8px;cursor:pointer;' +
-            'font-family:var(--studio-sans,Manrope),sans-serif;' +
-            'font-size:12.5px;font-weight:700;letter-spacing:0.02em;">Yes, go live</button>' +
+            '<div class="ssm-confirm-foot">' +
+            '<button type="button" id="sym-confirm-cancel" class="ssm-btn ssm-btn--ghost">Cancel</button>' +
+            '<button type="button" id="sym-confirm-go-live" class="ssm-btn ssm-btn--danger">Yes, go live</button>' +
             '</div></div></div>';
 
         var surface = overlay.querySelector('[data-modal-surface]');
@@ -605,54 +670,36 @@
         }
     }
 
-    // ── HTML primitives (vanilla, --studio-* tokens only) ─────────────────────
+    // ── HTML primitives (vanilla, classes from MODAL_CSS) ─────────────────────
 
-    // _surfaceHtml builds the modal shell.  modeBadge is injected into the header
+    // _surfaceHtml builds the modal shell.  modeBadgeHtml is injected into the header
     // so the effective-mode badge (AC-2) is always visible regardless of body scroll.
     // showIdentity is false while loading, when no identifier may be shown yet.
     function _surfaceHtml(bodyHtml, footerHtml, modeBadgeHtml, hasFooter, showIdentity) {
         var footerSection = hasFooter
-            ? '<div style="flex-shrink:0;border-top:1px solid var(--studio-rule);padding:14px 18px;' +
-              'display:flex;flex-direction:column;gap:10px;background:var(--studio-paper);">' +
-              footerHtml + '</div>'
+            ? '<div class="ssm-foot">' + footerHtml + '</div>'
             : '';
 
-        return '<div data-modal-surface style="' +
-            'position:relative;z-index:1;' +
-            'width:560px;max-width:calc(100vw - 32px);' +
-            'max-height:calc(100vh - 56px);' +
-            'background:var(--studio-paper);' +
-            'border:1px solid var(--studio-rule-hi);' +
-            'border-radius:16px;' +
-            'box-shadow:0 24px 64px rgba(0,0,0,0.32);' +
-            'display:flex;flex-direction:column;overflow:hidden;">' +
+        return '<div data-modal-surface class="ssm-surface">' +
 
-            '<div style="padding:16px 18px;border-bottom:1px solid var(--studio-rule);' +
-            'display:flex;align-items:flex-start;gap:12px;flex-shrink:0;">' +
-            '<div style="flex:1;min-width:0;">' +
-            '<div style="font-size:9.5px;font-weight:700;color:var(--studio-ink-dim);' +
-            'letter-spacing:0.14em;text-transform:uppercase;margin-bottom:4px;">Settings</div>' +
-            '<div style="font-size:16px;font-weight:700;color:var(--studio-ink);' +
-            'letter-spacing:-0.01em;line-height:1.25;' +
-            'white-space:normal;overflow-wrap:anywhere;"' +
+            '<div class="ssm-head">' +
+            '<div class="ssm-head-main">' +
+            '<div class="ssm-kicker"><span>Settings</span>' +
+            '<span id="sym-settings-mode-badge">' +
+            (modeBadgeHtml || '') + '</span></div>' +
+            '<div class="ssm-title"' +
             (showIdentity
                 ? ' title="' + _esc(_currentSymphonyId || '') + '">' +
                   _esc(_currentDisplayName || _currentSymphonyId || '')
                 : '>&nbsp;') +
             '</div>' +
-            '<div style="margin-top:7px;" id="sym-settings-mode-badge">' +
-            (modeBadgeHtml || '') + '</div>' +
             '</div>' +
-            '<button type="button" id="sym-settings-close" aria-label="Close"' +
-            ' style="width:30px;height:30px;flex-shrink:0;' +
-            'background:transparent;border:1px solid var(--studio-rule);border-radius:7px;' +
-            'color:var(--studio-ink-dim);cursor:pointer;font-size:15px;">×</button>' +
+            '<button type="button" id="sym-settings-close" class="ssm-close" aria-label="Close">×</button>' +
             '</div>' +
 
             // min-height:0 lets this flex child shrink below its content so it scrolls inside the
             // capped surface and the footer (Cancel, Save) stays on screen.
-            '<div style="flex:1;min-height:0;overflow:auto;padding:18px;' +
-            'display:flex;flex-direction:column;gap:10px;">' +
+            '<div class="ssm-body">' +
             bodyHtml + '</div>' +
 
             footerSection +
@@ -661,110 +708,97 @@
 
     function _sectionHeader(title, caption, rightHtml) {
         var captionHtml = caption
-            ? '<div style="font-size:11px;color:var(--studio-ink-dim);margin-top:3px;">' +
-              _esc(caption) + '</div>'
+            ? '<div class="ssm-sec-cap">' + _esc(caption) + '</div>'
             : '';
-        // One balanced element: the header row. This function used to open a column wrapper it
-        // never closed, so every block after it nested inside that wrapper and the footer
-        // (Cancel, Save) ended up inside the scrolling body instead of below it. The blocks are
-        // now siblings in the body's column, which carries the gap the wrapper used to carry.
-        return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;">' +
+        // One balanced element: the header row. The blocks that follow are siblings in the body's
+        // column, so the footer (Cancel, Save) sits below the scrolling body, never inside it.
+        return '<div class="ssm-sec">' +
             '<div>' +
-            '<div style="font-size:11px;font-weight:700;color:var(--studio-ink);' +
-            'letter-spacing:0.1em;text-transform:uppercase;">' + _esc(title) + '</div>' +
+            '<div class="ssm-sec-title">' + _esc(title) + '</div>' +
             captionHtml + '</div>' +
             (rightHtml || '') + '</div>';
     }
 
-    function _badge(kind, label) {
-        var styles = {
-            live:    'background:var(--studio-neg);border-color:var(--studio-neg);color:#fff;',
-            caution: 'background:color-mix(in srgb,var(--studio-warn) 8%,transparent);' +
-                     'border-color:color-mix(in srgb,var(--studio-warn) 53%,transparent);' +
-                     'color:var(--studio-warn);',
-            dry:     'background:var(--studio-chip-bg);border-color:var(--studio-rule);' +
-                     'color:var(--studio-ink-dim);',
-            neutral: 'background:transparent;border-color:var(--studio-rule);' +
-                     'color:var(--studio-ink-dim);',
-            pass:    'background:color-mix(in srgb,var(--studio-pos) 8%,transparent);' +
-                     'border-color:color-mix(in srgb,var(--studio-pos) 53%,transparent);' +
-                     'color:var(--studio-pos);',
-            fail:    'background:color-mix(in srgb,var(--studio-neg) 8%,transparent);' +
-                     'border-color:color-mix(in srgb,var(--studio-neg) 53%,transparent);' +
-                     'color:var(--studio-neg);',
-        }[kind] || 'background:transparent;border-color:var(--studio-rule);color:var(--studio-ink-dim);';
-
-        return '<span style="display:inline-flex;align-items:center;gap:6px;' +
-            'padding:3px 9px;border-radius:999px;' + styles + 'border:1px solid;' +
-            'font-size:9.5px;font-weight:700;letter-spacing:0.08em;' +
-            'text-transform:uppercase;white-space:nowrap;">' + label + '</span>';
+    // A status is a dot and one word. `kind` picks the dot's colour; `labelHtml` is markup the
+    // caller has already made safe.
+    function _status(kind, labelHtml) {
+        return '<span class="ssm-status"><span class="ssm-dot ssm-dot--' + kind + '"></span>' +
+            labelHtml + '</span>';
     }
 
     function _banner(tone, innerHtml) {
-        var colorVar = {
-            caution: 'var(--studio-warn)',
-            danger:  'var(--studio-neg)',
-            info:    'var(--studio-cyan)',
-        }[tone] || 'var(--studio-ink-dim)';
-        var glyph = (tone === 'danger' || tone === 'caution') ? '⚠' : 'ⓘ';
-        return '<div style="display:flex;gap:11px;align-items:flex-start;' +
-            'padding:11px 14px 11px 12px;' +
-            'background:color-mix(in srgb,' + colorVar + ' 7%,transparent);' +
-            'border:1px solid color-mix(in srgb,' + colorVar + ' 33%,transparent);' +
-            'border-left:3px solid ' + colorVar + ';border-radius:8px;">' +
-            '<span style="color:' + colorVar + ';font-size:14px;font-weight:800;line-height:1.3;">' +
-            glyph + '</span>' +
-            '<div style="font-size:12px;color:var(--studio-ink);line-height:1.5;">' +
-            innerHtml + '</div></div>';
+        var dot = { caution: 'warn', danger: 'neg' }[tone] || 'muted';
+        return '<div class="ssm-banner ssm-banner--' + tone + '">' +
+            '<span class="ssm-dot ssm-dot--' + dot + '"></span>' +
+            '<div>' + innerHtml + '</div></div>';
     }
 
     function _toggleHtml(on, prearmed) {
-        var trackColor = prearmed ? 'var(--studio-warn)' : 'var(--studio-neg)';
-        var bgColor = on ? trackColor : 'var(--studio-chip-bg)';
-        var borderColor = on ? trackColor : 'var(--studio-rule-hi)';
-        var justify = on ? 'flex-end' : 'flex-start';
-        var stripes = (prearmed && on)
-            ? 'background-image:repeating-linear-gradient(45deg,transparent,transparent 4px,' +
-              'rgba(255,255,255,0.18) 4px,rgba(255,255,255,0.18) 8px);'
-            : '';
-        return '<button type="button" id="sym-settings-live-toggle"' +
+        var cls = 'ssm-switch' + (on ? (prearmed ? ' ssm-switch--on ssm-switch--prearmed' : ' ssm-switch--on') : '');
+        return '<button type="button" id="sym-settings-live-toggle" class="' + cls + '"' +
             ' role="switch" aria-checked="' + (on ? 'true' : 'false') + '"' +
-            ' aria-label="Live trading toggle"' +
-            ' style="width:52px;height:30px;padding:2px;flex-shrink:0;' +
-            'background:' + bgColor + ';border:1px solid ' + borderColor + ';' +
-            'border-radius:999px;cursor:pointer;' +
-            'display:flex;align-items:center;justify-content:' + justify + ';' +
-            'transition:background .15s,border-color .15s;' + stripes + '">' +
-            '<span style="width:24px;height:24px;border-radius:999px;' +
-            'background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.2);"></span>' +
+            ' aria-label="Live trading toggle">' +
+            '<span class="ssm-knob"></span>' +
             '</button>';
     }
 
-    var ADVISOR_VERDICT_KIND = { CLEAR: 'pass', BREACH: 'fail' };
+    var ADVISOR_VERDICT_DOT = { CLEAR: 'pos', BREACH: 'neg', WATCH: 'warn' };
 
-    // One card per stored observation row (advisor_role, verdict, raw_response, created_at).
-    // A row with neither a verdict nor prose has nothing to show and draws no card ('').
-    function _advisorCard(obs) {
-        // Display-only: operators act by locking a variable and letting the optimizer converge.
+    // The words of one stored observation row (advisor_role, verdict, raw_response), or null when
+    // the row has neither a verdict nor prose and so has nothing to show.
+    function _advisorParts(obs) {
         var verdict = typeof obs.verdict === 'string' ? obs.verdict : '';
         var body = obs.raw_response;
         var note = body && typeof body === 'object' && typeof body.note === 'string' ? body.note : '';
-        if (!verdict && !note) return '';
+        if (!verdict && !note) return null;
         var role = typeof obs.advisor_role === 'string'
             ? obs.advisor_role.toLowerCase().replace(/_/g, ' ') : '';
-        var badge = verdict
-            ? _badge(ADVISOR_VERDICT_KIND[verdict.toUpperCase()] || 'neutral', _esc(verdict))
+        return { verdict: verdict, note: note, role: role.charAt(0).toUpperCase() + role.slice(1) };
+    }
+
+    // "NOT_APPLICABLE" reads "Not applicable".
+    function _verdictWord(verdict) {
+        var text = verdict.replace(/_/g, ' ').toLowerCase();
+        return text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    // One row per distinct (role, verdict, note), in the order each first appears, with how many
+    // stored observations say it. Display-only: operators act by locking a variable and letting the
+    // optimizer converge.
+    function _advisorRows(list) {
+        var order = [];
+        var seen = {};
+        (list || []).forEach(function (obs) {
+            var parts = _advisorParts(obs);
+            if (!parts) return;
+            var key = [parts.role, parts.verdict, parts.note].join('\u0000');
+            if (!seen[key]) {
+                seen[key] = { parts: parts, count: 0 };
+                order.push(key);
+            }
+            seen[key].count += 1;
+        });
+        if (!order.length) return '';
+        return '<div class="ssm-adv-list">' + order.map(function (key) {
+            return _advisorCard(seen[key].parts, seen[key].count);
+        }).join('') + '</div>';
+    }
+
+    function _advisorCard(parts, count) {
+        var status = parts.verdict
+            ? _status(ADVISOR_VERDICT_DOT[parts.verdict.toUpperCase()] || 'muted', _esc(_verdictWord(parts.verdict)))
             : '';
-        var noteRow = note
-            ? '<div style="font-size:12px;color:var(--studio-ink-dim);line-height:1.5;">' +
-              _esc(note) + '</div>'
+        var countHtml = count > 1
+            ? '<span class="ssm-adv-count" title="The same verdict and note, stored ' + count + ' times">' +
+              count + ' observations</span>'
             : '';
-        return '<div data-testid="sym-settings-advisor-card" style="background:var(--studio-bg);border:1px solid var(--studio-rule);' +
-            'border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;flex-shrink:0;">' +
-            '<div style="display:flex;align-items:center;justify-content:space-between;' +
-            'gap:10px;flex-wrap:wrap;">' +
-            '<span style="font-size:13px;font-weight:700;color:var(--studio-ink);">' +
-            _esc(role) + '</span>' + badge + '</div>' + noteRow +
+        var noteRow = parts.note
+            ? '<div class="ssm-adv-note">' + _esc(parts.note) + '</div>'
+            : '';
+        return '<div data-testid="sym-settings-advisor-card" class="ssm-adv">' +
+            '<div class="ssm-adv-line">' + status +
+            '<span class="ssm-adv-role">' + _esc(parts.role) + '</span>' + countHtml + '</div>' +
+            noteRow +
             '</div>';
     }
 

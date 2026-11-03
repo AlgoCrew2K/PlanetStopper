@@ -689,7 +689,7 @@ def _click_live_toggle_every_way(probe):
 
 def test_live_card_in_dry_run_is_read_only_and_says_where_live_is_armed(probe):
     _seed([_captured(NAME_PARENS_PLUS)])
-    _open_master_controls(probe, "DRY RUN")
+    _open_master_controls(probe, "Dry run")
     card = probe.page.evaluate(_LIVE_CARD_JS)
     assert card["disabled"] is True, "the live toggle must be disabled"
     assert card["readonly"] == "true", "the live toggle must carry aria-readonly"
@@ -698,7 +698,7 @@ def test_live_card_in_dry_run_is_read_only_and_says_where_live_is_armed(probe):
     _click_live_toggle_every_way(probe)
 
     after = probe.page.evaluate(_LIVE_CARD_JS)
-    assert after["pill"] == "DRY RUN" and after["pillLive"] == "false"
+    assert after["pill"] == "Dry run" and after["pillLive"] == "false"
     assert after["toggleOn"] == "0" and after["ariaChecked"] == "false"
     assert after["cardLive"] == "false" and after["bannerHidden"] is True
     assert after["saveDisabled"] is True, "a click on the read-only toggle must mark nothing dirty"
@@ -708,7 +708,7 @@ def test_live_card_in_dry_run_is_read_only_and_says_where_live_is_armed(probe):
 def test_live_card_in_live_mode_reads_live_read_only_with_the_same_statement(probe, env_file):
     _write_env(env_file, live="True")
     _seed([_captured(NAME_PARENS_PLUS)])
-    _open_master_controls(probe, "LIVE")
+    _open_master_controls(probe, "Live")
     card = probe.page.evaluate(_LIVE_CARD_JS)
     assert card["pillLive"] == "true" and card["cardLive"] == "true"
     assert card["bannerHidden"] is False
@@ -718,7 +718,7 @@ def test_live_card_in_live_mode_reads_live_read_only_with_the_same_statement(pro
     _click_live_toggle_every_way(probe)
 
     after = probe.page.evaluate(_LIVE_CARD_JS)
-    assert after["pill"] == "LIVE" and after["toggleOn"] == "1"
+    assert after["pill"] == "Live" and after["toggleOn"] == "1"
     assert after["saveDisabled"] is True
     assert probe.writes == []
 
@@ -802,7 +802,7 @@ def test_list_entry_counts_only_differing_values_and_states_the_pinned_ones(prob
 
     text = entry_text(probe, norm)
     assert overrides_label(differing) in text, text
-    assert f"{len(params) - differing} pinned at the global value" in text, text
+    assert f"{len(params) - differing} pinned" in text, text
     assert "uses globals" not in text
 
 
@@ -819,7 +819,7 @@ def test_list_entry_for_an_untouched_default_row_reads_zero_overrides_all_pinned
 
     text = entry_text(probe, norm)
     assert "0 overrides" in text, text
-    assert f"{len(params)} pinned at the global value" in text, text
+    assert f"{len(params)} pinned" in text, text
     assert f"{len(locked)} locked" in text, "the lock count must still show"
     tooltips = " ".join(entry_tooltips(probe, norm)).lower()
     assert "will not follow a later global change" in tooltips, entry_tooltips(probe, norm)
@@ -945,3 +945,89 @@ def test_detail_header_shows_the_display_name_and_the_key_only_in_a_title_attrib
         f"the key may appear only in a title attribute, found in {header['attributesWithKey']}"
     )
     assert header["attributesWithKey"].count("title") <= 1, "at most once"
+
+
+# ---------------------------------------------------------------------------
+# Density contract: a ledger of rows, text stated once
+# ---------------------------------------------------------------------------
+
+
+def test_the_detail_is_one_row_per_parameter_under_one_set_of_column_heads(probe):
+    key, record = _captured(NAME_PARENS_PLUS)
+    _seed([(key, record)], {NAME_PARENS_PLUS: (_overridden_params(), list(STORED_LOCKS))})
+    open_settings(probe, 1)
+
+    facts = probe.page.evaluate(
+        """() => {
+             const rows = Array.from(document.querySelectorAll('#sym-detail .override-row'));
+             return {
+               rows: rows.length,
+               heads: document.querySelectorAll('#sym-detail .override-colhead').length,
+               heights: rows.map((r) => r.getBoundingClientRect().height),
+               lockTops: rows.map((r) => r.querySelector('.lock-btn').getBoundingClientRect().top
+                 - r.getBoundingClientRect().top),
+               labelsOutOfFlow: Array.from(document.querySelectorAll('#sym-detail .override-label'))
+                 .every((l) => getComputedStyle(l).position === 'absolute'),
+             };
+           }"""
+    )
+    assert facts["heads"] == 1, "the column heads are stated once, not on every row"
+    assert facts["rows"] == len(PARAM_KEYS)
+    assert all(h <= 48 for h in facts["heights"]), (
+        f"a parameter row is a card again: {facts['heights']}"
+    )
+    assert max(facts["lockTops"]) - min(facts["lockTops"]) < 2, "the lock buttons share one column"
+    assert facts["labelsOutOfFlow"], "the per-row words global and override are not drawn"
+
+
+def test_the_algorithm_parameters_sit_in_two_columns_at_desktop_width(probe):
+    key, record = _captured(NAME_PARENS_PLUS)
+    _seed([(key, record)])
+    open_settings(probe, 1, section="algorithm")
+
+    cards = probe.page.evaluate(
+        """() => Array.from(document.querySelectorAll('#algo-grid .param-card')).map((c) => {
+             const r = c.getBoundingClientRect();
+             return { top: Math.round(r.top), left: Math.round(r.left), height: r.height };
+           })"""
+    )
+    assert len(cards) == len(PARAM_KEYS)
+    assert len({c["left"] for c in cards}) == 2, "the grid has two columns"
+    assert len({c["top"] for c in cards}) == len(PARAM_KEYS) // 2, "two parameters share a row"
+    assert all(c["height"] <= 96 for c in cards), [c["height"] for c in cards]
+
+
+def test_what_pinned_means_is_said_once_for_the_list_not_on_every_entry(probe):
+    first_key, first = _captured(NAME_PARENS_PLUS)
+    second_key, second = _captured(NAME_PARENS_WORDS)
+    _seed([(first_key, first), (second_key, second)])
+    open_settings(probe, 2)
+
+    for name in (NAME_PARENS_PLUS, NAME_PARENS_WORDS):
+        text = entry_text(probe, _norm(name))
+        assert "at the global value" not in text, text
+    subtitle = probe.page.evaluate(
+        "() => document.querySelector('#sec-symphonies .sec-subtitle').innerText"
+    )
+    assert "pinned" in subtitle and "will not follow a later global change" in subtitle, subtitle
+
+
+def test_the_credential_rows_are_quiet_until_something_is_typed(probe):
+    key, record = _captured(NAME_PARENS_PLUS)
+    _seed([(key, record)])
+    open_settings(probe, 1, section="credentials")
+
+    before = probe.page.evaluate(
+        "() => Array.from(document.querySelectorAll('.cred-status'))"
+        ".map((s) => ({ text: s.innerText.trim(), shown: s.getClientRects().length > 0 }))"
+    )
+    assert len(before) == 9
+    assert all(s["text"] == "" and not s["shown"] for s in before), before
+
+    probe.page.locator('.cred-input[data-key="ALPACA_KEY"]').fill("typed-but-never-saved")
+    typed = probe.page.evaluate(
+        "() => document.querySelector('.cred-input[data-key=\"ALPACA_KEY\"]')"
+        ".closest('.cred-field-wrap').querySelector('.cred-status').innerText.trim()"
+    )
+    assert typed == "Ready to save"
+    assert probe.writes == [], "typing is not saving"
