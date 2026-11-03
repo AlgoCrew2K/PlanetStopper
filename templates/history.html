@@ -34,88 +34,186 @@
             --studio-page-max-width: 2400px;
         }
 
-        /* The shared primitives (.hero-section, .section-header, .mini-stats, .sym-card) are
-           defined once in layout.css; the rules below add layout only, never a look. */
+        /* The shared panel (.hero-section) and heading (.section-header) come from layout.css; the
+           page-scoped classes below tighten their rhythm to the 4 px grid and set the heading in
+           sentence case, so the page carries no second definition of either. */
         .hero-section > .section-header:first-child { margin-top: 0; }
 
-        .reason-grid .sym-card { cursor: default; overflow: hidden; }
+        .hp-panel { padding: 20px 24px; margin-bottom: 16px; }
 
-        /* Controls bar */
-        .controls-row {
+        .hp-heading {
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0;
+            text-transform: none;
+            margin: 0 0 12px;
+        }
+
+        /* A panel's heading with one control on its right. */
+        .hp-head {
             display: flex;
             align-items: center;
-            gap: 1rem;
-            margin-bottom: 1.25rem;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+            margin-bottom: 12px;
+            min-height: 28px;
         }
 
-        .ctrl-label {
-            font-size: 0.625rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-muted);
-            font-weight: 700;
-        }
+        .hp-head .hp-heading { margin: 0; }
 
-        .window-selector {
+        /* One row for the window picker, the basis caption and the data stamp. */
+        .hp-toolbar {
             display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+            margin-bottom: 16px;
+        }
+
+        .hp-note {
+            font-size: 11px;
+            line-height: 16px;
+            margin: 0;
+        }
+
+        .hp-toolbar .hp-note { margin-left: 0; }
+        .hp-toolbar .hp-note.hp-asof { margin-left: auto; }
+
+        /* Window picker: one segmented control. */
+        .window-selector {
+            display: inline-flex;
             gap: 2px;
             background: var(--studio-chip-bg);
             border: 1px solid var(--studio-rule);
             border-radius: 8px;
-            padding: 3px;
-            align-self: flex-start;
+            padding: 2px;
         }
 
         .window-selector button {
-            padding: 4px 10px;
+            height: 26px;
+            padding: 0 12px;
             border: none;
-            border-radius: 6px;
+            border-radius: 5px;
             background: transparent;
             color: var(--studio-ink-dim);
-            font-size: 11.5px;
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 500;
             cursor: pointer;
             font-family: var(--studio-sans);
+            transition: color 0.15s ease, background-color 0.15s ease;
         }
 
-        /* The way back from a drilled day: the picker's look, as a standalone control. */
-        .history-exits-btn {
-            padding: 4px 10px;
-            border: 1px solid var(--studio-rule);
-            border-radius: 6px;
-            background: var(--studio-chip-bg);
-            color: var(--studio-ink-dim);
-            font-size: 11.5px;
-            font-weight: 600;
-            cursor: pointer;
-            font-family: var(--studio-sans);
-        }
-
-        .history-exits-btn:hover {
-            color: var(--studio-ink);
-        }
+        .window-selector button:hover { color: var(--studio-ink); }
 
         .window-selector button.active {
             background: var(--studio-paper-hi);
             color: var(--studio-ink);
-            box-shadow: 0 1px 3px var(--studio-rule);
+            box-shadow: 0 0 0 1px var(--studio-rule);
         }
 
-        /* Daily strip chart — fixed 100 px tall, full width (V-30).
+        .window-selector button:focus-visible,
+        .history-exits-btn:focus-visible,
+        .hp-more summary:focus-visible {
+            outline: 2px solid var(--studio-accent);
+            outline-offset: 2px;
+        }
+
+        /* The way back from a drilled day: the picker's look, as a standalone control. */
+        .history-exits-btn {
+            height: 28px;
+            padding: 0 12px;
+            border: 1px solid var(--studio-rule);
+            border-radius: 8px;
+            background: var(--studio-chip-bg);
+            color: var(--studio-ink-dim);
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            font-family: var(--studio-sans);
+            transition: color 0.15s ease;
+        }
+
+        .history-exits-btn[hidden] { display: none; }
+        .history-exits-btn:hover { color: var(--studio-ink); }
+
+        /* Headline figures: one row, a hairline between them, no boxes. */
+        .hp-figs {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .hp-fig {
+            min-width: 0;
+            padding: 0 24px;
+            border-left: 1px solid var(--studio-rule);
+        }
+
+        .hp-fig:first-child { padding-left: 0; border-left: 0; }
+
+        .hp-fig-label {
+            font-size: 12px;
+            line-height: 16px;
+            color: var(--studio-ink-dim);
+        }
+
+        .hp-fig-value {
+            margin-top: 4px;
+            font-size: 24px;
+            line-height: 32px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            color: var(--studio-ink);
+        }
+
+        .hp-fig-note {
+            margin: 12px 0 0;
+            font-size: 11px;
+            line-height: 16px;
+            color: var(--studio-ink-dim);
+        }
+
+        /* Daily strip: the page's one chart, 120 px tall, full width (V-30).
            preserveAspectRatio="none" on the SVG scales bars horizontally
            without distorting bar height at any viewport width. */
         .daily-chart-wrap {
             width: 100%;
-            height: 100px;
+            height: 120px;
             position: relative;
             overflow: hidden;
         }
 
+        #daily-chart-svg { display: block; }
+
+        #daily-chart-svg rect[data-date] {
+            cursor: pointer;
+            transition: opacity 0.15s ease;
+        }
+
+        #daily-chart-svg rect[data-date]:hover { opacity: 1; }
+
+        /* The day whose exits the table below is showing. */
+        #daily-chart-svg rect.is-drilled {
+            opacity: 1;
+            stroke: var(--studio-ink);
+            stroke-width: 1;
+            vector-effect: non-scaling-stroke;
+        }
+
+        .hp-axis {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 8px;
+            font-size: 11px;
+            line-height: 16px;
+            color: var(--studio-ink-dim);
+            font-variant-numeric: tabular-nums;
+        }
+
         .chart-legend {
             display: flex;
-            gap: 1rem;
-            margin-top: 0.625rem;
-            font-size: 0.6875rem;
+            gap: 16px;
+            font-size: 12px;
             color: var(--studio-ink-dim);
         }
 
@@ -124,64 +222,145 @@
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            margin-right: 0.25rem;
+            margin-right: 8px;
             vertical-align: middle;
         }
 
-        /* Reason cards grid — 4 cards per design spec (V-28).
-           cap at 4 columns; never exceeds design's 4-card layout. */
-        .reason-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1rem;
+        /* A state is a dot and one word; the dot's colour names the exit reason. */
+        .hp-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: baseline;
+            background: var(--studio-ink-dim);
         }
 
-        @media (max-width: 1200px) {
-            .reason-grid { grid-template-columns: repeat(2, 1fr); }
-        }
+        .hp-dot--tp { background: var(--studio-plum); }
+        .hp-dot--stop { background: var(--studio-neg); }
+        .hp-dot--vwap { background: var(--studio-cyan); }
+        .hp-dot--bleed { background: var(--studio-warn); }
 
-        @media (max-width: 640px) {
-            .reason-grid { grid-template-columns: 1fr; }
-        }
+        /* Tables: 28 px rows, a hairline between them, figures right-aligned and tabular. */
+        .hp-scroll { overflow-x: auto; }
 
-        .reason-stat {
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-            line-height: 1.6;
-        }
-
-        /* Triggers table */
-        .triggers-tbl {
+        .hp-tbl {
             width: 100%;
-            font-size: 0.8125rem;
             border-collapse: collapse;
+            font-size: 13px;
+            line-height: 20px;
+            font-variant-numeric: tabular-nums;
         }
 
-        .triggers-tbl thead tr {
-            border-bottom: 1px solid var(--studio-border);
-            color: var(--studio-ink-muted);
-            font-size: 0.625rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
+        .hp-tbl th {
+            padding: 4px 12px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--studio-ink-dim);
+            white-space: nowrap;
+            border-bottom: 1px solid var(--studio-rule);
         }
 
-        .triggers-tbl th { padding: 0.375rem 0.75rem; text-align: left; }
-        .triggers-tbl td { padding: 0.375rem 0.75rem; color: var(--studio-ink-dim); }
-        .triggers-tbl tbody tr { border-bottom: 1px solid var(--studio-border-dim, var(--studio-border)); }
+        .hp-tbl td {
+            padding: 4px 12px;
+            color: var(--studio-ink);
+            border-bottom: 1px solid var(--studio-rule);
+        }
+
+        /* The first and last columns sit flush with the panel's own content edges. */
+        .hp-tbl th:first-child, .hp-tbl td:first-child { padding-left: 0; }
+        .hp-tbl th:last-child, .hp-tbl td:last-child { padding-right: 0; }
+        .hp-tbl tbody tr:last-child td { border-bottom: 0; }
+        .hp-tbl th.num, .hp-tbl td.num { text-align: right; }
+        .hp-tbl td.hp-empty-cell { text-align: center; color: var(--studio-ink-dim); padding: 16px 12px; }
+
+        .hp-tbl td.hp-strong { font-weight: 500; }
+
+        /* Win rate: the figure and a thin bar on a track. */
+        .hp-rate { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+
+        .hp-rate svg {
+            display: block;
+            width: 48px;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--studio-rule);
+        }
+
+        /* Collapsed by default: what each reason means. */
+        .hp-more { margin-top: 12px; font-size: 12px; color: var(--studio-ink-dim); }
+        .hp-more[hidden] { display: none; }
+        .hp-more summary { cursor: pointer; width: fit-content; border-radius: 4px; }
+        .hp-more summary:hover { color: var(--studio-ink); }
+        .hp-more dl { margin-top: 8px; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+        .hp-more dt { color: var(--studio-ink); }
+
+        .hp-empty { text-align: center; }
+        .hp-empty-title { font-size: 16px; font-weight: 500; color: var(--studio-ink); margin-bottom: 4px; }
+        .hp-empty-body { font-size: 13px; color: var(--studio-ink-dim); }
+
+        /* Exits table. */
+        .triggers-tbl th:first-child, .triggers-tbl td:first-child { width: 80px; }
+        .triggers-tbl th:nth-child(3), .triggers-tbl td:nth-child(3) { width: 200px; }
+        .triggers-tbl th:nth-child(4), .triggers-tbl td:nth-child(4) { width: 96px; }
+        .triggers-tbl td.hp-time { color: var(--studio-ink-dim); }
+
+        @media (max-width: 900px) {
+            .hp-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+            .hp-fig:nth-child(odd) { padding-left: 0; border-left: 0; }
+        }
 
         /* On a phone the four columns share the table's width and long cells wrap, so no column is
            cut at the scroll box's edge (the drilled-day table, like the closed-day table). */
         @media (max-width: 480px) {
-            .triggers-tbl { table-layout: auto; font-size: 0.6875rem; }
-            .triggers-tbl th, .triggers-tbl td { padding: 0.375rem 0.2rem; }
+            .triggers-tbl { table-layout: auto; font-size: 12px; }
+            .triggers-tbl th, .triggers-tbl td { padding: 4px; }
+            .triggers-tbl th:first-child, .triggers-tbl td:first-child,
+            .triggers-tbl th:nth-child(3), .triggers-tbl td:nth-child(3),
+            .triggers-tbl th:nth-child(4), .triggers-tbl td:nth-child(4) { width: auto; }
         }
 
         @media (max-width: 700px) {
-            .mini-stats { flex-wrap: wrap; }
-            /* about two tiles to a line at 375 px, one at 320 px; never a clipped label */
-            .mini-stats .mini-stat { flex: 1 1 6.25rem; min-width: 0; }
-            .controls-row { flex-wrap: wrap; }
+            .hp-panel { padding: 16px 12px; margin-bottom: 12px; }
+            .hp-toolbar { gap: 8px; }
+            .hp-toolbar .hp-note.hp-asof { margin-left: 0; }
             .window-selector { flex-wrap: wrap; }
+            .window-selector button { height: 32px; padding: 0 10px; }
+            .hp-fig { padding: 0 12px; }
+            .hp-fig-value { font-size: 20px; line-height: 28px; }
+
+            /* The by-reason ledger stacks: the reason on a line, its six figures under it, each
+               with its own label (the header row is hidden). */
+            .hp-reasons thead { display: none; }
+            .hp-reasons tr {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 4px 12px;
+                padding: 8px 0;
+                border-bottom: 1px solid var(--studio-rule);
+            }
+            .hp-reasons tbody tr:last-child { border-bottom: 0; }
+            .hp-reasons td { display: block; padding: 0; border: 0; text-align: left; }
+            .hp-reasons td.num { text-align: left; }
+            .hp-reasons td:first-child { grid-column: 1 / -1; font-weight: 500; }
+            .hp-reasons td[data-label]::before {
+                content: attr(data-label);
+                display: block;
+                font-size: 11px;
+                line-height: 16px;
+                color: var(--studio-ink-dim);
+                font-weight: 400;
+            }
+            .hp-reasons td.hp-empty-cell { grid-column: 1 / -1; text-align: center; }
+            .hp-rate { justify-content: flex-start; }
+            .hp-more dl { grid-template-columns: 1fr; gap: 0; }
+            .hp-more dd { margin-bottom: 8px; }
+        }
+
+        @media (max-width: 480px) {
+            .hp-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
     </style>
 </head>
@@ -191,9 +370,9 @@
 
     <div class="page-wrap" data-testid="history-page">
 
-        <!-- First panel: caption, window picker and headline figures -->
-        <section data-testid="history-controls" class="hero-section">
-            <div class="controls-row">
+        <!-- First panel: window picker, caption and data stamp on one row, then the headline figures -->
+        <section data-testid="history-controls" class="hero-section hp-panel">
+            <div class="hp-toolbar">
                 <div data-testid="window-selector" class="window-selector" id="window-picker">
                     <button data-window="30" class="active" onclick="historySelectWindow(this, '30')">30d</button>
                     <button data-window="60" onclick="historySelectWindow(this, '60')">60d</button>
@@ -203,110 +382,152 @@
                     <button data-window="365" onclick="historySelectWindow(this, '365')">1Y</button>
                     <button data-window="1825" onclick="historySelectWindow(this, '1825')">5Y</button>
                 </div>
-                <span data-testid="history-caption" class="legend-as-of">
+                <span data-testid="history-caption" class="legend-as-of hp-note">
                     Rollup of post-mortem snapshots · how the bot's exits actually scored vs the if-held series
                 </span>
-                <span id="history-data-as-of" data-testid="history-data-as-of" class="legend-as-of" role="status"></span>
+                <span id="history-data-as-of" data-testid="history-data-as-of" class="legend-as-of hp-note hp-asof" role="status"></span>
             </div>
 
-            <!-- Hero stats -->
-            <div data-testid="history-hero" class="mini-stats">
-                <div data-testid="stat-total-alpha" class="mini-stat">
-                    <div class="mini-stat-value" id="val-total-alpha">--</div>
-                    <div class="mini-stat-label">Sum of exit alpha</div>
-                    <div class="mini-stat-note" id="total-alpha-descriptor">Each exit's return minus its if-held return at 15:54 ET, added across the window's exits with no size weighting. Not a portfolio return.</div>
+            <!-- Hero figures -->
+            <div data-testid="history-hero">
+                <div class="hp-figs">
+                    <div data-testid="stat-total-alpha" class="hp-fig">
+                        <div class="hp-fig-label">Sum of exit alpha</div>
+                        <div class="hp-fig-value" id="val-total-alpha">--</div>
+                    </div>
+                    <div data-testid="stat-total-saved" class="hp-fig">
+                        <div class="hp-fig-label">Dollar result</div>
+                        <div class="hp-fig-value" id="val-total-saved">--</div>
+                    </div>
+                    <div data-testid="stat-trigger-count" class="hp-fig">
+                        <div class="hp-fig-label">Triggers</div>
+                        <div class="hp-fig-value" id="val-trigger-count">--</div>
+                    </div>
+                    <div data-testid="stat-win-rate" class="hp-fig">
+                        <div class="hp-fig-label">Win rate</div>
+                        <div class="hp-fig-value" id="val-win-rate">--</div>
+                    </div>
                 </div>
-                <div data-testid="stat-total-saved" class="mini-stat">
-                    <div class="mini-stat-value" id="val-total-saved">--</div>
-                    <div class="mini-stat-label">Dollar result</div>
-                </div>
-                <div data-testid="stat-trigger-count" class="mini-stat">
-                    <div class="mini-stat-value" id="val-trigger-count">--</div>
-                    <div class="mini-stat-label">Triggers</div>
-                </div>
-                <div data-testid="stat-win-rate" class="mini-stat">
-                    <div class="mini-stat-value" id="val-win-rate">--</div>
-                    <div class="mini-stat-label">Win rate</div>
-                </div>
+                <p class="hp-fig-note" id="total-alpha-descriptor">Each exit's return minus its if-held return at 15:54 ET, added across the window's exits with no size weighting. Not a portfolio return.</p>
             </div>
         </section>
 
         <!-- Empty state (shown when no data for window) -->
-        <div data-testid="history-empty-state" id="history-empty-state" class="hero-section"
-             style="display:none;text-align:center;">
-            <div style="font-size:1.5rem;font-weight:700;color:var(--studio-ink-dim);margin-bottom:0.5rem;">
-                No guard alpha data
-            </div>
-            <div style="font-size:0.875rem;color:var(--studio-ink-dim);">
+        <div data-testid="history-empty-state" id="history-empty-state" class="hero-section hp-panel hp-empty"
+             style="display:none;">
+            <div class="hp-empty-title">No guard alpha data</div>
+            <div class="hp-empty-body">
                 No exits recorded for this window. Try a shorter range or check back after market hours.
             </div>
         </div>
 
         <!-- Daily alpha strip chart -->
-        <div data-testid="daily-strip" class="hero-section">
-            <div data-testid="daily-strip-header" class="section-header">Daily sum of exit alpha (pts, unweighted)</div>
-            <div class="daily-chart-wrap">
-                <svg id="daily-chart-svg" width="100%" height="100" preserveAspectRatio="none"></svg>
+        <div data-testid="daily-strip" class="hero-section hp-panel">
+            <div class="hp-head">
+                <div data-testid="daily-strip-header" class="section-header hp-heading">Daily sum of exit alpha (pts, unweighted)</div>
+                <div class="chart-legend">
+                    <span>
+                        <span class="legend-dot" id="legend-pos-dot" style="background:var(--studio-pos);"></span>Positive &alpha;
+                    </span>
+                    <span>
+                        <span class="legend-dot" id="legend-neg-dot" style="background:var(--studio-neg);"></span>Negative &alpha;
+                    </span>
+                </div>
             </div>
-            <div class="chart-legend">
-                <span>
-                    <span class="legend-dot" id="legend-pos-dot" style="background:var(--studio-pos);"></span>
-                    Positive &alpha;
-                </span>
-                <span>
-                    <span class="legend-dot" id="legend-neg-dot" style="background:var(--studio-neg);"></span>
-                    Negative &alpha;
-                </span>
+            <div class="daily-chart-wrap">
+                <svg id="daily-chart-svg" width="100%" height="120" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="hp-axis" aria-hidden="true">
+                <span id="daily-chart-first"></span>
+                <span id="daily-chart-last"></span>
             </div>
         </div>
 
         <!-- By-reason breakdown -->
-        <div data-testid="by-reason-section" class="hero-section">
-            <div data-testid="by-reason-header" class="section-header">By Exit Reason</div>
-            <div class="reason-grid" id="reason-cards">
-                <!-- Server-rendered placeholders ensure data-testid="reason-card" and
-                     reason-bar SVGs are present in the HTML before JS fires (B-13). -->
-                <div data-testid="reason-card" class="sym-card">
-                    <div class="card-name">Take-Profit</div>
-                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-plum)"></rect></svg>
-                    <div class="reason-stat">--</div>
-                </div>
-                <div data-testid="reason-card" class="sym-card">
-                    <div class="card-name">Trailing Stop</div>
-                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>
-                    <div class="reason-stat">--</div>
-                </div>
-                <div data-testid="reason-card" class="sym-card">
-                    <div class="card-name">VWAP Breakdown</div>
-                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-cyan)"></rect></svg>
-                    <div class="reason-stat">--</div>
-                </div>
-                <div data-testid="reason-card" class="sym-card">
-                    <div class="card-name">VWAP Bleed Cut</div>
-                    <svg data-testid="reason-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="100%" height="6" style="display:block;margin-bottom:0.5rem;"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-warn)"></rect></svg>
-                    <div class="reason-stat">--</div>
-                </div>
+        <div data-testid="by-reason-section" class="hero-section hp-panel">
+            <div data-testid="by-reason-header" class="section-header hp-heading">By exit reason</div>
+            <div class="hp-scroll">
+                <table class="hp-tbl hp-reasons">
+                    <thead>
+                        <tr>
+                            <th>Reason</th>
+                            <th class="num">Sum of exit alpha</th>
+                            <th class="num">Dollar result</th>
+                            <th class="num">Triggers</th>
+                            <th class="num">Wins</th>
+                            <th class="num">Win rate</th>
+                            <th class="num">Avg per exit</th>
+                        </tr>
+                    </thead>
+                    <!-- Server-rendered placeholders ensure data-testid="reason-card" and
+                         reason-bar SVGs are present in the HTML before JS fires (B-13). -->
+                    <tbody id="reason-cards">
+                        <tr data-testid="reason-card">
+                            <td><span class="hp-dot hp-dot--tp"></span>Take-Profit</td>
+                            <td class="num" data-label="Sum of exit alpha">--</td>
+                            <td class="num" data-label="Dollar result">--</td>
+                            <td class="num" data-label="Triggers">--</td>
+                            <td class="num" data-label="Wins">--</td>
+                            <td class="num" data-label="Win rate"><span class="hp-rate"><svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="48" height="4"><rect x="0" y="0" width="0" height="4" fill="var(--studio-plum)"></rect></svg>--</span></td>
+                            <td class="num" data-label="Avg per exit">--</td>
+                        </tr>
+                        <tr data-testid="reason-card">
+                            <td><span class="hp-dot hp-dot--stop"></span>Trailing Stop</td>
+                            <td class="num" data-label="Sum of exit alpha">--</td>
+                            <td class="num" data-label="Dollar result">--</td>
+                            <td class="num" data-label="Triggers">--</td>
+                            <td class="num" data-label="Wins">--</td>
+                            <td class="num" data-label="Win rate"><span class="hp-rate"><svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="48" height="4"><rect x="0" y="0" width="0" height="4" fill="var(--studio-neg)"></rect></svg>--</span></td>
+                            <td class="num" data-label="Avg per exit">--</td>
+                        </tr>
+                        <tr data-testid="reason-card">
+                            <td><span class="hp-dot hp-dot--vwap"></span>VWAP Breakdown</td>
+                            <td class="num" data-label="Sum of exit alpha">--</td>
+                            <td class="num" data-label="Dollar result">--</td>
+                            <td class="num" data-label="Triggers">--</td>
+                            <td class="num" data-label="Wins">--</td>
+                            <td class="num" data-label="Win rate"><span class="hp-rate"><svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="48" height="4"><rect x="0" y="0" width="0" height="4" fill="var(--studio-cyan)"></rect></svg>--</span></td>
+                            <td class="num" data-label="Avg per exit">--</td>
+                        </tr>
+                        <tr data-testid="reason-card">
+                            <td><span class="hp-dot hp-dot--bleed"></span>VWAP Bleed Cut</td>
+                            <td class="num" data-label="Sum of exit alpha">--</td>
+                            <td class="num" data-label="Dollar result">--</td>
+                            <td class="num" data-label="Triggers">--</td>
+                            <td class="num" data-label="Wins">--</td>
+                            <td class="num" data-label="Win rate"><span class="hp-rate"><svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="48" height="4"><rect x="0" y="0" width="0" height="4" fill="var(--studio-warn)"></rect></svg>--</span></td>
+                            <td class="num" data-label="Avg per exit">--</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
+            <!-- Filled by renderReasonDescriptions() for the reasons the window holds; collapsed by default. -->
+            <details class="hp-more" id="reason-descriptions" data-testid="reason-descriptions" hidden>
+                <summary>What the exit reasons mean</summary>
+                <dl id="reason-descriptions-list"></dl>
+            </details>
         </div>
 
         <!-- Recent triggers -->
-        <div data-testid="recent-triggers" class="hero-section">
-            <div class="section-header" id="todays-exits-heading">{{ exits_label }}</div>
-            <button type="button" class="history-exits-btn" data-testid="history-todays-exits-btn" hidden
-                    onclick="historyShowTodaysExits()">{{ exits_label }}</button>
-            <div style="overflow-x:auto;">
-                <table class="triggers-tbl">
+        <div data-testid="recent-triggers" class="hero-section hp-panel">
+            <div class="hp-head">
+                <div class="section-header hp-heading" id="todays-exits-heading">{{ exits_label }}</div>
+                <button type="button" class="history-exits-btn" data-testid="history-todays-exits-btn" hidden
+                        onclick="historyShowTodaysExits()">{{ exits_label }}</button>
+            </div>
+            <div class="hp-scroll">
+                <table class="triggers-tbl hp-tbl">
                     <thead>
                         <tr>
                             <th>Time</th>
                             <th>Symphony</th>
                             <th>Reason</th>
-                            <th>Detail</th>
+                            <th class="num">Detail</th>
                         </tr>
                     </thead>
                     <tbody id="triggers-tbody">
                         <tr>
-                            <td colspan="4" style="text-align:center;padding:1rem;color:var(--studio-ink-dim);">
+                            <td colspan="4" class="hp-empty-cell">
                                 Loading…
                             </td>
                         </tr>

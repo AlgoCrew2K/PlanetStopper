@@ -38,114 +38,176 @@
 
         /* .page-wrap skeleton lives in static/layout.css (shared single source) */
 
-        /* The shared primitives (.hero-section, .section-header, .mini-stats, .legend-as-of)
-           live in static/layout.css; the rules here add layout only, never a look. */
+        /* The shared panel (.hero-section) and heading (.section-header) come from layout.css; the
+           page-scoped classes below tighten their rhythm to the 4 px grid and set the heading in
+           sentence case, so the page carries no second definition of either. */
         .hero-section > .section-header:first-child { margin-top: 0; }
 
-        /* First panel: the controls on the left, the basis and observation captions on the right */
-        .perf-panel-top {
+        .hp-panel { padding: 20px 24px; margin-bottom: 16px; }
+
+        .hp-heading {
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0;
+            text-transform: none;
+            margin: 0 0 12px;
+        }
+
+        /* A panel's heading with its legend or control on the right. */
+        .hp-head {
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            align-items: flex-start;
             flex-wrap: wrap;
-            gap: clamp(0.75rem, 1.5vw, 1.5rem);
-            margin-bottom: 1.25rem;
+            gap: 8px 16px;
+            margin-bottom: 12px;
+            min-height: 28px;
         }
 
-        .perf-captions {
-            display: flex;
-            flex-direction: column;
-            gap: 0.25rem;
-            min-width: 0;
+        .hp-head .hp-heading { margin: 0; }
+
+        .hp-note {
+            font-size: 11px;
+            line-height: 16px;
+            margin: 0;
         }
 
-        /* Controls: scope toggle + optional symphony picker + window toggle — right-aligned row */
-        .perf-controls {
+        /* First panel: the controls on one row, the basis, observation and stamp captions on the next. */
+        .hp-toolbar {
             display: flex;
             align-items: center;
             flex-wrap: wrap;
-            gap: clamp(0.5rem, 0.8vw, 1rem);
+            gap: 8px 16px;
+            margin-bottom: 12px;
+        }
+
+        .hp-toolbar .hp-note { margin-left: 0; }
+        .hp-toolbar .hp-note.hp-asof { margin-left: auto; }
+
+        .perf-picker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .perf-picker-label {
+            font-size: 12px;
+            color: var(--studio-ink-dim);
         }
 
         .seg-control {
-            display: flex;
+            display: inline-flex;
             gap: 2px;
             background: var(--studio-chip-bg);
             border: 1px solid var(--studio-rule);
             border-radius: 8px;
-            padding: 3px;
+            padding: 2px;
         }
 
         .seg-control button {
-            padding: clamp(3px, 0.3vw, 6px) clamp(8px, 0.8vw, 14px);
+            height: 26px;
+            padding: 0 12px;
             border: none;
-            border-radius: 6px;
+            border-radius: 5px;
             background: transparent;
             color: var(--studio-ink-dim);
-            font-size: clamp(11px, 0.75vw, 14px);
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 500;
             cursor: pointer;
             font-family: var(--studio-sans);
             white-space: nowrap;
+            transition: color 0.15s ease, background-color 0.15s ease;
         }
+
+        .seg-control button:hover { color: var(--studio-ink); }
 
         .seg-control button.active {
             background: var(--studio-paper-hi);
             color: var(--studio-ink);
-            box-shadow: 0 1px 3px var(--studio-rule);
+            box-shadow: 0 0 0 1px var(--studio-rule);
+        }
+
+        .seg-control button:focus-visible,
+        .control-select:focus-visible {
+            outline: 2px solid var(--studio-accent);
+            outline-offset: 2px;
         }
 
         .control-select {
+            height: 32px;
+            min-width: 16rem;
             background: var(--studio-bg);
             color: var(--studio-ink);
-            border: 1px solid var(--studio-border);
-            border-radius: 0.25rem;
-            padding: 0.375rem 0.75rem;
-            font-size: 0.875rem;
+            border: 1px solid var(--studio-rule);
+            border-radius: 8px;
+            padding: 0 12px;
+            font-size: 13px;
         }
 
-        .control-select:focus {
-            outline: none;
-            border-color: var(--studio-accent);
+        /* Headline figures: one row, a hairline between them, no boxes. */
+        .hp-figs {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
         }
 
-        /* Chart heading + legend inline on same row */
-        .chart-block-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-bottom: 0.75rem;
+        .hp-fig {
+            min-width: 0;
+            padding: 0 24px;
+            border-left: 1px solid var(--studio-rule);
         }
 
-        /* The title is a .section-header; inside this flex row it carries no outer margin. */
-        .chart-block-header .section-header { margin: 0; }
+        .hp-fig:first-child { padding-left: 0; border-left: 0; }
 
-        /* Legend inline — right of heading */
+        .hp-fig-label {
+            font-size: 12px;
+            line-height: 16px;
+            color: var(--studio-ink-dim);
+        }
+
+        .hp-fig-value {
+            margin-top: 4px;
+            font-size: 24px;
+            line-height: 32px;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+            color: var(--studio-ink);
+        }
+
+        .hp-fig-note {
+            margin-top: 4px;
+            font-size: 11px;
+            line-height: 16px;
+            color: var(--studio-ink-dim);
+        }
+
+        .hp-fig-note:empty { display: none; }
+
+        /* Chart legend: a swatch and a name per series, on the heading's row. */
         .perf-chart-legend {
             display: flex;
-            gap: 1.25rem;
+            flex-wrap: wrap;
+            gap: 4px 16px;
             align-items: center;
         }
 
         .legend-item {
             display: flex;
             align-items: center;
-            gap: 0.375rem;
-            font-size: 0.75rem;
+            gap: 8px;
+            font-size: 12px;
             color: var(--studio-ink-dim);
+            white-space: nowrap;
         }
 
         .legend-swatch {
-            width: 1.5rem;
+            width: 24px;
             height: 2px;
             background: var(--studio-accent);
             border-radius: 1px;
         }
 
         .legend-swatch-dashed {
-            width: 1.5rem;
+            width: 24px;
             height: 2px;
             border-top: 2px dashed var(--studio-ink-dim);
         }
@@ -156,150 +218,172 @@
             height: clamp(320px, 15vw, 620px);
         }
 
-        /* Metrics table */
-        /* Non-expert framing caption below the metrics heading (Phase 2). */
+        /* Non-expert framing caption below a table's heading. */
         .metrics-caption {
-            font-size: 0.75rem;
+            font-size: 12px;
+            line-height: 16px;
             color: var(--studio-ink-dim);
-            margin-bottom: 0.75rem;
-            line-height: 1.4;
+            margin-bottom: 12px;
         }
+
+        .metrics-caption:empty { display: none; }
 
         .metrics-overflow {
             overflow-x: auto;
         }
 
+        /* Tables: 28 px rows, a hairline between them, figures right-aligned and tabular. */
         .metrics-tbl {
             width: 100%;
-            font-size: clamp(0.8125rem, 0.9vw, 1rem);
+            font-size: 13px;
+            line-height: 20px;
             border-collapse: collapse;
             table-layout: fixed;
+            /* Table numbers use the page's sans face with tabular figures (as the dashboard's). */
+            font-variant-numeric: tabular-nums;
         }
 
-        /* Fluid column widths: label ~40%, three value columns share the rest */
+        /* Fluid column widths: label ~36%, the value columns share the rest */
         .metrics-tbl th:first-child,
         .metrics-tbl td:first-child {
-            width: 40%;
+            width: 36%;
         }
 
         .metrics-tbl thead tr {
             text-align: left;
-            color: var(--studio-ink-muted);
-            font-size: clamp(0.625rem, 0.65vw, 0.75rem);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            border-bottom: 1px solid var(--studio-border);
+            color: var(--studio-ink-dim);
+            font-size: 12px;
+            border-bottom: 1px solid var(--studio-rule);
         }
 
         .metrics-tbl th {
-            padding: clamp(0.375rem, 0.5vw, 0.625rem) clamp(0.5rem, 0.75vw, 1rem);
+            padding: 4px 12px;
+            font-weight: 400;
+            vertical-align: bottom;
+            border-bottom: 1px solid var(--studio-rule);
         }
 
-        /* Table numbers use the page's sans face with tabular figures (as the dashboard's). */
-        .metrics-tbl tbody {
-            font-variant-numeric: tabular-nums;
-            color: var(--studio-ink);
-        }
-
-        .metrics-tbl tbody tr {
-            border-bottom: 1px solid var(--studio-border-dim, var(--studio-border));
-        }
-
-        /* Bold primary rows: larger font + extra vertical padding */
-        .metrics-tbl tbody tr[data-primary="true"] td {
-            font-size: clamp(0.875rem, 1vw, 1.125rem);
-            font-weight: 700;
-            padding-top: 0.625rem;
-            padding-bottom: 0.625rem;
-        }
-
-        /* Dark theme: boost primary row background so bold rows are distinct */
-        [data-theme="dark"] .metrics-tbl tbody tr[data-primary="true"] {
-            background: var(--studio-surface-raised, rgba(255,255,255,0.04));
-        }
+        .metrics-tbl tbody { color: var(--studio-ink); }
 
         .metrics-tbl td {
-            padding: clamp(0.375rem, 0.5vw, 0.625rem) clamp(0.5rem, 0.75vw, 1rem);
+            padding: 4px 12px;
+            border-bottom: 1px solid var(--studio-rule);
+        }
+
+        /* The first and last columns sit flush with the panel's own content edges. */
+        .metrics-tbl th:first-child,
+        .metrics-tbl td:first-child { padding-left: 0; }
+        .metrics-tbl th:last-child,
+        .metrics-tbl td:last-child { padding-right: 0; }
+        .metrics-tbl tbody tr:last-child td { border-bottom: 0; }
+
+        /* Primary rows read by size and ink, not by weight. */
+        .metrics-tbl tbody tr[data-primary="true"] td {
+            font-size: 14px;
+            font-weight: 500;
         }
 
         .metrics-tbl td.delta {
             text-align: right;
-            font-weight: 600;
         }
 
-        /* Insufficient banner */
+        /* A count with its retained-days note quieter beside it. */
+        .hp-muted { color: var(--studio-ink-dim); }
+
+        /* Insufficient banner: a caveat, kept plain. */
         .insufficient-banner {
-            margin-bottom: 1.5rem;
-            background: color-mix(in srgb, var(--studio-warn) 15%, transparent);
-            border: 1px solid color-mix(in srgb, var(--studio-warn) 40%, transparent);
+            margin-bottom: 16px;
+            background: var(--studio-warn-tint);
+            border: 1px solid var(--studio-warn-border);
             color: var(--studio-ink);
-            padding: 0.75rem 1rem;
-            border-radius: 0.5rem;
-            font-size: 0.875rem;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 20px;
         }
 
-        /* Guard-Alpha stop-justification verdict chip — semantic color by class
-           (mirrors templates/ai_advisor.html's .prism-sentiment-chip --modifier
-           BEM pattern; CSS vars only, no raw colors). */
+        .insufficient-banner strong { font-weight: 500; }
+
+        /* The empty state for a per-symphony scope with no symphony picked. */
+        .hp-empty { text-align: center; }
+        .hp-empty-title { font-size: 16px; font-weight: 500; color: var(--studio-ink); margin-bottom: 4px; }
+        .hp-empty-body { font-size: 13px; color: var(--studio-ink-dim); }
+
+        /* Guard-Alpha stop-justification verdict: a status dot and one word, coloured by class
+           (mirrors templates/ai_advisor.html's .prism-sentiment-chip --modifier BEM pattern;
+           CSS vars only, no raw colors). */
         .precond-verdict-chip {
-            display: inline-block;
-            padding: 0.2rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.6875rem;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            border: 1px solid;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--studio-ink);
+            white-space: nowrap;
         }
 
-        .precond-verdict-chip--sufficient-met {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-            background: rgba(31, 122, 77, 0.07);
+        .precond-verdict-chip::before {
+            content: "";
+            flex: none;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--precond-dot, var(--studio-ink-dim));
         }
 
-        .precond-verdict-chip--sufficient-likely {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
+        .precond-verdict-chip--sufficient-met { --precond-dot: var(--studio-pos); }
+        .precond-verdict-chip--sufficient-likely { --precond-dot: var(--studio-pos); }
+        .precond-verdict-chip--not-met { --precond-dot: var(--studio-ink-dim); }
+        .precond-verdict-chip--negative-edge { --precond-dot: var(--studio-neg); }
+        .precond-verdict-chip--insufficient-data { --precond-dot: var(--studio-warn); }
+
+        @media (max-width: 900px) {
+            .hp-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+            .hp-fig:nth-child(odd) { padding-left: 0; border-left: 0; }
         }
 
-        .precond-verdict-chip--not-met {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
-        }
-
-        .precond-verdict-chip--negative-edge {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
-        }
-
-        .precond-verdict-chip--insufficient-data {
-            color: var(--studio-warn);
-            border-color: var(--studio-warn);
-            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
-        }
-
-        /* Narrow screens: headline tiles wrap two per line so no label is truncated, and each
-           table keeps its columns' own widths so its container scrolls instead of the columns
-           overlapping. Layout properties only. */
+        /* Narrow screens: the headline leads on its own line with the other three figures under
+           it, and each table keeps its columns' own widths so its container scrolls instead of the
+           columns overlapping. Layout properties only. */
         @media (max-width: 700px) {
-            .mini-stats { flex-wrap: wrap; }
-            /* about two tiles to a line at 375 px, one at 320 px; never a clipped label */
-            .mini-stats .mini-stat { flex: 1 1 6.25rem; min-width: 0; }
-            .perf-captions .legend-as-of { margin-left: 0; }
+            .hp-panel { padding: 16px 12px; margin-bottom: 12px; }
+            .hp-toolbar { gap: 8px; }
+            .hp-toolbar .hp-note.hp-asof { margin-left: 0; }
+            .hp-figs { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 0; }
+            .hp-fig { padding: 0 12px; }
+            .hp-fig:nth-child(odd) { padding-left: 12px; border-left: 1px solid var(--studio-rule); }
+            .hp-fig:first-child {
+                grid-column: 1 / -1;
+                padding: 0 0 12px;
+                margin-bottom: 12px;
+                border-left: 0;
+                border-bottom: 1px solid var(--studio-rule);
+            }
+            .hp-fig:nth-child(2) { padding-left: 0; border-left: 0; }
+            .hp-fig-value { font-size: 20px; line-height: 28px; }
             .seg-control { flex-wrap: wrap; }
-            .control-select { min-width: 0; max-width: 100%; }
-            #symphony-picker { min-width: 0 !important; width: 100%; }
-            .chart-canvas-wrap { min-width: 0; }
+            .seg-control button { height: 30px; padding: 0 10px; }
+            .perf-picker { width: 100%; }
+            .control-select { min-width: 0; width: 100%; max-width: 100%; }
+            .chart-canvas-wrap { min-width: 0; height: 260px; }
             .chart-canvas-wrap canvas { max-width: 100%; }
             .metrics-tbl { table-layout: auto; }
             .metrics-tbl th:first-child,
             .metrics-tbl td:first-child { width: auto; }
             .metrics-tbl th,
-            .metrics-tbl td { white-space: nowrap; }
+            .metrics-tbl td { white-space: nowrap; padding: 4px 8px; }
+
+            /* The risk-metrics table has four columns and fits the screen: its labels and headers
+               wrap, its figures do not. */
+            .metrics-tbl--fit { table-layout: fixed; font-size: 12px; }
+            .metrics-tbl--fit th,
+            .metrics-tbl--fit td { padding: 4px; }
+            .metrics-tbl--fit th { white-space: normal; }
+            .metrics-tbl--fit td { white-space: nowrap; }
+            .metrics-tbl--fit th:first-child,
+            .metrics-tbl--fit td:first-child { width: 30%; white-space: normal; }
+            .metrics-tbl--fit th:nth-child(2),
+            .metrics-tbl--fit th:nth-child(3) { width: 20%; }
+            .metrics-tbl--fit tbody tr[data-primary="true"] td { font-size: 13px; }
         }
     </style>
 </head>
@@ -310,43 +394,41 @@
     <div class="page-wrap" data-testid="performance-page">
         <!-- First panel: controls, the basis and observation captions, the stability banner and the
              headline strip. The page has no title card; the nav marks the page. -->
-        <section data-testid="perf-controls-panel" class="hero-section">
-            <div class="perf-panel-top">
-                <!-- Scope + window controls -->
-                <div class="perf-controls">
-                    <div class="seg-control" data-testid="scope-control" id="scope-toggle" role="group" aria-label="Scope">
-                        <button type="button" data-value="aggregate" data-testid="scope-btn-aggregate" class="active" aria-pressed="true">Aggregate</button>
-                        <button type="button" data-value="symphony" data-testid="scope-btn-symphony" aria-pressed="false">Per-symphony</button>
-                    </div>
-                    <div id="symphony-picker-wrapper" style="display:none">
-                        <label for="symphony-picker" class="sr-only">Symphony</label>
-                        <select id="symphony-picker" data-testid="symphony-picker" class="control-select" style="min-width:14rem;">
-                            <option value="" disabled selected>Loading...</option>
-                        </select>
-                    </div>
-                    <!-- Each button's data-value is the window token /api/performance resolves to a
-                         calendar cutoff (the dashboard picker's cutoffs). The page opens on 60d, the
-                         shortest window that can hold the minimum-history rule: 30d spans about 21
-                         trading days, below the {{ min_history_days }} observations that rule needs. -->
-                    <div class="seg-control" data-testid="window-control" id="days-picker" role="group" aria-label="Window">
-                        <button type="button" data-value="30d" data-testid="window-btn-30">30d</button>
-                        <button type="button" data-value="60d" data-testid="window-btn-60" class="active" aria-pressed="true">60d</button>
-                        <button type="button" data-value="90d" data-testid="window-btn-90">90d</button>
-                        <button type="button" data-value="125d" data-testid="window-btn-125">125d</button>
-                        <button type="button" data-value="ytd" data-testid="window-btn-ytd">YTD</button>
-                        <button type="button" data-value="1y" data-testid="window-btn-1y">1Y</button>
-                        <button type="button" data-value="5y" data-testid="window-btn-5y">5Y</button>
-                    </div>
+        <section data-testid="perf-controls-panel" class="hero-section hp-panel">
+            <!-- Scope + window controls -->
+            <div class="hp-toolbar">
+                <div class="seg-control" data-testid="scope-control" id="scope-toggle" role="group" aria-label="Scope">
+                    <button type="button" data-value="aggregate" data-testid="scope-btn-aggregate" class="active" aria-pressed="true">Aggregate</button>
+                    <button type="button" data-value="symphony" data-testid="scope-btn-symphony" aria-pressed="false">Per-symphony</button>
                 </div>
-                <div class="perf-captions">
-                    <p class="legend-as-of">
-                        Live (if held) vs Planet Stopper-exited (shadow) · daily portfolio series, value-weighted
-                    </p>
-                    <!-- Observation count moved out of the headline strip into a caption (Phase 2,
-                         ux-design-deliverable.md §Change 1). Populated by renderObsCount(). -->
-                    <p class="legend-as-of" data-testid="obs-caption" id="obs-caption">--</p>
-                    <p class="legend-as-of" data-testid="performance-data-as-of" id="performance-data-as-of" role="status"></p>
+                <div id="symphony-picker-wrapper" class="perf-picker" style="display:none">
+                    <label for="symphony-picker" class="perf-picker-label">Symphony</label>
+                    <select id="symphony-picker" data-testid="symphony-picker" class="control-select">
+                        <option value="" disabled selected>Loading...</option>
+                    </select>
                 </div>
+                <!-- Each button's data-value is the window token /api/performance resolves to a
+                     calendar cutoff (the dashboard picker's cutoffs). The page opens on 60d, the
+                     shortest window that can hold the minimum-history rule: 30d spans about 21
+                     trading days, below the {{ min_history_days }} observations that rule needs. -->
+                <div class="seg-control" data-testid="window-control" id="days-picker" role="group" aria-label="Window">
+                    <button type="button" data-value="30d" data-testid="window-btn-30">30d</button>
+                    <button type="button" data-value="60d" data-testid="window-btn-60" class="active" aria-pressed="true">60d</button>
+                    <button type="button" data-value="90d" data-testid="window-btn-90">90d</button>
+                    <button type="button" data-value="125d" data-testid="window-btn-125">125d</button>
+                    <button type="button" data-value="ytd" data-testid="window-btn-ytd">YTD</button>
+                    <button type="button" data-value="1y" data-testid="window-btn-1y">1Y</button>
+                    <button type="button" data-value="5y" data-testid="window-btn-5y">5Y</button>
+                </div>
+            </div>
+            <div class="hp-toolbar perf-captions">
+                <p class="legend-as-of hp-note">
+                    Live (if held) vs Planet Stopper-exited (shadow) · daily portfolio series, value-weighted
+                </p>
+                <!-- Observation count moved out of the headline strip into a caption (Phase 2,
+                     ux-design-deliverable.md §Change 1). Populated by renderObsCount(). -->
+                <p class="legend-as-of hp-note" data-testid="obs-caption" id="obs-caption">--</p>
+                <p class="legend-as-of hp-note hp-asof" data-testid="performance-data-as-of" id="performance-data-as-of" role="status"></p>
             </div>
 
             <!-- Insufficient-history banner -->
@@ -356,35 +438,35 @@
                 quantstats metrics. Showing what's available so far.
             </div>
 
-            <!-- Headline strip — 4 equal tiles (V-14).
+            <!-- Headline strip — 4 figures in one row (V-14).
                  Phase 2 leads with risk-adjusted evidence (ux-design-deliverable.md §Change 1):
                  Guard Alpha | Sharpe Delta | MDD Reduction | Sortino Delta. -->
-            <div data-testid="headline-strip" class="mini-stats">
-                <div data-testid="guard-alpha-stat" class="mini-stat">
-                    <div class="mini-stat-value" id="guard-alpha-value">--</div>
-                    <div class="mini-stat-label" id="guard-alpha-label">Guard effect on portfolio</div>
-                    <div class="mini-stat-note" id="guard-alpha-basis"></div>
+            <div data-testid="headline-strip" class="hp-figs">
+                <div data-testid="guard-alpha-stat" class="hp-fig">
+                    <div class="hp-fig-label" id="guard-alpha-label">Guard effect on portfolio</div>
+                    <div class="hp-fig-value" id="guard-alpha-value">--</div>
+                    <div class="hp-fig-note" id="guard-alpha-basis"></div>
                 </div>
-                <div data-testid="sharpe-delta-stat" class="mini-stat">
-                    <div class="mini-stat-value" id="sharpe-delta-value">--</div>
-                    <div class="mini-stat-label">Sharpe improvement</div>
+                <div data-testid="sharpe-delta-stat" class="hp-fig">
+                    <div class="hp-fig-label">Sharpe improvement</div>
+                    <div class="hp-fig-value" id="sharpe-delta-value">--</div>
                 </div>
-                <div data-testid="mdd-reduction-stat" class="mini-stat">
-                    <div class="mini-stat-value" id="mdd-reduction-value">--</div>
-                    <div class="mini-stat-label">Max DD reduction</div>
+                <div data-testid="mdd-reduction-stat" class="hp-fig">
+                    <div class="hp-fig-label">Max DD reduction</div>
+                    <div class="hp-fig-value" id="mdd-reduction-value">--</div>
                 </div>
-                <div data-testid="sortino-delta-stat" class="mini-stat">
-                    <div class="mini-stat-value" id="sortino-delta-value">--</div>
-                    <div class="mini-stat-label">Sortino improvement</div>
+                <div data-testid="sortino-delta-stat" class="hp-fig">
+                    <div class="hp-fig-label">Sortino improvement</div>
+                    <div class="hp-fig-value" id="sortino-delta-value">--</div>
                 </div>
             </div>
         </section>
 
         <!-- Chart block -->
-        <section data-testid="perf-chart-block" class="hero-section">
+        <section data-testid="perf-chart-block" class="hero-section hp-panel">
             <!-- Heading + legend inline on same row (V-16) -->
-            <div class="chart-block-header">
-                <h2 class="section-header">Cumulative returns</h2>
+            <div class="hp-head">
+                <h2 class="section-header hp-heading">Cumulative returns</h2>
                 <div data-testid="perf-chart-legend" class="perf-chart-legend">
                     <div class="legend-item">
                         <div class="legend-swatch"></div>
@@ -402,15 +484,15 @@
         </section>
 
         <!-- Metrics table -->
-        <section data-testid="metrics-table" class="hero-section">
-            <h2 class="section-header">Risk Metrics</h2>
+        <section data-testid="metrics-table" class="hero-section hp-panel">
+            <h2 class="section-header hp-heading">Risk metrics</h2>
             <!-- Non-expert framing for the delta column (Phase 2, ux-design-deliverable.md §Change 3). -->
             <p class="metrics-caption">
                 Positive deltas on risk metrics (Sharpe, Sortino, drawdown reduction) mean the bot
                 improved risk-adjusted outcomes vs holding through.
             </p>
             <div class="metrics-overflow">
-                <table class="metrics-tbl">
+                <table class="metrics-tbl metrics-tbl--fit">
                     <thead>
                         <tr>
                             <th>Metric</th>
@@ -424,34 +506,34 @@
                          labels mirror METRIC_LABELS (ux-design-deliverable.md §Change 2). -->
                     <tbody id="metrics-tbody">
                         <tr data-testid="metric-row" data-primary="true">
-                            <td>Sharpe</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Sharpe</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Sortino</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Sortino</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row" data-primary="true">
-                            <td>Max DD</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-neg)"></rect></svg>--</td>
+                            <td>Max DD</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Max DD reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Max DD reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Calmar</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Calmar</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Annualized volatility</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Annualized volatility</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Volatility reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Volatility reduction</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row" data-primary="true">
-                            <td>Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Total return</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Annualized return (CAGR)</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Annualized return (CAGR)</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                         <tr data-testid="metric-row">
-                            <td>Win rate</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td style="text-align:right"><svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" preserveAspectRatio="none" width="80" height="6"><rect x="0" y="1" width="0" height="4" rx="2" fill="var(--studio-accent)"></rect></svg>--</td>
+                            <td>Win rate</td><td style="text-align:right">--</td><td style="text-align:right">--</td><td class="delta">--</td>
                         </tr>
                     </tbody>
                 </table>
@@ -459,8 +541,8 @@
         </section>
 
         <!-- Guard-Alpha stop-justification preconditions panel (Kaminski & Lo 2014) -->
-        <section data-testid="guard-alpha-preconditions-panel" class="hero-section">
-            <h2 class="section-header">Stop-Justification Preconditions</h2>
+        <section data-testid="guard-alpha-preconditions-panel" class="hero-section hp-panel">
+            <h2 class="section-header hp-heading">Stop-justification preconditions</h2>
             <p class="metrics-caption">
                 Kaminski &amp; Lo (2014): a trailing stop is statistically justified only when
                 daily returns show persistence (positive autocorrelation) and a favorable
@@ -491,7 +573,7 @@
             <!-- One panel-level note when some replay samples are cold (no cached replay series
                  yet); renderGuardAlphaPreconditions() fills and shows it. -->
             <p data-testid="guard-alpha-preconditions-note" id="guard-alpha-preconditions-note"
-                class="metrics-caption" hidden></p>
+                class="metrics-caption" style="margin-top:12px" hidden></p>
             <p data-testid="guard-alpha-preconditions-empty-state" id="guard-alpha-preconditions-empty-state"
                 class="metrics-caption" style="display:none">
                 No symphony has enough persistence-check data yet — this populates after the
@@ -504,8 +586,8 @@
              names its actual retained-history days, never implies a full nominal
              window the retention policy can't back) + an estimated annual friction
              drag. Populated by fetchExitTurnover() in static/performance.js. -->
-        <section data-testid="exit-turnover-panel" class="hero-section">
-            <h2 class="section-header">Exit Turnover &amp; Estimated Friction Drag</h2>
+        <section data-testid="exit-turnover-panel" class="hero-section hp-panel">
+            <h2 class="section-header hp-heading">Exit turnover &amp; estimated friction drag</h2>
             <p class="metrics-caption">
                 Exit-leg trigger counts per symphony over trailing 30/90/365-day windows,
                 with the actual retained-history days each window's count is based on
@@ -520,7 +602,7 @@
                             <th style="text-align:right">30d</th>
                             <th style="text-align:right">90d</th>
                             <th style="text-align:right">365d</th>
-                            <th style="text-align:right">Est. Annual Friction Drag</th>
+                            <th style="text-align:right">Est. annual friction drag</th>
                         </tr>
                     </thead>
                     <!-- Populated by renderExitTurnover() via DOM APIs (textContent/

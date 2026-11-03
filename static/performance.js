@@ -134,8 +134,25 @@
         return out;
     }
 
-    // Chart.js plugin: draws filled pill (bot) and hollow rect (live) endpoint
-    // callout labels at the right edge of the chart (V-15).
+    var MONTH_ABBREVIATIONS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+    // "Aug 31" from an ISO day, when the whole series sits in one calendar year; a series that
+    // crosses a year keeps its ISO days (the year is part of what the tick tells), and a label that
+    // is not an ISO day is shown as sent.
+    function tickDayLabel(label, spansYears) {
+        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(label));
+        if (!m || spansYears || Number(m[2]) < 1 || Number(m[2]) > 12) return String(label);
+        return MONTH_ABBREVIATIONS[Number(m[2]) - 1] + ' ' + Number(m[3]);
+    }
+
+    function seriesSpansYears(dates) {
+        if (!dates || dates.length < 2) return false;
+        return String(dates[0]).slice(0, 4) !== String(dates[dates.length - 1]).slice(0, 4);
+    }
+
+    // Chart.js plugin: writes each series' final figure at the right edge of the chart, in the
+    // series' own ink (the bot's in the accent, the held line's in the dim ink), on a paper ground
+    // so a gridline never runs through it. Two labels that would overlap are moved apart (V-15).
     var endpointLabelPlugin = {
         id: 'endpointLabels',
         afterDraw: function (chart) {
@@ -161,52 +178,36 @@
             var botLabel  = (botVal  >= 0 ? '+' : '') + botVal.toFixed(1)  + '%';
 
             var cs = getComputedStyle(document.documentElement);
-            var accentColor = cs.getPropertyValue('--studio-accent').trim() || '#1f7a4d';
-            var paperColor  = cs.getPropertyValue('--studio-paper').trim()  || '#ffffff';
-            var inkDimColor = cs.getPropertyValue('--studio-ink-dim').trim() || '#64748b';
-            var ruleColor   = cs.getPropertyValue('--studio-rule').trim()    || '#e2e8f0';
+            var accentColor = cs.getPropertyValue('--studio-accent').trim();
+            var paperColor  = cs.getPropertyValue('--studio-paper').trim();
+            var inkDimColor = cs.getPropertyValue('--studio-ink-dim').trim();
+            var fontFamily  = getComputedStyle(document.body).fontFamily;
+
+            var lineHeight = 16;
+            var labels = [
+                { text: botLabel,  x: lastBot.x,  y: lastBot.y,  ink: accentColor },
+                { text: liveLabel, x: lastLive.x, y: lastLive.y, ink: inkDimColor },
+            ];
+            // Upper label first; when the two sit closer than a line, each moves half the shortfall.
+            labels.sort(function (p, q) { return p.y - q.y; });
+            var gap = labels[1].y - labels[0].y;
+            if (gap < lineHeight) {
+                var shift = (lineHeight - gap) / 2;
+                labels[0].y -= shift;
+                labels[1].y += shift;
+            }
 
             ctx.save();
-            ctx.font = '700 11px Manrope, ui-sans-serif, system-ui, sans-serif';
-
-            var pad = 6;
-            var h = 18;
-
-            // Bot — filled pill
-            var bw = ctx.measureText(botLabel).width + pad * 2;
-            var bx = lastBot.x + 6;
-            var by = lastBot.y - h / 2;
-            ctx.fillStyle = accentColor;
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(bx, by, bw, h, 3);
-            } else {
-                ctx.rect(bx, by, bw, h);
-            }
-            ctx.fill();
-            ctx.fillStyle = '#ffffff';
+            ctx.font = '500 11px ' + fontFamily;
             ctx.textBaseline = 'middle';
             ctx.textAlign = 'left';
-            ctx.fillText(botLabel, bx + pad, by + h / 2);
-
-            // Live — hollow rect (filled with paper colour + border)
-            var lw = ctx.measureText(liveLabel).width + pad * 2;
-            var lx = lastLive.x + 6;
-            var ly = lastLive.y - h / 2;
-            ctx.fillStyle = paperColor;
-            ctx.strokeStyle = ruleColor;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            if (ctx.roundRect) {
-                ctx.roundRect(lx, ly, lw, h, 3);
-            } else {
-                ctx.rect(lx, ly, lw, h);
-            }
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = inkDimColor;
-            ctx.fillText(liveLabel, lx + pad, ly + h / 2);
-
+            labels.forEach(function (label) {
+                var width = ctx.measureText(label.text).width + 8;
+                ctx.fillStyle = paperColor;
+                ctx.fillRect(label.x + 4, label.y - lineHeight / 2, width, lineHeight);
+                ctx.fillStyle = label.ink;
+                ctx.fillText(label.text, label.x + 8, label.y);
+            });
             ctx.restore();
         },
     };
@@ -218,7 +219,7 @@
         var cs = getComputedStyle(document.documentElement);
         var botColor  = cs.getPropertyValue('--studio-accent').trim();
         var liveColor = cs.getPropertyValue('--studio-ink-dim').trim();
-        var posColor  = cs.getPropertyValue('--studio-pos').trim() || '#1f7a4d';
+        var posColor  = cs.getPropertyValue('--studio-pos').trim();
         var divFill   = hexToRgba(posColor, 0.14);
 
         var botSeries  = cumulative(payload.shadow_returns);
@@ -235,7 +236,7 @@
                     fill: false,
                     tension: 0.15,
                     pointRadius: 0,
-                    borderWidth: 2,
+                    borderWidth: 1.5,
                     borderDash: [4, 4],
                 },
                 {
@@ -251,18 +252,33 @@
             ],
         };
 
-        var inkFaint  = cs.getPropertyValue('--studio-ink-faint').trim();
-        var ruleColor = cs.getPropertyValue('--studio-rule').trim();
+        var inkColor    = cs.getPropertyValue('--studio-ink').trim();
+        var ruleColor   = cs.getPropertyValue('--studio-rule').trim();
+        var ruleHiColor = cs.getPropertyValue('--studio-rule-hi').trim();
+        var paperHi     = cs.getPropertyValue('--studio-paper-hi').trim();
+        var fontFamily  = getComputedStyle(document.body).fontFamily;
+        var tickFont    = { family: fontFamily, size: 11 };
+        var spansYears  = seriesSpansYears(payload.dates);
 
-        // Reserve right-side padding so endpoint labels fit inside the canvas
+        // Reserve right-side padding so the endpoint labels fit inside the canvas
         var options = {
             responsive: true,
             maintainAspectRatio: false,
-            layout: { padding: { right: 80 } },
+            animation: { duration: 300 },
+            layout: { padding: { right: 64 } },
             interaction: { mode: 'index', intersect: false },
             plugins: {
                 legend: { display: false },
                 tooltip: {
+                    backgroundColor: paperHi,
+                    titleColor: liveColor,
+                    bodyColor: inkColor,
+                    borderColor: ruleHiColor,
+                    borderWidth: 1,
+                    padding: 8,
+                    cornerRadius: 8,
+                    titleFont: tickFont,
+                    bodyFont: tickFont,
                     callbacks: {
                         label: function (c) {
                             return c.dataset.label + ': ' + c.parsed.y.toFixed(2) + '%';
@@ -272,15 +288,30 @@
             },
             scales: {
                 x: {
-                    ticks: { color: inkFaint, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 },
-                    grid: { color: ruleColor },
+                    ticks: {
+                        color: liveColor,
+                        font: tickFont,
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 12,
+                        callback: function (value) {
+                            return tickDayLabel(this.getLabelForValue(value), spansYears);
+                        },
+                    },
+                    grid: { display: false },
+                    border: { color: ruleHiColor },
                 },
                 y: {
                     ticks: {
-                        color: inkFaint,
+                        color: liveColor,
+                        font: tickFont,
                         callback: function (v) { return v.toFixed(1) + '%'; },
                     },
-                    grid: { color: ruleColor },
+                    // The zero line is the one that matters: the held and the bot series both start there.
+                    grid: {
+                        color: function (c) { return c.tick && c.tick.value === 0 ? ruleHiColor : ruleColor; },
+                    },
+                    border: { display: false },
                 },
             },
         };
@@ -351,25 +382,15 @@
             // value (a "0.00%" there is a baseline that was never measured).
             var derivedRow = /_delta$/.test(key);
             var deltaColor = dc === 'pos' ? 'var(--studio-pos)' : dc === 'neg' ? 'var(--studio-neg)' : 'inherit';
-            var barFill = key === 'max_drawdown' ? 'var(--studio-neg)' : 'var(--studio-accent)';
 
-            // Only render bar when both values are present and finite
-            var hasDelta = typeof liveVal === 'number' && typeof shadowVal === 'number'
-                           && isFinite(liveVal) && isFinite(shadowVal);
-            var delta = hasDelta ? shadowVal - liveVal : 0;
-            var barW = hasDelta ? Math.min(Math.abs(delta) * 10, 100).toFixed(1) : '0';
-            var metricBarSvg = '<svg data-testid="metric-bar" class="metric-bar" viewBox="0 0 100 6" '
-                + 'preserveAspectRatio="none" width="80" height="6">'
-                + '<rect x="0" y="1" width="' + barW + '" height="4" rx="2" fill="' + barFill + '"></rect>'
-                + '</svg>';
-
+            // The delta cell is the figure alone: its sign, arrow and colour say which leg did better.
             return (
                 '<tr data-testid="metric-row"' + primaryAttr + '>'
                 + '<td>' + label + '</td>'
                 + '<td style="text-align:right;color:' + signColor(liveVal, key)   + '">' + (derivedRow ? '—' : fmt(liveVal, kind)) + '</td>'
                 + '<td style="text-align:right;color:' + signColor(shadowVal, key) + '">' + fmt(shadowVal, kind) + '</td>'
                 + '<td class="delta" style="text-align:right;color:' + deltaColor + '">'
-                +   metricBarSvg + fmtDelta(liveVal, shadowVal, kind, invert)
+                +   fmtDelta(liveVal, shadowVal, kind, invert)
                 + '</td>'
                 + '</tr>'
             );
@@ -569,11 +590,9 @@
             emptyState = document.createElement('div');
             emptyState.id = 'pick-symphony-state';
             // A panel like every other block on the page; layout.css owns its box.
-            emptyState.className = 'hero-section';
-            emptyState.style.cssText = 'text-align:center;color:var(--studio-ink-dim);font-size:0.9375rem;';
-            emptyState.innerHTML = '<div style="font-size:2rem;margin-bottom:0.75rem;">&#9835;</div>'
-                + '<strong>Pick a symphony</strong>'
-                + '<p style="margin-top:0.5rem;font-size:0.8125rem;">Select a symphony from the dropdown above to view per-symphony performance.</p>';
+            emptyState.className = 'hero-section hp-panel hp-empty';
+            emptyState.innerHTML = '<div class="hp-empty-title">Pick a symphony</div>'
+                + '<div class="hp-empty-body">Select a symphony from the dropdown above to view per-symphony performance.</div>';
             if (chartBlock) chartBlock.parentNode.insertBefore(emptyState, chartBlock);
         }
         emptyState.style.display = '';
@@ -767,7 +786,9 @@
         var chip = document.createElement('span');
         var cls = PRECOND_VERDICT_CHIP_CLASS[verdict] || 'precond-verdict-chip--insufficient-data';
         chip.className = 'precond-verdict-chip ' + cls;
-        chip.textContent = verdict ? verdict.replace(/_/g, ' ') : 'INSUFFICIENT DATA';
+        // A status dot (drawn by the class) and one word or two in sentence case: "Negative edge".
+        var words = (verdict ? verdict.replace(/_/g, ' ') : 'INSUFFICIENT DATA').toLowerCase();
+        chip.textContent = words.charAt(0).toUpperCase() + words.slice(1);
         return chip;
     }
 
@@ -894,7 +915,13 @@
         // RULING C: every window cell names its actual retained-history days
         // (coverage_days) beside the count -- never let a nominal 365d column
         // header imply a full year the retention policy can't back.
-        td.textContent = windowStats.exit_count + ' (' + windowStats.coverage_days + 'd retained)';
+        // The count reads first; the days it rests on sit beside it in the quieter ink (the cell's
+        // text is still "<count> (<days>d retained)").
+        td.appendChild(document.createTextNode(String(windowStats.exit_count)));
+        var retained = document.createElement('span');
+        retained.className = 'hp-muted';
+        retained.textContent = ' (' + windowStats.coverage_days + 'd retained)';
+        td.appendChild(retained);
         return td;
     }
 
