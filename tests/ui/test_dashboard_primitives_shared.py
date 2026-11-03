@@ -48,6 +48,26 @@ _TEMPLATES = REPO / "templates"
 _STATIC = REPO / "static"
 _ADVISOR_TEMPLATE = "ai_advisor.html"
 
+# The one rule added to layout.css after the base was captured: the zero top margin of a panel's
+# first heading, shared by every page that links the sheet. It sits right after the
+# `.section-header` rule it refines, so its source order agrees with its specificity. The baseline
+# file is not edited; this record is the only difference allowed against it.
+_FIRST_HEADING_SELECTOR = ".hero-section > .section-header:first-child"
+_FIRST_HEADING_KEY = f"||{_FIRST_HEADING_SELECTOR}"
+_FIRST_HEADING_RULE = {
+    "context": "",
+    "selectors": [_FIRST_HEADING_SELECTOR],
+    "declarations": [["margin-top", "0"]],
+}
+
+
+def _ordered_with_the_first_heading_rule() -> list[dict]:
+    ordered = list(BASELINE["ordered"])
+    at = next(i for i, rule in enumerate(ordered) if rule["selectors"] == [".section-header"])
+    ordered.insert(at + 1, _FIRST_HEADING_RULE)
+    return ordered
+
+
 # What a page may write beside a primitive: layout properties only. Anything that gives the
 # primitive a radius, border, padding, font, colour or shadow of the page's own would be a second
 # definition. `cursor` is allowed on `.sym-card` alone: it is a button-like card on the dashboard
@@ -236,7 +256,7 @@ class TestDashboardUsesTheSharedPrimitives:
 class TestOneDefinition:
     def test_layout_css_holds_the_base_rules_byte_for_byte_in_order(self):
         css = (_STATIC / "layout.css").read_text(encoding="utf-8")
-        assert cap.ordered_primitive_rules(css) == BASELINE["ordered"]
+        assert cap.ordered_primitive_rules(css) == _ordered_with_the_first_heading_rule()
 
     def test_the_moved_rules_are_a_suffix_of_layout_css(self):
         css = (_STATIC / "layout.css").read_text(encoding="utf-8")
@@ -257,8 +277,31 @@ class TestOneDefinition:
                 if cap.names_primitive(selector):
                     key = f"{context}||{selector}"
                     counts[key] = counts.get(key, 0) + 1
-        assert set(counts) == set(BASELINE["resolved"])
+        assert set(counts) == set(BASELINE["resolved"]) | {_FIRST_HEADING_KEY}
         assert {k: n for k, n in counts.items() if n != 1} == {}
+
+    def test_the_first_heading_rule_is_defined_once_and_in_no_template(self):
+        """The zero top margin of a panel's first heading is one rule in layout.css; no page's
+        inline block repeats it, so a page cannot drift from the shared heading."""
+        css = (_STATIC / "layout.css").read_text(encoding="utf-8")
+        shared = [
+            rule
+            for rule in cap.ordered_primitive_rules(css)
+            if _FIRST_HEADING_SELECTOR in rule["selectors"]
+        ]
+        assert shared == [_FIRST_HEADING_RULE], shared
+        copies = {
+            path.name: [
+                rule
+                for rule in cap.ordered_primitive_rules(_inline_css(path.name))
+                # Any spelling of the selector counts, not only the shared rule's own.
+                if any(
+                    "section-header:first-child" in s.replace(" ", "") for s in rule["selectors"]
+                )
+            ]
+            for path in sorted(_TEMPLATES.glob("*.html"))
+        }
+        assert {name: rules for name, rules in copies.items() if rules} == {}
 
     def test_the_dashboard_template_refines_them_only_under_the_page_class(self):
         """A dashboard rule that names a primitive is scoped under .page-dashboard."""
