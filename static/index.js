@@ -738,22 +738,56 @@
         el.textContent = text;
     }
 
-    // Names the session of a tape that is not today's: one span in the card, text
-    // "<session_date> session", present only while the tape's session differs from the ET
-    // day. A body naming either date less (a store that records no date) names no session.
-    // The date is written as text; the span is cleared by the next tape that is today's.
-    function setSparkSessionCaption(canvas, chartBody) {
+    // The caption a symphony's last tape named: "<session_date> session" while the tape's session
+    // differs from the ET day, '' for a tape that is today's (or one whose body names either date
+    // less: a store that records no date names no session). A symphony with no tape yet has no entry.
+    var _sparkSessionText = {};
+
+    // The section (Active or Standby) a card sits in: the nearest ancestor whose test id ends in
+    // "-section".
+    function sectionOfCard(card) {
+        for (var node = card; node; node = node.parentNode) {
+            var id = node.getAttribute ? node.getAttribute('data-testid') : null;
+            if (typeof id === 'string' && /-section$/.test(id)) return node;
+        }
+        return null;
+    }
+
+    // Writes the session a section's tapes belong to, once: in the section's header line, when
+    // every tape in the section named the same session. A section whose tapes disagree (or where
+    // some tape is today's) states nothing in the header and each card names its own, so no card is
+    // ever left without the session its tape belongs to. Text only; a caption goes when the new
+    // session's tapes arrive.
+    function syncSessionCaptions(section) {
+        var canvases = section.querySelectorAll('[data-testid="card-spark"]');
+        var texts = [];
+        canvases.forEach(function (canvas) {
+            var text = _sparkSessionText[canvas.getAttribute('data-sym-id')];
+            if (typeof text === 'string') texts.push(text);
+        });
+        var shared = texts.length > 0 && texts[0] !== '' && texts.every(function (t) { return t === texts[0]; })
+            ? texts[0] : '';
+        var header = section.querySelector('[data-field="section-session"]');
+        if (header) {
+            setTextIfChanged(header, shared);
+            header.hidden = !shared;
+        }
+        canvases.forEach(function (canvas) {
+            var text = _sparkSessionText[canvas.getAttribute('data-sym-id')];
+            writeCardSessionCaption(canvas, shared ? '' : (typeof text === 'string' ? text : ''));
+        });
+    }
+
+    // One span in the card, class spark-session, shown only when the card has to name its own
+    // session (the header does not). It lives outside the fixed-height box, never inside it: the
+    // responsive chart sizes itself to the box and would grow it. It sits on the card's meta line
+    // (under the name), so it takes no height of its own; a card without that line keeps it beside
+    // the box.
+    function writeCardSessionCaption(canvas, text) {
         var box = canvas.parentNode;
-        // The caption lives outside the fixed-height box, never inside it: the responsive
-        // chart sizes itself to the box and would grow it. It sits on the card's meta line
-        // (under the name), so it takes no height of its own; a card without that line keeps
-        // it beside the box.
         var card = box && typeof box.closest === 'function' ? box.closest('[data-testid="sym-card"]') : null;
         var parent = (card && card.querySelector('.card-meta')) || (box && box.parentNode);
         if (!parent) return;
-        var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
-        var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
-        var text = session && today && session !== today ? session + ' session' : '';
         var el = parent.querySelector('.spark-session');
         if (!el) {
             if (!text) return;
@@ -762,8 +796,20 @@
             if (parent === box.parentNode) parent.insertBefore(el, box);
             else parent.appendChild(el);
         }
-        el.textContent = text;
+        setTextIfChanged(el, text);
         el.hidden = !text;
+    }
+
+    function setSparkSessionCaption(canvas, chartBody) {
+        var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
+        var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
+        _sparkSessionText[canvas.getAttribute('data-sym-id')] = session && today && session !== today
+            ? session + ' session' : '';
+        var box = canvas.parentNode;
+        var card = box && typeof box.closest === 'function' ? box.closest('[data-testid="sym-card"]') : null;
+        var section = sectionOfCard(card || box);
+        if (section) syncSessionCaptions(section);
+        else writeCardSessionCaption(canvas, _sparkSessionText[canvas.getAttribute('data-sym-id')]);
     }
 
     function sparkHeldDataset(data) {

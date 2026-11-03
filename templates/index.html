@@ -50,15 +50,17 @@
       color: var(--studio-ink);
       margin: 24px 0 8px;
       display: flex;
+      flex-wrap: wrap;
       align-items: baseline;
-      gap: 8px;
+      gap: 0 8px;
     }
 
-    /* A count beside a section title: plain muted text. */
+    /* A count or note beside a section title: plain muted text, kept whole when the line wraps. */
     .count-note {
       font-size: 12px;
       font-weight: 400;
       color: var(--studio-ink-dim);
+      white-space: nowrap;
     }
 
     .page-dashboard .card-name {
@@ -771,6 +773,11 @@
       .dollar-panel { grid-template-columns: 1fr; gap: 8px; }
       .page-dashboard .sym-card { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; }
       .card-footer-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr); column-gap: 8px; }
+      /* The ledger's headings (Today's session day, Cum, Max DD) take a line of their own over the
+         figures, each with its alpha under it and right-aligned like the figures below, so an alpha
+         never sits beside the next column's heading. */
+      .card-footer-grid .cfg-label { flex-direction: column; align-items: flex-end; gap: 0; min-height: 0; }
+      .card-footer-grid .cfg-label .row-note { white-space: normal; text-align: right; }
       .page-dashboard .mini-stats { gap: 16px; flex-wrap: wrap; }
       .fleet-banner { flex-wrap: wrap; }
       [data-testid="cash-now-note"] { position: static; flex-basis: 100%; text-align: right; white-space: normal; }
@@ -1644,6 +1651,8 @@
         {# One span, hidden and empty at 0, so a poll can show the count or hide it again. #}
         {% set _vars_shown = vars_locked_count is defined and vars_locked_count > 0 %}
         <span data-testid="edit-vars-indicator" class="count-note"{% if not _vars_shown %} hidden{% endif %} style="display:{{ 'inline-flex' if _vars_shown else 'none' }};">{% if _vars_shown %}{{ vars_locked_count }} locked{% endif %}</span>
+        {# The session the section's sparklines belong to, stated once here while it is not today's (the script writes it, hidden until then). #}
+        <span data-field="section-session" class="count-note" hidden></span>
       </div>
       <div class="cards-grid sym-list">
         {% for sym in active_syms %}
@@ -1758,6 +1767,7 @@
       <div class="section-header">
         Standby
         <span data-testid="standby-section-count" class="count-note">{{ standby_syms | length }}</span>
+        <span data-field="section-session" class="count-note" hidden></span>
       </div>
       <div class="cards-grid sym-list">
         {% for sym in standby_syms %}

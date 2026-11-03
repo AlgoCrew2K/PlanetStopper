@@ -144,6 +144,84 @@ def test_the_verdict_word_is_sentence_case():
     assert "verdict.replace(/_/g, ' ')" in body
 
 
+_STACKED_TABLES = {
+    # testid: (modifier class, the header texts after "Symphony", in order)
+    "guard-alpha-preconditions-table": (
+        "metrics-tbl--ledger-pre",
+        ["Sample", "\u03c1", "95% CI", "Daily Sharpe", "N", "Verdict"],
+    ),
+    "exit-turnover-table": (
+        "metrics-tbl--ledger-turn",
+        ["30d", "90d", "365d", "Est. annual friction drag"],
+    ),
+}
+
+
+def _phone_css() -> str:
+    css = _css("performance")
+    start = css.index("@media (max-width: 700px)")
+    return css[start:]
+
+
+@pytest.mark.parametrize("testid", list(_STACKED_TABLES))
+def test_a_per_symphony_ledger_is_a_name_line_and_a_figure_line_on_a_phone(testid):
+    """Too many columns for a phone: each row is the symphony on its own line with one line of
+    figures under it, under one header row of column labels stated once at the table's top."""
+    modifier, columns = _STACKED_TABLES[testid]
+    template = _template("performance")
+    assert re.search(
+        rf'<table class="metrics-tbl metrics-tbl--stack {modifier}"[^>]*data-testid="{testid}"',
+        template,
+    ), f"{testid} does not take the phone ledger layout"
+    css = _phone_css()
+    header = " ".join(_rule_bodies(css, ".metrics-tbl--stack thead tr"))
+    assert "display: flex" in header, "the header row is not kept as one row"
+    assert "display: none" not in " ".join(_rule_bodies(css, ".metrics-tbl--stack thead"))
+    assert "display: none" in " ".join(_rule_bodies(css, ".metrics-tbl--stack th:first-child"))
+    table = re.search(rf'<table[^>]*data-testid="{testid}".*?</thead>', template, re.S).group(0)
+    headers = [
+        re.sub(r"<[^>]+>", "", cell).replace("&rho;", "\u03c1").strip()
+        for cell in re.findall(r"<th[^>]*>(.*?)</th>", table, re.S)
+    ]
+    assert headers[1:] == columns, "the header row changed"
+    sizes = [int(n) for n in re.findall(r"font-size:\s*(\d+)px", css)]
+    assert sizes and min(sizes) >= 11, "text under 11 px on the phone ledgers"
+
+
+def test_the_turnover_figure_line_is_four_columns_and_a_count_reads_n_in_days():
+    css = _phone_css()
+    columns = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-turn tbody tr"))
+    assert "display: grid" in columns
+    assert "repeat(3, minmax(0, 1fr)) minmax(0, 0.8fr)" in columns, "not four figure columns"
+    first = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-turn tbody td:first-child"))
+    assert "grid-column: 1 / -1" in first, "the symphony does not take its own line"
+    after = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-turn td[data-days]::after"))
+    assert 'content: " in " attr(data-days) "d"' in after
+    longer = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-turn td .hp-muted"))
+    assert "clip: rect(0 0 0 0)" in longer, "the retained words must stay for screen readers"
+    script = _script("performance")
+    cell = script[script.index("function turnoverWindowCell") :].split("\n    }\n")[0]
+    assert "setAttribute('data-days', String(windowStats.coverage_days))" in cell
+    assert "' (' + windowStats.coverage_days + 'd retained)'" in cell, "the cell text changed"
+
+
+def test_the_precondition_verdict_sits_on_the_name_line_and_the_figures_under_it():
+    css = _phone_css()
+    name = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-pre tbody td:first-child"))
+    verdict = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-pre tbody td:nth-child(7)"))
+    figures = " ".join(
+        _rule_bodies(css, ".metrics-tbl--ledger-pre td:nth-child(n+2):nth-child(-n+6)")
+    )
+    assert "order: 0" in name and "flex: 1 1 0" in name
+    assert "order: 0" in verdict and "flex: none" in verdict
+    assert "order: 2" in figures, "the figures do not follow the name line"
+    line_break = " ".join(_rule_bodies(css, ".metrics-tbl--ledger-pre tbody tr::after"))
+    assert "flex: 0 0 100%" in line_break and "order: 1" in line_break
+    assert "display: none" in " ".join(
+        _rule_bodies(css, ".metrics-tbl--ledger-pre th:nth-child(7)")
+    )
+
+
 def test_a_reason_is_a_coloured_dot_and_its_name_in_both_tables():
     css = _css("history")
     for key, token in (

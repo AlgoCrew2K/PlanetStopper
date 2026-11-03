@@ -103,6 +103,19 @@ const caption = function (id) {
   return { text: e.textContent.trim(), hidden: e.hasAttribute('hidden') || e.style.display === 'none',
            classes: e.className };
 };
+// The section header lines that state a session once, and the cards that still name their own.
+const headerCaptions = function () {
+  return Array.prototype.slice.call(
+    H.sandbox.document.querySelectorAll('[data-field="section-session"]')).map(function (e) {
+    return { text: e.textContent.trim(), hidden: e.hasAttribute('hidden') || e.style.display === 'none' };
+  });
+};
+const cardCaptions = function () {
+  return Array.prototype.slice.call(
+    H.sandbox.document.querySelectorAll('[data-testid="card-spark"]')).map(function (c) {
+    return caption(c.getAttribute('data-sym-id'));
+  }).filter(function (e) { return e && !e.hidden && e.text; });
+};
 const poll = async function (body) {
   H.route('/api/state', { body: body });
   await H.tick(); await H.completeAnimations();
@@ -430,6 +443,87 @@ class TestAPreviousSessionsTapeCarriesItsDate:
             "markup in a date shows literally"
         )
         assert r["htmlWrites"] == 0, "no markup write lands inside a symphony card"
+
+
+class TestASessionIsStatedOnceInTheSectionHeader:
+    """Tapes that all belong to one session name it once, in the section's header line."""
+
+    @staticmethod
+    def _charts_all(session_date: str, et_date: str) -> dict:
+        return {
+            sid: _chart_with_session(body, session_date, et_date)
+            for sid, body in _world()["charts"].items()
+        }
+
+    def test_every_tape_from_the_previous_session_is_one_header_caption_and_no_card_caption(self):
+        today = _world()["seeded_today"]
+        previous = _day_before(today)
+        r = _run_p(
+            r"""
+        await H.boot({ extras: true, charts: H.bodies.charts, state: H.bodies.same });
+        return { headers: headerCaptions(), cards: cardCaptions() };
+        """,
+            charts=self._charts_all(previous, today),
+            same=_same_stamp(),
+        )
+        shown = [h for h in r["headers"] if not h["hidden"]]
+        assert shown, "no section header names the previous session"
+        assert {h["text"] for h in shown} == {f"{previous} session"}
+        assert r["cards"] == [], "a card repeats the session its section header already names"
+
+    def test_tapes_of_one_section_that_disagree_leave_the_header_empty_and_each_card_names_its_own(
+        self,
+    ):
+        today = _world()["seeded_today"]
+        previous = _day_before(today)
+        charts = self._charts_all(previous, today)
+        charts[UNTRIGGERED] = _chart_with_session(charts[UNTRIGGERED], today, today)
+        r = _run_p(
+            r"""
+        await H.boot({ extras: true, charts: H.bodies.charts, state: H.bodies.same });
+        return { headers: headerCaptions(), cards: cardCaptions() };
+        """,
+            charts=charts,
+            same=_same_stamp(),
+        )
+        assert all(h["hidden"] or not h["text"] for h in r["headers"]), r["headers"]
+        assert r["cards"], "the cards whose tape is from the previous session name it themselves"
+        assert {c["text"] for c in r["cards"]} == {f"{previous} session"}
+
+    def test_the_header_caption_goes_when_the_new_sessions_tapes_arrive(self):
+        today = _world()["seeded_today"]
+        previous = _day_before(today)
+        r = _run_p(
+            r"""
+        await H.boot({ extras: true, charts: H.bodies.charts, state: H.bodies.same });
+        const before = headerCaptions();
+        H.route(__CHART__, function (url, o, m) { return { body: H.bodies.fresh[m[1]] }; });
+        await poll(H.bodies.later);
+        return { before: before, after: headerCaptions(), cards: cardCaptions() };
+        """.replace("__CHART__", CHART_URL),
+            charts=self._charts_all(previous, today),
+            same=_same_stamp(),
+            later=_later(),
+            fresh=self._charts_all(today, today),
+        )
+        assert any(not h["hidden"] and h["text"] for h in r["before"])
+        assert all(h["hidden"] or not h["text"] for h in r["after"]), r["after"]
+        assert r["cards"] == []
+
+    def test_the_header_caption_is_written_as_text(self):
+        today = _world()["seeded_today"]
+        hostile = "<img src=x onerror=alert(1)>"
+        r = _run_p(
+            r"""
+        const writes0 = H.htmlWrites.length;
+        await H.boot({ extras: true, charts: H.bodies.charts, state: H.bodies.same });
+        return { headers: headerCaptions(), htmlWrites: H.htmlWrites.length - writes0 };
+        """,
+            charts=self._charts_all(hostile, today),
+            same=_same_stamp(),
+        )
+        assert any(hostile in h["text"] for h in r["headers"]), "markup in a date shows literally"
+        assert not [h for h in r["headers"] if "<" in h["text"] and h["hidden"]]
 
 
 # ---------------------------------------------------------------------------

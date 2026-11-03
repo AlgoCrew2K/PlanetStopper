@@ -918,6 +918,9 @@
         // The count reads first; the days it rests on sit beside it in the quieter ink (the cell's
         // text is still "<count> (<days>d retained)").
         td.appendChild(document.createTextNode(String(windowStats.exit_count)));
+        // The phone layout reads the retained days from here ("15 in 30d") and keeps the longer
+        // words in the cell for screen readers only.
+        td.setAttribute('data-days', String(windowStats.coverage_days));
         var retained = document.createElement('span');
         retained.className = 'hp-muted';
         retained.textContent = ' (' + windowStats.coverage_days + 'd retained)';
