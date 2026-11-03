@@ -137,7 +137,7 @@ def test_a_laptop_asleep_over_the_weekend_resumes_with_the_monday_open_and_no_re
         "the header still reads Closed after the page woke on the Monday open",
     )
     assert text(probe, "#engine-status-label") in ("Live", "Opening")
-    assert re.fullmatch(r"NEXT \d\d:\d\d", text(probe, "#next-run-countdown"))
+    assert re.fullmatch(r"Next \d\d:\d\d", text(probe, "#next-run-countdown"))
     assert text(probe, '[data-testid="et-clock"]').startswith("09:31:"), (
         "the header clock must read Eastern time on the Monday after the clocks went back"
     )

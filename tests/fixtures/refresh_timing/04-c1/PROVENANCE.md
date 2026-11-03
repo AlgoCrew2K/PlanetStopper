@@ -14,6 +14,13 @@ Plan: refresh-timing 04 (pages and header), cycle C1 (the header on the four oth
 - Scenario served: the header-layout row (a page header markup equals the base markup except the one attribute).
 - Edits: none. Sign-off: not needed (no derived record).
 
+## Revision: `header_markup_at_base.json` re-captured for the unslop pass (shared chrome)
+
+The unslop pass rewrote the header markup on purpose (classes instead of inline styles, a plain wordmark, an icon bell, "Next mm:ss", a chevron on the account chip; the mode tag, Force run now and Emergency Liquidate keep their recorded markup). The record now holds the header as the pass left it, taken with the poll attribute on four pages; `tests/ui/test_header_refresh_client.py` reads both sides without that attribute.
+
+- Producer call: `python tests/fixtures/refresh_timing/04-c1/capture_header_markup.py` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files; the script refuses to run when `templates/`, `app.py` or `static/chrome.js` differ from `HEAD`. Base SHA now `efa817096f942f122129e1921e521513e3396966` (the file's `base_sha`), captured `2026-11-03T17:02:27Z`.
+- Sign-off: not needed (producer output).
+
 ## Derived at test time (not stored)
 
 | Builder | Source | Changed field | Reason | Scenarios | PM sign-off |

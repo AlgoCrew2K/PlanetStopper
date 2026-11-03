@@ -66,7 +66,7 @@ def test_topbar_engine_status_indicator_present(client, route):
 
 @pytest.mark.parametrize("route", ["/", "/performance", "/ai-advisor", "/history", "/settings"])
 def test_topbar_next_run_countdown_present(client, route):
-    """Top-bar must render the NEXT MM:SS countdown element on all routes.
+    """Top-bar must render the Next MM:SS countdown element on all routes.
 
     The old next-run-ticker was replaced by #next-run-countdown in _chrome.html
     (commits 4b6d8c3 / 45a6000). The element is present in the DOM on all routes

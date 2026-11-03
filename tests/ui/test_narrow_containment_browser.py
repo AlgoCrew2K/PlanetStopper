@@ -365,15 +365,18 @@ _TINT_CLASSES = {
     "approved retirement status": ["status-pill", "armed"],
 }
 
+# A status is a dot and a word: its tint is the dot's, which is the ::before box.
+_DOT_TINTS = ["approved retirement status"]
+
 _TINT_PROBE = """
-(tints) => {
+([tints, dots]) => {
   const out = {};
   for (const [name, classes] of Object.entries(tints)) {
     const el = document.createElement('span');
     el.className = classes.join(' ');
     el.textContent = name;
     document.body.appendChild(el);
-    const s = getComputedStyle(el);
+    const s = getComputedStyle(el, dots.includes(name) ? '::before' : null);
     out[name] = s.backgroundColor;
     el.remove();
   }
@@ -391,7 +394,7 @@ def _tints(firefox, server, theme):
             f"the {theme} theme was never applied",
             arg=theme or "light",
         )
-        return probe.page.evaluate(_TINT_PROBE, _TINT_CLASSES)
+        return probe.page.evaluate(_TINT_PROBE, [_TINT_CLASSES, _DOT_TINTS])
 
 
 def test_each_of_the_five_tints_changes_with_the_theme(firefox, advisor_server):

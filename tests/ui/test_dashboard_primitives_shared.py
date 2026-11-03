@@ -38,34 +38,9 @@ SHELL_BASELINE = json.loads(
     )
 )["dashboard"]
 
-# The one change admitted since the base capture: three labels moved from the faint ink token to the
-# dim one for contrast. Only these three colours move; every other declaration stays as captured.
-_ADMITTED_COLOUR_CHANGES = {
-    ".mini-stat-label": ("var(--studio-ink-faint)", "var(--studio-ink-dim)"),
-    ".section-header": ("var(--studio-ink-faint)", "var(--studio-ink-dim)"),
-    ".status-pill.sleeve-stale": ("var(--studio-ink-faint)", "var(--studio-ink-dim)"),
-}
-
-
-def _admit_colour_changes(baseline_resolved, baseline_ordered=None):
-    """The base capture with the admitted colour changes applied, asserting each was in the base."""
-    for selector, (was, now) in _ADMITTED_COLOUR_CHANGES.items():
-        declarations = baseline_resolved[f"||{selector}"]
-        assert declarations["color"] == was, f"{selector}: the base colour is not {was}"
-        declarations["color"] = now
-    if baseline_ordered is not None:
-        for rule in baseline_ordered:
-            for selector in rule["selectors"]:
-                if selector in _ADMITTED_COLOUR_CHANGES:
-                    was, now = _ADMITTED_COLOUR_CHANGES[selector]
-                    rule["declarations"] = [
-                        [prop, now if prop == "color" and value == was else value]
-                        for prop, value in rule["declarations"]
-                    ]
-
-
-_admit_colour_changes(BASELINE["resolved"], BASELINE["ordered"])
-_admit_colour_changes(SHELL_BASELINE["resolved"])
+# The rule records (`resolved` and `ordered`) are the primitives as the unslop pass left them (status
+# as a dot and a word, stat figures as a ruled row, sentence-case headers, hairline cards); the
+# structure records are still the base's. See the PROVENANCE.md beside each baseline.
 
 _TEMPLATES = REPO / "templates"
 _STATIC = REPO / "static"

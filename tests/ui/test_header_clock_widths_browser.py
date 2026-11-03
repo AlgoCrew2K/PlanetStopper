@@ -171,7 +171,7 @@ def test_the_rebalance_pause_hides_the_clock_and_keeps_the_countdown_whole_at_14
         facts = _dashboard_header(firefox, server, world, "rebalance-pause", WIDTH_IN_RANGE)
     _assert_clock_and_chip(facts, "rebalance-pause", WIDTH_IN_RANGE, shown=False)
     assert facts["countdownShown"], "the countdown is hidden in a Rebalance pause"
-    assert facts["countdownText"].startswith("NEXT "), facts["countdownText"]
+    assert facts["countdownText"].startswith("Next "), facts["countdownText"]
     assert not facts["countdownClipped"], "the countdown's box is narrower than its text"
     assert facts["countdownOnScreen"], "the countdown is cut at the screen's edge"
     assert not facts["countdownCovered"], "another element covers the countdown"

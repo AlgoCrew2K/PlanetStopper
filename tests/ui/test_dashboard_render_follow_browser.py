@@ -29,6 +29,13 @@ from tests.ui._dashboard_refresh_browser_support import (  # noqa: F401  (fixtur
 pytestmark = pytest.mark.browser
 
 PILL = '[data-testid="mode-pill"]'
+
+
+def _mode_value(probe) -> str:
+    """The engine's own value the mode tag holds; the page shows it in sentence case."""
+    return " ".join((probe.page.locator(PILL).first.text_content() or "").split())
+
+
 LEGEND_WORD = '[data-field="legend-mode"]'
 
 
@@ -49,16 +56,16 @@ def test_a_second_tab_turns_live_on_its_next_poll_and_the_first_stays_as_it_was(
                 probe.state = same
                 probe.page.goto(server.base_url + "/")
                 wait_refresh(probe, 1)
-            assert text(polled, PILL) == "DRY RUN"
+            assert _mode_value(polled) == "DRY RUN"
 
             polled.state = _live(same)
             polled.page.evaluate("window.loadState()")
             wait_refresh(polled, 2)
 
-            assert text(polled, PILL) == "LIVE"
+            assert _mode_value(polled) == "LIVE"
             assert polled.page.locator(PILL).first.get_attribute("data-live") == "true"
             assert text(polled, LEGEND_WORD) == "live"
-            assert text(quiet, PILL) == "DRY RUN", "a tab that did not poll changed"
+            assert _mode_value(quiet) == "DRY RUN", "a tab that did not poll changed"
             assert text(quiet, LEGEND_WORD) == "dry-run"
         finally:
             context.close()

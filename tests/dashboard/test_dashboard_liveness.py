@@ -385,12 +385,12 @@ class TestCatchUp:
 # S-4.7 to S-4.9, S-4.11: the countdown
 # ---------------------------------------------------------------------------
 
-_COUNTDOWN = re.compile(r"^NEXT (\d\d):(\d\d)$")
+_COUNTDOWN = re.compile(r"^Next (\d\d):(\d\d)$")
 
 
 def _secs(text: str) -> int:
     match = _COUNTDOWN.match(text)
-    assert match, f"the countdown must read 'NEXT MM:SS' like the server render; got {text!r}"
+    assert match, f"the countdown must read 'Next MM:SS' like the server render; got {text!r}"
     return int(match[1]) * 60 + int(match[2])
 
 

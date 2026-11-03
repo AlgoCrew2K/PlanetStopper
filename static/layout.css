@@ -62,27 +62,43 @@ textarea {
 
 /* A stat tile's one-line statement of what the number is (basis, window, unit). */
 .mini-stat-note {
-  font-size: 10px;
-  line-height: 1.35;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--studio-ink-dim);
   margin-top: 4px;
 }
 
-/* The shared stat labels, section headers and chips are upper-case. A Greek alpha or rho in
-   one would turn into the Latin A or P and read as another word, so the glyph carries this
-   class: lower-case, whatever its parent does. The one rule for every page. */
+/* A page's own text may still be set in upper case. A Greek alpha or rho in it would turn into
+   the Latin A or P and read as another word, so the glyph carries this class: lower-case,
+   whatever its parent does. The one rule for every page. */
 .alpha-glyph { text-transform: none; }
 
+/* A keyboard user sees where focus is on every control, on every page. A page that styles its
+   own focus (a more specific rule) keeps its own. */
+a:focus-visible,
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--studio-accent);
+  outline-offset: 2px;
+}
+
 /* ---- Shared dashboard primitives (SC-5) ----
-   Moved byte-for-byte, in order, from the inline style block of
-   templates/index.html. Defined ONCE here so every page that links this
-   sheet can use them; the dashboard itself resolves them unchanged. */
+   Moved in order from the inline style block of templates/index.html and
+   restyled once by the unslop pass: a status is a dot and a word, stat
+   figures are a ruled row, section headers are sentence-case headings,
+   cards have a hairline and no shadow, weights stay 400 to 600. Defined ONCE
+   here so every page that links this sheet can use them; a page sets layout
+   properties on a primitive, never its look (tests/ui/test_dashboard_primitives_shared.py). */
 
 .hero-section {
   background: var(--studio-paper);
   border-radius: 14px;
-  padding: 28px 32px 24px;
-  margin-bottom: 28px;
+  padding: 24px 32px 20px;
+  margin-bottom: 24px;
 }
 
 .legend-as-of {
@@ -91,49 +107,50 @@ textarea {
   color: var(--studio-ink-dim);
 }
 
-/* Mini-stats */
+/* Mini-stats: a row of figures, each under a hairline, with no box around it */
 .mini-stats {
   display: flex;
-  gap: 10px;
+  gap: 24px;
 }
 
 .mini-stat {
   flex: 1;
-  background: var(--studio-chip-bg);
-  border-radius: 8px;
-  padding: 10px 12px;
-  text-align: center;
+  border-top: 1px solid var(--studio-rule);
+  padding: 8px 0 0;
+  text-align: left;
 }
 
 .mini-stat-value {
   font-size: 22px;
-  font-weight: 800;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--studio-ink);
-  line-height: 1;
-  margin-bottom: 3px;
+  line-height: 1.2;
+  margin-bottom: 4px;
 }
 
 .mini-stat-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 400;
   color: var(--studio-ink-dim);
 }
 
 @media (max-width: 700px) {
   .hero-section {
-    padding: 18px 16px 16px;
+    padding: 16px;
     margin-bottom: 16px;
+  }
+
+  /* No text below 11 px on a phone */
+  .legend-as-of {
+    font-size: 11px;
   }
 }
 
 .section-header {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--studio-ink-dim);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--studio-ink);
   margin: 28px 0 12px;
 }
 
@@ -142,54 +159,61 @@ textarea {
   background: var(--studio-paper);
   border: 1px solid var(--studio-rule);
   border-radius: 12px;
-  padding: 18px 20px 16px;
+  padding: 16px 20px;
   cursor: pointer;
-  transition: box-shadow 0.15s;
+  transition: border-color 0.15s;
   position: relative;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
 
 .sym-card:hover {
-  box-shadow: 0 4px 16px var(--studio-rule-hi);
+  border-color: var(--studio-rule-hi);
 }
 
 .card-name {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
   color: var(--studio-ink);
 }
 
-/* Status pill */
+/* Status: a dot and one word. The dot carries the state; the word stays in the text colour. */
 .status-pill {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   white-space: nowrap;
-  padding: 3px 9px;
-  border-radius: 20px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--studio-ink);
 }
 
-.status-pill.armed { background: color-mix(in srgb, var(--studio-pos-dim) 70%, transparent); color: var(--studio-pos); }
-.status-pill.triggered { background: color-mix(in srgb, var(--studio-neg-dim) 70%, transparent); color: var(--studio-neg); }
-.status-pill.standby { background: color-mix(in srgb, var(--studio-chip-bg) 70%, transparent); color: var(--studio-ink-dim); }
-/* Strategy-type colored pills */
-.status-pill.tp   { background: color-mix(in srgb, var(--studio-plum) 18%, transparent); color: var(--studio-plum); }
-.status-pill.stop { background: color-mix(in srgb, var(--studio-neg) 18%, transparent);  color: var(--studio-neg); }
-.status-pill.vwap { background: color-mix(in srgb, var(--studio-cyan) 18%, transparent); color: var(--studio-cyan); }
-.status-pill.bleed { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-warn); }
-.status-pill.tp-armed { background: color-mix(in srgb, var(--studio-plum) 18%, transparent); color: var(--studio-plum); }
-.status-pill.para-armed { background: color-mix(in srgb, var(--studio-cyan) 18%, transparent); color: var(--studio-cyan); }
+.status-pill::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--studio-ink-dim);
+}
 
-/* Managed Sleeves status pills (AC-16) -- each of the 6 named statuses
-   (SHADOW/PAPER/LIVE/BENCHED/PAUSED_RECONCILIATION/stale) gets its own
-   pairwise-distinct background/color/border combo, never collapsing
-   into a shared "standby" look (s3-ux live-render finding #1) --
-   PAUSED_RECONCILIATION additionally gets a bordered/bold treatment so
+.status-pill.armed::before { background: var(--studio-pos); }
+.status-pill.triggered::before { background: var(--studio-neg); }
+/* Standby is a hollow dot: nothing is armed. */
+.status-pill.standby::before { background: transparent; border: 1.5px solid var(--studio-ink-dim); }
+/* Strategy-type dots */
+.status-pill.tp::before   { background: var(--studio-plum); }
+.status-pill.stop::before { background: var(--studio-neg); }
+.status-pill.vwap::before { background: var(--studio-cyan); }
+.status-pill.bleed::before { background: var(--studio-warn); }
+.status-pill.tp-armed::before { background: var(--studio-plum); }
+.status-pill.para-armed::before { background: var(--studio-cyan); }
+
+/* Managed Sleeves statuses (AC-16) -- each of the 6 named statuses
+   (SHADOW/PAPER/LIVE/BENCHED/PAUSED_RECONCILIATION/stale) keeps its own
+   dot, never collapsing into a shared "standby" look (s3-ux live-render
+   finding #1) -- PAUSED_RECONCILIATION additionally gets a heavier word so
    it reads as the serious operational state it is, never mistaken for
-   a mundane fresh SHADOW sleeve. */
-.status-pill.sleeve-benched { background: color-mix(in srgb, var(--studio-warn) 18%, transparent); color: var(--studio-warn); }
-.status-pill.sleeve-paused { background: color-mix(in srgb, var(--studio-neg) 18%, transparent); color: var(--studio-neg); border: 1px solid var(--studio-neg); font-weight: 800; }
-.status-pill.sleeve-stale { background: color-mix(in srgb, var(--studio-cyan) 12%, transparent); color: var(--studio-ink-dim); border: 1px dashed var(--studio-ink-faint); }
+   a mundane fresh SHADOW sleeve. Stale is a hollow cyan dot. */
+.status-pill.sleeve-benched::before { background: var(--studio-warn); }
+.status-pill.sleeve-paused { font-weight: 600; }
+.status-pill.sleeve-paused::before { background: var(--studio-neg); }
+.status-pill.sleeve-stale::before { background: transparent; border: 1.5px solid var(--studio-cyan); }
