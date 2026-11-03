@@ -103,8 +103,10 @@ _PRIMITIVE_COLOURS = [
     ("/performance", ".mini-stat", "backgroundColor", "background", "--studio-chip-bg"),
     ("/settings", ".hero-section", "backgroundColor", "background", "--studio-paper"),
     ("/settings", ".section-header", "color", "color", "--studio-ink-dim"),
-    ("/ai-advisor", ".hero-section", "backgroundColor", "background", "--studio-paper"),
-    ("/ai-advisor", ".section-header", "color", "color", "--studio-ink-dim"),
+    # The advisor's first panel sits on the page itself (its tab bar), so a panel with a box is read;
+    # its headings take the primary ink, one step above the dashboard's captions.
+    ("/ai-advisor", ".hero-section.prism-block", "backgroundColor", "background", "--studio-paper"),
+    ("/ai-advisor", ".section-header", "color", "color", "--studio-ink"),
 ]
 
 

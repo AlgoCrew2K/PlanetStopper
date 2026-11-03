@@ -415,15 +415,19 @@ class TestCardAnatomyFrontrunnerBuilderSource:
             "for row_id=42 (locked contract, AC-10-UX)."
         )
 
-    def test_source_badge_reads_frontrunner_builder(self, html):
-        idx = html.find('data-testid="proposal-source-badge"')
-        assert idx != -1, 'data-testid="proposal-source-badge" not found (AC-10-UX).'
-        nearby = html[idx : idx + 300]
-        assert "Frontrunner Builder" in nearby, (
-            'The source badge for a proposal_source="frontrunner_builder" row must '
-            'read "Frontrunner Builder" nearby its testid. Found: '
-            f"{nearby[:150]!r} (AC-10-UX)."
+    def test_the_usual_source_carries_no_badge_and_the_shared_note_names_it(self, html):
+        """A proposal_source="frontrunner_builder" card needs no source pill: it is the tab's own
+        kind of proposal, and the shared note above the list says what each one is. Only a card of
+        another source (the retrofit) names its source."""
+        card_start = html.find('data-testid="frontrunner-proposal-card"')
+        assert card_start != -1
+        card = html[card_start : card_start + 6000]
+        assert 'data-testid="proposal-source-badge"' not in card, (
+            "a frontrunner_builder card must not repeat its source as a pill"
         )
+        note = html.find('data-testid="fr-identity-note"')
+        assert note != -1 and note < card_start, "the shared note sits above the cards"
+        assert "frontrunner proposal" in html[note : note + 300]
 
     def test_incumbent_and_candidate_calmar_cells_present(self, html):
         assert 'data-testid="fr-incumbent-calmar"' in html, (

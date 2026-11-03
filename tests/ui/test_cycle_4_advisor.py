@@ -1148,18 +1148,26 @@ def test_every_chip_pill_and_notice_rule_uses_tokens_for_its_tint():
 
 @pytest.mark.parametrize("label, selector", sorted(_NAMED_TINT_RULES.items()))
 def test_each_named_tint_references_a_studio_token(label, selector):
-    """the tint of each named element is derived from a token."""
+    """the signal of each named element is derived from a token.
+
+    A chip or pill is a status dot and one word: its signal is the dot's colour (``--dot``), set to a
+    token by its modifier rule; a notice carries its signal in its text colour. Either way the colour
+    is a token (or a token with a fallback), never a raw value fixed for both themes.
+    """
     rules = [
         dict(decls)
         for _context, selectors, decls in _advisor_style_rules()
         if selector in selectors
     ]
     assert rules, f"no rule for {label} ({selector})"
-    backgrounds = [r.get("background") or r.get("background-color") or "" for r in rules]
-    assert all("var(--studio-" in b for b in backgrounds), (label, backgrounds)
-    assert all(not _RAW_COLOUR.search(_TOKEN_WITH_FALLBACK.sub("", b)) for b in backgrounds), (
+    signals = [
+        r.get("--dot") or r.get("background") or r.get("background-color") or r.get("color") or ""
+        for r in rules
+    ]
+    assert all("var(--studio-" in s for s in signals), (label, signals)
+    assert all(not _RAW_COLOUR.search(_TOKEN_WITH_FALLBACK.sub("", s)) for s in signals), (
         label,
-        backgrounds,
+        signals,
     )
 
 

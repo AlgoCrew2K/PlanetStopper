@@ -362,7 +362,7 @@ _TINT_CLASSES = {
     "promoted incubation chip": ["incubation-status-chip", "incubation-status-chip--promoted"],
     "passed gate pill": ["gate-pill", "gate-pill--passed"],
     "risk-on sentiment chip": ["prism-sentiment-chip", "prism-sentiment-chip--risk-on"],
-    "approved retirement status": ["status-pill", "armed"],
+    "approved retirement status": ["status-pill", "adv-status", "armed"],
 }
 
 _TINT_PROBE = """
@@ -374,7 +374,10 @@ _TINT_PROBE = """
     el.textContent = name;
     document.body.appendChild(el);
     const s = getComputedStyle(el);
-    out[name] = s.backgroundColor;
+    // An outcome is a status dot and one word: its signal is the dot's fill (the ::before box); a
+    // notice has no dot and carries its signal in its text colour.
+    const dot = getComputedStyle(el, '::before');
+    out[name] = dot.content !== 'none' && dot.content !== 'normal' ? dot.backgroundColor : s.color;
     el.remove();
   }
   return out;
@@ -395,7 +398,7 @@ def _tints(firefox, server, theme):
 
 
 def test_each_of_the_five_tints_changes_with_the_theme(firefox, advisor_server):
-    """a tint built from a token differs between light and dark; a literal does not."""
+    """a signal colour built from a token differs between light and dark; a literal does not."""
     light = _tints(firefox, advisor_server, None)
     dark = _tints(firefox, advisor_server, "dark")
     fixed = [name for name in _TINT_CLASSES if light[name] == dark[name]]

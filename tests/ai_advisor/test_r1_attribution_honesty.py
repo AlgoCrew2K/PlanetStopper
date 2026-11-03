@@ -132,7 +132,8 @@ def test_ac1_strategy_builder_tab_labeled_generation_model_plus_community_statis
     value proves the label is read from the model authority at render time."""
     monkeypatch.setenv("ADVISOR_SUGGESTION_MODEL", "test-marker-sb-model")
     html = _get_html(client, monkeypatch)
-    tab = _extract_by_testid(html, "strategy-builder-tab", closing_tag="</button>")
+    # The attribution sits at the head of the tab's own panel (the tab button is one line).
+    tab = _extract_by_testid(html, "tab-panel-strategy-builder", closing_tag="</p>")
     assert "test-marker-sb-model" in tab, (
         f"AC-1 GAP: strategy-builder-tab does not reflect the configured "
         f"generation model (set ADVISOR_SUGGESTION_MODEL to a marker value and it "
@@ -156,7 +157,7 @@ def test_ac1_chat_and_run_advisor_retain_claude_attribution(client, monkeypatch)
     today; this pins that a per-tab-attribution pass adds real attribution
     here rather than only removing the page-global claim."""
     html = _get_html(client, monkeypatch)
-    chat_tab = _extract_by_testid(html, "tab-chat", closing_tag="</button>")
+    chat_tab = _extract_by_testid(html, "tab-panel-chat", closing_tag="</p>")
     assert "claude" in chat_tab.lower() or "opus" in chat_tab.lower(), (
         f"AC-1 GAP: tab-chat carries no Claude/Opus attribution despite Chat "
         f"being a genuine real-LLM feature. Element: {chat_tab}"
@@ -362,15 +363,16 @@ def _element_after(html: str, marker: str, closing_tag: str) -> str:
 def _badges(html: str) -> dict[str, str]:
     """The rendered (still HTML-escaped) text of every model badge on the page."""
     badges: dict[str, str] = {}
+    # Each tab's attribution is the first line of that tab's own panel; the tab button is one line.
     for key, testid in (
-        ("asset_swaps", "tab-asset-swaps"),
-        ("logic_changes", "tab-logic-changes"),
-        ("chat", "tab-chat"),
-        ("strategy_builder", "strategy-builder-tab"),
+        ("asset_swaps", "tab-panel-asset-swaps"),
+        ("logic_changes", "tab-panel-logic-changes"),
+        ("chat", "tab-panel-chat"),
+        ("strategy_builder", "tab-panel-strategy-builder"),
     ):
-        tab = _extract_by_testid(html, testid, closing_tag="</button>")
-        match = re.search(r'<span class="cap-tab-attribution">(.*?)</span>', tab, re.S)
-        assert match, f"{testid} carries no cap-tab-attribution badge"
+        panel = _extract_by_testid(html, testid, closing_tag="</p>")
+        match = re.search(r'<p class="cap-tab-attribution">(.*)$', panel, re.S)
+        assert match, f"{testid} carries no cap-tab-attribution line"
         badges[key] = match.group(1)
     badges["prism"] = _element_after(html, 'data-testid="prism-model-badge"', "</span>")
     badges["run_note"] = _element_after(html, 'class="run-controls-note"', "</p>")

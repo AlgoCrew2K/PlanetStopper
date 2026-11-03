@@ -1,4 +1,4 @@
-<div data-testid="market-prism-block" class="hero-section prism-block">
+<div data-testid="market-prism-block" class="hero-section prism-block adv-panel">
 {# Determine the sentiment value and CSS modifier once for the block #}
 {% if market_prism_summary %}
 {% set _raw = market_prism_summary.get('raw_response', {}) %}
@@ -8,16 +8,11 @@
 {% set _created = market_prism_summary.get('created_at', '') %}
 {% endif %}
 <div class="prism-block-header">
-<span class="section-header prism-block-title">Market Prism</span>
-<span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+<span class="section-header prism-block-title adv-heading">Market Prism</span>
 {% if market_prism_summary %}
-<span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
-{% endif %}
-</div>
-{% if market_prism_summary %}
-{# Sentiment chip — maps overall_sentiment to semantic CSS modifier.
-Both canonical (risk-on/risk-off) and synonym (bullish/bearish) forms
-are emitted by the lens_pipeline synthesizer; both sets must map. #}
+{# Sentiment verdict: a dot and one word. Maps overall_sentiment to its semantic CSS modifier.
+Both canonical (risk-on/risk-off) and synonym (bullish/bearish) forms are emitted by the
+lens_pipeline synthesizer; both sets must map. #}
 {% set _chip_class = {
 'bullish':        'prism-sentiment-chip--risk-on',
 'risk-on':        'prism-sentiment-chip--risk-on',
@@ -28,6 +23,13 @@ are emitted by the lens_pipeline synthesizer; both sets must map. #}
 }.get(_sentiment, 'prism-sentiment-chip--neutral') %}
 <span class="prism-sentiment-chip {{ _chip_class }}"
 data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
+{% endif %}
+<span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+{% if market_prism_summary %}
+<span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
+{% endif %}
+</div>
+{% if market_prism_summary %}
 {% if _rationale %}
 <p class="prism-rationale" data-testid="prism-rationale">{{ _rationale | e }}</p>
 {% endif %}
@@ -40,14 +42,19 @@ data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
 {% set _available = _lens.get('available', false) %}
 <div class="prism-lens {% if _available %}prism-lens--available{% else %}prism-lens--unavailable{% endif %}"
 data-testid="prism-lens-{{ _lens_name }}">
-<div class="prism-lens-name">{{ _lens_name | e }}</div>
+<div class="prism-lens-head">
+<span class="prism-lens-name">{{ _lens_name | capitalize | e }}</span>
 {% if _available %}
 <span class="prism-lens-status prism-lens-status--ok">Available</span>
+{% else %}
+<span class="prism-lens-status prism-lens-status--unavailable">Unavailable</span>
+{% endif %}
+</div>
+{% if _available %}
 {% if _lens.get('summary') %}
 <p class="prism-lens-text">{{ _lens.get('summary') | e }}</p>
 {% endif %}
 {% else %}
-<span class="prism-lens-status prism-lens-status--unavailable">Unavailable</span>
 {% if _lens.get('reason') %}
 <p class="prism-lens-text">{{ _lens.get('reason') | e }}</p>
 {% endif %}
@@ -69,9 +76,14 @@ XSS-safe: all values escaped with | e, no | safe used. #}
 {% set _ns.any_sources = true %}
 {% endif %}
 {% endfor %}
+{% set _src_n = namespace(total=0) %}
+{% for _lname in _lens_names %}
+{% set _le = _per_lens.get(_lname, {}) %}
+{% set _src_n.total = _src_n.total + (_le.get('article_corpus', []) | length) + (_le.get('sources', []) | length) %}
+{% endfor %}
 {% if _ns.any_sources %}
-<div data-testid="prism-sources">
-<div class="prism-sources-header">Sources</div>
+<details class="prism-sources" data-testid="prism-sources">
+<summary>Sources ({{ _src_n.total }})</summary>
 {% for _lname in _lens_names %}
 {% set _le = _per_lens.get(_lname, {}) %}
 {% set _le_articles = _le.get('article_corpus', []) %}
@@ -106,7 +118,7 @@ rel="noopener noreferrer">
 </div>
 {% endif %}
 {% endfor %}
-</div>
+</details>
 {% endif %}
 {# Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10).
 2026-07 redesign: the day-to-day signal is the VERDICT, not 27
@@ -151,7 +163,7 @@ data-testid="{{ testid_prefix }}{{ _indicator | e }}">
 {% endmacro %}
 {% if market_prism_verification is not none %}
 <div data-testid="prism-verification" class="prism-verification">
-<div class="prism-verification-header">Numeric Verification</div>
+<div class="prism-verification-header">Numeric verification</div>
 {# verdict_label/verdict_class computed in ai_advisor_tab()
 (single source of truth — /review PR #92): the pill
 reuses the 4 existing check-badge classes, and an
