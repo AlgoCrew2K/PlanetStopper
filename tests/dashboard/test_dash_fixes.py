@@ -263,8 +263,8 @@ class TestF4ResponsiveHeroGrid:
         (grid-template-columns: 1fr or similar one-value expression).
         """
         html = _html()
-        media_idx = html.find("@media")
-        assert media_idx != -1, "F-4b FAIL: no @media rule found (prerequisite)."
+        media_idx = html.find("@media (max-width: 700px)")
+        assert media_idx != -1, "F-4b FAIL: no @media (max-width: 700px) rule found (prerequisite)."
         # Read up to 400 chars after the @media to capture the block.
         media_block = html[media_idx : media_idx + 400]
         assert "hero-grid" in media_block, (

@@ -3506,10 +3506,12 @@ def test_cash_now_button_css_is_outlined_not_solid_fill():
     )
 
 
-def test_cash_now_button_css_has_uppercase_text():
-    """Cash Now button must have text-transform: uppercase per design spec.
+def test_cash_now_button_css_is_sentence_case_not_upper_case():
+    """Cash Now reads "Cash Now" as written: no text-transform, no letter-spacing.
 
-    Parity BLOCK-D-4: Live button has no text-transform. Design spec: uppercase letters.
+    Supersedes the earlier parity pin (text-transform: uppercase with letter-spacing): the
+    dashboard's design direction keeps labels in sentence case and untracked. The button stays
+    outlined in the danger colour (see the outline and border pins around this one).
     """
     template_path = _TEMPLATES_DIR / "index.html"
     src = template_path.read_text(encoding="utf-8")
@@ -3518,17 +3520,18 @@ def test_cash_now_button_css_has_uppercase_text():
     assert css_block_match, "templates/index.html must define a .cash-now-btn CSS rule block."
     css_block = css_block_match.group(1)
 
-    assert re.search(r"text-transform\s*:\s*uppercase", css_block), (
-        f"Cash Now button must have text-transform: uppercase. "
-        f"Design spec (studio.jsx): text-transform: uppercase with letter-spacing. "
-        f"Current rule: {css_block.strip()!r}"
+    assert not re.search(r"text-transform\s*:\s*uppercase", css_block), (
+        f"Cash Now button must not be upper-cased. Current rule: {css_block.strip()!r}"
+    )
+    assert not re.search(r"letter-spacing\s*:\s*0?\.\d+em", css_block), (
+        f"Cash Now button must not be letter-spaced. Current rule: {css_block.strip()!r}"
     )
 
 
-def test_cash_now_button_css_font_weight_is_600():
-    """Cash Now button must have font-weight: 600 per design spec (not 700).
+def test_cash_now_button_css_font_weight_is_500():
+    """Cash Now button is weight 500, the page's one emphasis weight (not 600 or 700).
 
-    Parity BLOCK-D-5: Live button has font-weight: 700. Design spec: 600.
+    Supersedes the earlier parity pin (font-weight: 600): the dashboard uses weights 400 and 500.
     """
     template_path = _TEMPLATES_DIR / "index.html"
     src = template_path.read_text(encoding="utf-8")
@@ -3537,18 +3540,13 @@ def test_cash_now_button_css_font_weight_is_600():
     assert css_block_match, "templates/index.html must define a .cash-now-btn CSS rule block."
     css_block = css_block_match.group(1)
 
-    # Must be 600, not 700
     fw_match = re.search(r"font-weight\s*:\s*(\d+)", css_block)
     assert fw_match, (
-        f"Cash Now button must have font-weight: 600. No font-weight found in CSS. "
+        f"Cash Now button must have font-weight: 500. No font-weight found in CSS. "
         f"Current rule: {css_block.strip()!r}"
     )
     fw_val = int(fw_match.group(1))
-    assert fw_val == 600, (
-        f"Cash Now button font-weight must be 600 (design spec). "
-        f"Got font-weight: {fw_val}. "
-        f"Design spec (studio.jsx): font-weight: 600."
-    )
+    assert fw_val == 500, f"Cash Now button font-weight must be 500. Got font-weight: {fw_val}."
 
 
 def test_cash_now_button_css_has_border_styling():

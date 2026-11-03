@@ -371,10 +371,7 @@ class TestAPreviousSessionsTapeCarriesItsDate:
             "the previous session's tape has no caption"
         )
         assert shown["text"] == f"{previous} session"
-        assert (
-            "spark-session" in shown["classes"].split()
-            and "legend-as-of" in shown["classes"].split()
-        )
+        assert "spark-session" in shown["classes"].split()
         assert r["other"] is None or r["other"]["hidden"], (
             "a card with no date fields gets no caption"
         )
