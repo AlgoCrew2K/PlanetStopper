@@ -328,31 +328,38 @@ def test_save_and_discard_are_disabled_with_no_edit(client):
 # ---------------------------------------------------------------------------
 
 
-def test_history_panels_labels_and_hero_stats_use_the_primitives(client):
+def test_history_panels_labels_and_hero_figures_use_the_panel_and_figure_row(client):
+    """The panels and headings are the shared primitives; the four headline figures are one row
+    of figures (``.hp-figs``), not four boxed tiles."""
     root = _page(client, "/history")
     for testid in ("daily-strip", "by-reason-section", "recent-triggers"):
         panel = root.find(testid=testid)
         assert panel is not None and "hero-section" in panel.classes, testid
         assert panel.find(cls="section-header") is not None, f"{testid} has no .section-header"
     hero = root.find(testid="history-hero")
-    assert hero is not None and "mini-stats" in hero.classes
+    assert hero is not None and hero.find(cls="hp-figs") is not None
+    assert hero.find_all(cls="mini-stat") == [], "the headline figures are still boxed tiles"
     for testid in ("stat-total-alpha", "stat-total-saved", "stat-trigger-count", "stat-win-rate"):
         tile = hero.find(testid=testid)
-        assert tile is not None and "mini-stat" in tile.classes, testid
-        assert tile.find(cls="mini-stat-value") is not None
-        assert tile.find(cls="mini-stat-label") is not None
+        assert tile is not None and "hp-fig" in tile.classes, testid
+        assert tile.find(cls="hp-fig-value") is not None
+        assert tile.find(cls="hp-fig-label") is not None
     for old in ("section-card", "section-title", "hero-stat"):
         assert root.find_all(cls=old) == [], f"an element still carries .{old}"
 
 
-def test_history_reason_cards_are_sym_cards_with_card_names(client):
-    """the server-rendered placeholders."""
+def test_history_reason_rows_are_ledger_rows_with_a_dot_and_a_name(client):
+    """the server-rendered placeholders: one table row per reason, its name led by a status dot,
+    its seven cells under one header row, and no pill or card box."""
     root = _page(client, "/history")
-    cards = root.find_all(testid="reason-card")
-    assert len(cards) == 4
-    for card in cards:
-        assert "sym-card" in card.classes
-        assert card.find(cls="card-name") is not None
+    rows = root.find_all(testid="reason-card")
+    assert len(rows) == 4
+    for row in rows:
+        assert row.tag == "tr"
+        assert row.find(cls="hp-dot") is not None, "a reason row has no status dot"
+        assert len(row.find_all("td")) == 7
+        assert row.find(cls="status-pill") is None and "sym-card" not in row.classes
+    assert len(root.find(testid="by-reason-section").find_all("th")) == 7
 
 
 def test_history_empty_state_sits_in_the_panel_primitive_without_its_own_box(client):
@@ -365,22 +372,23 @@ def test_history_empty_state_sits_in_the_panel_primitive_without_its_own_box(cli
     assert not [p for p in own if p.startswith(("border", "padding", "background"))], sorted(own)
 
 
-def test_history_reason_cards_script_emits_sym_card_and_card_name():
-    """renderReasonCards (the card the script draws) carries the primitives too."""
+def test_history_reason_rows_script_emits_a_dot_row_and_no_pill_or_box():
+    """renderReasonCards draws a ledger row per reason: the status dot, the figures under the
+    table's headers, and no pill, card or inline box."""
     source = _read(STATIC / "history.js")
     body = source[source.index("function renderReasonCards") :]
-    body = body[: body.index("function ", 10)]
-    assert _token("sym-card").search(body), "renderReasonCards emits no .sym-card"
-    assert _token("card-name").search(body), "renderReasonCards emits no .card-name"
-    assert "border-radius" not in body and "border:" not in body, (
-        "renderReasonCards still writes a radius or border inline"
-    )
+    body = body[: body.index("\n    function ", 10)]
+    assert "reasonDotHtml(reason)" in body, "renderReasonCards emits no status dot"
+    assert '<tr data-testid="reason-card">' in body
+    for gone in ("status-pill", "sym-card", "card-name", "border-radius", "border:"):
+        assert gone not in body, f"renderReasonCards still writes {gone}"
 
 
 def test_performance_strip_charts_and_tables_use_the_primitives(client):
     root = _page(client, "/performance")
     strip = root.find(testid="headline-strip")
-    assert strip is not None and "mini-stats" in strip.classes
+    assert strip is not None and "hp-figs" in strip.classes
+    assert strip.find_all(cls="mini-stat") == [], "the headline figures are still boxed tiles"
     for testid in (
         "guard-alpha-stat",
         "sharpe-delta-stat",
@@ -388,9 +396,9 @@ def test_performance_strip_charts_and_tables_use_the_primitives(client):
         "sortino-delta-stat",
     ):
         tile = strip.find(testid=testid)
-        assert tile is not None and "mini-stat" in tile.classes, testid
-        assert tile.find(cls="mini-stat-value") is not None
-        assert tile.find(cls="mini-stat-label") is not None
+        assert tile is not None and "hp-fig" in tile.classes, testid
+        assert tile.find(cls="hp-fig-value") is not None
+        assert tile.find(cls="hp-fig-label") is not None
     for testid in (
         "perf-chart-block",
         "metrics-table",

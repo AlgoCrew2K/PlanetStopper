@@ -96,11 +96,8 @@ _COMPUTED = """
 _PRIMITIVE_COLOURS = [
     ("/history", ".hero-section", "backgroundColor", "background", "--studio-paper"),
     ("/history", ".section-header", "color", "color", "--studio-ink"),
-    ("/history", ".mini-stat", "borderTopColor", "border-top-color", "--studio-rule"),
-    ("/history", "#reason-cards > *", "backgroundColor", "background", "--studio-paper"),
     ("/performance", ".hero-section", "backgroundColor", "background", "--studio-paper"),
     ("/performance", ".section-header", "color", "color", "--studio-ink"),
-    ("/performance", ".mini-stat", "borderTopColor", "border-top-color", "--studio-rule"),
     ("/settings", ".hero-section", "backgroundColor", "background", "--studio-paper"),
     ("/settings", ".section-header", "color", "color", "--studio-ink"),
     ("/ai-advisor", ".hero-section", "backgroundColor", "background", "--studio-paper"),

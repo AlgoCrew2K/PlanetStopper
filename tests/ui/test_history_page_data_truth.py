@@ -71,7 +71,7 @@ def _run(client, routes, scenario):
 _TILE_SCENARIO = """
 await H.boot();
 await H.click(%r);
-return { value: H.text(%r), label: H.text(%r + ' .mini-stat-label'), tile: H.text(%r) };
+return { value: H.text(%r), label: H.text(%r + ' .hp-fig-label'), tile: H.text(%r) };
 """
 
 

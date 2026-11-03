@@ -123,6 +123,8 @@
 
     function renderDailyChart(dailyAlpha, dailyDates) {
         var svg = document.getElementById('daily-chart-svg');
+        setId('daily-chart-first', dailyDates && dailyDates.length ? String(dailyDates[0]) : '');
+        setId('daily-chart-last', dailyDates && dailyDates.length > 1 ? String(dailyDates[dailyDates.length - 1]) : '');
         if (!svg || !dailyAlpha || dailyAlpha.length === 0) {
             if (svg) svg.innerHTML = '';
             return;
@@ -145,19 +147,20 @@
             var y = v >= 0 ? midY - barH : midY;
             var fill = v >= 0 ? posColor : negColor;
             // F-020: per-bar date hook (data-date + a <title> tooltip) so a
-            // day is both hoverable and clickable for the drill-down below.
+            // day is both hoverable and clickable for the drill-down below. The
+            // tooltip also carries the day's figure, in the strip's own unit.
             var dateStr = (dailyDates && dailyDates[i]) || '';
             var dateAttr = dateStr ? ' data-date="' + escHtml(dateStr) + '"' : '';
-            var titleTag = dateStr ? '<title>' + escHtml(dateStr) + '</title>' : '';
+            var titleTag = dateStr ? '<title>' + escHtml(dateStr + ': ' + alphaPointsText(v)) + '</title>' : '';
             return '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" ' +
                 'width="' + barW.toFixed(1) + '" height="' + barH.toFixed(1) + '" ' +
-                'fill="' + escHtml(fill) + '" opacity="0.85"' + dateAttr +
-                ' style="cursor:pointer;">' + titleTag + '</rect>';
+                'fill="' + escHtml(fill) + '" opacity="0.85"' + dateAttr + '>' + titleTag + '</rect>';
         });
 
-        // baseline
+        // baseline: a hairline that stays one pixel wide however the strip is scaled
         bars.push('<line x1="0" y1="' + midY + '" x2="' + viewW + '" y2="' + midY + '" ' +
-            'stroke="' + escHtml(color('--studio-rule')) + '" stroke-width="0.5"/>');
+            'stroke="' + escHtml(color('--studio-rule-hi')) + '" stroke-width="1" ' +
+            'vector-effect="non-scaling-stroke"/>');
 
         svg.innerHTML = bars.join('');
 
@@ -168,6 +171,16 @@
             rect.addEventListener('click', function () {
                 renderDayDrilldown(rect.getAttribute('data-date'));
             });
+        });
+    }
+
+    // Marks the bar of the day the exits table is showing; no argument clears the mark.
+    function markDrilledBar(dateStr) {
+        var svg = document.getElementById('daily-chart-svg');
+        if (!svg) return;
+        svg.querySelectorAll('rect[data-date]').forEach(function (rect) {
+            if (dateStr && rect.getAttribute('data-date') === dateStr) rect.classList.add('is-drilled');
+            else rect.classList.remove('is-drilled');
         });
     }
 
@@ -217,16 +230,9 @@
         'VWAP Bleed Cut': '--studio-warn',
     };
 
-    var REASON_BADGE = {
-        'Take-Profit':    'TP',
-        'Trailing Stop':  'STOP',
-        'VWAP Breakdown': 'VWAP',
-        'VWAP Bleed Cut': 'BLEED',
-    };
-
-    // The badge is the shared .status-pill; layout.css tints its .tp / .stop / .vwap / .bleed
-    // variants with the same four tokens as REASON_STRIP_COLOR, so no page-local pill is drawn.
-    var REASON_PILL_CLASS = {
+    // A reason is a coloured dot and its name; hp-dot--<key> in history.html colours the dot with
+    // the same four tokens as REASON_STRIP_COLOR.
+    var REASON_DOT_CLASS = {
         'Take-Profit':    'tp',
         'Trailing Stop':  'stop',
         'VWAP Breakdown': 'vwap',
@@ -260,8 +266,28 @@
         return REASON_STRIP_COLOR[reason] || '--studio-accent';
     }
 
-    function reasonBadge(reason) {
-        return REASON_BADGE[reason] || reason.slice(0, 4).toUpperCase();
+    function reasonDotHtml(reason) {
+        var key = REASON_DOT_CLASS[reason];
+        return '<span class="hp-dot' + (key ? ' hp-dot--' + key : '') + '"></span>';
+    }
+
+    // The definitions sit behind a disclosure that is collapsed by default, one entry per reason the
+    // window holds (a reason with no exits has no row to explain).
+    function renderReasonDescriptions(reasons) {
+        var wrap = document.getElementById('reason-descriptions');
+        var list = document.getElementById('reason-descriptions-list');
+        if (!wrap || !list) return;
+        list.textContent = '';
+        reasons.forEach(function (reason) {
+            var term = document.createElement('dt');
+            term.insertAdjacentHTML('beforeend', reasonDotHtml(reason));
+            term.appendChild(document.createTextNode(reason));
+            var definition = document.createElement('dd');
+            definition.textContent = REASON_DESCRIPTIONS[reason] || reason;
+            list.appendChild(term);
+            list.appendChild(definition);
+        });
+        wrap.hidden = reasons.length === 0;
     }
 
     function renderReasonCards(byReason) {
@@ -272,18 +298,15 @@
         var canonical = canonicalizeByReason(byReason || {});
 
         if (Object.keys(canonical).length === 0) {
-            // The message is a card in the grid (spanning every column), so the empty state
-            // sits in the same box the cards would.
-            container.innerHTML = '<div class="sym-card" style="grid-column:1/-1;text-align:center;color:' +
-                cssVar('--studio-ink-dim') + ';font-size:0.875rem;">No exit reason data for this window.</div>';
+            // The message is one row of the ledger, spanning every column.
+            container.innerHTML = '<tr><td class="hp-empty-cell" colspan="7">No exit reason data for this window.</td></tr>';
+            renderReasonDescriptions([]);
             return;
         }
 
-        // The card is the dashboard's .sym-card and its name .card-name: layout.css owns their
-        // look (radius, border, padding, type), so nothing of that is written inline here.
-        var cardOpen = '<div data-testid="reason-card" class="sym-card">';
-        var nameOpen = '<span class="card-name">';
-
+        // One row per reason: the dot and name, then the figures under the table's own column
+        // headers, so no label repeats on a row. On a phone the row stacks and each figure
+        // carries its label (data-label).
         var html = Object.keys(canonical).map(function (reason) {
             var s = canonical[reason];
             var alphaNum = typeof s.alpha === 'number' ? s.alpha : null;
@@ -292,46 +315,31 @@
                 ? (alphaNum >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg'))
                 : cssVar('--studio-ink');
             var stripToken = reasonStripColor(reason);
-            var badge = reasonBadge(reason);
-            var pillClass = REASON_PILL_CLASS[reason] || 'standby';
             var winRateNum = s.count > 0 ? (s.wins / s.count) * 100 : 0;
-            var descText = REASON_DESCRIPTIONS[reason] || reason;
+            var rateColor = winRateNum >= 50 ? cssVar('--studio-pos') : cssVar('--studio-neg');
             var avgAlpha = s.count > 0 && alphaNum !== null ? alphaNum / s.count : null;
             var avgStr = avgAlpha !== null ? (avgAlpha >= 0 ? '+' : '') + avgAlpha.toFixed(3) + ' pts' : '--';
 
             return (
-                // V-29: 4px colored top edge per design spec (position:absolute span, top 0).
-                cardOpen +
-                '<span style="position:absolute;top:0;left:0;right:0;height:4px;background:' + cssVar(stripToken) + ';display:block;"></span>' +
-                '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:0.5rem;">' +
-                nameOpen + escHtml(reason) + '</span>' +
-                '<span class="status-pill ' + pillClass + '">' + escHtml(badge) + '</span>' +
-                '</div>' +
+                '<tr data-testid="reason-card">' +
+                '<td>' + reasonDotHtml(reason) + escHtml(reason) + '</td>' +
+                '<td class="num hp-strong" data-label="Sum of exit alpha" style="color:' + alphaColor + ';">' +
+                escHtml(alphaStr) + '</td>' +
+                '<td class="num" data-label="Dollar result">' + escHtml(dollarSavedText(s.dollars)) + '</td>' +
+                '<td class="num" data-label="Triggers">' + escHtml(String(s.count)) + '</td>' +
+                '<td class="num" data-label="Wins">' + escHtml((s.wins || 0) + '/' + s.count) + '</td>' +
                 // B-13: reason-bar SVG whose rect width reflects win-rate for this reason.
-                '<svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="100%" height="4" style="display:block;margin-bottom:0.5rem;">' +
-                '<rect x="0" y="0" width="' + Math.min(winRateNum, 100).toFixed(1) + '" height="4" fill="' + cssVar(stripToken) + '" opacity="0.35"></rect>' +
-                '</svg>' +
-                '<div style="font-size:1.75rem;font-weight:800;color:' + alphaColor + ';line-height:1;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;">' +
-                escHtml(alphaStr) + '</div>' +
-                '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;margin-bottom:0.75rem;">' +
-                'Sum of exit alpha · ' + escHtml(dollarSavedText(s.dollars)) +
-                '</div>' +
-                '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.375rem;padding-top:0.75rem;border-top:1px solid ' + cssVar('--studio-border') + ';">' +
-                '<div><div style="font-size:0.5625rem;color:' + cssVar('--studio-ink-dim') + ';text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Triggers</div>' +
-                '<div style="font-size:0.8125rem;font-weight:600;color:' + cssVar('--studio-ink') + ';margin-top:1px;">' + escHtml(String(s.count)) + '</div></div>' +
-                '<div><div style="font-size:0.5625rem;color:' + cssVar('--studio-ink-dim') + ';text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Wins</div>' +
-                '<div style="font-size:0.8125rem;font-weight:600;color:' + (winRateNum >= 50 ? cssVar('--studio-pos') : cssVar('--studio-neg')) + ';margin-top:1px;">' + escHtml((s.wins || 0) + '/' + s.count) + '</div></div>' +
-                '<div data-testid="avg-per-exit"><div style="font-size:0.5625rem;color:' + cssVar('--studio-ink-dim') + ';text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Win rate</div>' +
-                '<div style="font-size:0.8125rem;font-weight:600;color:' + (winRateNum >= 50 ? cssVar('--studio-pos') : cssVar('--studio-neg')) + ';margin-top:1px;">' + escHtml(winRateNum.toFixed(0) + '%') + '</div></div>' +
-                '</div>' +
-                '<div style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.625rem;">' + escHtml(descText) + '</div>' +
-                '<div style="font-size:0.625rem;color:' + cssVar('--studio-ink-dim') + ';margin-top:0.25rem;font-variant-numeric:tabular-nums;">' +
-                'avg per exit: ' + escHtml(avgStr) + '</div>' +
-                '</div>'
+                '<td class="num" data-label="Win rate" style="color:' + rateColor + ';"><span class="hp-rate">' +
+                '<svg data-testid="reason-bar" viewBox="0 0 100 4" preserveAspectRatio="none" width="48" height="4">' +
+                '<rect x="0" y="0" width="' + Math.min(winRateNum, 100).toFixed(1) + '" height="4" fill="' + cssVar(stripToken) + '"></rect>' +
+                '</svg>' + escHtml(winRateNum.toFixed(0) + '%') + '</span></td>' +
+                '<td class="num" data-label="Avg per exit" data-testid="avg-per-exit">' + escHtml(avgStr) + '</td>' +
+                '</tr>'
             );
         }).join('');
 
         container.innerHTML = html;
+        renderReasonDescriptions(Object.keys(canonical));
     }
 
     // ---------------------------------------------------------------------------
@@ -370,20 +378,16 @@
 
         if (todays_exits.length === 0) {
             tbody.innerHTML =
-                '<tr><td colspan="4" style="text-align:center;padding:1rem;color:' +
-                cssVar('--studio-ink-dim') + ';">No exit records for this window.</td></tr>';
+                '<tr><td colspan="4" class="hp-empty-cell">No exit records for this window.</td></tr>';
             return;
         }
 
         tbody.innerHTML = todays_exits.map(function (rec) {
             var symDisplay = rec.symphony_name || rec.symphony_id || '—';
             var rawReason = String(rec.reason || '—');
-            // V-31: color REASON cell per strategy — resolve to canonical key for color lookup.
+            // V-31: the reason's dot is coloured per strategy — resolve to the canonical key for the lookup.
             var normalizedKey = rawReason.toLowerCase().replace(/-/g, '_').replace(/\s+/g, '_');
             var canonicalReason = REASON_CANONICAL_MAP[normalizedKey] || REASON_CANONICAL_MAP[rawReason.toLowerCase()] || null;
-            var reasonColor = canonicalReason
-                ? cssVar(REASON_STRIP_COLOR[canonicalReason] || '--studio-ink')
-                : cssVar('--studio-ink');
             // DE-GAS-COHERENCE-001: the Detail % is a signed guard-alpha figure --
             // color by sign (same convention as renderHero's alpha and
             // renderReasonCards' alphaColor), not the flat --studio-ink-dim a
@@ -392,11 +396,11 @@
                 ? (rec.detail >= 0 ? cssVar('--studio-pos') : cssVar('--studio-neg'))
                 : cssVar('--studio-ink-dim');
             return (
-                '<tr style="border-bottom:1px solid ' + cssVar('--studio-border') + ';">' +
-                '<td style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(rec.ts || '—')) + '</td>' +
-                '<td style="color:' + cssVar('--studio-ink-dim') + ';">' + escHtml(String(symDisplay)) + '</td>' +
-                '<td style="font-weight:700;letter-spacing:0.04em;color:' + reasonColor + ';">' + escHtml(rawReason) + '</td>' +
-                '<td style="color:' + detailColor + ';">' + escHtml((function(d) {
+                '<tr>' +
+                '<td class="hp-time">' + escHtml(String(rec.ts || '—')) + '</td>' +
+                '<td>' + escHtml(String(symDisplay)) + '</td>' +
+                '<td>' + reasonDotHtml(canonicalReason) + escHtml(rawReason) + '</td>' +
+                '<td class="num" style="color:' + detailColor + ';">' + escHtml((function(d) {
                     if (typeof d !== 'number') return String(d || '—');
                     return (d >= 0 ? '+' : '') + d.toFixed(2) + '%';
                 })(rec.detail)) + '</td>' +
@@ -419,6 +423,7 @@
     function clearDrilledDay() {
         drilledDay = null;
         setTodaysExitsButtonVisible(false);
+        markDrilledBar(null);
     }
 
     function renderDayDrilldown(dateStr) {
@@ -455,6 +460,7 @@
         if (heading) {
             heading.textContent = sessionDayLabel(dateStr) + ' exits (' + exits.length + ')';
         }
+        markDrilledBar(dateStr);
     }
 
     // ---------------------------------------------------------------------------

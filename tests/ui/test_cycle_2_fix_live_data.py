@@ -1588,46 +1588,22 @@ def test_performance_rendered_html_has_cumulative_chart_svg(client):
     )
 
 
-def test_performance_rendered_html_has_metric_chart_elements(client):
-    """/performance rendered HTML must have >= 7 metric comparison chart elements.
+def test_performance_rendered_html_has_the_cumulative_chart_and_no_metric_bars(client):
+    """/performance rendered HTML holds the one cumulative returns chart (a canvas) and the risk
+    metrics table as figures alone: the per-metric bars the first design drew are gone.
 
-    PM browser-verify (2026-05-19): performance page must have ≥ 8 total chart
-    elements — 1 cumulative returns chart + 7 per-metric comparison bars (one per
-    METRICS entry: Total Return, Annualized, Sharpe, Sortino, Max DD, Calmar, Win Rate).
-
-    This test hits the live Flask client to count actual <canvas> and <svg> elements
-    in the rendered HTML — not the source template. div containers without SVG/canvas
-    children do NOT count.
-
-    The per-metric bars must be rendered as <canvas> or <svg> elements (not bare divs).
+    Counts real elements in the live Flask render, not the source template.
     """
     resp = client.get("/performance")
     assert resp.status_code == 200, f"/performance returned {resp.status_code}"
     html = resp.data.decode("utf-8", errors="replace")
 
-    canvas_count = len(re.findall(r"<canvas", html, re.I))
-    svg_count = len(re.findall(r"<svg", html, re.I))
-
-    # Exclude nav/icon SVGs: small inline SVGs (width < 20, height < 20 or path-only)
-    # Count only chart-purpose SVGs: those with viewBox, preserveAspectRatio, or large size
-    chart_svgs = len(
-        re.findall(
-            r'<svg[^>]*(?:preserveAspectRatio|viewBox="0 0 \d{2,}|data-testid)',
-            html,
-            re.I,
-        )
-    )
-    total_chart_elements = canvas_count + chart_svgs
-
-    assert total_chart_elements >= 8, (
-        f"GET /performance rendered HTML must have >= 8 chart elements "
-        f"(1 cumulative returns chart + 7 per-metric comparison bars). "
-        f"Found {canvas_count} canvas + {chart_svgs} chart-purpose SVG = {total_chart_elements} total. "
-        f"(Raw SVG count: {svg_count} — excludes nav/icon SVGs.) "
-        "Each of the 7 METRICS rows (Total Return, Annualized, Sharpe, Sortino, "
-        "Max DD, Calmar, Win Rate) must have a <canvas> or <svg> bar element. "
-        "performance.jsx renders these as visual bars, not just text. "
-        "Implement the bars as inline SVGs or Chart.js canvases per metric row."
+    assert len(re.findall(r"<canvas", html, re.I)) == 1, "the cumulative returns chart is missing"
+    metrics = re.search(r'data-testid="metrics-table".*?</section>', html, re.S)
+    assert metrics, "the risk metrics panel is missing"
+    assert "<svg" not in metrics.group(0), "the risk metrics table still draws bars"
+    assert metrics.group(0).count('data-testid="metric-row"') == 10, (
+        "the risk metrics table must keep its ten rows"
     )
 
 
@@ -2230,41 +2206,32 @@ def test_api_history_daily_alpha_not_capped_when_db_has_more_data(client, monkey
 
 
 # ---------------------------------------------------------------------------
-# UX BLOCK-1 (cycle-2-fix-v2): renderMetrics must emit metric-bar SVGs in the
-# rebuilt DOM, not just in the static server-rendered scaffolding.
+# UX BLOCK-1 (cycle-2-fix-v2), superseded by the unslop pass: the delta column of the
+# risk-metrics table is the signed figure alone. The per-row mini bar (an 80 px SVG whose rect
+# width was ``|delta| * 10`` percent, on a different unit for every row, so it rendered as a
+# speck on all but the largest deltas) is gone, from the scaffolding and from the rebuilt rows.
 # ---------------------------------------------------------------------------
 
 
-def test_performance_js_render_metrics_emits_metric_bar_svg():
-    """performance.js renderMetrics must include data-testid="metric-bar" SVG in rebuilt rows.
-
-    UX review (2026-05-19) found that the 7 metric-bar SVGs in the server-rendered
-    performance.html are destroyed when renderMetrics fires — it rebuilds tbody.innerHTML
-    with rows containing no SVG elements. After the first fetch the DOM has zero
-    metric-bar SVGs, which is what the PM sees in the browser.
-
-    This test asserts the JS source string for renderMetrics contains the string
-    'metric-bar' AND a SVG-generating pattern so the rebuilt DOM includes bar elements.
-    """
+def test_performance_js_render_metrics_emits_the_delta_figure_without_a_mini_bar():
+    """renderMetrics rebuilds each row with the delta figure in its delta cell and no SVG bar, and
+    the server-rendered scaffolding holds no bar either, so the table reads the same before and
+    after the first fetch."""
     perf_js = _STATIC_DIR / "performance.js"
     src = perf_js.read_text(encoding="utf-8")
 
-    # Locate the renderMetrics function body
     match = re.search(r"function renderMetrics\b.*?(?=\nfunction |\Z)", src, re.S)
     assert match, "performance.js must define a renderMetrics function"
     fn_body = match.group(0)
 
-    assert "metric-bar" in fn_body, (
-        "renderMetrics in performance.js must emit 'metric-bar' in the innerHTML it builds. "
-        "Currently it rebuilds tbody rows with text-only delta columns — no SVG elements. "
-        "Each metric row's delta column must include an SVG bar element with "
-        'data-testid="metric-bar" whose rect width reflects the metric delta.'
+    assert "metric-bar" not in fn_body and "<svg" not in fn_body, (
+        "renderMetrics draws a decorative bar in the delta column again"
     )
-    assert re.search(r"<svg|svg[^>]*viewBox", fn_body, re.I), (
-        "renderMetrics must emit an <svg> element inside each rebuilt row. "
-        "The static scaffolding SVGs are destroyed on first render — the JS "
-        "must regenerate them with actual computed widths."
+    assert "fmtDelta(liveVal, shadowVal, kind, invert)" in fn_body, (
+        "the delta cell no longer carries the formatted delta"
     )
+    template = (_TEMPLATES_DIR / "performance.html").read_text(encoding="utf-8")
+    assert "metric-bar" not in template, "the scaffolding still holds a metric bar"
 
 
 # ---------------------------------------------------------------------------
