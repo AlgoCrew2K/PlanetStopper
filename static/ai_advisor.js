@@ -270,8 +270,10 @@
             var oosColor = oosStatusColor(s.oos_status || 'pending');
             var oosLabel = escHtml(s.oos_status || 'pending');
             if (s.oos_reason) oosLabel += ' — ' + escHtml(s.oos_reason);
+            // A status dot and one word, like the gate badges: the word stays in primary ink (the
+            // warn colour is too light to carry 11-12px text), the dot carries the meaning.
             var suffBadge = (s.data_sufficiency && s.data_sufficiency !== 'sufficient')
-                ? '<span style="font-size:0.6875rem;color:' + cssVar('--studio-warn') + ';margin-left:0.25rem;">' +
+                ? '<span class="gate-dot gate-dot--warn" data-testid="data-sufficiency-badge">' +
                   escHtml(s.data_sufficiency) + ' data</span>'
                 : '';
 
@@ -296,7 +298,7 @@
             var projectedImpactBar =
                 '<div data-testid="projected-impact-bar" style="margin-bottom:0.5rem;">' +
                 (impactBefore !== null
-                    ? '<span style="font-size:0.625rem;color:' + cssVar('--studio-ink-dim') + ';">' +
+                    ? '<span style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';">' +
                       escHtml(impactMetric) + ': ' + impactBefore.toFixed(3) + ' → ' +
                       (impactAfter !== null ? impactAfter.toFixed(3) : '?') + '</span><br>'
                     : '') +
@@ -327,7 +329,9 @@
 
                 '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
 
-                '<div style="flex:1;min-width:0;">' +
+                // The text column asks for 12rem before it shrinks: on a phone the actions wrap under it
+                // instead of sitting on top of the config key. min-width:0 lets it shrink if it must.
+                '<div style="flex:1 1 12rem;min-width:0;">' +
                 '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
                 confidenceRing +
                 '<span style="font-size:0.75rem;font-weight:500;' +

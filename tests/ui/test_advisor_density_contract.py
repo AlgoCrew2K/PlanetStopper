@@ -30,6 +30,7 @@ from tests._advisor_overview_prism import prism_raw_response
 from tests._ai_advisor_autotune_panel_harness import drive
 from tests._ux_truth_support import parse_html
 from tests.app import _retirement_tab_world as w
+from tests.app import _tenure_review_panel_builders as pb
 from tests.ui import _dashboard_primitives_capture as cap
 from tests.ui._shell_support import seed_pending_frontrunner_proposal
 
@@ -311,6 +312,124 @@ class TestMarketPrismIsCompact:
         block = parse_html(_page(client)).find(testid="market-prism-block")
         header = block.find_all(cls="prism-block-header")[0]
         assert header.find(testid="prism-sentiment-chip") is not None
+
+
+# ---------------------------------------------------------------------------
+# Retirement tenure review: the long evidence lists sit behind closed disclosures
+# ---------------------------------------------------------------------------
+
+_EVIDENCE_ITEMS = ("performance", "composite", "redundancy", "backtest", "marginal", "long_vix")
+
+
+def _inside_details(node) -> bool:
+    cursor = node.parent
+    while cursor is not None:
+        if cursor.tag == "details":
+            return True
+        cursor = cursor.parent
+    return False
+
+
+class TestTenureEvidenceIsCollapsed:
+    @pytest.fixture()
+    def entries(self, isolated_db, client):
+        pb.seed_bot_state()
+        record = pb.store_full_run()
+        panel = pb.panel_of(_page(client))
+        return record, [pb.entry_node(panel, e["symphony_id"]) for e in record["entries"]], panel
+
+    def test_every_evidence_item_is_a_closed_disclosure(self, entries):
+        _record, nodes, _panel_node = entries
+        checked = 0
+        for node in nodes:
+            for name in _EVIDENCE_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                details = [n for n in block.walk() if n.tag == "details"]
+                assert len(details) == 1, name
+                assert "open" not in details[0].attrs, (
+                    f"{name} opens only when the operator opens it"
+                )
+                checked += 1
+        assert checked >= 18
+
+    def test_the_summary_is_the_heading_and_one_headline_line(self, entries):
+        _record, nodes, _panel_node = entries
+        for node in nodes:
+            for name in _EVIDENCE_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                summary = [n for n in block.walk() if n.tag == "summary"]
+                assert len(summary) == 1, name
+                heading = summary[0].find("tenure-review-evidence-heading")
+                assert heading is not None, name
+                lines = [
+                    n
+                    for n in summary[0].walk()
+                    if {"tenure-review-evidence-figure", "tenure-review-evidence-meta"}
+                    & set(n.classes())
+                ]
+                assert len(lines) <= 1, f"{name}: a summary holds one headline, not a list"
+
+    def test_an_available_item_leads_with_its_first_figure_and_keeps_the_rest_inside(self, entries):
+        record, nodes, _panel_node = entries
+        checked = 0
+        for stored, node in zip(record["entries"], nodes, strict=True):
+            item = stored["evidence"]["performance"]
+            if item.get("status") != "available" or not item.get("figures"):
+                continue
+            block = node.find("tenure-review-evidence-performance")
+            summary = [n for n in block.walk() if n.tag == "summary"][0]
+            first = next(iter(item["figures"])).replace("_", " ")
+            headline = [n for n in summary.walk() if "tenure-review-evidence-figure" in n.classes()]
+            assert headline and headline[0].text().lower().startswith(first + ":"), first
+            later = [
+                n
+                for n in block.walk()
+                if "tenure-review-evidence-figure" in n.classes() and n not in headline
+            ]
+            assert later, "the other figures stay in the item"
+            assert all(_inside_details(n) and not n.is_inside(summary) for n in later)
+            checked += 1
+        assert checked >= 1
+
+    def test_an_item_that_is_not_available_leads_with_its_status_line(self, entries):
+        record, nodes, _panel_node = entries
+        seen = 0
+        for stored, node in zip(record["entries"], nodes, strict=True):
+            for name in _EVIDENCE_ITEMS:
+                if stored["evidence"][name].get("status") == "available":
+                    continue
+                block = node.find(f"tenure-review-evidence-{name}")
+                summary = [n for n in block.walk() if n.tag == "summary"][0]
+                text = summary.text().lower()
+                assert "not applicable" in text or "unavailable" in text, (name, text)
+                seen += 1
+        assert seen >= 1
+
+    def test_the_provenance_lines_stay_in_the_page_inside_the_disclosure(self, entries):
+        record, nodes, _panel_node = entries
+        for stored, node in zip(record["entries"], nodes, strict=True):
+            for name in _EVIDENCE_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                label = stored["evidence"][name]["label"]
+                labels = [
+                    n
+                    for n in block.walk()
+                    if "retirement-rec-basis" in n.classes() and label in n.text()
+                ]
+                assert labels and all(_inside_details(n) for n in labels), name
+
+    def test_the_verdict_the_tenure_the_basis_and_the_missing_line_stay_visible(self, entries):
+        record, nodes, _panel_node = entries
+        for node in nodes:
+            assert node.find("tenure-review-verdict-chip") is not None
+            for testid in ("tenure-review-tenure", "tenure-review-basis"):
+                line = node.find(testid)
+                assert line is not None and not _inside_details(line), testid
+            chip = node.find("tenure-review-verdict-chip")
+            assert not _inside_details(chip)
+        with_missing = [n for n in nodes if n.find("tenure-review-missing") is not None]
+        assert with_missing, "premise: at least one stored entry names a missing item"
+        assert all(not _inside_details(n.find("tenure-review-missing")) for n in with_missing)
 
 
 # ---------------------------------------------------------------------------
