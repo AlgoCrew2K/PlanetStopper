@@ -794,23 +794,28 @@
       flex-direction: column;
       gap: 2px;
     }
+    /* The name and its flags share a line when they fit and the flags drop under the name when they
+       do not; the dot sits in the left gutter so it never takes a line of its own. */
     .flush-armed-item {
+      position: relative;
+      padding-left: 16px;
       font-size: 12px;
       line-height: 16px;
       color: var(--studio-ink);
       display: flex;
+      flex-wrap: wrap;
       align-items: baseline;
-      gap: 8px;
+      gap: 0 8px;
     }
     .flush-armed-item::before {
       content: '';
-      display: inline-block;
+      position: absolute;
+      left: 4px;
+      top: 5px;
       width: 6px;
       height: 6px;
       border-radius: 50%;
       background: var(--studio-neg);
-      flex-shrink: 0;
-      align-self: center;
     }
     .flush-armed-flags {
       font-size: 12px;
