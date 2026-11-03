@@ -29,6 +29,7 @@ Fixture provenance
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -60,7 +61,7 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
     """
     F-2: when meta.portfolio.insufficient_history is true, the Max DD vs-row must:
       (a) suppress the winner-encoding (no 'winner' class on any bar when insufficient)
-      (b) annotate the row label with an "insufficient history (<30d)" note
+      (b) annotate the row label with a note stating the requirement ("needs 30 trading days")
       (c) per-card Max DD also annotated (not the alpha-badge)
 
     These are HTML-source checks against the Jinja template. The template renders
@@ -71,7 +72,7 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
     def test_hero_mdd_row_has_insufficient_label_conditional(self):
         """
         F-2a: the Max DD row label must contain a conditional block that renders
-        an 'insufficient history (<30d)' annotation tied to mdd_insufficient.
+        a "needs 30 trading days" annotation tied to mdd_insufficient.
         A missing or wrong variable name means the annotation never appears.
         """
         html = _html()
@@ -83,14 +84,25 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
 
     def test_hero_mdd_row_label_contains_insufficient_history_text(self):
         """
-        F-2b: the template must contain the annotation string "insufficient history"
-        associated with the Max DD row label, so the operator can tell why the row is
-        greyed out instead of showing a winner.
+        F-2b: the template must contain an annotation inside the Max DD row label that
+        states the requirement in the gate's own unit (app._MDD_MIN_OBS counts trading
+        days), so the operator can tell why the row is greyed out instead of showing a
+        winner, and the text never reads as a window length beside a "30d" picker.
         """
+        import app as app_module
+
         html = _html()
-        assert "insufficient history" in html.lower(), (
-            "F-2b FAIL: templates/index.html has no 'insufficient history' text. "
-            "The Max DD row cannot be annotated when history is short."
+        wording = f"needs {app_module._MDD_MIN_OBS} trading days"
+        hero = re.search(
+            r'<span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label"[^>]*>([^<]*)</span>',
+            html,
+        )
+        assert hero, "F-2b FAIL: the Max DD row label holds no mdd-insufficient-label annotation."
+        assert hero.group(1) == wording, (
+            f"F-2b FAIL: the Max DD annotation reads {hero.group(1)!r}, not {wording!r}."
+        )
+        assert "insufficient history (&lt;30d)" not in html, (
+            "F-2b FAIL: the retired '<30d' wording (it reads as a window length) is back."
         )
 
     def test_hero_mdd_row_winner_bar_guarded_by_insufficient_flag(self):
@@ -146,17 +158,26 @@ class TestF2MddInsufficientHistorySuppressAndAnnotate:
 
     def test_per_card_mdd_has_insufficient_label_not_alpha_badge(self):
         """
-        F-2e: per-symphony cards must show an "insufficient history (<30d)" label
+        F-2e: per-symphony cards must show a "needs 30 trading days" label
         on the Max DD cell instead of the alpha-badge when history is short.
-        The template must reference a testid card-mdd-insufficient-label or equivalent.
+        The template must reference a testid card-mdd-insufficient-label or equivalent,
+        and both card renders (the card grid and the detail list) word it like the hero row.
         """
+        import app as app_module
+
         html = _html()
-        assert "card-mdd-insufficient-label" in html or (
-            "insufficient history" in html.lower() and "cfg-cell" in html
-        ), (
+        assert "card-mdd-insufficient-label" in html, (
             "F-2e FAIL: per-card Max DD cell does not contain an insufficient-history "
             "annotation. The alpha-badge will be shown even when the bot has fewer "
             "than 30 trading days of shadow history."
+        )
+        wording = f"needs {app_module._MDD_MIN_OBS} trading days"
+        card_labels = re.findall(
+            r'<span data-testid="card-mdd-insufficient-label"[^>]*>([^<]*)</span>', html
+        )
+        assert len(card_labels) == 2, f"F-2e FAIL: expected two card renders, found {card_labels}"
+        assert set(card_labels) == {wording}, (
+            f"F-2e FAIL: the card annotations read {card_labels}, not {wording!r}."
         )
 
 

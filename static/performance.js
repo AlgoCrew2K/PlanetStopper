@@ -64,17 +64,35 @@
         ['win_rate',            'Win rate',                  'frac',     false],
     ];
 
+    // toFixed that never prints a minus sign for a value that rounds to zero ("-0.00"); the same
+    // rule as the Dashboard's fixedNoNegZero (static/index.js).
+    function fixedNoNegZero(value, digits) {
+        var text = value.toFixed(digits);
+        return /^-0(\.0+)?$/.test(text) ? text.slice(1) : text;
+    }
+
+    // True when the value prints as zero at the given decimals, whichever side of zero it is on.
+    function roundsToZero(value, digits) {
+        return /^-?0(\.0+)?$/.test(value.toFixed(digits));
+    }
+
+    // A value that rounds to zero at the shown decimals reads as plain zero: no minus sign (and no
+    // plus sign either, which would claim a direction the figure does not have).
+    function signedFixed(value, digits) {
+        return (roundsToZero(value, digits) || value < 0 ? '' : '+') + fixedNoNegZero(value, digits);
+    }
+
     function fmt(value, kind) {
         if (value === null || value === undefined) return '—';
         if (typeof value !== 'number' || !isFinite(value)) return '—';
         if (Math.abs(value) > 1000) return '—';
         // pct_frac: quantstats returns fractions; multiply by 100 for display
-        if (kind === 'pct_frac') return (value * 100).toFixed(2) + '%';
+        if (kind === 'pct_frac') return fixedNoNegZero(value * 100, 2) + '%';
         if (kind === 'pct_mag') return (Math.abs(value) * 100).toFixed(2) + '%';
-        if (kind === 'frac') return (value * 100).toFixed(2) + '%';
+        if (kind === 'frac') return fixedNoNegZero(value * 100, 2) + '%';
         // pp: fraction-scale delta shown as percentage points (e.g. 0.017 → +1.70pp)
-        if (kind === 'pp') return (value >= 0 ? '+' : '') + (value * 100).toFixed(2) + 'pp';
-        return value.toFixed(3);
+        if (kind === 'pp') return signedFixed(value * 100, 2) + 'pp';
+        return fixedNoNegZero(value, 3);
     }
 
     function fmtDelta(live, shadow, kind, lowerIsBetter) {
@@ -91,6 +109,8 @@
             : shadow - live;
         var formatted = fmt(delta, tallied ? 'pp' : kind);
         if (formatted === '—') return formatted;
+        // A delta that prints as zero has no direction: no arrow, as for an exactly zero delta.
+        if (/^[+-]?0(\.0+)?(pp|%)?$/.test(formatted)) return formatted;
         // One sign per delta: the 'pp' kind already carries its own '+', the others do not.
         if (delta > 0) return '↑ ' + (formatted.charAt(0) === '+' ? '' : '+') + formatted;
         if (delta < 0) return '↓ ' + formatted;
@@ -376,12 +396,18 @@
 
     // Set a headline stat value element's text + sign color. delta is in the
     // metric's native scale; suffix is appended verbatim (e.g. '%', 'pp', '').
-    // higherIsBetter governs which sign is rendered green.
+    // higherIsBetter governs which sign is rendered green. A value that rounds to zero at the
+    // shown decimals prints without a sign and in neither the good nor the bad colour.
     function setHeadlineStat(id, value, decimals, suffix, higherIsBetter) {
         var el = document.getElementById(id);
         if (!el) return;
         if (value === null || typeof value !== 'number' || !isFinite(value)) {
             el.textContent = '--';
+            el.style.color = 'inherit';
+            return;
+        }
+        if (roundsToZero(value, decimals)) {
+            el.textContent = fixedNoNegZero(value, decimals) + suffix;
             el.style.color = 'inherit';
             return;
         }
@@ -426,10 +452,12 @@
         var gaEl = document.getElementById('guard-alpha-value');
         if (gaEl) {
             gaEl.textContent = guardAlpha !== null
-                ? (guardAlpha >= 0 ? '+' : '') + guardAlpha.toFixed(2) + ' pp'
+                ? signedFixed(guardAlpha, 2) + ' pp'
                 : '--';
-            gaEl.style.color = guardAlpha !== null && guardAlpha >= 0
-                ? 'var(--studio-pos)' : 'var(--studio-neg)';
+            // A figure that rounds to zero is neither a gain nor a loss: no good/bad colour.
+            gaEl.style.color = guardAlpha !== null && roundsToZero(guardAlpha, 2)
+                ? 'inherit'
+                : (guardAlpha !== null && guardAlpha >= 0 ? 'var(--studio-pos)' : 'var(--studio-neg)');
         }
         renderGuardEffectCaption(liveTR, shadowTR);
 

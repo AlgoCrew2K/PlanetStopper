@@ -500,6 +500,39 @@ class TestTheMaxDrawdownLabelsFollowThePoll:
         assert r["heroLabel"] is insufficient_history
         assert r["heroDelta"] is (not insufficient_history)
 
+    def test_the_labels_state_the_requirement_in_trading_days_and_a_poll_leaves_the_words_alone(
+        self,
+    ):
+        """The gate counts trading days, so the labels say so (a window length beside the picker's
+        "30d" would read as a contradiction); the poll only shows and hides them, so the server's
+        wording is the one on the page before and after it."""
+        import app as app_module
+
+        world = _world()
+        short = _with_portfolio_meta(_same_stamp(world), insufficient_history=True)
+        long = _with_portfolio_meta(_same_stamp(world), insufficient_history=False)
+        r = _run(
+            r"""
+        const words = function () {
+          const card = D.querySelector('.sym-card[data-sym-id]');
+          const read = function (e) { return e ? e.textContent.replace(/\s+/g, ' ').trim() : null; };
+          return { hero: read(D.querySelector('[data-testid="mdd-insufficient-label"]')),
+                   card: read(card.querySelector('[data-testid="card-mdd-insufficient-label"]')) };
+        };
+        await H.boot({ extras: true });
+        const rendered = words();
+        await poll(H.bodies.short);
+        const afterShort = words();
+        await poll(H.bodies.long);
+        return { rendered: rendered, afterShort: afterShort, afterLong: words() };
+        """,
+            short=short,
+            long=long,
+        )
+        wording = f"needs {app_module._MDD_MIN_OBS} trading days"
+        for phase in ("rendered", "afterShort", "afterLong"):
+            assert r[phase] == {"hero": wording, "card": wording}, phase
+
 
 class TestEachCardsLifetimeMaxDrawdownFollowsThePoll:
     @pytest.mark.parametrize(

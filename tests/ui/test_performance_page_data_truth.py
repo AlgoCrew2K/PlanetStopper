@@ -544,6 +544,97 @@ def test_every_other_metric_cell_and_headline_keeps_its_existing_text(client):
 
 
 # ---------------------------------------------------------------------------
+# A figure that rounds to zero prints no minus sign and no good/bad colour
+# ---------------------------------------------------------------------------
+
+_HEADLINE_IDS = (
+    "guard-alpha-value",
+    "sharpe-delta-value",
+    "sortino-delta-value",
+    "mdd-reduction-value",
+)
+_HEADLINE_SCENARIO = """
+await H.boot();
+return { metrics: H.rows('#metrics-tbody'),
+         heads: %s.map(function (id) {
+           return { id: id, text: H.text('#' + id), color: H.$('#' + id).style.color };
+         }) };
+""" % list(_HEADLINE_IDS)
+ARROWS = ("↑", "↓")
+# Gaps between the two legs whose every shown figure (2 decimals; the Sharpe and Sortino cells show
+# 3) rounds to zero, on either side of zero and exactly zero.
+ZERO_ROUNDING_GAPS = [-0.0004, 0.0004, 0.0]
+# Gaps that survive the rounding: the figure keeps its sign and its colour.
+SHOWN_GAPS = [(0.05, "+", "pos"), (-0.05, "-", "neg")]
+
+
+def _payload_with_gap(client, gap: float) -> dict:
+    """The route's own answer for one symphony with the two legs set a known gap apart: Sharpe,
+    Sortino and total return differ by ``gap`` (total return in percentage points) and the drawdown
+    reduction (held minus bot, in percentage points) is ``gap``."""
+    _seed_captured_state_and_shadow_rows()
+    payload = _symphony_payload(client, _symphony_where(_bot_shallower))
+    live, shadow = payload["live_metrics"], payload["shadow_metrics"]
+    live.update(sharpe=1.0, sortino=1.0, max_drawdown=-0.10, total_return=0.05)
+    shadow.update(
+        sharpe=1.0 + gap,
+        sortino=1.0 + gap,
+        max_drawdown=-(0.10 - gap / 100),
+        total_return=0.05 + gap / 100,
+    )
+    return payload
+
+
+def _headlines(client, payload) -> dict:
+    result = _perf_page(client, _routes(client, payload, with_panels=False), _HEADLINE_SCENARIO)
+    return {"heads": {h["id"]: h for h in result["heads"]}, "rows": _metric_rows(result)}
+
+
+@pytest.mark.parametrize("gap", ZERO_ROUNDING_GAPS)
+def test_a_headline_stat_that_rounds_to_zero_prints_no_sign_and_no_good_or_bad_colour(client, gap):
+    shown = _headlines(client, _payload_with_gap(client, gap))["heads"]
+
+    for stat in _HEADLINE_IDS:
+        text = shown[stat]["text"]
+        assert "-" not in text and "+" not in text, f"{stat} at gap {gap}: {text!r}"
+        assert re.fullmatch(r"0\.00( ?pp)?", text), f"{stat} at gap {gap}: {text!r}"
+        assert shown[stat]["color"] == "inherit", f"{stat} at gap {gap}: {shown[stat]['color']!r}"
+
+
+@pytest.mark.parametrize("gap, sign, colour", SHOWN_GAPS)
+def test_a_headline_stat_that_survives_the_rounding_keeps_its_sign_and_colour(
+    client, gap, sign, colour
+):
+    shown = _headlines(client, _payload_with_gap(client, gap))["heads"]
+
+    for stat in _HEADLINE_IDS:
+        text = shown[stat]["text"]
+        assert text.startswith(sign + "0.05"), f"{stat}: {text!r}"
+        assert f"studio-{colour}" in shown[stat]["color"], f"{stat}: {shown[stat]['color']!r}"
+
+
+@pytest.mark.parametrize("gap", ZERO_ROUNDING_GAPS)
+def test_a_table_delta_that_rounds_to_zero_prints_no_sign_and_no_arrow(client, gap):
+    rows = _headlines(client, _payload_with_gap(client, gap))["rows"]
+
+    for label in ("Sharpe", "Sortino", "Max DD reduction"):
+        cell = rows[label][3]
+        assert "-" not in cell and "+" not in cell, f"{label} at gap {gap}: {cell!r}"
+        assert not any(arrow in cell for arrow in ARROWS), f"{label} at gap {gap}: {cell!r}"
+        assert re.fullmatch(r"0\.00(0|pp)", cell), f"{label} at gap {gap}: {cell!r}"
+
+
+def test_a_table_cell_that_rounds_to_zero_never_prints_a_minus_sign(client):
+    payload = _payload_with_gap(client, 0.0)
+    payload["live_metrics"].update(sharpe=-0.0004, total_return=-0.000001)
+
+    rows = _headlines(client, payload)["rows"]
+
+    assert rows["Sharpe"][1] == "0.000"
+    assert rows["Total return"][1] == "0.00%"
+
+
+# ---------------------------------------------------------------------------
 # Stop-justification preconditions panel
 # ---------------------------------------------------------------------------
 

@@ -7,8 +7,8 @@ artifact (a flat divergence series has zero peak-to-trough), but it renders besi
 history yet."
 
 THE CONTRACT (AC-4c): when the history is insufficient (<30 trading days, the Bailey/de-Prado
-2014 interpretability floor) the rendered MAX DD row must annotate "insufficient history",
-SUPPRESS the misleading alpha delta, and NOT mark the Bot as the drawdown "winner"; when
+2014 interpretability floor) the rendered MAX DD row must annotate the shortfall ("needs 30
+trading days"), SUPPRESS the misleading alpha delta, and NOT mark the Bot as the drawdown "winner"; when
 history IS sufficient the comparison renders normally (the suppression is scoped, not blanket).
 
 Two layers, each able to fail on a wrong implementation:

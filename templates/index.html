@@ -68,10 +68,19 @@
 
     .hero-top {
       display: flex;
+      /* When the headline block and the window picker do not fit side by side, the picker drops
+         under the headline instead of overflowing into the chart column. */
+      flex-wrap: wrap;
       align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
       margin-bottom: 20px;
+    }
+
+    /* The headline block takes the room the picker leaves (its sentence wraps to it) but never
+       less than its widest unbreakable line, the headline figure. */
+    .hero-top > :first-child {
+      flex: 1 1 0;
     }
 
     .guard-alpha-headline {
@@ -79,6 +88,9 @@
       font-weight: 800;
       letter-spacing: -0.03em;
       line-height: 1;
+      /* The figure and its unit ("-0.73 pp") are one reading: the space between them is not a
+         break opportunity, so a squeezed column never leaves "pp" alone on a second line. */
+      white-space: nowrap;
     }
 
     .guard-alpha-headline.pos { color: var(--studio-pos); }
@@ -978,8 +990,11 @@
             {% set _mdd_held_known = has_live_data and _mdd_held_raw is not none %}
             <div data-testid="vs-row" class="vs-row">
               <div class="vs-row-top">
-                {# F-2: when insufficient_history, label row with annotation instead of alpha delta #}
-                <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
+                {# F-2: when insufficient_history, label row with annotation instead of alpha delta.
+                   The annotation states the requirement in the gate's own unit: app._MDD_MIN_OBS
+                   counts trading days (about 21 fit in a 30-day window), so it never reads as a
+                   window length. The poll only shows and hides it; this is the one place it is worded. #}
+                <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
                 {# A drawdown is a magnitude: no sign is printed (the poll's text reads the same). #}
                 <span data-testid="comp-mdd-bot-text" class="vs-val{{ ' neg' if _mdd_bot_known }}">{% if _mdd_bot_known %}Bot {{ "%.2f"|format(mdd_bot|abs) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-mdd-held-text" class="vs-val{{ ' neg' if _mdd_held_known }}">{% if _mdd_held_known %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
@@ -1284,7 +1299,7 @@
                  needed here. #}
               {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
               <div class="cfg-cell">
-                <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
+                <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
                 <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
                 <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
               </div>
@@ -1397,7 +1412,7 @@
                needed here. #}
             {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
             <div class="cfg-cell">
-              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>insufficient history (&lt;30d)</span></span>
+              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
               <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
             </div>
