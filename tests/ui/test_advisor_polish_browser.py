@@ -319,3 +319,36 @@ def test_the_chat_unavailable_title_is_primary_ink_with_a_warn_dot(advisor_probe
     assert title["text"] == "Chat unavailable", title
     assert title["colour"] == title["ink"] != title["warn"], title
     assert title["dot"] == title["warn"], title
+
+
+@pytest.mark.parametrize(
+    ("decision", "dot"),
+    [("passed", "--studio-pos"), ("withheld", "--studio-warn"), ("rejected", "--studio-neg")],
+)
+def test_the_chat_artifact_gate_pill_is_a_dot_and_a_word_never_coloured_text(
+    advisor_probe, decision, dot
+):
+    open_advisor(advisor_probe)
+    advisor_probe.page.evaluate(
+        """(d) => window.openChatPanel({ artifactId: 'x', artifactType: 'config_suggestion',
+          title: 'Explain', contextLabel: 'Config Suggestion', objective: 'o',
+          gateDecision: d, keyStat: '', artifactContext: {} })""",
+        decision,
+    )
+    pill = advisor_probe.page.evaluate(
+        """(token) => {
+          const el = document.getElementById('artifact-gate-pill');
+          const probe = document.createElement('span');
+          const resolve = (v) => { probe.style.color = v; document.body.appendChild(probe);
+                                   const c = getComputedStyle(probe).color; probe.remove(); return c; };
+          const cs = getComputedStyle(el);
+          return { text: el.textContent.trim(), colour: cs.color, ink: resolve('var(--studio-ink)'),
+                   dot: getComputedStyle(el, '::before').backgroundColor, want: resolve('var(' + token + ')'),
+                   background: cs.backgroundColor, border: cs.borderTopWidth };
+        }""",
+        dot,
+    )
+    assert pill["text"], pill
+    assert pill["colour"] == pill["ink"], "the word stays in primary ink"
+    assert pill["dot"] == pill["want"], "the decision sets the dot"
+    assert pill["background"] == "rgba(0, 0, 0, 0)" and pill["border"] == "0px", "no tinted pill"
