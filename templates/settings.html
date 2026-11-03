@@ -27,7 +27,9 @@
 
     /* ── Page layout ──────────────────────────────────────────────────────── */
     /* The shared primitives (.hero-section, .section-header, .sym-card, .legend-as-of) live in
-       static/layout.css; the rules here add layout only, never a look. */
+       static/layout.css; a rule here that names one sets layout only. The page's own look comes
+       from its own classes (.settings-actions, .settings-section, .settings-sec-title, .ledger ...).
+       Spacing is on a 4 px grid; type is 12 / 13 / 14 / 16 px at weight 400 or 500. */
     .hero-section > .section-header:first-child { margin-top: 0; }
 
     /* First panel: the caption on the left, Discard and Save on the right. It sits above the
@@ -37,35 +39,41 @@
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
-      gap: 16px;
+      gap: 8px 16px;
+      min-height: 48px;
+      padding: 8px 12px 8px 16px;
+      margin-bottom: 16px;
     }
     .settings-actions .legend-as-of { margin-left: 0; }
+    .settings-caption { font-size: 12px; line-height: 16px; }
 
     .header-actions { display: flex; gap: 8px; }
 
     .btn-discard {
-      padding: 7px 13px;
+      height: 32px;
+      padding: 0 12px;
       background: transparent;
-      border: 1px solid var(--studio-rule);
-      border-radius: 4px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
       cursor: pointer;
       color: var(--studio-ink-dim);
       font-family: var(--studio-sans, Manrope, sans-serif);
-      font-size: 11.5px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 500;
     }
     .btn-discard:disabled { color: var(--studio-ink-faint); cursor: default; }
+    .btn-discard:not(:disabled):hover { background: var(--studio-chip-bg); color: var(--studio-ink); }
 
     .btn-save {
-      padding: 7px 14px;
+      height: 32px;
+      padding: 0 16px;
       background: var(--studio-chip-bg);
-      border: none;
-      border-radius: 4px;
+      border: 1px solid transparent;
+      border-radius: 6px;
       color: var(--studio-ink-faint);
       font-family: var(--studio-sans, Manrope, sans-serif);
-      font-size: 11.5px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
+      font-size: 13px;
+      font-weight: 500;
       cursor: default;
     }
     .btn-save:not(:disabled) {
@@ -73,57 +81,60 @@
       color: var(--studio-paper);
       cursor: pointer;
     }
+    .btn-save:not(:disabled):hover { background: color-mix(in srgb, var(--studio-accent) 86%, var(--studio-ink)); }
+
+    /* A visible focus ring for keyboard users, on every control of the page. */
+    [data-testid="settings-page"] :focus-visible {
+      outline: 2px solid var(--studio-accent);
+      outline-offset: 2px;
+    }
 
     /* ── Body split ───────────────────────────────────────────────────────── */
     .settings-body {
       display: flex;
       align-items: flex-start;
-      gap: 28px;
+      gap: 24px;
     }
 
     /* ── Side nav ─────────────────────────────────────────────────────────── */
     .settings-sidenav {
-      width: 220px;
+      width: 200px;
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
-    }
-
-    /* V-34: narrow viewport — shrink sidebar so content isn't cramped */
-    @media (max-width: 1400px) {
-      .settings-sidenav { width: 180px; }
-      .sn-btn { padding: 10px 14px; font-size: 12px; }
-      .sn-footnote { margin: 20px 14px 0; }
+      gap: 2px;
     }
 
     .sn-btn {
       display: block;
       width: 100%;
-      padding: 10px 22px;
+      height: 36px;
+      padding: 0 12px;
       background: transparent;
       border: none;
-      border-left: 2px solid transparent;
+      border-radius: 6px;
       text-align: left;
       cursor: pointer;
       color: var(--studio-ink-dim);
       font-family: var(--studio-sans, Manrope, sans-serif);
       font-size: 13px;
-      font-weight: 500;
-      letter-spacing: -0.005em;
+      font-weight: 400;
     }
+    .sn-btn:hover { background: var(--studio-chip-bg); color: var(--studio-ink); }
     .sn-btn.sn-active {
-      border-left-color: var(--studio-accent);
+      background: var(--studio-chip-bg);
+      box-shadow: inset 0 0 0 1px var(--studio-rule);
       color: var(--studio-ink);
-      font-weight: 700;
+      font-weight: 500;
     }
 
     .sn-footnote {
-      margin: 20px 22px 0;
-      padding-top: 18px;
+      margin: 16px 12px 0;
+      padding-top: 12px;
       border-top: 1px solid var(--studio-rule);
-      font-size: 11px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      line-height: 1.5;
+      line-height: 16px;
     }
 
     /* ── Content area ─────────────────────────────────────────────────────── */
@@ -132,80 +143,116 @@
       min-width: 0;
     }
 
-    .settings-section { display: block; }
+    .settings-section { display: block; padding: 20px 24px 24px; margin-bottom: 0; }
     .settings-section[hidden] { display: none; }
 
     /* ── Section header ───────────────────────────────────────────────────── */
-    /* The title is a .section-header (shared); only the line under it is local. */
+    /* The title keeps the shared .section-header (colour, and the hook the page tests read);
+       .settings-sec-title gives it this page's size and case, and the line under it is local. */
+    .settings-section > .settings-sec-title {
+      margin: 0;
+      font-size: 16px;
+      line-height: 24px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+    }
     .sec-subtitle {
-      margin-top: 6px;
-      font-size: 12.5px;
+      margin: 4px 0 16px;
+      max-width: 880px;
+      font-size: 13px;
       color: var(--studio-ink-dim);
-      line-height: 1.5;
-      max-width: 680px;
-      margin-bottom: 20px;
+      line-height: 20px;
     }
 
     /* ── Master controls ──────────────────────────────────────────────────── */
-    .live-card {
-      margin-bottom: 16px;
-      max-width: 760px;
+    /* One ledger holds the two master rows, so the section reads as a single block. */
+    .ledger {
+      max-width: 960px;
+      border: 1px solid var(--studio-rule);
+      border-radius: 8px;
+      overflow: hidden;
     }
+    .ledger > * + * { border-top: 1px solid var(--studio-rule); }
+
+    .ledger > .live-card {
+      padding: 16px;
+      background: transparent;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+    }
+    .ledger > .live-card:hover { box-shadow: none; }
     .live-card.sym-card { cursor: default; }
-    .live-card[data-live="true"] {
-      background: var(--studio-neg-tint);
-      border-color: var(--studio-neg-border);
-    }
+    .ledger > .live-card[data-live="true"] { background: var(--studio-neg-tint); }
 
     .live-card-inner { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
-    .live-card-body { flex: 1; }
+    .live-card-body { flex: 1; min-width: 0; max-width: 640px; }
 
-    .live-heading-row { display: flex; align-items: center; gap: 10px; }
-    .live-heading { font-size: 16px; font-weight: 700; color: var(--studio-ink); }
+    .live-heading-row { display: flex; align-items: center; gap: 12px; }
+    .live-heading { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--studio-ink); }
 
+    /* The mode is a status dot and one word, like the header's. The dot only shows once the
+       server has answered (data-known), so the first paint states no mode. */
     .live-pill {
-      padding: 2px 8px;
-      background: var(--studio-chip-bg);
-      border: 1px solid var(--studio-rule);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 500;
       color: var(--studio-ink-dim);
-      border-radius: 4px;
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
     }
-    .live-pill[data-live="true"] {
-      background: var(--studio-neg);
-      border-color: var(--studio-neg);
-      color: var(--studio-white, #fff);
+    .live-pill[data-known="true"]::before {
+      content: '';
+      flex: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
     }
+    .live-pill[data-live="true"] { color: var(--studio-neg); }
 
     .live-desc {
-      margin-top: 6px;
+      margin-top: 4px;
       font-size: 13px;
       color: var(--studio-ink-dim);
-      line-height: 1.55;
+      line-height: 20px;
     }
     .live-desc code {
       font-size: 12px;
-      padding: 1px 5px;
+      padding: 0 4px;
       background: var(--studio-chip-bg);
-      border-radius: 2px;
+      border-radius: 4px;
     }
 
     .live-warning {
-      margin-top: 12px;
-      padding: 10px 14px;
+      margin-top: 8px;
+      padding: 8px 12px;
       background: var(--studio-neg-tint);
       border: 1px solid var(--studio-neg-border);
+      border-radius: 6px;
       color: var(--studio-neg);
       font-size: 12px;
-      font-weight: 600;
-      line-height: 1.4;
+      font-weight: 500;
+      line-height: 16px;
     }
+    .live-warning[hidden] { display: none; }
 
-    /* Toggle — off-state uses rule-hi so the track is visible in dark mode (V-38) */
+    /* Shown when the settings could not be loaded after the page's one retry. */
+    #settings-load-error {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0 0 16px;
+      border-radius: 8px;
+    }
+    #settings-load-error[hidden] { display: none; }
+
+    /* Toggle: read-only. Off-state uses rule-hi so the track is visible in dark mode (V-38). */
     .toggle-btn {
-      width: 56px;
+      width: 52px;
       height: 30px;
       padding: 2px;
       border-radius: 999px;
@@ -215,7 +262,7 @@
       display: flex;
       align-items: center;
       justify-content: flex-start;
-      transition: background 0.15s;
+      transition: background-color 0.15s, border-color 0.15s;
       flex-shrink: 0;
     }
     .toggle-btn[data-on="1"] {
@@ -234,129 +281,141 @@
     }
 
     .setting-row {
-      background: var(--studio-paper);
-      border: 1px solid var(--studio-rule);
-      padding: 16px 18px;
-      margin-bottom: 12px;
-      max-width: 760px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap: 24px;
+      align-items: center;
+      padding: 12px 16px;
     }
-    .field-label { font-size: 12.5px; font-weight: 600; color: var(--studio-ink-dim); margin-bottom: 8px; }
+    .setting-row > .field-label,
+    .setting-row > .field-hint { grid-column: 1; }
+    .setting-row > .text-input-wrap { grid-column: 2; grid-row: 1 / span 2; }
+    .field-label { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--studio-ink); }
     .text-input-wrap { display: flex; align-items: center; gap: 8px; }
     .text-input {
-      width: 120px;
-      padding: 7px 10px;
+      width: 96px;
+      height: 32px;
+      padding: 0 8px;
       background: var(--studio-bg);
-      border: 1px solid var(--studio-rule);
-      border-radius: 4px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
       color: var(--studio-ink);
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 500;
       font-family: var(--studio-sans, Manrope, sans-serif);
       font-variant-numeric: tabular-nums;
-      outline: none;
     }
-    .input-suffix { font-size: 12px; color: var(--studio-ink-dim); font-weight: 600; }
-    .field-hint { margin-top: 8px; font-size: 11.5px; color: var(--studio-ink-dim); line-height: 1.5; }
+    .input-suffix { font-size: 12px; color: var(--studio-ink-dim); }
+    .field-hint { margin-top: 4px; font-size: 12px; color: var(--studio-ink-dim); line-height: 16px; }
 
     /* ── Algorithm params ─────────────────────────────────────────────────── */
+    /* A two-column ledger: name and help on the left, the input and its unit on the right. */
     #algo-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      max-width: 880px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 32px;
+      max-width: 960px;
     }
 
     .param-card {
-      background: var(--studio-paper);
-      border: 1px solid var(--studio-rule);
-      padding: 14px 16px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas: "name input" "help input";
+      column-gap: 16px;
+      row-gap: 2px;
+      align-items: start;
+      padding: 12px 0;
+      border-top: 1px solid var(--studio-rule);
     }
     .param-name {
-      font-size: 11.5px;
+      grid-area: name;
+      font-size: 13px;
+      line-height: 16px;
       color: var(--studio-ink);
-      font-weight: 700;
-      letter-spacing: 0.04em;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
-      margin-bottom: 8px;
     }
-    .param-input-row { display: flex; align-items: center; }
-    /* V-36: explicit height ensures all param inputs are identical across grid rows */
+    /* V-36: one grid and one height for every param input, so they line up across rows. */
+    .param-input-row {
+      grid-area: input;
+      align-self: center;
+      display: grid;
+      grid-template-columns: 96px 32px;
+      column-gap: 8px;
+      align-items: center;
+    }
     .param-input {
-      flex: 1;
-      height: 34px;
-      padding: 0 10px;
+      width: 100%;
+      height: 32px;
+      padding: 0 8px;
       background: var(--studio-bg);
-      border: 1px solid var(--studio-rule);
-      border-radius: 4px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
       color: var(--studio-ink);
       font-size: 13px;
       font-family: var(--studio-sans, Manrope, sans-serif);
-      font-weight: 600;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
-      outline: none;
     }
-    .param-unit { margin-left: 8px; font-size: 12px; color: var(--studio-ink-dim); font-weight: 600; }
-    .param-help { margin-top: 8px; font-size: 11.5px; color: var(--studio-ink-dim); line-height: 1.45; }
+    .param-unit { font-size: 12px; color: var(--studio-ink-dim); }
+    .param-help { grid-area: help; font-size: 12px; color: var(--studio-ink-dim); line-height: 16px; }
 
     /* ── Credentials ──────────────────────────────────────────────────────── */
     .cred-warn {
       background: var(--studio-warn-tint);
       border: 1px solid var(--studio-warn-border);
-      padding: 10px 14px;
+      border-radius: 8px;
+      padding: 8px 12px;
       color: var(--studio-ink);
       font-size: 12px;
-      line-height: 1.5;
-      margin-bottom: 18px;
-      max-width: 760px;
+      line-height: 16px;
+      margin-bottom: 16px;
+      max-width: 960px;
     }
-    .cred-warn strong { color: var(--studio-warn); }
-    .cred-warn code { font-size: 11px; padding: 1px 4px; background: var(--studio-chip-bg); border-radius: 2px; }
+    .cred-warn strong { color: var(--studio-ink); font-weight: 500; }
+    .cred-warn code { font-size: 12px; padding: 0 4px; background: var(--studio-chip-bg); border-radius: 4px; }
 
     .cred-group {
-      background: var(--studio-paper);
-      border: 1px solid var(--studio-rule);
-      margin-bottom: 12px;
-      max-width: 760px;
+      margin-bottom: 16px;
+      max-width: 960px;
     }
     .cred-group-title {
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--studio-rule);
-      font-size: 10px;
-      font-weight: 700;
+      padding-bottom: 4px;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 500;
       color: var(--studio-ink-dim);
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
     }
 
     .cred-field-wrap {
-      padding: 10px 16px;
       display: grid;
-      grid-template-columns: 180px 1fr 64px 80px;
-      gap: 10px;
+      grid-template-columns: 200px minmax(0, 1fr) 56px 96px;
+      column-gap: 12px;
       align-items: center;
-      border-bottom: 1px solid var(--studio-rule);
+      min-height: 40px;
+      padding: 4px 0;
+      border-top: 1px solid var(--studio-rule);
     }
-    .cred-field-wrap:last-child { border-bottom: none; }
 
     .cred-name {
-      font-size: 11.5px;
-      color: var(--studio-ink-dim);
-      font-weight: 600;
-      letter-spacing: 0.04em;
+      font-size: 12px;
+      line-height: 16px;
+      color: var(--studio-ink);
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
     }
     .cred-input {
-      padding: 7px 10px;
+      height: 32px;
+      padding: 0 8px;
       background: var(--studio-bg);
-      border: 1px solid var(--studio-rule);
-      border-radius: 4px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
       color: var(--studio-ink);
-      font-size: 12.5px;
+      font-size: 13px;
       font-family: var(--studio-sans, Manrope, sans-serif);
       font-weight: 500;
       font-variant-numeric: tabular-nums;
-      outline: none;
-      letter-spacing: 0.04em;
       width: 100%;
     }
     /* V-39: appearance:none prevents UA from applying ButtonFace bg (white in some
@@ -364,38 +423,49 @@
     .cred-toggle-vis {
       appearance: none;
       -webkit-appearance: none;
-      padding: 5px 9px;
-      background: var(--studio-chip-bg);
+      height: 32px;
+      padding: 0 8px;
+      background: transparent;
       border: 1px solid var(--studio-rule-hi);
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
-      color: var(--studio-ink);
-      font-size: 10.5px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
+      color: var(--studio-ink-dim);
+      font-size: 12px;
+      font-weight: 500;
       font-family: var(--studio-sans, Manrope, sans-serif);
     }
     .cred-toggle-vis:hover {
-      background: var(--studio-rule);
-      border-color: var(--studio-rule-hi);
+      background: var(--studio-chip-bg);
+      color: var(--studio-ink);
     }
+    /* Empty while a field is untouched (the note above says blank fields are ignored); it
+       names a field only once something is typed in it. */
     .cred-status {
-      font-size: 10.5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      font-weight: 600;
-      letter-spacing: 0.04em;
-      text-align: right;
+      font-weight: 500;
     }
+    .cred-status:empty { display: none; }
     .cred-status[data-ready="1"] { color: var(--studio-pos); }
+    .cred-status[data-ready="1"]::before {
+      content: '';
+      flex: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
 
     /* V-37: ultrawide — let sidebar + content area use full available width;
-       inner cards drop hard max-width caps so content fills the canvas */
+       inner panels drop hard max-width caps so content fills the canvas */
     @media (min-width: 2560px) {
-      .live-card,
-      .setting-row,
+      .ledger,
       .cred-group,
       .cred-warn { max-width: 100%; }
-      #algo-grid { max-width: 100%; grid-template-columns: repeat(4, 1fr); }
+      #algo-grid { max-width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .sym-split { max-width: 100%; }
       .sec-subtitle { max-width: 960px; }
     }
@@ -403,15 +473,17 @@
     /* ── Symphony overrides ───────────────────────────────────────────────── */
     .sym-split {
       display: grid;
-      grid-template-columns: 300px 1fr;
-      gap: 16px;
+      grid-template-columns: 280px minmax(0, 1fr);
+      align-items: start;
+      gap: 24px;
       max-width: 1120px;
     }
 
+
     #sym-list {
-      background: var(--studio-paper);
       border: 1px solid var(--studio-rule);
-      max-height: 540px;
+      border-radius: 8px;
+      max-height: 520px;
       overflow: auto;
     }
 
@@ -419,168 +491,177 @@
       display: block;
       width: 100%;
       text-align: left;
-      padding: 11px 14px;
+      padding: 8px 12px;
       background: transparent;
       border: none;
-      border-left: 2px solid transparent;
       border-bottom: 1px solid var(--studio-rule);
       cursor: pointer;
       font-family: var(--studio-sans, Manrope, sans-serif);
     }
     .sym-list-btn:last-child { border-bottom: none; }
-    .sym-list-btn.sym-active {
-      background: var(--studio-bg);
-      border-left-color: var(--studio-accent);
-    }
+    .sym-list-btn:hover,
+    .sym-list-btn.sym-active { background: var(--studio-chip-bg); }
     .sym-list-name {
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 13px;
+      line-height: 20px;
+      font-weight: 400;
       color: var(--studio-ink);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .sym-active .sym-list-name { font-weight: 700; }
+    .sym-active .sym-list-name { font-weight: 500; }
     .sym-list-meta {
-      margin-top: 2px;
-      font-size: 10px;
+      font-size: 12px;
+      line-height: 16px;
       color: var(--studio-ink-dim);
-      font-weight: 500;
-      letter-spacing: 0.04em;
       display: flex;
       flex-wrap: wrap;
-      gap: 2px 6px;
+      gap: 0 6px;
     }
-    .sym-has-override { color: var(--studio-accent); font-weight: 700; }
-    .sym-locked-count { color: var(--studio-warn); }
-    .sym-empty { padding: 16px; font-size: 12px; color: var(--studio-ink-dim); }
+    .sym-list-meta > span + span::before { content: '\00b7'; margin-right: 6px; }
+    .sym-has-override { color: var(--studio-accent); }
+    .sym-empty { padding: 16px; font-size: 13px; color: var(--studio-ink-dim); }
     /* Symphonies still recorded but no longer held: listed apart and dimmed, with nothing to edit. */
     .sym-gone-heading {
-      padding: 10px 14px 4px;
+      padding: 8px 12px 4px;
       border-top: 1px solid var(--studio-rule);
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 500;
       color: var(--studio-ink-dim);
     }
     .sym-gone-row {
-      padding: 4px 14px 8px;
+      padding: 4px 12px 8px;
       font-size: 12px;
+      line-height: 16px;
       color: var(--studio-ink-dim);
       overflow-wrap: anywhere;
     }
 
     #sym-detail {
-      background: var(--studio-paper);
       border: 1px solid var(--studio-rule);
-      padding: 18px 20px;
+      border-radius: 8px;
+      padding: 12px 16px 8px;
     }
 
     .sym-detail-header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
-      gap: 14px;
-      margin-bottom: 16px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--studio-rule);
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 12px;
     }
-    .sym-detail-name { font-size: 16px; font-weight: 700; color: var(--studio-ink); letter-spacing: -0.01em; }
+    .sym-detail-name { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--studio-ink); }
 
     .btn-reset-globals {
-      padding: 6px 11px;
+      height: 32px;
+      padding: 0 12px;
       background: transparent;
-      border: 1px solid var(--studio-rule);
-      border-radius: 4px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
       color: var(--studio-ink-dim);
-      font-size: 11px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
       font-family: var(--studio-sans, Manrope, sans-serif);
       flex-shrink: 0;
     }
+    .btn-reset-globals:hover { background: var(--studio-chip-bg); color: var(--studio-ink); }
 
-    .override-grid {
+    /* One row per parameter under one set of column heads, not a card each with its own labels. */
+    .override-colhead,
+    .override-row {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+      grid-template-columns: minmax(0, 1fr) 96px 104px 64px;
+      column-gap: 12px;
+      align-items: center;
+      padding: 0 8px;
     }
+    .override-colhead { padding-bottom: 4px; font-size: 12px; line-height: 16px; color: var(--studio-ink-dim); }
 
     .override-row {
-      padding: 11px 14px;
-      background: var(--studio-bg);
-      border: 1px solid var(--studio-rule);
+      min-height: 40px;
+      padding-top: 4px;
+      padding-bottom: 4px;
+      border-top: 1px solid var(--studio-rule);
     }
     .override-row.override-row-active {
       background: var(--studio-accent-tint);
-      border-color: var(--studio-accent-border);
     }
 
-    .override-row-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+    .override-row-header { display: contents; }
     .override-key {
-      font-size: 11px;
+      grid-column: 1;
+      grid-row: 1;
+      font-size: 12px;
+      line-height: 16px;
       color: var(--studio-ink);
-      font-weight: 700;
-      letter-spacing: 0.04em;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
+      overflow-wrap: break-word;
     }
 
     .lock-btn {
-      padding: 1px 7px;
+      grid-column: 4;
+      grid-row: 1;
+      justify-self: end;
+      min-width: 56px;
+      height: 28px;
+      padding: 0 8px;
       background: transparent;
-      border: 1px solid var(--studio-rule);
-      border-radius: 4px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
       cursor: pointer;
       color: var(--studio-ink-dim);
-      font-size: 9.5px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 500;
       font-family: var(--studio-sans, Manrope, sans-serif);
     }
+    .lock-btn:hover { background: var(--studio-chip-bg); color: var(--studio-ink); }
     .lock-btn.lock-btn-on {
       background: var(--studio-warn-tint);
       border-color: var(--studio-warn-border);
-      color: var(--studio-warn);
+      color: var(--studio-ink);
     }
 
     .override-global-row, .override-input-row {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-top: 5px;
+      min-width: 0;
     }
+    .override-global-row { grid-column: 2; grid-row: 1; }
+    .override-input-row { grid-column: 3; grid-row: 1; }
+    /* The column heads name these on a wide screen; the words stay for assistive technology. */
     .override-label {
-      font-size: 10px;
-      color: var(--studio-ink-dim);
-      letter-spacing: 0.04em;
-      min-width: 50px;
-      font-weight: 600;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
-    .override-label-override.override-label-active { color: var(--studio-accent); }
     .override-global-val {
-      flex: 1;
-      padding: 4px 8px;
-      background: var(--studio-chip-bg);
-      border: 1px solid var(--studio-rule);
-      border-radius: 3px;
-      font-size: 11.5px;
+      font-size: 13px;
+      line-height: 20px;
       color: var(--studio-ink-dim);
       font-variant-numeric: tabular-nums;
     }
     .override-input {
       flex: 1;
-      padding: 4px 8px;
-      background: var(--studio-paper);
-      border: 1px solid var(--studio-rule);
-      border-radius: 3px;
-      font-size: 11.5px;
+      min-width: 0;
+      width: 100%;
+      height: 32px;
+      padding: 0 8px;
+      background: var(--studio-bg);
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 6px;
+      font-size: 13px;
       color: var(--studio-ink);
-      font-weight: 600;
+      font-weight: 500;
       font-family: var(--studio-sans, Manrope, sans-serif);
       font-variant-numeric: tabular-nums;
-      outline: none;
     }
     .override-row-active .override-input {
       border-color: var(--studio-accent-border);
@@ -590,39 +671,40 @@
     .maint-warn {
       background: var(--studio-neg-tint);
       border: 1px solid var(--studio-neg-border);
-      padding: 12px 16px;
+      border-radius: 8px;
+      padding: 8px 12px;
       color: var(--studio-neg);
       font-size: 12px;
-      font-weight: 600;
-      line-height: 1.5;
-      margin-bottom: 20px;
-      max-width: 760px;
+      font-weight: 500;
+      line-height: 16px;
+      margin-bottom: 16px;
+      max-width: 960px;
     }
     .maint-card {
-      background: var(--studio-paper);
       border: 1px solid var(--studio-rule);
-      padding: 20px 22px;
-      margin-bottom: 16px;
-      max-width: 760px;
+      border-radius: 8px;
+      padding: 16px;
+      max-width: 960px;
     }
     .maint-card-title {
       font-size: 14px;
-      font-weight: 700;
+      line-height: 20px;
+      font-weight: 500;
       color: var(--studio-ink);
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
     .maint-card-desc {
-      font-size: 12.5px;
+      font-size: 13px;
       color: var(--studio-ink-dim);
-      line-height: 1.55;
-      margin-bottom: 16px;
-      max-width: 600px;
+      line-height: 20px;
+      margin-bottom: 12px;
+      max-width: 640px;
     }
     .maint-card-desc code {
-      font-size: 11.5px;
-      padding: 1px 5px;
+      font-size: 12px;
+      padding: 0 4px;
       background: var(--studio-chip-bg);
-      border-radius: 2px;
+      border-radius: 4px;
     }
     .maint-action-row {
       display: flex;
@@ -633,21 +715,21 @@
     .btn-flush {
       appearance: none;
       -webkit-appearance: none;
-      padding: 8px 16px;
+      height: 32px;
+      padding: 0 12px;
       background: var(--studio-neg-tint);
       border: 1px solid var(--studio-neg-border);
-      border-radius: 4px;
+      border-radius: 6px;
       color: var(--studio-neg);
       font-family: var(--studio-sans, Manrope, sans-serif);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.02em;
+      font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
-      transition: background 0.12s, border-color 0.12s;
+      transition: background-color 0.12s, border-color 0.12s;
     }
     .btn-flush:hover:not(:disabled) {
       background: var(--studio-neg);
-      color: var(--studio-white, #fff);
+      color: var(--studio-paper);
       border-color: var(--studio-neg);
     }
     .btn-flush:disabled {
@@ -659,50 +741,50 @@
       color: var(--studio-ink-dim);
       font-weight: 500;
     }
-    .flush-status[data-state="running"] { color: var(--studio-warn); }
-    .flush-status[data-state="success"] { color: var(--studio-pos); font-weight: 700; }
-    .flush-status[data-state="error"]   { color: var(--studio-neg); font-weight: 700; }
+    .flush-status[data-state="running"] { color: var(--studio-ink); }
+    .flush-status[data-state="success"] { color: var(--studio-pos); }
+    .flush-status[data-state="error"]   { color: var(--studio-neg); }
 
     /* Confirm panel — shown after first click, before final confirm */
     .flush-confirm-panel {
       margin-top: 12px;
-      padding: 14px 16px;
+      padding: 12px;
       background: var(--studio-neg-tint);
       border: 1px solid var(--studio-neg-border);
-      border-radius: 4px;
-      max-width: 600px;
+      border-radius: 8px;
+      max-width: 640px;
     }
     .flush-confirm-panel[hidden] { display: none; }
 
     .flush-confirm-loading {
       font-size: 12px;
       color: var(--studio-ink-dim);
-      font-weight: 500;
     }
 
-    .flush-confirm-body { display: flex; flex-direction: column; gap: 10px; }
+    .flush-confirm-body { display: flex; flex-direction: column; gap: 8px; }
     .flush-confirm-body[hidden] { display: none; }
 
     .flush-confirm-desc {
       font-size: 12px;
       color: var(--studio-neg);
-      font-weight: 600;
-      line-height: 1.5;
+      font-weight: 500;
+      line-height: 16px;
     }
 
     /* Armed-symphony callout — only shown when N > 0 */
     .flush-armed-callout {
-      padding: 10px 12px;
-      background: var(--studio-neg-tint);
+      padding: 8px 12px;
+      background: var(--studio-paper);
       border: 1px solid var(--studio-neg-border);
-      border-radius: 3px;
+      border-radius: 4px;
     }
     .flush-armed-callout[hidden] { display: none; }
     .flush-armed-heading {
       font-size: 12px;
-      font-weight: 700;
+      line-height: 16px;
+      font-weight: 500;
       color: var(--studio-neg);
-      margin-bottom: 6px;
+      margin-bottom: 4px;
     }
     .flush-armed-list {
       list-style: none;
@@ -710,15 +792,15 @@
       padding: 0;
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 2px;
     }
     .flush-armed-item {
-      font-size: 11.5px;
+      font-size: 12px;
+      line-height: 16px;
       color: var(--studio-ink);
-      font-weight: 600;
       display: flex;
-      align-items: center;
-      gap: 6px;
+      align-items: baseline;
+      gap: 8px;
     }
     .flush-armed-item::before {
       content: '';
@@ -728,13 +810,11 @@
       border-radius: 50%;
       background: var(--studio-neg);
       flex-shrink: 0;
+      align-self: center;
     }
     .flush-armed-flags {
-      font-size: 10px;
-      color: var(--studio-neg);
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
+      font-size: 12px;
+      color: var(--studio-ink-dim);
     }
 
     .flush-confirm-actions {
@@ -746,47 +826,50 @@
     .btn-flush-confirm {
       appearance: none;
       -webkit-appearance: none;
-      padding: 7px 14px;
+      height: 32px;
+      padding: 0 12px;
       background: var(--studio-neg);
       border: 1px solid var(--studio-neg);
-      border-radius: 4px;
-      color: var(--studio-white, #fff);
+      border-radius: 6px;
+      color: var(--studio-paper);
       font-family: var(--studio-sans, Manrope, sans-serif);
-      font-size: 11.5px;
-      font-weight: 700;
+      font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
-      letter-spacing: 0.02em;
     }
     .btn-flush-confirm:disabled { opacity: 0.45; cursor: default; }
     .btn-flush-cancel {
       appearance: none;
       -webkit-appearance: none;
-      padding: 7px 11px;
+      height: 32px;
+      padding: 0 12px;
       background: transparent;
       border: 1px solid var(--studio-rule-hi);
-      border-radius: 4px;
+      border-radius: 6px;
       color: var(--studio-ink-dim);
       font-family: var(--studio-sans, Manrope, sans-serif);
-      font-size: 11.5px;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
     }
+    .btn-flush-cancel:hover { background: var(--studio-chip-bg); color: var(--studio-ink); }
 
-    /* Result summary card */
+    /* Result summary: one row of figures */
     .flush-result {
-      margin-top: 14px;
-      padding: 12px 16px;
+      margin-top: 12px;
+      padding: 12px;
       background: var(--studio-chip-bg);
       border: 1px solid var(--studio-rule);
-      border-radius: 4px;
-      max-width: 600px;
+      border-radius: 8px;
+      max-width: 640px;
     }
     .flush-result[hidden] { display: none; }
     .flush-result[data-state="success"] { border-color: var(--studio-accent-border); background: var(--studio-accent-tint); }
     .flush-result[data-state="error"]   { border-color: var(--studio-neg-border); background: var(--studio-neg-tint); }
     .flush-result-title {
-      font-size: 12px;
-      font-weight: 700;
+      font-size: 13px;
+      line-height: 16px;
+      font-weight: 500;
       color: var(--studio-ink);
       margin-bottom: 8px;
     }
@@ -794,7 +877,7 @@
     .flush-result[data-state="success"] .flush-result-title { color: var(--studio-pos); }
     .flush-result-stats {
       display: flex;
-      gap: 20px;
+      gap: 24px;
       flex-wrap: wrap;
     }
     .flush-result-stat {
@@ -803,24 +886,22 @@
       gap: 2px;
     }
     .flush-stat-val {
-      font-size: 18px;
-      font-weight: 700;
+      font-size: 16px;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
       color: var(--studio-ink);
-      line-height: 1;
+      line-height: 20px;
     }
     .flush-stat-label {
-      font-size: 10px;
+      font-size: 12px;
+      line-height: 16px;
       color: var(--studio-ink-dim);
-      font-weight: 600;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
     }
     .flush-result-msg {
       margin-top: 8px;
-      font-size: 11.5px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      line-height: 1.5;
+      line-height: 16px;
     }
 
     @media (min-width: 2560px) {
@@ -832,20 +913,38 @@
        content as a wrapping row of buttons, and every grid drops to one column so no label or
        input is wider than the screen. Layout properties only. */
     @media (max-width: 700px) {
-      .settings-body { flex-direction: column; align-items: stretch; gap: 16px; }
+      .settings-actions { padding: 8px 12px; }
+      .settings-body { flex-direction: column; align-items: stretch; gap: 12px; }
       .settings-sidenav { width: 100%; flex-direction: row; flex-wrap: wrap; gap: 4px; }
-      .sn-btn { width: auto; }
-      .sn-footnote { flex-basis: 100%; margin: 8px 0 0; }
+      .sn-btn { width: auto; height: 32px; padding: 0 8px; }
+      .sn-footnote { flex-basis: 100%; margin: 4px 0 0; padding-top: 8px; }
       .settings-content { width: 100%; }
+      .settings-section { padding: 16px; }
+      .live-card-inner { flex-wrap: wrap; gap: 12px; }
+      .setting-row { grid-template-columns: minmax(0, 1fr); row-gap: 4px; }
+      .setting-row > .text-input-wrap { grid-column: 1; grid-row: auto; }
       #algo-grid { grid-template-columns: minmax(0, 1fr); }
-      .cred-field-wrap { grid-template-columns: minmax(0, 1fr) auto; }
+      .param-card { grid-template-areas: "name input" "help help"; row-gap: 4px; }
+      .cred-field-wrap { grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; }
       .cred-field-wrap .cred-name,
-      .cred-field-wrap .cred-status { grid-column: 1 / -1; text-align: left; }
-      .sym-split { grid-template-columns: minmax(0, 1fr); }
-      .override-grid { grid-template-columns: minmax(0, 1fr); }
-      .override-row { min-width: 0; }
-      .override-row-header { gap: 8px; }
-      .override-key { min-width: 0; overflow-wrap: anywhere; }
+      .cred-field-wrap .cred-status { grid-column: 1 / -1; }
+      .sym-split { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+      #sym-list { max-height: 240px; }
+      .override-colhead { display: none; }
+      .override-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; row-gap: 4px; padding: 8px; }
+      .override-key { grid-column: 1 / 3; grid-row: 1; }
+      .lock-btn { grid-column: 3; grid-row: 1; }
+      .override-global-row { grid-column: 1; grid-row: 2; }
+      .override-input-row { grid-column: 2 / 4; grid-row: 2; }
+      .override-label {
+        position: static;
+        width: auto;
+        height: auto;
+        overflow: visible;
+        clip-path: none;
+        font-size: 12px;
+        color: var(--studio-ink-dim);
+      }
       .sym-detail-header { flex-wrap: wrap; }
       .live-card-inner { flex-wrap: wrap; }
     }
@@ -859,7 +958,7 @@
 
   <!-- First panel: the page's caption with Save and Discard. No title card; the nav marks the page. -->
   <section class="hero-section settings-actions" data-testid="settings-actions">
-    <span class="legend-as-of" data-testid="settings-caption">.env globals + SQLite-isolated symphony strategies &middot; live edits, no restart</span>
+    <span class="legend-as-of settings-caption" data-testid="settings-caption">.env globals + SQLite-isolated symphony strategies &middot; live edits, no restart</span>
     <div class="header-actions">
       <button type="button" id="btn-discard" class="btn-discard" disabled>Discard changes</button>
       <button type="button" id="btn-save" class="btn-save" disabled>Save changes</button>
@@ -893,9 +992,10 @@
 
       <!-- ── Master controls ─────────────────────────────────────────────── -->
       <section id="sec-master" class="settings-section hero-section">
-        <div class="section-header">Master controls</div>
-        <div class="sec-subtitle">The two switches that govern real-money execution. Treat both with respect.</div>
+        <div class="section-header settings-sec-title">Master controls</div>
+        <div class="sec-subtitle">The mode and the start time that govern real-money execution. Treat both with care.</div>
 
+        <div class="ledger">
         <div class="live-card sym-card" id="live-card" data-live="false">
           <div class="live-card-inner">
             <div class="live-card-body">
@@ -904,13 +1004,13 @@
                 <span class="live-pill" id="live-pill" data-live="false">&mdash;</span>
               </div>
               <div class="live-desc">
-                When <strong>LIVE</strong>, the bot fires real
+                When <strong>Live</strong>, the bot fires real
                 <code>POST /go-to-cash</code>
-                requests to Composer the moment a stop is hit. <strong>DRY RUN</strong>
+                requests to Composer the moment a stop is hit. <strong>Dry run</strong>
                 tracks identical math but never sends an order — used to validate parameters before flipping the switch.
               </div>
               <div class="live-warning" id="live-banner" hidden>
-                ⚠ Real-money mode. Every trigger will send a liquidation to Composer.
+                Real-money mode. Every trigger will send a liquidation to Composer.
                 Discord receives an audit alert on every panic-stop call regardless of live state.
               </div>
               <div class="field-hint">Live trading is armed in the server's .env file, not from the dashboard. This switch shows the current mode and cannot change it.</div>
@@ -929,18 +1029,19 @@
           </div>
           <div class="field-hint">The minute the scheduler begins monitoring stops. Market opens 09:30; earlier values stage state pre-open.</div>
         </div>
+        </div>
       </section>
 
       <!-- ── Algorithm parameters ────────────────────────────────────────── -->
       <section id="sec-algorithm" class="settings-section hero-section" hidden>
-        <div class="section-header">Algorithm parameters</div>
+        <div class="section-header settings-sec-title">Algorithm parameters</div>
         <div class="sec-subtitle">Global defaults applied to every symphony. Per-symphony overrides in the next section take precedence.</div>
         <div id="algo-grid"><!-- rendered by settings.js --></div>
       </section>
 
       <!-- ── Credentials ─────────────────────────────────────────────────── -->
       <section id="sec-credentials" class="settings-section hero-section" hidden>
-        <div class="section-header">Credentials</div>
+        <div class="section-header settings-sec-title">Credentials</div>
         <div class="sec-subtitle">Keys + account UUIDs + webhook URLs. Values are write-only — the server returns masked placeholders so secrets never round-trip through the browser.</div>
 
         <div class="cred-warn">
@@ -956,31 +1057,31 @@
             <span class="cred-name">COMPOSER_KEY_ID</span>
             <input type="password" class="cred-input" data-key="COMPOSER_KEY_ID" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
           <div class="cred-field-wrap">
             <span class="cred-name">COMPOSER_SECRET</span>
             <input type="password" class="cred-input" data-key="COMPOSER_SECRET" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
           <div class="cred-field-wrap">
             <span class="cred-name">ACCOUNT_INDIVIDUAL</span>
             <input type="password" class="cred-input" data-key="ACCOUNT_INDIVIDUAL" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
           <div class="cred-field-wrap">
             <span class="cred-name">ACCOUNT_ROTH</span>
             <input type="password" class="cred-input" data-key="ACCOUNT_ROTH" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
           <div class="cred-field-wrap">
             <span class="cred-name">ACCOUNT_TRAD</span>
             <input type="password" class="cred-input" data-key="ACCOUNT_TRAD" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
         </div>
 
@@ -991,13 +1092,13 @@
             <span class="cred-name">ALPACA_KEY</span>
             <input type="password" class="cred-input" data-key="ALPACA_KEY" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
           <div class="cred-field-wrap">
             <span class="cred-name">ALPACA_SECRET</span>
             <input type="password" class="cred-input" data-key="ALPACA_SECRET" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
         </div>
 
@@ -1008,21 +1109,21 @@
             <span class="cred-name">DISCORD_WEBHOOK_URL</span>
             <input type="password" class="cred-input" data-key="DISCORD_WEBHOOK_URL" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
           <div class="cred-field-wrap">
             <span class="cred-name">ANTHROPIC_API_KEY</span>
             <input type="password" class="cred-input" data-key="ANTHROPIC_API_KEY" placeholder="" autocomplete="new-password">
             <button type="button" class="cred-toggle-vis" data-show="show" data-hide="hide">show</button>
-            <span class="cred-status" data-ready="0">unchanged</span>
+            <span class="cred-status" data-ready="0" aria-live="polite"></span>
           </div>
         </div>
       </section>
 
       <!-- ── Symphony overrides ──────────────────────────────────────────── -->
       <section id="sec-symphonies" class="settings-section hero-section" hidden>
-        <div class="section-header">Per-symphony overrides</div>
-        <div class="sec-subtitle">Override globals or lock parameters against autotuner changes. Stored in alphabot_state.db, keyed on normalized symphony name.</div>
+        <div class="section-header settings-sec-title">Per-symphony overrides</div>
+        <div class="sec-subtitle">Override globals or lock parameters against autotuner changes. Stored in alphabot_state.db, keyed on normalized symphony name. A pinned value is stored for the symphony and equals the global today; it will not follow a later global change.</div>
 
         <div class="sym-split">
           <div id="sym-list"><!-- rendered by settings.js --></div>
@@ -1032,7 +1133,7 @@
 
       <!-- ── Maintenance ───────────────────────────────────────────────────── -->
       <section id="sec-maintenance" class="settings-section hero-section" hidden>
-        <div class="section-header">Maintenance</div>
+        <div class="section-header settings-sec-title">Maintenance</div>
         <div class="sec-subtitle">Destructive data operations. Each action is irreversible — use with care.</div>
 
         <div class="maint-warn">

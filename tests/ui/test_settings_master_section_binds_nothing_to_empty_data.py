@@ -570,7 +570,7 @@ def test_a_later_good_load_shows_the_live_switch_again_at_the_servers_position(
         facts = probe.page.evaluate(_SWITCH_FACTS)
         assert facts["ariaChecked"] == str(live).lower()
         assert facts["dataOn"] == ("1" if live else "0")
-        assert facts["pill"] == ("LIVE" if live else "DRY RUN")
+        assert facts["pill"] == ("Live" if live else "Dry run")
         assert (facts["bannerBoxes"] > 0) is live
 
 
