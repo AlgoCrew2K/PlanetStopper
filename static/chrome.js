@@ -104,7 +104,7 @@ function toggleAccountDropdown(e) {
       dd.innerHTML = '';
       var accounts = (data && data.accounts) || [];
       if (accounts.length === 0) {
-        dd.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--studio-ink-dim);">No accounts configured</div>';
+        dd.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--studio-ink-dim);">No accounts configured</div>';
       } else {
         accounts.forEach(function (acc) {
           var btn = document.createElement('button');
@@ -113,14 +113,14 @@ function toggleAccountDropdown(e) {
           btn.dataset.label = acc.label;
           btn.style.cssText = [
             'display:block', 'width:100%', 'text-align:left',
-            'padding:9px 14px', 'border:none', 'border-bottom:1px solid var(--studio-rule)',
+            'padding:8px 12px', 'border:none', 'border-bottom:1px solid var(--studio-rule)',
             'background:transparent', 'cursor:pointer',
             'font-family:var(--studio-sans,Manrope,sans-serif)',
             'font-size:12px', 'color:var(--studio-ink)'
           ].join(';');
           btn.innerHTML =
-            '<span style="font-weight:600;">' + escHtml(acc.label) + '</span>' +
-            '<span style="display:block;font-size:10px;color:var(--studio-ink-dim);margin-top:1px;">' +
+            '<span style="font-weight:500;">' + escHtml(acc.label) + '</span>' +
+            '<span style="display:block;font-size:11px;color:var(--studio-ink-dim);margin-top:2px;">' +
             escHtml(acc.uuid.slice(0, 8)) + '</span>';
           btn.addEventListener('click', function () { switchAccount(acc.uuid); });
           btn.addEventListener('mouseover', function () {
@@ -138,7 +138,7 @@ function toggleAccountDropdown(e) {
       dd.removeAttribute('hidden');
     })
     .catch(function () {
-      dd.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--studio-neg);">Failed to load accounts</div>';
+      dd.innerHTML = '<div style="padding:8px 12px;font-size:12px;color:var(--studio-neg);">Failed to load accounts</div>';
       dd.removeAttribute('hidden');
     });
 }
@@ -465,7 +465,7 @@ function updateModeIndicators(meta) {
 }
 window.updateModeIndicators = updateModeIndicators;
 
-// ── NEXT MM:SS countdown ──────────────────────────────────────────────────
+// ── Next MM:SS countdown ──────────────────────────────────────────────────
 // Anchored at the moment the request was SENT with the seconds the server reported
 // (taken before its per-symphony work), and counted down on performance.now(), so a
 // slow response does not shift it. It wraps at the minute instead of stopping at zero.
@@ -479,7 +479,7 @@ function renderCountdown() {
   if (!el || _countdownAnchor === null) return;
   var remaining = _countdownAnchor.secs - (performance.now() - _countdownAnchor.atMono) / 1000;
   var secs = ((Math.floor(remaining) % NEXT_RUN_PERIOD_S) + NEXT_RUN_PERIOD_S) % NEXT_RUN_PERIOD_S;
-  el.textContent = 'NEXT ' + _pad2(Math.floor(secs / SECONDS_PER_MINUTE)) + ':' + _pad2(secs % SECONDS_PER_MINUTE);
+  el.textContent = 'Next ' + _pad2(Math.floor(secs / SECONDS_PER_MINUTE)) + ':' + _pad2(secs % SECONDS_PER_MINUTE);
 }
 
 function resyncNextCountdown(data, timing) {

@@ -1,45 +1,17 @@
 {# Scripts: /static/request_guard.js (window.PSRequest) loads just before /static/chrome.js, at the end of this file. #}
 {% include '_fonts.html' %}
-<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav"{% if active_route != 'dashboard' %} data-header-poll="1"{% endif %} class="shell-nav" style="padding:14px clamp(16px,2vw,40px);border-bottom:1px solid var(--studio-rule);background:var(--studio-paper);font-family:var(--studio-sans,Manrope,sans-serif);width:100%;box-sizing:border-box;">
+<div data-testid="top-bar" style="width:100%;box-sizing:border-box;"><nav data-testid="studio-nav"{% if active_route != 'dashboard' %} data-header-poll="1"{% endif %} class="shell-nav">
 
   <!-- Wordmark -->
-  <div style="font-weight:700;font-size:18px;letter-spacing:-0.02em;color:var(--studio-ink);display:flex;align-items:baseline;gap:7px;">
-    Planet Stopper
-    <span style="color:var(--studio-accent);font-weight:500;font-size:13px;font-style:italic;">guard</span>
-  </div>
+  <div class="shell-brand">Planet Stopper <span class="shell-brand-sub">guard</span></div>
 
-  <!-- Nav links (C-12: url_for() not hardcoded paths) -->
+  <!-- Nav links (C-12: url_for() not hardcoded paths). The current page carries aria-current; the style block draws its underline. -->
   <div class="shell-nav-links">
-    <a href="{{ url_for('dashboard') }}"
-       {% if active_route == 'dashboard' %}aria-current="page"{% endif %}
-       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'dashboard' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'dashboard' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
-      Dashboard
-      {% if active_route == 'dashboard' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
-    </a>
-    <a href="{{ url_for('performance_page') }}"
-       {% if active_route == 'performance' %}aria-current="page"{% endif %}
-       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'performance' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'performance' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
-      Performance
-      {% if active_route == 'performance' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
-    </a>
-    <a href="{{ url_for('ai_advisor_tab') }}"
-       {% if active_route == 'advisor' %}aria-current="page"{% endif %}
-       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'advisor' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'advisor' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
-      Advisor
-      {% if active_route == 'advisor' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
-    </a>
-    <a href="{{ url_for('history_page') }}"
-       {% if active_route == 'history' %}aria-current="page"{% endif %}
-       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'history' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'history' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
-      History
-      {% if active_route == 'history' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
-    </a>
-    <a href="{{ url_for('settings_page') }}"
-       {% if active_route == 'settings' %}aria-current="page"{% endif %}
-       style="padding:6px 11px;text-decoration:none;color:{% if active_route == 'settings' %}var(--studio-ink){% else %}var(--studio-ink-dim){% endif %};font-size:12.5px;font-weight:{% if active_route == 'settings' %}700{% else %}500{% endif %};letter-spacing:-0.005em;position:relative;border-radius:4px;">
-      Settings
-      {% if active_route == 'settings' %}<span style="position:absolute;left:8px;right:8px;bottom:-14px;height:2px;background:var(--studio-accent);"></span>{% endif %}
-    </a>
+    <a class="shell-link" href="{{ url_for('dashboard') }}"{% if active_route == 'dashboard' %} aria-current="page"{% endif %}>Dashboard</a>
+    <a class="shell-link" href="{{ url_for('performance_page') }}"{% if active_route == 'performance' %} aria-current="page"{% endif %}>Performance</a>
+    <a class="shell-link" href="{{ url_for('ai_advisor_tab') }}"{% if active_route == 'advisor' %} aria-current="page"{% endif %}>Advisor</a>
+    <a class="shell-link" href="{{ url_for('history_page') }}"{% if active_route == 'history' %} aria-current="page"{% endif %}>History</a>
+    <a class="shell-link" href="{{ url_for('settings_page') }}"{% if active_route == 'settings' %} aria-current="page"{% endif %}>Settings</a>
   </div>
 
   <div style="flex:1;"></div>
@@ -48,13 +20,13 @@
   <div class="shell-nav-status">
     <!-- Single engine-state indicator — written only by chrome.js renderEngineLabel() -->
     {% set _paused = meta is defined and meta.system_online and engine_phase is defined and engine_phase in ('blackout', 'opening') %}
-    <span id="engine-status" data-testid="engine-status"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %} style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;flex-shrink:0;">
-      <span id="engine-status-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};flex-shrink:0;"></span>
+    <span id="engine-status" data-testid="engine-status" class="shell-status"{% if _paused %} title="{% if engine_phase == 'blackout' %}Scheduled pause before the close; stops resume at the close.{% else %}Scheduled session start; the first cycle is running.{% endif %}"{% endif %}>
+      <span id="engine-status-dot" class="shell-status-dot" style="background:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};"></span>
       <span id="engine-status-label" style="color:{% if meta is defined and meta.system_online and not _paused %}var(--studio-pos){% else %}var(--studio-ink-dim){% endif %};">{% if _paused %}{% if engine_phase == 'blackout' %}Rebalance pause{% else %}Opening{% endif %}{% elif meta is defined and meta.system_online %}Live{% else %}Closed{% endif %}</span>
     </span>
-    <span data-testid="et-clock" id="et-clock" class="studio-nav-wide" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.04em;color:var(--studio-ink-dim);white-space:nowrap;">--:--:--</span>
-    <!-- NEXT countdown — ticks every second via chrome.js; hidden when market closed -->
-    <span id="next-run-countdown" data-testid="next-run-countdown" style="font-size:11px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:0.04em;color:var(--studio-ink-dim);white-space:nowrap;flex-shrink:0;{% if not (meta is defined and meta.system_online) %}display:none;{% endif %}">{% if meta is defined and meta.system_online %}NEXT {{ meta.next_run }}{% endif %}</span>
+    <span data-testid="et-clock" id="et-clock" class="studio-nav-wide shell-meta">--:--:--</span>
+    <!-- Next-run countdown — ticks every second via chrome.js; hidden when market closed -->
+    <span id="next-run-countdown" data-testid="next-run-countdown" class="shell-meta"{% if not (meta is defined and meta.system_online) %} style="display:none;"{% endif %}>{% if meta is defined and meta.system_online %}Next {{ meta.next_run }}{% endif %}</span>
   </div>
 
   <!-- Right-rail: candidate-alert indicator (header badge, AC-1/AC-2/AC-4 —
@@ -62,31 +34,23 @@
        view so a click routes there even before chrome.js runs; chrome.js
        populates the badge count + tooltip and fires the mark-viewed POST on
        click (progressive enhancement — navigation works without it). -->
-  <a data-testid="candidate-alert-indicator" id="candidate-alert-indicator"
+  <a data-testid="candidate-alert-indicator" id="candidate-alert-indicator" class="shell-bell"
      href="{{ url_for('ai_advisor_tab') }}"
-     style="display:flex;align-items:center;gap:2px;padding:4px 8px;border-radius:6px;text-decoration:none;color:var(--studio-ink-dim);flex-shrink:0;position:relative;"
      title="No weekly run yet">
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-    <span data-testid="candidate-alert-badge" id="candidate-alert-badge"
-          style="display:none;min-width:16px;height:16px;padding:0 4px;margin-left:2px;border-radius:8px;background:var(--studio-neg);color:var(--studio-white);font-size:10px;font-weight:700;line-height:16px;text-align:center;"></span>
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    <span data-testid="candidate-alert-badge" id="candidate-alert-badge" class="shell-bell-count"></span>
   </a>
 
   <!-- Right-rail: workspace switcher chip (B-08: real dropdown on click) -->
-  <div id="ws-wrap" class="studio-nav-wide" style="position:relative;flex-shrink:0;">
-    <button data-testid="workspace-switcher" type="button"
-            onclick="toggleAccountDropdown(event)"
-            style="display:flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid var(--studio-rule);border-radius:6px;background:var(--studio-chip-bg);color:var(--studio-ink);font-size:11.5px;cursor:pointer;">
+  <div id="ws-wrap" class="studio-nav-wide">
+    <button data-testid="workspace-switcher" type="button" class="shell-account"
+            onclick="toggleAccountDropdown(event)">
       <span id="ws-label">{% if meta is defined %}{{ meta.account.label }}{% else %}Account{% endif %}</span>
-      <span id="ws-uuid" style="color:var(--studio-ink-dim);font-size:10px;">{% if meta is defined %}{{ meta.account.uuid_short }}{% else %}--------{% endif %}</span>
-      <span>&#x25BE;</span>
+      <span id="ws-uuid" class="shell-account-id">{% if meta is defined %}{{ meta.account.uuid_short }}{% else %}--------{% endif %}</span>
+      <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
     </button>
     <!-- Account dropdown (populated by chrome.js) -->
-    <div id="ws-dropdown" hidden
-         style="position:absolute;top:calc(100% + 6px);right:0;min-width:160px;
-                background:var(--studio-paper);border:1px solid var(--studio-rule-hi);
-                border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.14);
-                z-index:9999;overflow:hidden;">
-    </div>
+    <div id="ws-dropdown" class="shell-dropdown" hidden></div>
   </div>
 
   <!-- Right-rail: mode pill -->
@@ -109,16 +73,45 @@
 
 <!-- ======================== PANIC MODAL (chrome — all pages) ======================== -->
 <style>
-  /* Header layout lives in classes (not inline style) so a media rule can wrap it.
-     Values are the ones the nav carried inline; at 1440 px the header is unchanged.
-     At the existing 1400 px breakpoint the nav and its link group wrap onto as many rows
-     as they need, so every control stays on screen (interim narrow layout; the real
-     mobile layout is a separate design). */
-  .shell-nav { display:flex; align-items:center; gap:clamp(8px,1.2vw,20px); min-width:0; }
-  .shell-nav-links { display:flex; gap:2px; margin-left:8px; flex-shrink:0; }
-  .shell-nav-status { display:flex; align-items:center; gap:clamp(6px,0.8vw,14px); flex-shrink:0; min-width:0; }
+  /* Header layout and look live in classes (not inline style) so a media rule can wrap them.
+     At the 1400 px breakpoint the nav and its link group wrap onto as many rows as they need,
+     so every control stays on screen. */
+  .shell-nav { display:flex; align-items:center; gap:clamp(8px,1.2vw,20px); min-width:0; width:100%; box-sizing:border-box; padding:8px clamp(16px,2vw,40px); border-bottom:1px solid var(--studio-rule); background:var(--studio-paper); font-family:var(--studio-sans,Manrope,sans-serif); }
   /* The wordmark never wraps: a wrapped brand makes the header taller on every page. */
-  .shell-nav > div:first-child { white-space:nowrap; flex-shrink:0; }
+  .shell-brand { display:flex; align-items:baseline; gap:8px; flex-shrink:0; white-space:nowrap; font-size:18px; font-weight:500; color:var(--studio-ink); }
+  .shell-brand-sub { font-size:13px; font-weight:400; color:var(--studio-ink-dim); }
+  .shell-nav-links { display:flex; margin-left:8px; flex-shrink:0; }
+  .shell-link { position:relative; display:inline-flex; align-items:center; height:32px; padding:0 12px; border-radius:8px; text-decoration:none; font-size:13px; font-weight:500; color:var(--studio-ink-dim); transition:color 0.15s; }
+  .shell-link:hover, .shell-link[aria-current="page"] { color:var(--studio-ink); }
+  /* The underline of the current page sits on the header's bottom rule (the nav's 8 px padding below the link). */
+  .shell-link[aria-current="page"]::after { content:""; position:absolute; left:12px; right:12px; bottom:-8px; height:2px; background:var(--studio-accent); }
+  .shell-nav-status { display:flex; align-items:center; gap:clamp(6px,0.8vw,14px); flex-shrink:0; min-width:0; font-size:12px; font-variant-numeric:tabular-nums; }
+  .shell-status { display:inline-flex; align-items:center; gap:6px; flex-shrink:0; white-space:nowrap; font-weight:500; }
+  .shell-status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .shell-meta { flex-shrink:0; white-space:nowrap; color:var(--studio-ink-dim); }
+  .shell-bell { display:inline-flex; align-items:center; justify-content:center; gap:4px; flex-shrink:0; height:32px; min-width:32px; padding:0 8px; border-radius:8px; text-decoration:none; color:var(--studio-ink-dim); transition:color 0.15s; }
+  .shell-bell:hover { color:var(--studio-ink); }
+  .shell-bell-count { display:none; font-size:12px; font-weight:500; font-variant-numeric:tabular-nums; color:var(--studio-neg); }
+  #ws-wrap { position:relative; flex-shrink:0; }
+  .shell-account { display:flex; align-items:center; gap:8px; height:32px; padding:0 8px 0 12px; border:1px solid var(--studio-rule); border-radius:8px; background:transparent; color:var(--studio-ink); font-size:12px; cursor:pointer; transition:background-color 0.15s; }
+  .shell-account:hover { background:var(--studio-chip-bg); }
+  .shell-account-id { color:var(--studio-ink-dim); font-size:11px; font-variant-numeric:tabular-nums; }
+  .shell-account svg { flex-shrink:0; color:var(--studio-ink-dim); }
+  .shell-dropdown { position:absolute; top:calc(100% + 8px); right:0; z-index:9999; min-width:160px; overflow:hidden; background:var(--studio-paper); border:1px solid var(--studio-rule-hi); border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.12); }
+
+  /* The mode tag, Force run now and Emergency Liquidate keep the markup recorded in
+     tests/app/test_chrome_header_honesty.py, inline styles included; their look is set here, so
+     the declarations that fight an inline value carry !important. The mode is one status word
+     after a dot: hollow for DRY RUN (nothing is traded), filled and in the danger colour for
+     LIVE. The DOM keeps the engine's own value (DRY RUN / LIVE); the display is sentence case. */
+  .shell-nav > [data-testid="mode-pill"] { padding:0 0 0 14px !important; border-radius:0 !important; font-size:12px !important; font-weight:500 !important; letter-spacing:0 !important; background-color:transparent !important; background-image:radial-gradient(circle at 4px 50%, transparent 2px, currentColor 2.5px 4px, transparent 4.5px) !important; background-repeat:no-repeat !important; text-transform:lowercase; }
+  .shell-nav > [data-testid="mode-pill"]::first-letter { text-transform:uppercase; }
+  .shell-nav > [data-testid="mode-pill"][data-live="true"] { color:var(--studio-neg) !important; font-weight:600 !important; background-image:radial-gradient(circle at 4px 50%, currentColor 3.5px, transparent 4.5px) !important; }
+  .shell-nav > [data-testid="force-run-btn"], .shell-nav > #emergency-liquidate { box-sizing:border-box; min-height:32px; line-height:16px; padding:8px 16px !important; border-radius:8px !important; font-weight:500 !important; letter-spacing:0 !important; transition:background-color 0.15s, opacity 0.15s; }
+  .shell-nav > [data-testid="force-run-btn"]:hover { opacity:0.9; }
+  .shell-nav > [data-testid="force-run-btn"]:disabled { opacity:0.6; }
+  .shell-nav > #emergency-liquidate:hover { background:var(--studio-neg-tint) !important; }
+
   /* From 1401 to 1500 the ET clock and workspace chip give way only while the long engine label shows (chrome.js sets engine-label-long; tokens.css hides them at 1400 and
      below), so the longest engine label (Rebalance pause) leaves the countdown whole. */
   @media (min-width: 1401px) and (max-width: 1500px) {
@@ -126,7 +119,7 @@
   }
   @media (max-width: 1400px) {
     .shell-nav { flex-wrap:wrap; row-gap:16px; }
-    /* row-gap leaves room for the active link's underline (bottom:-14px) between wrapped rows */
+    /* row-gap leaves room for the active link's underline (bottom:-8px) between wrapped rows */
     .shell-nav-links { flex-wrap:wrap; flex-shrink:1; row-gap:16px; }
     .shell-nav-status { flex-wrap:wrap; overflow:visible; }
   }
@@ -138,35 +131,45 @@
     body:has(.chat-panel--open) [data-testid="tweaks-btn"] { display:none !important; }
   }
   @media (max-width: 700px) {
-    /* On a phone it is smaller and tucked into the corner, so it covers as little as it can.
-       The button's inline style sets its place, so !important. */
-    [data-testid="tweaks-btn"] { width:26px !important; height:26px !important; bottom:6px !important; right:6px !important; font-size:12px !important; opacity:0.6; }
+    /* On a phone it is smaller and tucked into the corner, so it covers as little as it can. */
+    [data-testid="tweaks-btn"] { width:28px; height:28px; bottom:8px; right:8px; opacity:0.6; }
     /* Force run now shows the route's answer (a sentence) for a few seconds; on a phone it
        wraps inside the screen instead of widening the page. The button's own inline style
        says nowrap, so only !important can override it here. */
     [data-testid="force-run-btn"] { max-width:100%; white-space:normal !important; }
 
-    /* A compact header on a phone, so the page's first content is on the first screen: tighter
-       padding and gaps; the engine status, the alert bell and the mode pill share the wordmark's
-       row; the two action buttons share the next; the five links take one row with less padding
-       each. Every control stays on screen. The inline styles set these values, so !important. */
-    .shell-nav { padding:8px 12px !important; row-gap:6px; column-gap:8px; }
+    /* A compact header on a phone, three rows: the wordmark and the engine status; the alert bell,
+       the mode and the two action buttons; the five links, whose current-page underline sits on the
+       header's bottom rule. Every control stays on screen; a row that cannot hold its controls
+       wraps them onto the next. The inline styles set some of these values, so !important. */
+    .shell-nav { padding:8px 12px 0; row-gap:8px; column-gap:8px; }
     .shell-nav > div[style="flex:1;"] { display:none; }
-    .shell-nav > .shell-nav-status { order:1; }
-    .shell-nav > #candidate-alert-indicator { order:2; }
+    .shell-brand { gap:6px; font-size:16px; }
+    .shell-brand-sub { font-size:12px; }
+    .shell-nav > .shell-nav-status { order:1; margin-left:auto; }
+    .shell-nav > .shell-bell { order:2; min-width:24px; height:28px; padding:0 4px; }
     .shell-nav > [data-testid="mode-pill"] { order:3; }
-    .shell-nav > [data-testid="force-run-btn"] { order:4; flex:1 1 40%; padding:6px 10px !important; }
-    .shell-nav > #emergency-liquidate { order:5; flex:1 1 40%; padding:6px 10px !important; font-size:11px !important; }
-    .shell-nav > .shell-nav-links { order:6; flex:1 1 100%; margin-left:0; row-gap:4px; }
-    .shell-nav-links { gap:0; }
-    .shell-nav-links a { padding:6px 5px !important; font-size:12px !important; }
-    /* The current page's underline sits at the link's own foot instead of below the row. */
-    .shell-nav-links a > span { bottom:0 !important; left:6px !important; right:6px !important; }
+    .shell-nav > [data-testid="force-run-btn"] { order:4; flex:1 1 auto; padding:8px 8px !important; }
+    .shell-nav > #emergency-liquidate { order:5; flex:1 1 auto; padding:8px 8px !important; }
+    .shell-nav > .shell-nav-links { order:6; flex:1 1 100%; margin-left:0; justify-content:space-between; row-gap:0; }
+    .shell-link { padding:0 6px; font-size:12px; }
+    .shell-link[aria-current="page"]::after { left:6px; right:6px; bottom:0; }
   }
   /* display:flex must NOT appear as an inline style — it overrides [hidden].
      Gate display on the hidden attribute so setAttribute('hidden','') actually hides. */
   #panic-modal { display:none; position:fixed; inset:0; z-index:99999; align-items:center; justify-content:center; background:var(--studio-scrim); }
   #panic-modal:not([hidden]) { display:flex; }
+  /* The modal's markup is the recorded one (inline styles included); its look is set here. The
+     Confirm button reads as disabled until the phrase is typed. */
+  #panic-modal > div { padding:24px 28px !important; box-shadow:none !important; }
+  #panic-modal > div > div:first-child { font-size:16px !important; font-weight:500 !important; letter-spacing:0 !important; text-transform:none !important; }
+  #panic-modal > div > div:nth-child(2) { margin-bottom:16px !important; line-height:1.5; }
+  #panic-modal label { font-size:12px !important; font-weight:500 !important; }
+  #panic-modal select, #panic-modal input { padding:8px 12px !important; border-radius:8px !important; }
+  #panic-modal input { letter-spacing:0 !important; }
+  #panic-modal button { min-height:32px; padding:0 16px !important; border-radius:8px !important; font-weight:500 !important; }
+  #panic-modal > div > div:last-child { gap:8px !important; }
+  #panic-confirm-btn:disabled { opacity:0.4 !important; cursor:not-allowed !important; }
 </style>
 <div id="panic-modal" hidden onclick="closePanicModal()">
   <div onclick="event.stopPropagation()" style="background:var(--studio-paper);border:1px solid var(--studio-neg-border);border-radius:14px;padding:32px 36px;max-width:480px;width:92%;box-shadow:0 24px 64px rgba(0,0,0,0.32);">
@@ -197,16 +200,15 @@
   </div>
 </div>
 
-<!-- Tweaks floating trigger (dev tool — not in design nav) -->
+<!-- Tweaks floating trigger (dev tool — not in design nav); its look and its icon live in static/tweaks.css -->
 <button data-testid="tweaks-btn" type="button" aria-label="Open tweaks panel"
-        onclick="document.getElementById('studio-tweaks-panel').removeAttribute('hidden')"
-        style="position:fixed;bottom:72px;right:16px;z-index:2147483645;width:32px;height:32px;border-radius:50%;background:var(--studio-paper);border:1px solid var(--studio-rule);color:var(--studio-ink-dim);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.12);">&#x2699;</button>
+        onclick="document.getElementById('studio-tweaks-panel').removeAttribute('hidden')"></button>
 
 <!-- Tweaks slide-over panel (hidden by default) -->
 <div id="studio-tweaks-panel" class="twk-panel" hidden>
   <div class="twk-hd">
     <b>Studio Tweaks</b>
-    <button class="twk-x" type="button" aria-label="Close tweaks" onclick="document.getElementById('studio-tweaks-panel').setAttribute('hidden','')">&#x2715;</button>
+    <button class="twk-x" type="button" aria-label="Close tweaks" onclick="document.getElementById('studio-tweaks-panel').setAttribute('hidden','')"></button>
   </div>
   <div class="twk-body">
     <div class="twk-sect">Appearance</div>
