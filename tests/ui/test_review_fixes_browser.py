@@ -470,7 +470,8 @@ def test_the_observations_note_is_caption_size(firefox, advisor_server):
             () => {
               const note = document.querySelector('.obs-framing-note');
               const probe = document.createElement('span');
-              probe.className = 'legend-as-of';
+              // The page's caption as this page renders it: the shared caption with its advisor modifier.
+              probe.className = 'legend-as-of adv-note';
               document.body.appendChild(probe);
               const caption = parseFloat(getComputedStyle(probe).fontSize);
               probe.remove();
@@ -651,7 +652,7 @@ def test_each_symphony_first_and_last_series_dates_are_on_the_correlations_tab(
             assert item["series_last"] in text, f"{symphony_id}: last series date not on the tab"
 
 
-def test_frontrunner_card_separates_identity_explainer_and_overlay_into_labelled_lines(
+def test_frontrunner_list_states_identity_and_approval_once_and_the_card_keeps_its_overlay_line(
     firefox, advisor_server
 ):
     seed_pending_frontrunner_proposal()
@@ -662,9 +663,13 @@ def test_frontrunner_card_separates_identity_explainer_and_overlay_into_labelled
             """
             () => {
               const card = document.querySelector('[data-testid="frontrunner-proposal-card"]');
-              const lines = ['fr-incumbent-name', 'fr-explainer-line', 'fr-overlay-summary']
-                .map((id) => card.querySelector('[data-testid="' + id + '"]'));
-              const labels = lines.map((l) => l && l.querySelector('.fr-line-label'));
+              const shared = document.querySelector('[data-testid="fr-shared-notes"]');
+              const lines = [
+                shared.querySelector('[data-testid="fr-identity-note"]'),
+                shared.querySelector('[data-testid="fr-explainer-line"]'),
+                card.querySelector('[data-testid="fr-overlay-summary"]'),
+              ];
+              const labels = lines.map((l) => l && l.querySelector('.fr-shared-label, .fr-line-label'));
               const overlayRaw = 'relative-strength-index(SPY,10) gt 80 rotates into UVXY';
               const preview = card.querySelector('[data-testid="fr-overlay-preview"]');
               const inLines = lines.filter((l) => l && l.textContent.includes(overlayRaw)).length;
@@ -675,7 +680,9 @@ def test_frontrunner_card_separates_identity_explainer_and_overlay_into_labelled
             }
             """
         )
-        assert all(facts["present"]), f"the card lacks one of its three lines: {facts['present']}"
+        assert all(facts["present"]), (
+            f"the list or the card lacks one of its three lines: {facts['present']}"
+        )
         assert all(facts["labelled"]), f"a line has no label: {facts['labelTexts']}"
         assert len(set(facts["labelTexts"])) == 3
         assert facts["rawInLines"] == 0, "the raw overlay string is still in the paragraph"

@@ -179,6 +179,11 @@ through `tests/_advisor_overview_prism.py`.
   (`class="section-header prism-block-title"`). A line diff of the old and new baseline shows exactly those
   two lines changed and no text, attribute other than `class`, testid or Jinja expression changed; the
   guard still pins every other line of the block.
+- Re-captured at the advisor density pass (branch unslop/advisor, same script, nothing edited): the block was
+  rewritten on purpose (the verdict moved to the title line, each lens became a name-and-status head over a
+  clamped summary, the per-lens source carousels moved behind one closed `<details>` that counts them, and the
+  verification header is sentence case). The new baseline is the block as that pass leaves it; the guard
+  keeps pinning every line of it.
 
 ### MARKET_PRISM row (case: a stored nightly read the block renders)
 - Source: `rf1_lens_pipeline_row77.json` (captured read-only from the production state database,

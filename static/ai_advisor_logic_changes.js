@@ -98,7 +98,7 @@
 
         const heading = paramKey
             ? `<div class="proposal-card-heading">
-                 <span class="proposal-param-name card-name">${paramKey}</span>
+                 <span class="proposal-param-name card-name adv-card-name">${paramKey}</span>
                  <span class="proposal-value--old">${oldVal}</span>
                  <span class="proposal-change-arrow">&#x2192;</span>
                  <span class="proposal-value--new">${newVal}</span>
@@ -284,17 +284,16 @@
         // "Discuss this" link (AC-4). card-actions container uses flex-wrap:wrap so
         // buttons stay within card bounds at narrow viewports (AC-2).
         const chatBtn = `
-        <div class="card-actions" style="margin-top:0.75rem;padding-top:0.625rem;border-top:1px solid var(--studio-border);display:flex;flex-wrap:wrap;gap:0.5rem;">
+        <div class="card-actions">
             <button class="chat-about-btn" data-testid="chat-about-this-btn"
                data-artifact-json='${_escapeHtml(lcArtifactJson)}'
-               style="padding:0.375rem 0.875rem;background:var(--studio-accent);color: var(--studio-paper);border:none;border-radius:0.5rem;font-size:0.8125rem;font-weight:600;cursor:pointer;white-space:nowrap;"
                onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;try{if(typeof openChatPanel==='function'){openChatPanel(JSON.parse(d));}else{sessionStorage.setItem('pendingChatArtifact',d);window.location.href='/ai-advisor/chat';}}catch(ex){sessionStorage.setItem('pendingChatArtifact',d);window.location.href='/ai-advisor/chat';}})(event)">
                 Chat about this
             </button>
         </div>`;
 
         return `
-        <div class="sym-card proposal-card ${cardModifier}" data-testid="proposal-card">
+        <div class="sym-card adv-card proposal-card ${cardModifier}" data-testid="proposal-card">
             ${objLine}
             ${heading}
             ${statsHtml}
@@ -366,7 +365,7 @@
                 <div class="no-survivors-body">${_escapeHtml(data.message || "no logic change cleared the gate this run")}</div>
             </div>`;
         } else {
-            html += `<div class="section-header">Proposals — ${survivors.length} survivor${survivors.length !== 1 ? "s" : ""}</div>`;
+            html += `<div class="section-header adv-heading">Proposals — ${survivors.length} survivor${survivors.length !== 1 ? "s" : ""}</div>`;
             html += `<div class="proposal-cards" data-testid="proposal-cards">`;
             survivors.forEach(function (p) {
                 html += _renderProposalCard(p, true);
@@ -377,7 +376,7 @@
         // Rejected candidates — always shown in a de-emphasised section (AC-3.1)
         if (rejected.length) {
             html += `<div class="rejected-section" data-testid="rejected-section">
-                <div class="section-header">Rejected candidates</div>
+                <div class="section-header adv-heading">Rejected candidates</div>
                 <div class="proposal-cards">`;
             rejected.forEach(function (p) {
                 html += _renderProposalCard(p, false);

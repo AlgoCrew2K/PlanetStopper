@@ -613,10 +613,10 @@ def _pointer(html: str) -> pb.Node:
 
 
 class TestOverviewPointer:
-    def test_it_is_one_mini_stat_link_to_the_retirement_tab(self, client, isolated_db):
+    def test_it_is_one_plain_link_to_the_retirement_tab_on_the_toolbar(self, client, isolated_db):
         node = _pointer(w.get_page(client))
         assert node.tag == "a" and node.attrs["href"] == "#retirement"
-        assert "mini-stat" in node.classes()
+        assert "adv-pointer" in node.classes()
 
     def test_never_run_reads_not_run_yet(self, client, isolated_db):
         assert "Retirement: not run yet" in _pointer(w.get_page(client)).text()

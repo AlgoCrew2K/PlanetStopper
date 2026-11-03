@@ -8,7 +8,8 @@ with a message naming it, never a skip.
 The server is the app in this process on the per-test database, seeded with a stored Market
 Prism read (the tallest block of the page), observation rows and autotune runs through their
 real writers. At 1440x900 the Retirement pointer and the controls bar end inside the first
-900 px, and the page reads top to bottom: pointer, controls, grid, Prism block, observations.
+900 px, share one toolbar row at the head of the top panel (the grid), and the page reads top to
+bottom: the top panel, the Prism block, the observations.
 """
 
 from __future__ import annotations
@@ -37,12 +38,11 @@ pytestmark = pytest.mark.browser
 
 _FIRST_SCREEN_PX = 900
 _BLOCKS = (
-    "retirement-pointer",
-    "advisor-controls",
     "advisor-grid",
     "market-prism-block",
     "advisor-observations-section",
 )
+_TOOLBAR = ("retirement-pointer", "advisor-controls")
 _BOXES_JS = """
 (ids) => Object.fromEntries(ids.map((id) => {
   const el = document.querySelector('[data-testid="' + id + '"]');
@@ -82,7 +82,7 @@ def test_the_pointer_and_the_controls_end_inside_the_first_screen(advisor_probe)
         "() => document.querySelectorAll(\"#autotune-runs-list [data-testid='autotune-run-row']\").length === 11",
         "the autotune list never finished loading",
     )
-    boxes = advisor_probe.page.evaluate(_BOXES_JS, list(_BLOCKS))
+    boxes = advisor_probe.page.evaluate(_BOXES_JS, [*_TOOLBAR, *_BLOCKS])
     missing = [name for name, box in boxes.items() if box is None]
     assert missing == [], f"the Overview has no {missing}"
     assert boxes["retirement-pointer"]["bottom"] <= _FIRST_SCREEN_PX, boxes["retirement-pointer"]
@@ -91,7 +91,19 @@ def test_the_pointer_and_the_controls_end_inside_the_first_screen(advisor_probe)
         assert boxes[name]["height"] > 0 and boxes[name]["width"] > 0, f"{name} takes no space"
 
 
-def test_the_page_reads_pointer_controls_grid_prism_observations_top_to_bottom(advisor_probe):
+def test_the_pointer_and_the_controls_share_one_toolbar_row(advisor_probe):
+    _seed()
+    open_advisor(advisor_probe)
+    boxes = advisor_probe.page.evaluate(_BOXES_JS, list(_TOOLBAR))
+    pointer, controls = boxes["retirement-pointer"], boxes["advisor-controls"]
+    assert abs(pointer["top"] - controls["top"]) < controls["height"], (
+        "the pointer sits on its own row instead of beside the controls",
+        pointer,
+        controls,
+    )
+
+
+def test_the_page_reads_top_panel_prism_observations_top_to_bottom(advisor_probe):
     _seed()
     open_advisor(advisor_probe)
     boxes = advisor_probe.page.evaluate(_BOXES_JS, list(_BLOCKS))

@@ -1182,7 +1182,8 @@ class TestDesignSystem:
         css = " ".join(
             sel + body for sel, body in self._css_rules() if "tenure-verdict-chip" in sel
         )
-        for token in ("--studio-pos", "--studio-neg", "--studio-ink-dim", "--studio-border"):
+        # A verdict is a status dot and one word: the dot takes the signal token, the word the ink.
+        for token in ("--studio-pos", "--studio-neg", "--studio-ink-dim", "--studio-warn"):
             assert token in css, f"verdict chip styles never use {token}"
 
     @staticmethod

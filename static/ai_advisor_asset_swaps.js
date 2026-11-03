@@ -109,7 +109,7 @@
     function renderSwapCard(result) {
         var isSurvivor = result.gate_decision === 'ADOPT_CANDIDATE';
         var isError = !!result.backtest_error;
-        var cardClass = 'sym-card swap-card' +
+        var cardClass = 'sym-card adv-card swap-card' +
             (isSurvivor ? ' swap-card--survivor' : '') +
             (isError ? ' swap-card--error' : '') +
             (!isSurvivor && !isError ? ' swap-card--rejected' : '');
@@ -128,7 +128,7 @@
         // replace from_ticker/to_ticker (the per-candidate dict shape now also
         // covers LLM-proposed pairs, not only the operator's explicit pair).
         var heading =
-            '<div class="swap-card-heading card-name">' +
+            '<div class="swap-card-heading card-name adv-card-name">' +
             '<span class="swap-ticker">' + escHtml(result.incumbent_asset || '') + '</span>' +
             '<span class="swap-arrow">&rarr;</span>' +
             '<span class="swap-ticker swap-ticker--new">' + escHtml(result.candidate_asset || '') + '</span>' +
@@ -265,13 +265,9 @@
         // "Discuss this" link (AC-4). card-actions container uses flex-wrap:wrap so
         // buttons stay within card bounds at narrow viewports (AC-2).
         var chatBtn =
-            '<div class="card-actions" style="margin-top:0.75rem;padding-top:0.625rem;' +
-            'border-top:1px solid var(--studio-border);display:flex;flex-wrap:wrap;gap:0.5rem;">' +
+            '<div class="card-actions">' +
             '<button class="chat-about-btn" data-testid="chat-about-this-btn"' +
             ' data-artifact-json=\'' + escHtml(swArtifactJson) + '\'' +
-            ' style="padding:0.375rem 0.875rem;background:var(--studio-accent);color: var(--studio-paper);' +
-            'border:none;border-radius:0.5rem;font-size:0.8125rem;font-weight:600;cursor:pointer;' +
-            'white-space:nowrap;"' +
             ' onclick="(function(e){var d=e.currentTarget.dataset.artifactJson;' +
             'try{if(typeof openChatPanel===\'function\'){openChatPanel(JSON.parse(d));}' +
             'else{sessionStorage.setItem(\'pendingChatArtifact\',d);window.location.href=\'/ai-advisor/chat\';}}' +
@@ -367,8 +363,8 @@
 
         if (survivors.length) {
             html +=
-                '<div class="section-header" data-testid="survivors-header">' +
-                'Swap Survivors (passed gate)' +
+                '<div class="section-header adv-heading" data-testid="survivors-header">' +
+                'Swap survivors (passed gate)' +
                 '</div>' +
                 '<div class="swap-cards">' +
                 survivors.map(renderSwapCard).join('') +
@@ -391,8 +387,7 @@
 
         if (rejected.length) {
             html +=
-                '<div class="section-header" data-testid="rejected-header" ' +
-                'style="margin-top:1.25rem;">' +
+                '<div class="section-header adv-heading" data-testid="rejected-header">' +
                 'Rejected candidates' +
                 '</div>' +
                 '<div class="swap-cards">' +

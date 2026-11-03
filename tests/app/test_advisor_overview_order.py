@@ -3,9 +3,10 @@ below it.
 
 Subject: ``GET /ai-advisor`` over a real temp database.
 
-* In the Overview panel the order is: the Retirement pointer, the controls bar, the summary
-  strip, the lens stamp, the suggestions/autotune grid, the Market Prism block, then the
-  advisor observations.
+* In the Overview panel the top panel (the grid) holds, in this order: the Retirement pointer,
+  the controls bar, the summary strip, the lens stamp, the suggestions column and the autotune
+  runs; then come the Market Prism block and the advisor observations. The pointer, the controls
+  and the one-line hint share one toolbar row.
 * The order is the same with a Market Prism row and without one (the empty state sits where the
   block does).
 * The Prism block itself is moved, not edited: its template text equals the copy captured
@@ -26,11 +27,13 @@ from tests.app import _retirement_tab_world as w
 from tests.app import _tenure_review_panel_builders as pb
 
 _OVERVIEW_ORDER = (
+    "advisor-grid",
     "retirement-pointer",
     "advisor-controls",
     "advisor-summary-strip",
     "advisor-lens-as-of",
-    "advisor-grid",
+    "suggestions-column",
+    "autotune-panel",
     "market-prism-block",
 )
 

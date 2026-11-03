@@ -29,345 +29,503 @@
             font-family: var(--studio-sans, sans-serif);
         }
 
-        /* .page-wrap skeleton lives in static/layout.css (shared single source) */
+        /* ------------------------------------------------------------------ */
+        /* The advisor's surface.                                              */
+        /* Type is 11 to 16 px at weights 400 and 500, in sentence case, with  */
+        /* no italics. Space is on a 4 px grid. Colour comes from tokens only. */
+        /* A gate or run outcome is a status dot and one word.                 */
+        /*                                                                     */
+        /* The shared primitives (static/layout.css) are used as they are, with */
+        /* layout rules beside them. The quiet look of this page is carried by  */
+        /* the adv-* modifier classes on the same elements; those rules are     */
+        /* kept here and never name a primitive.                                */
+        /* ------------------------------------------------------------------ */
+        .page-wrap {
+            --adv-control-border: color-mix(in srgb, var(--studio-ink) 50%, transparent);
+            --adv-warn-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E");
+            font-size: 13px;
+            line-height: 1.5;
+        }
 
-        /* The shared primitives (.hero-section, .section-header, .sym-card, .card-name,
-           .mini-stats, .legend-as-of, .status-pill) live in static/layout.css; the rules in this
-           block add layout only, never a look. */
         .hero-section > .section-header:first-child { margin-top: 0; }
 
         /* Non-clickable cards: the shared card is button-like (pointer cursor) on the dashboard. */
         .sym-card.proposal-card,
-        .sym-card.autotune-run-card,
         .sym-card.retirement-rec-card,
         .sym-card.swap-card { cursor: default; }
 
-        /* The page's description line, above the tab bar in the first panel. */
-        .adv-caption { margin: 0 0 1rem; }
+        /* Panel: the shared panel with a tighter fit. */
+        .adv-panel { padding: 20px 24px; margin-bottom: 16px; border-radius: 12px; }
+        /* The panel that holds only the page description and the tab bar sits on the page itself. */
+        .adv-panel--nav { background: none; padding: 0; margin-bottom: 16px; }
+        /* A panel inside another panel adds no box of its own. */
+        .adv-panel--bare { background: none; padding: 0; margin-bottom: 0; border-radius: 0; }
+        .adv-panel--stack { margin-bottom: 0; }
+
+        /* Section heading: sentence case, one size, primary ink. */
+        .adv-heading {
+            font-size: 14px;
+            font-weight: 500;
+            line-height: 1.4;
+            letter-spacing: 0;
+            text-transform: none;
+            color: var(--studio-ink);
+            margin: 24px 0 8px;
+        }
+
+        /* Card: a hairline box that adds no shadow. */
+        .adv-card {
+            background: none;
+            border-radius: 8px;
+            padding: 12px 16px;
+            box-shadow: none;
+            transition: none;
+        }
+        .adv-card:hover { box-shadow: none; }
+        .adv-card-name { font-size: 14px; font-weight: 500; line-height: 1.4; }
+        .matrix-card-header { font-size: 16px; }
+
+        /* Caption: the shared caption, one size up so it can be read. */
+        .adv-note { margin-left: 0; font-size: 12px; line-height: 1.4; }
+
+        /* A figure row: value and name on one line, the figure's own detail under it. */
+        .adv-figs { gap: 8px 32px; flex-wrap: wrap; align-items: flex-start; }
+        .adv-fig {
+            flex: 0 1 auto;
+            min-width: 0;
+            background: none;
+            border-radius: 0;
+            padding: 0;
+            text-align: left;
+        }
+        .adv-fig:has(> .adv-note) { flex: 0 1 30rem; }
+        .adv-fig-value {
+            display: inline;
+            font-size: 16px;
+            font-weight: 500;
+            line-height: 1.4;
+            margin: 0 6px 0 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .adv-fig-label {
+            display: inline;
+            font-size: 12px;
+            font-weight: 400;
+            letter-spacing: 0;
+            text-transform: none;
+            line-height: 1.4;
+            color: var(--studio-ink-dim);
+        }
+
+        /* An outcome is a status dot and one word. The dot colour carries the meaning (--dot);
+           the word stays in primary ink so it clears 4.5:1 in both themes. */
+        .adv-status, .decision-pill, .gate-pill, .gate-dot, .tenure-verdict-chip, .prism-sentiment-chip,
+        .prism-lens-status, .prism-verify-badge, .incubation-status-chip, .artifact-gate-pill,
+        .frozen-eval-pill {
+            display: inline-block;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: none;
+            box-shadow: none;
+            font-size: 12px;
+            font-weight: 500;
+            line-height: 1.4;
+            letter-spacing: 0;
+            text-transform: none;
+            color: var(--studio-ink);
+            white-space: nowrap;
+        }
+        .adv-status::before, .decision-pill::before, .gate-pill::before, .gate-dot::before,
+        .tenure-verdict-chip::before, .prism-sentiment-chip::before, .prism-lens-status::before,
+        .prism-verify-badge::before, .incubation-status-chip::before, .artifact-gate-pill::before,
+        .frozen-eval-pill::before {
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin-right: 6px;
+            border-radius: 50%;
+            background: var(--dot, var(--studio-ink-dim));
+        }
+        .adv-status.armed, .adv-status.triggered, .adv-status.standby { background: none; color: var(--studio-ink); }
+        .adv-status.armed, .decision-pill--pos, .gate-pill--passed, .gate-dot--pos, .frozen-eval-pill--pos,
+        .tenure-verdict-chip--keep, .prism-sentiment-chip--risk-on, .prism-lens-status--ok,
+        .prism-verify-badge--pass, .incubation-status-chip--promoted { --dot: var(--studio-pos); }
+        .adv-status.triggered, .decision-pill--neg, .gate-pill--failed, .gate-pill--rejected, .gate-dot--neg,
+        .frozen-eval-pill--neg, .tenure-verdict-chip--retire_candidate, .prism-sentiment-chip--risk-off,
+        .prism-verify-badge--overridden, .incubation-status-chip--failed { --dot: var(--studio-neg); }
+        .decision-pill--warn, .gate-pill--withheld, .gate-dot--warn, .frozen-eval-pill--warn,
+        .tenure-verdict-chip--watch, .prism-sentiment-chip--limited-inputs, .prism-verify-badge--flagged,
+        .incubation-status-chip--expired { --dot: var(--studio-warn); }
+        /* A word group is one unit: it stays on one line. */
+        .tenure-verdict-chip, .gate-pill, .decision-pill { white-space: nowrap; }
+
+        /* Advisory-only is stated in plain text, never as a pill. */
+        .advisory-only-badge {
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--studio-ink-dim);
+            white-space: nowrap;
+        }
+
+        /* Buttons: one primary fill, one outline. */
+        .run-btn, .run-trigger-btn, .try-swap-btn, .try-tweak-btn, .chat-send-btn, .chat-about-btn {
+            padding: 8px 16px;
+            background: var(--studio-accent);
+            color: var(--studio-paper);
+            border: 0;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            line-height: 1.4;
+            cursor: pointer;
+            white-space: nowrap;
+            font-family: inherit;
+            transition: opacity 0.12s ease;
+        }
+        .run-btn:hover:not(:disabled), .run-trigger-btn:hover:not(:disabled), .try-swap-btn:hover:not(:disabled),
+        .try-tweak-btn:hover:not(:disabled), .chat-send-btn:hover:not(:disabled), .chat-about-btn:hover { opacity: 0.88; }
+        .run-btn:disabled, .run-trigger-btn:disabled, .try-swap-btn:disabled, .try-tweak-btn:disabled,
+        .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .run-btn { flex-shrink: 0; }
+        .run-trigger-btn { flex-shrink: 0; align-self: flex-end; }
+        .discuss-btn {
+            margin-top: 8px;
+            padding: 4px 12px;
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--studio-ink-dim);
+            background: transparent;
+            border: 1px solid var(--adv-control-border);
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: inherit;
+            transition: color 0.12s ease, border-color 0.12s ease;
+        }
+        .discuss-btn:hover { border-color: var(--studio-accent); color: var(--studio-ink); }
+        .run-btn:focus-visible, .run-trigger-btn:focus-visible, .try-swap-btn:focus-visible,
+        .try-tweak-btn:focus-visible, .chat-send-btn:focus-visible, .chat-about-btn:focus-visible,
+        .discuss-btn:focus-visible, .cap-tab:focus-visible, .prism-lens-more:focus-visible,
+        .obs-history > summary:focus-visible {
+            outline: 2px solid var(--studio-accent);
+            outline-offset: 2px;
+        }
 
         /* Controls */
         .adv-controls {
             display: flex;
             align-items: flex-end;
-            gap: 1rem;
+            gap: 8px 12px;
             flex-wrap: wrap;
-        }
-
-        .ctrl-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.25rem;
             min-width: 0;
-            max-width: 100%;
         }
-
-        .ctrl-label {
-            font-size: 0.625rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-muted);
-            font-weight: 700;
+        .ctrl-group, .form-group { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+        .form-group { flex: 1; min-width: 10rem; }
+        .ctrl-label, .form-label {
+            font-size: 12px;
+            font-weight: 400;
+            letter-spacing: 0;
+            text-transform: none;
+            color: var(--studio-ink-dim);
         }
-
-        .ctrl-select {
+        .ctrl-select, .form-select, .form-input, .form-textarea, .chat-input {
             background: var(--studio-bg);
-            border: 1px solid var(--studio-border);
-            border-radius: 0.5rem;
-            padding: 0.4rem 0.75rem;
-            font-size: 0.875rem;
+            border: 1px solid var(--adv-control-border);
+            border-radius: 8px;
+            padding: 6px 12px;
+            min-height: 32px;
+            font-size: 13px;
             color: var(--studio-ink);
-            min-width: min(16rem, 100%);
-            max-width: 100%;
+            font-family: inherit;
             box-sizing: border-box;
         }
-
-        .ctrl-select:focus { outline: none; border-color: var(--studio-accent); }
-
-        .run-btn {
-            padding: 0.5rem 1.25rem;
-            background: var(--studio-accent);
-            color: var(--studio-paper);
-            border: none;
-            border-radius: 0.5rem;
-            font-size: 0.875rem;
-            font-weight: 700;
-            cursor: pointer;
-            flex-shrink: 0;
-            white-space: nowrap;
+        .ctrl-select { min-width: min(16rem, 100%); max-width: 100%; }
+        .form-textarea { resize: vertical; min-height: 64px; width: 100%; }
+        .chat-input { flex: 1; resize: none; }
+        .ctrl-select:focus-visible, .form-select:focus-visible, .form-input:focus-visible,
+        .form-textarea:focus-visible, .chat-input:focus-visible {
+            outline: 2px solid var(--studio-accent);
+            outline-offset: 1px;
         }
-
-        .run-btn:hover:not(:disabled) { opacity: 0.9; }
-        .run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .adv-error {
-            font-size: 0.875rem;
+        .adv-error, .try-swap-error, .try-tweak-error, .run-error, .backtest-error {
+            font-size: 13px;
             color: var(--studio-neg);
-            margin-top: 0.5rem;
-            display: none;
+            margin-top: 8px;
         }
+        .adv-error { display: none; flex-basis: 100%; margin-top: 0; }
+        .try-swap-form, .try-tweak-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .form-row { display: flex; flex-wrap: wrap; gap: 12px; width: 100%; }
 
-        /* Summary chips */
-        .summary-strip {
-            display: flex;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-            flex-wrap: wrap;
-        }
+        /* The description line, above the tab bar. */
+        .adv-caption { margin: 0 0 8px; }
 
-        /* display:flex above would override the UA [hidden] rule; the strip waits for a run. */
-        .summary-strip[hidden] { display: none; }
-
-        .summary-chip {
-            background: var(--studio-surface);
-            border: 1px solid var(--studio-border);
-            border-radius: 2rem;
-            padding: 0.25rem 0.875rem;
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-            font-weight: 600;
-        }
-
-        /* Two-column grid — design ratio ~1.6:1 (suggestions:rail).
-           Rail uses clamp so it scales from 18rem at narrow up to 38% at
-           ultrawide (2560+), never shrinking to a sliver or growing past 40rem. */
+        /* Overview top: the toolbar (picker, Run, the one-line hint, the Retirement pointer) on one row,
+           then the stamp and suggestions, then the autotune runs. One panel holds all of it. */
         .adv-grid {
             display: grid;
-            grid-template-columns: minmax(0, 1.6fr) clamp(18rem, 38%, 40rem);
-            gap: 1.25rem;
-            align-items: start;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            gap: 12px 24px;
+            align-items: end;
+            background: var(--studio-paper);
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 16px;
         }
-
-        /* Stack to single column only below 1100px (V-21). */
-        @media (max-width: 1100px) {
-            .adv-grid {
-                grid-template-columns: 1fr;
+        .adv-grid > .adv-controls { grid-column: 1; grid-row: 1; }
+        .adv-pointer {
+            grid-column: 3;
+            grid-row: 1;
+            align-self: center;
+            max-width: 26rem;
+            font-size: 12px;
+            line-height: 1.4;
+            color: var(--studio-accent);
+            text-decoration: underline;
+            text-underline-offset: 0.2em;
+        }
+        .adv-pointer:hover { color: var(--studio-ink); }
+        .adv-pointer:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: 2px; }
+        .adv-grid > .summary-strip,
+        .adv-grid > .adv-stamp,
+        .adv-grid > .autotune-panel { grid-column: 1 / -1; }
+        .suggestions-col {
+            grid-column: 1 / -1;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+            gap: 12px;
+            align-items: start;
+            min-width: 0;
+        }
+        /* Only the hint inside: it takes the toolbar's middle, beside the picker. */
+        .adv-grid > .suggestions-col:has(> .suggestions-placeholder:only-child) {
+            grid-column: 2;
+            grid-row: 1;
+            align-self: center;
+            display: block;
+        }
+        .suggestions-placeholder {
+            color: var(--studio-ink-dim);
+            font-size: 12px;
+            line-height: 1.4;
+            grid-column: 1 / -1;
+        }
+        .adv-stamp { font-size: 12px; color: var(--studio-ink-dim); font-variant-numeric: tabular-nums; }
+        @media (max-width: 1359px) {
+            .adv-grid { grid-template-columns: minmax(0, 1fr) auto; }
+            .adv-grid > .suggestions-col:has(> .suggestions-placeholder:only-child) { grid-column: 1 / -1; grid-row: 2; }
+        }
+        @media (max-width: 900px) {
+            .adv-grid { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+            .adv-grid > .adv-controls, .adv-pointer,
+            .adv-grid > .suggestions-col:has(> .suggestions-placeholder:only-child) {
+                grid-column: 1;
+                grid-row: auto;
+                max-width: none;
             }
         }
 
-        /* Suggestions column — auto-fill so cards reflow into multi-column on
-           ultrawide rather than stretching to absurd widths. */
-        .suggestions-col {
+        /* Summary of a run: plain figures, not chips. */
+        .summary-strip { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; }
+        .summary-strip[hidden] { display: none; }
+        .summary-chip { font-size: 12px; color: var(--studio-ink-dim); font-variant-numeric: tabular-nums; }
+
+        /* Autotune runs: a table of one row per symphony. */
+        .autotune-panel { min-width: 0; }
+        .autotune-panel > .autotune-header { margin-top: 0; }
+        .autotune-table { font-size: 12px; }
+        .autotune-row {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
-            gap: 0.75rem;
-            min-height: 8rem;
-            align-items: start;
+            grid-template-columns: minmax(10rem, 2fr) 9rem minmax(6rem, 0.8fr) minmax(17rem, 1.8fr) 5rem 4rem;
+            column-gap: 16px;
+            align-items: baseline;
+            padding: 8px 0;
+            border-top: 1px solid var(--studio-rule);
         }
-
-        .suggestions-placeholder {
-            color: var(--studio-ink-dim);
-            font-size: 0.875rem;
-            text-align: center;
-            grid-column: 1 / -1;
-        }
-
-        /* While the suggestions column holds only its one-line hint, the grid is one column: the hint
-           sits above the autotune block and the block takes the width, instead of sitting beside a
-           column of blank. The first suggestion card makes the column real again and the grid two columns. */
-        .adv-grid:has(> .suggestions-col > .suggestions-placeholder:only-child) {
-            grid-template-columns: 1fr;
-        }
-        .suggestions-col:has(> .suggestions-placeholder:only-child) { min-height: 0; }
-
-        /* Autotune panel */
-        .autotune-panel {
-            min-width: 0;
-        }
-
-        .autotune-run-card {
-            display: flex;
-            flex-direction: column;
-            gap: 0.25rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .autotune-run-card:last-child { margin-bottom: 0; }
-
-        /* Older runs: a closed details under the cards. No display rule here: the
-           hidden attribute must keep hiding it while it has no rows. */
-        .autotune-older { margin-top: 0.75rem; }
-        .autotune-older-summary {
-            cursor: pointer;
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-        }
-
-        .autotune-run-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        /* V-23: symphony name normal weight, timestamp muted */
+        .autotune-row--head { border-top: 0; padding: 4px 0; color: var(--studio-ink-dim); }
+        .autotune-row--head > * { font-weight: 400; }
         .autotune-run-name {
-            font-size: 0.75rem;
+            font-size: 13px;
             font-weight: 400;
             color: var(--studio-ink);
+            overflow-wrap: anywhere;
+            min-width: 0;
+        }
+        .autotune-run-time, .autotune-run-streak, .autotune-run-frozen { color: var(--studio-ink-dim); }
+        .autotune-run-time, .autotune-run-score, .autotune-run-tstat { font-variant-numeric: tabular-nums; }
+        .autotune-run-outcome { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; }
+        .autotune-run-score, .autotune-run-tstat { text-align: right; color: var(--studio-ink); }
+        .autotune-row--head .autotune-run-score, .autotune-row--head .autotune-run-tstat { color: var(--studio-ink-dim); }
+        .mono-bold { font-weight: 500; font-variant-numeric: tabular-nums; }
+        /* Words a column header already says: kept in the row for a reader that reads one row alone. */
+        .adv-vh {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            margin: -1px;
+            padding: 0;
             overflow: hidden;
-            text-overflow: ellipsis;
+            clip: rect(0 0 0 0);
             white-space: nowrap;
+            border: 0;
         }
-
-        .autotune-run-meta {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.6563rem;
-            color: var(--studio-ink-dim);
-            font-variant-numeric: tabular-nums;
+        @media (max-width: 1000px) {
+            .autotune-row {
+                grid-template-columns: minmax(0, 1fr) auto auto;
+                grid-template-areas:
+                    "name name outcome"
+                    "time score tstat"
+                    "streak streak streak";
+                column-gap: 12px;
+                row-gap: 2px;
+                padding: 8px 0;
+            }
+            .autotune-run-time, .autotune-run-score, .autotune-run-tstat, .autotune-run-streak { font-size: 11px; }
+            .autotune-run-score, .autotune-run-tstat { white-space: nowrap; }
+            .autotune-row--head { display: none; }
+            .autotune-run-name { grid-area: name; }
+            .autotune-run-outcome { grid-area: outcome; justify-content: flex-end; }
+            .autotune-run-time { grid-area: time; }
+            .autotune-run-score { grid-area: score; }
+            .autotune-run-tstat { grid-area: tstat; }
+            .autotune-run-streak { grid-area: streak; }
+            /* No header on a phone: the row names its own score and t-stat. */
+            .autotune-run-score::before { content: "Score "; color: var(--studio-ink-dim); }
+            .autotune-run-tstat .adv-vh {
+                position: static;
+                width: auto;
+                height: auto;
+                margin: 0;
+                overflow: visible;
+                clip: auto;
+                white-space: normal;
+            }
         }
+        .autotune-spark { position: relative; height: 60px; margin-bottom: 12px; }
+        /* No chart (no scored run, or no chart library): the box takes no space either. */
+        .autotune-spark:has(> canvas[style*="display: none"]) { display: none; }
+        .autotune-notice { color: var(--studio-neg); margin: 0 0 8px; font-size: 12px; }
+        .autotune-empty { padding: 16px 0; color: var(--studio-ink-dim); font-size: 13px; text-align: left; }
 
-        /* V-23: Sortino / selection t-stat bold mono */
-        .autotune-run-meta .mono-bold {
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            color: var(--studio-ink);
-        }
+        /* Older runs: a closed details under the rows. No display rule here: the
+           hidden attribute must keep hiding it while it has no rows. */
+        .autotune-older { margin-top: 8px; }
+        .autotune-older-summary { cursor: pointer; font-size: 12px; color: var(--studio-ink-dim); }
 
-        .autotune-run-verdict {
-            font-size: 0.625rem;
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-            color: var(--studio-ink-dim);
-        }
-
-        /* B-13/V-25: decision pill with semantic color; FALLBACK uses warn
-           token for consistent saturation in both light and dark themes. */
-        .decision-pill {
-            display: inline-block;
-            padding: 0.125rem 0.5rem;
-            border-radius: 999px;
-            font-size: 0.625rem;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            border: 1px solid;
-        }
-
-        /* V-23: FROZEN-EVAL as a colored pill */
-        .frozen-eval-pill {
-            display: inline-block;
-            padding: 0.1rem 0.4rem;
-            border-radius: 999px;
-            font-size: 0.5625rem;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            border: 1px solid;
-        }
-
-        /* Capability tab nav — in-place switching via JS (window-selector pattern) */
+        /* Capability tab bar: one line per tab, in-place switching via JS. */
         .cap-nav {
             display: flex;
-            gap: 0.25rem;
-            border-bottom: 1px solid var(--studio-border);
-            padding-bottom: 0;
+            gap: 4px;
+            border-bottom: 1px solid var(--studio-rule);
         }
-
         /* On a narrow screen the tabs stay in ONE row that scrolls sideways, so the first content
            starts on the first screen instead of under several rows of tabs. */
         @media (max-width: 700px) {
             .cap-nav { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
-            .cap-tab { flex: 0 0 auto; white-space: nowrap; bottom: 0; }
-            .cap-tab-attribution { white-space: nowrap; }
+            .cap-tab { flex: 0 0 auto; }
         }
-
-        /* Tab buttons — not anchors; JS handles switching (AC2) */
         .cap-tab {
-            padding: 0.5rem 1rem;
-            font-size: 0.8125rem;
-            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 400;
             color: var(--studio-ink-dim);
-            text-decoration: none;
-            border-radius: 0.375rem 0.375rem 0 0;
-            border: 1px solid transparent;
-            border-bottom: none;
+            white-space: nowrap;
+            border: 0;
+            border-bottom: 2px solid transparent;
+            border-radius: 0;
             position: relative;
             bottom: -1px;
             background: transparent;
             cursor: pointer;
             font-family: var(--studio-sans, sans-serif);
+            transition: color 0.12s ease, border-color 0.12s ease;
         }
-
         .cap-tab:hover { color: var(--studio-ink); }
-
         .cap-tab.active,
         .cap-tab[aria-selected="true"] {
             color: var(--studio-ink);
-            background: var(--studio-surface);
-            border-color: var(--studio-border);
-            border-bottom-color: var(--studio-surface);
+            font-weight: 500;
+            border-bottom-color: var(--studio-ink);
         }
-
+        /* The dot after a tab's name is its risk tier: green is low, amber is higher. */
         .cap-tab-badge {
             display: inline-block;
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
-            margin-left: 0.25rem;
-            vertical-align: middle;
             background: var(--studio-pos);
+            flex: none;
         }
-
         .cap-tab-badge--yellow { background: var(--studio-warn); }
 
-        /* AC-1: per-tab reasoning-mode attribution — visible text, not a
-           hover-only title tooltip.  The audit's root cause (F4) was a
-           page-global banner claiming universal Claude reasoning; hiding the
-           per-tab correction in a tooltip would reproduce the same failure
-           mode at a smaller scale. */
+        /* AC-1: per-tab reasoning-mode attribution. Visible text, never a hover-only tooltip: the
+           audit's root cause (F4) was a page-global banner claiming universal Claude reasoning. It sits
+           at the head of the tab's own panel. Accessor-driven, never a hardcoded model-name literal. */
         .cap-tab-attribution {
-            display: block;
-            font-size: 0.625rem;
+            margin: 0 0 12px;
+            font-size: 12px;
             font-weight: 400;
+            line-height: 1.4;
             color: var(--studio-ink-dim);
-            margin-top: 0.125rem;
-            white-space: nowrap;
         }
 
-        /* Tab panels — in-place switching: only the active panel is visible */
+        /* Tab panels: only the active panel is visible */
         .tab-panel { display: none; }
         .tab-panel--active { display: block; }
 
-        /* ------------------------------------------------------------------ */
-        /* Styles imported from the merged sub-page templates                  */
-        /* ------------------------------------------------------------------ */
-
-        /* Correlations panel */
-        .crisis-caveat {
+        /* Notices: one amber hairline box, an icon and a sentence. */
+        .crisis-caveat, .advise-only-banner, .fdr-warning-banner, .sb-risk-banner {
             display: flex;
             align-items: flex-start;
-            gap: 0.75rem;
-            padding: 1rem 1.25rem;
-            border-radius: 0.75rem;
-            border: 1px solid var(--studio-warn-border, var(--studio-border));
-            border-left: 3px solid var(--studio-warn);
-            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
-            margin-bottom: 1.25rem;
-            font-size: 0.8125rem;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--studio-warn-border);
+            background: var(--studio-warn-tint);
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.5;
             color: var(--studio-ink);
         }
-        .crisis-caveat-icon { font-size: 1rem; flex-shrink: 0; color: var(--studio-warn); }
-        .crisis-caveat-text { margin: 0; }
-        .correlations-state {
-            text-align: center;
+        /* The notice icon: a line triangle (one icon set, 16 px, 1.5 stroke) drawn as a mask in the notice's
+           own colour, so the markup carries no graphic of its own. */
+        .crisis-caveat-icon, .advise-only-banner-icon, .fdr-warning-banner-icon, .sb-risk-banner-icon {
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+            margin-top: 2px;
+            background: var(--studio-warn);
+            -webkit-mask: var(--adv-warn-icon) center / contain no-repeat;
+            mask: var(--adv-warn-icon) center / contain no-repeat;
         }
-        .correlations-state-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
-        .correlations-state-line { color: var(--studio-ink-dim); font-size: 0.875rem; margin: 0.25rem 0 0; }
-        .correlations-notes { margin-bottom: 0.75rem; }
-        .refresh-link { color: var(--studio-accent); text-decoration: none; font-size: 0.75rem; }
+        .crisis-caveat-text, .advise-only-banner-text, .fdr-warning-banner-text, .sb-risk-banner-text { margin: 0; }
+        .sb-risk-banner-text { color: var(--studio-ink-dim); }
+        .sb-risk-banner-text strong, .advise-only-banner-text strong, .fdr-warning-banner-text strong {
+            color: var(--studio-ink);
+            font-weight: 600;
+        }
+
+        /* Correlations panel */
+        .correlations-state { text-align: left; }
+        .correlations-state-title { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
+        .correlations-state-line { color: var(--studio-ink-dim); font-size: 13px; margin: 4px 0 0; }
+        .correlations-notes { margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 0 16px; }
+        .refresh-link { color: var(--studio-accent); text-decoration: none; font-size: 12px; }
         .refresh-link:hover { text-decoration: underline; }
         /* The matrix scrolls inside its own wrapper, so the legend and header stay put. */
         .matrix-scroll { overflow-x: auto; }
-        .heatmap-table { border-collapse: collapse; min-width: 100%; font-size: 0.8125rem; }
-        .heatmap-table th, .heatmap-table td { padding: 0.375rem 0.5rem; text-align: center; }
-        .heatmap-table th { font-size: 0.6875rem; font-weight: 700; color: var(--studio-ink-dim); white-space: nowrap; }
+        .heatmap-table { border-collapse: collapse; min-width: 100%; font-size: 13px; }
+        .heatmap-table th, .heatmap-table td { padding: 4px 8px; text-align: center; }
+        .heatmap-table th { font-size: 12px; font-weight: 500; color: var(--studio-ink-dim); white-space: nowrap; }
         /* A row label wraps: the full display name is shown, never cut. It stays at the left edge of
            the box while the columns scroll under it, and is never wider than the box. */
         .heatmap-table th.corr-row-label {
-            text-align: left; white-space: normal; max-width: min(22rem, 45vw); padding-right: 1rem;
-            font-size: 0.75rem; font-weight: 600; color: var(--studio-ink);
+            text-align: left; white-space: normal; max-width: min(22rem, 45vw); padding-right: 16px;
+            font-size: 12px; font-weight: 400; color: var(--studio-ink);
             position: sticky; left: 0; z-index: 1; background: var(--studio-paper);
         }
         .heatmap-table th.corr-row-label:focus-visible,
@@ -375,98 +533,77 @@
         .corr-cell:focus-visible { outline: 2px solid var(--studio-accent); outline-offset: -2px; }
         /* The number stays in the ink token; the band shows as a fill behind it. The aligned days
            (the depth the number rests on) print under it, so they are read without a hover. */
-        .corr-cell { color: var(--studio-ink); font-variant-numeric: tabular-nums; font-weight: 600; position: relative; }
+        .corr-cell { color: var(--studio-ink); font-variant-numeric: tabular-nums; font-weight: 500; position: relative; }
         .corr-n {
-            display: block; font-size: 0.5625rem; font-weight: 400; line-height: 1.2;
+            display: block; font-size: 11px; font-weight: 400; line-height: 1.2;
             color: var(--studio-ink-dim);
         }
         .corr-diagonal {
             background-color: var(--studio-chip-bg); color: var(--studio-ink-dim);
-            font-variant-numeric: tabular-nums; font-weight: 600;
+            font-variant-numeric: tabular-nums; font-weight: 500;
         }
         /* A filled band mixes its own signal token by the cell's inline --corr-fill-pct. */
         .corr-band-danger { background-color: color-mix(in srgb, var(--studio-neg) var(--corr-fill-pct), transparent); }
         .corr-band-warn { background-color: color-mix(in srgb, var(--studio-warn) var(--corr-fill-pct), transparent); }
         .corr-band-diversifying { background-color: color-mix(in srgb, var(--studio-pos) var(--corr-fill-pct), transparent); }
         .corr-band-neutral { background-color: transparent; }
-        .corr-band-undefined { background-color: transparent; font-style: italic; }
+        .corr-band-undefined { background-color: transparent; font-weight: 400; }
         /* A thin pair carries a small corner mark and keeps its band fill: nothing is drawn behind
            the number, so it stays readable. One mark for a pair under the uncertainty gate's
            minimum (the stronger shortfall), another for one under the stress gate's. */
         .corr-thin-uncertainty::after,
         .corr-thin-stress::after {
             position: absolute; top: 1px; right: 3px;
-            font-size: 0.5625rem; font-weight: 700; line-height: 1; color: var(--studio-ink-dim);
+            font-size: 11px; font-weight: 500; line-height: 1; color: var(--studio-ink-dim);
         }
         .corr-thin-uncertainty::after { content: "\2020"; }
         .corr-thin-stress::after { content: "\2021"; }
-        .matrix-legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 0.875rem; font-size: 0.6875rem; color: var(--studio-ink-dim); }
-        .corr-legend-item { display: flex; align-items: center; gap: 0.375rem; }
+        .matrix-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; font-size: 12px; color: var(--studio-ink-dim); }
+        .corr-legend-item { display: flex; align-items: center; gap: 4px; }
         .corr-legend-swatch {
-            display: inline-block; width: 1.25rem; height: 0.875rem; flex-shrink: 0; position: relative;
-            border: 1px solid var(--studio-border); border-radius: 0.1875rem;
+            display: inline-block; width: 20px; height: 12px; flex-shrink: 0; position: relative;
+            border: 1px solid var(--studio-border); border-radius: 4px;
         }
-        .correlations-series { margin-top: 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); }
-        .correlations-series ul { margin: 0.25rem 0 0; padding-left: 1.25rem; }
-        .correlations-excluded { margin-top: 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); }
-        .correlations-excluded ul { margin: 0; padding-left: 1.25rem; }
+        .correlations-series { margin-top: 12px; font-size: 12px; color: var(--studio-ink-dim); }
+        .correlations-series ul { margin: 4px 0 0; padding-left: 20px; column-width: 34rem; column-gap: 32px; }
+        .correlations-excluded { margin-top: 12px; font-size: 12px; color: var(--studio-ink-dim); }
+        .correlations-excluded ul { margin: 0; padding-left: 20px; }
 
-        /* Asset-swaps + Logic-changes panels */
-        .advise-only-banner, .fdr-warning-banner {
-            display: flex; align-items: flex-start; gap: 0.75rem;
-            padding: 0.875rem 1.25rem; border-radius: 0.75rem;
-            border: 1px solid var(--studio-border);
-            border-left: 3px solid var(--studio-warn);
-            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
-            margin-bottom: 1.25rem; font-size: 0.8125rem;
-        }
-        .advise-only-banner-icon, .fdr-warning-banner-icon { color: var(--studio-warn); flex-shrink: 0; }
-        .advise-only-banner-text, .fdr-warning-banner-text { margin: 0; }
-        .no-api-key-state { text-align: center; }
-        .no-api-key-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
-        .no-api-key-body { color: var(--studio-ink-dim); font-size: 0.875rem; }
-        .try-swap-form, .try-tweak-form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
-        .form-row { display: flex; flex-wrap: wrap; gap: 1rem; width: 100%; }
-        .form-group { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; min-width: 10rem; }
-        .form-label { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-muted); font-weight: 700; }
-        .form-select, .form-input {
-            background: var(--studio-bg); border: 1px solid var(--studio-border);
-            border-radius: 0.5rem; padding: 0.4rem 0.75rem; font-size: 0.875rem;
-            color: var(--studio-ink); font-family: var(--studio-sans, sans-serif);
-        }
-        .form-select:focus, .form-input:focus { outline: none; border-color: var(--studio-accent); }
-        .form-textarea {
-            background: var(--studio-bg); border: 1px solid var(--studio-border);
-            border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.875rem;
-            color: var(--studio-ink); font-family: var(--studio-sans, sans-serif);
-            resize: vertical; min-height: 4rem; width: 100%;
-        }
-        .form-textarea:focus { outline: none; border-color: var(--studio-accent); }
-        .try-swap-btn, .try-tweak-btn {
-            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-paper);
-            border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
-            cursor: pointer; white-space: nowrap; font-family: var(--studio-sans, sans-serif);
-        }
-        .try-swap-btn:disabled, .try-tweak-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .try-swap-error, .try-tweak-error { color: var(--studio-neg); font-size: 0.8125rem; margin-top: 0.5rem; }
-
-        /* Result card action row — JS-rendered swap/logic suggestion cards use this class */
+        /* Asset swaps and logic changes: the panels and the results the page scripts draw. */
+        .no-api-key-state { text-align: left; }
+        .no-api-key-title { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
+        .no-api-key-body { color: var(--studio-ink-dim); font-size: 13px; }
         .card-actions {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.5rem;
-            margin-top: 0.75rem;
-            padding-top: 0.625rem;
-            border-top: 1px solid var(--studio-border);
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid var(--studio-rule);
         }
+        .swap-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; align-items: start; }
+        .swap-card-objective, .proposal-card-objective { font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 4px; }
+        .swap-card-heading, .proposal-card-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-bottom: 8px; }
+        .swap-arrow, .proposal-change-arrow { color: var(--studio-ink-dim); }
+        .swap-ticker--new, .proposal-value--new { color: var(--studio-pos); }
+        .proposal-value--old { color: var(--studio-ink-dim); }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; margin-bottom: 8px; font-size: 13px; }
+        .stats-col-label { font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 4px; }
+        .stat-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; border-top: 1px solid var(--studio-rule); }
+        .stat-label { color: var(--studio-ink-dim); font-size: 12px; }
+        .stat-value { font-variant-numeric: tabular-nums; }
+        .gate-reason, .validation-days, .data-warnings { font-size: 12px; color: var(--studio-ink-dim); }
+        .no-survivors-state { padding: 12px 16px; border: 1px solid var(--studio-rule); border-radius: 8px; margin-bottom: 12px; }
+        .no-survivors-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
+        .no-survivors-body, .loading-state, .sb-loading-state { font-size: 13px; color: var(--studio-ink-dim); }
+        .loading-state, .sb-loading-state { padding: 12px 0; }
 
-        /* Chat panel (slide-in, always in DOM — AC4) */
-        .chat-default-state { text-align: center; }
-        .chat-default-icon { font-size: 2rem; margin-bottom: 0.75rem; }
-        .chat-default-title { font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem; }
-        .chat-default-body { color: var(--studio-ink-dim); font-size: 0.875rem; margin-bottom: 1rem; }
-        .chat-example-prompts { color: var(--studio-ink-dim); font-size: 0.8125rem; font-style: italic; list-style: none; padding: 0; }
-        .chat-example-prompts li { padding: 0.25rem 0; }
+        /* Chat tab and panel */
+        .chat-default-state { text-align: left; }
+        .chat-default-title { font-weight: 500; font-size: 14px; margin-bottom: 4px; }
+        .chat-default-body { color: var(--studio-ink-dim); font-size: 13px; margin-bottom: 8px; }
+        .chat-example-prompts { color: var(--studio-ink-dim); font-size: 13px; list-style: none; padding: 0; }
+        .chat-example-prompts li { padding: 2px 0; }
         .chat-panel {
             position: fixed; top: 0; right: -440px; width: 420px; height: 100vh;
             background: var(--studio-paper, var(--studio-surface));
@@ -479,368 +616,200 @@
         .chat-panel.chat-panel--open { right: 0; visibility: visible; transition: right 0.25s ease; }
         .chat-panel-header {
             display: flex; justify-content: space-between; align-items: flex-start;
-            padding: 1rem 1.25rem; border-bottom: 1px solid var(--studio-border); flex-shrink: 0;
+            padding: 16px 20px; border-bottom: 1px solid var(--studio-border); flex-shrink: 0;
         }
-        .chat-panel-title { font-weight: 700; font-size: 1rem; }
-        .chat-panel-breadcrumb { display: flex; align-items: center; gap: 0.375rem; font-size: 0.6875rem; color: var(--studio-ink-dim); margin-top: 0.25rem; }
-        .chat-panel-breadcrumb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--studio-plum, var(--studio-accent)); display: inline-block; }
-        .chat-panel-close { background: transparent; border: none; cursor: pointer; font-size: 1.25rem; color: var(--studio-ink-dim); padding: 0.25rem; line-height: 1; }
+        .chat-panel-title { font-weight: 500; font-size: 16px; }
+        .chat-panel-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--studio-ink-dim); margin-top: 4px; }
+        .chat-panel-breadcrumb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--studio-ink-dim); display: inline-block; }
+        .chat-panel-close { background: transparent; border: none; cursor: pointer; font-size: 20px; color: var(--studio-ink-dim); padding: 4px; line-height: 1; }
         .artifact-summary-strip {
-            display: flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.25rem;
-            background: var(--studio-chip-bg, rgba(0,0,0,0.04)); border-bottom: 1px solid var(--studio-border);
-            flex-shrink: 0; font-size: 0.8125rem; flex-wrap: wrap;
+            display: flex; align-items: center; gap: 8px; padding: 12px 20px;
+            background: var(--studio-chip-bg); border-bottom: 1px solid var(--studio-border);
+            flex-shrink: 0; font-size: 13px; flex-wrap: wrap;
         }
-        .artifact-gate-pill {
-            padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.625rem; font-weight: 700;
-            border: 1px solid; text-transform: uppercase; letter-spacing: 0.06em;
-        }
-        .artifact-key-stat { font-size: 0.75rem; color: var(--studio-ink-dim); }
+        .artifact-key-stat { font-size: 12px; color: var(--studio-ink-dim); }
         .explain-only-notice {
-            display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.625rem 1.25rem;
-            background: color-mix(in srgb, var(--studio-cyan) 8%, transparent);
-            border-bottom: 1px solid color-mix(in srgb, var(--studio-cyan) 25%, transparent);
-            font-size: 0.75rem; color: var(--studio-cyan, var(--studio-ink-dim)); flex-shrink: 0;
+            display: flex; align-items: flex-start; gap: 8px; padding: 12px 20px;
+            border-bottom: 1px solid var(--studio-border);
+            font-size: 12px; color: var(--studio-ink-dim); flex-shrink: 0;
         }
-        .explain-only-notice-icon { flex-shrink: 0; }
-        .chat-unavailable {
-            padding: 2rem 1.25rem; text-align: center;
-        }
-        .chat-unavailable-title { font-weight: 700; margin-bottom: 0.5rem; color: var(--studio-warn); }
-        .chat-unavailable-body { font-size: 0.875rem; color: var(--studio-ink-dim); }
+        .chat-unavailable { padding: 32px 20px; text-align: left; }
+        .chat-unavailable-title { font-weight: 500; margin-bottom: 4px; color: var(--studio-warn); }
+        .chat-unavailable-body { font-size: 13px; color: var(--studio-ink-dim); }
         .chat-thread {
-            flex: 1; overflow-y: auto; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 0.75rem;
+            flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px;
         }
+        .chat-bubble--operator { align-self: flex-end; max-width: 85%; padding: 8px 12px; border-radius: 8px; background: var(--studio-chip-bg); font-size: 13px; }
+        .chat-bubble--ai { align-self: flex-start; max-width: 92%; font-size: 13px; }
+        .chat-bubble--thinking { color: var(--studio-ink-dim); }
+        .chat-bubble-label { font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 2px; }
         .chat-input-row {
-            display: flex; gap: 0.5rem; padding: 0.75rem 1.25rem;
+            display: flex; gap: 8px; padding: 12px 20px;
             border-top: 1px solid var(--studio-border); flex-shrink: 0; align-items: flex-end;
         }
-        .chat-input {
-            flex: 1; background: var(--studio-bg); border: 1px solid var(--studio-border);
-            border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.875rem;
-            color: var(--studio-ink); font-family: var(--studio-sans, sans-serif); resize: none;
-        }
-        .chat-input:focus { outline: none; border-color: var(--studio-accent); }
-        .chat-send-btn {
-            padding: 0.5rem 1rem; background: var(--studio-accent); color: var(--studio-paper);
-            border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
-            cursor: pointer; white-space: nowrap; font-family: var(--studio-sans, sans-serif);
-        }
-        .chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         @media (max-width: 768px) {
             .chat-panel { width: 100%; right: -100%; }
         }
 
-        /* ------------------------------------------------------------------ */
-        /* Strategy Builder panel — ported from ai_advisor_strategy_builder    */
-        /* ------------------------------------------------------------------ */
-
-        /* Non-dismissible risk banner (highest overfitting risk tier) */
-        .sb-risk-banner {
-            display: flex; align-items: flex-start; gap: 0.625rem;
-            background: var(--studio-warn-tint);
-            border: 1px solid var(--studio-warn-border);
-            border-radius: 0.625rem;
-            padding: 0.875rem 1rem;
-            margin-bottom: 1.25rem;
-        }
-        .sb-risk-banner-icon { flex-shrink: 0; color: var(--studio-warn); font-size: 1rem; line-height: 1.5; }
-        .sb-risk-banner-text { font-size: 0.8125rem; color: var(--studio-ink-dim); line-height: 1.6; }
-        .sb-risk-banner-text strong { color: var(--studio-ink); font-weight: 700; }
-
-        /* Run controls panel */
-        .run-controls-row { display: flex; align-items: flex-end; gap: 0.75rem; flex-wrap: wrap; }
-        .run-trigger-btn {
-            padding: 0.5rem 1.25rem; background: var(--studio-accent); color: var(--studio-paper);
-            border: none; border-radius: 0.5rem; font-size: 0.875rem; font-weight: 700;
-            cursor: pointer; flex-shrink: 0; white-space: nowrap; align-self: flex-end;
-            font-family: var(--studio-sans, sans-serif);
-        }
+        /* Strategy Builder and Frontrunner Builder panels */
+        .run-controls-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
         @media (max-width: 700px) {
             .run-trigger-btn { white-space: normal; flex-shrink: 1; }
         }
-        .run-trigger-btn:hover:not(:disabled) { opacity: 0.9; }
-        .run-trigger-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        .run-controls-note { font-size: 0.75rem; color: var(--studio-ink-dim); margin-top: 0.75rem; }
-        .run-error { font-size: 0.8125rem; color: var(--studio-neg); margin-top: 0.5rem; }
-        #sb-run-results { min-height: 4rem; margin-top: 1rem; }
-        .sb-loading-state {
-            text-align: center;
-            color: var(--studio-ink-dim); font-size: 0.875rem;
-        }
-
-        /* Proposal card grid */
-        .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.875rem; }
+        .run-controls-note { font-size: 12px; color: var(--studio-ink-dim); margin-top: 12px; }
+        .run-controls-note:empty { display: none; }
+        #sb-run-results { min-height: 4rem; margin-top: 16px; }
+        .proposal-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; }
         .proposal-card--survivor { border-color: var(--studio-pos); }
         .proposal-card--rejected { opacity: 0.75; }
         .proposal-card--backtest-failed { background: var(--studio-warn-tint); border-color: var(--studio-warn-border); }
 
-        /* Advisory-only badge */
-        .advisory-only-badge {
-            display: inline-block; padding: 0.125rem 0.5rem; border-radius: 999px;
-            font-size: 0.5rem; font-weight: 700; letter-spacing: 0.06em;
-            text-transform: uppercase; border: 1px solid var(--studio-border); color: var(--studio-ink-dim);
-        }
-
         /* Card anatomy */
-        .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; }
+        .card-header-row { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 
         /* A proposal card is a column whose action row sits at its foot, so the Approve buttons of
            cards side by side line up whatever the length of the text above them. */
         .sym-card.proposal-card { display: flex; flex-direction: column; }
         .sym-card.proposal-card .proposal-actions { margin-top: auto; }
-        .proposal-card .proposal-actions { padding-top: 0.75rem; }
+        .proposal-card .proposal-actions { padding-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
 
-        /* One labelled line each: identity, what Approve does, what the overlay adds. */
-        .fr-line { font-size: 0.8125rem; margin: 0.25rem 0; line-height: 1.4; }
-        .fr-line-label {
-            display: inline-block; min-width: 5.5rem; margin-right: 0.5rem;
-            font-size: 0.5625rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-            color: var(--studio-ink-dim);
-        }
-        .fr-overlay-raw { margin: 0.375rem 0; font-size: 0.75rem; color: var(--studio-ink); }
+        /* What every Frontrunner card shares, said once above the list. */
+        .fr-shared { margin: 0 0 12px; font-size: 13px; color: var(--studio-ink-dim); display: grid; gap: 4px; }
+        .fr-shared > p { margin: 0; }
+        .fr-shared-label { color: var(--studio-ink); font-weight: 500; margin-right: 8px; }
+        .fr-line { font-size: 13px; margin: 4px 0; line-height: 1.4; }
+        .fr-line-label { margin-right: 8px; font-size: 12px; font-weight: 500; color: var(--studio-ink-dim); }
+        .fr-overlay-raw { margin: 4px 0; font-size: 12px; color: var(--studio-ink); }
+        .fr-retrofit-identity-line, .fr-source { font-size: 12px; color: var(--studio-ink-dim); margin: 0 0 8px; }
 
-        /* Strategy incubation gate status chip — mirrors .prism-sentiment-chip's
-           shape exactly. Status is computed LIVE via a candidate_hash join at
-           render/API time (never a frozen field on the observation row) — see
-           .claude/tdd-handoff.md "raw_response contract" (AC-5 amendment).
-           Only --promoted carries the actionable/recommended visual weight;
-           the other three statuses stay informational-only (no new action
-           affordances — Strategy Builder survivor cards remain
-           advisory/ZERO-action per the existing house convention). */
-        .incubation-status-chip {
-            display: inline-block;
-            padding: 0.2rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.6875rem;
-            font-weight: 700;
-            border: 1px solid var(--studio-border);
-            margin-top: 0.5rem;
-        }
+        /* Strategy incubation gate status: a dot and one word. Status is computed LIVE via a candidate_hash
+           join at render/API time (never a frozen field on the observation row). Only --promoted is the
+           recommended state; the others are informational (survivor cards stay advisory, ZERO-action). */
+        .incubation-status-chip { margin-top: 8px; }
+        .incubation-status-chip--incubating { --dot: var(--studio-ink-dim); }
 
-        .incubation-status-chip--incubating {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
-        }
-
-        .incubation-status-chip--promoted {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-            background: color-mix(in srgb, var(--studio-pos) 12%, transparent);
-            font-weight: 800;
-        }
-
-        .incubation-status-chip--failed {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
-        }
-
-        .incubation-status-chip--expired {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-warn, var(--studio-border));
-            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.05));
-        }
-
-        /* Objective strip */
-        .objective-strip {
-            background: var(--studio-accent-tint, rgba(46,165,102,0.06));
-            border: 1px solid var(--studio-accent-border, rgba(46,165,102,0.2));
-            border-left: 3px solid var(--studio-accent);
-            border-radius: 0 0.375rem 0.375rem 0;
-            padding: 0.375rem 0.625rem; margin-bottom: 0.875rem;
-            font-size: 0.8125rem; font-weight: 600; color: var(--studio-ink-dim);
-        }
+        /* Objective line: a plain caption, no tinted bar. */
+        .objective-strip { margin-bottom: 8px; font-size: 12px; color: var(--studio-ink-dim); }
 
         /* Stats table */
-        .stats-table { width: 100%; border-collapse: collapse; margin-bottom: 0.875rem; font-size: 0.8125rem; }
-        .stats-table .stats-caption { caption-side: top; text-align: left; font-size: 0.6875rem; font-weight: 600; color: var(--studio-ink-dim); padding-bottom: 0.25rem; }
-        .stats-table th { font-size: 0.5625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-muted); padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--studio-border); text-align: left; }
-        .stats-table td { padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--studio-border); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
-        .stats-table td:first-child { font-size: 0.6875rem; color: var(--studio-ink-dim); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+        .stats-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 13px; }
+        .stats-table .stats-caption { caption-side: top; text-align: left; font-size: 12px; font-weight: 400; color: var(--studio-ink-dim); padding-bottom: 4px; }
+        .stats-table th { font-size: 12px; font-weight: 400; color: var(--studio-ink-dim); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--studio-border); text-align: left; }
+        .stats-table td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--studio-border); color: var(--studio-ink); font-variant-numeric: tabular-nums; }
+        .stats-table td:first-child { font-size: 12px; color: var(--studio-ink-dim); font-weight: 400; }
         .stat-pos { color: var(--studio-pos); }
         .stat-neg { color: var(--studio-neg); }
         .stat-nil { color: var(--studio-ink-muted); }
 
         /* Gate verdict */
-        .gate-verdict-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; border-radius: 0.5rem; background: var(--studio-bg); flex-wrap: wrap; }
-        .gate-pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.5625rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid; }
-        .gate-pill--passed { color: var(--studio-pos); border-color: var(--studio-pos); background: color-mix(in srgb, var(--studio-pos) 7%, transparent); }
-        .gate-pill--withheld { color: var(--studio-warn); border-color: var(--studio-warn); background: var(--studio-warn-tint); }
-        .gate-pill--failed { color: var(--studio-neg); border-color: var(--studio-neg); background: var(--studio-neg-tint); }
-        .fdr-metadata { font-size: 0.6875rem; color: var(--studio-ink-muted); font-variant-numeric: tabular-nums; margin-top: 0.25rem; flex-basis: 100%; }
-        .fdr-metadata strong { color: var(--studio-ink-dim); }
+        .gate-verdict-row { display: flex; align-items: center; gap: 4px 12px; margin-bottom: 8px; flex-wrap: wrap; }
+        .fdr-metadata { font-size: 12px; color: var(--studio-ink-muted); font-variant-numeric: tabular-nums; flex-basis: 100%; }
+        .fdr-metadata strong { color: var(--studio-ink-dim); font-weight: 500; }
 
         /* Caveats + apply guidance */
-        .caveat-text { font-size: 0.6875rem; color: var(--studio-ink-dim); line-height: 1.5; border-left: 2px solid var(--studio-warn); padding-left: 0.625rem; margin-bottom: 0.375rem; }
-        .caveats-block { margin-bottom: 0.75rem; }
-        .apply-guidance { font-size: 0.6875rem; color: var(--studio-ink-dim); background: var(--studio-bg); border: 1px solid var(--studio-border); border-radius: 0.5rem; padding: 0.5rem 0.75rem; line-height: 1.5; margin-bottom: 0.75rem; }
-        .apply-guidance strong { color: var(--studio-ink); font-weight: 700; }
-        .rules-collapsible summary { cursor: pointer; font-size: 0.75rem; font-weight: 600; color: var(--studio-ink-dim); margin-bottom: 0.375rem; }
-        .rules-collapsible pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: var(--studio-ink); background: var(--studio-bg); border: 1px solid var(--studio-border); border-radius: 0.375rem; padding: 0.625rem; white-space: pre-wrap; word-break: break-all; margin: 0; }
-        .backtest-error { font-size: 0.8125rem; color: var(--studio-neg); margin-top: 0.5rem; }
-
-        /* Discuss button */
-        .discuss-btn { margin-top: 0.5rem; padding: 0.25rem 0.75rem; font-size: 0.75rem; color: var(--studio-ink-dim); background: transparent; border: 1px solid var(--studio-border); border-radius: 0.375rem; cursor: pointer; font-family: var(--studio-sans, sans-serif); }
-        .discuss-btn:hover { border-color: var(--studio-accent); color: var(--studio-ink); }
+        .caveat-text { font-size: 12px; color: var(--studio-ink-dim); line-height: 1.5; margin-bottom: 4px; }
+        .caveats-block { margin-bottom: 8px; }
+        .apply-guidance { font-size: 12px; color: var(--studio-ink-dim); border-top: 1px solid var(--studio-rule); padding: 8px 0 0; line-height: 1.5; margin-bottom: 8px; }
+        .apply-guidance strong { color: var(--studio-ink); font-weight: 500; }
+        .rules-collapsible summary { cursor: pointer; font-size: 12px; font-weight: 400; color: var(--studio-ink-dim); margin-bottom: 4px; }
+        .rules-collapsible pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--studio-ink); background: var(--studio-chip-bg); border-radius: 4px; padding: 8px; white-space: pre-wrap; word-break: break-all; margin: 0; }
 
         /* Empty state */
-        .empty-state { background: var(--studio-neg-tint, rgba(180,58,42,0.06)); border: 1px solid var(--studio-neg-border, rgba(180,58,42,0.25)); border-left: 3px solid var(--studio-neg); border-radius: 1rem; padding: 2rem 1.5rem; }
-        .empty-state-title { font-size: 1rem; font-weight: 700; color: var(--studio-ink); margin-bottom: 0.5rem; }
-        .empty-state-body { font-size: 0.875rem; color: var(--studio-ink-dim); }
+        .empty-state { border: 1px solid var(--studio-rule); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        .empty-state-title { font-size: 14px; font-weight: 500; color: var(--studio-ink); margin-bottom: 4px; }
+        .empty-state-body { font-size: 13px; color: var(--studio-ink-dim); }
 
         /* Rejected section */
-        .rejected-section { margin-top: 1.5rem; }
-        .rejected-collapsible summary { cursor: pointer; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--studio-ink-dim, var(--studio-ink-dim)); margin-bottom: 0.875rem; user-select: none; }
-        .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.875rem; margin-top: 0.875rem; }
+        .rejected-section { margin-top: 24px; }
+        .rejected-collapsible summary { cursor: pointer; font-size: 13px; font-weight: 500; color: var(--studio-ink-dim); margin-bottom: 12px; user-select: none; }
+        .rejected-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 12px; margin-top: 12px; }
 
         /* ------------------------------------------------------------------ */
-        /* Market Prism block — always-on overnight market summary             */
+        /* Market Prism: the verdict, its rationale, five lenses in one row    */
         /* ------------------------------------------------------------------ */
         .prism-block-header {
             display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 1rem;
+            align-items: baseline;
             flex-wrap: wrap;
-            gap: 0.5rem;
+            gap: 4px 16px;
+            margin-bottom: 8px;
         }
-
         /* The title is a .section-header; inside this flex row it carries no outer margin. */
         .prism-block-header .section-header { margin: 0; }
-
-        .prism-as-of {
-            font-size: 0.625rem;
+        .prism-block-header .prism-sentiment-chip { font-size: 13px; }
+        .prism-as-of, .prism-model-badge {
+            font-size: 12px;
+            font-weight: 400;
             color: var(--studio-ink-dim);
             font-variant-numeric: tabular-nums;
         }
-
-        /* AC-2: the one genuinely real, best-documented LLM pipeline in the
-           suite (real `claude -p` council, prism_scheduler.py) was the LEAST
-           attributed surface in the UI — opposite failure mode from AC-1's
-           over-attribution.  Accessor-driven (advisor_synthesis_model), never
-           a hardcoded model-name literal. */
-        .prism-model-badge {
-            font-size: 0.625rem;
-            color: var(--studio-ink-dim);
-            font-style: italic;
-        }
-
-        /* Sentiment chip — semantic color by value */
-        .prism-sentiment-chip {
-            display: inline-block;
-            padding: 0.2rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.6875rem;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            border: 1px solid;
-            margin-bottom: 0.75rem;
-        }
-
-        .prism-sentiment-chip--risk-on {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-            background: color-mix(in srgb, var(--studio-pos) 7%, transparent);
-        }
-
-        .prism-sentiment-chip--risk-off {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-            background: var(--studio-neg-tint, rgba(180, 58, 42, 0.06));
-        }
-
-        .prism-sentiment-chip--neutral {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-            background: var(--studio-chip-bg, rgba(0, 0, 0, 0.04));
-        }
-
-        .prism-sentiment-chip--limited-inputs {
-            color: var(--studio-warn);
-            border-color: var(--studio-warn);
-            background: var(--studio-warn-tint, rgba(176, 116, 25, 0.08));
-        }
+        .prism-block-header .prism-as-of { margin-left: auto; }
 
         .prism-rationale {
-            font-size: 0.8125rem;
+            max-width: 110ch;
+            font-size: 13px;
             color: var(--studio-ink);
             line-height: 1.6;
-            margin-bottom: 1rem;
+            margin: 0 0 12px;
         }
 
-        /* Per-lens digest */
+        /* Per-lens digest: one row of five, each clamped to a few lines until opened. */
         .prism-lenses {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
-            gap: 0.625rem;
-            margin-bottom: 1rem;
+            grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+            gap: 12px 24px;
+            margin-bottom: 12px;
+        }
+        .prism-lens { min-width: 0; border-top: 1px solid var(--studio-rule); padding-top: 8px; }
+        .prism-lens--unavailable { color: var(--studio-ink-dim); }
+        .prism-lens-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+        .prism-lens-name { font-size: 13px; font-weight: 500; color: var(--studio-ink); }
+        .prism-lens-status { font-weight: 400; color: var(--studio-ink-dim); }
+        .prism-lens-text { font-size: 12px; color: var(--studio-ink-dim); line-height: 1.5; margin: 0; }
+        .prism-lenses[data-clamp="on"] .prism-lens-text {
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 4;
+            line-clamp: 4;
+            overflow: hidden;
+        }
+        .prism-lenses[data-clamp="on"] .prism-lens--open .prism-lens-text {
+            display: block;
+            -webkit-line-clamp: unset;
+            line-clamp: unset;
+            overflow: visible;
+        }
+        .prism-lens-more {
+            margin: 4px 0 0;
+            padding: 0;
+            border: 0;
+            background: none;
+            font: inherit;
+            font-size: 12px;
+            color: var(--studio-accent);
+            text-decoration: underline;
+            text-underline-offset: 0.2em;
+            cursor: pointer;
+        }
+        .prism-lens-more:hover { color: var(--studio-ink); }
+        @media (max-width: 700px) {
+            .prism-lenses {
+                display: grid;
+                grid-auto-flow: column;
+                grid-template-columns: none;
+                grid-auto-columns: 84%;
+                overflow-x: auto;
+                scroll-snap-type: x mandatory;
+                gap: 16px;
+            }
+            .prism-lens { scroll-snap-align: start; }
         }
 
-        .prism-lens {
-            background: var(--studio-bg);
-            border: 1px solid var(--studio-border);
-            border-radius: 0.5rem;
-            padding: 0.625rem 0.875rem;
-        }
-
-        .prism-lens--available {
-            border-left: 3px solid var(--studio-pos);
-        }
-
-        .prism-lens--unavailable {
-            border-left: 3px solid var(--studio-border);
-            opacity: 0.75;
-        }
-
-        .prism-lens-name {
-            font-size: 0.5625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 0.25rem;
-        }
-
-        .prism-lens-status {
-            display: inline-block;
-            font-size: 0.5rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-            border: 1px solid;
-            border-radius: 999px;
-            padding: 0.05rem 0.375rem;
-            margin-bottom: 0.375rem;
-        }
-
-        .prism-lens-status--ok {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-        }
-
-        .prism-lens-status--unavailable {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-        }
-
-        .prism-lens-text {
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-            line-height: 1.5;
-        }
-
-        /* Cited sources */
-        .prism-sources-header {
-            font-size: 0.5625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 0.5rem;
-        }
-
+        /* Cited sources: one closed disclosure, grouped by lens inside. */
+        .prism-sources { margin-bottom: 8px; }
+        .prism-sources > summary { cursor: pointer; font-size: 12px; color: var(--studio-ink-dim); }
+        .prism-sources > summary:hover { color: var(--studio-ink); }
+        .prism-sources-header { display: none; }
         /* Horizontal scroll-snap carousel; max-height keeps page height stable */
         .prism-sources-carousel {
             display: flex;
@@ -850,21 +819,17 @@
                vertical scrollbar when card content slightly exceeds max-height */
             overflow-y: hidden;
             scroll-snap-type: x mandatory;
-            gap: 0.75rem;
-            padding: 0.5rem 0;
+            gap: 12px;
+            padding: 4px 0;
             max-height: 160px;
         }
-
-        /* Per-lens section label above each carousel group */
+        /* Per-lens label above each carousel group */
         .prism-lens-carousel-label {
-            font-size: 0.6875rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
+            font-size: 12px;
+            font-weight: 500;
             color: var(--studio-ink-dim);
-            margin: 0.75rem 0 0.25rem;
+            margin: 12px 0 4px;
         }
-
         .prism-source-card {
             flex: 0 0 auto;
             scroll-snap-align: start;
@@ -872,371 +837,229 @@
             max-width: 220px;
             display: flex;
             flex-direction: column;
-            gap: 0.25rem;
-            padding: 0.5rem 0.625rem;
+            gap: 4px;
+            padding: 8px 12px;
             border: 1px solid var(--studio-border);
-            border-radius: 6px;
-            font-size: 0.75rem;
+            border-radius: 8px;
+            font-size: 12px;
             color: var(--studio-ink);
             text-decoration: none;
         }
-
         /* Hover affordance for clickable anchor cards */
-        a.prism-source-card:hover {
-            border-color: var(--studio-accent);
-        }
-
-        /* Citation-only cards are non-interactive — dim + suppress pointer cursor */
-        .prism-source-card--citation {
-            opacity: 0.75;
-            cursor: default;
-        }
-
+        a.prism-source-card:hover { border-color: var(--studio-accent); }
+        /* Citation-only cards are non-interactive: dim, no pointer cursor */
+        .prism-source-card--citation { opacity: 0.75; cursor: default; }
         /* Truncate long titles to a single line so card height stays uniform */
-        .prism-source-card span:first-child {
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .prism-source-card .prism-source-meta {
-            font-size: 0.6875rem;
-            color: var(--studio-ink-dim);
-        }
+        .prism-source-card span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .prism-source-card .prism-source-meta { font-size: 12px; color: var(--studio-ink-dim); }
 
         /* Empty / no-data state */
-        .prism-empty {
-            padding: 1.5rem;
-            text-align: center;
-            color: var(--studio-ink-dim);
-            font-size: 0.875rem;
+        .prism-empty { padding: 16px 0; text-align: left; color: var(--studio-ink-dim); font-size: 13px; }
+
+        /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10): one line, the checks behind a disclosure. */
+        .prism-verification {
+            display: flex;
+            align-items: baseline;
+            flex-wrap: wrap;
+            gap: 4px 16px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--studio-rule);
         }
+        .prism-verification-header { font-size: 12px; font-weight: 500; color: var(--studio-ink-dim); }
+        .prism-verify-check { flex-basis: 100%; padding: 4px 0; }
+        .prism-verify-badge { font-weight: 500; }
+        .prism-verify-badge--unverifiable { font-weight: 400; }
+        .prism-verify-annotation { font-size: 12px; color: var(--studio-ink-dim); line-height: 1.5; margin-top: 4px; }
+        /* Compact verdict-first summary: a single verdict + short count line replaces the flat wall of
+           pass/unverifiable badges; only flagged/overridden checks render individually. */
+        .prism-verify-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+        .prism-verify-summary-count { font-size: 12px; color: var(--studio-ink-dim); }
+        .prism-verify-details { flex: 0 1 auto; }
+        .prism-verify-details[open] { flex-basis: 100%; }
+        .prism-verify-details > summary { cursor: pointer; font-size: 12px; color: var(--studio-ink-dim); user-select: none; }
+        .prism-verify-details > summary:hover { color: var(--studio-ink); }
+        .prism-verify-details-list { margin-top: 8px; }
 
         /* ------------------------------------------------------------------ */
-        /* Retirement tab. The cards are .sym-card (static/layout.css), the   */
-        /* name is .card-name and the decision state is .status-pill; these   */
-        /* rules add only what the shared rules do not set.                   */
+        /* Retirement tab. The cards are the shared card, the name the shared   */
+        /* name and the decision state the shared status; these rules add only  */
+        /* what the shared rules do not set.                                    */
         /* ------------------------------------------------------------------ */
-        .retirement-rec-card {
-            margin-bottom: 0.75rem;
-            font-size: 0.8125rem;
-        }
+        .retirement-rec-card { margin-bottom: 12px; font-size: 13px; }
         .retirement-rec-card:last-child { margin-bottom: 0; }
         /* The panel holds two sub-sections, each with its own heading and its own run button. */
         .retirement-subsection + .retirement-subsection {
-            margin-top: 1.5rem;
-            padding-top: 1rem;
-            border-top: 1px solid var(--studio-border);
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid var(--studio-rule);
         }
         .retirement-subsection > .section-header { margin-top: 0; }
-        /* A verdict or gate label is one word group: it stays on one line. */
-        .tenure-verdict-chip, .gate-pill, .decision-pill { white-space: nowrap; }
-        .retirement-rec-pair {
-            margin-bottom: 0.375rem;
-        }
+        .retirement-rec-pair { margin-bottom: 4px; }
         .retirement-rec-meta, .retirement-rec-gates {
             display: flex;
-            gap: 1rem;
+            gap: 4px 16px;
             flex-wrap: wrap;
             color: var(--studio-ink-dim);
-            font-size: 0.75rem;
-            margin-bottom: 0.25rem;
+            font-size: 12px;
+            margin-bottom: 4px;
         }
-        .retirement-rec-basis {
-            color: var(--studio-ink-dim, var(--studio-ink-dim));
-            font-size: 0.6875rem;
-            font-style: italic;
-        }
+        .retirement-rec-basis { color: var(--studio-ink-dim); font-size: 12px; }
 
-        /* Cycle 2b (AC-7) additions -- explanation, live status chip,
-           approve/reject actions, deterministic checklist. All fields rely
-           on Jinja's default autoescaping only; no raw hex, design tokens
-           only. */
-        .retirement-rec-explanation {
-            color: var(--studio-ink);
-            font-size: 0.8125rem;
-            margin: 0.5rem 0;
-            line-height: 1.4;
-        }
-
-        .retirement-rec-actions {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 0.625rem;
-        }
-
+        /* Cycle 2b (AC-7): explanation, live status, approve/reject actions, deterministic checklist. */
+        .retirement-rec-explanation { color: var(--studio-ink); font-size: 13px; margin: 8px 0; line-height: 1.5; }
+        .retirement-rec-actions { display: flex; gap: 8px; margin-top: 12px; }
         .retirement-checklist {
             margin-top: var(--studio-space-sm);
-            padding-top: 0.75rem;
+            padding-top: 12px;
             border-top: 1px solid var(--studio-border);
-            font-size: 0.8125rem;
+            font-size: 13px;
         }
-        .retirement-checklist-header {
-            font-size: 0.5625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 0.5rem;
-        }
-        .retirement-checklist-holdings {
-            color: var(--studio-ink);
-            margin-bottom: 0.5rem;
-        }
-        .retirement-checklist-holdings--unavailable {
-            color: var(--studio-ink-dim);
-            font-style: italic;
-        }
-        .retirement-checklist-steps {
-            margin: 0;
-            padding-left: 1.25rem;
-            color: var(--studio-ink);
-        }
-        .retirement-checklist-steps li { margin-bottom: 0.25rem; }
+        .retirement-checklist-header { font-size: 12px; font-weight: 500; color: var(--studio-ink-dim); margin-bottom: 8px; }
+        .retirement-checklist-holdings { color: var(--studio-ink); margin-bottom: 8px; }
+        .retirement-checklist-holdings--unavailable { color: var(--studio-ink-dim); }
+        .retirement-checklist-steps { margin: 0; padding-left: 20px; color: var(--studio-ink); }
+        .retirement-checklist-steps li { margin-bottom: 4px; }
 
-        /* Cycle 2e (retirement-visibility AC-6/AC-7): "last run" block + the
-           Run-now button. Design tokens only; every value is Jinja-
-           autoescaped, nothing is marked safe. */
+        /* Cycle 2e (retirement-visibility AC-6/AC-7): "last run" block + the Run-now button. */
         .retirement-last-run {
-            border: 1px solid var(--studio-border);
-            border-radius: 0.75rem;
-            padding: 0.625rem 1rem;
-            margin-bottom: 0.75rem;
-            font-size: 0.75rem;
+            border-top: 1px solid var(--studio-rule);
+            padding: 12px 0 0;
+            margin-bottom: 12px;
+            font-size: 12px;
             color: var(--studio-ink-dim);
         }
-        .retirement-last-run-line { margin-bottom: 0.25rem; }
-        .retirement-tiles { flex-wrap: wrap; margin-bottom: 0.5rem; }
-        .retirement-tiles > * { min-width: 7.5rem; }
-        .retirement-pointer-row { margin-bottom: 1rem; }
-        .retirement-pointer-row a {
-            text-decoration: underline;
-            text-underline-offset: 0.2em;
-            color: var(--studio-accent);
-        }
-        .retirement-pointer-row a > span { color: var(--studio-accent); }
-        .retirement-last-run-state {
-            color: var(--studio-ink);
-            font-weight: 700;
-            margin-bottom: 0.25rem;
-        }
+        .retirement-last-run-line { margin-bottom: 4px; }
+        .retirement-tiles { margin: 8px 0; }
+        .retirement-last-run-state { color: var(--studio-ink); font-weight: 500; margin-bottom: 4px; }
         .retirement-last-run-state--internal_error { color: var(--studio-neg); }
-        .retirement-last-run-excluded ul { margin: 0.125rem 0 0; padding-left: 1.25rem; }
-        .retirement-run-now-row {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            margin-bottom: 0.75rem;
-        }
-        .retirement-run-now-status {
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-        }
-        .retirement-cards-from-earlier-run {
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-            border-left: 3px solid var(--studio-border);
-            padding-left: 0.625rem;
-            margin-bottom: 0.75rem;
-        }
-        .retirement-run-now-hint {
-            font-size: 0.6875rem;
-            font-style: italic;
-            color: var(--studio-ink-dim);
-            margin: -0.375rem 0 0.75rem;
-        }
+        .retirement-last-run-excluded ul { margin: 2px 0 0; padding-left: 20px; }
+        .retirement-run-now-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .retirement-run-now-status { font-size: 12px; color: var(--studio-ink-dim); }
+        .retirement-cards-from-earlier-run { font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
+        .retirement-run-now-hint { font-size: 12px; color: var(--studio-ink-dim); margin: 0 0 12px; }
 
-        /* Symphony tenure review: tokens only. */
-        .tenure-review-header {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            margin-bottom: 0.5rem;
-        }
-        .tenure-review-run-message {
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-        }
-        .tenure-review-run-message--refused {
-            color: var(--studio-neg);
-        }
-        .tenure-review-evidence-heading {
-            font-weight: 700;
-            color: var(--studio-ink);
-            font-size: 0.75rem;
-            margin-bottom: 0.125rem;
-        }
+        /* Symphony tenure review */
+        .tenure-review-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .tenure-review-run-message { font-size: 12px; color: var(--studio-ink-dim); }
+        .tenure-review-run-message--refused { color: var(--studio-neg); }
+        .tenure-review-evidence-heading { font-weight: 500; color: var(--studio-ink); font-size: 12px; margin-bottom: 2px; }
         .tenure-review-notice {
-            font-size: 0.75rem;
+            font-size: 12px;
             color: var(--studio-ink-dim);
             border: 1px solid var(--studio-border);
-            border-radius: 0.5rem;
-            padding: 0.375rem 0.75rem;
-            margin-bottom: 0.5rem;
+            border-radius: 8px;
+            padding: 4px 12px;
+            margin-bottom: 8px;
         }
-        .tenure-review-notice--failed {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-        }
-        .tenure-review-run {
-            display: flex;
-            gap: 1rem;
-            flex-wrap: wrap;
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
-            margin-bottom: 0.75rem;
-        }
-        .tenure-review-entry {
-            margin-bottom: 0.75rem;
-            font-size: 0.8125rem;
-        }
-        .tenure-review-entry-head {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            margin-bottom: 0.375rem;
-        }
-        .tenure-review-line {
-            color: var(--studio-ink-dim);
-            font-size: 0.75rem;
-            margin-bottom: 0.25rem;
-        }
-        .tenure-verdict-chip {
-            display: inline-block;
-            padding: 0.2rem 0.75rem;
-            border-radius: 999px;
-            font-size: 0.6875rem;
-            font-weight: 700;
-            white-space: nowrap;
-            border: 1px solid var(--studio-border);
-            color: var(--studio-ink-dim);
-        }
-        .tenure-verdict-chip--retire_candidate {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-        }
-        .tenure-verdict-chip--watch {
-            color: var(--studio-ink);
-            border-color: var(--studio-ink-dim);
-        }
-        .tenure-verdict-chip--keep {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-        }
-        .tenure-verdict-chip--none {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-        }
+        .tenure-review-notice--failed { color: var(--studio-neg); border-color: var(--studio-neg); }
+        .tenure-review-run { display: flex; gap: 4px 16px; flex-wrap: wrap; font-size: 12px; color: var(--studio-ink-dim); margin-bottom: 12px; }
+        .tenure-review-entry { margin-bottom: 12px; font-size: 13px; }
+        .tenure-review-entry-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+        .tenure-review-line { color: var(--studio-ink-dim); font-size: 12px; margin-bottom: 4px; }
+        .tenure-verdict-chip--none { --dot: var(--studio-ink-dim); }
+        /* The six evidence items read as compact lists side by side, each as tall as its own content. */
         .tenure-review-evidence-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
-            gap: 0.5rem;
-            margin-top: 0.5rem;
+            gap: 12px 24px;
+            align-items: start;
+            margin-top: 8px;
         }
-        .tenure-review-evidence {
-            border: 1px solid var(--studio-border);
-            border-radius: 0.5rem;
-            padding: 0.5rem 0.75rem;
-        }
-        .tenure-review-evidence-meta, .tenure-review-evidence-figure {
-            color: var(--studio-ink-dim);
-            font-size: 0.6875rem;
-        }
+        .tenure-review-evidence { border-top: 1px solid var(--studio-rule); padding: 8px 0 0; }
+        .tenure-review-evidence-meta, .tenure-review-evidence-figure { color: var(--studio-ink-dim); font-size: 12px; }
+        .tenure-review-evidence .retirement-rec-meta, .tenure-review-evidence .retirement-rec-gates,
+        .tenure-review-evidence .retirement-rec-basis { margin-bottom: 2px; }
 
-        /* Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10) */
-        .prism-verification {
-            margin-top: 0.75rem;
-            padding-top: 0.75rem;
-            border-top: 1px solid var(--studio-border);
-        }
-
-        .prism-verification-header {
-            font-size: 0.5625rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--studio-ink-dim);
-            margin-bottom: 0.5rem;
-        }
-
-        .prism-verify-check {
-            padding: 0.375rem 0;
-        }
-
-        .prism-verify-badge {
-            display: inline-block;
-            font-size: 0.6875rem;
-            font-weight: 700;
-            border: 1px solid;
-            border-radius: 999px;
-            padding: 0.05rem 0.5rem;
-        }
-
-        .prism-verify-badge--pass {
-            color: var(--studio-pos);
-            border-color: var(--studio-pos);
-        }
-
-        .prism-verify-badge--flagged {
-            color: var(--studio-warn);
-            border-color: var(--studio-warn);
-        }
-
-        .prism-verify-badge--overridden {
-            color: var(--studio-neg);
-            border-color: var(--studio-neg);
-        }
-
-        .prism-verify-badge--unverifiable {
-            color: var(--studio-ink-dim);
-            border-color: var(--studio-border);
-        }
-
-        .prism-verify-annotation {
-            font-size: 0.75rem;
-            color: var(--studio-ink-dim);
+        /* ------------------------------------------------------------------ */
+        /* Advisor observations: one line per producer, its history behind it  */
+        /* ------------------------------------------------------------------ */
+        .obs-section .obs-framing-note {
+            margin: 0 0 12px;
+            font-size: 12px;
             line-height: 1.5;
-            margin-top: 0.25rem;
-        }
-
-        /* Compact verdict-first summary (2026-07 redesign): a single verdict
-           pill + short count line replaces the flat wall of pass/unverifiable
-           badges — only flagged/overridden checks render individually below. */
-        .prism-verify-summary {
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 0.5rem;
-        }
-
-        .prism-verify-summary-count {
-            font-size: 0.75rem;
             color: var(--studio-ink-dim);
         }
-
-        /* /review PR #92: the verdict pill reuses the 4 check-badge classes
-           above (--pass/--flagged/--overridden/--unverifiable) via the
-           verdict_class mapping computed in ai_advisor_tab() — no separate
-           --clean/--flags-detected/--overrides-detected/--no-*-claims classes,
-           those were pixel-identical dupes of the same 4 --studio-* pairs. */
-
-        .prism-verify-details {
-            margin-top: 0.5rem;
+        .obs-section-note { font-size: 12px; font-weight: 400; color: var(--studio-ink-dim); margin-left: 8px; }
+        .obs-producer { border-top: 1px solid var(--studio-border); }
+        .obs-history > summary { list-style: none; cursor: pointer; }
+        .obs-history > summary::-webkit-details-marker { display: none; }
+        .obs-producer-line {
+            display: grid;
+            grid-template-columns: 12rem minmax(0, 1fr) 11rem 8rem 5rem;
+            align-items: baseline;
+            gap: 4px 16px;
+            padding: 8px 0;
+            font-size: 13px;
         }
-
-        .prism-verify-details > summary {
-            cursor: pointer;
-            font-size: 0.75rem;
+        .obs-producer-label { font-weight: 500; color: var(--studio-ink); margin: 0; }
+        .obs-producer-verdict { min-width: 0; }
+        .obs-producer-time, .obs-producer-total { color: var(--studio-ink-dim); font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
+        .obs-history-toggle { color: var(--studio-ink-dim); font-size: 12px; text-align: right; }
+        .obs-history-toggle::before { content: "+ "; }
+        .obs-history[open] .obs-history-toggle::before { content: "\2212  "; }
+        @media (max-width: 700px) {
+            .obs-producer-line {
+                grid-template-columns: minmax(0, 1fr) auto;
+                grid-template-areas:
+                    "label toggle"
+                    "verdict verdict"
+                    "time total";
+            }
+            .obs-producer-label { grid-area: label; }
+            .obs-history-toggle { grid-area: toggle; }
+            .obs-producer-verdict { grid-area: verdict; }
+            .obs-producer-time { grid-area: time; text-align: left; }
+            .obs-producer-total { grid-area: total; }
+        }
+        .obs-scroll { overflow-x: auto; max-width: 100%; padding-bottom: 8px; }
+        .obs-history-note { margin: 4px 0 8px; font-size: 12px; color: var(--studio-ink-dim); }
+        .obs-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .obs-table th {
+            text-align: left;
+            font-size: 12px;
+            font-weight: 400;
+            color: var(--studio-ink-muted);
+            padding: 4px 12px 4px 0;
+            border-bottom: 1px solid var(--studio-border);
+        }
+        .obs-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--studio-border); vertical-align: top; }
+        .obs-table tr:last-child td { border-bottom: none; }
+        .obs-table .obs-time { white-space: nowrap; }
+        /* Verdict classes: colour via design-system tokens, never raw hex. */
+        .verdict-clear, .verdict-watch, .verdict-breach, .verdict-unknown { color: var(--studio-ink); font-weight: 500; }
+        .verdict-clear::before, .verdict-watch::before, .verdict-breach::before, .verdict-unknown::before {
+            content: "";
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            margin-right: 6px;
+            border-radius: 50%;
+            background: var(--dot, var(--studio-ink-dim));
+        }
+        .verdict-clear { --dot: var(--studio-pos); }
+        .verdict-watch { --dot: var(--studio-warn); }
+        .verdict-breach { --dot: var(--studio-neg); }
+        .obs-empty { color: var(--studio-ink-dim); font-size: 13px; text-align: left; padding: 16px 0; }
+        .obs-raw-preview {
+            font-size: 12px;
             color: var(--studio-ink-dim);
-            user-select: none;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
-        .prism-verify-details > summary:hover {
-            color: var(--studio-ink);
-        }
-
-        .prism-verify-details-list {
-            margin-top: 0.5rem;
+        /* A narrower page: the panels give up some padding. */
+        @media (max-width: 700px) {
+            .adv-panel { padding: 16px; margin-bottom: 12px; }
+            .adv-panel--nav { padding: 0; margin-bottom: 12px; }
+            .adv-panel--bare, .adv-panel--stack { padding: 0; margin-bottom: 0; }
+            .adv-grid { margin-bottom: 12px; }
+            .adv-card { padding: 12px; }
+            .tenure-review-entry-head { flex-wrap: wrap; }
+            .stats-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -1248,7 +1071,7 @@
 
         <!-- First panel: the page's description line and the capability tab bar. No title card;
              the nav marks the page. -->
-        <section class="hero-section" data-testid="advisor-nav-panel">
+        <section class="hero-section adv-panel adv-panel--nav" data-testid="advisor-nav-panel">
             {# AC-1 (F4, Gap D): the page-global "Claude-powered" claim was TRUE
                    for 3 of 6 tabs and FALSE/MISLEADING for the other 3 — the audit's
                    likely root cause of operator distrust (first thing rendered on
@@ -1256,7 +1079,7 @@
                    attribution now lives per-tab below (cap-tab-attribution), driven
                    by the same accessors the engine actually calls, never a hardcoded
                    model-name literal (AC-16 attribution-coherence requirement). #}
-            <p class="legend-as-of adv-caption" data-testid="advisor-caption">
+            <p class="legend-as-of adv-caption adv-note" data-testid="advisor-caption">
                 Advisory suite — operator must approve each change through safety gates
             </p>
 
@@ -1296,7 +1119,6 @@
                     data-tab="asset-swaps">
                 Asset Swaps
                 <span class="cap-tab-badge" title="Low risk when gated"></span>
-                <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1306,7 +1128,6 @@
                     data-tab="logic-changes">
                 Logic Changes
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Higher overfitting risk"></span>
-                <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1316,7 +1137,6 @@
                     data-tab="chat">
                 Chat
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Explain-only"></span>
-                <span class="cap-tab-attribution">{{ advisor_synthesis_model | e }}</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1326,7 +1146,6 @@
                     data-tab="strategy-builder">
                 Strategy Builder
                 <span class="cap-tab-badge cap-tab-badge--yellow" title="Highest overfitting risk — building from scratch"></span>
-                <span class="cap-tab-attribution">{{ advisor_suggestion_model | e }} + community, statistically gated</span>
             </button>
             <button role="tab"
                     aria-selected="false"
@@ -1349,66 +1168,66 @@
              data-tab="overview"
              class="tab-panel tab-panel--active">
 
-        {# One line pointing at the Retirement tab. Its text comes from _build_retirement_pointer over context this page already reads, so it makes no request of its own. #}
-        <div class="mini-stats retirement-pointer-row">
-            <a class="mini-stat" href="#retirement" data-testid="retirement-pointer"><span class="mini-stat-label">{{ retirement_pointer.text }} <span aria-hidden="true">&rarr;</span></span></a>
-        </div>
-
-
-        <!-- Controls bar -->
-        <div data-testid="advisor-controls" class="hero-section adv-controls">
-            <div class="ctrl-group">
-                <label class="ctrl-label" for="symphony-id-input">Symphony</label>
-                <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
-                    <option value="">Select symphony…</option>
-                </select>
-            </div>
-            <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
-                    onclick="getSuggestions()" disabled>
-                Run Claude advisor
-            </button>
-            <div id="advisor-error" class="adv-error"></div>
-        </div>
-
-        <!-- Summary strip -->
-        <div id="advisor-summary-strip" data-testid="advisor-summary-strip" class="summary-strip" hidden>
-            <div data-testid="chip-total-suggestions" class="summary-chip"
-                 id="chip-total">0 suggestions</div>
-            <div data-testid="chip-oos-passed" class="summary-chip"
-                 id="chip-passed">0 OOS passed</div>
-            <div data-testid="chip-oos-rejected" class="summary-chip"
-                 id="chip-rejected">0 OOS rejected</div>
-        </div>
-
-        <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
-             Uses textContent only; never innerHTML (XSS guard). -->
-        <div id="advisor-lens-as-of"
-             data-testid="advisor-lens-as-of"
-             class="prism-as-of"
-             style="display:none;padding:0.25rem 0;"></div>
-
-        <!-- Two-column grid -->
+        {# The Overview's top panel. One toolbar row holds the symphony picker, Run, the one-line hint (it sits
+           in the suggestions column while that column holds only the hint) and the pointer at the Retirement
+           tab; the lens stamp, the run summary and any suggestions follow, then the autotune runs. The
+           pointer text comes from _build_retirement_pointer over context this page already reads, so it
+           makes no request of its own. #}
         <div data-testid="advisor-grid" class="adv-grid">
 
-            <!-- Left: suggestions -->
+            <a class="adv-pointer" href="#retirement" data-testid="retirement-pointer">{{ retirement_pointer.text }} <span aria-hidden="true">&rarr;</span></a>
+
+            <!-- Controls -->
+            <div data-testid="advisor-controls" class="adv-controls">
+                <div class="ctrl-group">
+                    <label class="ctrl-label" for="symphony-id-input">Symphony</label>
+                    <select id="symphony-id-input" data-testid="symphony-select" class="ctrl-select">
+                        <option value="">Select symphony…</option>
+                    </select>
+                </div>
+                <button id="get-suggestions-btn" data-testid="run-advisor-btn" class="run-btn"
+                        onclick="getSuggestions()" disabled>
+                    Run Claude advisor
+                </button>
+                <div id="advisor-error" class="adv-error"></div>
+            </div>
+
+            <!-- Summary strip -->
+            <div id="advisor-summary-strip" data-testid="advisor-summary-strip" class="summary-strip" hidden>
+                <div data-testid="chip-total-suggestions" class="summary-chip"
+                     id="chip-total">0 suggestions</div>
+                <div data-testid="chip-oos-passed" class="summary-chip"
+                     id="chip-passed">0 OOS passed</div>
+                <div data-testid="chip-oos-rejected" class="summary-chip"
+                     id="chip-rejected">0 OOS rejected</div>
+            </div>
+
+            <!-- Lens-cache staleness stamp (AC-3) — hidden until JS populates from suggest response.
+                 Uses textContent only; never innerHTML (XSS guard). -->
+            <div id="advisor-lens-as-of"
+                 data-testid="advisor-lens-as-of"
+                 class="prism-as-of adv-stamp"
+                 style="display:none;"></div>
+
+            <!-- Suggestions: the hint until a run returns -->
             <div data-testid="suggestions-column" class="suggestions-col" id="suggestions-container">
-                <div data-testid="suggestions-placeholder" class="hero-section suggestions-placeholder">
+                <div data-testid="suggestions-placeholder" class="suggestions-placeholder">
                     Select a symphony and click Run Claude advisor to get suggestions.
                 </div>
             </div>
 
-            <!-- Right: autotune panel -->
-            <aside data-testid="autotune-panel" class="hero-section autotune-panel">
-                <div data-testid="autotune-panel-header" class="section-header autotune-header">
-                    Recent Autotune Runs
+            <!-- Autotune runs: one table row per symphony -->
+            <aside data-testid="autotune-panel" class="hero-section autotune-panel adv-panel adv-panel--bare">
+                <div data-testid="autotune-panel-header" class="section-header autotune-header adv-heading">
+                    Recent autotune runs
                 </div>
-                <canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;margin-bottom:0.75rem;width:100%;height:60px;"></canvas>
+                {# The chart sits in a box of its own with a set height: a responsive chart sizes itself from its
+                   parent, and a parent that also holds the table would feed its own height back into the chart. #}
+                <div class="autotune-spark"><canvas data-testid="autotune-sparkline" id="autotune-sparkline-canvas" width="220" height="60" style="display:block;width:100%;height:100%;"></canvas></div>
                 <div id="autotune-runs-list" data-testid="autotune-runs-list">
-                    <div class="sym-card autotune-run-card" style="color:var(--studio-ink-dim);font-size:0.875rem;text-align:center;">
-                        Loading…
-                    </div>
+                    <div class="autotune-empty">Loading…</div>
                 </div>
-                {# The runs beyond one card per symphony. Static, so a 15 s poll only rewrites the
+                {# The runs beyond one row per symphony. Static, so a 15 s poll only rewrites the
                    rows and the summary text and never closes a details the operator opened;
                    hidden while it has no rows (no display rule on .autotune-older, so the
                    hidden attribute is what governs it). #}
@@ -1425,7 +1244,7 @@
         <!-- Reads from get_latest_market_prism_summary() prefetched in   -->
         <!-- the route.  Advisory-only, no trade affordances.             -->
         <!-- ============================================================ -->
-        <div data-testid="market-prism-block" class="hero-section prism-block">
+        <div data-testid="market-prism-block" class="hero-section prism-block adv-panel">
 
             {# Determine the sentiment value and CSS modifier once for the block #}
             {% if market_prism_summary %}
@@ -1437,18 +1256,11 @@
             {% endif %}
 
             <div class="prism-block-header">
-                <span class="section-header prism-block-title">Market Prism</span>
-                <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+                <span class="section-header prism-block-title adv-heading">Market Prism</span>
                 {% if market_prism_summary %}
-                    <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
-                {% endif %}
-            </div>
-
-            {% if market_prism_summary %}
-
-                {# Sentiment chip — maps overall_sentiment to semantic CSS modifier.
-                   Both canonical (risk-on/risk-off) and synonym (bullish/bearish) forms
-                   are emitted by the lens_pipeline synthesizer; both sets must map. #}
+                {# Sentiment verdict: a dot and one word. Maps overall_sentiment to its semantic CSS modifier.
+                   Both canonical (risk-on/risk-off) and synonym (bullish/bearish) forms are emitted by the
+                   lens_pipeline synthesizer; both sets must map. #}
                 {% set _chip_class = {
                     'bullish':        'prism-sentiment-chip--risk-on',
                     'risk-on':        'prism-sentiment-chip--risk-on',
@@ -1457,9 +1269,16 @@
                     'neutral':        'prism-sentiment-chip--neutral',
                     'limited-inputs': 'prism-sentiment-chip--limited-inputs',
                 }.get(_sentiment, 'prism-sentiment-chip--neutral') %}
-
                 <span class="prism-sentiment-chip {{ _chip_class }}"
                       data-testid="prism-sentiment-chip">{{ _sentiment | e }}</span>
+                {% endif %}
+                <span class="prism-model-badge" data-testid="prism-model-badge">Synthesized by {{ advisor_synthesis_model | e }}</span>
+                {% if market_prism_summary %}
+                    <span class="prism-as-of" data-testid="prism-as-of">As of {{ _created | et_stamp }}</span>
+                {% endif %}
+            </div>
+
+            {% if market_prism_summary %}
 
                 {% if _rationale %}
                     <p class="prism-rationale" data-testid="prism-rationale">{{ _rationale | e }}</p>
@@ -1474,14 +1293,19 @@
                             {% set _available = _lens.get('available', false) %}
                             <div class="prism-lens {% if _available %}prism-lens--available{% else %}prism-lens--unavailable{% endif %}"
                                  data-testid="prism-lens-{{ _lens_name }}">
-                                <div class="prism-lens-name">{{ _lens_name | e }}</div>
+                                <div class="prism-lens-head">
+                                    <span class="prism-lens-name">{{ _lens_name | capitalize | e }}</span>
+                                    {% if _available %}
+                                        <span class="prism-lens-status prism-lens-status--ok">Available</span>
+                                    {% else %}
+                                        <span class="prism-lens-status prism-lens-status--unavailable">Unavailable</span>
+                                    {% endif %}
+                                </div>
                                 {% if _available %}
-                                    <span class="prism-lens-status prism-lens-status--ok">Available</span>
                                     {% if _lens.get('summary') %}
                                         <p class="prism-lens-text">{{ _lens.get('summary') | e }}</p>
                                     {% endif %}
                                 {% else %}
-                                    <span class="prism-lens-status prism-lens-status--unavailable">Unavailable</span>
                                     {% if _lens.get('reason') %}
                                         <p class="prism-lens-text">{{ _lens.get('reason') | e }}</p>
                                     {% endif %}
@@ -1504,9 +1328,14 @@
                         {% set _ns.any_sources = true %}
                     {% endif %}
                 {% endfor %}
+                {% set _src_n = namespace(total=0) %}
+                {% for _lname in _lens_names %}
+                    {% set _le = _per_lens.get(_lname, {}) %}
+                    {% set _src_n.total = _src_n.total + (_le.get('article_corpus', []) | length) + (_le.get('sources', []) | length) %}
+                {% endfor %}
                 {% if _ns.any_sources %}
-                    <div data-testid="prism-sources">
-                        <div class="prism-sources-header">Sources</div>
+                    <details class="prism-sources" data-testid="prism-sources">
+                        <summary>Sources ({{ _src_n.total }})</summary>
                         {% for _lname in _lens_names %}
                             {% set _le = _per_lens.get(_lname, {}) %}
                             {% set _le_articles = _le.get('article_corpus', []) %}
@@ -1541,7 +1370,7 @@
                                 </div>
                             {% endif %}
                         {% endfor %}
-                    </div>
+                    </details>
                 {% endif %}
 
                 {# Numeric verification overlay (DE-PRISM-NUMERIC-VERIFY-001, AC-10).
@@ -1587,7 +1416,7 @@
                 {% endmacro %}
                 {% if market_prism_verification is not none %}
                     <div data-testid="prism-verification" class="prism-verification">
-                        <div class="prism-verification-header">Numeric Verification</div>
+                        <div class="prism-verification-header">Numeric verification</div>
 
                         {# verdict_label/verdict_class computed in ai_advisor_tab()
                            (single source of truth — /review PR #92): the pill
@@ -1641,109 +1470,6 @@
         <!-- advisor_observations rows. data-testid used by tests:         -->
         <!-- advisor-observations-section                                  -->
         <!-- ============================================================ -->
-        <style>
-            /* The explanation sits at caption size, below the status lines it explains. */
-            .obs-section .obs-framing-note {
-                margin: 0 0 0.75rem;
-                font-size: 0.625rem;
-                line-height: 1.45;
-                color: var(--studio-ink-dim);
-            }
-
-            /* One status line per producer; its history opens below the line. */
-            .obs-producer {
-                border-top: 1px solid var(--studio-border);
-                padding: 0.625rem 0;
-            }
-            .obs-producer-line {
-                display: flex;
-                flex-wrap: wrap;
-                align-items: baseline;
-                gap: 0.25rem 1rem;
-                font-size: 0.8125rem;
-            }
-            .obs-producer .obs-producer-label {
-                margin: 0;
-                min-width: 11rem;
-            }
-            .obs-producer-time,
-            .obs-producer-total {
-                color: var(--studio-ink-dim);
-                font-variant-numeric: tabular-nums;
-            }
-            .obs-history { margin-top: 0.375rem; }
-            .obs-scroll { overflow-x: auto; max-width: 100%; }
-            .obs-history > summary {
-                cursor: pointer;
-                font-size: 0.6875rem;
-                color: var(--studio-ink-dim);
-            }
-            .obs-history-note {
-                margin: 0.375rem 0 0;
-                font-size: 0.6875rem;
-                color: var(--studio-ink-dim);
-            }
-
-            .obs-table {
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 0.8125rem;
-            }
-            .obs-table th {
-                text-align: left;
-                font-size: 0.625rem;
-                font-weight: 700;
-                text-transform: uppercase;
-                letter-spacing: 0.08em;
-                color: var(--studio-ink-muted);
-                padding: 0.375rem 0.625rem;
-                border-bottom: 1px solid var(--studio-border);
-            }
-            .obs-table td {
-                padding: 0.5rem 0.625rem;
-                border-bottom: 1px solid var(--studio-border);
-                vertical-align: top;
-            }
-            .obs-table tr:last-child td { border-bottom: none; }
-            .obs-table .obs-time { white-space: nowrap; }
-
-            /* Verdict classes — color via design-system tokens, never raw hex. */
-            .verdict-clear { color: var(--studio-pos); font-weight: 700; }
-            .verdict-watch { color: var(--studio-warn); font-weight: 700; }
-            .verdict-breach { color: var(--studio-neg); font-weight: 700; }
-            .verdict-unknown { color: var(--studio-ink-dim); font-weight: 700; }
-
-            /* Advisory-only badge */
-            .advisory-only-badge {
-                display: inline-block;
-                padding: 0.1rem 0.4rem;
-                border-radius: 999px;
-                font-size: 0.5rem;
-                font-weight: 700;
-                letter-spacing: 0.06em;
-                text-transform: uppercase;
-                border: 1px solid var(--studio-border);
-                color: var(--studio-ink-dim);
-                white-space: nowrap;
-            }
-
-            .obs-empty {
-                color: var(--studio-ink-dim);
-                font-size: 0.875rem;
-                text-align: center;
-                padding: 1.5rem 0;
-            }
-
-            .obs-raw-preview {
-                font-size: 0.6875rem;
-                color: var(--studio-ink-dim);
-                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                width: 100%;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-        </style>
 
         {# Role label mapping — human-friendly names for operator display #}
         {%- set _ROLE_LABELS = {
@@ -1767,8 +1493,8 @@
         {# What a line and a row read when the stored verdict is NULL or empty. #}
         {%- set _VERDICT_NOT_RECORDED = "verdict not recorded" -%}
 
-        <section data-testid="advisor-observations-section" class="hero-section obs-section">
-            <div class="section-header obs-section-header">Advisor Observations</div>
+        <section data-testid="advisor-observations-section" class="hero-section obs-section adv-panel">
+            <div class="section-header obs-section-header adv-heading">Advisor observations<span class="obs-section-note" data-testid="obs-advisory-only" title="Advisory only: nothing here moves money">advisory only, nothing here moves money</span></div>
             {# AC-14 (F8, doc-reconciliation.md §1.8): the three guardrail producers are
                NOT uniform — Spec Critic is a genuine active control (an empty/missing-facet
                bundle triggers BREACH, not a default CLEAR, so a CLEAR is an evaluated pass);
@@ -1796,15 +1522,15 @@
             {% set latest_verdict = latest.verdict or _VERDICT_NOT_RECORDED %}
             {% set latest_class = _VERDICT_CLASS.get(latest.verdict, "verdict-unknown") %}
             <div class="obs-producer" data-testid="obs-producer" data-role="{{ group.role | e }}">
-                <div class="obs-producer-line">
-                    <span class="section-header obs-producer-label" data-testid="obs-producer-label">{{ _ROLE_LABELS.get(group.role, group.role) | e }}</span>
-                    <span class="obs-producer-verdict {{ latest_class }}" data-testid="obs-producer-verdict">{{ (latest.verdict | advisor_words) if latest.verdict else _VERDICT_NOT_RECORDED }}</span>
-                    <span class="obs-producer-time" data-testid="obs-producer-time">{{ latest.created_at | et_stamp }}</span>
-                    <span class="obs-producer-total" data-testid="obs-producer-total">{{ group.total }} {{ "observation" if group.total == 1 else "observations" }}</span>
-                    <span class="advisory-only-badge" title="Advisory only — never moves money">advisory only</span>
-                </div>
+                {# One line per producer: its latest read. The history opens from that line. #}
                 <details class="obs-history" data-testid="obs-producer-history">
-                    <summary>History</summary>
+                    <summary class="obs-producer-line">
+                        <span class="section-header obs-producer-label adv-heading" data-testid="obs-producer-label">{{ _ROLE_LABELS.get(group.role, group.role) | e }}</span>
+                        <span class="obs-producer-verdict {{ latest_class }}" data-testid="obs-producer-verdict">{{ (latest.verdict | advisor_words) if latest.verdict else _VERDICT_NOT_RECORDED }}</span>
+                        <span class="obs-producer-time" data-testid="obs-producer-time">{{ latest.created_at | et_stamp }}</span>
+                        <span class="obs-producer-total" data-testid="obs-producer-total">{{ group.total }} {{ "observation" if group.total == 1 else "observations" }}</span>
+                        <span class="obs-history-toggle">History</span>
+                    </summary>
                     {# The table scrolls inside its box: an open history never widens the page. #}
                     <div class="obs-scroll">
                     <table class="obs-table">
@@ -1814,7 +1540,6 @@
                                 <th>Symphony</th>
                                 <th>Subject</th>
                                 <th>Verdict</th>
-                                <th>Badge</th>
                                 <th>Summary</th>
                             </tr>
                         </thead>
@@ -1834,12 +1559,6 @@
                                 {% endif %}
                                 <td><span title="{{ obs.subject_id | e }}">{{ obs.subject_type | advisor_words }}</span></td>
                                 <td class="{{ verdict_class }}" data-testid="obs-verdict">{{ (obs.verdict | advisor_words) if obs.verdict else _VERDICT_NOT_RECORDED }}</td>
-                                <td>
-                                    <span class="advisory-only-badge" data-testid="advisory-only-badge"
-                                          title="Advisory only — never moves money">
-                                        advisory only
-                                    </span>
-                                </td>
                                 <td class="obs-raw-preview" data-testid="obs-summary">
                                     {%- if obs.advisor_role == 'MARKET_PRISM' -%}
                                         {{ obs.verdict | e }}
@@ -1876,7 +1595,7 @@
 
             <!-- Crisis caveat banner — always on (AC-1.4) -->
             <div class="crisis-caveat" data-testid="crisis-caveat-banner" role="note">
-                <span class="crisis-caveat-icon" aria-hidden="true">&#x26A0;</span>
+                <span class="crisis-caveat-icon" aria-hidden="true"></span>
                 <p class="crisis-caveat-text">
                     {{ crisis_caveat }}
                 </p>
@@ -1889,7 +1608,7 @@
             {% if _cm.state != 'matrix' %}
 
             {# One state block, no matrix: no run yet, a run without pairs, a failed run, or an unreadable one. #}
-            <div class="hero-section correlations-state" data-testid="correlations-state" data-state="{{ _cm.state }}">
+            <div class="hero-section correlations-state adv-panel" data-testid="correlations-state" data-state="{{ _cm.state }}">
                 <div class="correlations-state-title">{{ _cm.title }}</div>
                 {% for _line in _cm.lines %}
                 <p class="correlations-state-line">{{ _line }}</p>
@@ -1899,15 +1618,15 @@
             {% else %}
 
             <div class="correlations-notes">
-                <div class="legend-as-of" data-testid="correlations-basis">Basis: {{ _cm.basis }}</div>
-                <div class="legend-as-of" data-testid="correlations-as-of">{{ _cm.as_of }}</div>
+                <div class="legend-as-of adv-note" data-testid="correlations-basis">Basis: {{ _cm.basis }}</div>
+                <div class="legend-as-of adv-note" data-testid="correlations-as-of">{{ _cm.as_of }}</div>
                 {% if _cm.earlier_run_note %}
-                <div class="legend-as-of" data-testid="correlations-earlier-run-note">{{ _cm.earlier_run_note }}</div>
+                <div class="legend-as-of adv-note" data-testid="correlations-earlier-run-note">{{ _cm.earlier_run_note }}</div>
                 {% endif %}
             </div>
 
-            <section class="hero-section matrix-card" data-testid="pairwise-matrix-card">
-                <div class="section-header matrix-card-header">Pairwise Return Correlation</div>
+            <section class="hero-section matrix-card adv-panel" data-testid="pairwise-matrix-card">
+                <div class="section-header matrix-card-header adv-heading">Pairwise return correlation</div>
                 <div class="matrix-scroll">
                 <table class="heatmap-table" data-testid="correlation-matrix-table">
                     <thead>
@@ -1946,7 +1665,7 @@
                 </div>{# /matrix-scroll #}
 
                 <div class="correlations-series" data-testid="correlations-series">
-                    <div class="legend-as-of">Series held per symphony (first to last day)</div>
+                    <div class="legend-as-of adv-note">Series held per symphony (first to last day)</div>
                     <ul>
                         {%- for _ax in _cm.axes -%}
                         <li data-testid="correlations-series-item" title="{{ _ax.sym }}">{{ _ax.number }} {{ _ax.name }}: {{ _ax.series_first }} to {{ _ax.series_last }} ({{ _ax.series_points }} points)</li>
@@ -2006,7 +1725,7 @@
                     {% if candidate_id %}
                     {# The pill class per decision state; static/ai_advisor.js swaps to the same three pairs. #}
                     {% set _pill_class = {'pending': 'standby', 'approved': 'armed', 'rejected': 'triggered'}.get(status or 'pending', 'standby') %}
-                    <span class="status-pill {{ _pill_class }}"
+                    <span class="status-pill adv-status {{ _pill_class }}"
                           data-testid="retirement-rec-status">
                         {{- (status or 'pending') | capitalize -}}
                     </span>
@@ -2154,12 +1873,12 @@
             </div>
         {% endmacro %}
 
-        <section class="hero-section matrix-card" data-testid="retirement-recommendations-panel">
-            <div class="section-header matrix-card-header">Retirement Recommendations</div>
+        <section class="hero-section matrix-card adv-panel" data-testid="retirement-recommendations-panel">
+            <div class="section-header matrix-card-header adv-heading">Retirement recommendations</div>
 
             {# The recommender first: the card to act on is at the top, then the run it came from. #}
             <section class="retirement-subsection" data-testid="retirement-recommender-section">
-                <div class="section-header">Correlated pairs</div>
+                <div class="section-header adv-heading">Correlated pairs</div>
             {# Cycle 2e AC-5b: the cards below are scoped to the latest SUCCESSFUL #}
             {# run, so when the most recent run (shown in the block above) was    #}
             {# not that run -- it failed -- say which run the cards come from.    #}
@@ -2177,7 +1896,7 @@
 
             {% if retirement_recommendations %}
                 {% for rec in retirement_recommendations %}
-                <div class="sym-card retirement-rec-card" data-testid="retirement-recommendation-card">
+                <div class="sym-card retirement-rec-card adv-card" data-testid="retirement-recommendation-card">
                     {# Resolved display name is primary; the raw Composer hash stays available but secondary (title tooltip). #}
                     {# A stored id, name or label that is not non-blank text reads "not recorded"; a card without a usable candidate id offers no decision. #}
                     {% set _cid = rec.get('candidate_id') %}
@@ -2189,7 +1908,7 @@
                     {% set _cand_display = (_cname if _cname is string and _cname.strip() else _cid) if _cid_ok else 'not recorded' %}
                     {% set _sib_display = (_sname if _sname is string and _sname.strip() else _sid) if _sid_ok else 'not recorded' %}
                     <div class="card-header-row">
-                        <div class="retirement-rec-pair card-name">
+                        <div class="retirement-rec-pair card-name adv-card-name">
                             <span class="retirement-rec-candidate" title="{{ (_cid if _cid_ok else 'not recorded') | e }}">{{ _cand_display | e }}</span>
                             <span aria-hidden="true">&rarr;</span>
                             <span class="retirement-rec-sibling" title="{{ (_sid if _sid_ok else 'not recorded') | e }}">kept: {{ _sib_display | e }}</span>
@@ -2230,23 +1949,23 @@
                 {% if retirement_last_run %}
                     {% set _lr = retirement_last_run %}
                     {% set _st = _lr.get('status') %}
-                    <div class="legend-as-of" data-testid="retirement-last-run-time">Last run {{ _lr.get('run_at') | et_stamp }}</div>
+                    <div class="legend-as-of adv-note" data-testid="retirement-last-run-time">Last run {{ _lr.get('run_at') | et_stamp }}</div>
 
                     {% if _st == 'ok' %}
                         <div class="retirement-last-run-line" data-testid="retirement-last-run-basis">
                             Basis: {{ _lr | retirement_basis }}
                         </div>
                         {% if retirement_series_through %}
-                        <div class="legend-as-of" data-testid="retirement-last-run-series-through">Series through {{ retirement_series_through }}</div>
+                        <div class="legend-as-of adv-note" data-testid="retirement-last-run-series-through">Series through {{ retirement_series_through }}</div>
                         {% endif %}
                         {# Five tiles from _build_retirement_summary_tiles, in its order; the ids are the ones the lines carried. #}
                         {% set _tile_ids = ['retirement-last-run-symphonies', 'retirement-last-run-depth', 'retirement-last-run-pairs', 'retirement-last-run-blocked', 'retirement-last-run-recommendations'] %}
-                        <div class="mini-stats retirement-tiles">
+                        <div class="mini-stats retirement-tiles adv-figs">
                             {% for _tile in retirement_summary_tiles %}
-                            <div class="mini-stat" data-testid="{{ _tile_ids[loop.index0] }}">
-                                <div class="mini-stat-value">{{ _tile.value }}</div>
-                                <div class="mini-stat-label">{{ _tile.label }}</div>
-                                {% if _tile.detail %}<div class="legend-as-of">{{ _tile.detail }}</div>{% endif %}
+                            <div class="mini-stat adv-fig" data-testid="{{ _tile_ids[loop.index0] }}">
+                                <div class="mini-stat-value adv-fig-value">{{ _tile.value }}</div>
+                                <div class="mini-stat-label adv-fig-label">{{ _tile.label }}</div>
+                                {% if _tile.detail %}<div class="legend-as-of adv-note">{{ _tile.detail }}</div>{% endif %}
                             </div>
                             {% endfor %}
                         </div>
@@ -2309,7 +2028,7 @@
             </section>
 
             <section class="retirement-subsection" data-testid="tenure-review-section">
-                <div class="section-header">Symphony tenure review</div>
+                <div class="section-header adv-heading">Symphony tenure review</div>
             {# Symphony tenure review: header, run state, then one entry per live symphony. #}
             <div class="tenure-review-header">
                 <button type="button"
@@ -2352,9 +2071,9 @@
             {% set status = e.get('approval_status') %}
             {% set vtext = e.get('verdict_text') %}
             {% set chip_mod = verdict_mod if vtext is string and vtext.strip() else 'none' %}
-            <div class="sym-card tenure-review-entry retirement-rec-card" data-testid="tenure-review-entry" data-symphony-id="{{ sid }}">
+            <div class="sym-card tenure-review-entry retirement-rec-card adv-card" data-testid="tenure-review-entry" data-symphony-id="{{ sid }}">
                 <div class="tenure-review-entry-head retirement-rec-pair">
-                    <span class="tenure-review-name card-name" data-testid="tenure-review-name" title="{{ sid }}">{% set dn = e.get('display_name') %}{{ dn if dn is string and dn.strip() else (sid if sid.strip() else 'not recorded') }}</span>
+                    <span class="tenure-review-name card-name adv-card-name" data-testid="tenure-review-name" title="{{ sid }}">{% set dn = e.get('display_name') %}{{ dn if dn is string and dn.strip() else (sid if sid.strip() else 'not recorded') }}</span>
                     <span class="tenure-verdict-chip tenure-verdict-chip--{{ chip_mod }}" data-testid="tenure-review-verdict-chip">{{ e.get('verdict_text') | tenure_text }}</span>
                 </div>
                 {% if 'tenure_trading_days' in e %}
@@ -2415,8 +2134,10 @@
              data-tab="asset-swaps"
              class="tab-panel">
 
+            <p class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</p>
+
             <div class="advise-only-banner" data-testid="advise-only-banner" role="note">
-                <span class="advise-only-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <span class="advise-only-banner-icon" aria-hidden="true"></span>
                 <p class="advise-only-banner-text">
                     <strong>Advise only — no trades are placed from this screen.</strong>
                     Swap proposals that survive the gate are recommendations only.
@@ -2425,16 +2146,16 @@
             </div>
 
             {% if no_api_key %}
-            <div class="hero-section no-api-key-state" data-testid="no-api-key-state">
-                <div class="no-api-key-title">Advisor Unavailable</div>
+            <div class="hero-section no-api-key-state adv-panel" data-testid="no-api-key-state">
+                <div class="no-api-key-title">Advisor unavailable</div>
                 <div class="no-api-key-body">
                     Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
                     <code>COMPOSER_SECRET</code> to enable swap proposals.
                 </div>
             </div>
             {% else %}
-            <div class="hero-section try-swap-panel" data-testid="try-swap-panel">
-                <div class="section-header try-swap-header">Try a Swap</div>
+            <div class="hero-section try-swap-panel adv-panel" data-testid="try-swap-panel">
+                <div class="section-header try-swap-header adv-heading">Try a swap</div>
                 <div class="try-swap-form" data-testid="try-swap-form">
                     <div class="form-group">
                         <label class="form-label" for="swap-symphony-select">Symphony</label>
@@ -2482,11 +2203,13 @@
              data-tab="logic-changes"
              class="tab-panel">
 
+            <p class="cap-tab-attribution">{{ advisor_suggestion_model | e }} — reasons over your live tree</p>
+
             <div class="fdr-warning-banner"
                  data-testid="fdr-warning-banner"
                  role="note"
                  aria-live="polite">
-                <span class="fdr-warning-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <span class="fdr-warning-banner-icon" aria-hidden="true"></span>
                 <p class="fdr-warning-banner-text">
                     <strong>Logic-change proposals carry the highest overfitting risk.</strong>
                     FDR/Yekutieli correction applied. Survivors are sound-but-unprovable.
@@ -2494,16 +2217,16 @@
             </div>
 
             {% if no_api_key %}
-            <div class="hero-section no-api-key-state" data-testid="no-api-key-state-logic">
-                <div class="no-api-key-title">Advisor Unavailable</div>
+            <div class="hero-section no-api-key-state adv-panel" data-testid="no-api-key-state-logic">
+                <div class="no-api-key-title">Advisor unavailable</div>
                 <div class="no-api-key-body">
                     Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
                     <code>COMPOSER_SECRET</code> to enable logic-change proposals.
                 </div>
             </div>
             {% else %}
-            <div class="hero-section try-tweak-panel" data-testid="try-tweak-panel">
-                <div class="section-header try-tweak-header">Try a Logic Tweak</div>
+            <div class="hero-section try-tweak-panel adv-panel" data-testid="try-tweak-panel">
+                <div class="section-header try-tweak-header adv-heading">Try a logic tweak</div>
                 <div class="try-tweak-form" data-testid="try-tweak-form">
                     <div class="form-row">
                         <div class="form-group">
@@ -2560,8 +2283,9 @@
              data-tab="chat"
              class="tab-panel">
 
-            <div data-testid="chat-default-state" class="hero-section chat-default-state">
-                <div class="chat-default-icon" aria-hidden="true">&#x1F4AC;</div>
+            <p class="cap-tab-attribution">{{ advisor_synthesis_model | e }}</p>
+
+            <div data-testid="chat-default-state" class="hero-section chat-default-state adv-panel">
                 <div class="chat-default-title">
                     Select a recommendation or diagnostic figure to open a contextual explanation.
                 </div>
@@ -2596,6 +2320,8 @@
              data-sb-labels='{{ {"objectives": sb_objective_labels, "sources": sb_source_labels, "not_recorded": sb_label_not_recorded} | tojson }}'
              class="tab-panel">
 
+            <p class="cap-tab-attribution">{{ advisor_suggestion_model | e }} + community, statistically gated</p>
+
             <!--
                 Persistent non-dismissible risk warning (AC-3.2 + AC-3.3).
                 Strategy Builder carries the highest overfitting risk tier — proposals
@@ -2606,7 +2332,7 @@
                  data-testid="strategy-builder-risk-banner"
                  role="note"
                  aria-live="polite">
-                <span class="sb-risk-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <span class="sb-risk-banner-icon" aria-hidden="true"></span>
                 <p class="sb-risk-banner-text">
                     <strong>Strategy Builder proposals carry the highest overfitting risk.</strong>
                     A multiple-testing correction (FDR/Yekutieli) is applied across ALL
@@ -2621,8 +2347,8 @@
 
             <!-- AC-X4: no API key configured — run controls unavailable.
                  Stored observations from previous runs are still shown below. -->
-            <div class="hero-section no-api-key-state" data-testid="no-api-key-state-sb">
-                <div class="no-api-key-title">Advisor Unavailable</div>
+            <div class="hero-section no-api-key-state adv-panel" data-testid="no-api-key-state-sb">
+                <div class="no-api-key-title">Advisor unavailable</div>
                 <div class="no-api-key-body">
                     Composer API key not configured. Set <code>COMPOSER_KEY_ID</code> and
                     <code>COMPOSER_SECRET</code> environment variables to enable
@@ -2633,8 +2359,8 @@
             {% else %}
 
             <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
-            <div class="hero-section run-controls-panel" data-testid="strategy-builder-controls">
-                <div class="section-header run-controls-header">Propose New Strategies</div>
+            <div class="hero-section run-controls-panel adv-panel" data-testid="strategy-builder-controls">
+                <div class="section-header run-controls-header adv-heading">Propose new strategies</div>
                 <div class="run-controls-row">
                     <div class="form-group">
                         <label class="form-label" for="sb-objective-select">Objective</label>
@@ -2818,7 +2544,7 @@
 
             <!-- Survivor cards (ADOPT_CANDIDATE) — ZERO action affordances -->
             {% if sb_survivors %}
-            <div class="section-header">Strategy Proposals — Gate Passed</div>
+            <div class="section-header adv-heading">Strategy proposals — gate passed</div>
             <div class="proposal-cards" data-testid="survivor-cards">
                 {% for obs in sb_survivors %}
                 {% set rr = obs.raw_response %}
@@ -2826,10 +2552,10 @@
                 {% set n_cand = rr.get('n_candidates') or 1 %}
                 {% set fdr_q_val = rr.get('fdr_q') or 0.05 %}
                 {% set p_adj = rr.get('winner_p_adj') %}
-                <div class="sym-card proposal-card proposal-card--survivor">
+                <div class="sym-card proposal-card proposal-card--survivor adv-card">
                     <div class="card-header-row">
-                        <span class="card-name">{{ render_sb_card_title(obs, rr) }}</span>
-                        <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
+                        <span class="card-name adv-card-name">{{ render_sb_card_title(obs, rr) }}</span>
+                        <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory only</span>
                     </div>
                     {# Forward incubation status chip — only rendered when app.py's
                        ai_advisor_tab() found a live ledger match for this survivor's
@@ -2907,14 +2633,14 @@
                         </tbody>
                     </table>
                     <div class="gate-verdict-row">
-                        <span class="gate-pill gate-pill--passed" data-testid="gate-verdict-pill">PASSED</span>
-                        <span style="font-size:0.75rem;color:var(--studio-ink-dim);">Cleared BHY/Yekutieli FDR gate</span>
+                        <span class="gate-pill gate-pill--passed" data-testid="gate-verdict-pill">Passed</span>
+                        <span class="gate-reason">Cleared BHY/Yekutieli FDR gate</span>
                         {% set fdr_display = rr.get('fdr_adjusted_threshold') or rr.get('fdr_q') or 0.05 %}
                         <span class="fdr-metadata" data-testid="fdr-metadata">
                             <strong>N={{ n_cand }}</strong> candidates tested
                             &middot; adjusted threshold &alpha;={{ "%.4f" | format(fdr_display) }} (Yekutieli-adjusted)
                             {% if p_adj is not none %}
-                            &middot; this candidate p={{ "%.4f" | format(p_adj) }} (PASSED)
+                            &middot; this candidate p={{ "%.4f" | format(p_adj) }} (passed)
                             {% endif %}
                         </span>
                     </div>
@@ -2957,14 +2683,14 @@
 
             <!-- Backtest-failed cards -->
             {% if sb_bt_failed %}
-            <div class="section-header" style="margin-top:1.25rem;">Backtest Failures</div>
+            <div class="section-header adv-heading">Backtest failures</div>
             <div class="proposal-cards">
                 {% for obs in sb_bt_failed %}
                 {% set rr = obs.raw_response %}
-                <div class="sym-card proposal-card proposal-card--backtest-failed" data-testid="backtest-failed-card">
+                <div class="sym-card proposal-card proposal-card--backtest-failed adv-card" data-testid="backtest-failed-card">
                     <div class="card-header-row">
-                        <span class="card-name">{{ render_sb_card_title(obs, rr) }}</span>
-                        <span class="gate-pill gate-pill--failed">BACKTEST FAILED</span>
+                        <span class="card-name adv-card-name">{{ render_sb_card_title(obs, rr) }}</span>
+                        <span class="gate-pill gate-pill--failed">Backtest failed</span>
                     </div>
                     {{ render_sb_objective_strip(obs) }}
                     <p class="backtest-error">Composer API returned: {{ rr.get('backtest_error', 'unknown error') | e }}</p>
@@ -2983,10 +2709,10 @@
                         {% set rr = obs.raw_response %}
                         {% set metrics = rr.get('metrics') or {} %}
                         {% set n_cand = rr.get('n_candidates') or 1 %}
-                        <div class="sym-card proposal-card proposal-card--rejected">
+                        <div class="sym-card proposal-card proposal-card--rejected adv-card">
                             <div class="card-header-row">
-                                <span class="card-name">{{ render_sb_card_title(obs, rr) }}</span>
-                                <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory Only</span>
+                                <span class="card-name adv-card-name">{{ render_sb_card_title(obs, rr) }}</span>
+                                <span class="advisory-only-badge" data-testid="advisory-only-badge">Advisory only</span>
                             </div>
                             {{ render_sb_sparkline(obs.sparkline_points) }}
                             {{ render_sb_objective_strip(obs) }}
@@ -3006,7 +2732,7 @@
                                 </tbody>
                             </table>
                             <div class="gate-verdict-row">
-                                <span class="gate-pill gate-pill--withheld" data-testid="gate-verdict-pill">WITHHELD</span>
+                                <span class="gate-pill gate-pill--withheld" data-testid="gate-verdict-pill">Withheld</span>
                                 <span class="fdr-metadata" data-testid="fdr-metadata"><strong>N={{ n_cand }}</strong> candidates tested</span>
                             </div>
                             {% set _reason_copy = _REJECTION_COPY.get(rr.get('rejection_reason')) %}
@@ -3068,7 +2794,7 @@
                  data-testid="frontrunner-builder-risk-banner"
                  role="note"
                  aria-live="polite">
-                <span class="sb-risk-banner-icon" aria-hidden="true">&#x26A0;</span>
+                <span class="sb-risk-banner-icon" aria-hidden="true"></span>
                 <p class="sb-risk-banner-text">
                     <strong>Approving a proposal creates a NEW UNDEPLOYED symphony
                     in your Composer account.</strong>
@@ -3083,7 +2809,7 @@
             <!-- ANTHROPIC_API_KEY not configured — the build needs it for Fable
                  candidate generation. Pending proposals from a prior run (when the
                  key WAS configured) still render below regardless. -->
-            <div class="hero-section no-api-key-state" data-testid="no-api-key-state-fr">
+            <div class="hero-section no-api-key-state adv-panel" data-testid="no-api-key-state-fr">
                 <div class="no-api-key-title">Frontrunner Builder Unavailable</div>
                 <div class="no-api-key-body">
                     <code>ANTHROPIC_API_KEY</code> not configured — the build needs it
@@ -3095,8 +2821,8 @@
             {% else %}
 
             <!-- Run controls — no HTML form element; trigger uses JS fetch + X-CSRF-Token header -->
-            <div class="hero-section run-controls-panel" data-testid="frontrunner-builder-controls">
-                <div class="section-header run-controls-header">Run Frontrunner Build</div>
+            <div class="hero-section run-controls-panel adv-panel" data-testid="frontrunner-builder-controls">
+                <div class="section-header run-controls-header adv-heading">Run frontrunner build</div>
                 <div class="run-controls-row">
                     <button id="fr-run-btn"
                             type="button"
@@ -3133,22 +2859,28 @@
 
             {% else %}
 
-            <div class="section-header">Pending Approval ({{ frontrunner_proposals | length }})</div>
+            <div class="section-header adv-heading">Pending approval ({{ frontrunner_proposals | length }})</div>
+            {# What is the same on every card is said once here; a card keeps only what differs (the incumbent,
+               its overlay, its figures). Identity applies to frontrunner proposals; the approval line to all. #}
+            <div class="fr-shared" data-testid="fr-shared-notes">
+                {% if frontrunner_proposals | selectattr('proposal_source', 'equalto', 'frontrunner_builder') | list %}
+                <p class="fr-line fr-identity-line" data-testid="fr-identity-note"><span class="fr-shared-label">Identity</span>Each frontrunner proposal is a full standalone copy of its incumbent with one new frontrunner overlay.</p>
+                {% endif %}
+                <p class="fr-line fr-explainer-line" data-testid="fr-explainer-line"><span class="fr-shared-label">On approval</span>Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.</p>
+            </div>
             <div class="proposal-cards" data-testid="frontrunner-proposal-cards">
                 {% for p in frontrunner_proposals %}
                 {% set m = p.metrics_json or {} %}
                 {% set is_fr = p.proposal_source == 'frontrunner_builder' %}
-                <div class="sym-card proposal-card"
+                <div class="sym-card proposal-card adv-card"
                      data-testid="frontrunner-proposal-card"
                      id="fr-card-{{ p.id }}">
                     <div class="card-header-row">
                         {# Title: the incumbent's display name (resolved in ai_advisor_tab());
                            the Composer hash stays only in the title attribute. A hash no
                            longer held in the live state reads as the hash. #}
-                        <span class="card-name" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }}</span>
-                        <span class="advisory-only-badge" data-testid="proposal-source-badge">
-                            {% if is_fr %}Frontrunner Builder{% else %}Strategy Builder (retrofit){% endif %}
-                        </span>
+                        <span class="card-name adv-card-name" data-testid="fr-incumbent-name" title="{{ p.symphony_id | e }}">{{ (p._incumbent_display_name or p.symphony_id) | e }}</span>
+                        {% if not is_fr %}<span class="fr-source" data-testid="proposal-source-badge">Strategy Builder (retrofit)</span>{% endif %}
                     </div>
                     <table class="stats-table" data-testid="stats-table">
                         {#- The figures are backtest figures, not what the symphony earned. A window is named only when both of its dates are stored. -#}
@@ -3185,14 +2917,15 @@
                                 {% set _cand_mdd = m.candidate_max_drawdown if is_fr else m.max_drawdown %}
                                 <td data-testid="fr-candidate-mdd">{% if _cand_mdd is defined and _cand_mdd is not none %}{{ "%.2f%%" | format((_cand_mdd | abs) * 100) }}{% else %}—{% endif %}</td>
                             </tr>
+                            {% if is_fr %}
+                            <tr data-testid="fr-node-count-delta">
+                                <td>Node count change</td>
+                                <td colspan="2">{{ m.node_count_delta if m.node_count_delta is defined and m.node_count_delta is not none else '—' }} <span class="stat-nil">vs the incumbent</span></td>
+                            </tr>
+                            {% endif %}
                         </tbody>
                     </table>
                     {% if is_fr %}
-                    <div class="objective-strip" data-testid="fr-node-count-delta">
-                        Node count change vs the incumbent: {{ m.node_count_delta if m.node_count_delta is defined and m.node_count_delta is not none else '—' }}
-                    </div>
-                    <div class="fr-line fr-identity-line" data-testid="fr-incumbent-name"><span class="fr-line-label">Identity</span>Full standalone copy of {{ p._incumbent_display_name | e }} with one new frontrunner overlay</div>
-                    <div class="fr-line fr-explainer-line" data-testid="fr-explainer-line"><span class="fr-line-label">On approval</span>Approve creates a NEW undeployed Composer symphony &mdash; the incumbent is never modified.</div>
                     <div class="fr-line fr-overlay-summary-line" data-testid="fr-overlay-summary"><span class="fr-line-label">Overlay</span>{% if m.overlay_summary %}one new condition, below{% else %}{{ overlay_not_recorded_text | e }}{% endif %}</div>
                     {#- The overlay line says what the overlay is for; the overlay itself is read under its preview, directly below. -#}
                     <details class="rules-collapsible" data-testid="fr-overlay-preview"><summary>View overlay delta</summary>{% if m.overlay_summary %}<p class="fr-overlay-raw">{{ m.overlay_summary | e }}</p>{% endif %}<pre>{{ p.overlay_tree_preview or '(unavailable)' }}</pre></details>
@@ -3208,7 +2941,7 @@
                         <summary>{% if is_fr %}Full spliced symphony (preview){% else %}Proposed symphony (preview){% endif %}</summary>
                         <pre>{{ p.candidate_tree_preview or '(unavailable)' }}</pre>
                     </details>
-                    <div class="proposal-actions" style="display:flex;flex-wrap:wrap;gap:0.5rem;">
+                    <div class="proposal-actions">
                         <button type="button"
                                 class="run-trigger-btn"
                                 data-testid="fr-approve-btn"
@@ -3264,7 +2997,6 @@
         </div>
 
         <div data-testid="explain-only-notice" class="explain-only-notice" role="note">
-            <span class="explain-only-notice-icon" aria-hidden="true">&#x2139;</span>
             <span class="explain-only-notice-text">
                 This chat explains advisor findings. It cannot apply changes, place trades,
                 or generate new recommendations.

@@ -446,7 +446,9 @@ class TestAutotuneRunCardRender:
         assert "Best CRRA-EU score" in card.text, "the pill sits on a card that names its score"
         pill = card.find(cls="frozen-eval-pill")
         assert pill is not None and pill.text == "passed"
-        assert "--studio-pos" in pill.attrs.get("style", "")
+        # The verdict is a status dot and one word: the modifier class carries the positive token.
+        assert "frozen-eval-pill--pos" in pill.attrs.get("class", "").split()
+        assert "style" not in pill.attrs
         assert "not evaluated" not in card.text
 
     def test_failed_verdict_renders_a_pill_in_the_negative_token(self, client):
@@ -455,7 +457,8 @@ class TestAutotuneRunCardRender:
         assert "Best CRRA-EU score" in card.text, "the pill sits on a card that names its score"
         pill = card.find(cls="frozen-eval-pill")
         assert pill is not None and pill.text == "failed"
-        assert "--studio-neg" in pill.attrs.get("style", "")
+        assert "frozen-eval-pill--neg" in pill.attrs.get("class", "").split()
+        assert "style" not in pill.attrs
 
     def test_null_verdict_reads_not_evaluated_with_no_pill_element(self, client):
         run_id = save_run("none-sym", None, frozen_eval_sharpe=None)
@@ -465,10 +468,11 @@ class TestAutotuneRunCardRender:
         assert "Frozen-eval not evaluated" in card.text
         assert card.find(cls="frozen-eval-pill") is None
         notice = next(n for n in card.iter() if n.text == "Frozen-eval not evaluated")
-        styled = [*notice.iter(), *_ancestors_within(notice, card)]
-        assert any("--studio-ink-dim" in n.attrs.get("style", "") for n in styled), (
-            "the not-evaluated line is dim ink"
-        )
+        # The line is the dim-ink frozen-eval line, visually hidden: a column of 12 identical
+        # "not evaluated" lines says nothing a reader of the table needs, and a reader of one row
+        # still gets it.
+        assert "autotune-run-frozen" in notice.attrs.get("class", "").split()
+        assert "adv-vh" in notice.attrs.get("class", "").split()
 
     def test_missing_verdict_key_reads_the_same_as_a_null_verdict(self, client):
         run_id = save_run("missing-sym", None, frozen_eval_sharpe=None)

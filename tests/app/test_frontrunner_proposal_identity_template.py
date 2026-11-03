@@ -314,27 +314,39 @@ class TestIncumbentDisplayNameResolution:
 
 class TestFrontrunnerSourceCardOverlayIdentity:
     @pytest.fixture
-    def card(self, client, monkeypatch):
+    def page(self, client, monkeypatch):
         row = _make_pending_row(
             row_id=10, symphony_id="hash-1", proposal_source="frontrunner_builder"
         )
         bot_state = {"hash-1": {"name": "My Symphony"}}
-        html = _render_advisor_page(client, monkeypatch, pending_rows=[row], bot_state=bot_state)
-        return _card_source(html, 10)
+        return _render_advisor_page(client, monkeypatch, pending_rows=[row], bot_state=bot_state)
 
-    def test_identity_line_states_full_standalone_copy(self, card):
-        assert "Full standalone copy of" in card, (
-            f"frontrunner_builder-source card must render the AC-4 identity line — "
-            f"card slice: {card[:800]!r}"
-        )
+    @pytest.fixture
+    def card(self, page):
+        return _card_source(page, 10)
+
+    def test_identity_is_stated_once_above_the_cards_and_the_card_names_its_incumbent(
+        self, page, card
+    ):
+        """What every card shares (a full standalone copy of its incumbent with one new overlay)
+        is said once in the note above the list; the card keeps only its own incumbent's name."""
+        note = page.find('data-testid="fr-identity-note"')
+        assert note != -1, "the shared identity note is missing"
+        assert "full standalone copy of its incumbent" in page[note : note + 400]
+        assert page.count("full standalone copy of its incumbent") == 1
+        assert "Full standalone copy of" not in card, "the card repeats the shared sentence"
         assert "My Symphony" in card
 
     def test_identity_line_has_testid(self, card):
+        """The incumbent's name carries the testid the identity line used to."""
         assert 'data-testid="fr-incumbent-name"' in card
 
-    def test_explainer_line_present(self, card):
-        assert "Approve creates a NEW undeployed Composer symphony" in card
-        assert "the incumbent is never modified" in card
+    def test_explainer_line_is_stated_once_above_the_cards(self, page, card):
+        assert page.count("Approve creates a NEW undeployed Composer symphony") == 1
+        shared = page.find('data-testid="fr-explainer-line"')
+        assert shared != -1 and shared < page.find('data-testid="frontrunner-proposal-card"')
+        assert "the incumbent is never modified" in page[shared : shared + 300]
+        assert "Approve creates a NEW undeployed" not in card
 
     def test_overlay_summary_line_present_with_testid(self, card):
         idx = card.find('data-testid="fr-overlay-summary"')
