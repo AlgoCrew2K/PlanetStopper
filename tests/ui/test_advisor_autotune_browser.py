@@ -141,3 +141,107 @@ def test_the_older_runs_details_takes_no_space_when_each_symphony_has_one_run(ad
     assert details.evaluate("(el) => el.getBoundingClientRect().height") == 0
     if advisor_probe.page_errors:
         fail(advisor_probe, "the page raised")
+
+
+_ON_SCREEN_JS = """() => {
+  const colour = (value) => {
+    const probe = document.createElement('span');
+    probe.style.color = value;
+    document.body.appendChild(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  };
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  const row = document.querySelector("#autotune-runs-list [data-testid='autotune-run-row']");
+  const head = document.querySelector('#autotune-runs-list .autotune-row--head');
+  const frozen = row.querySelector('.autotune-run-frozen');
+  const scoreHead = head.querySelector('.autotune-run-score');
+  const label = row.querySelector('.autotune-score-label');
+  const streakHead = head.querySelector('.autotune-run-streak');
+  const figure = row.querySelector('.autotune-streak-figure');
+  const tail = row.querySelector('.autotune-streak-tail');
+  return {
+    inkDim: colour('var(--studio-ink-dim)'),
+    frozenText: frozen.innerText,
+    frozenBox: box(frozen),
+    frozenColour: getComputedStyle(frozen).color,
+    headDisplay: getComputedStyle(head).display,
+    scoreHeadText: scoreHead.innerText,
+    scoreHeadBox: box(scoreHead),
+    labelText: label.textContent.trim(),
+    labelBox: box(label),
+    streakHeadText: streakHead.innerText,
+    figureText: figure.innerText,
+    figureAlign: getComputedStyle(row.querySelector('.autotune-run-streak')).textAlign,
+    tailBox: box(tail),
+    tailText: tail.textContent,
+    cellText: row.querySelector('.autotune-run-streak').textContent,
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  };
+}"""
+
+
+def _open_at(probe, width: int, height: int):
+    """Size the viewport first, then load: the page sizes its chart canvas at load."""
+    probe.page.set_viewport_size({"width": width, "height": height})
+    open_advisor(probe)
+    _wait_for_cards(probe, 11)
+    return probe.page.evaluate(_ON_SCREEN_JS)
+
+
+def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_wide_page(
+    advisor_probe,
+):
+    _seed(3)
+    wide = _open_at(advisor_probe, 1440, 900)
+    assert wide["frozenText"] == "Frozen-eval not evaluated", wide
+    assert wide["frozenBox"]["w"] > 100 and wide["frozenBox"]["h"] >= 12, wide
+    assert wide["frozenColour"] == wide["inkDim"], "the reason is in dim ink"
+    # Wide: the header row names the column and the objective; a row holds the figure only.
+    assert wide["headDisplay"] != "none", wide
+    assert wide["scoreHeadText"] == "Best objective score", wide
+    assert wide["scoreHeadBox"]["w"] > 60 and wide["scoreHeadBox"]["h"] >= 12, wide
+    assert wide["streakHeadText"] == "Runs without adopting a tuned config", wide
+    assert wide["figureText"].strip().isdigit() and wide["figureAlign"] == "right", wide
+    assert wide["tailBox"]["w"] <= 1, "the streak sentence is the header's, not repeated per row"
+    assert wide["scrollWidth"] == wide["clientWidth"], "the page scrolls horizontally"
+    if advisor_probe.page_errors:
+        fail(advisor_probe, "the page raised")
+
+
+def test_the_missing_frozen_verdict_and_the_scores_objective_are_on_screen_on_a_phone(
+    advisor_probe,
+):
+    _seed(3)
+    narrow = _open_at(advisor_probe, 375, 812)
+    assert narrow["frozenText"] == "Frozen-eval not evaluated", narrow
+    assert narrow["frozenBox"]["w"] > 100 and narrow["frozenBox"]["h"] >= 10, narrow
+    assert narrow["frozenColour"] == narrow["inkDim"], narrow
+    # Narrow: there is no header, so the row names its own score objective and its own streak.
+    assert narrow["headDisplay"] == "none", narrow
+    assert narrow["labelText"] == "Best objective score", narrow
+    assert narrow["labelBox"]["w"] > 60 and narrow["labelBox"]["h"] >= 10, narrow
+    assert narrow["tailBox"]["w"] > 100, "the phone row says what the streak figure counts"
+    assert narrow["cellText"].strip().endswith("runs without adopting a tuned config"), narrow
+    assert narrow["scrollWidth"] == narrow["clientWidth"], "the page scrolls horizontally"
+    if advisor_probe.page_errors:
+        fail(advisor_probe, "the page raised")
+
+
+def test_the_older_runs_table_names_its_own_columns_when_opened(advisor_probe):
+    _seed(3)
+    open_advisor(advisor_probe)
+    _wait_for_cards(advisor_probe, 11)
+    page = advisor_probe.page
+    page.locator("#autotune-older-summary").click()
+    head = page.locator("#autotune-older-list .autotune-row--head")
+    assert head.count() == 1 and head.is_visible()
+    assert head.locator(".autotune-run-streak").inner_text() == (
+        "Runs without adopting a tuned config"
+    )
+    assert head.locator(".autotune-run-score").inner_text() == "Best objective score"

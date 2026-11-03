@@ -50,17 +50,19 @@
     // Gate pill colour from decision string
     // -------------------------------------------------------------------------
 
+    // The pill is a status dot and one word (.artifact-gate-pill): the decision sets the dot colour
+    // (--dot) and the word stays in primary ink, which clears 4.5:1 where warn and pos text do not.
     function _gatePillStyle(decision) {
         if (!decision) {
-            return 'color:var(--studio-ink-dim);border-color:var(--studio-border);';
+            return '--dot:var(--studio-ink-dim);';
         }
         if (decision === 'ADOPT_CANDIDATE' || decision === 'passed') {
-            return 'color:var(--studio-pos);border-color:var(--studio-pos);background:color-mix(in srgb, var(--studio-pos) 7%, transparent);';
+            return '--dot:var(--studio-pos);';
         }
         if (decision === 'KEEP_INCUMBENT' || decision === 'withheld') {
-            return 'color:var(--studio-warn);border-color:var(--studio-warn);background:var(--studio-warn-tint);';
+            return '--dot:var(--studio-warn);';
         }
-        return 'color:var(--studio-neg);border-color:var(--studio-neg);background:var(--studio-neg-tint);';
+        return '--dot:var(--studio-neg);';
     }
 
     function _gatePillLabel(decision) {

@@ -270,8 +270,10 @@
             var oosColor = oosStatusColor(s.oos_status || 'pending');
             var oosLabel = escHtml(s.oos_status || 'pending');
             if (s.oos_reason) oosLabel += ' — ' + escHtml(s.oos_reason);
+            // A status dot and one word, like the gate badges: the word stays in primary ink (the
+            // warn colour is too light to carry 11-12px text), the dot carries the meaning.
             var suffBadge = (s.data_sufficiency && s.data_sufficiency !== 'sufficient')
-                ? '<span style="font-size:0.6875rem;color:' + cssVar('--studio-warn') + ';margin-left:0.25rem;">' +
+                ? '<span class="gate-dot gate-dot--warn" data-testid="data-sufficiency-badge">' +
                   escHtml(s.data_sufficiency) + ' data</span>'
                 : '';
 
@@ -296,7 +298,7 @@
             var projectedImpactBar =
                 '<div data-testid="projected-impact-bar" style="margin-bottom:0.5rem;">' +
                 (impactBefore !== null
-                    ? '<span style="font-size:0.625rem;color:' + cssVar('--studio-ink-dim') + ';">' +
+                    ? '<span style="font-size:0.6875rem;color:' + cssVar('--studio-ink-dim') + ';">' +
                       escHtml(impactMetric) + ': ' + impactBefore.toFixed(3) + ' → ' +
                       (impactAfter !== null ? impactAfter.toFixed(3) : '?') + '</span><br>'
                     : '') +
@@ -327,7 +329,9 @@
 
                 '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">' +
 
-                '<div style="flex:1;min-width:0;">' +
+                // The text column asks for 12rem before it shrinks: on a phone the actions wrap under it
+                // instead of sitting on top of the config key. min-width:0 lets it shrink if it must.
+                '<div style="flex:1 1 12rem;min-width:0;">' +
                 '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">' +
                 confidenceRing +
                 '<span style="font-size:0.75rem;font-weight:500;' +
@@ -741,7 +745,8 @@
 
     // The markup of one run: one table row, used for the main list and for the older-runs list. The words
     // a header names for the whole column stay in the row as visually hidden text (and show on a phone,
-    // where there is no header), so a row read alone says what each figure is.
+    // where there is no header, and in a table whose header cannot name the score's objective), so a row
+    // read alone says what each figure is.
     function autotuneRunRowHtml(r) {
         var decision = r.baseline_decision || '';
         // B-13: human-readable label instead of raw enum.
@@ -753,12 +758,13 @@
         var symKey = escHtml(r.symphony_id || '');
         var scoreInfo = autotuneScoreInfo(r.objective);
         // A run that never reached the frozen evaluation has no verdict:
-        // say so in dim ink instead of rendering an empty word.
+        // say so in dim ink instead of rendering an empty word. It stays on screen:
+        // it is the reason there is no verdict, not a word a header already says.
         var frozenHtml = frozenVerdict
             ? '<span class="autotune-run-frozen">Frozen-eval ' +
               '<span class="frozen-eval-pill frozen-eval-pill--' + frozenEvalTone(frozenVerdict) + '">' +
               escHtml(frozenVerdict) + '</span></span>'
-            : '<span class="autotune-run-frozen adv-vh">Frozen-eval not evaluated</span>';
+            : '<span class="autotune-run-frozen">Frozen-eval not evaluated</span>';
         // Selection t-stat is the Harvey & Liu haircut winner's t-statistic.
         var selTstat = r.selection_tstat;
         // BL-8 (DE-AUDIT-BL8-001): the "silent-never-tuned" streak signal.
@@ -766,10 +772,13 @@
         // analytics._NEVER_ADOPTED_MIN_ROWS) or status == 'insufficient_history'
         // (AC-11's informative degrade); streak_weeks < 2 with status 'streak'
         // renders nothing: a single non-adopted run isn't a pattern worth flagging.
+        // The column header says "Runs without adopting a tuned config", so the cell is the
+        // figure; the rest of the sentence stays in the cell as hidden text and shows on a phone.
         var streak = r.never_adopted_streak;
         var streakHtml = '';
         if (streak && streak.status === 'streak' && streak.streak_weeks >= 2) {
-            streakHtml = escHtml(streak.streak_weeks + ' consecutive runs without adopting a tuned config');
+            streakHtml = '<span class="autotune-streak-figure">' + escHtml(streak.streak_weeks) + '</span> ' +
+                '<span class="adv-vh autotune-streak-tail">runs without adopting a tuned config</span>';
         } else if (streak && streak.status === 'insufficient_history') {
             streakHtml = 'adoption streak: insufficient history (&lt;2 runs)';
         }
@@ -784,7 +793,7 @@
             '</span>' +
             '<span class="autotune-run-streak" role="cell">' + streakHtml + '</span>' +
             '<span class="autotune-run-score" role="cell" title="' + escHtml(scoreInfo.tip) + '">' +
-            '<span class="adv-vh">' + escHtml(scoreInfo.label) + ' </span>' +
+            '<span class="adv-vh autotune-score-label">' + escHtml(scoreInfo.label) + ' </span>' +
             '<span class="mono-bold">' + escHtml(fmtSharpe(r.naive_sharpe)) + '</span></span>' +
             '<span class="autotune-run-tstat" role="cell">' +
             '<span class="adv-vh">Sel t-stat </span><span class="mono-bold">' + escHtml(fmtSharpe(selTstat)) + '</span></span>' +
@@ -792,20 +801,34 @@
         );
     }
 
-    // The runs as one table; the header row only above the main list.
-    function autotuneTableHtml(rows, withHeader) {
-        var head = withHeader
-            ? '<div class="autotune-row autotune-row--head" role="row">' +
-              '<span role="columnheader">Symphony</span>' +
-              '<span role="columnheader">Run time (ET)</span>' +
-              '<span role="columnheader">Outcome</span>' +
-              '<span role="columnheader">Adoption streak</span>' +
-              '<span role="columnheader" class="autotune-run-score">Best score</span>' +
-              '<span role="columnheader" class="autotune-run-tstat">Sel t-stat</span>' +
-              '</div>'
-            : '';
-        return '<div class="autotune-table" role="table" aria-label="Autotune runs">' + head +
-            rows.map(autotuneRunRowHtml).join('') + '</div>';
+    // The runs as one table with its own header row (the older-runs list is a separate table, so a bare
+    // figure there still has its column name above it). The score column's header names the objective
+    // when every row in the table shares one (the usual case); when they differ it says "Best score" and
+    // each row names its own, so the objective is always on screen.
+    function autotuneTableHtml(rows) {
+        var labels = [];
+        var scoreTip = '';
+        rows.forEach(function (r) {
+            var info = autotuneScoreInfo(r.objective);
+            if (labels.indexOf(info.label) === -1) {
+                labels.push(info.label);
+                scoreTip = info.tip;
+            }
+        });
+        var sharedObjective = labels.length === 1;
+        var scoreHead = sharedObjective ? labels[0] : 'Best score';
+        var scoreHeadTitle = sharedObjective ? ' title="' + escHtml(scoreTip) + '"' : '';
+        var head = '<div class="autotune-row autotune-row--head" role="row">' +
+            '<span role="columnheader">Symphony</span>' +
+            '<span role="columnheader">Run time (ET)</span>' +
+            '<span role="columnheader">Outcome</span>' +
+            '<span role="columnheader" class="autotune-run-streak">Runs without adopting a tuned config</span>' +
+            '<span role="columnheader" class="autotune-run-score"' + scoreHeadTitle + '>' + escHtml(scoreHead) + '</span>' +
+            '<span role="columnheader" class="autotune-run-tstat">Sel t-stat</span>' +
+            '</div>';
+        return '<div class="autotune-table' + (sharedObjective ? '' : ' autotune-table--row-objectives') +
+            '" role="table" aria-label="Autotune runs">' + head +
+            rows.map(function (r) { return autotuneRunRowHtml(r); }).join('') + '</div>';
     }
 
     // The older-runs <details> is static page markup: this writes only its rows container,
@@ -815,7 +838,7 @@
         var details = document.getElementById('autotune-older-runs');
         var summary = document.getElementById('autotune-older-summary');
         var olderList = document.getElementById('autotune-older-list');
-        if (olderList) olderList.innerHTML = older.length ? autotuneTableHtml(older, false) : '';
+        if (olderList) olderList.innerHTML = older.length ? autotuneTableHtml(older) : '';
         if (summary) {
             summary.textContent = older.length
                 ? older.length + (older.length === 1 ? ' older run' : ' older runs') +
@@ -873,7 +896,7 @@
                 }
                 // C-16: render the table with all per-run fields per advisor.jsx.
                 var parts = splitAutotuneRuns(rows);
-                list.innerHTML = autotuneTableHtml(parts.cards, true);
+                list.innerHTML = autotuneTableHtml(parts.cards);
                 renderOlderAutotuneRuns(parts.older);
                 // Last, and on its own: the cards are on screen whatever the chart does.
                 renderAutotuneSparkline(rows);

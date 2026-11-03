@@ -30,6 +30,7 @@ from tests._advisor_overview_prism import prism_raw_response
 from tests._ai_advisor_autotune_panel_harness import drive
 from tests._ux_truth_support import parse_html
 from tests.app import _retirement_tab_world as w
+from tests.app import _tenure_review_panel_builders as pb
 from tests.ui import _dashboard_primitives_capture as cap
 from tests.ui._shell_support import seed_pending_frontrunner_proposal
 
@@ -50,6 +51,19 @@ def _inline_css() -> str:
 
 def _page(client) -> str:
     return w.get_page(client)
+
+
+def _declared(selector_fragment: str, prop: str) -> str | None:
+    """The last top-level value the page's stylesheet declares for ``prop`` on a rule whose
+    selector contains ``selector_fragment`` (None when no such rule declares it)."""
+    value = None
+    for ctx, selectors, decls in cap.iter_rules(_inline_css()):
+        if ctx or not any(selector_fragment in sel for sel in selectors):
+            continue
+        for name, val in decls:
+            if name == prop:
+                value = val.strip()
+    return value
 
 
 def _inside(node, ancestor) -> bool:
@@ -113,7 +127,14 @@ class TestAutotuneRunsAreRows:
             "autotune-run-tstat",
         ):
             assert f'class="{cell}"' in html, cell
-        for header in ("Symphony", "Run time (ET)", "Outcome", "Best score", "Sel t-stat"):
+        for header in (
+            "Symphony",
+            "Run time (ET)",
+            "Outcome",
+            "Runs without adopting a tuned config",
+            "Best CRRA-EU score",
+            "Sel t-stat",
+        ):
             assert f">{header}</span>" in html, header
 
     def test_the_outcome_is_a_dot_and_one_word_with_no_inline_colour(self):
@@ -121,22 +142,119 @@ class TestAutotuneRunsAreRows:
         assert 'class="decision-pill decision-pill--warn">Fallback</span>' in html
         assert "style=" not in html, "an outcome is coloured by its class, never an inline colour"
 
-    def test_the_streak_keeps_its_full_sentence_for_a_reader_of_one_row(self):
-        html = self._list_html([_run_row(1, "alpha")])
-        text = re.sub(r"<[^>]+>", "", html)
-        assert "4 consecutive runs without adopting a tuned config" in text
+    def test_the_header_carries_the_streak_sentence_and_a_cell_carries_the_figure(self):
+        root = parse_html(self._list_html([_run_row(1, "alpha")]))
+        head = root.find_all(cls="autotune-row--head")[0]
+        assert head.find_all(cls="autotune-run-streak")[0].text == (
+            "Runs without adopting a tuned config"
+        )
+        cell = root.find_all(testid="autotune-run-row")[0].find_all(cls="autotune-run-streak")[0]
+        assert cell.find_all(cls="autotune-streak-figure")[0].text == "4"
+        # The row read alone still says the whole sentence; it shows on a phone, which has no header.
+        assert cell.text == "4 runs without adopting a tuned config"
+        tail = cell.find_all(cls="autotune-streak-tail")[0]
+        assert "adv-vh" in tail.classes
 
-    def test_a_run_that_was_never_frozen_evaluated_says_so_without_a_visible_line(self):
-        html = self._list_html([_run_row(1, "alpha")])
-        assert "Frozen-eval not evaluated" in html
-        assert re.search(r'class="autotune-run-frozen adv-vh">Frozen-eval not evaluated', html)
+    def test_a_streak_below_two_runs_renders_an_empty_cell(self):
+        rows = [_run_row(1, "alpha", never_adopted_streak={"status": "streak", "streak_weeks": 1})]
+        root = parse_html(self._list_html(rows))
+        cell = root.find_all(testid="autotune-run-row")[0].find_all(cls="autotune-run-streak")[0]
+        assert cell.text == ""
 
-    def test_the_older_runs_use_the_same_rows_without_a_second_header(self):
+    def test_an_unknown_streak_keeps_its_informative_text(self):
+        rows = [_run_row(1, "alpha", never_adopted_streak={"status": "insufficient_history"})]
+        root = parse_html(self._list_html(rows))
+        cell = root.find_all(testid="autotune-run-row")[0].find_all(cls="autotune-run-streak")[0]
+        assert cell.text == "adoption streak: insufficient history (<2 runs)"
+
+    def test_a_run_that_was_never_frozen_evaluated_says_so_in_visible_dim_ink(self):
+        root = parse_html(self._list_html([_run_row(1, "alpha")]))
+        row = root.find_all(testid="autotune-run-row")[0]
+        frozen = row.find_all(cls="autotune-run-frozen")[0]
+        assert frozen.text == "Frozen-eval not evaluated"
+        assert "adv-vh" not in frozen.classes, "the reason there is no verdict is on screen"
+        assert not [n for n in frozen.iter() if "adv-vh" in n.classes]
+        assert _declared("autotune-run-frozen", "color") == "var(--studio-ink-dim)"
+        for prop, value in (
+            ("display", "none"),
+            ("visibility", "hidden"),
+            ("clip", "rect(0 0 0 0)"),
+        ):
+            assert _declared("autotune-run-frozen", prop) != value, prop
+
+    def test_the_score_column_header_names_the_objective_the_rows_share(self):
+        rows = [_run_row(1, "alpha"), _run_row(2, "beta")]
+        root = parse_html(self._list_html(rows))
+        head = root.find_all(cls="autotune-row--head")[0]
+        score = head.find_all(cls="autotune-run-score")[0]
+        assert score.text == "Best CRRA-EU score"
+        assert not [n for n in score.iter() if "adv-vh" in n.classes], "named on screen"
+        assert score.title and "CRRA expected-utility" in score.title
+        table = root.find_all(cls="autotune-table")[0]
+        assert "autotune-table--row-objectives" not in table.classes
+
+    def test_a_sortino_run_names_its_objective_in_the_header_too(self):
+        rows = [_run_row(1, "alpha", objective="sortino_loss_aversion")]
+        head = parse_html(self._list_html(rows)).find_all(cls="autotune-row--head")[0]
+        assert head.find_all(cls="autotune-run-score")[0].text == "Best Sortino score"
+
+    def test_rows_that_differ_in_objective_each_name_their_own_on_screen(self):
+        rows = [
+            _run_row(1, "alpha"),
+            _run_row(2, "beta", objective="sortino_loss_aversion"),
+            _run_row(3, "gamma", objective=None),
+        ]
+        root = parse_html(self._list_html(rows))
+        table = root.find_all(cls="autotune-table")[0]
+        assert "autotune-table--row-objectives" in table.classes
+        head = root.find_all(cls="autotune-row--head")[0]
+        assert head.find_all(cls="autotune-run-score")[0].text == "Best score"
+        labels = [
+            row.find_all(cls="autotune-score-label")[0].text
+            for row in root.find_all(testid="autotune-run-row")
+        ]
+        assert labels == ["Best CRRA-EU score", "Best Sortino score", "Best objective score"]
+        # That modifier is what un-hides the label above the figure at every width.
+        assert (
+            _declared(
+                "autotune-table--row-objectives .autotune-run-score .autotune-score-label",
+                "position",
+            )
+            == "static"
+        )
+
+    def test_a_phone_row_names_its_score_t_stat_and_streak_on_screen(self):
+        shown = {
+            ".autotune-run-score .autotune-score-label",
+            ".autotune-run-tstat .adv-vh",
+            ".autotune-run-streak .autotune-streak-tail",
+        }
+        css = _inline_css()
+        phone = [
+            (selectors, dict(decls))
+            for ctx, selectors, decls in cap.iter_rules(css)
+            if "max-width: 1000px" in ctx
+        ]
+        for selector in shown:
+            rules = [d for sels, d in phone if selector in sels]
+            assert rules, selector
+            merged = {k: v for d in rules for k, v in d.items()}
+            assert merged.get("position") == "static", selector
+            assert merged.get("display") == "inline", selector
+        assert ".autotune-run-score::before" not in css, "the generic Score prefix is gone"
+        assert 'content: "Score "' not in css
+
+    def test_the_older_runs_table_has_its_own_header_so_a_bare_figure_keeps_its_name(self):
         rows = [_run_row(1, "alpha"), _run_row(2, "alpha", run_timestamp="2026-10-23T22:33:00")]
         snapshots = drive([{"op": "load"}], {"/api/autotune-runs": rows})
-        older = snapshots[-1]["older"]["html"]
-        assert older.count('data-testid="autotune-run-row"') == 1
-        assert "autotune-row--head" not in older
+        older = parse_html(snapshots[-1]["older"]["html"])
+        assert len(older.find_all(testid="autotune-run-row")) == 1
+        head = older.find_all(cls="autotune-row--head")
+        assert len(head) == 1, "the older table names its own columns"
+        assert head[0].find_all(cls="autotune-run-streak")[0].text == (
+            "Runs without adopting a tuned config"
+        )
+        assert head[0].find_all(cls="autotune-run-score")[0].text == "Best CRRA-EU score"
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +312,124 @@ class TestMarketPrismIsCompact:
         block = parse_html(_page(client)).find(testid="market-prism-block")
         header = block.find_all(cls="prism-block-header")[0]
         assert header.find(testid="prism-sentiment-chip") is not None
+
+
+# ---------------------------------------------------------------------------
+# Retirement tenure review: the long evidence lists sit behind closed disclosures
+# ---------------------------------------------------------------------------
+
+_EVIDENCE_ITEMS = ("performance", "composite", "redundancy", "backtest", "marginal", "long_vix")
+
+
+def _inside_details(node) -> bool:
+    cursor = node.parent
+    while cursor is not None:
+        if cursor.tag == "details":
+            return True
+        cursor = cursor.parent
+    return False
+
+
+class TestTenureEvidenceIsCollapsed:
+    @pytest.fixture()
+    def entries(self, isolated_db, client):
+        pb.seed_bot_state()
+        record = pb.store_full_run()
+        panel = pb.panel_of(_page(client))
+        return record, [pb.entry_node(panel, e["symphony_id"]) for e in record["entries"]], panel
+
+    def test_every_evidence_item_is_a_closed_disclosure(self, entries):
+        _record, nodes, _panel_node = entries
+        checked = 0
+        for node in nodes:
+            for name in _EVIDENCE_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                details = [n for n in block.walk() if n.tag == "details"]
+                assert len(details) == 1, name
+                assert "open" not in details[0].attrs, (
+                    f"{name} opens only when the operator opens it"
+                )
+                checked += 1
+        assert checked >= 18
+
+    def test_the_summary_is_the_heading_and_one_headline_line(self, entries):
+        _record, nodes, _panel_node = entries
+        for node in nodes:
+            for name in _EVIDENCE_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                summary = [n for n in block.walk() if n.tag == "summary"]
+                assert len(summary) == 1, name
+                heading = summary[0].find("tenure-review-evidence-heading")
+                assert heading is not None, name
+                lines = [
+                    n
+                    for n in summary[0].walk()
+                    if {"tenure-review-evidence-figure", "tenure-review-evidence-meta"}
+                    & set(n.classes())
+                ]
+                assert len(lines) <= 1, f"{name}: a summary holds one headline, not a list"
+
+    def test_an_available_item_leads_with_its_first_figure_and_keeps_the_rest_inside(self, entries):
+        record, nodes, _panel_node = entries
+        checked = 0
+        for stored, node in zip(record["entries"], nodes, strict=True):
+            item = stored["evidence"]["performance"]
+            if item.get("status") != "available" or not item.get("figures"):
+                continue
+            block = node.find("tenure-review-evidence-performance")
+            summary = [n for n in block.walk() if n.tag == "summary"][0]
+            first = next(iter(item["figures"])).replace("_", " ")
+            headline = [n for n in summary.walk() if "tenure-review-evidence-figure" in n.classes()]
+            assert headline and headline[0].text().lower().startswith(first + ":"), first
+            later = [
+                n
+                for n in block.walk()
+                if "tenure-review-evidence-figure" in n.classes() and n not in headline
+            ]
+            assert later, "the other figures stay in the item"
+            assert all(_inside_details(n) and not n.is_inside(summary) for n in later)
+            checked += 1
+        assert checked >= 1
+
+    def test_an_item_that_is_not_available_leads_with_its_status_line(self, entries):
+        record, nodes, _panel_node = entries
+        seen = 0
+        for stored, node in zip(record["entries"], nodes, strict=True):
+            for name in _EVIDENCE_ITEMS:
+                if stored["evidence"][name].get("status") == "available":
+                    continue
+                block = node.find(f"tenure-review-evidence-{name}")
+                summary = [n for n in block.walk() if n.tag == "summary"][0]
+                text = summary.text().lower()
+                assert "not applicable" in text or "unavailable" in text, (name, text)
+                seen += 1
+        assert seen >= 1
+
+    def test_the_provenance_lines_stay_in_the_page_inside_the_disclosure(self, entries):
+        record, nodes, _panel_node = entries
+        for stored, node in zip(record["entries"], nodes, strict=True):
+            for name in _EVIDENCE_ITEMS:
+                block = node.find(f"tenure-review-evidence-{name}")
+                label = stored["evidence"][name]["label"]
+                labels = [
+                    n
+                    for n in block.walk()
+                    if "retirement-rec-basis" in n.classes() and label in n.text()
+                ]
+                assert labels and all(_inside_details(n) for n in labels), name
+
+    def test_the_verdict_the_tenure_the_basis_and_the_missing_line_stay_visible(self, entries):
+        record, nodes, _panel_node = entries
+        for node in nodes:
+            assert node.find("tenure-review-verdict-chip") is not None
+            for testid in ("tenure-review-tenure", "tenure-review-basis"):
+                line = node.find(testid)
+                assert line is not None and not _inside_details(line), testid
+            chip = node.find("tenure-review-verdict-chip")
+            assert not _inside_details(chip)
+        with_missing = [n for n in nodes if n.find("tenure-review-missing") is not None]
+        assert with_missing, "premise: at least one stored entry names a missing item"
+        assert all(not _inside_details(n.find("tenure-review-missing")) for n in with_missing)
 
 
 # ---------------------------------------------------------------------------

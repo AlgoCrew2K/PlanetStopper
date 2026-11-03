@@ -147,15 +147,16 @@ class TestRawBaselineDecisionIndependence:
 
 class TestStreakRenderTextContract:
     def test_multi_run_streak_variant_wrapped_in_eschtml(self):
-        """status=='streak' && streak_weeks>=2 branch: text must contain
-        'consecutive runs without adopting a tuned config', and the dynamic
+        """status=='streak' && streak_weeks>=2 branch: the cell must carry
+        'runs without adopting a tuned config' (the column header says it once;
+        the row keeps it as hidden text, shown on a phone), and the dynamic
         (streak_weeks-containing) string must be passed through escHtml —
         never raw string concatenation directly into the DOM.
         """
         src = _AI_ADVISOR_JS.read_text(encoding="utf-8")
-        idx = src.find("consecutive runs without adopting a tuned config")
+        idx = src.find("runs without adopting a tuned config")
         assert idx != -1, (
-            "static/ai_advisor.js must render 'N consecutive runs without "
+            "static/ai_advisor.js must render 'N runs without "
             "adopting a tuned config' for a genuine multi-run streak"
         )
         # The literal lives inside a string argument to escHtml(...) — walk
@@ -468,11 +469,10 @@ class TestAutotuneRunCardRender:
         assert "Frozen-eval not evaluated" in card.text
         assert card.find(cls="frozen-eval-pill") is None
         notice = next(n for n in card.iter() if n.text == "Frozen-eval not evaluated")
-        # The line is the dim-ink frozen-eval line, visually hidden: a column of 12 identical
-        # "not evaluated" lines says nothing a reader of the table needs, and a reader of one row
-        # still gets it.
+        # The line is the dim-ink frozen-eval line and it stays on screen: it is the reason this run
+        # has no verdict, so it is not visually hidden (not an adv-vh line).
         assert "autotune-run-frozen" in notice.attrs.get("class", "").split()
-        assert "adv-vh" in notice.attrs.get("class", "").split()
+        assert "adv-vh" not in notice.attrs.get("class", "").split()
 
     def test_missing_verdict_key_reads_the_same_as_a_null_verdict(self, client):
         run_id = save_run("missing-sym", None, frozen_eval_sharpe=None)
@@ -526,8 +526,7 @@ class TestAutotuneRunCardRender:
         streak = card.find(cls="autotune-run-streak")
         assert streak is not None
         assert streak.text == (
-            f"{newest['never_adopted_streak']['streak_weeks']} consecutive runs "
-            "without adopting a tuned config"
+            f"{newest['never_adopted_streak']['streak_weeks']} runs without adopting a tuned config"
         )
 
     def test_name_shows_the_display_name_with_the_key_only_in_the_title(self, client):
