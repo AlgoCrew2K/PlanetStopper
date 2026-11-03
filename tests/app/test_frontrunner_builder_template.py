@@ -54,6 +54,7 @@ of the (unrelated) /ai-advisor render succeeds.
 
 from __future__ import annotations
 
+import html as html_lib
 import pathlib
 import re
 from unittest.mock import MagicMock, patch
@@ -469,6 +470,64 @@ class TestCardAnatomyFrontrunnerBuilderSource:
         assert 'data-testid="fr-reject-btn"' in html, (
             'A pending card must render a Reject button (data-testid="fr-reject-btn").'
         )
+
+
+# ===========================================================================
+# Group D2: the node count change prints a signed figure
+#
+# The rule (a change is a signed count): a positive change prints "+N", a negative one prints
+# "<U+2212>N" with the typographic minus sign, zero prints "0", and a change the proposal did not
+# record prints the dash. The words after the figure ("vs the incumbent") stay.
+# ===========================================================================
+
+_MINUS = chr(0x2212)
+
+
+def _node_count_change_cell(html: str) -> str:
+    """The text of the value cell in the node count change row, tags removed, entities decoded."""
+    start = html.find('data-testid="fr-node-count-delta"')
+    assert start != -1, "the card has no node count change row"
+    row = html[start : html.find("</tr>", start)]
+    cells = re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.S)
+    assert len(cells) == 2, cells
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", "", cells[1])).split())
+
+
+class TestNodeCountChangeIsSigned:
+    def _cell(self, client, monkeypatch, metrics: dict) -> str:
+        row = _make_pending_row(
+            row_id=7, proposal_source="frontrunner_builder", metrics_json=metrics
+        )
+        return _node_count_change_cell(
+            _render_advisor_page(client, monkeypatch, pending_rows=[row])
+        )
+
+    @pytest.mark.parametrize(
+        ("delta", "expected"),
+        [
+            pytest.param(9, "+9 vs the incumbent", id="grew"),
+            pytest.param(1, "+1 vs the incumbent", id="grew-by-one"),
+            pytest.param(-3, f"{_MINUS}3 vs the incumbent", id="shrank"),
+            pytest.param(-6, f"{_MINUS}6 vs the incumbent", id="shrank-the-fixture-value"),
+            pytest.param(0, "0 vs the incumbent", id="unchanged"),
+        ],
+    )
+    def test_the_figure_carries_its_sign(self, client, monkeypatch, delta, expected):
+        cell = self._cell(client, monkeypatch, {**_FR_METRICS, "node_count_delta": delta})
+        assert cell == expected, cell
+        assert "-" not in cell, "a negative change prints the typographic minus, not a hyphen"
+
+    def test_a_zero_change_has_no_sign(self, client, monkeypatch):
+        cell = self._cell(client, monkeypatch, {**_FR_METRICS, "node_count_delta": 0})
+        assert not cell.startswith(("+", _MINUS, "-")), cell
+
+    def test_a_change_the_proposal_did_not_record_prints_the_dash(self, client, monkeypatch):
+        recorded_none = self._cell(client, monkeypatch, {**_FR_METRICS, "node_count_delta": None})
+        without_key = self._cell(
+            client, monkeypatch, {k: v for k, v in _FR_METRICS.items() if k != "node_count_delta"}
+        )
+        assert recorded_none == "— vs the incumbent", recorded_none
+        assert without_key == "— vs the incumbent", without_key
 
 
 # ===========================================================================

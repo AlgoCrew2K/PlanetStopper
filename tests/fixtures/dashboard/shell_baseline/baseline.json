@@ -5728,6 +5728,13 @@
     {
      "index": 0,
      "testid": "",
+     "cls": "hp-tbl hp-reasons",
+     "box_scrolls": false,
+     "table_wider_than_viewport": false
+    },
+    {
+     "index": 0,
+     "testid": "",
      "cls": "triggers-tbl",
      "box_scrolls": false,
      "table_wider_than_viewport": false

@@ -75,3 +75,12 @@ The unslop pass restyles the shared primitives on purpose (see `primitives_basel
 - Producer call: `python tests/fixtures/dashboard/shell_baseline/capture_shell_baseline.py --resolved-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `efa817096f942f122129e1921e521513e3396966` (templates, static and `app.py` clean). `resolved_revision` records this run (24 to 27 selectors).
 - What differs: the same selectors as the primitives record.
 - Sign-off: not needed (producer output; the differences are the pass's own).
+
+## Revision: `pages_1440["/history"]["tables"]` gains the By-exit-reason table (unslop pass)
+
+The unslop pass turned History's By-exit-reason cards into a table on purpose (`<table class="hp-tbl hp-reasons">` in `templates/history.html`), so `/history` now has two tables at 1440 where the base capture had one, and `tests/ui/test_narrow_close_browser.py::test_no_table_gained_a_scroll_bar_at_1440[history]` failed on the table count. The PM ruled that the new table is accepted, on the condition that it does not scroll and is not wider than the viewport at 1440.
+
+- Edit: one entry inserted at the front of `pages_1440["/history"]["tables"]`, before the triggers table (the table order in the document): `testid` empty, `cls` `hp-tbl hp-reasons`, `box_scrolls` false, `table_wider_than_viewport` false. Nothing else in `baseline.json` changed. The test still compares the two lists position by position and still fails when this table's box scrolls or when it is wider than the viewport.
+- This entry is a derived edit under the PM's ruling, not producer output: `capture_shell_baseline.py` was not re-run. Its two booleans are the ruling's condition, and the check against the live page is the test itself.
+- Every other value in the file is the shell work's base. The triggers entry keeps the `index` 0 it was recorded with at the base (it was the only table then), so two entries now carry `index` 0; the test reads `index` from the live capture only and compares the entries by position.
+- Sign-off: the PM's ruling.

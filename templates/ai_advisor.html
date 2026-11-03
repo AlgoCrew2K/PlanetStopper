@@ -1795,7 +1795,7 @@
                 {% set gap_legs = {'max_drawdown_gap': ('realized', 'backtest'), 'max_drawdown_difference': ('without', 'with')}.get(fig_name) -%}
                 {% set gap_shown = ((0 - value) | round(2)) if gap_legs else none -%}
                 <div class="tenure-review-evidence-figure retirement-rec-gates">{{ fig_label }}: {% if unit == 'days' %}{{ value | int }}{% elif gap_legs %}{{ gap_shown | abs | tenure_number }}{% elif fig_name == 'max_drawdown' or fig_name.endswith('_max_drawdown') %}{{ value | abs | tenure_number }}{% else %}{{ value | tenure_number }}{% endif %}
-                    {%- if unit == 'percent' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
+                    {%- if unit == 'percent' or unit == 'percentage points' %}%{% elif unit is string and unit.strip() %}{% if not fig_label.lower().endswith(unit.lower()) %} {{ unit }}{% endif %}{% else %} (unit not recorded){% endif %}
                     {%- if gap_legs %} ({% if gap_shown == 0 %}{{ gap_legs[0] }} and {{ gap_legs[1] }} are equally deep{% else %}{{ gap_legs[0] }} is {{ 'shallower' if gap_shown < 0 else 'deeper' }} than {{ gap_legs[1] }}{% endif %}){% endif %}
                     {%- if with_population %}, {% if population is whole_number %}normalized across {{ population | int }} {{ 'symphony' if population == 1 else 'symphonies' }}{% else %}population not recorded{% endif %}{% endif %}</div>
                 {% elif value is finite_number %}
@@ -2920,7 +2920,7 @@
                             {% if is_fr %}
                             <tr data-testid="fr-node-count-delta">
                                 <td>Node count change</td>
-                                <td colspan="2">{{ m.node_count_delta if m.node_count_delta is defined and m.node_count_delta is not none else '—' }} <span class="stat-nil">vs the incumbent</span></td>
+                                <td colspan="2">{% set _ncd = m.node_count_delta if m.node_count_delta is defined else none %}{% if _ncd is number %}{% if _ncd > 0 %}+{{ _ncd }}{% elif _ncd < 0 %}&minus;{{ _ncd | abs }}{% else %}{{ _ncd }}{% endif %}{% else %}{{ _ncd if _ncd is not none else '—' }}{% endif %} <span class="stat-nil">vs the incumbent</span></td>
                             </tr>
                             {% endif %}
                         </tbody>

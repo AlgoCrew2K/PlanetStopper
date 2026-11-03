@@ -4207,8 +4207,13 @@ class TestAUnitWordIsNotRepeatedBesideTheFigureItNames:
                         ]
                         where = f"{stored['display_name']} / {fig_name}"
                         assert len(lines) == 1, where
-                        # a percent figure carries the percent sign, not the word
-                        shown_unit = "%" if fig["unit"].lower() == "percent" else unit_word
+                        # a percent figure and a figure in percentage points carry the percent
+                        # sign, not the words
+                        shown_unit = (
+                            "%"
+                            if fig["unit"].lower() in ("percent", "percentage points")
+                            else unit_word
+                        )
                         assert shown_unit in lines[0].text().lower(), (where, lines[0].text())
                         shown += 1
         assert shown >= 20, "the records must hold many figures with a unit of their own"
@@ -5408,15 +5413,80 @@ class TestAPercentFigureCarriesThePercentSign:
         assert len(lines) == 1
         assert re.fullmatch(r"max drawdown: 0\.00%", lines[0].text()), lines[0].text()
 
-    def test_a_unit_that_is_not_percent_keeps_its_words(self, client, isolated_db):
+
+class TestAPercentagePointsFigureReadsAsAPercent:
+    """A figure the review stores in percentage points prints the number and the percent sign, the
+    same as a figure stored as percent. The stored unit is not changed: the review keeps writing
+    ``percentage points`` and only the page's wording differs."""
+
+    def test_a_stored_percentage_points_figure_reads_with_the_percent_sign_not_the_words(
+        self, client, isolated_db
+    ):
         record = _store_record("full")
         watch = pb.entry_with_verdict(record, "watch")
+        figure = watch["evidence"]["marginal"]["figures"]["total_return_difference"]
+        assert figure["unit"] == "percentage points", "premise: the record stores the long unit"
         block = pb.entry_node(_panel(client), watch["symphony_id"]).find(
             "tenure-review-evidence-marginal"
         )
         lines = _figure_lines(block, "total return difference")
         assert len(lines) == 1
-        assert "percentage points" in lines[0].text(), lines[0].text()
+        text = lines[0].text()
+        assert any(
+            re.search(rf"{re.escape(form)}%(?![\w%])", text)
+            for form in _two_decimal_forms(figure["value"])
+        ), text
+        assert "percentage points" not in text.lower(), text
+
+    def test_a_known_value_in_percentage_points_prints_as_that_value_and_a_percent_sign(
+        self, client, isolated_db
+    ):
+        holder = {}
+
+        def edit(record):
+            victim = pb.entry_with_verdict(record, "watch")
+            holder["id"] = victim["symphony_id"]
+            _edit(victim, "evidence.marginal.figures.total_return_difference.value", 2.5)
+
+        _, _, panel = _render_edited(client, "full", edit)
+        block = pb.entry_node(panel, holder["id"]).find("tenure-review-evidence-marginal")
+        lines = _figure_lines(block, "total return difference")
+        assert len(lines) == 1
+        text = lines[0].text()
+        assert re.match(r"total return difference:\s*2\.50%(?![\w%])", text), text
+        assert "percentage points" not in text.lower(), text
+
+    def test_no_figure_line_of_any_record_prints_the_words_percentage_points(
+        self, client, isolated_db
+    ):
+        checked = 0
+        for which in ("full", "edge", "small", "quiet", "gap"):
+            record = _store_record(which)
+            panel = _panel(client)
+            for stored in record["entries"]:
+                node = pb.entry_node(panel, stored["symphony_id"])
+                for name in _PANEL_ITEMS:
+                    item = stored["evidence"][name]
+                    if item["status"] != "available":
+                        continue
+                    block = node.find(f"tenure-review-evidence-{name}")
+                    for fig_name, fig in item["figures"].items():
+                        if fig["unit"] != "percentage points" or fig["value"] is None:
+                            continue
+                        label = fig_name.replace("_", " ")
+                        where = f"{which} / {stored['display_name']} / {fig_name}"
+                        lines = _figure_lines(block, label)
+                        assert len(lines) == 1, where
+                        text = lines[0].text()
+                        printed = _printed_figure(fig_name, fig["value"])
+                        # a value that rounds to zero prints 0.00, with no sign
+                        forms = ["0.00"] if round(printed, 2) == 0 else _two_decimal_forms(printed)
+                        assert any(
+                            re.search(rf"{re.escape(form)}%(?![\w%])", text) for form in forms
+                        ), (where, text)
+                        assert "percentage" not in text.lower(), (where, text)
+                        checked += 1
+        assert checked >= 6, f"the records must hold figures in percentage points, got {checked}"
 
 
 class TestAFigureWithNoValueReadsNotComputable:

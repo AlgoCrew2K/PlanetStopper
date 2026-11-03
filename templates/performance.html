@@ -500,7 +500,8 @@
             <!-- Non-expert framing for the delta column (Phase 2, ux-design-deliverable.md §Change 3). -->
             <p class="metrics-caption">
                 Positive deltas on risk metrics (Sharpe, Sortino, drawdown reduction) mean the bot
-                improved risk-adjusted outcomes vs holding through.
+                improved risk-adjusted outcomes vs holding through. Delta is bot minus baseline;
+                drawdown and volatility deltas are in %.
             </p>
             <div class="metrics-overflow">
                 <table class="metrics-tbl metrics-tbl--fit">
@@ -509,7 +510,7 @@
                             <th>Metric</th>
                             <th style="text-align:right">If-held baseline</th>
                             <th style="text-align:right">Bot (Planet Stopper)</th>
-                            <th style="text-align:right">Delta (bot &minus; baseline; drawdown and volatility in %)</th>
+                            <th style="text-align:right">Delta</th>
                         </tr>
                     </thead>
                     <!-- Static rows are server-rendered placeholders; performance.js
