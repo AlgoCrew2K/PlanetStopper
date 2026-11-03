@@ -8,16 +8,16 @@ from a capture: the session's date text is ``session_label(anchor)`` of the anch
 names, the same helper the sleeve row and History heading tests use.
 
 The labels are the ones named beside the last session's figures: the hero Today row, each card's
-footer, the detail panel's Live Return heading, its HWM sub-label, its events heading and its empty
+footer, the detail panel's Live return heading, its HWM sub-label, its events heading and its empty
 events line, and the triggered card's "If held · live" heading.
 
 Contract pinned
 * First paint on a closed day: the hero row, every card footer, the panel's events heading, HWM
-  sub-label and empty events line name the session date and do not say "today"; the Live Return
+  sub-label and empty events line name the session date and do not say "today"; the Live return
   heading and every if-held heading do not say "live" (and the if-held heading is still there).
 * The same texts after the first poll while closed (nothing changes between first paint and the poll),
   and in a panel opened on a card while closed (its events line is written by the page script).
-* While open the wording is unchanged: Today, Live Return, HWM today, Today's events, No events yet
+* While open the wording is unchanged: Today, Live return, HWM today, Today's events, No events yet
   today., If held · live on a triggered card.
 * The labels follow the state: an open page polled with a closed body reads as a closed render does,
   and a closed page polled with an open body reads as an open render does.
@@ -169,7 +169,7 @@ def assert_closed_wording(found: dict, session: str, where: str) -> None:
 
 OPEN_WORDING = {
     "heroToday": "Today",
-    "liveReturn": "Live Return",
+    "liveReturn": "Live return",
     "hwm": "HWM today",
     "eventsHeading": "Today’s events",
     "eventsEmpty": "No events yet today.",

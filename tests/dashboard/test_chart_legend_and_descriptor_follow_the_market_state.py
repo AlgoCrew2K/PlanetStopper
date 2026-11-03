@@ -8,7 +8,7 @@ and ``static/index.js`` run whole under node (tests/dashboard/_index_js_harness.
 Contract pinned
 * The detail panel's chart legend names the if-held line "Live (if held)" while the market is open and
   "If held" while it is not, at first paint and after the first poll (nothing changes between them),
-  and it follows a state change in either direction, as the panel's Live Return heading does.
+  and it follows a state change in either direction, as the panel's Live return heading does.
 * The headline descriptor ends "All symphonies at their latest values, before exit friction." in every
   market state, at first paint and after a poll, and never says "today".
 * The Performance page keeps its own "Live (if held)" series name: it names a series, not a clock.

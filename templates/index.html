@@ -11,18 +11,106 @@
   <script src="{{ url_for('static', filename='tweaks.js') }}"></script>
   <script src="{{ url_for('static', filename='vendor/chart.js-4.6.1.umd.js') }}"></script>
   <style>
-    /* Universal + body reset live in static/layout.css (shared single source) */
+    /* Dashboard page rules. Character: exact, sober, ledger-like. Sizes 11 / 12 / 13 / 14 / 16 / 20 / 56 px,
+       weights 400 and 500, spacing on a 4 px grid, figures tabular. Colour sits in the hero chart and its
+       figure; every state elsewhere is a dot and one word. Universal + body reset live in
+       static/layout.css (shared single source). The rules that name a shared primitive (.hero-section,
+       .section-header, .mini-stat*, .sym-card, .card-name, .status-pill, .legend-as-of) are this page's
+       refinements, scoped under .page-dashboard; the shared sheet is untouched. */
 
     body {
       background: var(--studio-bg);
       color: var(--studio-ink);
       font-family: var(--studio-sans);
+      font-size: 13px;
+      line-height: 1.4;
       min-height: 100vh;
+      font-variant-numeric: tabular-nums;
     }
 
-    /* .page-wrap skeleton lives in static/layout.css (shared single source) */
+    .page-dashboard button:focus-visible {
+      outline: 2px solid var(--studio-accent);
+      outline-offset: 2px;
+    }
 
-    /* status-strip removed (V-40): status info is inline in the chrome nav right-rail */
+    /* ---- Shared primitives, as this page uses them ---- */
+    .page-dashboard .hero-section {
+      border-radius: 14px;
+      padding: 24px 28px;
+      margin-bottom: 16px;
+    }
+
+    .page-dashboard .legend-as-of { font-size: 11px; }
+
+    .page-dashboard .section-header {
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--studio-ink);
+      margin: 24px 0 8px;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    /* A count beside a section title: plain muted text. */
+    .count-note {
+      font-size: 12px;
+      font-weight: 400;
+      color: var(--studio-ink-dim);
+    }
+
+    .page-dashboard .card-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--studio-ink);
+      line-height: 1.3;
+    }
+
+    /* A state is a dot and one word. The dot carries the state colour; the word stays ink. */
+    .page-dashboard .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: none;
+      color: var(--studio-ink);
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+      white-space: nowrap;
+    }
+
+    .page-dashboard .status-pill::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--dot, var(--studio-ink-dim));
+      flex: none;
+    }
+
+    .page-dashboard .status-pill.armed { --dot: var(--studio-pos); }
+    .page-dashboard .status-pill.triggered,
+    .page-dashboard .status-pill.stop,
+    .page-dashboard .status-pill.sleeve-paused { --dot: var(--studio-neg); }
+    .page-dashboard .status-pill.tp,
+    .page-dashboard .status-pill.tp-armed { --dot: var(--studio-plum); }
+    .page-dashboard .status-pill.vwap,
+    .page-dashboard .status-pill.para-armed { --dot: var(--studio-cyan); }
+    .page-dashboard .status-pill.bleed,
+    .page-dashboard .status-pill.sleeve-benched { --dot: var(--studio-warn); }
+    .page-dashboard .status-pill.standby { --dot: var(--studio-ink-dim); color: var(--studio-ink-dim); }
+    .page-dashboard .status-pill.sleeve-paused { font-weight: 500; }
+    .page-dashboard .status-pill.sleeve-stale { color: var(--studio-ink-dim); }
+    .page-dashboard .status-pill.sleeve-stale::before {
+      background: none;
+      border: 1.5px dashed var(--studio-ink-dim);
+    }
 
     /* ---- Hero ---- */
     .hero-grid {
@@ -31,40 +119,7 @@
       gap: 32px;
     }
 
-    /* F-4: stack hero columns on narrow viewports. Floor is 700px — the card
-       grid is already responsive via auto-fill minmax; only the hero needs this.
-       The headline and the window picker stack too: side by side, the picker was squeezed into a
-       thin column. The picker takes the row and its buttons wrap as a row, the chart legend
-       wraps, and the headline sentence gets the full width. */
-    @media (max-width: 700px) {
-      .hero-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .hero-top {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 12px;
-      }
-
-      .window-selector {
-        flex-wrap: wrap;
-        align-self: stretch;
-      }
-
-      .chart-legend {
-        flex-wrap: wrap;
-        gap: 6px 16px;
-      }
-
-      .guard-alpha-headline {
-        font-size: 44px;
-      }
-    }
-
-    .hero-grid > * {
-      min-width: 0;
-    }
+    .hero-grid > * { min-width: 0; }
 
     .hero-top {
       display: flex;
@@ -74,20 +129,25 @@
       align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 20px;
+      margin-bottom: 16px;
     }
 
     /* The headline block takes the room the picker leaves (its sentence wraps to it) but never
        less than its widest unbreakable line, the headline figure. */
-    .hero-top > :first-child {
-      flex: 1 1 0;
+    .hero-top > :first-child { flex: 1 1 0; }
+
+    .guard-alpha-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--studio-ink-dim);
+      margin-bottom: 4px;
     }
 
     .guard-alpha-headline {
       font-size: 56px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      line-height: 1.05;
       /* The figure and its unit ("-0.73%") are one reading: kept on one line, so a squeezed
          column never leaves the unit alone on a second line. */
       white-space: nowrap;
@@ -96,102 +156,112 @@
     .guard-alpha-headline.pos { color: var(--studio-pos); }
     .guard-alpha-headline.neg { color: var(--studio-neg); }
 
-    .guard-alpha-label {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--studio-accent);
-      margin-bottom: 2px;
-    }
-
     .guard-alpha-descriptor {
       font-size: 12px;
       font-weight: 400;
       color: var(--studio-ink-dim);
-      line-height: 1.4;
-      letter-spacing: 0;
-      margin-top: 6px;
-      max-width: 46ch;
+      line-height: 1.5;
+      margin-top: 8px;
+      max-width: 52ch;
     }
 
-    /* Window selector */
+    .account-all-time-stat {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--studio-ink-dim);
+    }
+    .account-all-time-value { font-weight: 500; }
+    .account-all-time-value.pos { color: var(--studio-pos); }
+    .account-all-time-value.neg { color: var(--studio-neg); }
+
+    /* Window picker: a segmented control, the active segment one surface step up with a hairline. */
     .window-selector {
       display: flex;
-      gap: 2px;
+      gap: 0;
       background: var(--studio-chip-bg);
       border: 1px solid var(--studio-rule);
       border-radius: 8px;
-      padding: 3px;
+      padding: 2px;
       align-self: flex-start;
     }
 
     .window-selector button {
-      padding: 4px 10px;
-      border: none;
+      padding: 4px 12px;
+      border: 0;
       border-radius: 6px;
       background: transparent;
       color: var(--studio-ink-dim);
-      font-size: 11.5px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       font-family: var(--studio-sans);
+      transition: color 120ms ease, background-color 120ms ease;
     }
 
-    .window-selector button:hover {
-      background: var(--studio-paper-hi);
-      color: var(--studio-ink);
-    }
+    .window-selector button:hover { color: var(--studio-ink); }
 
     .window-selector button.active {
       background: var(--studio-paper-hi);
       color: var(--studio-ink);
-      box-shadow: 0 1px 3px var(--studio-rule);
+      box-shadow: inset 0 0 0 1px var(--studio-rule-hi);
     }
 
+    /* Chart overlay toggles in the detail panel: neutral controls; the legend below names the colours. */
     .overlay-toggle {
-      padding: 3px 8px;
+      padding: 4px 8px;
       border: 1px solid var(--studio-rule);
-      border-radius: 5px;
+      border-radius: 6px;
       background: transparent;
-      font-size: 10px;
-      font-weight: 600;
+      color: var(--studio-ink-dim);
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
       font-family: var(--studio-sans);
-      transition: background 0.1s;
+      transition: color 120ms ease, background-color 120ms ease;
     }
-    #toggle-stop      { color: var(--studio-neg); }
-    #toggle-breakeven { color: var(--studio-ink-dim); }
-    #toggle-vwap      { color: var(--studio-plum); }
-    #toggle-mc        { color: var(--studio-warn); }
-    .overlay-toggle.active { background: var(--studio-paper-hi); }
-    .overlay-toggle:disabled { opacity: 0.3; cursor: default; }
+    .overlay-toggle:hover { color: var(--studio-ink); }
+    .overlay-toggle.active {
+      background: var(--studio-paper-hi);
+      color: var(--studio-ink);
+      border-color: var(--studio-rule-hi);
+    }
+    .overlay-toggle:disabled { opacity: 0.4; cursor: default; }
 
     /* Cumulative chart */
+    #guard-alpha-window-notice { color: var(--studio-ink); }
+    .muted { color: var(--studio-ink-dim); }
+    .hero-chart-overlay {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      pointer-events: none;
+    }
+    .hero-chart-center { top: 50%; transform: translate(-50%, -50%); }
+    .hero-chart-top { top: 4px; }
+    .hero-chart-bottom { bottom: 4px; }
     .cum-chart-wrap {
       height: 160px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       position: relative;
     }
 
-    /* Chart legend */
     .chart-legend {
       display: flex;
       align-items: center;
-      gap: 16px;
-      font-size: 11px;
+      flex-wrap: wrap;
+      gap: 4px 16px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      margin-bottom: 16px;
     }
 
     .legend-item {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
 
     .legend-swatch {
-      width: 18px;
+      width: 16px;
       height: 2px;
       background: var(--studio-accent);
       border-radius: 1px;
@@ -200,31 +270,40 @@
     .legend-swatch.dashed {
       background: repeating-linear-gradient(
         90deg,
-        var(--studio-ink-faint) 0,
-        var(--studio-ink-faint) 4px,
+        var(--studio-ink-dim) 0,
+        var(--studio-ink-dim) 4px,
         transparent 4px,
         transparent 8px
       );
     }
 
-    /* VsRows */
+    .legend-basis-note { font-size: 11px; color: var(--studio-ink-dim); }
+    .hero-chart-note {
+      font-size: 11px;
+      color: var(--studio-ink-dim);
+      background: var(--studio-chip-bg);
+      padding: 2px 8px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+
+    /* Bot-vs-held rows: one ledger, label then Bot, Held and the gap, then the two bars. */
     .vs-rows {
       display: flex;
       flex-direction: column;
-      gap: 0;
       border: 1px solid var(--studio-rule);
       border-radius: 8px;
       overflow: hidden;
-      margin-bottom: 16px;
+      margin-bottom: 12px;
     }
 
     .vs-row {
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      padding: 10px 14px;
+      gap: 4px;
+      padding: 8px 12px;
       border-bottom: 1px solid var(--studio-rule);
-      font-size: 12px;
+      font-size: 13px;
     }
 
     .vs-row:last-child { border-bottom: none; }
@@ -232,100 +311,266 @@
 
     .vs-row-top {
       display: flex;
-      justify-content: space-between;
       align-items: baseline;
       flex-wrap: wrap;
-      gap: 4px;
+      gap: 4px 12px;
       min-width: 0;
     }
 
-    .vs-row-top > * {
-      min-width: 0;
-    }
+    .vs-row-top > * { min-width: 0; }
 
     .vs-row-label {
-      font-weight: 600;
-      font-size: 11px;
-      color: var(--studio-ink-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      font-weight: 500;
+      font-size: 13px;
+      color: var(--studio-ink);
     }
 
-    .vs-val { font-weight: 700; font-size: 12px; }
+    /* The row's figures sit at its right edge in fixed columns, so the three rows line up. */
+    .vs-row-top [data-testid$="-bot-text"] { margin-left: auto; }
+    .vs-val {
+      font-weight: 500;
+      font-size: 13px;
+      min-width: 92px;
+      text-align: right;
+    }
     .vs-val.pos { color: var(--studio-pos); }
     .vs-val.neg { color: var(--studio-neg); }
 
     .vs-delta {
-      font-size: 10px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 400;
       color: var(--studio-ink-dim);
+      min-width: 72px;
+      text-align: right;
     }
+    .vs-delta.pos { color: var(--studio-pos); }
+    .vs-delta.neg { color: var(--studio-neg); }
 
     .vs-bars {
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 4px;
     }
 
     .vs-bar-row {
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 10px;
+      gap: 8px;
+      font-size: 11px;
       color: var(--studio-ink-dim);
     }
 
-    .vs-bar-label { width: 36px; flex-shrink: 0; }
+    .vs-bar-label { width: 32px; flex-shrink: 0; }
+    .vs-bar-label.winner { color: var(--studio-ink); font-weight: 500; }
 
     .vs-bar-track {
       flex: 1;
-      height: 10px;
+      height: 4px;
       background: var(--studio-chip-bg);
-      border-radius: 4px;
+      border-radius: 2px;
       overflow: hidden;
     }
 
     .vs-bar-fill {
       height: 100%;
-      border-radius: 4px;
+      border-radius: 2px;
       background: var(--studio-ink-faint);
-      min-width: 4px;
-      transition: width 0.3s ease;
+      min-width: 2px;
+      transition: width 300ms ease;
     }
 
     .vs-bar-fill.winner { background: var(--studio-accent); }
-    .vs-bar-fill.loser  { background: var(--studio-ink-faint); opacity: 0.55; }
+    .vs-bar-fill.loser { background: var(--studio-ink-dim); }
 
-    .vs-bar-label.winner {
-      color: var(--studio-ink);
-      font-weight: 700;
+    /* A marker beside a row label: an info icon whose title carries the basis. */
+    .info-mark {
+      display: inline-flex;
+      vertical-align: -2px;
+      margin-left: 4px;
+      color: var(--studio-ink-dim);
+      cursor: default;
     }
 
-    .vs-delta.pos { color: var(--studio-pos); }
-    .vs-delta.neg { color: var(--studio-neg); }
+    /* A state note on a figure: a warn dot and plain text. */
+    .basis-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-basis: 100%;
+      font-size: 11px;
+      color: var(--studio-ink-dim);
+    }
+    .basis-chip[hidden] { display: none; }
+    .basis-chip::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--studio-warn);
+      flex: none;
+    }
 
-    /* ---- Card sections ---- */
+    .row-note {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--studio-ink-dim);
+    }
+    .row-note[hidden] { display: none; }
+
+    .mdd-lifetime {
+      font-size: 12px;
+      color: var(--studio-ink-dim);
+      margin: 0 0 8px;
+    }
+    .mdd-lifetime strong { font-weight: 500; color: var(--studio-ink); }
+
+    .account-basis-asof {
+      font-size: 11px;
+      color: var(--studio-ink-dim);
+      text-align: right;
+      margin: -4px 0 8px;
+    }
+    .account-basis-asof[hidden] { display: none; }
+
+    /* Tracked / Armed / Triggered: one row of figures. */
+    .page-dashboard .mini-stats { gap: 24px; align-items: baseline; }
+
+    .page-dashboard .mini-stat {
+      flex: none;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      background: none;
+      border-radius: 0;
+      padding: 0;
+      text-align: left;
+    }
+
+    .page-dashboard .mini-stat-value {
+      font-size: 20px;
+      font-weight: 500;
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    .page-dashboard .mini-stat-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--studio-ink-dim);
+    }
+
+    .page-dashboard .mini-stat-label::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--dot, transparent);
+    }
+    .page-dashboard .mini-stat.ms-armed { --dot: var(--studio-pos); }
+    .page-dashboard .mini-stat.ms-triggered { --dot: var(--studio-neg); }
+    .page-dashboard .mini-stat.ms-tracked .mini-stat-label::before { display: none; }
+
+    /* ---- Dollar-saved panel: the lead figure, then the other three bases as a short list. ---- */
+    .dollar-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+      gap: 8px 32px;
+      align-items: start;
+    }
+
+    .dollar-lead { font-size: 14px; color: var(--studio-ink); }
+    .dollar-figure { font-size: 24px; font-weight: 500; letter-spacing: -0.01em; }
+    .dollar-count { font-weight: 500; }
+
+    .dollar-meta {
+      margin-top: 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 12px;
+      font-size: 12px;
+      color: var(--studio-ink-dim);
+    }
+    .dollar-meta [hidden] { display: none; }
+    .dollar-notice { flex-basis: 100%; color: var(--studio-ink); }
+
+    .dollar-line { font-size: 13px; color: var(--studio-ink-dim); padding: 2px 0; }
+    .dollar-line .dollar-sub { font-weight: 500; }
+
+    /* ---- Card sections: one ledger, a row per symphony ---- */
     .cards-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(min(100%, 640px), 1fr));
-      gap: 16px;
+      grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr));
+      gap: 12px;
     }
 
+    .sym-list {
+      grid-template-columns: 1fr;
+      gap: 0;
+      border: 1px solid var(--studio-rule);
+      border-radius: 12px;
+      background: var(--studio-paper);
+      overflow: hidden;
+    }
+    .page-dashboard .sym-list:not(:has(.sym-card)) { display: none; }
+
+    .page-dashboard .sym-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 8px 24px;
+      align-items: center;
+      background: none;
+      border: 0;
+      border-top: 1px solid var(--studio-rule);
+      border-radius: 0;
+      box-shadow: none;
+      padding: 8px 16px;
+      transition: background-color 120ms ease;
+    }
+    .page-dashboard .sym-card:first-child { border-top: 0; }
+    .page-dashboard .sym-card:hover { background: var(--studio-chip-bg); box-shadow: none; }
+
     .card-top {
+      grid-column: 1 / -1;
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 12px;
+      gap: 12px;
+    }
+
+    .card-id {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .card-id-line {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0 12px;
+    }
+
+    .card-actions {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex: none;
     }
 
     /* Generic inert-control marker (AC-16 finding #5) -- a disabled sleeve
        control must never look identical to its enabled counterpart.
        cursor is !important because the Disarm button's own inline style
        sets cursor:pointer unconditionally (enabled case) -- a class
-       selector alone can never out-specificity an inline style, so without
-       !important the cursor silently never actually switches to
-       not-allowed even though opacity correctly does (s3-ux re-render
-       finding, 2026-07-08: opacity worked, cursor didn't). */
+       selector alone can never out-specificity an inline style. */
     .control-disabled { opacity: 0.4; cursor: not-allowed !important; }
 
     /* Per-symphony settings gear button */
@@ -338,30 +583,30 @@
       justify-content: center;
       background: transparent;
       border: 1px solid var(--studio-rule);
-      border-radius: 6px;
+      border-radius: 8px;
       color: var(--studio-ink-dim);
       cursor: pointer;
-      font-size: 14px;
       flex-shrink: 0;
+      transition: color 120ms ease, border-color 120ms ease;
     }
     .sym-settings-btn:hover {
       border-color: var(--studio-rule-hi);
       color: var(--studio-ink);
     }
 
-    /* Cash Now button */
+    /* Cash Now: a sell control, kept outlined in the danger colour and clearly a button. */
     .cash-now-btn {
-      padding: 4px 12px;
-      border-radius: 6px;
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 8px;
       background: transparent;
       color: var(--studio-neg);
-      font-size: 10.5px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 500;
       border: 1px solid var(--studio-neg);
       cursor: pointer;
       font-family: var(--studio-sans);
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+      transition: color 120ms ease, background-color 120ms ease;
     }
     .cash-now-btn:hover {
       background: var(--studio-neg);
@@ -371,61 +616,244 @@
       opacity: 0.4;
       cursor: default;
     }
-
-    /* Dual-value headline */
-    .dual-value-headline {
-      display: flex;
-      gap: 16px;
-      margin-bottom: 10px;
+    .cash-now-btn:disabled:hover {
+      background: transparent;
+      color: var(--studio-neg);
     }
-
-    .dv-block {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .dv-label {
-      font-size: 10px;
-      color: var(--studio-ink-dim);
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .dv-value {
-      font-size: 20px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-    }
-
-    .dv-value.pos { color: var(--studio-pos); }
-    .dv-value.neg { color: var(--studio-neg); }
-
-    /* Triggered verdict */
-    .triggered-verdict {
+    /* The note a refused sale leaves hangs under the button, so the row keeps its columns. */
+    [data-testid="cash-now-note"] {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      white-space: nowrap;
       font-size: 11px;
-      font-weight: 600;
-      color: var(--studio-ink-dim);
-      margin-top: 8px;
-      padding: 6px 10px;
-      background: var(--studio-chip-bg);
-      border-radius: 6px;
+      color: var(--studio-neg);
     }
 
-    /* ---- hidden-toggled banners/badges ---- */
-    /* display must NOT appear as inline style — it overrides [hidden]{display:none}.
-       Gate display on :not([hidden]) so setAttribute('hidden','') actually hides. */
+    .triggered-verdict {
+      font-size: 12px;
+      color: var(--studio-ink-dim);
+    }
+    .triggered-verdict[hidden] { display: none; }
+    .verdict-basis { font-size: 11px; margin-left: 4px; color: var(--studio-ink-dim); }
+
+    /* Where a card shows its second and third lines under the name. */
+    .card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 12px;
+      font-size: 11px;
+      color: var(--studio-ink-dim);
+    }
+    .lifetime-line { color: var(--studio-ink-dim); }
+
+    /* The ledger: Today, Cumulative and Max DD as three columns over three rows. Bot and If held
+       are named once, in the first column; the others line up under them. */
+    .card-footer-grid {
+      display: grid;
+      grid-template-columns: 144px 92px 104px;
+      grid-template-rows: auto 20px 20px;
+      column-gap: 20px;
+      align-items: center;
+    }
+
+    .cfg-cell {
+      display: grid;
+      grid-row: 1 / span 3;
+      grid-template-rows: subgrid;
+      min-width: 0;
+    }
+
+    .cfg-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      min-height: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--studio-ink);
+      white-space: nowrap;
+    }
+
+    .cfg-alpha-badge {
+      font-size: 12px;
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
+      color: var(--studio-ink-dim);
+    }
+    .cfg-alpha-badge.pos { color: var(--studio-pos); }
+    .cfg-alpha-badge.neg { color: var(--studio-neg); }
+    .cfg-alpha-badge[hidden] { display: none; }
+
+    .cfg-dual-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .cfg-tag, .dv-label {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--studio-ink-dim);
+      white-space: nowrap;
+    }
+
+    .cfg-val, .dv-value {
+      font-size: 13px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .cfg-val.pos, .dv-value.pos { color: var(--studio-pos); }
+    .cfg-val.neg, .dv-value.neg { color: var(--studio-neg); }
+    .cfg-dual-row:last-child .cfg-val,
+    .cfg-dual-row:last-child .dv-value { font-weight: 400; }
+
+    /* The row names repeat only in the first column: the others keep them for screen readers. */
+    .card-footer-grid > .cfg-cell ~ .cfg-cell .cfg-tag {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+    .card-footer-grid > .cfg-cell ~ .cfg-cell .cfg-dual-row { justify-content: flex-end; }
+
+    .card-spark-col {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .card-spark-box {
+      flex: 1;
+      min-width: 0;
+      height: 56px;
+      overflow: hidden;
+    }
+
+    .mc-dial { flex: none; width: 44px; height: 44px; }
+    .mc-track { stroke: var(--studio-chip-bg); stroke-width: 3; }
+    .mc-arc { stroke: var(--studio-accent); stroke-width: 3; transition: stroke-dashoffset 400ms ease; }
+    .mc-text {
+      fill: var(--studio-ink);
+      font-family: var(--studio-sans);
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    /* Desktop: one line per symphony. */
+    @media (min-width: 1240px) {
+      .page-dashboard .sym-card {
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 252px) auto;
+        column-gap: 24px;
+        padding: 8px 16px;
+      }
+      .card-top { display: contents; }
+      .card-id { grid-column: 1; grid-row: 1; }
+      .card-actions { grid-column: 4; grid-row: 1; }
+      .card-footer-grid { grid-column: 2; grid-row: 1; }
+      .card-spark-col { grid-column: 3; grid-row: 1; }
+    }
+
+    /* Phone: everything stacks in reading order. */
+    @media (max-width: 700px) {
+      .hero-grid { grid-template-columns: 1fr; gap: 16px; }
+      .hero-top { flex-direction: column; align-items: stretch; gap: 12px; }
+      .window-selector { flex-wrap: wrap; align-self: stretch; }
+      .guard-alpha-headline { font-size: 44px; }
+      .page-dashboard .hero-section { padding: 16px; margin-bottom: 12px; }
+      .vs-row-label { flex-basis: 100%; }
+      .vs-row-top [data-testid$="-bot-text"] { margin-left: 0; }
+      .vs-val, .vs-delta { min-width: 0; text-align: left; flex: 1 1 auto; }
+      .dollar-panel { grid-template-columns: 1fr; gap: 8px; }
+      .page-dashboard .sym-card { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; }
+      .card-footer-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr); column-gap: 8px; }
+      .page-dashboard .mini-stats { gap: 16px; flex-wrap: wrap; }
+      .fleet-banner { flex-wrap: wrap; }
+      [data-testid="cash-now-note"] { position: static; flex-basis: 100%; text-align: right; white-space: normal; }
+    }
+
+    /* ---- Dashboard banners (hidden by default; the script shows them) ---- */
     #fleet-correlation-banner { display: none; }
     #fleet-correlation-banner:not([hidden]) { display: flex; }
+    .fleet-banner {
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 16px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      background: var(--studio-warn-tint);
+      border: 1px solid var(--studio-warn-border);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--studio-ink);
+    }
+    .fleet-banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .banner-btn {
+      padding: 4px 12px;
+      border: 1px solid var(--studio-rule-hi);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--studio-ink);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: var(--studio-sans);
+      transition: background-color 120ms ease;
+    }
+    .banner-btn:hover { background: var(--studio-chip-bg); }
+
+    .market-banner {
+      padding: 8px 16px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      background: var(--studio-chip-bg);
+      border: 1px solid var(--studio-rule);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--studio-ink-dim);
+      text-align: center;
+    }
+    .market-banner[hidden] { display: none; }
+
     #fleet-info-modal { display: none; position: fixed; inset: 0; z-index: 9000; align-items: center; justify-content: center; background: var(--studio-scrim); }
     #fleet-info-modal:not([hidden]) { display: flex; }
+    .fleet-modal-card {
+      background: var(--studio-paper);
+      border: 1px solid var(--studio-warn-border);
+      border-radius: 14px;
+      padding: 24px 28px;
+      max-width: 520px;
+      width: 92%;
+    }
+    .fleet-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .fleet-modal-title { font-size: 16px; font-weight: 500; color: var(--studio-ink); }
+    .fleet-modal-card p { font-size: 13px; color: var(--studio-ink-dim); margin: 0 0 16px; line-height: 1.5; }
+    .fleet-modal-card h3 { font-size: 13px; font-weight: 500; color: var(--studio-ink); margin-bottom: 4px; }
+    #fleet-info-specifics {
+      background: var(--studio-chip-bg);
+      border: 1px solid var(--studio-rule);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--studio-ink);
+    }
+    #fleet-info-specifics strong { font-weight: 500; }
+    .fleet-modal-foot { display: flex; justify-content: flex-end; }
+
     /* ---- Detail panel ---- */
     .detail-panel-scrim {
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.35);
+      background: var(--studio-scrim);
+      opacity: 0.5;
       z-index: 900;
     }
 
@@ -441,7 +869,7 @@
       border-left: 1px solid var(--studio-rule);
       z-index: 901;
       overflow-y: auto;
-      transition: transform 0.25s ease;
+      transition: transform 250ms ease;
       transform: translateX(100%);
       display: flex;
       flex-direction: column;
@@ -455,36 +883,88 @@
       top: 0;
       background: var(--studio-paper);
       border-bottom: 1px solid var(--studio-rule);
-      padding: 18px 24px 16px;
+      padding: 16px 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
       z-index: 10;
     }
 
     .detail-panel-title {
-      font-size: 15px;
-      font-weight: 700;
+      font-size: 16px;
+      font-weight: 500;
       color: var(--studio-ink);
     }
 
-    .detail-close {
-      width: 30px;
-      height: 30px;
-      border: none;
-      background: var(--studio-chip-bg);
-      border-radius: 6px;
+    .detail-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+
+    .detail-btn {
+      height: 28px;
+      padding: 0 12px;
+      border: 1px solid var(--studio-rule);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--studio-ink-dim);
+      font-size: 12px;
+      font-weight: 500;
       cursor: pointer;
-      font-size: 14px;
+      font-family: var(--studio-sans);
+      transition: color 120ms ease, background-color 120ms ease;
+    }
+    .detail-btn:hover { color: var(--studio-ink); }
+    .detail-btn.danger { border-color: var(--studio-neg); color: var(--studio-neg); }
+    .detail-btn.danger:hover { background: var(--studio-neg); color: var(--studio-white); }
+
+    .detail-close {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      background: var(--studio-chip-bg);
+      border-radius: 8px;
+      cursor: pointer;
       color: var(--studio-ink-dim);
       display: flex;
       align-items: center;
       justify-content: center;
     }
+    .detail-close:hover { color: var(--studio-ink); }
 
     .detail-body { padding: 0; display: flex; flex-direction: column; }
 
-    /* Detail stats row — flush hairline grid, no chip bg, per design StatRow */
+    .detail-loading { padding: 12px 24px 0; }
+    .detail-section { padding: 16px 24px; border-bottom: 1px solid var(--studio-rule); }
+    .detail-section-open { border-bottom: 0; }
+    .detail-section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .detail-toggles { display: flex; gap: 8px; }
+    .detail-split { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--studio-rule); }
+    .detail-split-cell { padding: 16px 20px; }
+    .detail-split-cell:first-child { border-right: 1px solid var(--studio-rule); }
+    .detail-split-title { margin-bottom: 12px; }
+    .detail-foot {
+      padding: 12px 24px;
+      border-top: 1px solid var(--studio-rule);
+      background: var(--studio-paper);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 11px;
+      color: var(--studio-ink-dim);
+      flex-shrink: 0;
+    }
+    .legend-key { display: inline-flex; align-items: center; gap: 8px; }
+    .detail-section-title { font-size: 16px; font-weight: 500; color: var(--studio-ink); }
+    .detail-section-sub { font-size: 11px; color: var(--studio-ink-dim); margin-top: 2px; }
+
+    /* Detail stats row — flush hairline grid */
     .detail-stats-row {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -492,78 +972,80 @@
     }
 
     .detail-stat {
-      padding: 16px 18px;
+      padding: 16px;
       border-right: 1px solid var(--studio-rule);
+      min-width: 0;
     }
     .detail-stat:last-child { border-right: none; }
 
     .detail-stat-label {
-      font-size: 9.5px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      font-weight: 600;
-      margin-bottom: 2px;
+      font-weight: 400;
+      margin-bottom: 4px;
     }
 
     .detail-stat-value {
-      font-size: 26px;
+      font-size: 24px;
       font-weight: 500;
       color: var(--studio-ink);
-      letter-spacing: -0.02em;
-      line-height: 1.05;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
       font-variant-numeric: tabular-nums;
     }
 
     /* On a phone the four figures take two columns, so none is cut at the panel's edge. */
     @media (max-width: 520px) {
       .detail-stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .detail-stat { padding: 12px 14px; border-bottom: 1px solid var(--studio-rule); min-width: 0; }
+      .detail-stat { padding: 12px; border-bottom: 1px solid var(--studio-rule); }
       .detail-stat:nth-child(2n) { border-right: none; }
       .detail-stat:nth-last-child(-n+2) { border-bottom: none; }
-      .detail-stat-value { font-size: 22px; }
+      .detail-stat-value { font-size: 20px; }
+      .detail-split { grid-template-columns: 1fr; }
+      .detail-split-cell:first-child { border-right: 0; border-bottom: 1px solid var(--studio-rule); }
+      .detail-panel-header { flex-wrap: wrap; padding: 12px 16px; }
+      .detail-panel-title { flex: 1 1 100%; }
+      .detail-section { padding: 16px; }
+      .detail-section-head { flex-wrap: wrap; }
     }
 
     .detail-stat-sub {
-      font-size: 10.5px;
+      font-size: 11px;
       color: var(--studio-ink-dim);
-      margin-top: 3px;
-      letter-spacing: 0.02em;
+      margin-top: 4px;
     }
 
-    /* Intraday chart */
     .intraday-chart-wrap {
       height: 200px;
       background: var(--studio-chip-bg);
-      border-radius: 10px;
+      border-radius: 8px;
       position: relative;
     }
 
-    .section-label {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
+    .detail-legend {
+      display: flex;
+      gap: 16px;
+      margin-top: 12px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      margin-bottom: 10px;
+      flex-wrap: wrap;
     }
 
-    /* Events timeline — connected vertical rule with colored dots */
+    /* Events timeline — connected vertical rule with dots */
     .event-row {
       display: grid;
-      grid-template-columns: 54px 1fr;
+      grid-template-columns: 48px 1fr;
       gap: 12px;
       padding-bottom: 12px;
     }
     .event-ts {
-      font-size: 10px;
+      font-size: 11px;
       color: var(--studio-ink-dim);
-      letter-spacing: 0.04em;
       padding-top: 2px;
     }
     .event-body {
       border-left: 1px solid var(--studio-rule);
-      padding-left: 14px;
+      padding-left: 16px;
       position: relative;
       padding-bottom: 2px;
     }
@@ -571,150 +1053,146 @@
       position: absolute;
       left: -4px;
       top: 4px;
-      width: 7px;
-      height: 7px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       border: 2px solid var(--studio-paper);
     }
     .event-kind {
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.06em;
+      font-size: 12px;
+      font-weight: 500;
     }
     .event-detail {
-      font-size: 11.5px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
       margin-top: 2px;
     }
 
     /* MathRow — vertical list with label/value/bar/hint */
     .math-row {
-      padding-bottom: 10px;
-      margin-bottom: 10px;
+      padding-bottom: 8px;
+      margin-bottom: 8px;
       border-bottom: 1px solid var(--studio-rule);
     }
+    .math-row-line {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 2px;
+    }
     .math-row-label {
-      font-size: 11px;
+      font-size: 12px;
       color: var(--studio-ink-dim);
-      font-weight: 500;
-      letter-spacing: 0.02em;
+      font-weight: 400;
     }
     .math-row-value {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--studio-ink);
       font-weight: 500;
       font-variant-numeric: tabular-nums;
     }
     .math-row-bar-wrap {
-      height: 3px;
+      height: 4px;
       background: var(--studio-chip-bg);
+      border-radius: 2px;
       margin-bottom: 4px;
       overflow: hidden;
     }
     .math-row-bar { height: 100%; }
+    .math-row-last { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
     .math-row-hint {
-      font-size: 10px;
+      font-size: 11px;
       color: var(--studio-ink-dim);
-      letter-spacing: 0.02em;
     }
 
     /* Vars section */
     .vars-section {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
     }
 
     .var-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 7px 12px;
+      padding: 8px 12px;
       background: var(--studio-chip-bg);
-      border-radius: 6px;
+      border-radius: 8px;
       font-size: 12px;
     }
 
-    .var-key { color: var(--studio-ink-dim); font-weight: 500; }
-    .var-val { color: var(--studio-ink); font-weight: 600; font-family: monospace; }
+    .var-key { color: var(--studio-ink-dim); font-weight: 400; }
+    .lock-mark { margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--studio-accent); }
+    .var-val { color: var(--studio-ink); font-weight: 500; font-variant-numeric: tabular-nums; }
 
-    /* Card footer grid */
-    .card-footer-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-      flex: 1;
-      padding-left: 10px;
-      border-top: 1px solid var(--studio-rule);
-      padding-top: 8px;
+    /* ---- Panels under the ledger: CVaR diagnostic and Managed Sleeves ---- */
+    .dash-panel {
+      margin: 24px 0 0;
+      padding: 16px 20px;
+      border: 1px solid var(--studio-rule);
+      border-radius: 12px;
+      background: var(--studio-paper);
+      font-family: var(--studio-sans);
+      font-size: 13px;
+      color: var(--studio-ink);
     }
-
-    .cfg-cell {
+    .dash-panel[hidden] { display: none; }
+    .dash-panel-title { font-size: 14px; font-weight: 500; color: var(--studio-ink); margin-bottom: 8px; }
+    .dash-panel-head {
       display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 0;
-    }
-
-    .cfg-label {
-      font-size: 9px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: var(--studio-ink-dim);
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-    }
-
-    /* The label above is upper-case; the alpha sign in the badge keeps its lower-case glyph. */
-    .cfg-alpha-badge {
-      font-size: 9.5px;
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-      text-transform: none;
-    }
-
-    /* A tag and its figure that do not fit side by side wrap onto two lines instead of overlapping. */
-    .cfg-dual-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
       flex-wrap: wrap;
-      column-gap: 6px;
-      margin-top: 1px;
+      gap: 8px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
     }
+    .dash-panel-head .dash-panel-title { margin-bottom: 0; }
+    .dash-panel-note { color: var(--studio-ink-dim); font-size: 12px; margin-top: 4px; }
+    .cvar-figures { display: flex; gap: 8px 32px; flex-wrap: wrap; align-items: baseline; }
+    .cvar-figures [data-field="cvar-stderr"] { color: var(--studio-ink-dim); }
 
-    /* On a phone the three stat cells need room for their figures: they take the width they need and
-       wrap onto further rows rather than squeezing into thirds of a narrow card. */
-    @media (max-width: 700px) {
-      .card-footer-grid {
-        grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
-      }
+    .sleeve-card {
+      background: var(--studio-paper);
+      border: 1px solid var(--studio-rule);
+      border-radius: 8px;
+      padding: 12px 16px;
     }
-
-    .cfg-tag {
-      font-size: 8.5px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+    .sleeve-line { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; }
+    .sleeve-figures { margin-top: 4px; color: var(--studio-ink-dim); font-size: 12px; }
+    .sleeve-rules { margin-top: 8px; }
+    .sleeve-rules[hidden] { display: none; }
+    .sleeve-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .sleeve-rule-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      padding: 4px 0;
+      border-top: 1px solid var(--studio-rule);
+      gap: 8px;
+    }
+    .sleeve-rule-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--studio-ink-dim); }
+    .ctl-btn {
+      height: 28px;
+      padding: 0 12px;
+      border-radius: 8px;
+      background: transparent;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--studio-rule);
       color: var(--studio-ink-dim);
+      cursor: pointer;
+      font-family: var(--studio-sans);
     }
-
-    .cfg-val {
-      font-size: 11.5px;
-      font-weight: 600;
-      font-variant-numeric: tabular-nums;
-    }
-
-    /* MC arc dial */
-    .mc-track { stroke: var(--studio-chip-bg); }
-    .mc-arc { stroke: var(--studio-accent); transition: stroke-dashoffset 0.4s ease; }
-    .mc-text { fill: var(--studio-ink); font-family: var(--studio-sans); }
+    .ctl-pos { color: var(--studio-pos); border-color: var(--studio-pos); }
+    .ctl-neg { color: var(--studio-neg); border-color: var(--studio-neg); }
+    .ctl-btn:disabled { cursor: not-allowed; }
   </style>
 </head>
 
-<body>
+<body class="page-dashboard">
   {#- A gap between two returns, in %: signed, fixed decimals. A value that rounds to zero at the
       shown decimals prints plain "0.00%" (no sign: neither a gain nor a loss), the same rule as
       static/index.js's fmtPp, so the first paint and the poll print the same text. -#}
@@ -730,42 +1208,36 @@
   <div class="page-wrap">
 
     <!-- Fleet correlation alert banner (hidden by default; JS shows when fleet_correlation_alert is set) -->
-    <div id="fleet-correlation-banner"{% if not fleet_alert %} hidden{% endif %}{% if fleet_alert %} data-fleet-alert='{{ fleet_alert | tojson | e }}'{% endif %} style="align-items:center;justify-content:space-between;padding:10px 16px;margin-bottom:16px;border-radius:8px;background:var(--studio-warn-tint);border:1px solid var(--studio-warn-border);font-size:12px;font-weight:600;color:var(--studio-warn);">
+    <div id="fleet-correlation-banner" class="fleet-banner"{% if not fleet_alert %} hidden{% endif %}{% if fleet_alert %} data-fleet-alert='{{ fleet_alert | tojson | e }}'{% endif %}>
       <span id="fleet-correlation-banner-text">{{ fleet_alert_text if fleet_alert else 'Fleet correlation alert' }}</span>
-      <span id="fleet-dismiss-notice" data-testid="fleet-dismiss-notice" hidden>Dismissal not saved</span>
-      <div style="display:flex;gap:8px;flex-shrink:0;">
-        <button type="button" id="fleet-more-info-btn"
-                onclick="openFleetInfoModal()"
-                style="padding:3px 10px;border:1px solid currentColor;border-radius:5px;background:transparent;color:inherit;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">More Info</button>
-        <button type="button" id="fleet-dismiss-btn"
-                onclick="dismissFleetAlert(this)"
-                style="padding:3px 10px;border:1px solid currentColor;border-radius:5px;background:transparent;color:inherit;font-size:11px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">Dismiss</button>
+      <span id="fleet-dismiss-notice" data-testid="fleet-dismiss-notice" class="row-note" hidden>Dismissal not saved</span>
+      <div class="fleet-banner-actions">
+        <button type="button" id="fleet-more-info-btn" class="banner-btn" onclick="openFleetInfoModal()">More info</button>
+        <button type="button" id="fleet-dismiss-btn" class="banner-btn" onclick="dismissFleetAlert(this)">Dismiss</button>
       </div>
     </div>
 
-    <!-- Fleet correlation detail modal (hidden by default; opened by More Info button) -->
+    <!-- Fleet correlation detail modal (hidden by default; opened by More info button) -->
     <div id="fleet-info-modal" hidden onclick="closeFleetInfoModal()">
-      <div onclick="event.stopPropagation()" style="background:var(--studio-paper);border:1px solid var(--studio-warn-border);border-radius:14px;padding:28px 32px;max-width:520px;width:92%;box-shadow:0 24px 64px rgba(0,0,0,0.28);">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-          <div style="font-size:13px;font-weight:800;letter-spacing:0.04em;text-transform:uppercase;color:var(--studio-warn);">Fleet Correlation Risk</div>
-          <button type="button" onclick="closeFleetInfoModal()"
-                  style="padding:3px 8px;border:1px solid var(--studio-rule);border-radius:5px;background:transparent;color:var(--studio-ink-dim);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">&#x2715;</button>
+      <div class="fleet-modal-card" onclick="event.stopPropagation()">
+        <div class="fleet-modal-head">
+          <div class="fleet-modal-title">Fleet correlation risk</div>
+          <button type="button" class="detail-close" aria-label="Close" onclick="closeFleetInfoModal()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         </div>
-        <p style="font-size:12px;color:var(--studio-ink-dim);margin:0 0 16px;line-height:1.6;">When many symphonies exit on the same signal at once, the fleet effectively behaves as a single concentrated position. This amplifies drawdown risk — losses that would otherwise be spread across uncorrelated strategies compound simultaneously.</p>
-        <div style="font-size:12px;font-weight:600;color:var(--studio-ink);margin-bottom:4px;">Threshold</div>
-        <p style="font-size:12px;color:var(--studio-ink-dim);margin:0 0 16px;line-height:1.6;">&gt;50% of the fleet exiting on one shared reason within ~3 minutes triggers this alert.</p>
-        <div id="fleet-info-specifics" style="background:var(--studio-chip-bg);border:1px solid var(--studio-rule);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:12px;line-height:1.7;color:var(--studio-ink);">
+        <p>When many symphonies exit on the same signal at once, the fleet effectively behaves as a single concentrated position. This amplifies drawdown risk — losses that would otherwise be spread across uncorrelated strategies compound simultaneously.</p>
+        <h3>Threshold</h3>
+        <p>&gt;50% of the fleet exiting on one shared reason within ~3 minutes triggers this alert.</p>
+        <div id="fleet-info-specifics">
           <!-- Populated by openFleetInfoModal() -->
         </div>
-        <div style="display:flex;justify-content:flex-end;">
-          <button type="button" onclick="closeFleetInfoModal()"
-                  style="padding:7px 18px;border:1px solid var(--studio-rule);border-radius:6px;background:transparent;color:var(--studio-ink-dim);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">Close</button>
+        <div class="fleet-modal-foot">
+          <button type="button" class="banner-btn" onclick="closeFleetInfoModal()">Close</button>
         </div>
       </div>
     </div>
 
     <!-- Market state banner (hidden by default; JS updates from data.market_state) -->
-    <div id="market-state-banner" hidden style="padding:8px 16px;margin-bottom:16px;border-radius:8px;background:var(--studio-chip-bg);border:1px solid var(--studio-rule);font-size:12px;font-weight:600;color:var(--studio-ink-dim);text-align:center;" data-market-state="">
+    <div id="market-state-banner" class="market-banner" hidden data-market-state="">
       Market closed
     </div>
 
@@ -780,7 +1252,7 @@
             <div>
               <div class="guard-alpha-label">Guard effect on portfolio &middot; <span id="guard-alpha-window-label">30d</span></div>
               {# Shown by the picker when the picked window's strip could not be loaded: the figures beside the label then stay dashes and this names the window. #}
-              <div id="guard-alpha-window-notice" data-testid="guard-alpha-window-notice" class="legend-as-of" role="status" style="color:var(--studio-warn);" hidden></div>
+              <div id="guard-alpha-window-notice" data-testid="guard-alpha-window-notice" class="legend-as-of" role="status" hidden></div>
               {# The headline is the portfolio guard effect over the picked window: the Bot return
                  minus the If-held return, each compounded over the window, over every symphony
                  (the gap between the chart's two lines; also Performance's figure for the same
@@ -791,10 +1263,8 @@
               {% set _portfolio = (meta.portfolio if meta is defined and meta.portfolio is defined else {}) %}
               {% set _ga = _portfolio.get('guard_alpha') %}
               {% set alpha = _ga if _ga is not none else ((_portfolio.get('cr') or 0) - (_portfolio.get('cr_if_held') or 0)) %}
-              <div style="display:flex;align-items:baseline;gap:14px;">
-                <div id="guard-alpha-headline" data-testid="guard-alpha-headline" class="guard-alpha-headline {% if alpha >= 0 %}pos{% else %}neg{% endif %}">
-                  {{ gap_pct(alpha) }}
-                </div>
+              <div id="guard-alpha-headline" data-testid="guard-alpha-headline" class="guard-alpha-headline {% if alpha >= 0 %}pos{% else %}neg{% endif %}">
+                {{ gap_pct(alpha) }}
               </div>
               {# "Simulated" is bound to the engine's flag (last_execution_mode False; the poll's bot_state carries it). #}
               <div class="guard-alpha-descriptor" data-testid="guard-alpha-descriptor"><span id="guard-alpha-simulated">{% if execution_simulated %}Simulated {% endif %}</span>Bot return minus If-held return over this window: the gap between the chart's two lines. All symphonies at their latest values, before exit friction.</div>
@@ -803,7 +1273,7 @@
                  guard-alpha hero above so the ~67% is never mislabeled "30d". #}
               {% set _acct_cr = _portfolio.get('account_all_time_cr') %}
               {% if _acct_cr is not none %}
-              <div class="account-all-time-stat" style="margin-top:6px;font-size:11px;color:var(--studio-ink-dim);">
+              <div class="account-all-time-stat">
                 <span class="account-all-time-label">Account &middot; all-time</span>
                 <span data-testid="account-all-time-cr" class="account-all-time-value {% if _acct_cr >= 0 %}pos{% else %}neg{% endif %}">{% if _acct_cr >= 0 %}+{% endif %}{{ "%.2f"|format(_acct_cr) }}%</span>
               </div>
@@ -816,19 +1286,19 @@
               <button data-testid="window-125d" data-window="125d">125d</button>
               <button data-testid="window-ytd" data-window="ytd">YTD</button>
               <button data-testid="window-1y" data-window="1y">1Y</button>
-              <button data-testid="window-all" data-window="all">All Time</button>
+              <button data-testid="window-all" data-window="all">All time</button>
             </div>
           </div>
 
           <!-- Cumulative Bot-vs-Held chart -->
-          <div class="cum-chart-wrap" style="position:relative;">
+          <div class="cum-chart-wrap">
             <canvas data-testid="cum-chart" id="cum-chart" style="width:100%;height:100%;"></canvas>
-            <div id="hero-chart-empty" data-testid="hero-chart-empty" class="legend-as-of" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);" hidden>No portfolio history to chart yet</div>
+            <div id="hero-chart-empty" data-testid="hero-chart-empty" class="legend-as-of hero-chart-overlay hero-chart-center" hidden>No portfolio history to chart yet</div>
             <!-- Shown while the picked window has no data yet: the chart keeps the series it already drew. -->
-            <span id="hero-window-no-data" data-testid="hero-window-no-data" class="legend-as-of" style="position:absolute;top:4px;left:50%;transform:translateX(-50%);pointer-events:none;" hidden></span>
+            <span id="hero-window-no-data" data-testid="hero-window-no-data" class="legend-as-of hero-chart-overlay hero-chart-top" hidden></span>
             <!-- Non-blocking caption — shows when available history is shorter than selected window. Chart still renders what it has. -->
-            <div id="hero-chart-na" style="display:none;position:absolute;bottom:4px;left:50%;transform:translateX(-50%);pointer-events:none;">
-              <span style="font-size:10px;font-weight:600;color:var(--studio-ink-dim);background:var(--studio-chip-bg);padding:2px 8px;border-radius:10px;white-space:nowrap;">Limited history — showing available data</span>
+            <div id="hero-chart-na" class="hero-chart-overlay hero-chart-bottom" style="display:none;">
+              <span class="hero-chart-note">Limited history — showing available data</span>
             </div>
           </div>
 
@@ -846,7 +1316,7 @@
                  basis from the adjacent "Cumulative · lifetime" scalar comparison row a
                  few lines below -- without this an operator has no way to tell the two
                  numbers are different metrics on different bases. -->
-            <span class="legend-basis-note" style="font-size:10px;color:var(--studio-ink-dim);">Day-by-day cumulative &middot; shadow-history basis</span>
+            <span class="legend-basis-note">Day-by-day cumulative &middot; shadow-history basis</span>
             <span id="hero-data-as-of" class="legend-as-of">
               data as of {{ meta.portfolio.data_as_of if meta is defined and meta.portfolio is defined else '--' }}
             </span>
@@ -930,7 +1400,7 @@
                    the row explains that the If Held value is account-level (Composer
                    todays_percent_change) and includes uninvested cash, unlike the
                    per-card held figure which is symphony-scoped. #}
-                <span class="vs-row-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> <span data-testid="today-held-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash.">&#9432;</span></span>
+                <span class="vs-row-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> <span data-testid="today-held-footnote-marker" class="info-mark" title="If Held is account-level (includes uninvested cash). Per-card Held excludes cash."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span></span>
                 <span data-testid="comp-today-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none %}Bot {% if tc_bot >= 0 %}+{% endif %}{{ "%.2f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-held-text" class="vs-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_held_raw is not none %}Held {% if tc_held >= 0 %}+{% endif %}{{ "%.2f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-today-delta" class="vs-delta {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_tc_bot_raw is not none and _hero_tc_held_raw is not none %}α {{ gap_pct(tc_alpha) }}{% else %}&mdash;{% endif %}</span>
@@ -939,7 +1409,7 @@
                      floor) directly on the row that depends on it. Hidden by default
                      -- zero visual change on a healthy fetch. Populated by
                      renderAccountBasisChip() in static/index.js. -->
-                <span hidden data-testid="comp-today-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
+                <span hidden data-testid="comp-today-basis-chip" class="basis-chip"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -971,13 +1441,13 @@
                      contract.py's TestCumulativeRowNamesItsBasis regex, which requires the
                      bare "Cumulative · lifetime" text as vs-row-label's only content.
                      Display-only; zero change to the underlying value computation. -->
-                <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" style="font-size:9px;vertical-align:super;color:var(--studio-ink-faint);cursor:default;" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5% when cash flows exist. Excludes symphonies with no Composer cost basis.">&#9432;</span>
+                <span class="vs-row-label">Cumulative &middot; lifetime</span><span data-testid="cumulative-cashflow-footnote-marker" class="info-mark" title="Composer's own cash flow sensitive Total return figure (simple_return) — not a time-weighted return; diverges by ~5% when cash flows exist. Excludes symphonies with no Composer cost basis."><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></span>
                 <span data-testid="comp-cumulative-bot-text" title="Simulated (shadow-history) trajectory — not realized account P&amp;L" class="vs-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none %}Bot {% if cr_bot >= 0 %}+{% endif %}{{ "%.2f"|format(cr_bot) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-held-text" class="vs-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_held_raw is not none %}Held {% if cr_held >= 0 %}+{% endif %}{{ "%.2f"|format(cr_held) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-cumulative-delta" class="vs-delta {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">{% if has_live_data and _hero_cr_bot_raw is not none and _hero_cr_held_raw is not none %}α {{ gap_pct(cr_alpha) }}{% else %}&mdash;{% endif %}</span>
                 <!-- BL-4: see the comp-today-basis-chip comment above -- identical
                      honesty-disclosure chip for the Cumulative row. -->
-                <span hidden data-testid="comp-cumulative-basis-chip" style="font-size:9px;font-weight:600;color:var(--studio-ink-dim);border:1px solid var(--studio-warn);border-radius:3px;padding:0 4px;margin-left:6px;"></span>
+                <span hidden data-testid="comp-cumulative-basis-chip" class="basis-chip"></span>
               </div>
               <div class="vs-bars">
                 <div class="vs-bar-row">
@@ -1004,7 +1474,7 @@
                    The annotation states the requirement in the gate's own unit: app._MDD_MIN_OBS
                    counts trading days (about 21 fit in a 30-day window), so it never reads as a
                    window length. The poll only shows and hides it; this is the one place it is worded. #}
-                <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
+                <span class="vs-row-label">Max DD <span data-testid="mdd-insufficient-label" class="row-note"{% if not mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
                 {# A drawdown is a magnitude: no sign is printed (the poll's text reads the same). #}
                 <span data-testid="comp-mdd-bot-text" class="vs-val{{ ' neg' if _mdd_bot_known }}">{% if _mdd_bot_known %}Bot {{ "%.2f"|format(mdd_bot|abs) }}%{% else %}&mdash;{% endif %}</span>
                 <span data-testid="comp-mdd-held-text" class="vs-val{{ ' neg' if _mdd_held_known }}">{% if _mdd_held_known %}Held {{ "%.2f"|format(mdd_held|abs) }}%{% else %}&mdash;{% endif %}</span>
@@ -1050,7 +1520,7 @@
                shows it again when a picked window has one). #}
             <div data-testid="vs-row" class="vs-row"{% if not has_vol %} hidden{% endif %}>
               <div class="vs-row-top">
-                <span class="vs-row-label">Ann. Vol</span>
+                <span class="vs-row-label">Ann. vol</span>
                 <span data-testid="comp-vol-bot-text" class="vs-val">{% if has_vol %}Bot {{ "%.1f"|format(vol_bot * 100) }}%{% else %}Bot &mdash;{% endif %}</span>
                 <span data-testid="comp-vol-held-text" class="vs-val">{% if has_vol %}Held {{ "%.1f"|format(vol_held * 100) }}%{% else %}Held &mdash;{% endif %}</span>
                 <span data-testid="comp-vol-delta" class="vs-delta {% if vol_alpha_pp >= 0 %}pos{% else %}neg{% endif %}">{% if has_vol %}&alpha; {{ gap_pct(vol_alpha_pp, 1) }}{% else %}&alpha; &mdash;{% endif %}</span>
@@ -1094,8 +1564,8 @@
              key, matching the mdd_d.get(...) pattern already used for the
              per-card lifetime fields a few lines below. #}
           {% set mdd_lifetime = (meta.portfolio.get('mdd_if_held_lifetime') if meta is defined and meta.portfolio is defined and meta.portfolio is mapping else none) %}
-          <div data-testid="mdd-lifetime-scalar" style="font-size:10px;color:var(--studio-ink-dim);margin:2px 0 6px;">
-            Lifetime Max Drawdown &middot; since inception: <strong style="color:var(--studio-ink-dim);">{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
+          <div data-testid="mdd-lifetime-scalar" class="mdd-lifetime">
+            Lifetime max drawdown &middot; since inception: <strong>{% if mdd_lifetime is not none %}{{ "%.2f"|format(mdd_lifetime|abs) }}%{% else %}&mdash;{% endif %}</strong>
           </div>
 
           <!-- BL-4 (account-basis honesty render, DE-AUDIT-BL4-001): dedicated
@@ -1105,19 +1575,19 @@
                static/index.js only when the account basis is genuinely stale
                -- never fabricated for the value-weighted-floor tier, which
                has no honest timestamp to disclose. -->
-          <div id="account-basis-as-of" hidden style="font-size:10px;color:var(--studio-ink-dim);text-align:right;margin-top:2px;"></div>
+          <div id="account-basis-as-of" class="account-basis-asof" hidden></div>
 
           <!-- Mini-stats -->
           <div data-testid="mini-stats" class="mini-stats">
-            <div data-testid="mini-stat" class="mini-stat">
+            <div data-testid="mini-stat" class="mini-stat ms-tracked">
               <div class="mini-stat-value" id="hero-tracked">{{ meta.tracked if meta is defined else 0 }}</div>
               <div class="mini-stat-label">Tracked</div>
             </div>
-            <div data-testid="mini-stat" class="mini-stat">
+            <div data-testid="mini-stat" class="mini-stat ms-armed">
               <div class="mini-stat-value" id="hero-armed">{{ meta.armed if meta is defined else 0 }}</div>
               <div class="mini-stat-label">Armed</div>
             </div>
-            <div data-testid="mini-stat" class="mini-stat">
+            <div data-testid="mini-stat" class="mini-stat ms-triggered">
               <div class="mini-stat-value" id="hero-triggered">{{ meta.triggered if meta is defined else 0 }}</div>
               <div class="mini-stat-label">Triggered</div>
             </div>
@@ -1128,253 +1598,62 @@
     </section>
 
     <!-- ======================== DOLLAR-SAVED PANEL ======================== -->
-    <!-- AC-1: cumulative $-saved headline from /api/guard-alpha-summary (snapshot-time basis).
-         Populated on page load by fetchGuardAlphaSummary() in static/index.js.
-         Reuses .hero-section light card-UI CSS — no dark/foreign theme. -->
-    <div data-testid="dollar-saved-panel" class="hero-section" style="text-align:center;">
-      <!-- Finding 9: no hardcoded color — fetchGuardAlphaSummary() sets pos/neg by sign.
-           DE-GAS-COHERENCE-001: the direction word ("saved"/"lost") lives in its own
-           span (dollar-saved-verb) so it can be swapped independently of the static
-           "across"/"exits" text — never a naked minus paired with an implicit "saved". -->
-      <span data-testid="dollar-saved-headline" id="dollar-saved-headline" style="font-size:2em;font-weight:700;">&mdash;</span>
-      <span id="dollar-saved-verb" style="font-size:1.1em;color:var(--studio-ink);"></span>
-      <span style="font-size:1.1em;color:var(--studio-ink);"> across </span>
-      <span data-testid="guard-event-count" id="guard-event-count" style="font-size:1.1em;font-weight:600;color:var(--studio-ink);">&mdash;</span>
-      <span style="font-size:1.1em;color:var(--studio-ink);"> exits</span>
-      <div data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label" style="font-size:11px;color:var(--studio-ink-dim);margin-top:6px;"></div>
-      <div data-testid="dollar-saved-window-notice" id="dollar-saved-window-notice" role="status" hidden style="font-size:11px;color:var(--studio-ink);margin-top:4px;"></div>
-      <!-- BL-3 (friction-aware $-saved headline, DE-AUDIT-BL3-001): static
-           caveat qualifying the gross headline(s) above — never JS-injected,
-           so a JS bug (or a future refactor) can never silently drop this
-           disclosure. Mirrors the "(marks basis)" static caption pattern
-           already used by the realized-basis block below. -->
-      <div style="font-size:11px;color:var(--studio-ink-dim);margin-top:2px;">gross of trading costs</div>
-      <!-- BL-3: net-of-friction snapshot-basis figure, additive sibling to the
-           gross headline above. Populated by fetchGuardAlphaSummary() in
-           static/index.js — its OWN dedicated elements, never overwriting the
-           gross dollar-saved-headline/-verb elements above. -->
-      <div style="font-size:0.95em;color:var(--studio-ink-dim);margin-top:6px;">
-        <span id="dollar-saved-net-of-friction-headline" style="font-weight:600;">&mdash;</span>
-        <span id="dollar-saved-net-of-friction-verb"></span>
-        <span> net of trading costs</span>
-      </div>
-      <!-- AC-6 (exit-friction-realized-savings): realized-basis (EOD-marks) figure,
-           additive sibling to the snapshot-basis headline above. The "marks basis"
-           qualifier is a STATIC caption (never JS-injected) so it can never be
-           silently dropped by a JS bug — RULING A / AC-5 honesty addendum: this
-           captures post-snapshot drift through the rebalance window, not
-           fill-level slippage. Populated by fetchGuardAlphaSummary() in static/index.js. -->
-      <div style="font-size:0.95em;color:var(--studio-ink-dim);margin-top:8px;">
-        <span data-testid="dollar-saved-realized-headline" id="dollar-saved-realized-headline" style="font-weight:600;">&mdash;</span>
-        <span id="dollar-saved-realized-verb"></span>
-        <span> realized (marks basis), </span>
-        <span id="dollar-saved-realized-coverage">&mdash;</span>
+    <!-- Cumulative $-saved from /api/guard-alpha-summary (snapshot-time basis), filled by
+         fetchGuardAlphaSummary() in static/index.js. The saved/lost word has its own span (never a
+         naked minus). "gross of trading costs" and "marks basis" are static markup, never
+         script-written, so a script fault cannot drop the disclosure. -->
+    <div data-testid="dollar-saved-panel" class="hero-section dollar-panel">
+      <div class="dollar-lead">
+        <span data-testid="dollar-saved-headline" id="dollar-saved-headline" class="dollar-figure">&mdash;</span>
+        <span id="dollar-saved-verb"></span>
+        <span> across </span>
+        <span data-testid="guard-event-count" id="guard-event-count" class="dollar-count">&mdash;</span>
         <span> exits</span>
+        <div class="dollar-meta">
+          <span data-testid="dollar-saved-basis-label" id="dollar-saved-basis-label"></span>
+          <span>gross of trading costs</span>
+          <div data-testid="dollar-saved-window-notice" id="dollar-saved-window-notice" class="dollar-notice" role="status" hidden></div>
+        </div>
       </div>
-      <!-- BL-3: net-of-friction realized-basis figure, additive sibling to the
-           realized headline above. Reuses the existing
-           dollar-saved-realized-coverage counter — no new coverage element. -->
-      <div style="font-size:0.85em;color:var(--studio-ink-dim);margin-top:4px;">
-        <span id="dollar-saved-realized-net-of-friction-headline" style="font-weight:600;">&mdash;</span>
-        <span id="dollar-saved-realized-net-of-friction-verb"></span>
-        <span> realized net of trading costs</span>
+      <div class="dollar-lines">
+        <div class="dollar-line">
+          <span id="dollar-saved-net-of-friction-headline" class="dollar-sub">&mdash;</span>
+          <span id="dollar-saved-net-of-friction-verb"></span>
+          <span> net of trading costs</span>
+        </div>
+        <div class="dollar-line">
+          <span data-testid="dollar-saved-realized-headline" id="dollar-saved-realized-headline" class="dollar-sub">&mdash;</span>
+          <span id="dollar-saved-realized-verb"></span>
+          <span> realized (marks basis), </span>
+          <span id="dollar-saved-realized-coverage">&mdash;</span>
+          <span> exits</span>
+        </div>
+        <div class="dollar-line">
+          <span id="dollar-saved-realized-net-of-friction-headline" class="dollar-sub">&mdash;</span>
+          <span id="dollar-saved-realized-net-of-friction-verb"></span>
+          <span> realized net of trading costs</span>
+        </div>
       </div>
     </div>
 
     <!-- ======================== ACTIVE SECTION ======================== -->
     <section data-testid="active-section">
-      <div class="section-header" style="display:flex;align-items:center;gap:8px;">
-        Active &mdash; Armed &amp; Triggered
-        <span data-testid="active-section-count" style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--studio-chip-bg);border:1px solid var(--studio-rule);color:var(--studio-ink-dim);font-size:10px;font-weight:700;letter-spacing:0;">{{ active_syms | length }}</span>
+      <div class="section-header">
+        Active &mdash; armed &amp; triggered
+        <span data-testid="active-section-count" class="count-note">{{ active_syms | length }}</span>
         {# One span, hidden and empty at 0, so a poll can show the count or hide it again. #}
         {% set _vars_shown = vars_locked_count is defined and vars_locked_count > 0 %}
-        <span data-testid="edit-vars-indicator"{% if not _vars_shown %} hidden{% endif %} style="display:{{ 'inline-flex' if _vars_shown else 'none' }};align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--studio-accent);color: var(--studio-paper);font-size:10px;font-weight:700;letter-spacing:0;">{% if _vars_shown %}{{ vars_locked_count }} locked{% endif %}</span>
+        <span data-testid="edit-vars-indicator" class="count-note"{% if not _vars_shown %} hidden{% endif %} style="display:{{ 'inline-flex' if _vars_shown else 'none' }};">{% if _vars_shown %}{{ vars_locked_count }} locked{% endif %}</span>
       </div>
-      <div class="cards-grid">
+      <div class="cards-grid sym-list">
         {% for sym in active_syms %}
-        <div data-testid="sym-card" class="sym-card" onclick="openDetailPanel('{{ sym.get('id','') }}')"  data-sym-id="{{ sym.get('id','') }}">
-          <div class="card-top">
-            <div>
-              <div class="card-name">{{ sym.get("normalized_name") or sym.get("name", "Unknown") }}</div>
-              {# Status pill always rendered; JS updates class+text on each poll so it stays live #}
-              {% set _tr = sym.get("triggered_reason", "") or "" %}
-              {% if sym.get("triggered") %}
-                {% if "Take-Profit" in _tr or "take_profit" in _tr %}<span data-testid="status-pill" class="status-pill tp">TAKE-PROFIT</span>
-                {% elif "VWAP Bleed" in _tr or "vwap_bleed" in _tr %}<span data-testid="status-pill" class="status-pill bleed">VWAP BLEED</span>
-                {% elif "VWAP" in _tr or "vwap" in _tr %}<span data-testid="status-pill" class="status-pill vwap">VWAP</span>
-                {% else %}<span data-testid="status-pill" class="status-pill stop">TRAILING STOP</span>{% endif %}
-              {% elif sym.get("para_armed") %}<span data-testid="status-pill" class="status-pill para-armed">Para-Armed</span>
-              {% elif sym.get("tp_armed") %}<span data-testid="status-pill" class="status-pill tp-armed">TP-Armed</span>
-              {% elif sym.get("armed") %}<span data-testid="status-pill" class="status-pill armed">Armed</span>
-              {% else %}<span data-testid="status-pill" class="status-pill standby">Standby</span>{% endif %}
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <button data-testid="sym-settings-btn" class="sym-settings-btn" type="button"
-                      aria-label="Symphony settings"
-                      data-symphony-id="{{ sym.get('id','') }}"
-                      onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
-            </div>
-          </div>
-
-          <div data-testid="dual-value-headline" class="dual-value-headline">
-            {# F-016: None-aware Today guard (mirrors the MDD row's precedent below
-               -- `_mdd_bot_raw is not none`) -- a genuinely None dry_run/if_held
-               renders the honest '--' instead of coercing None to 0.0 via
-               .get(key, 0), which fabricated a false '+0.0%' for missing data. A
-               genuine 0.0 still renders '+0.0%'. #}
-            {% set tc_h = sym.get("_tc") or {} %}
-            {% set _tc_bot_raw = tc_h.get("dry_run") if tc_h is mapping else none %}
-            {% set _tc_held_raw = tc_h.get("if_held") if tc_h is mapping else none %}
-            {% set bot_tc = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
-            {% set held_tc = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
-            <div class="dv-block">
-              <span data-field="dv-label-bot" class="dv-label">Bot{% if sym.get("triggered") %} &middot; frozen{% endif %}</span>
-              <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%{% else %}&mdash;{% endif %}</span>
-            </div>
-            <div class="dv-block" data-field="dv-block-held" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
-              <span class="dv-label">If held{% if sym.get("triggered") and not session_day %} &middot; live{% endif %}</span>
-              <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
-            </div>
-          </div>
-
-          {# triggered-verdict always rendered; hidden when not triggered so JS can show/hide on poll #}
-          {# The figure is the exit return minus the card's current return, so it moves with
-             the card while the market is open. The label names that basis: "vs held now"
-             while open, "at close" once the close snapshot is served. #}
-          <div data-testid="triggered-verdict" class="triggered-verdict"
-               style="{% if not sym.get('triggered') %}display:none;{% endif %}">
-            <span data-field="verdict-text">{{ sym.get('_verdict_text', '—') }}</span>
-            <span data-testid="guard-alpha-basis" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;"{% if not sym.get('_verdict_has_value') %} hidden{% endif %}>{{ verdict_basis_label }}</span>
-          </div>
-          <div style="height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-top:0.375rem;">
-            <svg data-testid="mc-dial" class="mc-dial" data-sym-id="{{ sym.get('id', '') }}"
-                 viewBox="0 0 40 40" width="40" height="40" style="display:block;">
-              <circle class="mc-track" cx="20" cy="20" r="15" fill="none" stroke-width="4"/>
-              <circle class="mc-arc" cx="20" cy="20" r="15" fill="none" stroke-width="4"
-                      stroke-dasharray="94.25" stroke-dashoffset="{{ sym.get('_dial_offset', '94.25') }}" style="stroke: var({{ sym.get('_dial_token', '--studio-accent') }})" transform="rotate(-90 20 20)"/>
-              <text class="mc-text" x="20" y="24" text-anchor="middle" font-size="9" font-weight="700">{{ sym.get('_dial_text', '—') }}</text>
-            </svg>
-            {% set cr = sym.get("_cr") or {} %}
-            {% set tc_d = sym.get("_tc") or {} %}
-            {% set mdd_d = sym.get("_mdd") or {} %}
-            {# F-016: None-aware Today guard (mirrors the MDD bot guard just below)
-               -- a genuinely None dry_run/if_held renders '--' instead of coercing
-               None to 0.0, which fabricated a false '+0.0%' for missing data. #}
-            {% set _tc_bot_raw = tc_d.get("dry_run") if tc_d is mapping else none %}
-            {% set _tc_held_raw = tc_d.get("if_held") if tc_d is mapping else none %}
-            {% set tc_bot  = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
-            {% set tc_held = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
-            {% set _cr_bot_raw = cr.get("dry_run") if cr is mapping else none %}
-            {% set _cr_held_raw = cr.get("if_held") if cr is mapping else none %}
-            {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
-            {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
-            {# AC-6: None-aware MDD bot guard — dry_run=None (< 2 trading days) renders
-               '--' instead of coercing None to 0.0 via | float with default 0. #}
-            {% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}
-            {% set mdd_bot = _mdd_bot_raw | float if _mdd_bot_raw is not none else 0.0 %}
-            {# AC-1 (DE-PERF-WINDOW-TRUTH-001): None-aware MDD held guard, mirroring
-               the dry_run guard just above -- if_held can now independently be None
-               (the same floor dry_run already had), and the old
-               `(mdd_d.get("if_held", 0) ...) | float` coercion fabricated a false
-               "0.0%" Held figure instead of rendering '--' for a genuinely missing
-               value. #}
-            {% set _mdd_held_raw = mdd_d.get("if_held") if mdd_d is mapping else None %}
-            {% set mdd_held = _mdd_held_raw | float if _mdd_held_raw is not none else 0.0 %}
-            {% set tc_alpha  = tc_bot  - tc_held %}
-            {% set cr_alpha  = cr_bot  - cr_held %}
-            {% set mdd_alpha = mdd_held - mdd_bot %}
-            <div class="card-footer-grid">
-              <div class="cfg-cell">
-                <span class="cfg-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
-                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span></div>
-                <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span></div>
-              </div>
-              <div class="cfg-cell">
-                <span class="cfg-label">Cum {% if _cr_bot_raw is not none and _cr_held_raw is not none %}<span data-field="cr-alpha-badge" class="cfg-alpha-badge {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(cr_alpha) }}</span>{% else %}<span data-field="cr-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
-                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="cr-bot" class="cfg-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_bot) }}%</span></div>
-                <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="cr-held" class="cfg-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{{ "%+.1f"|format(cr_held) }}%</span></div>
-              </div>
-              {# [Updated, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] This card still
-                 reads the shared meta.portfolio.insufficient_history flag, same
-                 as before -- that flag's SOURCE is what changed (app.py's
-                 _build_meta now derives it from the portfolio-level MDD
-                 computation's n_obs instead of the unrelated _hist_dates
-                 series), fixing both the hero row and every card through the
-                 one shared computation. It now guards ONLY the Bailey/de-Prado
-                 (2014) statistical-stability concern -- the basis mismatch it
-                 used to ALSO guard is fixed structurally at the source (both
-                 legs are genuinely same-window), so no per-card scoping is
-                 needed here. #}
-              {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
-              <div class="cfg-cell">
-                <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
-                <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
-                <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
-              </div>
-            </div>
-            {# AC-2 (DE-PERF-WINDOW-TRUTH-001): Composer's per-symphony lifetime
-               max_drawdown scalar, rendered as its OWN clearly-labelled field --
-               never a leg of the bot/held comparison above. Kept OUTSIDE
-               .card-footer-grid (a fixed 3-column grid) rather than as a 4th
-               grid cell, which would wrap awkwardly onto its own row. #}
-            {% set _mdd_lifetime_raw = mdd_d.get("if_held_lifetime") if mdd_d is mapping else None %}
-            <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-dim);padding-left:10px;margin-top:2px;">
-              Lifetime MDD: <span data-field="mdd-lifetime">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
-            </div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-
-    <!-- ======================== STANDBY SECTION ======================== -->
-    <section data-testid="standby-section">
-      <div class="section-header" style="display:flex;align-items:center;gap:8px;">
-        Standby
-        <span data-testid="standby-section-count" style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--studio-chip-bg);border:1px solid var(--studio-rule);color:var(--studio-ink-dim);font-size:10px;font-weight:700;letter-spacing:0;">{{ standby_syms | length }}</span>
-      </div>
-      <div class="cards-grid">
-        {% for sym in standby_syms %}
         <div data-testid="sym-card" class="sym-card" onclick="openDetailPanel('{{ sym.get('id','') }}')" data-sym-id="{{ sym.get('id','') }}">
-          <div class="card-top">
-            <div>
-              <div class="card-name">{{ sym.get("normalized_name") or sym.get("name", "Unknown") }}</div>
-              <span data-testid="status-pill" class="status-pill standby">Standby</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <button data-testid="sym-settings-btn" class="sym-settings-btn" type="button"
-                      aria-label="Symphony settings"
-                      data-symphony-id="{{ sym.get('id','') }}"
-                      onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
-              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
-            </div>
-          </div>
-
-          <div data-testid="dual-value-headline" class="dual-value-headline">
-            {# F-016: None-aware Today guard -- see the active-section block above
-               for the full rationale. #}
-            {% set tc_h = sym.get("_tc") or {} %}
-            {% set _tc_bot_raw = tc_h.get("dry_run") if tc_h is mapping else none %}
-            {% set _tc_held_raw = tc_h.get("if_held") if tc_h is mapping else none %}
-            {% set bot_tc = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
-            {% set held_tc = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
-            <div class="dv-block">
-              <span data-field="dv-label-bot" class="dv-label">Bot</span>
-              <span data-field="tc-bot" class="dv-value {% if bot_tc >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{% if bot_tc >= 0 %}+{% endif %}{{ "%.1f"|format(bot_tc) }}%{% else %}&mdash;{% endif %}</span>
-            </div>
-            <div class="dv-block" style="padding-left:14px;border-left:1px solid var(--studio-rule);">
-              <span class="dv-label">If held</span>
-              <span data-field="tc-held" class="dv-value {% if held_tc >= 0 %}pos{% else %}neg{% endif %}" style="font-size:16px;">{% if _tc_held_raw is not none %}{% if held_tc >= 0 %}+{% endif %}{{ "%.1f"|format(held_tc) }}%{% else %}&mdash;{% endif %}</span>
-            </div>
-          </div>
-          <div style="height:64px;overflow:hidden;margin-top:0.5rem;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:64px;"></canvas></div>
+          {# None-aware figures (F-016, AC-6, AC-1 of DE-PERF-WINDOW-TRUTH-001): a genuinely missing
+             dry_run / if_held reads as a dash, never a coerced 0.0. Max DD and the lifetime Max DD
+             are their own figures, never legs of the Bot / If held comparison. #}
           {% set cr = sym.get("_cr") or {} %}
           {% set tc_d = sym.get("_tc") or {} %}
           {% set mdd_d = sym.get("_mdd") or {} %}
-          {# F-016: None-aware Today guard -- see the active-section block above
-             for the full rationale. #}
           {% set _tc_bot_raw = tc_d.get("dry_run") if tc_d is mapping else none %}
           {% set _tc_held_raw = tc_d.get("if_held") if tc_d is mapping else none %}
           {% set tc_bot  = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
@@ -1383,231 +1662,191 @@
           {% set _cr_held_raw = cr.get("if_held") if cr is mapping else none %}
           {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
           {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
-          {# AC-6: None-aware MDD bot guard — dry_run=None (< 2 trading days) renders
-             '--' instead of coercing None to 0.0 via | float with default 0. #}
           {% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}
           {% set mdd_bot = _mdd_bot_raw | float if _mdd_bot_raw is not none else 0.0 %}
-          {# AC-1 (DE-PERF-WINDOW-TRUTH-001): None-aware MDD held guard, mirroring
-             the dry_run guard just above -- if_held can now independently be None
-             (the same floor dry_run already had), and the old
-             `(mdd_d.get("if_held", 0) ...) | float` coercion fabricated a false
-             "0.0%" Held figure instead of rendering '--' for a genuinely missing
-             value. #}
           {% set _mdd_held_raw = mdd_d.get("if_held") if mdd_d is mapping else None %}
           {% set mdd_held = _mdd_held_raw | float if _mdd_held_raw is not none else 0.0 %}
           {% set tc_alpha  = tc_bot  - tc_held %}
           {% set cr_alpha  = cr_bot  - cr_held %}
           {% set mdd_alpha = mdd_held - mdd_bot %}
-          <div class="card-footer-grid" style="margin-top:0.375rem;">
-            <div class="cfg-cell">
+          <div class="card-top">
+            <div class="card-id">
+              <div class="card-id-line">
+                <div class="card-name">{{ sym.get("normalized_name") or sym.get("name", "Unknown") }}</div>
+                {# Status always rendered; the script updates class + text on each poll so it stays live. #}
+                {% set _tr = sym.get("triggered_reason", "") or "" %}
+                {% if sym.get("triggered") %}
+                  {% if "Take-Profit" in _tr or "take_profit" in _tr %}<span data-testid="status-pill" class="status-pill tp">Take-profit</span>
+                  {% elif "VWAP Bleed" in _tr or "vwap_bleed" in _tr %}<span data-testid="status-pill" class="status-pill bleed">VWAP bleed</span>
+                  {% elif "VWAP" in _tr or "vwap" in _tr %}<span data-testid="status-pill" class="status-pill vwap">VWAP</span>
+                  {% else %}<span data-testid="status-pill" class="status-pill stop">Trailing stop</span>{% endif %}
+                {% elif sym.get("para_armed") %}<span data-testid="status-pill" class="status-pill para-armed">Para-armed</span>
+                {% elif sym.get("tp_armed") %}<span data-testid="status-pill" class="status-pill tp-armed">TP-armed</span>
+                {% elif sym.get("armed") %}<span data-testid="status-pill" class="status-pill armed">Armed</span>
+                {% else %}<span data-testid="status-pill" class="status-pill standby">Standby</span>{% endif %}
+              </div>
+              {# Always rendered, hidden until the exit so the poll can show or hide it. The figure is the exit
+                 return minus the card's current return, so it moves with the card while the market is
+                 open; its label names that basis: "vs held now" while open, "at close" once the close
+                 snapshot is served. #}
+              <div data-testid="triggered-verdict" class="triggered-verdict"
+                   style="{% if not sym.get('triggered') %}display:none;{% endif %}">
+                <span data-field="verdict-text">{{ sym.get('_verdict_text', '—') }}</span>
+                <span data-testid="guard-alpha-basis" class="verdict-basis"{% if not sym.get('_verdict_has_value') %} hidden{% endif %}>{{ verdict_basis_label }}</span>
+              </div>
+              <div class="card-meta">
+                <div data-field="mdd-lifetime-cell" class="lifetime-line">Lifetime MDD: <span data-field="mdd-lifetime">{{ sym.get('_mdd_lifetime_text', '--') }}</span></div>
+              </div>
+            </div>
+            <div class="card-actions">
+              <button data-testid="sym-settings-btn" class="sym-settings-btn" type="button"
+                      aria-label="Symphony settings"
+                      data-symphony-id="{{ sym.get('id','') }}"
+                      onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
+            </div>
+          </div>
+
+          {# The ledger: Today, Cumulative and Max DD, each over Bot and If held with its gap. The
+             Today column is the dual-value headline the poll labels (frozen / live); the row names
+             show in it alone and the other columns line up under them. #}
+          <div class="card-footer-grid">
+            <div data-testid="dual-value-headline" class="dual-value-headline cfg-cell">
               <span class="cfg-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
-              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="tc-bot" class="cfg-val {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span></div>
-              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="tc-held" class="cfg-val {% if tc_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span></div>
+              <div class="dv-block cfg-dual-row">
+                <span data-field="dv-label-bot" class="dv-label">Bot{% if sym.get("triggered") %} &middot; frozen{% endif %}</span>
+                <span data-field="tc-bot" class="dv-value {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
+              </div>
+              <div class="dv-block cfg-dual-row" data-field="dv-block-held">
+                <span class="dv-label">If held{% if sym.get("triggered") and not session_day %} &middot; live{% endif %}</span>
+                <span data-field="tc-held" class="dv-value {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
+              </div>
             </div>
             <div class="cfg-cell">
               <span class="cfg-label">Cum {% if _cr_bot_raw is not none and _cr_held_raw is not none %}<span data-field="cr-alpha-badge" class="cfg-alpha-badge {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(cr_alpha) }}</span>{% else %}<span data-field="cr-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="cr-bot" class="cfg-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_bot) }}%</span></div>
-              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="cr-held" class="cfg-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}" style="opacity:0.7;">{{ "%+.1f"|format(cr_held) }}%</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="cr-held" class="cfg-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_held) }}%</span></div>
             </div>
-            {# [Updated, DE-PERF-WINDOW-TRUTH-001, 2026-09-03] This card still
-               reads the shared meta.portfolio.insufficient_history flag, same
-               as before -- that flag's SOURCE is what changed (app.py's
-               _build_meta now derives it from the portfolio-level MDD
-               computation's n_obs instead of the unrelated _hist_dates
-               series), fixing both the hero row and every card through the
-               one shared computation. It now guards ONLY the Bailey/de-Prado
-               (2014) statistical-stability concern -- the basis mismatch it
-               used to ALSO guard is fixed structurally at the source (both
-               legs are genuinely same-window), so no per-card scoping is
-               needed here. #}
+            {# This card reads the shared meta.portfolio.insufficient_history flag (derived from the
+               portfolio Max DD's own n_obs; it guards only the Bailey / de Prado (2014)
+               statistical-stability concern, the basis mismatch being fixed at the source). #}
             {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
             <div class="cfg-cell">
-              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" style="font-size:9px;color:var(--studio-ink-dim);font-weight:400;font-style:italic;"{% if not _card_mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
+              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" class="row-note"{% if not _card_mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
               <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
-              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg" style="opacity:0.7;">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
             </div>
           </div>
-          {# AC-2 (DE-PERF-WINDOW-TRUTH-001): Composer's per-symphony lifetime
-             max_drawdown scalar, rendered as its OWN clearly-labelled field --
-             never a leg of the bot/held comparison above. Kept OUTSIDE
-             .card-footer-grid (a fixed 3-column grid) rather than as a 4th
-             grid cell, which would wrap awkwardly onto its own row. #}
-          {% set _mdd_lifetime_raw = mdd_d.get("if_held_lifetime") if mdd_d is mapping else None %}
-          <div data-field="mdd-lifetime-cell" style="font-size:9px;color:var(--studio-ink-dim);padding-left:10px;margin-top:2px;">
-            Lifetime MDD: <span data-field="mdd-lifetime">{{ sym.get('_mdd_lifetime_text', '--') }}</span>
+
+          <div class="card-spark-col">
+            <svg data-testid="mc-dial" class="mc-dial" data-sym-id="{{ sym.get('id', '') }}"
+                 viewBox="0 0 40 40" width="40" height="40">
+              <circle class="mc-track" cx="20" cy="20" r="15" fill="none" stroke-width="4"/>
+              <circle class="mc-arc" cx="20" cy="20" r="15" fill="none" stroke-width="4"
+                      stroke-dasharray="94.25" stroke-dashoffset="{{ sym.get('_dial_offset', '94.25') }}" style="stroke: var({{ sym.get('_dial_token', '--studio-accent') }})" transform="rotate(-90 20 20)"/>
+              <text class="mc-text" x="20" y="24" text-anchor="middle">{{ sym.get('_dial_text', '—') }}</text>
+            </svg>
+            <div class="card-spark-box" style="height:56px;overflow:hidden;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:56px;"></canvas></div>
           </div>
         </div>
         {% endfor %}
       </div>
     </section>
 
-  </div><!-- /.page-wrap -->
-
-  <!-- ======================== DETAIL PANEL ======================== -->
-  <div class="detail-panel-scrim" id="detail-scrim" onclick="closeDetailPanel()"></div>
-
-  <aside data-testid="detail-panel" class="detail-panel" id="detail-panel">
-    <div class="detail-panel-header">
-      <span class="detail-panel-title" id="detail-panel-title">Symphony Detail</span>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <button id="dp-view-logs-btn" type="button" style="padding:4px 10px;border:1px solid var(--studio-rule);border-radius:6px;background:transparent;color:var(--studio-ink-dim);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">View logs</button>
-        <button id="dp-go-cash-btn" type="button" style="padding:4px 10px;border:1px solid var(--studio-neg);border-radius:6px;background:transparent;color:var(--studio-neg);font-size:11px;font-weight:600;cursor:pointer;font-family:var(--studio-sans);">Go to cash &rarr;</button>
-        <button data-testid="detail-close" class="detail-close" type="button" aria-label="Close detail panel" id="detail-close-btn">&#x2715;</button>
+    <!-- ======================== STANDBY SECTION ======================== -->
+    <section data-testid="standby-section">
+      <div class="section-header">
+        Standby
+        <span data-testid="standby-section-count" class="count-note">{{ standby_syms | length }}</span>
       </div>
-    </div>
-    <div class="detail-body">
+      <div class="cards-grid sym-list">
+        {% for sym in standby_syms %}
+        <div data-testid="sym-card" class="sym-card" onclick="openDetailPanel('{{ sym.get('id','') }}')" data-sym-id="{{ sym.get('id','') }}">
+          {# None-aware figures (F-016, AC-6, AC-1 of DE-PERF-WINDOW-TRUTH-001): a genuinely missing
+             dry_run / if_held reads as a dash, never a coerced 0.0. Max DD and the lifetime Max DD
+             are their own figures, never legs of the Bot / If held comparison. #}
+          {% set cr = sym.get("_cr") or {} %}
+          {% set tc_d = sym.get("_tc") or {} %}
+          {% set mdd_d = sym.get("_mdd") or {} %}
+          {% set _tc_bot_raw = tc_d.get("dry_run") if tc_d is mapping else none %}
+          {% set _tc_held_raw = tc_d.get("if_held") if tc_d is mapping else none %}
+          {% set tc_bot  = _tc_bot_raw | float if _tc_bot_raw is not none else 0.0 %}
+          {% set tc_held = _tc_held_raw | float if _tc_held_raw is not none else 0.0 %}
+          {% set _cr_bot_raw = cr.get("dry_run") if cr is mapping else none %}
+          {% set _cr_held_raw = cr.get("if_held") if cr is mapping else none %}
+          {% set cr_bot  = (cr.get("dry_run",    0) or 0) | float %}
+          {% set cr_held = (cr.get("if_held",    0) or 0) | float %}
+          {% set _mdd_bot_raw = mdd_d.get("dry_run") if mdd_d is mapping else None %}
+          {% set mdd_bot = _mdd_bot_raw | float if _mdd_bot_raw is not none else 0.0 %}
+          {% set _mdd_held_raw = mdd_d.get("if_held") if mdd_d is mapping else None %}
+          {% set mdd_held = _mdd_held_raw | float if _mdd_held_raw is not none else 0.0 %}
+          {% set tc_alpha  = tc_bot  - tc_held %}
+          {% set cr_alpha  = cr_bot  - cr_held %}
+          {% set mdd_alpha = mdd_held - mdd_bot %}
+          <div class="card-top">
+            <div class="card-id">
+              <div class="card-id-line">
+                <div class="card-name">{{ sym.get("normalized_name") or sym.get("name", "Unknown") }}</div>
+                <span data-testid="status-pill" class="status-pill standby">Standby</span>
+              </div>
+              <div class="card-meta">
+                <div data-field="mdd-lifetime-cell" class="lifetime-line">Lifetime MDD: <span data-field="mdd-lifetime">{{ sym.get('_mdd_lifetime_text', '--') }}</span></div>
+              </div>
+            </div>
+            <div class="card-actions">
+              <button data-testid="sym-settings-btn" class="sym-settings-btn" type="button"
+                      aria-label="Symphony settings"
+                      data-symphony-id="{{ sym.get('id','') }}"
+                      onclick="openSymphonySettings(event,'{{ sym.get('id','') }}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+              <button data-testid="cash-now-btn" class="cash-now-btn" type="button" onclick="cashNow(event,'{{ sym.id }}')" {% if sym.get('triggered') %}disabled{% endif %}>Cash Now</button>
+            </div>
+          </div>
 
-      <!-- Shown from the moment a card is opened until the first state names its symphony. -->
-      <div data-testid="detail-loading" id="detail-loading" class="math-row-hint" style="padding:12px 24px 0;" hidden>Loading symphony details&hellip;</div>
+          {# The ledger: Today, Cumulative and Max DD, each over Bot and If held with its gap. The
+             Today column is the dual-value headline the poll labels (frozen / live); the row names
+             show in it alone and the other columns line up under them. #}
+          <div class="card-footer-grid">
+            <div data-testid="dual-value-headline" class="dual-value-headline cfg-cell">
+              <span class="cfg-label"><span data-field="day-word">{{ session_day or 'Today' }}</span> {% if _tc_bot_raw is not none and _tc_held_raw is not none %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge {% if tc_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(tc_alpha) }}</span>{% else %}<span data-field="tc-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
+              <div class="dv-block cfg-dual-row">
+                <span data-field="dv-label-bot" class="dv-label">Bot</span>
+                <span data-field="tc-bot" class="dv-value {% if tc_bot >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_bot_raw is not none %}{{ "%+.1f"|format(tc_bot) }}%{% else %}&mdash;{% endif %}</span>
+              </div>
+              <div class="dv-block cfg-dual-row">
+                <span class="dv-label">If held</span>
+                <span data-field="tc-held" class="dv-value {% if tc_held >= 0 %}pos{% else %}neg{% endif %}">{% if _tc_held_raw is not none %}{{ "%+.1f"|format(tc_held) }}%{% else %}&mdash;{% endif %}</span>
+              </div>
+            </div>
+            <div class="cfg-cell">
+              <span class="cfg-label">Cum {% if _cr_bot_raw is not none and _cr_held_raw is not none %}<span data-field="cr-alpha-badge" class="cfg-alpha-badge {% if cr_alpha >= 0 %}pos{% else %}neg{% endif %}">α {{ "%+.1f"|format(cr_alpha) }}</span>{% else %}<span data-field="cr-alpha-badge" class="cfg-alpha-badge">α --</span>{% endif %}</span>
+              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="cr-bot" class="cfg-val {% if cr_bot >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_bot) }}%</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="cr-held" class="cfg-val {% if cr_held >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.1f"|format(cr_held) }}%</span></div>
+            </div>
+            {# This card reads the shared meta.portfolio.insufficient_history flag (derived from the
+               portfolio Max DD's own n_obs; it guards only the Bailey / de Prado (2014)
+               statistical-stability concern, the basis mismatch being fixed at the source). #}
+            {% set _card_mdd_insufficient = (meta.portfolio.insufficient_history if meta is defined and meta.portfolio is defined else true) %}
+            <div class="cfg-cell">
+              <span class="cfg-label">Max DD <span data-field="mdd-alpha-badge" class="cfg-alpha-badge{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %} {% if mdd_alpha >= 0 %}pos{% else %}neg{% endif %}{% endif %}"{% if _card_mdd_insufficient %} hidden{% endif %}>{% if _mdd_bot_raw is not none and _mdd_held_raw is not none %}α {{ "%+.1f"|format(mdd_alpha) }}{% else %}α --{% endif %}</span><span data-testid="card-mdd-insufficient-label" class="row-note"{% if not _card_mdd_insufficient %} hidden{% endif %}>needs 30 trading days</span></span>
+              <div class="cfg-dual-row"><span class="cfg-tag">bot</span><span data-field="mdd-bot" class="cfg-val neg">{% if _mdd_bot_raw is not none %}{{ "%.1f"|format(mdd_bot|abs) }}%{% else %}--{% endif %}</span></div>
+              <div class="cfg-dual-row"><span class="cfg-tag">held</span><span data-field="mdd-held" class="cfg-val neg">{% if _mdd_held_raw is not none %}{{ "%.1f"|format(mdd_held|abs) }}%{% else %}--{% endif %}</span></div>
+            </div>
+          </div>
 
-      <!-- Sticky stats row -->
-      <div data-testid="detail-stats-row" class="detail-stats-row">
-        <div class="detail-stat">
-          <div class="detail-stat-label" data-field="live-return-label">{{ 'Return' if session_day else 'Live Return' }}</div>
-          <div class="detail-stat-value" id="dp-live-ret">--</div>
-          <div class="detail-stat-sub" id="dp-live-ret-sub"></div>
+          <div class="card-spark-col">
+            <svg data-testid="mc-dial" class="mc-dial" data-sym-id="{{ sym.get('id', '') }}"
+                 viewBox="0 0 40 40" width="40" height="40">
+              <circle class="mc-track" cx="20" cy="20" r="15" fill="none" stroke-width="4"/>
+              <circle class="mc-arc" cx="20" cy="20" r="15" fill="none" stroke-width="4"
+                      stroke-dasharray="94.25" stroke-dashoffset="{{ sym.get('_dial_offset', '94.25') }}" style="stroke: var({{ sym.get('_dial_token', '--studio-accent') }})" transform="rotate(-90 20 20)"/>
+              <text class="mc-text" x="20" y="24" text-anchor="middle">{{ sym.get('_dial_text', '—') }}</text>
+            </svg>
+            <div class="card-spark-box" style="height:56px;overflow:hidden;"><canvas data-testid="card-spark" class="spark" data-sym-id="{{ sym.get('id', '') }}" style="display:block;width:100%;height:56px;"></canvas></div>
+          </div>
         </div>
-        <div class="detail-stat">
-          <div class="detail-stat-label">Stop Level</div>
-          <div class="detail-stat-value" id="dp-stop-level">--</div>
-          <div class="detail-stat-sub" id="dp-stop-sub"></div>
-        </div>
-        <div class="detail-stat">
-          <div class="detail-stat-label">Shadow Peak</div>
-          <div class="detail-stat-value" id="dp-shadow-peak">--</div>
-          <div class="detail-stat-sub" data-field="hwm-label">{% if session_day %}HWM {{ session_day }}{% else %}HWM today{% endif %}</div>
-        </div>
-        <div class="detail-stat">
-          <div class="detail-stat-label">Guard <span class="alpha-glyph">&alpha;</span></div>
-          <div class="detail-stat-value" id="dp-alpha">--</div>
-          <div class="detail-stat-sub" id="dp-alpha-sub"></div>
-        </div>
+        {% endfor %}
       </div>
-
-      <!-- Intraday chart -->
-      <div style="padding:18px 24px 24px;border-bottom:1px solid var(--studio-rule);">
-        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;">
-          <div>
-            <div style="font-size:16px;font-weight:500;color:var(--studio-ink);letter-spacing:-0.005em;">Intraday tape</div>
-            <div style="font-size:10.5px;color:var(--studio-ink-dim);margin-top:1px;">09:30 ET &rarr; {{ session_close_display }} &middot; 1-minute resolution</div>
-          </div>
-          <div style="display:flex;gap:6px;">
-            <button id="toggle-stop"      data-testid="overlay-toggle-stop"      class="overlay-toggle active" type="button">Stop</button>
-            <button id="toggle-breakeven" data-testid="overlay-toggle-breakeven" class="overlay-toggle active" type="button">Breakeven</button>
-            <button id="toggle-vwap"      data-testid="overlay-toggle-vwap"      class="overlay-toggle" type="button">VWAP</button>
-            <button id="toggle-mc"        data-testid="overlay-toggle-mc"        class="overlay-toggle" type="button">MC</button>
-          </div>
-        </div>
-        <div data-testid="intraday-chart" class="intraday-chart-wrap">
-          <canvas id="intraday-canvas" style="width:100%;height:100%;"></canvas>
-        </div>
-        <!-- Chart legend -->
-        <div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--studio-ink-dim);flex-wrap:wrap;">
-          <span data-field="if-held-legend" style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-pos)" stroke-width="2"/></svg>{{ 'If held' if session_day else 'Live (if held)' }}</span>
-          <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-ink-dim)" stroke-width="2" stroke-dasharray="3,3"/></svg>Shadow (booked)</span>
-          <span id="legend-stop"      style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-neg)" stroke-width="2" stroke-dasharray="4,3"/></svg>Trailing stop</span>
-          <span id="legend-breakeven" style="display:inline-flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-accent)" stroke-width="2"/></svg>Breakeven lock</span>
-          <span id="legend-vwap"      style="display:none;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-cyan)" stroke-width="2"/></svg>VWAP</span>
-          <span id="legend-mc"        style="display:none;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-warn)" stroke-width="2" stroke-dasharray="1,2"/></svg>MC probability (right axis)</span>
-        </div>
-      </div>
-
-      <!-- Split block: Events left, Risk Math right -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--studio-rule);">
-
-        <!-- Events timeline -->
-        <div style="padding:18px 20px 20px;border-right:1px solid var(--studio-rule);">
-          <div style="font-size:16px;font-weight:500;color:var(--studio-ink);letter-spacing:-0.005em;margin-bottom:14px;" data-field="events-heading">{% if session_day %}{{ session_day }} events{% else %}Today&rsquo;s events{% endif %}</div>
-          <div data-testid="events-timeline" id="events-timeline">
-            <div data-field="events-empty" style="font-size:11px;color:var(--studio-ink-dim);">{% if session_day %}No events on {{ session_day }}.{% else %}No events yet today.{% endif %}</div>
-          </div>
-        </div>
-
-        <!-- Risk math panel — MathRow vertical list -->
-        <div style="padding:18px 20px 20px;">
-          <div style="font-size:16px;font-weight:500;color:var(--studio-ink);letter-spacing:-0.005em;margin-bottom:14px;">Risk math</div>
-          <!-- MC probability -->
-          <div class="math-row" id="dp-rm-mc-row">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-              <span class="math-row-label">MC probability</span>
-              <span class="math-row-value" id="dp-rm-mc">—</span>
-            </div>
-            <div class="math-row-bar-wrap"><div class="math-row-bar" id="dp-rm-mc-bar" style="width:0%;background:var(--studio-accent);"></div></div>
-            <div class="math-row-hint">lower → more risk-off</div>
-          </div>
-          <!-- Stop distance -->
-          <div class="math-row">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-              <span class="math-row-label">Stop distance</span>
-              <span class="math-row-value" id="dp-rm-stop">—</span>
-            </div>
-            <div class="math-row-hint">from peak to stop</div>
-          </div>
-          <!-- Volatility -->
-          <div class="math-row">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-              <span class="math-row-label">Vol (20d)</span>
-              <span class="math-row-value" id="dp-rm-vol">—</span>
-            </div>
-            <div class="math-row-hint">daily standard deviation, in percent</div>
-          </div>
-          <!-- Parabolic velocity -->
-          <div class="math-row">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-              <span class="math-row-label">Parabolic velocity</span>
-              <span class="math-row-value" id="dp-rm-para">—</span>
-            </div>
-            <div class="math-row-hint" id="dp-rm-para-hint">threshold —</div>
-          </div>
-          <!-- Breakeven lock -->
-          <div class="math-row">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-              <span class="math-row-label">Breakeven lock</span>
-              <span class="math-row-value" id="dp-rm-be" style="color:var(--studio-accent);">—</span>
-            </div>
-            <div class="math-row-hint" id="dp-rm-be-hint">—</div>
-          </div>
-          <!-- VWAP defense -->
-          <div class="math-row" style="border-bottom:none;margin-bottom:0;padding-bottom:0;">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">
-              <span class="math-row-label">VWAP defense</span>
-              <span class="math-row-value" id="dp-rm-vwap">—</span>
-            </div>
-            <div class="math-row-hint" id="dp-rm-vwap-hint">—</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Risk Profile section (Phase 2, ux-design-deliverable.md §Change 5).
-           Per-symphony Sharpe / Sortino / Max DD / Ann. Vol, bot vs if-held, fetched from
-           /api/performance?scope=symphony in openDetailPanel(). Uses the existing .math-row
-           pattern — no new CSS classes. -->
-      <div style="padding:18px 24px 0;">
-        <div class="section-label" style="margin-bottom:10px;">Risk Profile</div>
-        <div id="detail-risk-profile" data-testid="detail-risk-profile">
-          <div class="math-row-hint">Select a symphony to load its risk profile.</div>
-        </div>
-      </div>
-
-      <!-- Vars section -->
-      <div style="padding:18px 24px 22px;border-bottom:1px solid var(--studio-rule);">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
-          <div style="font-size:16px;font-weight:500;color:var(--studio-ink);letter-spacing:-0.005em;">Symphony variables</div>
-          <button type="button" style="background:transparent;border:1px solid var(--studio-rule);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:var(--studio-sans);font-size:11px;color:var(--studio-ink);font-weight:500;">Edit variables</button>
-        </div>
-        <div data-testid="vars-section" class="vars-section" id="vars-section">
-          <div class="var-row"><span class="var-key">No vars loaded</span></div>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- Panel footer — id + normalized name -->
-    <div id="detail-panel-footer" style="padding:12px 24px;border-top:1px solid var(--studio-rule);background:var(--studio-paper);display:flex;justify-content:space-between;align-items:center;font-family:var(--studio-sans);font-size:10px;color:var(--studio-ink-dim);letter-spacing:0.04em;flex-shrink:0;">
-      <span id="dp-footer-id">id: — · normalized: —</span>
-      <span>shadow_hwm · stop · mc_prob updated every 1m</span>
-    </div>
-  </aside>
+    </section>
 
   {# The Sleeves panel's card and rule row. The loops below render them with the sleeve's data and the #}
   {# two <template> elements after the section render them with empty values, so the page render and #}
@@ -1619,17 +1858,17 @@
   {% set _rule_anchor = (meta.portfolio.get('window_anchor') if not template and meta is defined and meta is mapping and meta.portfolio is defined and meta.portfolio is mapping else none) %}
   {% set _rule_closed = (meta is defined and meta is mapping and meta.get('system_online') is sameas false) %}
   {% set _rule_today_label = ((_rule_months[_rule_anchor[5:7]|int - 1] ~ ' ' ~ (_rule_anchor[8:10]|int)) if _rule_closed and _rule_anchor is string and _rule_anchor|length == 10 and 1 <= _rule_anchor[5:7]|int <= 12 else 'today') %}
-  <div data-testid="sleeve-rule-row" data-rule-id="{{ rule.id }}" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--studio-rule);gap:8px;">
-    <span><span data-field="rule-name">{{ rule.name }}</span> <span data-field="rule-mode" style="color:var(--studio-ink-dim);">({{ rule.mode }})</span></span>
-    <span data-field="rule-actions" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;">
-      <span style="color:var(--studio-ink-dim);"><span data-field="rule-today-label">{{ _rule_today_label }}</span> <span data-field="rule-today">{{ rule.today_fires }}</span> &middot; lifetime <span data-field="rule-lifetime">{{ rule.lifetime_fires }}</span> &middot; realized <span data-field="rule-realized">{{ rule.realized_text }}</span></span>
+  <div data-testid="sleeve-rule-row" data-rule-id="{{ rule.id }}" class="sleeve-rule-row">
+    <span><span data-field="rule-name">{{ rule.name }}</span> <span data-field="rule-mode" class="muted">({{ rule.mode }})</span></span>
+    <span data-field="rule-actions" class="sleeve-rule-actions">
+      <span><span data-field="rule-today-label">{{ _rule_today_label }}</span> <span data-field="rule-today">{{ rule.today_fires }}</span> &middot; lifetime <span data-field="rule-lifetime">{{ rule.lifetime_fires }}</span> &middot; realized <span data-field="rule-realized">{{ rule.realized_text }}</span></span>
       {% if rule.mode == 'SHADOW' or template %}
       <button
         type="button"
         data-testid="sleeve-arm-control"
         data-sleeve-id="{{ sleeve_id }}"
         data-rule-id="{{ rule.id }}"
-        style="padding:3px 10px;border-radius:6px;background:transparent;color:var(--studio-pos);font-size:10.5px;font-weight:600;border:1px solid var(--studio-pos);cursor:pointer;"
+        class="ctl-btn ctl-pos"
         {% if not template %}onclick="armSleeveRuleToPaper({{ sleeve_id }}, {{ rule.id }}, this)"{% endif %}
       >Arm Paper</button>
       {% endif %}
@@ -1641,16 +1880,16 @@
       <div
         data-testid="sleeve-card"
         data-sleeve-id="{{ sleeve.id }}"
-        style="background:var(--studio-paper);border:1px solid var(--studio-rule);border-radius:12px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);"
+        class="sleeve-card"
       >
-        <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;">
+        <div class="sleeve-line">
           <span class="card-name" data-field="sleeve-name">{{ sleeve.name }}</span>
           <span
             data-testid="sleeve-status-badge"
             class="status-pill {{ sleeve.status_badge_class }}"
           >{{ sleeve.status }}</span>
         </div>
-        <div style="margin-top:6px;color:var(--studio-ink-dim);font-size:12px;">
+        <div class="sleeve-figures">
           Capital: <span data-field="sleeve-capital">{{ sleeve.capital_text }}</span>
           &middot;
           Ledger cash: <span data-field="sleeve-ledger-cash">{{ sleeve.ledger_cash_text }}</span>
@@ -1659,17 +1898,16 @@
           Realized: <span data-field="sleeve-realized">{{ sleeve.realized_text }}</span>
         </div>
 
-        <div data-field="sleeve-rules" style="margin-top:8px;"{% if not sleeve.rules %} hidden{% endif %}>
+        <div data-field="sleeve-rules" class="sleeve-rules"{% if not sleeve.rules %} hidden{% endif %}>
           {% for rule in sleeve.rules %}{{ sleeve_rule_row(sleeve.id, rule) }}{% endfor %}
         </div>
 
-        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+        <div class="sleeve-actions">
           <button
             type="button"
             data-testid="sleeve-disarm-control"
             data-sleeve-id="{{ sleeve.id }}"
-            class="{% if sleeve.status == 'SHADOW' %}control-disabled{% endif %}"
-            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-neg);font-size:10.5px;font-weight:600;border:1px solid var(--studio-neg);cursor:pointer;"
+            class="ctl-btn ctl-neg{% if sleeve.status == 'SHADOW' %} control-disabled{% endif %}"
             {% if not template %}onclick="disarmSleeve({{ sleeve.id }}, this)"{% endif %}
             {% if sleeve.status == 'SHADOW' %}disabled{% endif %}
           >Disarm</button>
@@ -1677,30 +1915,28 @@
             type="button"
             data-testid="sleeve-delete-control"
             data-sleeve-id="{{ sleeve.id }}"
-            style="padding:4px 12px;border-radius:6px;background:transparent;color:var(--studio-ink-dim);font-size:10.5px;font-weight:600;border:1px solid var(--studio-rule);cursor:pointer;"
+            class="ctl-btn"
             {% if not template %}onclick="deleteSleeve({{ sleeve.id }}, this)"{% endif %}
           >Delete</button>
         </div>
       </div>
   {%- endmacro %}
 
-  {# M2 CVaR diagnostic panel — S-3 four-part display contract (read-only, arch constraint 2). #}
-  {# All four S-3 elements are required: (a) stderr, (b) tail_obs_count, (c) diagnostic label, (d) bias warning. #}
-  {# CVAR-001 Phase-1 scope limit (sprint-2-audit a6e4d9f8): cvar_diagnostic holds the FIRST symphony only. #}
-  {# Multi-symphony portfolios silently omit other symphonies' CVaR diagnostics. Phase-2 will expand to a #}
-  {# per-symphony dict for multi-row rendering. See app.py CVAR-001 comment for the TODO. #}
-  {# The panel is always rendered, hidden while there is no diagnostic, so a poll that brings the #}
-  {# first diagnostic can show it and one that loses it can hide it. #}
+  {# CVaR diagnostic panel (M2), the S-3 four-part display contract (read-only, arch constraint 2):
+     (a) stderr, (b) tail_obs_count, (c) the diagnostic label, (d) the bias warning. cvar_diagnostic holds
+     the FIRST symphony only (CVAR-001 Phase-1 scope limit). The panel is always rendered, hidden while
+     there is no diagnostic, so a poll that brings the first diagnostic can show it and one that loses it
+     can hide it. #}
   <section
     id="cvar-diagnostic-panel"
-    aria-label="CVaR Diagnostic (M2)"
-    style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"{% if not cvar_diagnostic %}
+    class="dash-panel"
+    aria-label="CVaR Diagnostic (M2)"{% if not cvar_diagnostic %}
     hidden{% endif %}
   >
-    <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-dim);margin-bottom:10px;">
-      CVaR Diagnostic &mdash; 5th-Percentile Expected Shortfall
+    <div class="dash-panel-title">
+      CVaR diagnostic &mdash; 5th-percentile expected shortfall
     </div>
-    <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:baseline;">
+    <div class="cvar-figures">
       {# S-3 element (a): stderr / uncertainty band #}
       <span>
         CVaR (5%):
@@ -1710,7 +1946,6 @@
           <span
             data-cvar-stderr="{{ cvar_view.stderr_attr }}"
             data-field="cvar-stderr"
-            style="color:var(--studio-ink-dim);"
           >{{ cvar_view.stderr }}</span>
         </span>
       </span>
@@ -1720,40 +1955,35 @@
         <span
           data-cvar-n-tail="{{ cvar_view.n_tail_attr }}"
           data-field="cvar-n-tail"
-          style="font-weight:500;"
+          class="dollar-sub"
         >{{ cvar_view.n_tail }}</span>
       </span>
     </div>
     {# S-3 element (c): load-bearing safety label — do not trade on this #}
-    <div style="margin-top:8px;color:var(--studio-ink-dim);font-size:11px;">
+    <div class="dash-panel-note">
       diagnostic, not a signal &mdash; do not trade on this
     </div>
     {# S-3 element (d): bias warning — must be verbatim for the tripwire test #}
-    <div style="margin-top:4px;color:var(--studio-ink-dim);font-size:11px;">
+    <div class="dash-panel-note">
       known-low-biased LOWER BOUND on tail severity, not a point estimate
     </div>
   </section>
 
-  {# Managed Sleeves panel (AC-16) — sleeve/rule status, per-rule fire counts, #}
-  {# arm-to-paper/disarm controls, and the Atlas cache-health badge (audit #}
-  {# MEDIUM-2). Server-rendered read-only from app.py's dashboard() context; #}
-  {# all mutations route through the CSRF-protected /api/sleeves* endpoints #}
-  {# (static/index.js). No sleeve-creation UI yet (no committed RED requires #}
-  {# it) and no arm-live/envelope-widen one-click control — those ceremonies #}
-  {# need a dedicated confirm-phrase modal, deliberately deferred rather than #}
-  {# built as a bare button that could fat-finger a live-trading arm. #}
+  {# Managed Sleeves panel (AC-16): sleeve / rule status, per-rule fire counts, arm-to-paper and
+     disarm controls, and the Atlas cache-health badge (audit MEDIUM-2). Server-rendered read-only
+     from app.py's dashboard() context; every mutation routes through the CSRF-protected
+     /api/sleeves* endpoints (static/index.js). There is no sleeve-creation UI and no arm-live or
+     envelope-widen one-click control: those ceremonies need a dedicated confirm-phrase modal,
+     deliberately deferred rather than built as a bare button that could fat-finger a live arm. Every
+     flex row wraps (s3-ux 375 px finding #6) so a long name never misaligns its sibling badge. #}
   <section
     data-testid="sleeves-panel"
+    class="dash-panel"
     aria-label="Managed Sleeves"
-    style="margin:24px 32px;padding:18px 24px;border:1px solid var(--studio-rule);border-radius:10px;background:var(--studio-paper);font-family:var(--studio-sans);font-size:13px;color:var(--studio-ink);"
   >
-    {# flex-wrap+gap on every flex row below (s3-ux mobile-375px re-render finding #6): #}
-    {# a long sleeve/rule name wrapping to a second line must never misalign its #}
-    {# sibling badge/buttons -- center-aligned wrapping rows degrade gracefully #}
-    {# instead of the baseline-aligned single-line assumption breaking at narrow widths. #}
-    <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center;margin-bottom:12px;">
-      <div style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--studio-ink-dim);">
-        Managed Sleeves
+    <div class="dash-panel-head">
+      <div class="dash-panel-title">
+        Managed sleeves
       </div>
       <span
         data-testid="atlas-cache-health-badge"
@@ -1766,7 +1996,7 @@
     </div>
 
     {# Shown exactly while there are no sleeves; a poll toggles it. #}
-    <div data-testid="sleeves-empty" style="color:var(--studio-ink-dim);font-size:12px;"{% if sleeves %} hidden{% endif %}>No sleeves configured yet.</div>
+    <div data-testid="sleeves-empty" class="dash-panel-note"{% if sleeves %} hidden{% endif %}>No sleeves configured yet.</div>
     <div class="cards-grid" data-field="sleeves-list">
       {% for sleeve in sleeves %}{{ sleeve_card(sleeve) }}{% endfor %}
     </div>
@@ -1777,6 +2007,172 @@
   {% set _blank_sleeve = {"id": "", "name": "", "status": "", "status_badge_class": "standby", "capital_text": "", "ledger_cash_text": "", "realized_text": "", "rules": []} %}
   <template id="sleeve-card-template">{{ sleeve_card(_blank_sleeve, true) }}</template>
   <template id="sleeve-rule-row-template">{{ sleeve_rule_row("", _blank_rule, true) }}</template>
+
+  </div><!-- /.page-wrap -->
+
+  <!-- ======================== DETAIL PANEL ======================== -->
+  <div class="detail-panel-scrim" id="detail-scrim" onclick="closeDetailPanel()"></div>
+
+  <aside data-testid="detail-panel" class="detail-panel" id="detail-panel">
+    <div class="detail-panel-header">
+      <span class="detail-panel-title" id="detail-panel-title">Symphony detail</span>
+      <div class="detail-head-actions">
+        <button id="dp-view-logs-btn" type="button" class="detail-btn">View logs</button>
+        <button id="dp-go-cash-btn" type="button" class="detail-btn danger">Go to cash &rarr;</button>
+        <button data-testid="detail-close" class="detail-close" type="button" aria-label="Close detail panel" id="detail-close-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </div>
+    <div class="detail-body">
+
+      <!-- Shown from the moment a card is opened until the first state names its symphony. -->
+      <div data-testid="detail-loading" id="detail-loading" class="math-row-hint detail-loading" hidden>Loading symphony details&hellip;</div>
+
+      <!-- Sticky stats row -->
+      <div data-testid="detail-stats-row" class="detail-stats-row">
+        <div class="detail-stat">
+          <div class="detail-stat-label" data-field="live-return-label">{{ 'Return' if session_day else 'Live return' }}</div>
+          <div class="detail-stat-value" id="dp-live-ret">--</div>
+          <div class="detail-stat-sub" id="dp-live-ret-sub"></div>
+        </div>
+        <div class="detail-stat">
+          <div class="detail-stat-label">Stop level</div>
+          <div class="detail-stat-value" id="dp-stop-level">--</div>
+          <div class="detail-stat-sub" id="dp-stop-sub"></div>
+        </div>
+        <div class="detail-stat">
+          <div class="detail-stat-label">Shadow peak</div>
+          <div class="detail-stat-value" id="dp-shadow-peak">--</div>
+          <div class="detail-stat-sub" data-field="hwm-label">{% if session_day %}HWM {{ session_day }}{% else %}HWM today{% endif %}</div>
+        </div>
+        <div class="detail-stat">
+          <div class="detail-stat-label">Guard <span class="alpha-glyph">&alpha;</span></div>
+          <div class="detail-stat-value" id="dp-alpha">--</div>
+          <div class="detail-stat-sub" id="dp-alpha-sub"></div>
+        </div>
+      </div>
+
+      <!-- Intraday chart -->
+      <div class="detail-section">
+        <div class="detail-section-head">
+          <div>
+            <div class="detail-section-title">Intraday tape</div>
+            <div class="detail-section-sub">09:30 ET &rarr; {{ session_close_display }} &middot; 1-minute resolution</div>
+          </div>
+          <div class="detail-toggles">
+            <button id="toggle-stop"      data-testid="overlay-toggle-stop"      class="overlay-toggle active" type="button">Stop</button>
+            <button id="toggle-breakeven" data-testid="overlay-toggle-breakeven" class="overlay-toggle active" type="button">Breakeven</button>
+            <button id="toggle-vwap"      data-testid="overlay-toggle-vwap"      class="overlay-toggle" type="button">VWAP</button>
+            <button id="toggle-mc"        data-testid="overlay-toggle-mc"        class="overlay-toggle" type="button">MC</button>
+          </div>
+        </div>
+        <div data-testid="intraday-chart" class="intraday-chart-wrap">
+          <canvas id="intraday-canvas" style="width:100%;height:100%;"></canvas>
+        </div>
+        <!-- Chart legend -->
+        <div class="detail-legend">
+          <span data-field="if-held-legend" class="legend-key"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-pos)" stroke-width="2"/></svg>{{ 'If held' if session_day else 'Live (if held)' }}</span>
+          <span class="legend-key"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-ink-dim)" stroke-width="2" stroke-dasharray="3,3"/></svg>Shadow (booked)</span>
+          <span id="legend-stop"      class="legend-key" style="display:inline-flex;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-neg)" stroke-width="2" stroke-dasharray="4,3"/></svg>Trailing stop</span>
+          <span id="legend-breakeven" class="legend-key" style="display:inline-flex;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-accent)" stroke-width="2"/></svg>Breakeven lock</span>
+          <span id="legend-vwap"      class="legend-key" style="display:none;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-cyan)" stroke-width="2"/></svg>VWAP</span>
+          <span id="legend-mc"        class="legend-key" style="display:none;"><svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--studio-warn)" stroke-width="2" stroke-dasharray="1,2"/></svg>MC probability (right axis)</span>
+        </div>
+      </div>
+
+      <!-- Split block: Events left, Risk Math right -->
+      <div class="detail-split">
+
+        <!-- Events timeline -->
+        <div class="detail-split-cell">
+          <div class="detail-section-title detail-split-title" data-field="events-heading">{% if session_day %}{{ session_day }} events{% else %}Today&rsquo;s events{% endif %}</div>
+          <div data-testid="events-timeline" id="events-timeline">
+            <div data-field="events-empty" class="row-note">{% if session_day %}No events on {{ session_day }}.{% else %}No events yet today.{% endif %}</div>
+          </div>
+        </div>
+
+        <!-- Risk math panel — MathRow vertical list -->
+        <div class="detail-split-cell">
+          <div class="detail-section-title detail-split-title">Risk math</div>
+          <!-- MC probability -->
+          <div class="math-row" id="dp-rm-mc-row">
+            <div class="math-row-line">
+              <span class="math-row-label">MC probability</span>
+              <span class="math-row-value" id="dp-rm-mc">—</span>
+            </div>
+            <div class="math-row-bar-wrap"><div class="math-row-bar" id="dp-rm-mc-bar" style="width:0%;background:var(--studio-accent);"></div></div>
+            <div class="math-row-hint">lower → more risk-off</div>
+          </div>
+          <!-- Stop distance -->
+          <div class="math-row">
+            <div class="math-row-line">
+              <span class="math-row-label">Stop distance</span>
+              <span class="math-row-value" id="dp-rm-stop">—</span>
+            </div>
+            <div class="math-row-hint">from peak to stop</div>
+          </div>
+          <!-- Volatility -->
+          <div class="math-row">
+            <div class="math-row-line">
+              <span class="math-row-label">Vol (20d)</span>
+              <span class="math-row-value" id="dp-rm-vol">—</span>
+            </div>
+            <div class="math-row-hint">daily standard deviation, in percent</div>
+          </div>
+          <!-- Parabolic velocity -->
+          <div class="math-row">
+            <div class="math-row-line">
+              <span class="math-row-label">Parabolic velocity</span>
+              <span class="math-row-value" id="dp-rm-para">—</span>
+            </div>
+            <div class="math-row-hint" id="dp-rm-para-hint">threshold —</div>
+          </div>
+          <!-- Breakeven lock -->
+          <div class="math-row">
+            <div class="math-row-line">
+              <span class="math-row-label">Breakeven lock</span>
+              <span class="math-row-value" id="dp-rm-be" style="color:var(--studio-accent);">—</span>
+            </div>
+            <div class="math-row-hint" id="dp-rm-be-hint">—</div>
+          </div>
+          <!-- VWAP defense -->
+          <div class="math-row math-row-last">
+            <div class="math-row-line">
+              <span class="math-row-label">VWAP defense</span>
+              <span class="math-row-value" id="dp-rm-vwap">—</span>
+            </div>
+            <div class="math-row-hint" id="dp-rm-vwap-hint">—</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Risk Profile section: per-symphony Sharpe / Sortino / Max DD / Ann. vol, bot vs if-held,
+           fetched from /api/performance?scope=symphony in openDetailPanel(). -->
+      <div class="detail-section detail-section-open">
+        <div class="section-label">Risk Profile</div>
+        <div id="detail-risk-profile" data-testid="detail-risk-profile">
+          <div class="math-row-hint">Select a symphony to load its risk profile.</div>
+        </div>
+      </div>
+
+      <!-- Vars section -->
+      <div class="detail-section">
+        <div class="detail-section-head">
+          <div class="detail-section-title">Symphony variables</div>
+          <button type="button" class="detail-btn">Edit variables</button>
+        </div>
+        <div data-testid="vars-section" class="vars-section" id="vars-section">
+          <div class="var-row"><span class="var-key">No vars loaded</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Panel footer — id + normalized name -->
+    <div id="detail-panel-footer" class="detail-foot">
+      <span id="dp-footer-id">id: — · normalized: —</span>
+      <span>shadow_hwm · stop · mc_prob updated every 1m</span>
+    </div>
+  </aside>
 
   <script>
     function pctColor(v) {
@@ -1855,9 +2251,9 @@
           ? a.tripped_symphonies.join(', ')
           : 'Symphony names unavailable';
         specifics.innerHTML =
-          '<div style="margin-bottom:6px;"><span style="color:var(--studio-ink-dim);">Shared exit reason:</span> <strong>' + escHtmlInline(reason) + '</strong></div>' +
-          '<div style="margin-bottom:6px;"><span style="color:var(--studio-ink-dim);">Symphonies affected:</span> <strong>' + tripped + ' of ' + active + (pct ? ' (' + pct + ')' : '') + '</strong></div>' +
-          '<div style="margin-bottom:6px;"><span style="color:var(--studio-ink-dim);">Time tripped:</span> <strong>' + escHtmlInline(tripTime) + '</strong></div>' +
+          '<div style="margin-bottom:8px;"><span style="color:var(--studio-ink-dim);">Shared exit reason:</span> <strong>' + escHtmlInline(reason) + '</strong></div>' +
+          '<div style="margin-bottom:8px;"><span style="color:var(--studio-ink-dim);">Symphonies affected:</span> <strong>' + tripped + ' of ' + active + (pct ? ' (' + pct + ')' : '') + '</strong></div>' +
+          '<div style="margin-bottom:8px;"><span style="color:var(--studio-ink-dim);">Time tripped:</span> <strong>' + escHtmlInline(tripTime) + '</strong></div>' +
           '<div style="color:var(--studio-ink-dim);font-size:11px;margin-top:8px;line-height:1.6;">Symphonies: ' + escHtmlInline(syms) + '</div>';
       } else if (specifics) {
         specifics.innerHTML = '<span style="color:var(--studio-ink-dim);">No alert data available.</span>';

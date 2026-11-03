@@ -291,12 +291,12 @@ class TestAC1WarmCacheNoLongerOverridesIfHeld:
 class TestAC2LifetimeScalarRenderedSeparately:
     """[Updated, DE-PERF-WINDOW-TRUTH-001, AC-2 AMENDED per team-lead ruling
     2026-09-03]: the separate lifetime figure is labelled GENERICALLY --
-    "Lifetime Max Drawdown · since inception" -- NOT with the actual
+    "Lifetime max drawdown · since inception" -- NOT with the actual
     invested_since date (not persisted anywhere reachable without violating
     AC-7's alpha_bot_execution.py freeze; see feature-plans/mdd-window-
     truth.md's amended AC-2 + Decisions table)."""
 
-    _RULED_LABEL_FRAGMENTS = ("Lifetime Max Drawdown", "since inception")
+    _RULED_LABEL_FRAGMENTS = ("Lifetime max drawdown", "since inception")
 
     def test_page_renders_a_lifetime_figure_distinct_from_the_vs_row(
         self, client, mock_database, monkeypatch
@@ -335,7 +335,7 @@ class TestAC2LifetimeScalarRenderedSeparately:
     def test_lifetime_figure_uses_the_ruled_generic_label_not_a_date(
         self, client, mock_database, monkeypatch
     ):
-        """AC-2's team-lead-amended label text: 'Lifetime Max Drawdown ·
+        """AC-2's team-lead-amended label text: 'Lifetime max drawdown ·
         since inception', with NO invested_since date rendered this cycle
         (per feature-plans/mdd-window-truth.md's Decisions table -- fetching
         invested_since would need either a new Composer call, out of scope,
@@ -357,7 +357,7 @@ class TestAC2LifetimeScalarRenderedSeparately:
             assert fragment in snippet, (
                 f"AC-2 FAIL: the ruled label fragment {fragment!r} was not "
                 f"found near the lifetime-scalar figure. Ruled copy: "
-                f"'Lifetime Max Drawdown · since inception'. Snippet: {snippet!r}"
+                f"'Lifetime max drawdown · since inception'. Snippet: {snippet!r}"
             )
         # [Corrected during review, self-caught false positive]: this
         # test's first draft checked the WHOLE rendered page for any

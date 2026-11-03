@@ -896,7 +896,7 @@ class TestThemeAndAccentRecolourTheCharts:
 
     @pytest.mark.parametrize(
         ("sym_id", "token"),
-        [(hx.TRIGGERED_TP_ID, "--studio-pos"), (hx.TRIGGERED_VWAP_ID, "--studio-plum")],
+        [(hx.TRIGGERED_TP_ID, "--studio-plum"), (hx.TRIGGERED_VWAP_ID, "--studio-cyan")],
     )
     def test_exit_marker_follows_the_theme_at_draw(self, sym_id, token):
         scenario = r"""

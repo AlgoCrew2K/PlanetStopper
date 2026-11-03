@@ -161,4 +161,4 @@ class TestVariables:
         shown = self._open_with({key: 1.0}, [key])
         _no_markup_was_created(shown)
         assert key in " ".join(shown["readable"].split()), shown["readable"]
-        assert "◆" in shown["readable"] or "&#9670;" in shown["readable"], "the lock badge is gone"
+        assert f"{key} locked" in " ".join(shown["readable"].split()), "the lock badge is gone"

@@ -50,7 +50,7 @@
     var STREAM_TRUST_AFTER_SILENCE_MS = 90000;
     var WINDOW_LABELS = {
         '30d': '30d', '60d': '60d', '90d': '90d', '125d': '125d',
-        'ytd': 'YTD', '1y': '1Y', 'all': 'All Time'
+        'ytd': 'YTD', '1y': '1Y', 'all': 'All time'
     };
 
     // The CSRF token and every POST's answer come from window.PSRequest (static/request_guard.js,
@@ -279,7 +279,7 @@
                 // conflated with the adjacent VW-lifetime scalar headline (~+34%,
                 // opposite sign, ~12x magnitude). X stays hidden -- the
                 // hero-data-as-of legend span already covers time.
-                scales: { x: { display: false }, y: { display: true } }
+                scales: { x: { display: false }, y: { display: true, border: { display: false }, grid: { color: cs('--studio-rule') }, ticks: { color: cs('--studio-ink-dim'), font: { family: cs('--studio-sans'), size: 11 }, callback: function (v) { return v + '%'; } } } }
             }
         });
         if (!_cumChart) { showHeroEmpty(); return null; }
@@ -617,8 +617,8 @@
     function exitReasonColor(reason) {
         if (!reason) return cs('--studio-neg');
         var r = reason.toLowerCase();
-        if (r.indexOf('take') !== -1 || r.indexOf('tp') !== -1) return cs('--studio-pos');
-        if (r.indexOf('vwap') !== -1) return cs('--studio-plum');
+        if (r.indexOf('take') !== -1 || r.indexOf('tp') !== -1) return cs('--studio-plum');
+        if (r.indexOf('vwap') !== -1) return cs('--studio-cyan');
         return cs('--studio-neg');
     }
 
@@ -653,8 +653,8 @@
                 ctx.stroke();
 
                 var pad = 4;
-                var fontSize = isMini ? 8 : 10;
-                ctx.font = '700 ' + fontSize + 'px system-ui, sans-serif';
+                var fontSize = isMini ? 10 : 11;
+                ctx.font = '500 ' + fontSize + 'px ' + cs('--studio-sans');
                 var tw = ctx.measureText(label).width;
                 var bw = tw + pad * 2;
                 var bh = fontSize + pad * 2;
@@ -676,7 +676,7 @@
                 ctx.arcTo(bx, by, bx + r, by, r);
                 ctx.closePath();
                 ctx.fill();
-                ctx.fillStyle = '#ffffff';
+                ctx.fillStyle = cs('--studio-white');
                 ctx.textBaseline = 'middle';
                 ctx.fillText(label, bx + pad, by + bh / 2);
                 // Tick line from badge down to hairline
@@ -738,15 +738,18 @@
         el.textContent = text;
     }
 
-    // Names the session of a tape that is not today's: one span beside the canvas, text
+    // Names the session of a tape that is not today's: one span in the card, text
     // "<session_date> session", present only while the tape's session differs from the ET
     // day. A body naming either date less (a store that records no date) names no session.
     // The date is written as text; the span is cleared by the next tape that is today's.
     function setSparkSessionCaption(canvas, chartBody) {
         var box = canvas.parentNode;
-        // The caption lives beside the fixed-height box, never inside it: the responsive
-        // chart sizes itself to the box and would grow it.
-        var parent = box && box.parentNode;
+        // The caption lives outside the fixed-height box, never inside it: the responsive
+        // chart sizes itself to the box and would grow it. It sits on the card's meta line
+        // (under the name), so it takes no height of its own; a card without that line keeps
+        // it beside the box.
+        var card = box && typeof box.closest === 'function' ? box.closest('[data-testid="sym-card"]') : null;
+        var parent = (card && card.querySelector('.card-meta')) || (box && box.parentNode);
         if (!parent) return;
         var session = chartBody && typeof chartBody.session_date === 'string' ? chartBody.session_date : '';
         var today = chartBody && typeof chartBody.et_date === 'string' ? chartBody.et_date : '';
@@ -754,20 +757,13 @@
         var el = parent.querySelector('.spark-session');
         if (!el) {
             if (!text) return;
-            // On its own line above the tape, not laid over it: the tape's line never runs
-            // through the text.
             el = document.createElement('span');
-            el.className = 'spark-session legend-as-of';
-            el.style.display = 'block';
-            el.style.textAlign = 'left';
-            el.style.marginLeft = '2px';
-            // The caption takes over the box's top gap so the card grows by the caption alone.
-            el.style.marginTop = '0.5rem';
-            parent.insertBefore(el, box);
+            el.className = 'spark-session';
+            if (parent === box.parentNode) parent.insertBefore(el, box);
+            else parent.appendChild(el);
         }
         el.textContent = text;
         el.hidden = !text;
-        box.style.marginTop = text ? '0' : '0.5rem';
     }
 
     function sparkHeldDataset(data) {
@@ -1162,7 +1158,7 @@
     var _detailSymId = null;
     var _detailRequestSeq = 0;
     var _detailNeedsFetch = false;  // opened before any poll named the symphony: ask once it does
-    var DETAIL_UNKNOWN_TITLE = 'Symphony Detail';
+    var DETAIL_UNKNOWN_TITLE = 'Symphony detail';
     var DETAIL_NOT_IN_VIEW_TEXT = 'not in the current view';
 
     function detailPanelIsOpen() {
@@ -1198,7 +1194,7 @@
         var elStop = document.getElementById('dp-stop-level');
         if (elStop) elStop.textContent = stopLevel != null ? fmtPct(stopLevel) : '--';
         var elStopSub = document.getElementById('dp-stop-sub');
-        if (elStopSub) elStopSub.textContent = sym.breakeven_locked ? '◆ breakeven lock' : 'vol-scaled';
+        if (elStopSub) elStopSub.textContent = sym.breakeven_locked ? 'breakeven lock' : 'vol-scaled';
 
         var elPeak = document.getElementById('dp-shadow-peak');
         if (elPeak) {
@@ -1305,7 +1301,7 @@
                     // Match the existing .math-row pattern (index.html:1223-1258):
                     // label + value share a flex row; hint sits below on its own line.
                     return '<div class="math-row">'
-                        + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;">'
+                        + '<div class="math-row-line">'
                         + '<span class="math-row-label">' + label + '</span>'
                         + '<span class="math-row-value" style="color:' + dcol + ';">' + deltaStr + '</span>'
                         + '</div>'
@@ -1532,8 +1528,8 @@
                 plugins: { legend: { display: false } },
                 scales: {
                     x: { display: false },
-                    y: { position: 'left', ticks: { font: { size: 10 } } },
-                    mc: { position: 'right', min: 0, max: 100, ticks: { font: { size: 10 } }, grid: { drawOnChartArea: false } }
+                    y: { position: 'left', border: { display: false }, grid: { color: cs('--studio-rule') }, ticks: { color: cs('--studio-ink-dim'), font: { family: cs('--studio-sans'), size: 11 }, callback: function (v) { return v + '%'; } } },
+                    mc: { position: 'right', min: 0, max: 100, border: { display: false }, ticks: { color: cs('--studio-ink-dim'), font: { family: cs('--studio-sans'), size: 11 }, callback: function (v) { return v + '%'; } }, grid: { drawOnChartArea: false } }
                 }
             },
             plugins: intradayPlugins
@@ -1685,7 +1681,7 @@
             var kind = (ev.event_type || ev.kind || 'info').toLowerCase();
             var msg = String(ev.message || ev.msg || '');
             var color = kindColorMap[kind] || 'var(--studio-ink-dim)';
-            var kindLabel = kind.toUpperCase();
+            var kindLabel = kind.charAt(0).toUpperCase() + kind.slice(1);
             // Extract reason from message if present
             var reasonMatch = msg.match(/^([A-Z_]+(?:\s[A-Z_]+)*):\s*/);
             var reason = reasonMatch ? msg.slice(reasonMatch[0].length) : msg;
@@ -1730,7 +1726,7 @@
         }
         container.innerHTML = Object.entries(params).map(function (pair) {
             var k = pair[0]; var v = pair[1];
-            var lockBadge = locked.has(k) ? ' <span style="color:var(--studio-accent);font-size:9px;" title="Locked from autotuner">&#9670;</span>' : '';
+            var lockBadge = locked.has(k) ? ' <span class="lock-mark" title="Locked from autotuner">locked</span>' : '';
             // The name and a string value are written as text; the lock badge is this file's own markup.
             return '<div class="var-row">' +
                 '<span class="var-key">' + escHtml(k) + lockBadge + '</span>' +
@@ -2022,18 +2018,18 @@
         if (sym.triggered) {
             var tr = sym.triggered_reason || '';
             if (tr.indexOf('Take-Profit') !== -1 || tr.indexOf('take_profit') !== -1) {
-                return { text: 'TAKE-PROFIT', cls: 'tp' };
+                return { text: 'Take-profit', cls: 'tp' };
             }
             if (tr.indexOf('VWAP Bleed') !== -1 || tr.indexOf('vwap_bleed') !== -1) {
-                return { text: 'VWAP BLEED', cls: 'bleed' };
+                return { text: 'VWAP bleed', cls: 'bleed' };
             }
             if (tr.indexOf('VWAP') !== -1 || tr.indexOf('vwap') !== -1) {
                 return { text: 'VWAP', cls: 'vwap' };
             }
-            return { text: 'TRAILING STOP', cls: 'stop' };
+            return { text: 'Trailing stop', cls: 'stop' };
         }
-        if (sym.para_armed) { return { text: 'Para-Armed', cls: 'para-armed' }; }
-        if (sym.tp_armed)   { return { text: 'TP-Armed',   cls: 'tp-armed'   }; }
+        if (sym.para_armed) { return { text: 'Para-armed', cls: 'para-armed' }; }
+        if (sym.tp_armed)   { return { text: 'TP-armed',   cls: 'tp-armed'   }; }
         if (sym.armed)      { return { text: 'Armed',      cls: 'armed'      }; }
         return { text: 'Standby', cls: 'standby' };
     }
@@ -2275,7 +2271,6 @@
                 if (!parent) return;
                 container = document.createElement('div');
                 container.className = 'account-all-time-stat';
-                container.style.cssText = 'margin-top:6px;font-size:11px;color:var(--studio-ink-dim);';
                 container.innerHTML =
                     '<span class="account-all-time-label">Account &middot; all-time</span>'
                     + ' <span data-testid="account-all-time-cr" class="account-all-time-value"></span>';
@@ -2405,7 +2400,7 @@
             setTextIfChanged(el, _sessionDay || 'Today');
         });
         setTextIfChanged(document.querySelector('[data-field="live-return-label"]'),
-            _sessionDay ? 'Return' : 'Live Return');
+            _sessionDay ? 'Return' : 'Live return');
         // the legend's text follows its swatch, so it is the span's last child node
         var legend = document.querySelector('[data-field="if-held-legend"]');
         var legendText = _sessionDay ? 'If held' : 'Live (if held)';
@@ -3143,6 +3138,11 @@
         if (_cumChart) {
             _cumChart.data.datasets[0].borderColor = lineToken('hero', 0);
             _cumChart.data.datasets[1].borderColor = lineToken('hero', 1);
+            var heroY = _cumChart.options.scales && _cumChart.options.scales.y;
+            if (heroY) {
+                heroY.grid.color = cs('--studio-rule');
+                heroY.ticks.color = cs('--studio-ink-dim');
+            }
             _cumChart.update('none');
         }
         document.querySelectorAll('[data-testid="card-spark"]').forEach(function (canvas) {
@@ -3156,6 +3156,12 @@
             _intradayChart.data.datasets.forEach(function (ds, i) {
                 if (CHART_LINE_TOKENS.detail[i]) ds.borderColor = lineToken('detail', i);
             });
+            var detailScales = _intradayChart.options.scales || {};
+            if (detailScales.y) {
+                detailScales.y.grid.color = cs('--studio-rule');
+                detailScales.y.ticks.color = cs('--studio-ink-dim');
+            }
+            if (detailScales.mc) detailScales.mc.ticks.color = cs('--studio-ink-dim');
             _intradayChart.update('none');
         }
     }

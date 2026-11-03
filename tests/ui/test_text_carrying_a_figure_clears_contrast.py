@@ -246,15 +246,31 @@ def _index_source() -> str:
     return (TEMPLATES / "index.html").read_text(encoding="utf-8")
 
 
+def _named_colours(attrs: dict[str, str], label: str) -> list[tuple[str, str, str | None]]:
+    """(where, colour, opacity) the element names: its inline colour, then each rule of its classes."""
+    inline = contrast.style_properties(attrs.get("style"))
+    named = []
+    if "color" in inline:
+        named.append((f"{label}: inline colour", inline["color"], inline.get("opacity")))
+    for class_name in attrs.get("class", "").split():
+        for source_file, selector, props in contrast.class_rules(class_name):
+            if "color" in props:
+                named.append(
+                    (f"{label}: {source_file} {selector}", props["color"], props.get("opacity"))
+                )
+    return named
+
+
 def test_the_card_lifetime_mdd_line_and_its_figure_clear_the_bar_with_no_opacity_on_the_figure():
     source = _index_source()
     cells = _tag_attributes(source, r'<div[^>]*data-field="mdd-lifetime-cell"[^>]*>')
     figures = _tag_attributes(source, r'<span[^>]*data-field="mdd-lifetime"[^>]*>')
     assert len(cells) == len(figures) >= 1
     for attrs in cells:
-        inline = contrast.style_properties(attrs.get("style"))
-        assert "color" in inline, "the Lifetime MDD line carries no colour of its own"
-        assert_clears_bar(inline["color"], "the card Lifetime MDD line")
+        named = _named_colours(attrs, "the card Lifetime MDD line")
+        assert named, "the Lifetime MDD line carries no colour of its own"
+        for where, value, opacity in named:
+            assert_clears_bar(value, where, opacity=_opacity(opacity))
     for attrs in figures:
         inline = contrast.style_properties(attrs.get("style"))
         assert _opacity(inline.get("opacity")) == 1.0, (
@@ -267,9 +283,10 @@ def test_the_card_lifetime_mdd_line_and_its_figure_clear_the_bar_with_no_opacity
 def test_the_hero_lifetime_mdd_line_and_its_figure_clear_the_bar():
     source = _index_source()
     for attrs in _tag_attributes(source, r'<div[^>]*data-testid="mdd-lifetime-scalar"[^>]*>'):
-        inline = contrast.style_properties(attrs.get("style"))
-        assert "color" in inline, "the hero Lifetime MDD line carries no colour of its own"
-        assert_clears_bar(inline["color"], "the hero Lifetime MDD line")
+        named = _named_colours(attrs, "the hero Lifetime MDD line")
+        assert named, "the hero Lifetime MDD line carries no colour of its own"
+        for where, value, opacity in named:
+            assert_clears_bar(value, where, opacity=_opacity(opacity))
     strong = re.search(r'data-testid="mdd-lifetime-scalar".*?<strong([^>]*)>', source, flags=re.S)
     assert strong, "the hero Lifetime MDD line has no figure element"
     inline = contrast.style_properties(
@@ -304,8 +321,8 @@ DASHBOARD_ELEMENTS = {
     "hero Max DD 'insufficient history'": r'<span[^>]*data-testid="mdd-insufficient-label"[^>]*>',
     "card Max DD 'insufficient history'": r'<span[^>]*data-testid="card-mdd-insufficient-label"[^>]*>',
     "account basis stamp": r'<div[^>]*id="account-basis-as-of"[^>]*>',
-    "CVaR Diagnostic heading": r"<div[^>]*>\s*CVaR Diagnostic",
-    "Managed Sleeves heading": r"<div[^>]*>\s*Managed Sleeves",
+    "CVaR diagnostic heading": r"<div[^>]*>\s*CVaR diagnostic",
+    "Managed sleeves heading": r"<div[^>]*>\s*Managed sleeves",
     "Sleeve Delete button label": r'<button[^>]*data-testid="sleeve-delete-control"[^>]*>',
 }
 
@@ -336,7 +353,13 @@ def test_the_dashboards_basis_stamp_and_cue_lines_name_a_colour_that_clears_the_
 # The card headline's If held figure
 # ---------------------------------------------------------------------------
 
-IF_HELD_FIGURE = re.compile(r'data-field="tc-held"\s+class="dv-value[^"]*"\s*style="([^"]*)"', re.S)
+IF_HELD_FIGURE = re.compile(r'data-field="tc-held"\s+class="dv-value[^"]*"([^>]*)>', re.S)
+
+
+def _if_held_inline_style(trailing_attributes: str) -> str:
+    """The inline style the If held figure carries, '' when it carries none."""
+    found = re.search(r'style="([^"]*)"', trailing_attributes)
+    return found.group(1) if found else ""
 
 
 def test_the_card_headline_if_held_figure_is_found_in_both_card_templates():
@@ -350,7 +373,8 @@ def test_the_card_headline_if_held_figure_has_no_opacity_and_clears_the_bar_on_t
 ):
     rules = [r for r in contrast.class_rules("dv-value") if re.search(rf"\.{tone}(?![\w-])", r[1])]
     assert rules, f"no rule colours .dv-value.{tone}"
-    for style in IF_HELD_FIGURE.findall(_index_source()):
+    for trailing in IF_HELD_FIGURE.findall(_index_source()):
+        style = _if_held_inline_style(trailing)
         inline = contrast.style_properties(style)
         opacity = _opacity(inline.get("opacity"))
         assert opacity == 1.0, f"the If held figure is dimmed to opacity {opacity}: {style!r}"
@@ -503,22 +527,26 @@ _WARN_TOKEN = re.compile(r"var\(\s*(--studio-warn[\w-]*)")
 
 def _chip_outline_tokens(test_id: str) -> list[tuple[str, str]]:
     """(declaration, warn-family token) for every border, outline or shadow of the chip and its
-    classes that names a ``--studio-warn*`` token."""
+    classes that names a ``--studio-warn*`` token, and for the fill of the dot drawn in front of
+    its text (the chip is a dot and plain text: the dot is its boundary cue)."""
     found = []
     for props in _chip_declarations(test_id):
+        is_dot = "::before" in props.get("__selector__", "")
         for key, value in props.items():
             if key == "__selector__":
                 continue
             if key.startswith("border") or key in ("outline", "box-shadow"):
                 found += [(f"{key}: {value}", token) for token in _WARN_TOKEN.findall(value)]
+            if is_dot and key in ("background", "background-color"):
+                found += [(f"{key}: {value}", token) for token in _WARN_TOKEN.findall(value)]
     return found
 
 
 @pytest.mark.parametrize("test_id", CHIP_IDS)
-def test_the_chip_outlines_itself_with_a_token_of_the_warn_family(test_id):
+def test_the_chip_carries_a_cue_with_a_token_of_the_warn_family(test_id):
     assert _chip_outline_tokens(test_id), (
-        f"{test_id}: no border, outline or shadow names a {WARN_FAMILY}* token, so the chip has no "
-        "boundary cue whose contrast can be read"
+        f"{test_id}: no border, outline, shadow or leading dot names a {WARN_FAMILY}* token, so "
+        "the chip has no boundary cue whose contrast can be read"
     )
 
 
@@ -580,8 +608,6 @@ FAINT_TEXT = re.compile(
 # entries are a CSS selector, compared whole; the others are a fragment of the element's tag and the
 # words after it.
 SWEEP_ALLOWLIST: tuple[tuple[str, str, bool, str], ...] = (
-    ("templates/index.html", "today-held-footnote-marker", False, "footnote marker glyph"),
-    ("templates/index.html", "cumulative-cashflow-footnote-marker", False, "footnote marker glyph"),
     ("templates/settings.html", ".btn-discard:disabled", True, "disabled control label"),
     ("templates/settings.html", ".btn-save", True, "control label, replaced when enabled"),
 )
@@ -694,7 +720,7 @@ def test_precondition_the_sweep_finds_the_faint_text_colours_the_pages_use():
         f"the sweep found only {len(uses)} uses for {len(SWEEP_ALLOWLIST)} allowlist entries; "
         "its patterns have drifted"
     )
-    assert {u.kind for u in uses} == {"rule", "inline"}
+    assert {u.kind for u in uses} <= {"rule", "inline"}
 
 
 def test_every_allowlist_entry_excuses_a_use_that_still_exists():
