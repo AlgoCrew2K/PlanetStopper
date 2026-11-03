@@ -37,9 +37,11 @@ WIDTHS = [1440, 1366, 1280, 1000, 701, 375, 320]
 # A small negative, a small positive and a figure with more digits (the widest the headline prints).
 FIGURES = [-0.73, 0.73, -12.34]
 
+# One task: the text (when given) is written and measured with no page script able to run between.
 _LINE_FACTS = """
-() => {
+(written) => {
   const el = document.getElementById('guard-alpha-headline');
+  if (written !== null) el.textContent = written;
   const range = document.createRange();
   range.selectNodeContents(el);
   const tops = new Set([...range.getClientRects()].map((r) => Math.round(r.top)));
@@ -70,8 +72,8 @@ def probe(firefox, world):  # noqa: F811
             probe.context.close()
 
 
-def _assert_one_line(probe, expected: str, label: str) -> None:
-    facts = probe.page.evaluate(_LINE_FACTS)
+def _assert_one_line(probe, expected: str, label: str, *, written: str | None = None) -> None:
+    facts = probe.page.evaluate(_LINE_FACTS, written)
     assert facts["text"] == expected, f"{label}: the headline reads {facts['text']!r}"
     assert facts["lines"] == 1, (
         f"{label}: the headline {expected!r} is laid out on {facts['lines']} lines"
@@ -116,8 +118,22 @@ def test_the_headline_stays_one_line_for_any_figure_written_into_it(probe, width
     probe.page.goto(probe.server.base_url + "/")
     wait_refresh(probe, 1)
     want = sup.fmt_pp(figure)
+    _assert_one_line(probe, want, f"{width}px written {figure}", written=want)
+    assert probe.page_errors == []
+
+
+@pytest.mark.parametrize("width", [1440, 1366, 1280])
+@pytest.mark.parametrize("figure", FIGURES)
+def test_the_headline_stays_one_line_in_a_wide_typeface(probe, width, figure):
+    """A wider face makes the headline and the picker take more room, as the live page's does at
+    laptop widths. Verdana is wide where it is installed; where it is not the face falls back and
+    this case is the plain one."""
+    probe.page.set_viewport_size({"width": width, "height": HEIGHT})
+    probe.page.goto(probe.server.base_url + "/")
+    wait_refresh(probe, 1)
     probe.page.evaluate(
-        "(t) => { document.getElementById('guard-alpha-headline').textContent = t; }", want
+        "() => document.documentElement.style.setProperty('--studio-sans', 'Verdana, sans-serif')"
     )
-    _assert_one_line(probe, want, f"{width}px written {figure}")
+    want = sup.fmt_pp(figure)
+    _assert_one_line(probe, want, f"{width}px wide face {figure}", written=want)
     assert probe.page_errors == []
