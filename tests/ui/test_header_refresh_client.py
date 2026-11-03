@@ -110,22 +110,12 @@ class TestMarkup:
 class TestHeaderMarkupIsOnlyGivenTheAttribute:
     @pytest.mark.parametrize("path", [*FOUR_PAGES, "/"])
     def test_the_nav_is_the_one_at_the_base_except_for_the_poll_attribute(self, path):
+        # The record is the header as the unslop pass left it (see 04-c1/PROVENANCE.md); it was taken
+        # with the poll attribute on four pages, so both sides are read without it.
         base = json.loads(BASE_MARKUP.read_text(encoding="utf-8"))["navs"][path]
         now = nav_markup(path)
-        # The Force run label colour (white to paper, for contrast) is the one admitted change. It is
-        # put back inside the Force run button alone, so any other change to the nav still fails.
-        button = now.index('<button data-testid="force-run-btn"')
-        button_end = now.index("</button>", button)
-        force_run = now[button:button_end]
-        assert force_run.count("color: var(--studio-paper);") == 1, (
-            f"{path}: Force run label colour is no longer the admitted contrast colour"
-        )
-        now = (
-            now[:button]
-            + force_run.replace("color: var(--studio-paper);", "color:var(--studio-white);")
-            + now[button_end:]
-        )
-        assert now.replace(' data-header-poll="1"', "") == base, (
+        poll = ' data-header-poll="1"'
+        assert now.replace(poll, "") == base.replace(poll, ""), (
             f"{path}: the header markup changed beyond the one attribute"
         )
         opening = now.split(">", 1)[0]
@@ -450,8 +440,8 @@ class TestCountdown:
         )
         zero_run = 0
         for sample in out.result:
-            match = re.fullmatch(r"NEXT (\d\d):(\d\d)", sample["text"] or "")
-            assert match, f"countdown text {sample['text']!r} is not NEXT MM:SS"
+            match = re.fullmatch(r"Next (\d\d):(\d\d)", sample["text"] or "")
+            assert match, f"countdown text {sample['text']!r} is not Next MM:SS"
             shown = int(match.group(1)) * 60 + int(match.group(2))
             wall_seconds = (sample["wall"] / 1000.0) % 60
             expected = (60 - wall_seconds) % 60

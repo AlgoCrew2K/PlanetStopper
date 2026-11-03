@@ -87,9 +87,12 @@ summary:focus-visible,
 }
 
 /* ---- Shared dashboard primitives (SC-5) ----
-   Moved byte-for-byte, in order, from the inline style block of
-   templates/index.html. Defined ONCE here so every page that links this
-   sheet can use them; the dashboard itself resolves them unchanged. */
+   Moved in order from the inline style block of templates/index.html and
+   restyled once by the unslop pass: a status is a dot and a word, stat
+   figures are a ruled row, section headers are sentence-case headings,
+   cards have a hairline and no shadow, weights stay 400 to 600. Defined ONCE
+   here so every page that links this sheet can use them; a page sets layout
+   properties on a primitive, never its look (tests/ui/test_dashboard_primitives_shared.py). */
 
 .hero-section {
   background: var(--studio-paper);

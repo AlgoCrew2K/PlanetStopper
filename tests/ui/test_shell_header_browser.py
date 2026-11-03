@@ -173,14 +173,16 @@ def test_the_candidate_alert_indicator_and_its_badge_stay_visible_at_375(
 
 
 @pytest.mark.parametrize("path", PAGES, ids=PAGE_IDS)
-def test_at_1440_the_header_is_one_row_as_high_as_it_was_at_the_base(firefox, advisor_server, path):
-    """one row, and the same height as the capture of the base."""
+def test_at_1440_the_header_is_one_row_no_higher_than_it_was_at_the_base(
+    firefox, advisor_server, path
+):
+    """one row, and no higher than the capture of the base (the unslop pass made it slimmer)."""
     seed_dashboard_state()
     with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
         open_page(probe, path)
         assert nav_rows(probe) == 1
         base = BASELINE["pages_1440"][path]["nav_height"]
-        assert abs(nav_height(probe) - base) <= HEIGHT_TOLERANCE_PX, (
+        assert nav_height(probe) <= base + HEIGHT_TOLERANCE_PX, (
             f"{path}: the header is {nav_height(probe)} px high, the base was {base} px"
         )
         for label, selector in HEADER_CONTROLS.items():

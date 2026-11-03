@@ -67,3 +67,11 @@ The UX review fixes change two primitives on purpose, so `dashboard.resolved` wa
 - Producer call: `python tests/fixtures/dashboard/shell_baseline/capture_shell_baseline.py --resolved-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `2e114278e95ccb8235fc94e84664242bbf7a499b` (templates, static and `app.py` clean). `resolved_revision` now records this run (24 to 24 selectors).
 - What differs, read from `git diff` of the file: `.legend-as-of` `color` only.
 - Sign-off: not needed (producer output; the one difference is the fix's own).
+
+## Revision: `dashboard.resolved` for the unslop pass (shared chrome)
+
+The unslop pass restyles the shared primitives on purpose (see `primitives_baseline/PROVENANCE.md`), so `dashboard.resolved` was re-captured; `base_sha`, `dashboard.structure_outside_top_bar` and `pages_1440` (the header heights stay the shell work's base; the header is now no higher than that base) are untouched.
+
+- Producer call: `python tests/fixtures/dashboard/shell_baseline/capture_shell_baseline.py --resolved-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `efa817096f942f122129e1921e521513e3396966` (templates, static and `app.py` clean). `resolved_revision` records this run (24 to 27 selectors).
+- What differs: the same selectors as the primitives record.
+- Sign-off: not needed (producer output; the differences are the pass's own).

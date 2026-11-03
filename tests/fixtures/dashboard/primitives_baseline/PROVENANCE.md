@@ -44,3 +44,11 @@ The UX review fixes change two primitives on purpose, so the base's rule records
 - Producer call: `python tests/fixtures/dashboard/primitives_baseline/capture_baseline.py --rules-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `2e114278e95ccb8235fc94e84664242bbf7a499b` (templates and static clean). `rules_revision` now records this run (24 to 24 selectors and rules); the earlier phone-layout revision above is the one before it.
 - What differs, read from `git diff` of the file: `.legend-as-of` `color` only, in `resolved` and in `ordered`. `.mini-stat-note` also changed colour in `static/layout.css` but is not one of the primitive selectors this record holds.
 - Sign-off: not needed (producer output; the one difference is the fix's own).
+
+## Revision: `resolved` and `ordered` for the unslop pass (shared chrome)
+
+The unslop pass restyles the shared primitives on purpose (a status is a dot and a word, a row of stat figures has no box, section headers are sentence-case headings, a card has a hairline and no shadow, labels have no tracking, no weight above 600). `structure` and `base_sha` are still the base's.
+
+- Producer call: `python tests/fixtures/dashboard/primitives_baseline/capture_baseline.py --rules-only` with `DB_PATH` and `ATLAS_CACHE_DB_PATH` set to scratch files, at head `efa817096f942f122129e1921e521513e3396966` (templates and static clean). `rules_revision` records this run (24 to 27 selectors and rules).
+- What differs, read from `git diff` of the file: `.hero-section`, `.legend-as-of` (10 px on a desktop, a new 11 px rule at the phone breakpoint), `.mini-stat`, `.mini-stat-value`, `.mini-stat-label`, `.section-header`, `.sym-card` (and its hover), `.card-name` and `.status-pill` lose their old fills, uppercase, tracking, heavy weights and shadows; `.status-pill` and each variant gain a `::before` dot rule (the 11 variant selectors now name the `::before` dot; `.status-pill.sleeve-paused` keeps a rule for its word weight). The earlier colour admission in `tests/ui/test_dashboard_primitives_shared.py` is retired: the record holds the new colours.
+- Sign-off: not needed (producer output; the differences are the pass's own).
