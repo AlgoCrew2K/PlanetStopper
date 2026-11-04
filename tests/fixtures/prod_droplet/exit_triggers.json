@@ -4,7 +4,7 @@
   "ts_utc": "2026-06-22T13:43:04Z",
   "ts_et": "2026-06-22T09:43:04",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.8499999999999999,
   "cycle_id": "2026-06-22T09:42:01.483098-04:00"
@@ -14,7 +14,7 @@
   "ts_utc": "2026-06-22T13:43:05Z",
   "ts_et": "2026-06-22T09:43:05",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.8599999999999999,
   "cycle_id": "2026-06-22T09:42:01.483098-04:00"
@@ -24,7 +24,7 @@
   "ts_utc": "2026-06-22T14:04:05Z",
   "ts_et": "2026-06-22T10:04:05",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 2.82,
   "cycle_id": "2026-06-22T10:03:00.809127-04:00"
@@ -34,7 +34,7 @@
   "ts_utc": "2026-06-22T14:12:06Z",
   "ts_et": "2026-06-22T10:12:06",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 2.1399999999999997,
   "cycle_id": "2026-06-22T10:11:01.178794-04:00"
@@ -44,7 +44,7 @@
   "ts_utc": "2026-06-22T14:14:05Z",
   "ts_et": "2026-06-22T10:14:05",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 2.91,
   "cycle_id": "2026-06-22T10:13:01.054308-04:00"
@@ -54,7 +54,7 @@
   "ts_utc": "2026-06-22T14:23:05Z",
   "ts_et": "2026-06-22T10:23:05",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.67,
   "cycle_id": "2026-06-22T10:22:00.834994-04:00"
@@ -64,7 +64,7 @@
   "ts_utc": "2026-06-22T14:25:07Z",
   "ts_et": "2026-06-22T10:25:07",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.62,
   "cycle_id": "2026-06-22T10:24:01.987308-04:00"
@@ -74,7 +74,7 @@
   "ts_utc": "2026-06-22T14:26:06Z",
   "ts_et": "2026-06-22T10:26:06",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.29,
   "cycle_id": "2026-06-22T10:25:01.241692-04:00"
@@ -84,7 +84,7 @@
   "ts_utc": "2026-06-22T14:26:06Z",
   "ts_et": "2026-06-22T10:26:06",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.6799999999999999,
   "cycle_id": "2026-06-22T10:25:01.241692-04:00"
@@ -94,7 +94,7 @@
   "ts_utc": "2026-06-22T14:27:05Z",
   "ts_et": "2026-06-22T10:27:05",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.76,
   "cycle_id": "2026-06-22T10:26:01.657929-04:00"
@@ -104,7 +104,7 @@
   "ts_utc": "2026-06-22T14:28:05Z",
   "ts_et": "2026-06-22T10:28:05",
   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.44999999999999996,
   "cycle_id": "2026-06-22T10:27:00.924014-04:00"
@@ -114,7 +114,7 @@
   "ts_utc": "2026-06-23T13:50:10Z",
   "ts_et": "2026-06-23T09:50:10",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 5.7,
   "cycle_id": "2026-06-23T09:49:01.085420-04:00"
@@ -124,7 +124,7 @@
   "ts_utc": "2026-06-23T13:50:10Z",
   "ts_et": "2026-06-23T09:50:10",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.16,
   "cycle_id": "2026-06-23T09:49:01.085420-04:00"
@@ -134,7 +134,7 @@
   "ts_utc": "2026-06-23T13:50:10Z",
   "ts_et": "2026-06-23T09:50:10",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.16,
   "cycle_id": "2026-06-23T09:49:01.085420-04:00"
@@ -144,7 +144,7 @@
   "ts_utc": "2026-06-23T13:50:10Z",
   "ts_et": "2026-06-23T09:50:10",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 6.2700000000000005,
   "cycle_id": "2026-06-23T09:49:01.085420-04:00"
@@ -154,7 +154,7 @@
   "ts_utc": "2026-06-23T13:50:11Z",
   "ts_et": "2026-06-23T09:50:11",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -5.3100000000000005,
   "cycle_id": "2026-06-23T09:49:01.085420-04:00"
@@ -164,7 +164,7 @@
   "ts_utc": "2026-06-23T14:42:06Z",
   "ts_et": "2026-06-23T10:42:06",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 2.07,
   "cycle_id": "2026-06-23T10:41:01.411146-04:00"
@@ -174,7 +174,7 @@
   "ts_utc": "2026-06-23T15:27:06Z",
   "ts_et": "2026-06-23T11:27:06",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -2.7,
   "cycle_id": "2026-06-23T11:26:00.972778-04:00"
@@ -184,7 +184,7 @@
   "ts_utc": "2026-06-23T18:50:11Z",
   "ts_et": "2026-06-23T14:50:11",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -2.15,
   "cycle_id": "2026-06-23T14:49:02.237382-04:00"
@@ -194,7 +194,7 @@
   "ts_utc": "2026-06-24T13:58:06Z",
   "ts_et": "2026-06-24T09:58:06",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.27,
   "cycle_id": "2026-06-24T09:57:01.337173-04:00"
@@ -204,7 +204,7 @@
   "ts_utc": "2026-06-24T13:58:06Z",
   "ts_et": "2026-06-24T09:58:06",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.27,
   "cycle_id": "2026-06-24T09:57:01.337173-04:00"
@@ -214,7 +214,7 @@
   "ts_utc": "2026-06-24T14:02:06Z",
   "ts_et": "2026-06-24T10:02:06",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.7100000000000001,
   "cycle_id": "2026-06-24T10:01:00.819323-04:00"
@@ -224,7 +224,7 @@
   "ts_utc": "2026-06-24T17:44:06Z",
   "ts_et": "2026-06-24T13:44:06",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.62,
   "cycle_id": "2026-06-24T13:43:01.155890-04:00"
@@ -234,7 +234,7 @@
   "ts_utc": "2026-06-24T18:52:06Z",
   "ts_et": "2026-06-24T14:52:06",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": -2.48,
   "cycle_id": "2026-06-24T14:51:00.914689-04:00"
@@ -244,7 +244,7 @@
   "ts_utc": "2026-06-25T13:45:10Z",
   "ts_et": "2026-06-25T09:45:10",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.7100000000000001,
   "cycle_id": "2026-06-25T09:44:01.604200-04:00"
@@ -254,7 +254,7 @@
   "ts_utc": "2026-06-25T13:45:10Z",
   "ts_et": "2026-06-25T09:45:10",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.34,
   "cycle_id": "2026-06-25T09:44:01.604200-04:00"
@@ -264,7 +264,7 @@
   "ts_utc": "2026-06-25T13:45:11Z",
   "ts_et": "2026-06-25T09:45:11",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.63,
   "cycle_id": "2026-06-25T09:44:01.604200-04:00"
@@ -274,7 +274,7 @@
   "ts_utc": "2026-06-25T13:45:11Z",
   "ts_et": "2026-06-25T09:45:11",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.79,
   "cycle_id": "2026-06-25T09:44:01.604200-04:00"
@@ -284,7 +284,7 @@
   "ts_utc": "2026-06-25T13:45:11Z",
   "ts_et": "2026-06-25T09:45:11",
   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.9199999999999999,
   "cycle_id": "2026-06-25T09:44:01.604200-04:00"
@@ -294,7 +294,7 @@
   "ts_utc": "2026-06-25T13:47:07Z",
   "ts_et": "2026-06-25T09:47:07",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.13,
   "cycle_id": "2026-06-25T09:46:01.110513-04:00"
@@ -304,7 +304,7 @@
   "ts_utc": "2026-06-25T13:47:07Z",
   "ts_et": "2026-06-25T09:47:07",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.1400000000000001,
   "cycle_id": "2026-06-25T09:46:01.110513-04:00"
@@ -314,7 +314,7 @@
   "ts_utc": "2026-06-25T13:50:10Z",
   "ts_et": "2026-06-25T09:50:10",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.24,
   "cycle_id": "2026-06-25T09:49:01.409365-04:00"
@@ -324,7 +324,7 @@
   "ts_utc": "2026-06-25T14:11:07Z",
   "ts_et": "2026-06-25T10:11:07",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.7500000000000002,
   "cycle_id": "2026-06-25T10:10:01.663191-04:00"
@@ -334,7 +334,7 @@
   "ts_utc": "2026-06-29T13:50:10Z",
   "ts_et": "2026-06-29T09:50:10",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.25,
   "cycle_id": "2026-06-29T09:49:01.708975-04:00"
@@ -344,7 +344,7 @@
   "ts_utc": "2026-06-29T13:50:10Z",
   "ts_et": "2026-06-29T09:50:10",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.9600000000000004,
   "cycle_id": "2026-06-29T09:49:01.708975-04:00"
@@ -354,7 +354,7 @@
   "ts_utc": "2026-06-29T13:50:10Z",
   "ts_et": "2026-06-29T09:50:10",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -6.72,
   "cycle_id": "2026-06-29T09:49:01.708975-04:00"
@@ -364,7 +364,7 @@
   "ts_utc": "2026-06-29T13:50:10Z",
   "ts_et": "2026-06-29T09:50:10",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.94,
   "cycle_id": "2026-06-29T09:49:01.708975-04:00"
@@ -374,7 +374,7 @@
   "ts_utc": "2026-06-29T13:58:06Z",
   "ts_et": "2026-06-29T09:58:06",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.72,
   "cycle_id": "2026-06-29T09:57:02.390115-04:00"
@@ -384,7 +384,7 @@
   "ts_utc": "2026-06-29T13:58:06Z",
   "ts_et": "2026-06-29T09:58:06",
   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.48,
   "cycle_id": "2026-06-29T09:57:02.390115-04:00"
@@ -394,7 +394,7 @@
   "ts_utc": "2026-06-29T14:41:07Z",
   "ts_et": "2026-06-29T10:41:07",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.43,
   "cycle_id": "2026-06-29T10:40:02.830567-04:00"
@@ -404,7 +404,7 @@
   "ts_utc": "2026-06-30T13:50:13Z",
   "ts_et": "2026-06-30T09:50:13",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.53,
   "cycle_id": "2026-06-30T09:49:01.127563-04:00"
@@ -414,7 +414,7 @@
   "ts_utc": "2026-06-30T14:01:09Z",
   "ts_et": "2026-06-30T10:01:09",
   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.39,
   "cycle_id": "2026-06-30T10:00:03.372103-04:00"
@@ -424,7 +424,7 @@
   "ts_utc": "2026-06-30T14:02:08Z",
   "ts_et": "2026-06-30T10:02:08",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.59,
   "cycle_id": "2026-06-30T10:01:01.440008-04:00"
@@ -434,7 +434,7 @@
   "ts_utc": "2026-06-30T16:50:11Z",
   "ts_et": "2026-06-30T12:50:11",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.55,
   "cycle_id": "2026-06-30T12:49:02.839560-04:00"
@@ -444,7 +444,7 @@
   "ts_utc": "2026-07-01T13:50:10Z",
   "ts_et": "2026-07-01T09:50:10",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.83,
   "cycle_id": "2026-07-01T09:49:02.526729-04:00"
@@ -454,7 +454,7 @@
   "ts_utc": "2026-07-01T13:50:10Z",
   "ts_et": "2026-07-01T09:50:10",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.77,
   "cycle_id": "2026-07-01T09:49:02.526729-04:00"
@@ -464,7 +464,7 @@
   "ts_utc": "2026-07-01T13:50:11Z",
   "ts_et": "2026-07-01T09:50:11",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.26,
   "cycle_id": "2026-07-01T09:49:02.526729-04:00"
@@ -474,7 +474,7 @@
   "ts_utc": "2026-07-01T13:50:11Z",
   "ts_et": "2026-07-01T09:50:11",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 2.67,
   "cycle_id": "2026-07-01T09:49:02.526729-04:00"
@@ -484,7 +484,7 @@
   "ts_utc": "2026-07-01T13:50:11Z",
   "ts_et": "2026-07-01T09:50:11",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 2.22,
   "cycle_id": "2026-07-01T09:49:02.526729-04:00"
@@ -494,7 +494,7 @@
   "ts_utc": "2026-07-01T13:50:11Z",
   "ts_et": "2026-07-01T09:50:11",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.5599999999999998,
   "cycle_id": "2026-07-01T09:49:02.526729-04:00"
@@ -504,7 +504,7 @@
   "ts_utc": "2026-07-02T15:18:07Z",
   "ts_et": "2026-07-02T11:18:07",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.69,
   "cycle_id": "2026-07-02T11:17:00.932729-04:00"
@@ -514,7 +514,7 @@
   "ts_utc": "2026-07-02T16:18:08Z",
   "ts_et": "2026-07-02T12:18:08",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -2.15,
   "cycle_id": "2026-07-02T12:17:02.347476-04:00"
@@ -524,7 +524,7 @@
   "ts_utc": "2026-07-02T18:00:11Z",
   "ts_et": "2026-07-02T14:00:11",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.97,
   "cycle_id": "2026-07-02T13:59:01.488423-04:00"
@@ -534,7 +534,7 @@
   "ts_utc": "2026-07-06T13:38:06Z",
   "ts_et": "2026-07-06T09:38:06",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.44999999999999996,
   "cycle_id": "2026-07-06T09:37:01.031705-04:00"
@@ -544,7 +544,7 @@
   "ts_utc": "2026-07-06T13:38:06Z",
   "ts_et": "2026-07-06T09:38:06",
   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.08,
   "cycle_id": "2026-07-06T09:37:01.031705-04:00"
@@ -554,7 +554,7 @@
   "ts_utc": "2026-07-06T13:50:08Z",
   "ts_et": "2026-07-06T09:50:08",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -4.7,
   "cycle_id": "2026-07-06T09:49:02.156180-04:00"
@@ -564,7 +564,7 @@
   "ts_utc": "2026-07-06T13:52:07Z",
   "ts_et": "2026-07-06T09:52:07",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.2300000000000004,
   "cycle_id": "2026-07-06T09:51:02.001877-04:00"
@@ -574,7 +574,7 @@
   "ts_utc": "2026-07-06T14:11:06Z",
   "ts_et": "2026-07-06T10:11:06",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 3.04,
   "cycle_id": "2026-07-06T10:10:01.098614-04:00"
@@ -584,7 +584,7 @@
   "ts_utc": "2026-07-06T16:15:08Z",
   "ts_et": "2026-07-06T12:15:08",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.2199999999999998,
   "cycle_id": "2026-07-06T12:14:01.765923-04:00"
@@ -594,7 +594,7 @@
   "ts_utc": "2026-07-06T16:17:07Z",
   "ts_et": "2026-07-06T12:17:07",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.1199999999999997,
   "cycle_id": "2026-07-06T12:16:01.636273-04:00"
@@ -604,7 +604,7 @@
   "ts_utc": "2026-07-06T16:49:09Z",
   "ts_et": "2026-07-06T12:49:09",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.2300000000000004,
   "cycle_id": "2026-07-06T12:48:01.535191-04:00"
@@ -614,7 +614,7 @@
   "ts_utc": "2026-07-07T13:45:10Z",
   "ts_et": "2026-07-07T09:45:10",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.83,
   "cycle_id": "2026-07-07T09:44:02.208921-04:00"
@@ -624,7 +624,7 @@
   "ts_utc": "2026-07-07T13:50:08Z",
   "ts_et": "2026-07-07T09:50:08",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.8499999999999999,
   "cycle_id": "2026-07-07T09:49:02.078152-04:00"
@@ -634,7 +634,7 @@
   "ts_utc": "2026-07-07T13:54:07Z",
   "ts_et": "2026-07-07T09:54:07",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Bleed Cut",
   "at_return": -3.5700000000000003,
   "cycle_id": "2026-07-07T09:53:01.553864-04:00"
@@ -644,7 +644,7 @@
   "ts_utc": "2026-07-07T15:54:07Z",
   "ts_et": "2026-07-07T11:54:07",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.84,
   "cycle_id": "2026-07-07T11:53:00.913359-04:00"
@@ -654,7 +654,7 @@
   "ts_utc": "2026-07-07T15:54:07Z",
   "ts_et": "2026-07-07T11:54:07",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 2.13,
   "cycle_id": "2026-07-07T11:53:00.913359-04:00"
@@ -664,7 +664,7 @@
   "ts_utc": "2026-07-07T16:01:06Z",
   "ts_et": "2026-07-07T12:01:06",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.04,
   "cycle_id": "2026-07-07T12:00:02.391493-04:00"
@@ -674,7 +674,7 @@
   "ts_utc": "2026-07-07T16:32:07Z",
   "ts_et": "2026-07-07T12:32:07",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.64,
   "cycle_id": "2026-07-07T12:31:01.348895-04:00"
@@ -684,7 +684,7 @@
   "ts_utc": "2026-07-07T16:32:07Z",
   "ts_et": "2026-07-07T12:32:07",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.5599999999999999,
   "cycle_id": "2026-07-07T12:31:01.348895-04:00"
@@ -694,7 +694,7 @@
   "ts_utc": "2026-07-08T13:50:10Z",
   "ts_et": "2026-07-08T09:50:10",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.1900000000000002,
   "cycle_id": "2026-07-08T09:49:01.159858-04:00"
@@ -704,7 +704,7 @@
   "ts_utc": "2026-07-08T13:50:11Z",
   "ts_et": "2026-07-08T09:50:11",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.8900000000000001,
   "cycle_id": "2026-07-08T09:49:01.159858-04:00"
@@ -714,7 +714,7 @@
   "ts_utc": "2026-07-08T13:50:11Z",
   "ts_et": "2026-07-08T09:50:11",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 0.88,
   "cycle_id": "2026-07-08T09:49:01.159858-04:00"
@@ -724,7 +724,7 @@
   "ts_utc": "2026-07-08T13:50:11Z",
   "ts_et": "2026-07-08T09:50:11",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.7999999999999998,
   "cycle_id": "2026-07-08T09:49:01.159858-04:00"
@@ -734,7 +734,7 @@
   "ts_utc": "2026-07-08T13:50:11Z",
   "ts_et": "2026-07-08T09:50:11",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 2.92,
   "cycle_id": "2026-07-08T09:49:01.159858-04:00"
@@ -744,7 +744,7 @@
   "ts_utc": "2026-07-08T13:50:11Z",
   "ts_et": "2026-07-08T09:50:11",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.7999999999999998,
   "cycle_id": "2026-07-08T09:49:01.159858-04:00"
@@ -754,7 +754,7 @@
   "ts_utc": "2026-07-08T15:37:07Z",
   "ts_et": "2026-07-08T11:37:07",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.6400000000000001,
   "cycle_id": "2026-07-08T11:36:01.587990-04:00"
@@ -764,7 +764,7 @@
   "ts_utc": "2026-07-09T13:42:07Z",
   "ts_et": "2026-07-09T09:42:07",
   "symphony_id": "n2ooAZTvBRN6ZzpMmWmU",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.5700000000000001,
   "cycle_id": "2026-07-09T09:41:01.004612-04:00"
@@ -774,7 +774,7 @@
   "ts_utc": "2026-07-09T13:43:08Z",
   "ts_et": "2026-07-09T09:43:08",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.7799999999999999,
   "cycle_id": "2026-07-09T09:42:01.563995-04:00"
@@ -784,7 +784,7 @@
   "ts_utc": "2026-07-09T13:45:10Z",
   "ts_et": "2026-07-09T09:45:10",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.4200000000000002,
   "cycle_id": "2026-07-09T09:44:01.051542-04:00"
@@ -794,7 +794,7 @@
   "ts_utc": "2026-07-09T13:48:08Z",
   "ts_et": "2026-07-09T09:48:08",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.7000000000000001,
   "cycle_id": "2026-07-09T09:47:01.140272-04:00"
@@ -804,7 +804,7 @@
   "ts_utc": "2026-07-09T13:49:08Z",
   "ts_et": "2026-07-09T09:49:08",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.5499999999999999,
   "cycle_id": "2026-07-09T09:47:01.140272-04:00"
@@ -814,7 +814,7 @@
   "ts_utc": "2026-07-09T13:50:10Z",
   "ts_et": "2026-07-09T09:50:10",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.62,
   "cycle_id": "2026-07-09T09:47:01.140272-04:00"
@@ -824,7 +824,7 @@
   "ts_utc": "2026-07-09T13:51:07Z",
   "ts_et": "2026-07-09T09:51:07",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 0.6,
   "cycle_id": "2026-07-09T09:47:01.140272-04:00"
@@ -834,7 +834,7 @@
   "ts_utc": "2026-07-09T14:07:09Z",
   "ts_et": "2026-07-09T10:07:09",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.63,
   "cycle_id": "2026-07-09T10:06:01.419090-04:00"
@@ -844,7 +844,7 @@
   "ts_utc": "2026-07-09T14:07:09Z",
   "ts_et": "2026-07-09T10:07:09",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "Take-Profit",
   "at_return": 1.63,
   "cycle_id": "2026-07-09T10:06:01.419090-04:00"
@@ -854,7 +854,7 @@
   "ts_utc": "2026-07-09T14:11:07Z",
   "ts_et": "2026-07-09T10:11:07",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 2.26,
   "cycle_id": "2026-07-09T10:10:01.071429-04:00"
@@ -864,7 +864,7 @@
   "ts_utc": "2026-07-09T14:15:12Z",
   "ts_et": "2026-07-09T10:15:12",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "triggered_reason": "VWAP Breakdown",
   "at_return": 1.21,
   "cycle_id": "2026-07-09T10:14:01.308786-04:00"

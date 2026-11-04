@@ -49,9 +49,9 @@
     }
   },
   "record": {
-    "bytes": 3700,
+    "bytes": 3598,
     "file": "shadow_rows_two_cycles.json",
-    "sha256": "ccd51d83790659d622697f6df88c2c14281550a5f4ba89320d1dfa98f135190d"
+    "sha256": "9a2380b239f22fdc6f4cfcd8b890a212fd23501c3261b29a4802f4ca6bc1c693"
   },
   "script": "tests/fixtures/refresh_timing/capture.py",
   "source": {

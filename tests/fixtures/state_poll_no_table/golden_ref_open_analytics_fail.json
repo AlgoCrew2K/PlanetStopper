@@ -21,7 +21,7 @@
         "if_held": -0.31
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.733335140954921,
       "armed": true,
       "below_stop_count": 0,
@@ -274,7 +274,7 @@
         "if_held": null
       },
       "above_tp_count": 2,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.3249692225562325,
       "armed": false,
       "below_stop_count": 0,
@@ -556,7 +556,7 @@
         "if_held": -0.31
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.733335140954921,
       "armed": true,
       "below_stop_count": 0,
@@ -809,7 +809,7 @@
         "if_held": null
       },
       "above_tp_count": 2,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.3249692225562325,
       "armed": false,
       "below_stop_count": 0,
@@ -933,7 +933,7 @@
   "status": "active",
   "symphonies": [
     {
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "armed": true,
       "cr_bot": -4.342,
       "cr_held": -4.342,
@@ -975,7 +975,7 @@
       "triggered_reason": null
     },
     {
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "armed": false,
       "cr_bot": null,
       "cr_held": null,

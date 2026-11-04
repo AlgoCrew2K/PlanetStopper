@@ -1,6 +1,6 @@
 {
   "accounts_map": {
-    "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+    "ACCOUNT_ID_REDACTED": [
       {
         "_cr": {
           "_twr_fallback": false,
@@ -22,7 +22,7 @@
           "if_held": 0.74
         },
         "above_tp_count": 2,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.3249692225562325,
         "armed": false,
         "below_stop_count": 0,
@@ -162,7 +162,7 @@
           "if_held": -2.98
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.733335140954921,
         "armed": false,
         "below_stop_count": 0,
@@ -284,7 +284,7 @@
         "if_held": -2.98
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.733335140954921,
       "armed": false,
       "below_stop_count": 0,
@@ -403,7 +403,7 @@
         "if_held": 0.74
       },
       "above_tp_count": 2,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.3249692225562325,
       "armed": false,
       "below_stop_count": 0,
@@ -918,7 +918,7 @@
         "if_held": -2.98
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.733335140954921,
       "armed": false,
       "below_stop_count": 0,
@@ -1037,7 +1037,7 @@
         "if_held": 0.74
       },
       "above_tp_count": 2,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.3249692225562325,
       "armed": false,
       "below_stop_count": 0,
@@ -1160,7 +1160,7 @@
   "status": "active",
   "symphonies": [
     {
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "armed": false,
       "cr_bot": -15.455193980099668,
       "cr_held": -15.137,
@@ -1181,7 +1181,7 @@
       "triggered_reason": "Take-Profit"
     },
     {
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "armed": false,
       "cr_bot": 1.2829916788867628,
       "cr_held": -4.224,

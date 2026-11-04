@@ -28,7 +28,7 @@
 | Market dot (green = open) | **WORKS** | `dotClosed: false`, `labelText: "Market open"` — consistent |
 | Market label text | **WORKS** (circumstantial) | Label reads "Market open", dot is green, market IS open during audit. Underlying `updateStatusStrip` still does not update the label span — will diverge if market closes during a session |
 | Force-run button exists | **WORKS** | `data-testid="force-run-btn"` with `onclick="forceRun(event)"`, enabled |
-| Workspace switcher calls switchAccount | **WORKS** | Intercepted `switchAccount('880be47e')` on click |
+| Workspace switcher calls switchAccount | **WORKS** | Intercepted `switchAccount('ACCOUNT_ID_REDACTED')` on click |
 | Window selector (30d/60d/90d/125d/YTD/1Y) | **WORKS** | `.active` class toggles correctly on 60d click; `applyHeroWindow` not global but event delegation works |
 | Card footer: TODAY/CUM/MAX DD with α+BOT+HELD | **WORKS** | `cardBodyText` confirmed "TODAY Α +0.1 BOT -0.6% HELD -0.7% CUM Α -67.7 BOT +0.2% HELD +67.9% MAX DD Α -0.4 BOT 0.6% HELD 0.1%" |
 | Card headline: today's-change format | **WORKS** | "Bot · frozen -0.6% / If held" |

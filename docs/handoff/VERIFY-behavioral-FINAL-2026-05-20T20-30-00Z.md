@@ -44,7 +44,7 @@ UA: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/1
 ### Chrome / Nav
 - Status badge: ticker reads **"CLOSED"**, dot color `rgb(180,58,42)` red — MARKET CLOSED state correct (Wave 8 fix confirmed)
 - All 5 route tabs present (Dashboard / Performance / Advisor / History / Settings)
-- Workspace switcher: "Roth IRA 880be47e ▾", DRY RUN pill, Force run now button, clock
+- Workspace switcher: "Roth IRA ACCOUNT_ID_REDACTED ▾", DRY RUN pill, Force run now button, clock
 
 ### Hero
 - Guard Alpha headline: **-3.53%** with `.guard-alpha-headline.neg` class — correct negative styling

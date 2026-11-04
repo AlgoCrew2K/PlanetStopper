@@ -5,7 +5,7 @@
       "cycle_id": "20261021_1603",
       "rows": [
         {
-          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "account_id": "ACCOUNT_ID_REDACTED",
           "current_return": -0.66,
           "cycle_id": "20261021_1603",
           "id": 357063,
@@ -20,7 +20,7 @@
           "ts_utc": "2026-10-21T20:03:05Z"
         },
         {
-          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "account_id": "ACCOUNT_ID_REDACTED",
           "current_return": 0.29,
           "cycle_id": "20261021_1603",
           "id": 357064,
@@ -40,7 +40,7 @@
       "cycle_id": "20261021_1604",
       "rows": [
         {
-          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "account_id": "ACCOUNT_ID_REDACTED",
           "current_return": -0.66,
           "cycle_id": "20261021_1604",
           "id": 357074,
@@ -55,7 +55,7 @@
           "ts_utc": "2026-10-21T20:04:04Z"
         },
         {
-          "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+          "account_id": "ACCOUNT_ID_REDACTED",
           "current_return": 0.29,
           "cycle_id": "20261021_1604",
           "id": 357075,
@@ -75,7 +75,7 @@
   "symphonies": {
     "triggered": {
       "previous_day_last_row": {
-        "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account_id": "ACCOUNT_ID_REDACTED",
         "current_return": 0.11,
         "cycle_id": "20261020_1604",
         "id": 352961,
@@ -93,7 +93,7 @@
     },
     "untriggered": {
       "previous_day_last_row": {
-        "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account_id": "ACCOUNT_ID_REDACTED",
         "current_return": -0.45999999999999996,
         "cycle_id": "20261020_1604",
         "id": 352960,

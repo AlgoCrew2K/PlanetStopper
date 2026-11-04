@@ -391,7 +391,7 @@
 - **Actual:** "No vars loaded" for all 11 symphony cards tested; container is never populated
 - **Severity:** major
 
-[ ] **B-08** Dashboard — Workspace/account switcher: clicking the `Roth IRA 880be47e ▾` button produces no dropdown
+[ ] **B-08** Dashboard — Workspace/account switcher: clicking the `Roth IRA ACCOUNT_ID_REDACTED ▾` button produces no dropdown
 - **Expected:** a dropdown lists available workspaces/accounts for switching
 - **Actual:** click fires, no dropdown or menu element appears in the DOM; no visible UI response whatsoever
 - **Severity:** major

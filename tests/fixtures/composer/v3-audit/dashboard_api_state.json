@@ -1,6 +1,6 @@
 {
   "accounts_map": {
-    "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+    "ACCOUNT_ID_REDACTED": [
       {
         "_cr": {
           "dry_run": 0.7987009199999888,
@@ -15,7 +15,7 @@
           "if_held": -4.25
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 1.7584278133162223,
         "armed": false,
         "below_stop_count": 0,
@@ -159,7 +159,7 @@
           "if_held": 0.89
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.6690401764236295,
         "armed": false,
         "below_stop_count": 0,
@@ -221,7 +221,7 @@
           "if_held": -0.09
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.31512705972302874,
         "armed": false,
         "below_stop_count": 0,
@@ -379,7 +379,7 @@
           "if_held": 0.6
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.5144017312188537,
         "armed": false,
         "below_stop_count": 0,
@@ -505,7 +505,7 @@
           "if_held": -2.52
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.7116868313547509,
         "armed": false,
         "below_stop_count": 0,
@@ -598,7 +598,7 @@
           "if_held": -2.8000000000000003
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.9780240309432555,
         "armed": false,
         "below_stop_count": 0,
@@ -664,7 +664,7 @@
           "if_held": -5.3100000000000005
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 2.0447889025010406,
         "armed": false,
         "below_stop_count": 0,
@@ -781,7 +781,7 @@
           "if_held": -2.73
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.9666442101743138,
         "armed": false,
         "below_stop_count": 0,
@@ -875,7 +875,7 @@
           "if_held": -2.0500000000000003
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 1.587713171682582,
         "armed": false,
         "below_stop_count": 0,
@@ -1005,7 +1005,7 @@
           "if_held": -4.15
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 1.67769641743029,
         "armed": false,
         "below_stop_count": 0,
@@ -1067,7 +1067,7 @@
           "if_held": -1.04
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.29457625856405545,
         "armed": true,
         "below_stop_count": 0,
@@ -1228,10 +1228,10 @@
         },
         "above_tp_count": 0,
         "accounts_map": {
-          "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+          "ACCOUNT_ID_REDACTED": [
             {
               "above_tp_count": 0,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.4658276639228846,
               "armed": false,
               "below_stop_count": 0,
@@ -1336,7 +1336,7 @@
             },
             {
               "above_tp_count": 0,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.3197801025637384,
               "armed": false,
               "below_stop_count": 3,
@@ -1476,7 +1476,7 @@
             },
             {
               "above_tp_count": 0,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.6072783563169617,
               "armed": false,
               "below_stop_count": 0,
@@ -1585,7 +1585,7 @@
             },
             {
               "above_tp_count": 0,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.7397431021014104,
               "armed": false,
               "below_stop_count": 0,
@@ -1730,7 +1730,7 @@
             },
             {
               "above_tp_count": 2,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.5283420034743898,
               "armed": false,
               "below_stop_count": 2,
@@ -1830,7 +1830,7 @@
             },
             {
               "above_tp_count": 2,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.9391863152026448,
               "armed": false,
               "below_stop_count": 0,
@@ -1957,7 +1957,7 @@
             },
             {
               "above_tp_count": 2,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.432224322565111,
               "armed": false,
               "below_stop_count": 2,
@@ -2035,7 +2035,7 @@
             },
             {
               "above_tp_count": 2,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 1.652967811172848,
               "armed": false,
               "below_stop_count": 0,
@@ -2101,7 +2101,7 @@
             },
             {
               "above_tp_count": 0,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.640202507540015,
               "armed": false,
               "below_stop_count": 0,
@@ -2206,7 +2206,7 @@
             },
             {
               "above_tp_count": 0,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 0.7124239058863758,
               "armed": false,
               "below_stop_count": 0,
@@ -2263,7 +2263,7 @@
             },
             {
               "above_tp_count": 2,
-              "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+              "account": "ACCOUNT_ID_REDACTED",
               "active_stop_distance": 1.738856522244895,
               "armed": false,
               "below_stop_count": 0,
@@ -2497,10 +2497,10 @@
           "Unknown": [
             {
               "accounts_map": {
-                "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+                "ACCOUNT_ID_REDACTED": [
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.5664660412515061,
                     "armed": false,
                     "below_stop_count": 0,
@@ -2601,7 +2601,7 @@
                   },
                   {
                     "above_tp_count": 2,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.13536795273758034,
                     "armed": false,
                     "below_stop_count": 0,
@@ -2738,7 +2738,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 1.1658868568878085,
                     "armed": false,
                     "below_stop_count": 0,
@@ -2803,7 +2803,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 1.1532903713268772,
                     "armed": false,
                     "below_stop_count": 0,
@@ -2948,7 +2948,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 1.2132287237913901,
                     "armed": false,
                     "below_stop_count": 0,
@@ -3009,7 +3009,7 @@
                   },
                   {
                     "above_tp_count": 2,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.402974452117394,
                     "armed": false,
                     "below_stop_count": 0,
@@ -3187,7 +3187,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.31680749831920646,
                     "armed": false,
                     "below_stop_count": 0,
@@ -3236,7 +3236,7 @@
                   },
                   {
                     "above_tp_count": 2,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.7949989976948678,
                     "armed": false,
                     "below_stop_count": 0,
@@ -3342,7 +3342,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 1.1658550631549554,
                     "armed": false,
                     "below_stop_count": 0,
@@ -3407,7 +3407,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.0731440923022688,
                     "armed": false,
                     "below_stop_count": 3,
@@ -3591,7 +3591,7 @@
                   },
                   {
                     "above_tp_count": 0,
-                    "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                    "account": "ACCOUNT_ID_REDACTED",
                     "active_stop_distance": 0.7586024337754552,
                     "armed": false,
                     "below_stop_count": 0,
@@ -3792,7 +3792,7 @@
         "if_held": -2.8000000000000003
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.9780240309432555,
       "armed": false,
       "below_stop_count": 0,
@@ -3858,7 +3858,7 @@
         "if_held": -5.3100000000000005
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 2.0447889025010406,
       "armed": false,
       "below_stop_count": 0,
@@ -3975,7 +3975,7 @@
         "if_held": -1.04
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.29457625856405545,
       "armed": true,
       "below_stop_count": 0,
@@ -4133,7 +4133,7 @@
         "if_held": -0.09
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.31512705972302874,
       "armed": false,
       "below_stop_count": 0,
@@ -4291,7 +4291,7 @@
         "if_held": -2.73
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.9666442101743138,
       "armed": false,
       "below_stop_count": 0,
@@ -4385,7 +4385,7 @@
         "if_held": 0.89
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.6690401764236295,
       "armed": false,
       "below_stop_count": 0,
@@ -4447,7 +4447,7 @@
         "if_held": -4.25
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 1.7584278133162223,
       "armed": false,
       "below_stop_count": 0,
@@ -4591,7 +4591,7 @@
         "if_held": -4.15
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 1.67769641743029,
       "armed": false,
       "below_stop_count": 0,
@@ -4654,10 +4654,10 @@
       },
       "above_tp_count": 0,
       "accounts_map": {
-        "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+        "ACCOUNT_ID_REDACTED": [
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.4658276639228846,
             "armed": false,
             "below_stop_count": 0,
@@ -4762,7 +4762,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.3197801025637384,
             "armed": false,
             "below_stop_count": 3,
@@ -4902,7 +4902,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.6072783563169617,
             "armed": false,
             "below_stop_count": 0,
@@ -5011,7 +5011,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.7397431021014104,
             "armed": false,
             "below_stop_count": 0,
@@ -5156,7 +5156,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.5283420034743898,
             "armed": false,
             "below_stop_count": 2,
@@ -5256,7 +5256,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.9391863152026448,
             "armed": false,
             "below_stop_count": 0,
@@ -5383,7 +5383,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.432224322565111,
             "armed": false,
             "below_stop_count": 2,
@@ -5461,7 +5461,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 1.652967811172848,
             "armed": false,
             "below_stop_count": 0,
@@ -5527,7 +5527,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.640202507540015,
             "armed": false,
             "below_stop_count": 0,
@@ -5632,7 +5632,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.7124239058863758,
             "armed": false,
             "below_stop_count": 0,
@@ -5689,7 +5689,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 1.738856522244895,
             "armed": false,
             "below_stop_count": 0,
@@ -5923,10 +5923,10 @@
         "Unknown": [
           {
             "accounts_map": {
-              "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+              "ACCOUNT_ID_REDACTED": [
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.5664660412515061,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6027,7 +6027,7 @@
                 },
                 {
                   "above_tp_count": 2,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.13536795273758034,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6164,7 +6164,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.1658868568878085,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6229,7 +6229,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.1532903713268772,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6374,7 +6374,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.2132287237913901,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6435,7 +6435,7 @@
                 },
                 {
                   "above_tp_count": 2,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.402974452117394,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6613,7 +6613,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.31680749831920646,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6662,7 +6662,7 @@
                 },
                 {
                   "above_tp_count": 2,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.7949989976948678,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6768,7 +6768,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.1658550631549554,
                   "armed": false,
                   "below_stop_count": 0,
@@ -6833,7 +6833,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.0731440923022688,
                   "armed": false,
                   "below_stop_count": 3,
@@ -7017,7 +7017,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.7586024337754552,
                   "armed": false,
                   "below_stop_count": 0,
@@ -7215,7 +7215,7 @@
         "if_held": 0.6
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.5144017312188537,
       "armed": false,
       "below_stop_count": 0,
@@ -7341,7 +7341,7 @@
         "if_held": -2.52
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.7116868313547509,
       "armed": false,
       "below_stop_count": 0,
@@ -7434,7 +7434,7 @@
         "if_held": -2.0500000000000003
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 1.587713171682582,
       "armed": false,
       "below_stop_count": 0,
@@ -7556,13 +7556,13 @@
   "exit_authority": "per_symphony",
   "fleet_correlation_alert": null,
   "frozen_at": "16:00:01 ET",
-  "html": "\n    \n    \n\n    \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n    \n    \n    \n    \n\n    <div class=\"bg-slate-900 rounded-xl border border-slate-700 overflow-hidden shadow-sm\">\n        <div class=\"px-4 py-3 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center\">\n            <span class=\"text-sm font-semibold text-slate-300\">Roth IRA <span class=\"text-blue-400 font-mono text-xs ml-1\" title=\"880be47e-efe4-4b44-9d83-b6d86098fe0d\">(880be47e...)</span></span>\n            <div class=\"flex items-center gap-4\">\n                <span class=\"text-xs text-slate-500\">11 Symphonies</span>\n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <div class=\"flex items-center gap-1.5\">\n                    <span class=\"text-[10px] uppercase tracking-wider text-slate-500 font-bold\" title=\"Capital-Weighted Account Return\">Actual Return:</span>\n                    <span class=\"text-sm font-mono font-bold text-rose-400\">-1.98%</span>\n                </div>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <span class=\"text-[10px] text-slate-500 font-mono\" title=\"Data freshness timestamp\">data as of 16:00 ET</span>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <button onclick=\"openConfirmModal('880be47e-efe4-4b44-9d83-b6d86098fe0d')\" class=\"text-[11px] bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 px-3 py-1.5 rounded transition-colors font-bold tracking-wide flex items-center gap-1.5\">\n                    <svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path></svg>\n                    GO TO CASH\n                </button>\n            </div>\n        </div>\n        <!-- height cap removed: vertical expansion is now governed by the flex-1 accounts-container in index.html -->\n        <div class=\"overflow-x-auto\">\n            <table class=\"w-full text-left text-sm whitespace-nowrap relative\">\n                <thead class=\"text-slate-400 bg-slate-900 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm\">\n                    <tr>\n                        <th class=\"px-3 py-2.5 font-medium cursor-pointer hover:text-white transition-colors group select-none\" onclick=\"setSort('name')\">\n                            Symphony Name <span class=\"inline-block ml-1 transition-opacity opacity-100 text-blue-400\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"Monte Carlo probability this symphony beats SPY over the simulation horizon. Low values arm and trigger the trailing stop \u2014 the bot expects underperformance.\" onclick=\"setSort('mc_prob')\">\n                            MC Prob <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-center cursor-pointer hover:text-white transition-colors group select-none\" title=\"Guard state: STANDBY (watching) \u2192 ARMED (stop conditions building) \u2192 TP-ARMED / PARA-ARMED \u2192 TRIGGERED (bot exited to cash). (1/2 Ticks) = waiting for second confirmation.\" onclick=\"setSort('status')\">\n                            Status <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The return level (%) at which the bot exits this symphony to cash. Trails the high-water mark as the position rises. \ud83d\udd12 = breakeven lock active (stop raised to lock in gains).\" onclick=\"setSort('stop_level')\">\n                            Trailing Stop <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The symphony's return today. Once the bot triggers, this freezes at the return captured at the moment of exit (\ud83d\udd12 + time shown).\" onclick=\"setSort('current_return')\">\n                            Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The highest return the if-held (shadow) model has reached today. The trailing stop is measured as a drawdown from this peak.\" onclick=\"setSort('shadow_hwm')\">\n                            Shadow Peak <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The current live return of the symphony model. Shows what you would have if the bot didn't trigger. When triggered, the second line is Guard Alpha: % saved (+) or given up (\u2212) by exiting.\" onclick=\"setSort('shadow')\">\n                            If Held Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Today's Change: AlphaBot dry-run vs if-held\">TC</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Cumulative Return: AlphaBot dry-run vs if-held\">CR</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Max Drawdown: AlphaBot dry-run vs if-held\">MDD</th>\n                    </tr>\n                </thead>\n                <tbody class=\"divide-y divide-slate-800\">\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"iaSOOUsmnCJHiZvbrWfs\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('iaSOOUsmnCJHiZvbrWfs', '(INVEST) LQD + EYEG 5 ways Full Market')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('iaSOOUsmnCJHiZvbrWfs', '(INVEST) LQD + EYEG 5 ways Full Market')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST) LQD + EYEG 5 ways Full Market\">(INVEST) LQD + EYEG 5 ways Full Market</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">45.6%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-rose-500/10 text-rose-500 border border-rose-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(244,63,94,0.15)]\" title=\"Trailing Stop\">TRAILING STOP</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-3.00%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-5.50%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>2026-05-20T14:46:06Z ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-500/70\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-4.25%</span><span class=\"text-[10px] text-rose-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">-1.25% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-5.50% (-4.25%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+0.80% (+2.63%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">571.38% (1482.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"hvPiGP1O7AHfutHE3Fjy\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('hvPiGP1O7AHfutHE3Fjy', '(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('hvPiGP1O7AHfutHE3Fjy', '(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations\">(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-amber-400 font-medium\">14.4%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.31%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">+0.89%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.98%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-emerald-400\">+0.89% (+0.89%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+79.94% (+80.14%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">159.83% (3226.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"INfCn3eKsu6i4oTTqdUp\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('INfCn3eKsu6i4oTTqdUp', '(INVEST) Planet of Projected Inflation: Corporate Chaos 2060')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('INfCn3eKsu6i4oTTqdUp', '(INVEST) Planet of Projected Inflation: Corporate Chaos 2060')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST) Planet of Projected Inflation: Corporate Chaos 2060\">(INVEST) Planet of Projected Inflation: Corporate Chaos 2060</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">50.4%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.15)]\" title=\"VWAP Breakdown\">VWAP BREAKDOWN</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">2.10%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-0.56%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>11:13 ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-500/70\">0.16%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-0.09%</span><span class=\"text-[10px] text-rose-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">-0.47% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-0.56% (-0.09%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+67.73% (+67.48%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">56.45% (1495.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"n2ooAZTvBRN6ZzpMmWmU\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('n2ooAZTvBRN6ZzpMmWmU', '(INVEST:CRYPTO) We do a Little Trolling Planet\\&#39;s Mix v1.4 | 10.19.2022')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('n2ooAZTvBRN6ZzpMmWmU', '(INVEST:CRYPTO) We do a Little Trolling Planet\\&#39;s Mix v1.4 | 10.19.2022')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST:CRYPTO) We do a Little Trolling Planet&#39;s Mix v1.4 | 10.19.2022\">(INVEST:CRYPTO) We do a Little Trolling Planet&#39;s Mix v1.4 | 10.19.2022</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-amber-400 font-medium\">12.8%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">1.29%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">+0.60%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.86%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-emerald-400\">+0.60% (+0.60%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+317.56% (+318.41%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">92.52% (2552.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"nOyb55RMGVCKPiYXv7TI\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('nOyb55RMGVCKPiYXv7TI', 'Corporate Chaos 5 ways ')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('nOyb55RMGVCKPiYXv7TI', 'Corporate Chaos 5 ways ')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Corporate Chaos 5 ways \">Corporate Chaos 5 ways </div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">39.1%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.15)]\" title=\"VWAP Bleed Cut\">VWAP BLEED CUT</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-2.09%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-2.18%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>13:43 ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-2.52%</span><span class=\"text-[10px] text-emerald-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">+0.34% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.18% (-2.52%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">-4.64% (-4.48%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">222.50% (1251.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"5XjzXjdGnjh99MIsdM97\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('5XjzXjdGnjh99MIsdM97', 'Land of Feaver\\&#39;d Allocations: Intelligent Novas')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('5XjzXjdGnjh99MIsdM97', 'Land of Feaver\\&#39;d Allocations: Intelligent Novas')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Land of Feaver&#39;d Allocations: Intelligent Novas\">Land of Feaver&#39;d Allocations: Intelligent Novas</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">86.0%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-0.98%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-2.80%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.80% (-2.80%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+5.11% (+8.99%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">441.78% (1529.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"8FAXAnQmYi1INDubazeC\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('8FAXAnQmYi1INDubazeC', 'Planet LQD: Run of the Feaver\\&#39;d WaltAnansi USDs 2/3 Mixup')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('8FAXAnQmYi1INDubazeC', 'Planet LQD: Run of the Feaver\\&#39;d WaltAnansi USDs 2/3 Mixup')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet LQD: Run of the Feaver&#39;d WaltAnansi USDs 2/3 Mixup\">Planet LQD: Run of the Feaver&#39;d WaltAnansi USDs 2/3 Mixup</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">47.8%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.15)]\" title=\"VWAP Bleed Cut\">VWAP BLEED CUT</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-3.00%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-4.19%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>2026-05-20T14:59:06Z ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-5.31%</span><span class=\"text-[10px] text-emerald-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">+1.12% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-4.19% (-5.31%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+30.32% (+33.12%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">425.05% (2336.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"MoAkUHnavSYw3oONiUxe\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('MoAkUHnavSYw3oONiUxe', 'Planet of Erased History: Nova\\&#39;s Feaver\\&#39;d Golden Age of EYEG')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('MoAkUHnavSYw3oONiUxe', 'Planet of Erased History: Nova\\&#39;s Feaver\\&#39;d Golden Age of EYEG')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of Erased History: Nova&#39;s Feaver&#39;d Golden Age of EYEG\">Planet of Erased History: Nova&#39;s Feaver&#39;d Golden Age of EYEG</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">85.3%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-0.97%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-2.73%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.73% (-2.73%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">-3.15% (-0.84%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">295.33% (1526.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"qF5ZU7ALjrlhxrGEwsyJ\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('qF5ZU7ALjrlhxrGEwsyJ', 'Planet of the Golden Age (Buy Copy)')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('qF5ZU7ALjrlhxrGEwsyJ', 'Planet of the Golden Age (Buy Copy)')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of the Golden Age (Buy Copy)\">Planet of the Golden Age (Buy Copy)</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">84.8%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-0.86%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-2.05%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.73%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.05% (-2.05%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+20.71% (+20.10%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">210.57% (657.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"lW4ZzWuqR8tEO2DhXbil\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('lW4ZzWuqR8tEO2DhXbil', 'Planet of the Paragons: EYEG of the LQD')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('lW4ZzWuqR8tEO2DhXbil', 'Planet of the Paragons: EYEG of the LQD')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of the Paragons: EYEG of the LQD\">Planet of the Paragons: EYEG of the LQD</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">80.1%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-1.68%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-4.15%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-4.15% (-4.15%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">-7.92% (-8.91%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">437.29% (2318.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"Gpaw3IhZghQPRE6AdEKx\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('Gpaw3IhZghQPRE6AdEKx', 'Planet of the Reasonabilists: Era of the Erased Golden Age')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('Gpaw3IhZghQPRE6AdEKx', 'Planet of the Reasonabilists: Era of the Erased Golden Age')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of the Reasonabilists: Era of the Erased Golden Age\">Planet of the Reasonabilists: Era of the Erased Golden Age</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">87.1%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(6,182,212,0.15)]\" title=\"Parabolic Squeeze Active\">PARA-ARMED</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.21%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-1.04%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.45%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-1.04% (-1.04%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+72.96% (+75.00%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">102.96% (2344.00%)</td>\n                        </tr>\n                    \n                </tbody>\n            </table>\n        </div>\n    </div>\n\n    \n    \n\n    \n    \n        \n        \n        \n        \n    \n    \n    \n    \n    \n\n    <div class=\"bg-slate-900 rounded-xl border border-slate-700 overflow-hidden shadow-sm\">\n        <div class=\"px-4 py-3 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center\">\n            <span class=\"text-sm font-semibold text-slate-300\">Account <span class=\"text-blue-400 font-mono text-xs ml-1\" title=\"Unknown\">(Unknown...)</span></span>\n            <div class=\"flex items-center gap-4\">\n                <span class=\"text-xs text-slate-500\">1 Symphonies</span>\n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <div class=\"flex items-center gap-1.5\">\n                    <span class=\"text-[10px] uppercase tracking-wider text-slate-500 font-bold\" title=\"Capital-Weighted Account Return\">Actual Return:</span>\n                    <span class=\"text-sm font-mono font-bold text-emerald-400\">0.00%</span>\n                </div>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <span class=\"text-[10px] text-slate-500 font-mono\" title=\"Data freshness timestamp\">data as of 16:00 ET</span>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <button onclick=\"openConfirmModal('Unknown')\" class=\"text-[11px] bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 px-3 py-1.5 rounded transition-colors font-bold tracking-wide flex items-center gap-1.5\">\n                    <svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path></svg>\n                    GO TO CASH\n                </button>\n            </div>\n        </div>\n        <!-- height cap removed: vertical expansion is now governed by the flex-1 accounts-container in index.html -->\n        <div class=\"overflow-x-auto\">\n            <table class=\"w-full text-left text-sm whitespace-nowrap relative\">\n                <thead class=\"text-slate-400 bg-slate-900 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm\">\n                    <tr>\n                        <th class=\"px-3 py-2.5 font-medium cursor-pointer hover:text-white transition-colors group select-none\" onclick=\"setSort('name')\">\n                            Symphony Name <span class=\"inline-block ml-1 transition-opacity opacity-100 text-blue-400\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"Monte Carlo probability this symphony beats SPY over the simulation horizon. Low values arm and trigger the trailing stop \u2014 the bot expects underperformance.\" onclick=\"setSort('mc_prob')\">\n                            MC Prob <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-center cursor-pointer hover:text-white transition-colors group select-none\" title=\"Guard state: STANDBY (watching) \u2192 ARMED (stop conditions building) \u2192 TP-ARMED / PARA-ARMED \u2192 TRIGGERED (bot exited to cash). (1/2 Ticks) = waiting for second confirmation.\" onclick=\"setSort('status')\">\n                            Status <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The return level (%) at which the bot exits this symphony to cash. Trails the high-water mark as the position rises. \ud83d\udd12 = breakeven lock active (stop raised to lock in gains).\" onclick=\"setSort('stop_level')\">\n                            Trailing Stop <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The symphony's return today. Once the bot triggers, this freezes at the return captured at the moment of exit (\ud83d\udd12 + time shown).\" onclick=\"setSort('current_return')\">\n                            Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The highest return the if-held (shadow) model has reached today. The trailing stop is measured as a drawdown from this peak.\" onclick=\"setSort('shadow_hwm')\">\n                            Shadow Peak <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The current live return of the symphony model. Shows what you would have if the bot didn't trigger. When triggered, the second line is Guard Alpha: % saved (+) or given up (\u2212) by exiting.\" onclick=\"setSort('shadow')\">\n                            If Held Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Today's Change: AlphaBot dry-run vs if-held\">TC</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Cumulative Return: AlphaBot dry-run vs if-held\">CR</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Max Drawdown: AlphaBot dry-run vs if-held\">MDD</th>\n                    </tr>\n                </thead>\n                <tbody class=\"divide-y divide-slate-800\">\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"last_market_close_snapshot\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('last_market_close_snapshot', 'last_market_close_snapshot')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('last_market_close_snapshot', 'last_market_close_snapshot')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"last_market_close_snapshot\">last_market_close_snapshot</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">---</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">---</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.00%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">--- (0.00%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">--- (---)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">--- (---)</td>\n                        </tr>\n                    \n                </tbody>\n            </table>\n        </div>\n    </div>\n",
+  "html": "\n    \n    \n\n    \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n        \n        \n        \n        \n    \n    \n    \n    \n    \n\n    <div class=\"bg-slate-900 rounded-xl border border-slate-700 overflow-hidden shadow-sm\">\n        <div class=\"px-4 py-3 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center\">\n            <span class=\"text-sm font-semibold text-slate-300\">Roth IRA <span class=\"text-blue-400 font-mono text-xs ml-1\" title=\"ACCOUNT_ID_REDACTED\">(ACCOUNT_ID_REDACTED...)</span></span>\n            <div class=\"flex items-center gap-4\">\n                <span class=\"text-xs text-slate-500\">11 Symphonies</span>\n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <div class=\"flex items-center gap-1.5\">\n                    <span class=\"text-[10px] uppercase tracking-wider text-slate-500 font-bold\" title=\"Capital-Weighted Account Return\">Actual Return:</span>\n                    <span class=\"text-sm font-mono font-bold text-rose-400\">-1.98%</span>\n                </div>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <span class=\"text-[10px] text-slate-500 font-mono\" title=\"Data freshness timestamp\">data as of 16:00 ET</span>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <button onclick=\"openConfirmModal('ACCOUNT_ID_REDACTED')\" class=\"text-[11px] bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 px-3 py-1.5 rounded transition-colors font-bold tracking-wide flex items-center gap-1.5\">\n                    <svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path></svg>\n                    GO TO CASH\n                </button>\n            </div>\n        </div>\n        <!-- height cap removed: vertical expansion is now governed by the flex-1 accounts-container in index.html -->\n        <div class=\"overflow-x-auto\">\n            <table class=\"w-full text-left text-sm whitespace-nowrap relative\">\n                <thead class=\"text-slate-400 bg-slate-900 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm\">\n                    <tr>\n                        <th class=\"px-3 py-2.5 font-medium cursor-pointer hover:text-white transition-colors group select-none\" onclick=\"setSort('name')\">\n                            Symphony Name <span class=\"inline-block ml-1 transition-opacity opacity-100 text-blue-400\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"Monte Carlo probability this symphony beats SPY over the simulation horizon. Low values arm and trigger the trailing stop \u2014 the bot expects underperformance.\" onclick=\"setSort('mc_prob')\">\n                            MC Prob <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-center cursor-pointer hover:text-white transition-colors group select-none\" title=\"Guard state: STANDBY (watching) \u2192 ARMED (stop conditions building) \u2192 TP-ARMED / PARA-ARMED \u2192 TRIGGERED (bot exited to cash). (1/2 Ticks) = waiting for second confirmation.\" onclick=\"setSort('status')\">\n                            Status <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The return level (%) at which the bot exits this symphony to cash. Trails the high-water mark as the position rises. \ud83d\udd12 = breakeven lock active (stop raised to lock in gains).\" onclick=\"setSort('stop_level')\">\n                            Trailing Stop <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The symphony's return today. Once the bot triggers, this freezes at the return captured at the moment of exit (\ud83d\udd12 + time shown).\" onclick=\"setSort('current_return')\">\n                            Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The highest return the if-held (shadow) model has reached today. The trailing stop is measured as a drawdown from this peak.\" onclick=\"setSort('shadow_hwm')\">\n                            Shadow Peak <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The current live return of the symphony model. Shows what you would have if the bot didn't trigger. When triggered, the second line is Guard Alpha: % saved (+) or given up (\u2212) by exiting.\" onclick=\"setSort('shadow')\">\n                            If Held Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Today's Change: AlphaBot dry-run vs if-held\">TC</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Cumulative Return: AlphaBot dry-run vs if-held\">CR</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Max Drawdown: AlphaBot dry-run vs if-held\">MDD</th>\n                    </tr>\n                </thead>\n                <tbody class=\"divide-y divide-slate-800\">\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"iaSOOUsmnCJHiZvbrWfs\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('iaSOOUsmnCJHiZvbrWfs', '(INVEST) LQD + EYEG 5 ways Full Market')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('iaSOOUsmnCJHiZvbrWfs', '(INVEST) LQD + EYEG 5 ways Full Market')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST) LQD + EYEG 5 ways Full Market\">(INVEST) LQD + EYEG 5 ways Full Market</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">45.6%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-rose-500/10 text-rose-500 border border-rose-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(244,63,94,0.15)]\" title=\"Trailing Stop\">TRAILING STOP</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-3.00%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-5.50%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>2026-05-20T14:46:06Z ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-500/70\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-4.25%</span><span class=\"text-[10px] text-rose-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">-1.25% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-5.50% (-4.25%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+0.80% (+2.63%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">571.38% (1482.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"hvPiGP1O7AHfutHE3Fjy\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('hvPiGP1O7AHfutHE3Fjy', '(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('hvPiGP1O7AHfutHE3Fjy', '(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations\">(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-amber-400 font-medium\">14.4%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.31%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">+0.89%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.98%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-emerald-400\">+0.89% (+0.89%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+79.94% (+80.14%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">159.83% (3226.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"INfCn3eKsu6i4oTTqdUp\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('INfCn3eKsu6i4oTTqdUp', '(INVEST) Planet of Projected Inflation: Corporate Chaos 2060')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('INfCn3eKsu6i4oTTqdUp', '(INVEST) Planet of Projected Inflation: Corporate Chaos 2060')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST) Planet of Projected Inflation: Corporate Chaos 2060\">(INVEST) Planet of Projected Inflation: Corporate Chaos 2060</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">50.4%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.15)]\" title=\"VWAP Breakdown\">VWAP BREAKDOWN</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">2.10%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-0.56%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>11:13 ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-500/70\">0.16%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-0.09%</span><span class=\"text-[10px] text-rose-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">-0.47% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-0.56% (-0.09%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+67.73% (+67.48%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">56.45% (1495.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"n2ooAZTvBRN6ZzpMmWmU\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('n2ooAZTvBRN6ZzpMmWmU', '(INVEST:CRYPTO) We do a Little Trolling Planet\\&#39;s Mix v1.4 | 10.19.2022')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('n2ooAZTvBRN6ZzpMmWmU', '(INVEST:CRYPTO) We do a Little Trolling Planet\\&#39;s Mix v1.4 | 10.19.2022')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"(INVEST:CRYPTO) We do a Little Trolling Planet&#39;s Mix v1.4 | 10.19.2022\">(INVEST:CRYPTO) We do a Little Trolling Planet&#39;s Mix v1.4 | 10.19.2022</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-amber-400 font-medium\">12.8%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">1.29%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">+0.60%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.86%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-emerald-400\">+0.60% (+0.60%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+317.56% (+318.41%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">92.52% (2552.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"nOyb55RMGVCKPiYXv7TI\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('nOyb55RMGVCKPiYXv7TI', 'Corporate Chaos 5 ways ')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('nOyb55RMGVCKPiYXv7TI', 'Corporate Chaos 5 ways ')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Corporate Chaos 5 ways \">Corporate Chaos 5 ways </div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">39.1%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.15)]\" title=\"VWAP Bleed Cut\">VWAP BLEED CUT</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-2.09%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-2.18%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>13:43 ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-2.52%</span><span class=\"text-[10px] text-emerald-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">+0.34% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.18% (-2.52%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">-4.64% (-4.48%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">222.50% (1251.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"5XjzXjdGnjh99MIsdM97\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('5XjzXjdGnjh99MIsdM97', 'Land of Feaver\\&#39;d Allocations: Intelligent Novas')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('5XjzXjdGnjh99MIsdM97', 'Land of Feaver\\&#39;d Allocations: Intelligent Novas')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Land of Feaver&#39;d Allocations: Intelligent Novas\">Land of Feaver&#39;d Allocations: Intelligent Novas</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">86.0%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-0.98%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-2.80%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.80% (-2.80%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+5.11% (+8.99%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">441.78% (1529.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                            \n                                \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                            \n\n                            \n                            \n\n                            \n                            \n                            \n                            \n                            \n                            \n\n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"8FAXAnQmYi1INDubazeC\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('8FAXAnQmYi1INDubazeC', 'Planet LQD: Run of the Feaver\\&#39;d WaltAnansi USDs 2/3 Mixup')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('8FAXAnQmYi1INDubazeC', 'Planet LQD: Run of the Feaver\\&#39;d WaltAnansi USDs 2/3 Mixup')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet LQD: Run of the Feaver&#39;d WaltAnansi USDs 2/3 Mixup\">Planet LQD: Run of the Feaver&#39;d WaltAnansi USDs 2/3 Mixup</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">47.8%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(139,92,246,0.15)]\" title=\"VWAP Bleed Cut\">VWAP BLEED CUT</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-3.00%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono \"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500\" title=\"Frozen Exit Return\">-4.19%</span><span class=\"text-[10px] text-slate-500 font-bold mt-0.5 flex items-center gap-1\" title=\"Time of Execution\"><span class=\"opacity-70 text-[9px]\">\ud83d\udd12</span>2026-05-20T14:59:06Z ET</span></div></td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><div class=\"flex flex-col items-end leading-tight\"><span class=\"text-rose-500/50\" title=\"Live theoretical return of the symphony\">-5.31%</span><span class=\"text-[10px] text-emerald-400 font-bold mt-0.5\" title=\"Guard Alpha (How much % you saved or lost by triggering)\">+1.12% \u03b1</span></div></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-4.19% (-5.31%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+30.32% (+33.12%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">425.05% (2336.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"MoAkUHnavSYw3oONiUxe\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('MoAkUHnavSYw3oONiUxe', 'Planet of Erased History: Nova\\&#39;s Feaver\\&#39;d Golden Age of EYEG')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('MoAkUHnavSYw3oONiUxe', 'Planet of Erased History: Nova\\&#39;s Feaver\\&#39;d Golden Age of EYEG')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of Erased History: Nova&#39;s Feaver&#39;d Golden Age of EYEG\">Planet of Erased History: Nova&#39;s Feaver&#39;d Golden Age of EYEG</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">85.3%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-0.97%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-2.73%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.73% (-2.73%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">-3.15% (-0.84%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">295.33% (1526.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"qF5ZU7ALjrlhxrGEwsyJ\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('qF5ZU7ALjrlhxrGEwsyJ', 'Planet of the Golden Age (Buy Copy)')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('qF5ZU7ALjrlhxrGEwsyJ', 'Planet of the Golden Age (Buy Copy)')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of the Golden Age (Buy Copy)\">Planet of the Golden Age (Buy Copy)</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">84.8%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-0.86%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-2.05%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.73%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-2.05% (-2.05%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+20.71% (+20.10%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">210.57% (657.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"lW4ZzWuqR8tEO2DhXbil\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('lW4ZzWuqR8tEO2DhXbil', 'Planet of the Paragons: EYEG of the LQD')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('lW4ZzWuqR8tEO2DhXbil', 'Planet of the Paragons: EYEG of the LQD')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of the Paragons: EYEG of the LQD\">Planet of the Paragons: EYEG of the LQD</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">80.1%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">-1.68%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-4.15%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-4.15% (-4.15%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">-7.92% (-8.91%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">437.29% (2318.00%)</td>\n                        </tr>\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                            \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"Gpaw3IhZghQPRE6AdEKx\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('Gpaw3IhZghQPRE6AdEKx', 'Planet of the Reasonabilists: Era of the Erased Golden Age')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('Gpaw3IhZghQPRE6AdEKx', 'Planet of the Reasonabilists: Era of the Erased Golden Age')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"Planet of the Reasonabilists: Era of the Erased Golden Age\">Planet of the Reasonabilists: Era of the Erased Golden Age</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">87.1%</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest shadow-[0_0_8px_rgba(6,182,212,0.15)]\" title=\"Parabolic Squeeze Active\">PARA-ARMED</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">0.21%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-rose-400\">-1.04%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.45%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">-1.04% (-1.04%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">+72.96% (+75.00%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">102.96% (2344.00%)</td>\n                        </tr>\n                    \n                </tbody>\n            </table>\n        </div>\n    </div>\n\n    \n    \n\n    \n    \n        \n        \n        \n        \n    \n    \n    \n    \n    \n\n    <div class=\"bg-slate-900 rounded-xl border border-slate-700 overflow-hidden shadow-sm\">\n        <div class=\"px-4 py-3 border-b border-slate-700 bg-slate-800/50 flex justify-between items-center\">\n            <span class=\"text-sm font-semibold text-slate-300\">Account <span class=\"text-blue-400 font-mono text-xs ml-1\" title=\"Unknown\">(Unknown...)</span></span>\n            <div class=\"flex items-center gap-4\">\n                <span class=\"text-xs text-slate-500\">1 Symphonies</span>\n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <div class=\"flex items-center gap-1.5\">\n                    <span class=\"text-[10px] uppercase tracking-wider text-slate-500 font-bold\" title=\"Capital-Weighted Account Return\">Actual Return:</span>\n                    <span class=\"text-sm font-mono font-bold text-emerald-400\">0.00%</span>\n                </div>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <span class=\"text-[10px] text-slate-500 font-mono\" title=\"Data freshness timestamp\">data as of 16:00 ET</span>\n                \n                <div class=\"h-4 w-px bg-slate-700\"></div>\n                <button onclick=\"openConfirmModal('Unknown')\" class=\"text-[11px] bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 px-3 py-1.5 rounded transition-colors font-bold tracking-wide flex items-center gap-1.5\">\n                    <svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"></path></svg>\n                    GO TO CASH\n                </button>\n            </div>\n        </div>\n        <!-- height cap removed: vertical expansion is now governed by the flex-1 accounts-container in index.html -->\n        <div class=\"overflow-x-auto\">\n            <table class=\"w-full text-left text-sm whitespace-nowrap relative\">\n                <thead class=\"text-slate-400 bg-slate-900 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm\">\n                    <tr>\n                        <th class=\"px-3 py-2.5 font-medium cursor-pointer hover:text-white transition-colors group select-none\" onclick=\"setSort('name')\">\n                            Symphony Name <span class=\"inline-block ml-1 transition-opacity opacity-100 text-blue-400\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"Monte Carlo probability this symphony beats SPY over the simulation horizon. Low values arm and trigger the trailing stop \u2014 the bot expects underperformance.\" onclick=\"setSort('mc_prob')\">\n                            MC Prob <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-center cursor-pointer hover:text-white transition-colors group select-none\" title=\"Guard state: STANDBY (watching) \u2192 ARMED (stop conditions building) \u2192 TP-ARMED / PARA-ARMED \u2192 TRIGGERED (bot exited to cash). (1/2 Ticks) = waiting for second confirmation.\" onclick=\"setSort('status')\">\n                            Status <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The return level (%) at which the bot exits this symphony to cash. Trails the high-water mark as the position rises. \ud83d\udd12 = breakeven lock active (stop raised to lock in gains).\" onclick=\"setSort('stop_level')\">\n                            Trailing Stop <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The symphony's return today. Once the bot triggers, this freezes at the return captured at the moment of exit (\ud83d\udd12 + time shown).\" onclick=\"setSort('current_return')\">\n                            Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The highest return the if-held (shadow) model has reached today. The trailing stop is measured as a drawdown from this peak.\" onclick=\"setSort('shadow_hwm')\">\n                            Shadow Peak <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-3 py-2.5 font-medium text-right cursor-pointer hover:text-white transition-colors group select-none\" title=\"The current live return of the symphony model. Shows what you would have if the bot didn't trigger. When triggered, the second line is Guard Alpha: % saved (+) or given up (\u2212) by exiting.\" onclick=\"setSort('shadow')\">\n                            If Held Return <span class=\"inline-block ml-1 transition-opacity opacity-0 group-hover:opacity-50\">\u2191</span>\n                        </th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Today's Change: AlphaBot dry-run vs if-held\">TC</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Cumulative Return: AlphaBot dry-run vs if-held\">CR</th>\n                        <th class=\"px-2 py-2.5 font-medium text-right text-slate-500\" title=\"Max Drawdown: AlphaBot dry-run vs if-held\">MDD</th>\n                    </tr>\n                </thead>\n                <tbody class=\"divide-y divide-slate-800\">\n                    \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n\n                        \n                            \n                            \n                            \n\n                            \n\n                            \n                            \n                            \n                        \n\n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n                        \n                        \n                        \n                        \n\n                        \n                        \n\n                        <tr class=\"hover:bg-slate-800 transition-colors\" data-symphony-id=\"last_market_close_snapshot\">\n                            <td class=\"px-3 py-2.5 text-slate-200\">\n                                <div class=\"flex items-center gap-2 max-w-[250px]\">\n                                    <button onclick=\"openLogModal('last_market_close_snapshot', 'last_market_close_snapshot')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Logs\">\n                                        <svg xmlns=\"http://www.w3.org/2000/svg\" class=\"h-4 w-4\" fill=\"none\" viewBox=\"0 0 24 24\" stroke=\"currentColor\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z\" /></svg>\n                                    </button>\n                                    <button onclick=\"openChartModal('last_market_close_snapshot', 'last_market_close_snapshot')\" class=\"text-slate-500 hover:text-blue-400 transition-colors flex-shrink-0\" title=\"View Intraday Chart\">\n                                        <svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z\"></path></svg>\n                                    </button>\n\n                                    <div class=\"truncate\" title=\"last_market_close_snapshot\">last_market_close_snapshot</div>\n                                </div>\n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">---</td>\n                            <td class=\"px-3 py-2.5 text-center\">\n                                <span class=\"bg-slate-800 text-slate-500 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest\">STANDBY</span>\n                                \n                            </td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-400\">---</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-emerald-400\">0.00%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono text-slate-300\">0.0%</td>\n                            <td class=\"px-3 py-2.5 text-right font-mono\"><span class=\"text-slate-600\">---</span></td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-xs text-rose-400\">--- (0.00%)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">--- (---)</td>\n                            <td class=\"px-2 py-2.5 text-right font-mono text-slate-400 text-xs\">--- (---)</td>\n                        </tr>\n                    \n                </tbody>\n            </table>\n        </div>\n    </div>\n",
   "live_mode": false,
   "market_state": "closed_frozen",
   "meta": {
     "account": {
       "label": "Roth IRA",
-      "uuid_short": "880be47e"
+      "uuid_short": "ACCOUNT_ID_REDACTED"
     },
     "armed": 1,
     "clock_et": "06:53:14 PM ET",
@@ -7776,8 +7776,8 @@
     }
   },
   "port_state": {
-    "880be47e-efe4-4b44-9d83-b6d86098fe0d": {
-      "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+    "ACCOUNT_ID_REDACTED": {
+      "account_id": "ACCOUNT_ID_REDACTED",
       "armed": 0,
       "composition_hash": "",
       "current_return": 0.0,
@@ -7846,7 +7846,7 @@
         "if_held": -2.8000000000000003
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.9780240309432555,
       "armed": false,
       "below_stop_count": 0,
@@ -7912,7 +7912,7 @@
         "if_held": -5.3100000000000005
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 2.0447889025010406,
       "armed": false,
       "below_stop_count": 0,
@@ -8029,7 +8029,7 @@
         "if_held": -1.04
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.29457625856405545,
       "armed": true,
       "below_stop_count": 0,
@@ -8187,7 +8187,7 @@
         "if_held": -0.09
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.31512705972302874,
       "armed": false,
       "below_stop_count": 0,
@@ -8345,7 +8345,7 @@
         "if_held": -2.73
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.9666442101743138,
       "armed": false,
       "below_stop_count": 0,
@@ -8439,7 +8439,7 @@
         "if_held": 0.89
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.6690401764236295,
       "armed": false,
       "below_stop_count": 0,
@@ -8501,7 +8501,7 @@
         "if_held": -4.25
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 1.7584278133162223,
       "armed": false,
       "below_stop_count": 0,
@@ -8645,7 +8645,7 @@
         "if_held": -4.15
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 1.67769641743029,
       "armed": false,
       "below_stop_count": 0,
@@ -8708,10 +8708,10 @@
       },
       "above_tp_count": 0,
       "accounts_map": {
-        "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+        "ACCOUNT_ID_REDACTED": [
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.4658276639228846,
             "armed": false,
             "below_stop_count": 0,
@@ -8816,7 +8816,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.3197801025637384,
             "armed": false,
             "below_stop_count": 3,
@@ -8956,7 +8956,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.6072783563169617,
             "armed": false,
             "below_stop_count": 0,
@@ -9065,7 +9065,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.7397431021014104,
             "armed": false,
             "below_stop_count": 0,
@@ -9210,7 +9210,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.5283420034743898,
             "armed": false,
             "below_stop_count": 2,
@@ -9310,7 +9310,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.9391863152026448,
             "armed": false,
             "below_stop_count": 0,
@@ -9437,7 +9437,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.432224322565111,
             "armed": false,
             "below_stop_count": 2,
@@ -9515,7 +9515,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 1.652967811172848,
             "armed": false,
             "below_stop_count": 0,
@@ -9581,7 +9581,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.640202507540015,
             "armed": false,
             "below_stop_count": 0,
@@ -9686,7 +9686,7 @@
           },
           {
             "above_tp_count": 0,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 0.7124239058863758,
             "armed": false,
             "below_stop_count": 0,
@@ -9743,7 +9743,7 @@
           },
           {
             "above_tp_count": 2,
-            "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account": "ACCOUNT_ID_REDACTED",
             "active_stop_distance": 1.738856522244895,
             "armed": false,
             "below_stop_count": 0,
@@ -9977,10 +9977,10 @@
         "Unknown": [
           {
             "accounts_map": {
-              "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+              "ACCOUNT_ID_REDACTED": [
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.5664660412515061,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10081,7 +10081,7 @@
                 },
                 {
                   "above_tp_count": 2,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.13536795273758034,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10218,7 +10218,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.1658868568878085,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10283,7 +10283,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.1532903713268772,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10428,7 +10428,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.2132287237913901,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10489,7 +10489,7 @@
                 },
                 {
                   "above_tp_count": 2,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.402974452117394,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10667,7 +10667,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.31680749831920646,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10716,7 +10716,7 @@
                 },
                 {
                   "above_tp_count": 2,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.7949989976948678,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10822,7 +10822,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 1.1658550631549554,
                   "armed": false,
                   "below_stop_count": 0,
@@ -10887,7 +10887,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.0731440923022688,
                   "armed": false,
                   "below_stop_count": 3,
@@ -11071,7 +11071,7 @@
                 },
                 {
                   "above_tp_count": 0,
-                  "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+                  "account": "ACCOUNT_ID_REDACTED",
                   "active_stop_distance": 0.7586024337754552,
                   "armed": false,
                   "below_stop_count": 0,
@@ -11269,7 +11269,7 @@
         "if_held": 0.6
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.5144017312188537,
       "armed": false,
       "below_stop_count": 0,
@@ -11395,7 +11395,7 @@
         "if_held": -2.52
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.7116868313547509,
       "armed": false,
       "below_stop_count": 0,
@@ -11488,7 +11488,7 @@
         "if_held": -2.0500000000000003
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 1.587713171682582,
       "armed": false,
       "below_stop_count": 0,

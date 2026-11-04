@@ -7,7 +7,7 @@
 **Market state:** `closed_frozen` (frozen_at 16:00:01 ET 2026-05-20)  
 **Fixture path:** `tests/fixtures/composer/reconcile-FINAL-2026-05-20/`  
 **Fixture provenance:** captured-from-producer (live Composer API 2026-05-20)  
-**Account:** ROTH (`880be47e-efe4-4b44-9d83-b6d86098fe0d`)
+**Account:** ROTH (`ACCOUNT_ID_REDACTED`)
 
 ---
 

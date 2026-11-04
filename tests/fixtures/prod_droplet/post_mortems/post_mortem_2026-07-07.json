@@ -60,7 +60,7 @@
         {
             "symphony_name": "Planet of the Paragons: EYEG of the LQD",
             "symphony_value": 916.61,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 2.13,
             "attempted_trigger_level": 4.34,
@@ -88,7 +88,7 @@
         {
             "symphony_name": "Corporate Chaos 5 ways ",
             "symphony_value": 894.69,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.84,
             "attempted_trigger_level": 1.86,
@@ -123,7 +123,7 @@
         {
             "symphony_name": "Planet of the Golden Age (Buy Copy)",
             "symphony_value": 1452.17,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 1.04,
             "attempted_trigger_level": 2.63,
@@ -158,7 +158,7 @@
         {
             "symphony_name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
             "symphony_value": 1269.7,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -3.57,
             "attempted_trigger_level": -3.0,
@@ -192,7 +192,7 @@
         {
             "symphony_name": "Land of Feaver'd Allocations: Intelligent Novas",
             "symphony_value": 1007.63,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.64,
             "attempted_trigger_level": 3.14,
@@ -223,7 +223,7 @@
         {
             "symphony_name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
             "symphony_value": 1171.15,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 1.85,
             "attempted_trigger_level": 2.28,
@@ -260,7 +260,7 @@
         {
             "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
             "symphony_value": 1545.74,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 0.83,
             "attempted_trigger_level": 0.83,
@@ -298,7 +298,7 @@
         {
             "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
             "symphony_value": 1029.85,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.56,
             "attempted_trigger_level": 2.95,
