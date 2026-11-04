@@ -1935,6 +1935,28 @@ def _run_incubation_tick() -> None:
     t.start()
 
 
+def _regime_label_symphony_entries() -> dict:
+    """The stored bot state's symphony entries (metadata keys excluded), read-only."""
+    state = database.load_state(read_only=True)
+    return {k: v for k, v in state.items() if _is_symphony_state_entry(v)}
+
+
+def _regime_label_job_worker() -> None:
+    """Run the daily regime label job. The lazy import keeps it off the execution path; only the
+    exception class name is logged."""
+    try:
+        import regime_label_job  # lazy, not module-level
+
+        regime_label_job.run_regime_label_job(_regime_label_symphony_entries)
+    except Exception as exc:
+        _daemon_log.error("Regime label job failed: %s", type(exc).__name__)
+
+
+def _run_regime_label_tick() -> None:
+    """Non-blocking daily off-hours wrapper for the regime label job."""
+    threading.Thread(target=_regime_label_job_worker, daemon=True, name="regime-label").start()
+
+
 # PR#140 /code-review finding 1 (Cycle 2c, AC-4): the number of decimal
 # places every float in a retirement evidence snapshot is rounded to before
 # comparison -- named so both _round_floats and its docstrings share one
@@ -2760,6 +2782,8 @@ def run_scheduler():
     )
     # Daily re-list (only when the registry is stale) so new model releases reach the badges.
     _guard(schedule.every().day.at("04:15").do(_start_model_warmup), "04:15 model warmup")
+    # Regime label job: after the warm-up, outside every session in UTC and New York host time.
+    _guard(schedule.every().day.at("04:30").do(_run_regime_label_tick), "04:30 regime label job")
     while True:
         _scheduler_tick()
         time.sleep(1)
