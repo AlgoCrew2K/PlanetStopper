@@ -581,3 +581,43 @@ def test_a_start_inside_a_trading_session_requests_nothing_and_writes_nothing(
         assert conn.execute("SELECT COUNT(*) FROM regime_label_cache").fetchone() == (0,)
     finally:
         conn.close()
+
+
+_SEEDED_ID = "xR4tQ9mZ2bL7vN1cK8pW"
+
+
+def _row(conn_path):
+    conn = sqlite3.connect(conn_path)
+    try:
+        return conn.execute(
+            "SELECT symphony_id, label, as_of_date, updated_at FROM regime_label_cache"
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def test_a_mid_session_start_leaves_the_sessions_existing_rows_untouched(job, monkeypatch):
+    import database
+
+    database.save_regime_label(_SEEDED_ID, "trending", date(2026, 11, 4).isoformat())
+    before = _row(os.environ["DB_PATH"])
+    closes, holdings = _golden()
+    start = datetime(2026, 11, 4, 10, 0, tzinfo=S.ET).astimezone(UTC)
+
+    run, stub = _run(job, monkeypatch, closes, holdings, lambda: start)
+
+    assert run.session is None
+    assert stub.calls == []
+    assert _row(os.environ["DB_PATH"]) == before, "label, date and updated_at all intact"
+
+
+def test_a_start_after_the_close_writes_the_next_sessions_row_dated_that_session(job, monkeypatch):
+    closes, holdings = _golden()
+    start = datetime(2026, 11, 4, 16, 5, tzinfo=S.ET).astimezone(UTC)
+
+    run, _ = _run(job, monkeypatch, closes, holdings, lambda: start)
+
+    assert run.session == date(2026, 11, 5)
+    rows = _row(os.environ["DB_PATH"])
+    assert [(r[0], r[2]) for r in rows] == [(_SEEDED_ID, "2026-11-05")]
+    assert rows[0][1] == run.outcomes[0].label is not None

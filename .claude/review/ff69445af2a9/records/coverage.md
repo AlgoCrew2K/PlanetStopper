@@ -29,3 +29,17 @@
 | DC-4 | S-2.3 test |
 | DC-5 | S-2.4 tests |
 | DC-12 | S-2.1, S-2.6, S-2.10, S-2.11 tests; request params feed/timeframe in test_sip_fetch::test_request_is_a_get_of_sip_daily_split_adjusted_bars |
+
+## S-1.5 (PM ruling D-13: a start inside a trading session writes nothing, reason session_in_progress)
+| Test | Covers |
+|---|---|
+| test_target_session::test_run_at_ten_et_inside_a_trading_session_has_no_target, ::test_session_boundaries_open_inclusive_close_exclusive_early_closes_included, ::test_start_exactly_at_the_close_targets_the_next_session, ::test_start_after_the_early_close_targets_the_next_session, hypothesis ::test_target_is_none_inside_a_session_else_the_earliest_session_opening_after_the_instant | target_session returns None in session, next session after close, early closes |
+| test_sip_fetch::test_a_start_inside_a_trading_session_requests_nothing_and_writes_nothing | no HTTP call, no row, session None |
+| test_sip_fetch::test_a_mid_session_start_leaves_the_sessions_existing_rows_untouched | existing row (label, date, updated_at) intact |
+| test_sip_fetch::test_a_start_after_the_close_writes_the_next_sessions_row_dated_that_session | 16:05 ET writes the next session row |
+
+## Deviations
+- `window_sessions(D)` takes one parameter; the approach had `(D, newest_eligible)`. The newest-eligible cut is applied inside `compute_label`. Accepted by the PM ([PM-ASSUMED]).
+- S-2.4 sits partly in test_sip_fetch.py and test_label_computation.py (the table named test_sip_fetch.py only).
+- Batch B rows: `coverage-batch-b.json` in this folder (not merged into this file).
+- Equivalent mutants (not caught, by construction): UTC date instead of ET date in `target_session`; UTC date of a midnight-ET bar stamp.
