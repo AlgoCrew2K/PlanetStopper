@@ -10,6 +10,7 @@ import logging
 import math
 import time
 from collections import Counter
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
@@ -36,17 +37,27 @@ REASON_SESSION_IN_PROGRESS = "session_in_progress"
 
 # The SIP feed refuses a request whose end is inside the last 15 minutes; 20 leaves margin.
 SIP_END_LAG = timedelta(minutes=20)
+# Tickers per bars request, keeping the symbols query string and the response size modest.
 SIP_BATCH_SIZE = 30
+# Requests per page, copied from composer_series_client.MAX_ATTEMPTS.
 MAX_ATTEMPTS = 3
+# Seconds per request, copied from composer_series_client.REQUEST_TIMEOUT_SECONDS.
 REQUEST_TIMEOUT_SECONDS = 30.0
+# Longest sleep between attempts, copied from composer_series_client.RETRY_AFTER_CAP_SECONDS.
 RETRY_AFTER_CAP_SECONDS = 30.0
 REGIME_WINDOW_SESSIONS = regime_classifier.MIN_LABEL_SERIES_LENGTH
+# Sessions searched back from the target session for the 20 computable ones (unit: sessions).
 REGIME_WINDOW_MAX_LOOKBACK_SESSIONS = 30
+# Pages per batch: a real response is one page (at most 930 bars against a limit of 10000), so
+# more pages than this means the token chain is runaway (unit: requests).
+MAX_PAGES_PER_BATCH = 5
 
 _ET = ZoneInfo("America/New_York")
 _BARS_PATH = "/v2/stocks/bars"
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+# First retry sleep, doubled per attempt (unit: seconds).
 _BACKOFF_START_SECONDS = 1.0
+# Pause between pages of one batch, to stay well inside the provider rate limit (seconds).
 _PAGE_PAUSE_SECONDS = 0.25
 _BAR_LIMIT = 10000  # Alpaca's maximum bars per page
 _FOLLOWING_SESSION_SEARCH_DAYS = 15
@@ -98,16 +109,18 @@ class LabelComputation:
 
 
 class _BatchFailed(Exception):
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         super().__init__(text)
         self.text = text
 
 
 def _open_of(session: date) -> datetime:
+    """The 09:30 ET open of `session`."""
     return datetime.combine(session, market_calendar.REAL_MARKET_OPEN_TIME, _ET)
 
 
 def _in_session(start: datetime) -> bool:
+    """True when `start` lies inside a trading session."""
     day = start.astimezone(_ET).date()
     if not market_calendar.is_trading_day(day):
         return False
@@ -139,7 +152,8 @@ def window_sessions(session: date) -> list:
     return found[::-1]
 
 
-def _retry_delay(resp, backoff: float) -> float:
+def _retry_delay(resp: requests.Response | None, backoff: float) -> float:
+    """Seconds to sleep before the next attempt: Retry-After when numeric, else the backoff."""
     header = resp.headers.get("Retry-After") if resp is not None else None
     try:
         return min(max(float(int(str(header).strip())), 0.0), RETRY_AFTER_CAP_SECONDS)
@@ -147,7 +161,7 @@ def _retry_delay(resp, backoff: float) -> float:
         return min(backoff, RETRY_AFTER_CAP_SECONDS)
 
 
-def _get_page(url: str, params: dict):
+def _get_page(url: str, params: dict) -> tuple:
     """One bars page with bounded retries: (response, None) on a 200, else (None, failure text)."""
     backoff = _BACKOFF_START_SECONDS
     failure = None
@@ -193,11 +207,10 @@ def _fetch_batch(tickers: list, start: date, end: datetime) -> dict:
         "end": end.astimezone(UTC).strftime(_RFC3339_UTC),
     }
     closes: dict = {}
-    first = True
-    while True:
-        if not first:
+    seen_tokens: set = set()
+    for page in range(1, MAX_PAGES_PER_BATCH + 1):
+        if page > 1:
             time.sleep(_PAGE_PAUSE_SECONDS)
-        first = False
         resp, failure = _get_page(url, params)
         if resp is None:
             raise _BatchFailed(failure)
@@ -213,10 +226,14 @@ def _fetch_batch(tickers: list, start: date, end: datetime) -> dict:
             raise _BatchFailed(type(exc).__name__) from exc
         if not token:
             return closes
+        if token in seen_tokens:
+            raise _BatchFailed("RepeatedPageToken")
+        seen_tokens.add(token)
         params = {**params, "page_token": token}
+    raise _BatchFailed("PageLimitExceeded")
 
 
-def fetch_sip_daily_closes(tickers, start: date, end: datetime) -> SipCloses:
+def fetch_sip_daily_closes(tickers: Iterable[str], start: date, end: datetime) -> SipCloses:
     """Split-adjusted SIP daily closes, batched; a failed batch fails every ticker in it."""
     unique = sorted(set(tickers))
     closes: dict = {}
@@ -230,11 +247,13 @@ def fetch_sip_daily_closes(tickers, start: date, end: datetime) -> SipCloses:
     return SipCloses(closes=closes, failed=failed)
 
 
-def _valid_close(value) -> bool:
+def _valid_close(value: object) -> bool:
+    """True for a finite positive number."""
     return isinstance(value, int | float) and math.isfinite(value) and value > 0
 
 
-def _session_return(holdings, closes, current: date, previous: date) -> float:
+def _session_return(holdings: list, closes: dict, current: date, previous: date) -> float:
+    """Allocation-weighted return of the holdings from `previous` to `current`; NaN if invalid."""
     total = 0.0
     for holding in holdings:
         table = closes[holding["ticker"]]
@@ -245,7 +264,9 @@ def _session_return(holdings, closes, current: date, previous: date) -> float:
     return total
 
 
-def compute_label(holdings, closes, session: date, newest_eligible: date) -> LabelComputation:
+def compute_label(
+    holdings: list, closes: dict, session: date, newest_eligible: date
+) -> LabelComputation:
     """Label from the 20 most recent computable sessions among the 30 before `session`."""
     sessions = window_sessions(session)
     computable = []
@@ -272,7 +293,7 @@ def compute_label(holdings, closes, session: date, newest_eligible: date) -> Lab
     )
 
 
-def _holdings_of(entry) -> list:
+def _holdings_of(entry: dict) -> list:
     """Validated holdings [{ticker, allocation}] of a stored entry; raises on a malformed one."""
     raw = entry.get("current_holdings")
     if not raw:
@@ -280,7 +301,15 @@ def _holdings_of(entry) -> list:
     return [{"ticker": str(h["ticker"]), "allocation": float(h["allocation"])} for h in raw]
 
 
-def _outcome(sid, name, reason=None, detail=None, label=None, comp=None) -> SymphonyOutcome:
+def _outcome(
+    sid: str,
+    name: str | None,
+    reason: str | None = None,
+    detail: str | None = None,
+    label: str | None = None,
+    comp: LabelComputation | None = None,
+) -> SymphonyOutcome:
+    """Build the outcome record of one symphony."""
     return SymphonyOutcome(
         sid,
         name,
@@ -294,6 +323,7 @@ def _outcome(sid, name, reason=None, detail=None, label=None, comp=None) -> Symp
 
 
 def _log_symphony(session: date, o: SymphonyOutcome) -> None:
+    """Log the one line of a symphony outcome."""
     # repr() escapes any newline in a display name, so a name cannot forge a log line.
     line = f"regime_label symphony={o.symphony_id} name={o.name!r} session={session.isoformat()}"
     if o.reason is None:
@@ -308,7 +338,8 @@ def _log_symphony(session: date, o: SymphonyOutcome) -> None:
     logger.info("%s", line)
 
 
-def _log_summary(session: date, outcomes, failure: str | None) -> None:
+def _log_summary(session: date, outcomes: Iterable[SymphonyOutcome], failure: str | None) -> None:
+    """Log the one summary line of a run."""
     counts = Counter(o.reason for o in outcomes if o.reason)
     line = (
         f"regime_label summary session={session.isoformat()} seen={len(outcomes)}"
@@ -322,7 +353,16 @@ def _log_summary(session: date, outcomes, failure: str | None) -> None:
     logger.info("%s", line)
 
 
-def _label_and_store(sid, name, holdings, sip, session, newest_eligible, clock):
+def _label_and_store(
+    sid: str,
+    name: str | None,
+    holdings: list,
+    sip: SipCloses,
+    session: date,
+    newest_eligible: date,
+    clock: Callable[[], datetime],
+) -> SymphonyOutcome:
+    """Compute the label of one symphony and write it; the outcome says what happened."""
     failed = sorted(h["ticker"] for h in holdings if h["ticker"] in sip.failed)
     if failed:
         return _outcome(sid, name, REASON_PRICE_FETCH_FAILED, sip.failed[failed[0]])
@@ -338,7 +378,9 @@ def _label_and_store(sid, name, holdings, sip, session, newest_eligible, clock):
     return _outcome(sid, name, label=comp.label, comp=comp)
 
 
-def run_regime_label_job(load_symphonies, *, clock=None) -> RegimeLabelRun:
+def run_regime_label_job(
+    load_symphonies: Callable[[], dict], *, clock: Callable[[], datetime] | None = None
+) -> RegimeLabelRun:
     """Label every stored symphony for the session whose open follows this run.
 
     One symphony's failure never stops the others; logs one line per symphony and one summary.
@@ -383,16 +425,22 @@ def run_regime_label_job(load_symphonies, *, clock=None) -> RegimeLabelRun:
         except Exception as exc:
             sip = SipCloses(failed=dict.fromkeys(tickers, type(exc).__name__))
 
-    for sid, (name, holdings) in prepared.items():
-        try:
-            outcomes[sid] = _label_and_store(
-                sid, name, holdings, sip, session, newest_eligible, clock
-            )
-        except Exception as exc:
-            outcomes[sid] = _outcome(sid, name, REASON_UNEXPECTED_ERROR, type(exc).__name__)
-
-    ordered = tuple(outcomes[sid] for sid in entries)
-    for outcome in ordered:
+    # One roster-order pass: each line is logged as soon as its outcome is decided, before the
+    # next symphony is written.
+    decided: list = []
+    for sid in entries:
+        if sid in prepared:
+            name, holdings = prepared[sid]
+            try:
+                outcome = _label_and_store(
+                    sid, name, holdings, sip, session, newest_eligible, clock
+                )
+            except Exception as exc:
+                outcome = _outcome(sid, name, REASON_UNEXPECTED_ERROR, type(exc).__name__)
+        else:
+            outcome = outcomes[sid]
         _log_symphony(session, outcome)
+        decided.append(outcome)
+    ordered = tuple(decided)
     _log_summary(session, ordered, None)
     return RegimeLabelRun(session, ordered)

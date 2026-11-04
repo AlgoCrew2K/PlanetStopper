@@ -22,8 +22,8 @@ _ENGINE = _REPO_ROOT / "alpha_bot_execution.py"
 _APP = _REPO_ROOT / "app.py"
 _SNAPSHOT_KEY = "last_market_close_snapshot"
 
-# LF-normalized sha256 of alpha_bot_execution.py with the builder block's lines removed,
-# computed at the base commit 3be84137 (the engine file is byte-identical to 37c8e983's).
+# LF-normalized sha256 of alpha_bot_execution.py with the builder block's lines removed.
+# The pin follows the `session_date` keyword change at the regime read (commit 44b178d6).
 # Command: python -I -c "import tests.engine.test_close_snapshot_builder_scope as m; print(m.hash_without_builder())"
 _PINNED_HASH_WITHOUT_BUILDER = "228af7add5c89d53882129b67f26d4edfe9060161afb2f792f4647d171842bf1"
 
