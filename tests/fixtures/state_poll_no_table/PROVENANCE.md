@@ -30,6 +30,8 @@ To regenerate later: `git worktree add --detach <tmp> 758f7f9551ff3a15a292debb7b
 
 Fault worlds store the captured exit row `tests/fixtures/refresh_timing/01-c2/exit_trigger_row.json` through `database.record_exit_trigger` (the writer assigns a new id) so that the failing read would otherwise have found a figure. `golden_ref_closed_guard_alpha_fail.json` equals `golden_ref_closed_frozen_two_accounts.json` apart from `daemon_started_at`, as it must: a failed guard-alpha read leaves the body as if no exit row existed.
 
+Largest golden difference after the account-id redaction: 0 absolute and 0 relative over 2427 float pairs (`math.isclose(rel_tol=1e-12, abs_tol=0)`), compared with the earlier goldens with the id replaced by `ACCOUNT_ID_REDACTED`. The only change besides the id and its key move is that the `symphonies` list moved as whole account groups, because the producer orders it by account key.
+
 | File | World and request | sha256 | PM sign-off |
 |---|---|---|---|
 | `golden_ref_closed_frozen_two_accounts.json` | `closed_frozen_two_accounts` | `7316ed589a486b541c272dc5777eb1e5bac2f87560af66a92db305ed1b7f2098` | n/a (producer output) Changed field: `ACCOUNT_ID_REDACTED` replaces the account id and its 8-character prefix. |
