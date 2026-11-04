@@ -272,6 +272,8 @@ def open_page(probe, path: str, *, fragment: str = "") -> None:
             "() => document.querySelectorAll('[data-tab]').length > 0",
             "the Advisor page never rendered its tab bar",
         )
+    elif path == "/login":
+        probe.page.wait_for_selector("#password", timeout=READY_TIMEOUT_MS)
     else:
         raise AssertionError(f"no readiness rule for {path}")
 
