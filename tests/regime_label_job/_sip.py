@@ -100,7 +100,9 @@ class Resp:
 def page_body(closes: dict, next_page_token: str | None = None) -> dict:
     """closes: {ticker: {date: close}} -> a /v2/stocks/bars body."""
     return {
-        "bars": {t: [make_bar(d, c) for d, c in sorted(table.items())] for t, table in closes.items()},
+        "bars": {
+            t: [make_bar(d, c) for d, c in sorted(table.items())] for t, table in closes.items()
+        },
         "next_page_token": next_page_token,
     }
 
@@ -111,9 +113,12 @@ class AlpacaStub:
     no bars is simply absent from the 200 body. `rule(params)` may return a Resp or an
     exception to raise (for a batch-level failure); None means serve normally."""
 
-    def __init__(self, closes: dict, rule=None):
+    def __init__(self, closes: dict, rule=None, *, serve_all: bool = False):
         self.closes = closes
         self.rule = rule
+        self.serve_all = (
+            serve_all  # ignore start/end (a source that returns bars beyond the request)
+        )
         self.calls: list[dict] = []
 
     def __call__(self, url=None, **kwargs):
@@ -134,7 +139,8 @@ class AlpacaStub:
             keep = {
                 d: c
                 for d, c in table.items()
-                if (start is None or bar_dt(d) >= start) and (end is None or bar_dt(d) <= end)
+                if self.serve_all
+                or ((start is None or bar_dt(d) >= start) and (end is None or bar_dt(d) <= end))
             }
             if keep:
                 served[sym] = keep
@@ -162,3 +168,54 @@ def sample_std(values: list[float]) -> float:
     n = len(values)
     mean = sum(values) / n
     return (sum((v - mean) ** 2 for v in values) / (n - 1)) ** 0.5
+
+
+def bar_date(t: str) -> date:
+    """ET calendar date of a bar stamp (independent of the module under test)."""
+    return datetime.fromisoformat(t.replace("Z", "+00:00")).astimezone(ET).date()
+
+
+def closes_from_body(body: dict) -> dict:
+    """{ticker: {date: close}} from a /v2/stocks/bars body."""
+    return {sym: {bar_date(b["t"]): b["c"] for b in bars} for sym, bars in body["bars"].items()}
+
+
+def random_returns(n: int, seed: int, scale: float = 0.01) -> list[float]:
+    import random
+
+    rng = random.Random(seed)
+    return [rng.uniform(-scale, scale) for _ in range(n)]
+
+
+def window_candidates(session: date) -> list[date]:
+    """The 31 sessions an implementation must consider for D: the 30 strictly before it plus one."""
+    last = session - timedelta(days=1)
+    while not market_calendar.is_trading_day(last):
+        last -= timedelta(days=1)
+    return sessions_ending(last, 31)
+
+
+def oracle_window(holdings, closes, session: date, newest_eligible: date, take: int = 20):
+    """Independent reference: [(session, return)] for the `take` most recent computable sessions
+    among the 30 before `session`. A session is computable when every holding has a close on it and
+    on the session before it, and the session is not later than `newest_eligible`. No default fill."""
+    sess = window_candidates(session)
+    out = []
+    for i in range(1, len(sess)):
+        s, prev = sess[i], sess[i - 1]
+        if s > newest_eligible:
+            continue
+        if all(
+            s in closes.get(h["ticker"], {}) and prev in closes.get(h["ticker"], {})
+            for h in holdings
+        ):
+            out.append(
+                (
+                    s,
+                    sum(
+                        h["allocation"] * (closes[h["ticker"]][s] / closes[h["ticker"]][prev] - 1.0)
+                        for h in holdings
+                    ),
+                )
+            )
+    return out[-take:]
