@@ -17,6 +17,7 @@ import copy
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -137,6 +138,7 @@ def authed_client(monkeypatch):
     with app_module.app.test_client() as c:
         with c.session_transaction() as session:
             session["authenticated"] = True
+            session["issued_at_ns"] = time.time_ns()
         yield c
 
 

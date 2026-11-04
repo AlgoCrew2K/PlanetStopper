@@ -40,6 +40,28 @@ def _record(name: str) -> dict:
     return json.loads((RECORDS / name).read_text(encoding="utf-8"))
 
 
+# The three changes the dashboard-session work makes to the recorded base, and nothing else.
+_LOGOUT_RULE = "/logout"
+_LOGOUT_ENDPOINT = "logout"
+_REVOCATION_MIGRATION = "040_dashboard_session_revocation.sql"
+_PREVIOUS_MIGRATION = "039_close_account_totals.sql"
+_REVOCATION_TABLE = "dashboard_session_revocation"
+_AUTHORIZED_DELTAS = (
+    "the /logout rule gains POST (a CSRF-checked sign-out from the confirm page)",
+    "the logout endpoint leaves the auth-exempt set (the hook alone decides session validity)",
+    f"{_REVOCATION_MIGRATION} adds the {_REVOCATION_TABLE} table (one revocation row)",
+)
+
+
+def _rules_with_logout_post(rules: list) -> list:
+    changed = []
+    for rule, methods, endpoint, strict in rules:
+        if rule == _LOGOUT_RULE and endpoint == _LOGOUT_ENDPOINT:
+            methods = sorted({*methods, "POST"})
+        changed.append([rule, methods, endpoint, strict])
+    return changed
+
+
 def _difference(label: str, got: list, ref: list) -> str:
     added = [x for x in got if x not in ref]
     removed = [x for x in ref if x not in got]
@@ -56,10 +78,13 @@ class TestUrlMapAndHooks:
         return _record("url_map.json")
 
     def test_every_rule_method_and_endpoint(self, now, ref):
-        assert now["rules"] == ref["rules"], _difference("rules", now["rules"], ref["rules"])
+        expected = _rules_with_logout_post(ref["rules"])
+        assert now["rules"] == expected, _difference("rules", now["rules"], expected)
 
     def test_the_auth_exempt_endpoints(self, now, ref):
-        assert now["auth_exempt_endpoints"] == ref["auth_exempt_endpoints"]
+        expected = [e for e in ref["auth_exempt_endpoints"] if e != _LOGOUT_ENDPOINT]
+        assert _LOGOUT_ENDPOINT in ref["auth_exempt_endpoints"], "the record's premise"
+        assert now["auth_exempt_endpoints"] == expected
 
     def test_the_settings_write_allowlist(self, now, ref):
         assert now["settings_write_allowlist"] == ref["settings_write_allowlist"]
@@ -93,20 +118,35 @@ class TestSchema:
     def ref(self) -> dict:
         return _record("schema.json")
 
-    def test_the_migration_files_are_the_bases(self, now, ref):
-        assert now["migration_file_digests"] == ref["migration_file_digests"], _difference(
+    def test_the_migration_files_are_the_bases_plus_the_revocation_migration(self, now, ref):
+        files = dict(now["migration_file_digests"])
+        assert _REVOCATION_MIGRATION in files, f"{_REVOCATION_MIGRATION} is not on disk"
+        del files[_REVOCATION_MIGRATION]
+        assert files == ref["migration_file_digests"], _difference(
             "migration files",
-            sorted(now["migration_file_digests"].items()),
+            sorted(files.items()),
             sorted(ref["migration_file_digests"].items()),
         )
 
-    def test_the_migration_order_is_the_bases(self, now, ref):
-        assert now["migration_order"] == ref["migration_order"]
+    def test_the_migration_order_is_the_bases_with_the_revocation_migration_after_039(
+        self, now, ref
+    ):
+        order = list(now["migration_order"])
+        assert _REVOCATION_MIGRATION in order, "040 is not registered in _MIGRATION_FILES"
+        assert order.index(_REVOCATION_MIGRATION) == order.index(_PREVIOUS_MIGRATION) + 1
+        order.remove(_REVOCATION_MIGRATION)
+        assert order == ref["migration_order"]
 
-    def test_every_table_and_index_has_the_bases_sql(self, now, ref):
+    def test_every_table_and_index_has_the_bases_sql_plus_the_revocation_table(self, now, ref):
         got = [tuple(r) for r in now["sqlite_master"]]
         want = [tuple(r) for r in ref["sqlite_master"]]
-        assert got == want, _difference("sqlite_master entries", got, want)
+        added = [r for r in got if r not in want]
+        assert [r[1] for r in added] == [_REVOCATION_TABLE] and added[0][0] == "table", _difference(
+            "sqlite_master entries", got, want
+        )
+        assert [r for r in got if r not in added] == want, _difference(
+            "sqlite_master entries", got, want
+        )
 
     def test_the_record_is_not_empty(self, ref):
         assert len(ref["sqlite_master"]) > 20 and ref["migration_file_digests"]

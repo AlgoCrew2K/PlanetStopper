@@ -432,6 +432,24 @@ def test_post_settings_rejects_a_model_override_knob_and_leaves_the_env_file_unc
     assert knob not in app_module._SETTINGS_WRITE_ALLOWLIST
 
 
+def test_post_settings_rejects_the_session_lifetime_key_and_leaves_the_env_file_unchanged(
+    client, real_env_file, _stub_database
+):
+    """The session lifetime is operator configuration made in .env, never through the dashboard."""
+    before = real_env_file.read_bytes()
+
+    resp = client.post(
+        "/api/settings",
+        json={"globals": {"DASHBOARD_SESSION_LIFETIME_HOURS": "720"}, "symphonies": {}},
+    )
+
+    assert resp.status_code == 400
+    assert "Rejected keys not in settings allowlist" in resp.get_json()["message"]
+    assert "DASHBOARD_SESSION_LIFETIME_HOURS" in resp.get_json()["message"]
+    assert real_env_file.read_bytes() == before
+    assert "DASHBOARD_SESSION_LIFETIME_HOURS" not in app_module._SETTINGS_WRITE_ALLOWLIST
+
+
 @pytest.mark.parametrize("knob", _MODEL_OVERRIDE_KNOBS)
 def test_post_settings_writes_nothing_when_a_model_knob_rides_with_an_allowed_key(
     knob, client, real_env_file, _stub_database

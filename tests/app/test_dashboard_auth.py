@@ -360,21 +360,68 @@ class TestLoginFlow:
 
 
 class TestLogout:
-    """GET /logout clears the session and sends back to /login."""
+    """GET /logout shows a confirm page and ends nothing; POST /logout ends the session."""
 
-    def test_logout_clears_session_and_redirects(self, auth_client_authed):
-        """AC-11: GET /logout → session cleared + redirect to /login."""
+    def test_get_logout_renders_the_confirm_page(self, auth_client_authed):
         resp = auth_client_authed.get("/logout", follow_redirects=False)
-        assert resp.status_code in (302, 303), (
-            f"GET /logout must redirect (302/303), got {resp.status_code}"
+        assert resp.status_code == 200, (
+            f"GET /logout must answer the confirm page (200), got {resp.status_code}"
         )
-        assert "/login" in resp.headers.get("Location", ""), "GET /logout must redirect to /login"
+        page = resp.get_data(as_text=True)
+        assert "Sign out of Planet Stopper?" in page
+        assert "Planet Stopper" in page and "login-card" in page
+        assert re.search(r"<title>[^<]*Sign Out[^<]*</title>", page)
+        form = re.search(r"<form[^>]*>", page)
+        assert form, "the confirm page has no form"
+        assert 'id="logout-form"' in form.group(0)
+        assert 'action="/logout"' in form.group(0) and 'method="post"' in form.group(0).lower()
+        button = re.search(r'<button[^>]*data-testid="logout-btn"[^>]*>(.*?)</button>', page, re.S)
+        assert button and button.group(1).strip() == "Sign out"
 
-    def test_after_logout_protected_route_redirects_again(self, auth_client_authed):
-        """AC-11: After logout, subsequent protected request → 302 to /login."""
-        auth_client_authed.get("/logout", follow_redirects=True)
-        resp = auth_client_authed.get("/", follow_redirects=False)
-        assert resp.status_code == 302, "After logout, GET / must redirect to /login again"
+    def test_the_confirm_page_has_no_password_field_and_no_form_token(self, auth_client_authed):
+        page = auth_client_authed.get("/logout").get_data(as_text=True)
+        assert 'type="password"' not in page and 'id="password"' not in page
+        assert 'name="csrf_token"' not in page, (
+            "the form-field channel stays login-only: the confirm page sends its token in a header"
+        )
+
+    def test_the_confirm_page_loads_the_request_guard_then_the_logout_script_and_has_no_inline_script(
+        self, auth_client_authed
+    ):
+        page = auth_client_authed.get("/logout").get_data(as_text=True)
+        sources = re.findall(r'<script[^>]*\ssrc="([^"]+)"', page)
+        names = [s.split("/static/", 1)[1].split("?", 1)[0] for s in sources if "/static/" in s]
+        assert "request_guard.js" in names and "logout_confirm.js" in names, names
+        assert names.index("request_guard.js") < names.index("logout_confirm.js")
+        inline = [m for m in re.findall(r"<script([^>]*)>", page) if " src=" not in " " + m]
+        assert inline == [], "the POST must live in a static script, not in the template"
+
+    def test_the_confirm_page_has_a_hidden_alert_slot_for_a_refusal(self, auth_client_authed):
+        page = auth_client_authed.get("/logout").get_data(as_text=True)
+        slot = re.search(r'<div[^>]*data-testid="logout-message"[^>]*>', page)
+        assert slot, "no data-testid=logout-message slot"
+        assert "hidden" in slot.group(0) and 'role="alert"' in slot.group(0)
+
+    def test_get_logout_ends_no_session(self, auth_client_authed):
+        resp = auth_client_authed.get("/logout")
+        assert resp.status_code == 200
+        assert auth_client_authed.get("/api/accounts").status_code == 200, (
+            "GET /logout must not sign anyone out: a link or image could trigger it"
+        )
+
+    def test_post_logout_redirects_to_login_and_ends_the_session(self, auth_client_authed):
+        resp = auth_client_authed.post("/logout", follow_redirects=False)
+        assert resp.status_code in (302, 303), (
+            f"POST /logout must redirect (302/303), got {resp.status_code}"
+        )
+        assert resp.headers.get("Location", "").endswith("/login")
+        after = auth_client_authed.get("/", follow_redirects=False)
+        assert after.status_code == 302 and "/login" in after.headers.get("Location", "")
+
+    def test_after_logout_the_redirect_target_is_the_login_form(self, auth_client_authed):
+        resp = auth_client_authed.post("/logout", follow_redirects=True)
+        assert resp.status_code == 200
+        assert 'action="/login"' in resp.get_data(as_text=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1180,7 +1227,7 @@ class TestSecurity:
         """
         monkeypatch.setenv("DASHBOARD_PASSWORD", _TEST_PASSWORD)
         monkeypatch.setenv("SECRET_KEY", _TEST_SECRET_KEY)
-        expected = frozenset({"login", "logout", "static", "get_csrf_token", "health"})
+        expected = frozenset({"login", "static", "get_csrf_token", "health"})
         actual = app_module._AUTH_EXEMPT_ENDPOINTS
         assert actual == expected, (
             f"_AUTH_EXEMPT_ENDPOINTS must be exactly {expected!r}; "

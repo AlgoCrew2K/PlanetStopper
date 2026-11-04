@@ -32,6 +32,7 @@ import copy
 import inspect
 import logging
 import threading
+import time
 from datetime import datetime
 
 import pytest
@@ -615,6 +616,7 @@ class TestAnUnauthenticatedRequestIsRefused:
         calls, _ = refusal_world
         with client.session_transaction() as session:
             session["authenticated"] = True
+            session["issued_at_ns"] = time.time_ns()
 
         response = _post(client, headers=XHR)
 
