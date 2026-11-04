@@ -264,6 +264,9 @@ class TestSlotsThatRaise:
         try:
             loop.join(timeout=LOOP_JOIN_S)
             loop_ended_in_time = not loop.is_alive()
+            # Engine threads end their run with a refresh attempt; let them make it while the
+            # first refresh is still held, so it finds that one in flight.
+            join_engine_threads()
         finally:
             composer_total_stats.release.set()
             loop.join(timeout=SETTLE_S)
@@ -278,7 +281,6 @@ class TestSlotsThatRaise:
         assert outcome["composer_still_held"], (
             "the loop ended only after the held Composer call returned"
         )
-        join_engine_threads()
 
         assert stub_engine.starts == 2
         assert composer_total_stats.call_count == 1, (
