@@ -1,0 +1,28 @@
+{
+  "captured_at_et": "16:00:01 ET",
+  "data_as_of": "16:00 ET",
+  "portfolio_strip": {
+    "cumulative_return": {
+      "dry_run": 32.0365752021628,
+      "if_held": 27.613466260114887
+    },
+    "max_drawdown": {
+      "dry_run": 13.199659768545535,
+      "if_held": 14.638172564146402,
+      "if_held_lifetime": 26.363437645566684,
+      "n_obs": 87
+    },
+    "today_change": {
+      "dry_run": -3.836214882165558,
+      "if_held": -5.064515905484012
+    }
+  },
+  "shadow_divergence": {
+    "by_symphony": {
+      "5XjzXjdGnjh99MIsdM97": -0.43000000000000016,
+      "nOyb55RMGVCKPiYXv7TI": 0.61
+    },
+    "portfolio": -1.2283010233184548
+  },
+  "trading_day": "2026-10-21"
+}

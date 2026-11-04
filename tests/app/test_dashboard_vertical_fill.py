@@ -12,7 +12,6 @@ These tests assert the Studio design contract for vertical fill:
   - page-wrap CSS uses max-width: 100% (not a narrow cap)
   - cards-grid CSS is defined (grid layout for symphony tiles)
   - No legacy fixed-height caps (min-h-[750px], max-height inline style)
-  - table_partial.html no longer has the max-height inline style that capped the table
 
 Static HTML source checks — Pytest cannot verify rendered pixel height.
 """
@@ -24,7 +23,6 @@ import re
 
 _WORKTREE = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _WORKTREE / "templates" / "index.html"
-_TABLE_PARTIAL = _WORKTREE / "templates" / "table_partial.html"
 
 
 class TestBodyIsFlexColumn:
@@ -148,23 +146,4 @@ class TestTableCardFlexGrow:
             'data-testid="active-section", data-testid="standby-section", '
             'or data-testid="sym-card" elements; '
             "the old id='accounts-container' was replaced by per-card section layout"
-        )
-
-
-class TestTablePartialMaxHeightRemoved:
-    """The per-account table scroll div must no longer carry the max-height cap."""
-
-    def test_table_partial_has_no_max_height_inline_style(self):
-        """
-        The max-height inline style in table_partial.html was the primary per-table
-        height ceiling (calc(48px + (var(--max-rows, 10) * 49px))).  It must be removed;
-        vertical expansion is now handled by the flex-1 accounts-container.
-        """
-        html = _TABLE_PARTIAL.read_text(encoding="utf-8")
-
-        assert "max-height" not in html, (
-            "table_partial.html must not contain a max-height inline style; "
-            "the old 'max-height: calc(48px + (var(--max-rows, 10) * 49px))' was capping "
-            "each account table vertically. Remove it — the outer accounts-container now "
-            "owns vertical scroll."
         )

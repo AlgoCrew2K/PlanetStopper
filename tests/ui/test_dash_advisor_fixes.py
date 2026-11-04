@@ -1,11 +1,10 @@
 """
-RED tests — dash-fix cycle (AC-1 / AC-2 / AC-3a / AC-3b / AC-4 / node --check).
+RED tests — dash-fix cycle (AC-1 / AC-2 / AC-3a / AC-4 / node --check).
 
 AC-1  GET /ai-advisor renders the capability nav linking to all four sub-routes.
 AC-2  Advisor card action buttons do not overflow card bounds at 1440/1024/768.
       (Extends tests/ui/test_advisor_card_overflow.py — new overflow shape.)
 AC-3a index.js reads sym.symphony_vol for the detail-panel vol row (not sym.volatility/sym.vol).
-AC-3b table_partial MDD column renders percent-scale values without ×100 inflation.
 AC-4  Every ACCEPTABLE suggestion card (asset-swaps + logic-changes) renders a
       visible "Chat about this" button that links to /ai-advisor/chat with scoping params.
 
@@ -308,129 +307,6 @@ class TestAC3aVolFieldName:
         assert "sym.symphony_vol" in body, (
             "index.js riskMathRows does not read sym.symphony_vol. "
             "Fix: read sym.symphony_vol as the primary source for the vol row."
-        )
-
-
-# ---------------------------------------------------------------------------
-# AC-3b — table_partial MDD column must NOT multiply by 100
-# ---------------------------------------------------------------------------
-
-
-class TestAC3bMddColumnNotInflated:
-    """table_partial.html MDD column must render percent-scale values directly.
-
-    analytics.get_symphony_max_drawdown returns PERCENT-scale floats
-    (e.g. -17.35 means 17.35% drawdown).  table_partial.html:158-159 incorrectly
-    applies * 100, producing inflated values like 1735%.
-
-    The index.html card footer (line 1092) correctly uses the value WITHOUT * 100,
-    confirming the contract: the analytics function already returns percent scale.
-
-    Tests use a Flask test client + Jinja2 render_template to verify the
-    template output for a known MDD fixture value.
-    """
-
-    # Percent-scale MDD fixture: -17.35% drawdown.
-    # Expected rendered string: "-17.35%" (or "17.35%").
-    # Bug renders: "-1735.00%" (after * 100).
-    _MDD_PERCENT_SCALE = -17.35
-
-    def _render_table_partial(self, mdd_dry_run: float, mdd_if_held: float) -> str:
-        """Render table_partial.html via the Flask app's Jinja env with a known MDD fixture."""
-        import app as _app
-
-        # Construct a minimal accounts_map with one account + one symphony.
-        # Include all fields accessed by table_partial.html to avoid Jinja2
-        # UndefinedError on attribute access (e.g. sym.mc_prob, sym.stop_trigger).
-        sym = {
-            "id": "test_sym",
-            "name": "Test Symphony",
-            "position": 0.9,
-            "armed": True,
-            "triggered": False,
-            "para_armed": False,
-            "tp_armed": False,
-            "breakeven_locked": False,
-            "current_return": 5.0,
-            "current_value": 100000.0,
-            "mc_prob": 62.5,
-            "stop_trigger": -8.0,
-            "shadow_hwm": 6.2,
-            "below_stop_count": 0,
-            "above_tp_count": 0,
-            "triggered_reason": None,
-            "triggered_at_return": None,
-            "triggered_at_hwm": None,
-            "triggered_at_stop": None,
-            "triggered_at_time": None,
-            "last_trigger": None,
-            "is_live": False,
-            # _mdd is percent-scale (as returned by analytics.get_symphony_max_drawdown).
-            "_mdd": {"dry_run": mdd_dry_run, "if_held": mdd_if_held},
-            "_tc": {"dry_run": 0.5, "if_held": 0.4},
-            "_cr": {"dry_run": 5.0, "if_held": 4.8},
-        }
-        accounts_map = {"acc_test": [sym]}
-        account_labels = {"acc_test": "Test Account"}
-
-        with _app.app.app_context():
-            from flask import render_template as _render
-
-            return _render(
-                "table_partial.html",
-                accounts_map=accounts_map,
-                account_labels=account_labels,
-                sort_col="name",
-                sort_dir="asc",
-                data_as_of="12:00 ET",
-            )
-
-    def test_table_mdd_column_does_not_show_x100_inflated_value(self):
-        """table_partial MDD column must not multiply percent-scale MDD by 100.
-
-        Given _mdd.dry_run = -17.35 (percent scale, as returned by analytics),
-        the rendered cell must show approximately '-17.35%', not '-1735.00%'.
-        """
-        html = self._render_table_partial(
-            mdd_dry_run=self._MDD_PERCENT_SCALE,
-            mdd_if_held=self._MDD_PERCENT_SCALE * 0.9,
-        )
-        # The inflated value would be ~1735; assert it is NOT present.
-        assert "1735" not in html, (
-            "table_partial.html MDD column shows an inflated value (~1735%). "
-            "analytics.get_symphony_max_drawdown already returns percent scale. "
-            "Fix: remove the * 100 at table_partial.html:158-159."
-        )
-
-    def test_table_mdd_column_shows_correct_percent_scale_value(self):
-        """table_partial MDD column must render the percent-scale value directly.
-
-        Given _mdd.dry_run = -17.35, the rendered cell must contain '17.35'.
-        (The sign may be absorbed by formatting; we test the magnitude string.)
-        """
-        html = self._render_table_partial(
-            mdd_dry_run=self._MDD_PERCENT_SCALE,
-            mdd_if_held=self._MDD_PERCENT_SCALE * 0.9,
-        )
-        assert "17.35" in html, (
-            "table_partial.html MDD column does not show '17.35' for an input of "
-            f"{self._MDD_PERCENT_SCALE}. Expected direct percent rendering. "
-            "Fix: remove * 100 at table_partial.html:158-159."
-        )
-
-    def test_table_mdd_column_source_code_has_no_x100_multiplication(self):
-        """table_partial.html source must not multiply _mdd values by 100.
-
-        Direct source check to make the failure immediately actionable.
-        """
-        template_path = _WORKTREE_ROOT / "templates" / "table_partial.html"
-        src = template_path.read_text(encoding="utf-8")
-        # The bug pattern: mdd_dr * 100 or mdd_ih * 100 in the mdd_*_str assignments.
-        bug_pattern = re.search(r"mdd_[di][rh]\s*\*\s*100", src)
-        assert bug_pattern is None, (
-            f"table_partial.html still contains MDD × 100 multiplication: "
-            f"'{bug_pattern.group(0)}'. "
-            "Remove * 100 from the mdd_dr_str and mdd_ih_str assignments (lines 158-159)."
         )
 
 

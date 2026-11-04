@@ -1,38 +1,12 @@
 """
-RED tests -- F7 AC-3: the MC Prob tooltip truth correction.
+The MC Prob statistic is never described as "probability this symphony beats SPY".
 
-Cycle context (feature-plans/math-f7.md + team-lead's LOCKED ruling,
-2026-07-18)
----------------------------------------------------------------------------
-The MC Prob column's tooltip (``templates/table_partial.html:46``) claims
-the statistic is "probability this symphony beats SPY over the simulation
-horizon" -- flatly wrong. f7-dash traced the real mechanism
-(math_engine.py: the CONFIRM/trigger gate at ``compute_exit_confirmation``
-fires on a HIGH reading confirming underperformance vs the symphony's own
-regime-matched historical baseline; the separate TAKE-PROFIT gate at
-``compute_tp_confirmation`` arms on a LOW reading of that SAME statistic --
-two mechanisms, opposite directions, same stat -- so no single directional
-clause can be truthful). Team-lead's ruling: ship the corrected FIRST
-sentence only, with NO directional "low/high arms X" second sentence.
-
-LOCKED CONTRACT (team-lead, verbatim)
---------------------------------------
-Exact text required at ``templates/table_partial.html:46``:
-
-    "Monte Carlo probability this symphony underperforms its own
-    regime-matched historical baseline."
-
-Plus: ZERO occurrences of "beats SPY" (case-insensitive) anywhere under
-``templates/`` or ``static/`` (repo-wide sweep, not just the one file).
-``.design-handoff/`` is explicitly scoped OUT (verified unreachable --
-``app.py`` uses ``Flask(__name__)`` with no ``template_folder`` /
-``static_folder`` override, confirmed independently by both f7-dash and
-f7-test) and is therefore excluded from the sweep by construction (it sits
-outside both directories).
-
-RED STATUS (HEAD a904374d, no F7 code yet)
--------------------------------------------
-Both tests are RED: the current tooltip text is the old "beats SPY" claim.
+The statistic gates the trailing-stop CONFIRM (a high reading confirms underperformance against
+the symphony's own regime-matched historical baseline) and the take-profit ARM (a low reading of
+the same statistic), two mechanisms in opposite directions, so no wording that says it measures
+beating SPY is truthful. A sweep over every file under ``templates/`` and ``static/`` finds none.
+``.design-handoff/`` sits outside both directories and is not a live-serving surface (``app.py``
+uses ``Flask(__name__)`` with no ``template_folder`` or ``static_folder`` override).
 """
 
 from __future__ import annotations
@@ -40,32 +14,6 @@ from __future__ import annotations
 import pathlib
 
 _REPO_ROOT = pathlib.Path(__file__).parent.parent.parent
-_TABLE_PARTIAL = _REPO_ROOT / "templates" / "table_partial.html"
-
-_LOCKED_TOOLTIP_TEXT = (
-    "Monte Carlo probability this symphony underperforms its own "
-    "regime-matched historical baseline."
-)
-
-
-def test_mc_prob_tooltip_matches_locked_exact_text() -> None:
-    """The mc_prob column header's title attribute must contain the
-    team-lead-LOCKED verbatim first sentence -- pinned exactly (a ratified
-    UI-copy contract, not a producer-computed value; see quant-test-writer
-    anti-hardcoding rule, which applies to computed rates/hours/dollars/
-    percents, not fixed copy strings any more than it would forbid
-    asserting a fixed status label like "triggered")."""
-    assert _TABLE_PARTIAL.exists(), "templates/table_partial.html must exist"
-    content = _TABLE_PARTIAL.read_text(encoding="utf-8")
-    assert _LOCKED_TOOLTIP_TEXT in content, (
-        f"AC-3 FAIL: templates/table_partial.html does not contain the "
-        f"LOCKED tooltip text {_LOCKED_TOOLTIP_TEXT!r}. Team-lead ruled "
-        f"first-sentence-only (no directional 'low/high arms X' clause) "
-        f"after f7-dash's trace showed the same statistic gates the "
-        f"trailing-stop CONFIRM (high) and take-profit ARM (low) in "
-        f"opposite directions -- no single directional sentence is "
-        f"truthful."
-    )
 
 
 def test_no_beats_spy_claim_anywhere_under_templates_or_static() -> None:
@@ -91,8 +39,8 @@ def test_no_beats_spy_claim_anywhere_under_templates_or_static() -> None:
                 hits.append(str(path.relative_to(_REPO_ROOT)))
 
     assert not hits, (
-        f"AC-3 FAIL: found 'beats SPY' (case-insensitive) in the following "
+        f"Found 'beats SPY' (case-insensitive) in the following "
         f"live-serving files: {hits!r}. Every occurrence under templates/ "
         f"or static/ must be swept and corrected -- silence on any hit is "
-        f"a finding, per the plan's ADDENDUM."
+        f"a finding."
     )

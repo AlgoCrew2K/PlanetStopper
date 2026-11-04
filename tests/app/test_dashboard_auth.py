@@ -196,6 +196,27 @@ class TestUnauthenticatedAccess:
             f"XHR unauthenticated request must return 401, got {resp.status_code}"
         )
 
+    def test_unauthenticated_state_poll_reads_no_state_and_sends_none(
+        self, auth_client, monkeypatch
+    ):
+        """The state poll refuses before the route runs: the body is the refusal alone and the
+        state store is never read."""
+        import database
+
+        reads: list[str] = []
+
+        def spy(*_args, **_kwargs):
+            reads.append("load_state")
+            return {}
+
+        monkeypatch.setattr(database, "load_state", spy)
+
+        resp = auth_client.get("/api/state", headers={"X-Requested-With": "XMLHttpRequest"})
+
+        assert resp.status_code == 401
+        assert resp.get_json() == {"error": "unauthenticated"}
+        assert reads == [], "the state store was read for an unauthenticated request"
+
     def test_login_get_is_reachable_unauthenticated(self, auth_client):
         """AC-3: GET /login is reachable without auth and returns 200."""
         resp = auth_client.get("/login")
@@ -560,6 +581,10 @@ class TestSecurity:
             "Missing DASHBOARD_PASSWORD must deny access to /; "
             f"got {resp.status_code} with no login redirect"
         )
+        with app_module.app.test_client() as client:
+            poll = client.get("/api/state", headers={"X-Requested-With": "XMLHttpRequest"})
+        assert poll.status_code == 503
+        assert poll.get_json() == {"error": "misconfigured"}
 
     def test_fail_closed_missing_password_login_cannot_succeed(self, monkeypatch):
         """AC-8: When DASHBOARD_PASSWORD is missing, POST /login can never succeed."""
@@ -599,6 +624,10 @@ class TestSecurity:
         assert resp.status_code != 200 or b"login" in resp.get_data(), (
             "Missing SECRET_KEY must cause fail-closed behaviour on GET /"
         )
+        with app_module.app.test_client() as client:
+            poll = client.get("/api/state", headers={"X-Requested-With": "XMLHttpRequest"})
+        assert poll.status_code == 503
+        assert poll.get_json() == {"error": "misconfigured"}
 
     def test_fail_closed_empty_secret_key_denies_all(self, monkeypatch):
         """AC-8: When SECRET_KEY is an empty string, ALL routes are denied."""

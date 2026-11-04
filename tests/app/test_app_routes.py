@@ -9,13 +9,9 @@ surfaces the dashboard touches (``database``, ``subprocess``, ``requests``,
 
 Real-money risk surface — these routes either spawn the engine, trigger
 Composer liquidation, or rewrite operator credentials.  Each test pins the
-*observable* contract (status code, JSON shape, downstream call args, status
-ranking) so that a behaviour-changing refactor cannot pass silently.
+*observable* contract (status code, JSON shape, downstream call args) so that a behaviour-changing refactor cannot pass silently.
 
 Notes:
-- ``get_status_rank`` lives as a nested function inside ``get_state`` and is
-  not patchable from the outside; we assert the *ordering* it produces against
-  fixtures whose ranks span the full domain {0,1,2,3,4,5}.
 - ``/api/sell_account`` MUST reject non-LIVE-mode callers at the route layer.
   When ``LIVE_EXECUTION=False`` the route must return a clear dry-run signal
   (``"live_mode": false, "executed": false`` in the JSON body) and must NOT
@@ -84,95 +80,8 @@ def isolated_env_file(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 1. /api/state — sort-by-status uses the documented status rank
+# 1. /api/state — waiting and error bodies
 # ---------------------------------------------------------------------------
-
-# Status rank mapping confirmed by reading app.py get_status_rank (nested):
-#   triggered + reason "VWAP Breakdown" -> 5
-#   triggered (other reason)            -> 4
-#   para_armed                          -> 3
-#   tp_armed                            -> 2
-#   armed                               -> 1
-#   none                                -> 0
-EXPECTED_RANKS = {
-    "vwap_break": 5,
-    "triggered": 4,
-    "para": 3,
-    "tp": 2,
-    "armed": 1,
-    "idle": 0,
-}
-
-
-def test_api_state_sorts_symphonies_by_status_rank_desc(client, mock_database, monkeypatch):
-    """
-    GET /api/state?sortCol=status&sortDir=desc must return rows ordered by
-    descending status rank.  Pins the rank scale 0..5 (VWAP Breakdown is the
-    highest-severity bucket and must surface first).
-    """
-    # Six symphonies — one per rank bucket — all on the same account so they
-    # share a single ordered list in the response.
-    state = {
-        "sym_idle": {"name": "Idle", "account": "ACC1"},
-        "sym_armed": {"name": "Armed", "account": "ACC1", "armed": True},
-        "sym_tp": {"name": "TP", "account": "ACC1", "tp_armed": True},
-        "sym_para": {"name": "Para", "account": "ACC1", "para_armed": True},
-        "sym_triggered": {
-            "name": "Triggered",
-            "account": "ACC1",
-            "triggered": True,
-            "triggered_reason": "Stop Hit",
-        },
-        "sym_vwap": {
-            "name": "VWAPbreak",
-            "account": "ACC1",
-            "triggered": True,
-            "triggered_reason": "VWAP Breakdown",
-        },
-    }
-    mock_database.load_state.return_value = state
-
-    # Stub dotenv_values + render_template so the route does not touch real env / templates.
-    monkeypatch.setattr(app_module, "dotenv_values", lambda *_a, **_k: {})
-    monkeypatch.setattr(app_module, "render_template", lambda *_a, **_k: "")
-
-    resp = client.get("/api/state?sortCol=status&sortDir=desc")
-    assert resp.status_code == 200
-    body = resp.get_json()
-    assert body["status"] == "active"
-
-    # Reconstruct expected order by computing rank locally from the same scale.
-    def rank(s):
-        if s.get("triggered"):
-            return 5 if s.get("triggered_reason") == "VWAP Breakdown" else 4
-        if s.get("para_armed"):
-            return 3
-        if s.get("tp_armed"):
-            return 2
-        if s.get("armed"):
-            return 1
-        return 0
-
-    # The route returns the raw state dict in `state` AND a rendered html; we
-    # cannot inspect the html (template stubbed out), so we re-derive what the
-    # sort would have produced from the symphonies-by-account map and assert
-    # that the *route did not error*.  The sort itself mutates an internal
-    # accounts_map dict.  To pin ordering we re-run the same comparator on the
-    # state values and assert it produces the 5,4,3,2,1,0 sequence.
-    syms = [v for v in state.values() if isinstance(v, dict)]
-    syms.sort(key=rank, reverse=True)
-    assert [rank(s) for s in syms] == [5, 4, 3, 2, 1, 0]
-
-
-def test_api_state_status_rank_values_are_distinct_and_span_zero_to_five(
-    client, mock_database, monkeypatch
-):
-    """
-    Defensive guard: the rank scale documented in EXPECTED_RANKS must remain a
-    strict permutation of {0,1,2,3,4,5}.  If a future commit collapses two
-    states to the same rank, the dashboard's status column ordering breaks.
-    """
-    assert sorted(EXPECTED_RANKS.values()) == [0, 1, 2, 3, 4, 5]
 
 
 def test_api_state_returns_waiting_when_state_empty(client, mock_database, monkeypatch):
@@ -184,6 +93,7 @@ def test_api_state_returns_waiting_when_state_empty(client, mock_database, monke
     body = resp.get_json()
     assert body["status"] == "waiting"
     assert "message" in body
+    assert "html" not in body
 
 
 def test_api_state_returns_500_on_database_failure(client, mock_database, monkeypatch):
@@ -205,6 +115,8 @@ def test_api_state_returns_500_on_database_failure(client, mock_database, monkey
         "Return a generic message; log detail server-side with exc_info=True."
     )
     assert body["message"], "Error response must include a non-empty generic message"
+    assert body == {"status": "error", "message": "An internal error occurred"}
+    assert "html" not in body
 
 
 # ---------------------------------------------------------------------------

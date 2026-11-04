@@ -488,7 +488,7 @@ class TestSymphoniesIsAdditive:
     """
     Adding 'symphonies' to /api/state must not remove or rename any existing keys.
     The known required existing keys: status, bot_state, state, meta, portfolio_strip,
-    market_state, live_mode, html.
+    market_state, live_mode. The body carries no `html` key.
     """
 
     _EXISTING_KEYS = (
@@ -499,7 +499,6 @@ class TestSymphoniesIsAdditive:
         "portfolio_strip",
         "market_state",
         "live_mode",
-        "html",
     )
 
     def test_existing_keys_still_present(self, client, mock_database, monkeypatch):
@@ -515,6 +514,7 @@ class TestSymphoniesIsAdditive:
                 f"existing key '{key}' must still be present after adding 'symphonies'; "
                 f"got keys: {list(body.keys())}"
             )
+        assert "html" not in body, "the body still carries a table"
 
 
 # ---------------------------------------------------------------------------

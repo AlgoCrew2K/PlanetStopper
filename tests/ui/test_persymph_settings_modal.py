@@ -2,7 +2,7 @@
 RED tests — per-symphony Settings Modal (persymph-fe cycle).
 
 Surfaces covered:
-  AC-1   Gear icon on each symphony card AND table row opens the modal
+  AC-1   Gear icon on each symphony card opens the modal
   AC-2   Effective-mode badge = f(global LIVE_EXECUTION, symphony.live_mode)
            Live (both on) / Dry-run (global on, symph off) /
            Dry-run (global off) caution variant
@@ -40,7 +40,6 @@ import database
 # Constants
 # ---------------------------------------------------------------------------
 
-_TEMPLATES_DIR = __import__("pathlib").Path(__file__).parent.parent.parent / "templates"
 _STATIC_DIR = __import__("pathlib").Path(__file__).parent.parent.parent / "static"
 
 # The 6 autotuner-owned tuning parameters shown read-only in the modal.
@@ -1502,83 +1501,8 @@ def test_confirm_dialog_has_aria_labelledby():
 
 
 # ---------------------------------------------------------------------------
-# PM-directed findings F7 + F8 (2c6c08d audit round)
+# PM-directed finding F8 (2c6c08d audit round)
 # ---------------------------------------------------------------------------
-
-
-# F7 — REQUIRED — AC-1 completion: gear icon missing from table rows
-# AC-1 explicitly requires "each symphony card AND table row".
-# index.html cards were addressed in the initial GREEN; table_partial.html
-# rows were never touched this cycle.
-
-
-def test_table_partial_rows_have_gear_button(client, mock_db_one_symphony, monkeypatch):
-    """F7: The HTMX table-partial route must render a gear button on each symphony row.
-
-    AC-1 requires the gear icon on BOTH cards (index.html) AND table rows
-    (table_partial.html). The table partial is served via a dedicated route
-    (e.g. /api/state or /table-partial) and rendered as an HTMX partial.
-
-    Each row must include a button/element:
-    - wired to openSymphonySettings (onclick or data-action)
-    - carrying data-symphony-id or data-sym-id with the symphony id
-    - identifiable as a gear/settings trigger (⚙, SVG gear, aria-label,
-      data-testid="sym-settings-btn", or class sym-settings-btn)
-
-    PM finding: table_partial.html rows were never touched in the initial
-    GREEN — only index.html cards received the gear icon.
-    """
-    _mock_env(monkeypatch)
-
-    # Check table_partial.html template directly — it must contain gear button markup
-    table_partial = _TEMPLATES_DIR / "table_partial.html"
-    assert table_partial.exists(), (
-        "F7: templates/table_partial.html must exist — it renders symphony table rows"
-    )
-    source = table_partial.read_text(encoding="utf-8")
-
-    # The partial must include a settings trigger wired to openSymphonySettings
-    has_settings_trigger = (
-        "openSymphonySettings" in source
-        or "sym-settings-btn" in source
-        or "symphony-settings" in source.lower()
-        or ("gear" in source.lower() and "symphony" in source.lower())
-    )
-    assert has_settings_trigger, (
-        "F7: table_partial.html table rows must include a gear/settings button "
-        "wired to openSymphonySettings. AC-1 requires the gear icon on both "
-        "symphony cards AND table rows. The table partial was not updated in the "
-        "initial GREEN commit — only index.html cards have the gear button."
-    )
-
-
-def test_table_partial_gear_button_carries_symphony_id(client, mock_db_one_symphony, monkeypatch):
-    """F7: The gear button in table_partial.html must carry the symphony id.
-
-    Without data-symphony-id (or equivalent), the JS modal cannot tell which
-    symphony was opened — a safety hazard for live-mode toggling.
-    """
-    table_partial = _TEMPLATES_DIR / "table_partial.html"
-    if not table_partial.exists():
-        pytest.skip("table_partial.html not found")
-    source = table_partial.read_text(encoding="utf-8")
-
-    if "openSymphonySettings" not in source and "sym-settings-btn" not in source:
-        pytest.skip("Gear button not yet in table_partial.html — covered by F7 blocker test")
-
-    # The gear button must carry a data attribute with the symphony id
-    has_id_attr = (
-        "data-symphony-id" in source
-        or "data-sym-id" in source
-        or "data-sym=" in source
-        or "data-symid" in source
-        or "{{ sym" in source  # Jinja template variable referencing symphony data
-    )
-    assert has_id_attr, (
-        "F7: The gear button in table_partial.html must carry a data-symphony-id "
-        "attribute (or Jinja template expression) so the modal JS knows which "
-        "symphony was opened."
-    )
 
 
 # F8 — HARDENING — live_mode integer out-of-range silent no-op

@@ -215,7 +215,7 @@ class TestEveryOtherFieldIsStillServed:
 
         body = world.poll()
 
-        assert isinstance(body.get("html"), str) or branch != "open", "html"
+        assert "html" not in body, f"{branch}: the body still carries a table"
         for key in ("shadow_divergence", "port_state", "exit_authority"):
             assert key in body, key
         if branch == "open":

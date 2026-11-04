@@ -1,20 +1,19 @@
 """
 RED tests — R15: Shadow Performance banner UX — symphony names + hover-highlight.
 
-Covers eleven contracted changes:
+Covers ten contracted changes:
   1. /api/state shadow_divergence.by_symphony entries include a 'name' field
   2. Shadow Perf banner renders symphony NAME (truncated ≤24 chars + '...')
   3. data-symphony-id attribute present on each Shadow Perf pill
   4. Hover handler wired in index.html JS (mouseenter + setTimeout + mouseleave clear)
   5. .cross-highlighted CSS class defined with distinguishable visual style
-  6. Main-table rows carry data-symphony-id attribute for cross-highlight targeting
   7. index.html Shadow Perf loop references entry.name (not just entry.symphony_id)
   8. Legacy entry without 'name' in bot_state falls back to truncated ID in banner
   9. symphony name longer than 24 chars is truncated with '...' suffix in pill
  10. Full name in tooltip (title attribute) on each Shadow Perf pill
  11. /api/state name field is a non-empty string for active symphonies
 
-All tests parse templates/index.html and templates/table_partial.html as text —
+All tests parse templates/index.html as text —
 no live Composer/Alpaca calls are made.  Flask test_client is used for JSON contract.
 
 Fixture: tests/fixtures/dashboard/r15_shadow_names/shadow_divergence_with_names.json
@@ -43,7 +42,6 @@ _WORKTREE = pathlib.Path(__file__).parent.parent.parent
 _INDEX_HTML = _WORKTREE / "templates" / "index.html"
 # The dashboard primitives (.card-name, .sym-card, ...) are defined once, in the shared sheet.
 _LAYOUT_CSS = _WORKTREE / "static" / "layout.css"
-_TABLE_PARTIAL = _WORKTREE / "templates" / "table_partial.html"
 _FIXTURE = (
     pathlib.Path(__file__).parent.parent
     / "fixtures"
@@ -262,7 +260,7 @@ class TestShadowDivergenceNameField:
 
 
 # ---------------------------------------------------------------------------
-# 2-6. index.html static analysis — Shadow Perf pill rendering + hover JS + CSS
+# 2-5. index.html static analysis — Shadow Perf pill rendering + hover JS + CSS
 # ---------------------------------------------------------------------------
 
 
@@ -490,61 +488,6 @@ class TestCrossHighlightedCss:
             f".sym-card CSS must include border, box-shadow, background, or outline; "
             f"got: {css_body.strip()!r}. "
             "The card must be visually distinct from the page background."
-        )
-
-
-# ---------------------------------------------------------------------------
-# 6. table_partial.html — main-table rows carry data-symphony-id
-# ---------------------------------------------------------------------------
-
-
-class TestMainTableRowAttribute:
-    """
-    Each <tr> in table_partial.html's symphony rows must carry a
-    data-symphony-id attribute so the hover-highlight JS can find it.
-
-    A/C-6: matching row attribute for cross-highlight.
-    """
-
-    def _html(self) -> str:
-        return _TABLE_PARTIAL.read_text(encoding="utf-8")
-
-    def test_symphony_table_rows_have_data_symphony_id(self):
-        """
-        The per-symphony <tr> element in table_partial.html must include
-        data-symphony-id="{{ sym.id }}" (or equivalent Jinja expression).
-        """
-        html = self._html()
-
-        has_attr = re.search(
-            r'data-symphony-id\s*=\s*["\']?\{\{[^}]+\}\}["\']?|'
-            r"data-symphony-id\s*=",
-            html,
-        )
-        assert has_attr, (
-            "table_partial.html <tr> for each symphony must include a "
-            'data-symphony-id attribute (e.g., data-symphony-id="{{ sym.id }}"); '
-            "A/C-6: hover-highlight JS looks up the row by this attribute. "
-            "Without it, querySelector('[data-symphony-id=...]') returns null."
-        )
-
-    def test_symphony_table_row_data_attribute_uses_sym_id(self):
-        """
-        The data-symphony-id value must be the symphony's id field — not the
-        truncated name or account — so it matches the pill's data-symphony-id.
-        """
-        html = self._html()
-
-        # Must reference sym.id (not sym.name, not sym.account)
-        has_id_ref = re.search(
-            r'data-symphony-id\s*=\s*["\']?\{\{\s*sym\.id\s*\}\}["\']?',
-            html,
-        )
-        assert has_id_ref, (
-            "table_partial.html data-symphony-id must be populated from sym.id "
-            '(e.g., data-symphony-id="{{ sym.id }}"); '
-            "using sym.name would break the pill-to-row lookup because names can "
-            "collide or differ from the IDs used as dict keys."
         )
 
 
