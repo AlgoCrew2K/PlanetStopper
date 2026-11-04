@@ -1,0 +1,20 @@
+{
+  "body": {
+    "message": "subscription does not permit querying recent SIP data"
+  },
+  "captured_at_utc": "2026-11-04T02:51:16Z",
+  "request": {
+    "headers": "APCA-API-KEY-ID and APCA-API-SECRET-KEY sent; values not recorded",
+    "method": "GET",
+    "params": {
+      "adjustment": "split",
+      "end": "2026-11-04T02:46:16Z",
+      "feed": "sip",
+      "start": "2026-10-27",
+      "symbols": "QQQ,DULL",
+      "timeframe": "1Day"
+    },
+    "url": "https://data.alpaca.markets/v2/stocks/bars"
+  },
+  "status": 403
+}
