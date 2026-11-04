@@ -69,7 +69,7 @@ _PINNED_HASHES = {
     # Re-pinned for the one-line close-snapshot builder change (the account-map loop
     # keeps only dict values that carry `name`), the named exception of the
     # refresh-timing close-snapshot cycle; math_engine.py is unchanged.
-    "alpha_bot_execution.py": "a512d874e2d499a0bf6d245bed640d37dba7da5398262ad06f0b667ec0a08992",
+    "alpha_bot_execution.py": "7f6b2df373628aca0281c6007d432c8764ef1050b29ec95c1e45bfd6151a8fec",
     "math_engine.py": "772886ead636e67e2c801339268608b39180d846a749fee924debd27c915de5e",
 }
 
