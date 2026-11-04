@@ -24,8 +24,6 @@ from collections.abc import Callable
 import pytest
 import requests
 
-import database
-import synthetic_history
 from tests.regime_label_job import _sip
 
 KEY_SENTINEL = "PKSENTINELKEYQ9X2M7"
@@ -79,6 +77,8 @@ class JobHarness:
         self.monkeypatch = monkeypatch
         self.sleeps: list[float] = []
         self.http: _sip.AlpacaStub | None = None
+        import synthetic_history  # noqa: PLC0415 -- a conftest imports before DB_PATH is set
+
         monkeypatch.setattr(synthetic_history, "ALPACA_KEY", KEY_SENTINEL)
         monkeypatch.setattr(synthetic_history, "ALPACA_SECRET", SECRET_SENTINEL)
         monkeypatch.setattr(synthetic_history, "ALPACA_BASE_URL", DATA_BASE_URL)
@@ -109,9 +109,14 @@ class JobHarness:
             lambda: entries, clock=clock or (lambda: _sip.JOB_START)
         )
 
+    def _db_path(self) -> str:
+        import database  # noqa: PLC0415 -- see __init__
+
+        return database._db_file()
+
     def rows(self) -> dict[str, tuple[str, str, str]]:
         """{symphony_id: (label, as_of_date, updated_at)} read by SQL from the state database."""
-        conn = sqlite3.connect(database._db_file())
+        conn = sqlite3.connect(self._db_path())
         try:
             found = conn.execute(
                 "SELECT symphony_id, label, as_of_date, updated_at FROM regime_label_cache"
@@ -122,7 +127,7 @@ class JobHarness:
 
     def dump_other_tables(self) -> dict[str, list[tuple]]:
         """Every table's rows except regime_label_cache, for before/after comparison."""
-        conn = sqlite3.connect(database._db_file())
+        conn = sqlite3.connect(self._db_path())
         try:
             tables = [
                 row[0]
