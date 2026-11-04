@@ -117,6 +117,7 @@ class TestRegistrations:
         ("_run_incubation_tick", "days", dtime(3, 30)),
         ("_run_retirement_recommender_tick", "days", dtime(3, 45)),
         ("_start_model_warmup", "days", dtime(4, 15)),
+        ("_run_regime_label_tick", "days", dtime(4, 30)),
     ]
 
     def test_every_slot_is_guarded_registered_once_and_keeps_its_time(self, monkeypatch):
