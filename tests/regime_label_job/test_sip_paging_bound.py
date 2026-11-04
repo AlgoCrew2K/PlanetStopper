@@ -229,14 +229,15 @@ def test_an_empty_or_missing_page_token_ends_the_batch_with_its_bars(job, monkey
     assert len(http.calls) == 1, "no second page is requested"
 
 
-def test_an_integer_page_token_is_sent_as_the_next_page_token(job, monkeypatch):
-    http = Scripted([_ParsedResp(_captured_page(7)), _good_second_page()])
+@pytest.mark.parametrize("token", [7, 7.5, True], ids=["integer", "float", "boolean"])
+def test_a_hashable_non_string_page_token_is_sent_as_the_next_page_token(job, monkeypatch, token):
+    http = Scripted([_ParsedResp(_captured_page(token)), _good_second_page()])
 
     sip = _fetch(job, monkeypatch, http, tickers=_CAPTURED_TICKERS)
 
     assert sip.failed == {}
     assert len(http.calls) == 2
-    assert http.calls[1]["params"]["page_token"] == 7
+    assert http.calls[1]["params"]["page_token"] == token
 
 
 def test_a_token_seen_before_on_the_same_batch_fails_naming_the_repeat(job, monkeypatch):
