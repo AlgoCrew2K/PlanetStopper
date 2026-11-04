@@ -236,7 +236,9 @@ class TestSlotsThatRaise:
         composer_total_stats.hold_timeout_s = HELD_FOR_S
 
         def _before(tick, jobs):
-            join_engine_threads()
+            # A first run still alive here would make the second :00 skip its spawn, so a busy
+            # machine gets the whole settle bound to end it, never the helper's default.
+            assert join_engine_threads(SETTLE_S), "the earlier engine run did not end"
             if tick == 2:
                 # The second :00 must meet a refresh that is really in flight.
                 assert composer_total_stats.started.wait(timeout=SETTLE_S), (
@@ -266,7 +268,7 @@ class TestSlotsThatRaise:
             loop_ended_in_time = not loop.is_alive()
             # Engine threads end their run with a refresh attempt; let them make it while the
             # first refresh is still held, so it finds that one in flight.
-            join_engine_threads()
+            assert join_engine_threads(SETTLE_S), "an engine run did not end"
         finally:
             composer_total_stats.release.set()
             loop.join(timeout=SETTLE_S)
