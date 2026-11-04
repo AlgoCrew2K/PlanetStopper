@@ -3,6 +3,30 @@
 Used by `tests/ui/test_heading_margin_shared_browser.py`. One file of data, `baseline.json`; the script
 that wrote it, `produce_heading_margin_baseline.py`, is committed beside it.
 
+## Re-capture without `.env` (changed field: the Composer-key state of three Advisor tabs)
+
+The record above was first written on a machine whose `.env` held a Composer key: importing the app
+loads that file, `alpha_bot_execution.COMPOSER_KEY_ID` and its neighbours keep what it held, and the
+Asset Swaps, Logic Changes and Strategy Builder tabs test those values (`_has_composer_key()` in each
+engine), so they rendered their key-present form. The producer removed the environment variables but
+not those module values, so the record, and the check that reads the head with none, disagreed in a
+checkout with no `.env` (four Advisor cases of `test_heading_margin_shared_browser.py` failed there).
+`tests/ui/_advisor_browser_support.restore_credential_free_module_state` now puts those values back
+to what an import without `.env` gives; the producer calls it with `setattr` after it removes the
+variables, and `advisor_server` calls it with `monkeypatch.setattr`. The test that finds the full
+set of such values by behaviour is `tests/ui/test_advisor_browser_credential_free_state.py`.
+
+The record was written again by the fixed producer, in a throwaway worktree at the base commit (the
+producer refuses anywhere else) with the fixed producer and `tests/ui/_advisor_browser_support.py`,
+`tests/ui/_heading_margin_capture.py` and `tests/ui/_shell_support.py` copied in from the branch (the
+base predates the last two and their `/login` readiness rule). Run twice, in a worktree with no `.env`
+and in one with a `.env` holding invented credential values (synthetic, none real): the two records were
+equal apart from `captured_at_utc`, and the first of them is the committed file. It differs from the
+previous record in 12 views (the three tabs above at 1440 and 375, light and dark) and four elements
+(540 to 536): the tabs now show their `no-api-key-title` and `no-api-key-body` notice in place of the
+key-present form, the state the check reads. No other view differs. The Time and sha256 above are the
+new record's.
+
 ## Record: `baseline.json` (cases: every page the shared heading rule can reach, plus the two it cannot)
 
 - Source: the real pages loaded in Firefox headless from the in-process server
@@ -13,10 +37,10 @@ that wrote it, `produce_heading_margin_baseline.py`, is committed beside it.
   `git status --porcelain -- static templates app.py` is empty.
 - Producer call, from the repository root of a tree at that state:
   `DB_PATH=<scratch>/state.db ATLAS_CACHE_DB_PATH=<scratch>/atlas.db python tests/fixtures/dashboard/heading_margin_baseline/produce_heading_margin_baseline.py`.
-- Time: `2026-11-04T00:17:53Z` (also `captured_at_utc` in the file). Browser: Firefox `148.0.2`
+- Time: `2026-11-04T16:45:32Z` (also `captured_at_utc` in the file); re-captured (see "Re-capture without `.env`" below). Browser: Firefox `148.0.2`
   (`browser_version` in the file; the check refuses to compare on a different version).
 - sha256 of `baseline.json` (LF line ends, written with `newline="\n"`):
-  `90b68a5e17eb715724cb21ff1f032b0a8110289313242c62b5faff778a0336e9`.
+  `df8f35482e9a291108a21b1fe45002978a9df15ebe316fc3723cb246b3663690`.
 - Determinism: the producer was run repeatedly on the same tree and two consecutive runs gave records equal
   apart from `captured_at_utc`. Two sources of difference were found and removed before this capture: the
   date the History and Performance windows count back from (now pinned, `WINDOW_ANCHOR`), and the wall-clock
@@ -29,7 +53,7 @@ that wrote it, `produce_heading_margin_baseline.py`, is committed beside it.
 - Views: `/`, `/history`, `/performance`, `/login` on load; `/ai-advisor` on load and once per tab after its
   `button[data-tab]` is pressed (8 tabs); `/settings` on load and once per section after its
   `button[data-section]` is pressed (5 sections). Each at 1440x900 and 375x812, in the light and the dark
-  theme: 76 views, 540 elements.
+  theme: 76 views, 536 elements.
 - Elements per view: every element matching `.section-header, .hero-section > *` that the view shows, in
   document order; for `/login` every element of the body (the selector matches nothing there, so the page is
   read whole). Per element: tag, sorted classes, the classes of its parent, whether the shared rule's own
