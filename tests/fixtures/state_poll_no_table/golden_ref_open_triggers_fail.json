@@ -320,6 +320,7 @@
       "current_return_is_reconstructed": false,
       "current_value": 848.63,
       "disarm_confirm_count": 0,
+      "guard_alpha": -0.51,
       "high_water_mark": -999.0,
       "hwm_hold_ticks": 0,
       "id": "nOyb55RMGVCKPiYXv7TI",
@@ -398,7 +399,7 @@
       "vwap_ticks": 0
     }
   },
-  "daemon_started_at": "2026-11-04T00:05:53Z",
+  "daemon_started_at": "2026-11-04T00:13:12Z",
   "dashboard_panels": {
     "cvar": {
       "diagnostic": null,
@@ -858,6 +859,7 @@
       "current_return_is_reconstructed": false,
       "current_value": 848.63,
       "disarm_confirm_count": 0,
+      "guard_alpha": -0.51,
       "high_water_mark": -999.0,
       "hwm_hold_ticks": 0,
       "id": "nOyb55RMGVCKPiYXv7TI",
@@ -986,7 +988,7 @@
       "cr_bot": -15.817649000000008,
       "cr_held": -15.226999999999999,
       "current_return": 0.64,
-      "guard_alpha": null,
+      "guard_alpha": -0.51,
       "id": "nOyb55RMGVCKPiYXv7TI",
       "mc_prob": null,
       "mdd_bot": 0.0,

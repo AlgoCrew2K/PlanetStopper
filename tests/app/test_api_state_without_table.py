@@ -38,10 +38,14 @@ from tests.app._state_poll_worlds import (
     UNKNOWN_ACCOUNT_ID,
     WORLDS,
     StateWorld,
+    closed_frozen_two_accounts,
     comparable,
+    fail_guard_alpha,
     fail_symphony_helpers,
+    fail_triggers,
     golden_path,
     open_two_accounts,
+    seed_captured_exit_trigger,
 )
 
 NULL_LEGS = {"if_held": None, "dry_run": None}
@@ -245,11 +249,17 @@ def test_an_account_no_record_holds_leaves_no_symphony_entry(monkeypatch, tmp_pa
 
 
 def test_a_failed_trigger_read_leaves_every_last_trigger_null(monkeypatch, tmp_path):
-    built = build("open_triggers_fail", monkeypatch, tmp_path)
+    built = open_two_accounts(monkeypatch, tmp_path)
+    seed_captured_exit_trigger()
+    before = built.body()
+    assert symphony_entries(before["state"])[CORPORATE_ID]["last_trigger"] is not None, (
+        "fixture sanity: the stored exit row reaches the symphony's last_trigger"
+    )
+    fail_triggers(monkeypatch)
 
-    body = built.body()
+    after = built.body()
 
-    entries = symphony_entries(body["state"])
+    entries = symphony_entries(after["state"])
     assert entries, "fixture sanity: symphonies served"
     assert all(entry["last_trigger"] is None for entry in entries.values())
 
@@ -258,7 +268,13 @@ def test_a_failed_trigger_read_leaves_every_last_trigger_null(monkeypatch, tmp_p
 def test_a_symphony_whose_analytics_reads_fail_serves_null_legs_and_null_card_figures(
     monkeypatch, tmp_path, exc_type
 ):
-    built = build(f"open_analytics_fail_{exc_type.__name__}", monkeypatch, tmp_path)
+    built = open_two_accounts(monkeypatch, tmp_path)
+    fail_symphony_helpers(
+        monkeypatch,
+        exc_type,
+        symphony_name=built.record["entries"][CORPORATE_ID]["name"],
+        helpers=tuple(helper for _leg, helper in PER_SYMPHONY_HELPERS),
+    )
 
     body = built.body()
 
@@ -267,6 +283,10 @@ def test_a_symphony_whose_analytics_reads_fail_serves_null_legs_and_null_card_fi
         assert entry[leg] == NULL_LEGS, f"{leg} of the failing symphony"
     card = next(c for c in body["symphonies"] if c["id"] == CORPORATE_ID)
     assert all(card[key] is None for key in CARD_LEG_KEYS), "a card figure was not null"
+    differing = differing_keys(comparable(body), comparable(golden_for("open_analytics_fail")))
+    assert not differing, (
+        f"{exc_type.__name__} is served differently from the reference: {differing}"
+    )
 
 
 @pytest.mark.parametrize("exc_type", CAUGHT_EXCEPTIONS, ids=lambda t: t.__name__)
@@ -459,11 +479,15 @@ def test_a_snapshot_without_an_account_map_serves_null(monkeypatch, tmp_path):
 
 
 def test_a_failed_guard_alpha_read_leaves_every_entry_without_guard_alpha(monkeypatch, tmp_path):
-    built = build("closed_guard_alpha_fail", monkeypatch, tmp_path)
+    built = closed_frozen_two_accounts(monkeypatch, tmp_path)
     stored = {e["id"]: e for entries in built.record["accounts_map"].values() for e in entries}
     assert stored[CORPORATE_ID]["triggered"] and stored[FEAVERD_ID]["triggered"], (
         "fixture sanity: triggered entries make the read run"
     )
+    seed_captured_exit_trigger()
+    found = database_module.get_guard_alpha_by_symphony([CORPORATE_ID])
+    assert found.get(CORPORATE_ID) is not None, "fixture sanity: the read would find a figure"
+    fail_guard_alpha(monkeypatch)
 
     body = built.body()
 

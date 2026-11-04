@@ -65,6 +65,38 @@ PER_SYMPHONY_HELPERS = (
 CAUGHT_EXCEPTIONS = (KeyError, TypeError, ValueError)
 
 
+EXIT_TRIGGER_RECORD = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "refresh_timing"
+    / "01-c2"
+    / "exit_trigger_row.json"
+)
+
+
+def seed_captured_exit_trigger() -> int:
+    """Write the captured exit row of the triggered symphony through the real writer.
+
+    The writer assigns a new row id; the record's own id is not written. Returns the new id.
+    """
+    record = json.loads(EXIT_TRIGGER_RECORD.read_text(encoding="utf-8"))
+    row_id = database_module.record_exit_trigger(
+        symphony_id=record["symphony_id"],
+        account_id=record["account_id"],
+        triggered_reason=record["triggered_reason"],
+        at_return=record["at_return"],
+        gate_state_json=record["gate_state_json"],
+        cycle_id=record["cycle_id"],
+        ts_utc=record["ts_utc"],
+        ts_et=record["ts_et"],
+        math_mode=record["math_mode"],
+        port_trigger_id=record["port_trigger_id"],
+        also_true=json.loads(record["also_true_json"]),
+    )
+    assert row_id is not None, "the exit row was not written"
+    return row_id
+
+
 def load_derived(name: str) -> dict:
     return json.loads((FIXTURE_FOLDER / name).read_text(encoding="utf-8"))
 
@@ -226,26 +258,26 @@ def open_with_snapshot_key(monkeypatch, tmp_path) -> StateWorld:
 
 
 def open_triggers_fail(monkeypatch, tmp_path) -> StateWorld:
+    """An exit of the day is stored, and the trigger read fails."""
     built = open_two_accounts(monkeypatch, tmp_path)
+    seed_captured_exit_trigger()
     fail_triggers(monkeypatch)
     built.name = "open_triggers_fail"
     return built
 
 
-def _analytics_fail(exc_type: type[Exception]):
-    def build(monkeypatch, tmp_path) -> StateWorld:
-        built = open_two_accounts(monkeypatch, tmp_path)
-        fail_symphony_helpers(
-            monkeypatch,
-            exc_type,
-            symphony_name=built.record["entries"][CORPORATE_ID]["name"],
-            helpers=tuple(helper for _key, helper in PER_SYMPHONY_HELPERS),
-        )
-        built.name = f"open_analytics_fail_{exc_type.__name__}"
-        built.notes["failing_id"] = CORPORATE_ID
-        return built
-
-    return build
+def open_analytics_fail(monkeypatch, tmp_path) -> StateWorld:
+    """Every per-symphony analytics read raises KeyError for one symphony (Corporate Chaos)."""
+    built = open_two_accounts(monkeypatch, tmp_path)
+    fail_symphony_helpers(
+        monkeypatch,
+        KeyError,
+        symphony_name=built.record["entries"][CORPORATE_ID]["name"],
+        helpers=tuple(helper for _key, helper in PER_SYMPHONY_HELPERS),
+    )
+    built.name = "open_analytics_fail"
+    built.notes["failing_id"] = CORPORATE_ID
+    return built
 
 
 def open_prev_return_cases(monkeypatch, tmp_path) -> StateWorld:
@@ -303,8 +335,10 @@ def closed_no_accounts_map(monkeypatch, tmp_path) -> StateWorld:
 
 
 def closed_guard_alpha_fail(monkeypatch, tmp_path) -> StateWorld:
-    """Both captured entries of the first account are triggered, so the read runs."""
+    """Both captured entries of the first account are triggered and an exit row of one is stored,
+    so the read would find a figure; it fails instead."""
     built = closed_frozen_two_accounts(monkeypatch, tmp_path)
+    seed_captured_exit_trigger()
     fail_guard_alpha(monkeypatch)
     built.name = "closed_guard_alpha_fail"
     return built
@@ -362,9 +396,7 @@ WORLDS: dict[str, Callable[..., StateWorld]] = {
     "open_two_accounts": open_two_accounts,
     "open_with_snapshot_key": open_with_snapshot_key,
     "open_triggers_fail": open_triggers_fail,
-    "open_analytics_fail_KeyError": _analytics_fail(KeyError),
-    "open_analytics_fail_TypeError": _analytics_fail(TypeError),
-    "open_analytics_fail_ValueError": _analytics_fail(ValueError),
+    "open_analytics_fail": open_analytics_fail,
     "open_prev_return_cases": open_prev_return_cases,
     "open_panels_fail": open_panels_fail,
     "closed_no_snapshot_two_accounts": closed_no_snapshot_two_accounts,
