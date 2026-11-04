@@ -11558,3 +11558,43 @@ Source: `7d974a05cdc5-FIX-BATCH-5.md` and `code-reviewer.json` CR-1 to CR-4 in t
 ### Tests and review
 
 GREEN e3033871; stale-test fixes 371e1cef. CI 41509820934 green at ba850ea3 (25559 passed, the PM's supplied run). The open-market capture at ba850ea3 was read by the PM.
+
+---
+
+## dead-table-partial: state poll serves no table, first-heading margin rule defined once (2026-11-03)
+
+Source: `feature-plans/dead-table-partial-and-header-css.md` and its approach document. Reviewed head `f3a699965cca`, base `758f7f95`. Frozen: `alpha_bot_execution.py`, `math_engine.py` (no diff against the base). The rulings are [PM-ASSUMED].
+
+### Defect
+
+`GET /api/state` rendered `templates/table_partial.html` into an `html` key on two paths (the close-snapshot branch and the live branch) and sorted the account lists by `sortCol` and `sortDir`. Its only client, `static/index.js` `loadState`, never read `html`. `DE-MATH-F7-001` backlog items 1 (the template is an orphaned render path) and 2 (its `openChartModal` button has no handler) had recorded this without a decision. Four page templates each also defined the same `.hero-section > .section-header:first-child` zero top margin inline.
+
+### Fix
+
+- `templates/table_partial.html` is deleted. `get_state()` no longer renders it, sends `html`, or reads `sortCol` and `sortDir`. The close-snapshot branch keeps an in-place name sort of each `accounts_map` list and the frozen defaults fill; the live branch keeps the `id` and `normalized_name` stamping. The `static/settings-modal.js` header comment no longer names the template.
+- The first-heading margin rule moved from four templates into `static/layout.css` once.
+- This closes `DE-MATH-F7-001` backlog items 1 and 2 (delete chosen over rewire; the dead button goes with the file).
+- This supersedes `feature-plans/refresh-timing/01-server-state-truth.md` NB-2 and Q-4 for the `html` key only; the rest of that plan is unchanged.
+- The branch also lands the shipped model-unpin plan set (`feature-plans/model-unpin*`) and a 2-row cleanup of `tests/fixtures/anthropic/PROVENANCE.md`, which had not reached main.
+
+### Measured
+
+On a production-DB copy in the closed (`closed_frozen`) state, `GET /api/state` went from 172,798 to 95,813 bytes. Base-versus-head pixel parity on every page and every Advisor tab at 1440 and 375 px, light and dark, showed no difference outside the header clock.
+
+### Review
+
+All five verdict files at `f3a699965cca` (qa, code-reviewer, ux-expert, integration-auditor, flask-dashboard-specialist) are PASS with no blocking finding; the review ledger holds 15 open advisory entries. No task walkthrough was run for this head (the plan lists no User Tasks and no confirmed workflow files exist). No test count is recorded here because none was supplied.
+
+### Follow-ups (not fixed here)
+
+- INT-1: the `app.py` comment at the close-snapshot sort, and the plan and approach text, say the sort must stay in place because the held view is shared with `GET /`. That is false: `_ClosedHold.get_or_build` returns a deep copy on each call and `GET /` never reads the snapshot's account order. The comment is wrong and should be corrected.
+- Stale comments in `app.py`: "so the template can render them" (the TC/CR/MDD attach block in `get_state`) and the comment above `_FROZEN_SYM_DEFAULTS` ("the template's numeric filters need float or None").
+- QA-8: the heading-margin browser baseline producer `tests/ui/produce_heading_margin_baseline.py` reads local `.env` credentials.
+- FLASK-1 and CR-1: blank lines left behind in four templates, and the joined single-line comment in `static/settings-modal.js`.
+- Plan Follow-Ups NB-13 to NB-16, and the dead `live_mode` overwrite by `**_additive` in both `get_state` branches (`_frozen_live_mode` and the live branch's own read are dead code).
+- NB-17: `.claude/agents/flask-dashboard-specialist.md` (compiled agent file) still names the deleted template as owned; the change goes through the template and compiler, not a hand edit.
+- Documented behaviour: the detail-panel footer shows `normalized: <Composer hash>` in the closed-market state, on base and head alike, because close-snapshot entries carry no `normalized_name`.
+
+### Files changed
+
+`app.py`, `templates/table_partial.html` (deleted), `static/layout.css`, `static/settings-modal.js`, `templates/ai_advisor.html`, `templates/history.html`, `templates/performance.html`, `templates/settings.html`, tests and fixtures under `tests/`, `feature-plans/`, and the docs: `docs/generated/app.md`, `docs/generated/static_index_js.md`, `docs/generated/alpha_bot_execution.md`, `docs/generated/INDEX.md`, `.claude/CLAUDE.md` (Key Files row for `app.py`).
