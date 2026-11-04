@@ -152,8 +152,16 @@ def derive_all() -> dict[str, dict]:
     }
 
 
-def serialize(record: dict) -> str:
-    return json.dumps(record, indent=2, sort_keys=True) + "\n"
+def _sibling_serializer():
+    """The serializer of the record derivation this one follows (one rule for the byte form)."""
+    path = FIXTURES / "refresh_timing" / "01-c2" / "derive_records.py"
+    spec = importlib.util.spec_from_file_location("refresh_timing_derive_records", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.serialize
+
+
+serialize = _sibling_serializer()
 
 
 def main() -> int:
