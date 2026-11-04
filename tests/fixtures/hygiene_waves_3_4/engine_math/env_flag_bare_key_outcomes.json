@@ -1,0 +1,38 @@
+{
+  "api_state_frozen": [
+    "status",
+    500
+  ],
+  "api_state_open": [
+    "status",
+    500
+  ],
+  "header_status": [
+    "status",
+    500
+  ],
+  "page_dashboard": [
+    "raised",
+    "AttributeError"
+  ],
+  "page_history": [
+    "raised",
+    "AttributeError"
+  ],
+  "page_performance": [
+    "raised",
+    "AttributeError"
+  ],
+  "page_settings": [
+    "raised",
+    "AttributeError"
+  ],
+  "sell_account": [
+    "raised",
+    "AttributeError"
+  ],
+  "symphony_settings": [
+    "raised",
+    "AttributeError"
+  ]
+}

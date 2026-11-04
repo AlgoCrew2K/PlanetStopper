@@ -281,20 +281,6 @@ OPTUNA_N_TRIALS_CALIBRATION = (
 )
 
 
-def _build_optuna_sampler_from_env() -> "optuna.samplers.TPESampler":
-    """Return TPESampler with seed sourced from env (None when unset).
-
-    Reads _OPTUNA_SAMPLER_SEED_ENV ("OPTUNA_SAMPLER_SEED") from os.environ.
-    When set, the study is reproducible across runs on the same host —
-    enabling audit and regression comparisons. When unset, seed=None preserves
-    the prior wall-clock-seeded behaviour so operators who do not opt in to
-    determinism see no change.
-    """
-    raw = os.environ.get(_OPTUNA_SAMPLER_SEED_ENV)
-    seed = int(raw) if raw is not None and raw.strip() else None
-    return optuna.samplers.TPESampler(seed=seed)
-
-
 def _resolve_optuna_n_jobs_from_env() -> int:
     """Return n_jobs from env; falls back to 1 on unset or garbled.
 
@@ -618,11 +604,6 @@ def _generate_cpcv_folds(
 # persisted autotune_runs column, no Overfitting Conscience / Spec Critic
 # reader, and math_engine.compute_pbo runs its OWN independent S=8-block CSCV
 # construction untouched by this retirement.
-
-
-def build_symphony_study_name(timestamp: str, symphony_id: str) -> str:
-    """Return the per-symphony study name: {timestamp}__{symphony_id} (N1/O3)."""
-    return f"{timestamp}__{symphony_id}"
 
 
 def compute_sortino_ratio(returns: list, target: float = SORTINO_TARGET_RETURN) -> float:
@@ -2739,15 +2720,10 @@ def run_autotuner(
                 url=db_url, engine_kwargs={"connect_args": {"timeout": 60}}
             )
             study_timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-            # Source sampler seed + parallelism from env (OPTUNA-1 / OPTUNA-6 audit fix).
-            # Named constants _OPTUNA_SAMPLER_SEED_ENV / _OPTUNA_N_JOBS_ENV carry the
-            # canonical string values; the literals appear here so the env dependency
-            # is auditable at the call site without tracing the constant definitions.
-            _seed_raw = os.environ.get("OPTUNA_SAMPLER_SEED")
+            _seed_raw = os.environ.get(_OPTUNA_SAMPLER_SEED_ENV)
             _sampler_seed = int(_seed_raw) if _seed_raw is not None and _seed_raw.strip() else None
             # n_jobs sourced from OPTUNA_N_JOBS env (OPTUNA-6); default 1 for SQLite
             # RDBStorage writer-lock safety — see _resolve_optuna_n_jobs_from_env docstring.
-            _n_jobs_raw = os.environ.get("OPTUNA_N_JOBS")
             _n_jobs = _resolve_optuna_n_jobs_from_env()
             # Pruner: NopPruner (OPTUNA-2 pin) — the objective is end-of-trial-scored
             # (a single scalar after the full guard-alpha sim; the simulation runs

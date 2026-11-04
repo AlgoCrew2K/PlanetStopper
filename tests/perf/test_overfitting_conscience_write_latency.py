@@ -36,6 +36,7 @@ import pytest
 
 import database as db_module
 from advisors.overfitting_conscience import run_overfitting_conscience
+from tests._row_readback import advisor_observations_for_subject
 
 pytestmark = pytest.mark.perf  # excluded from default run
 
@@ -192,9 +193,9 @@ def test_run_overfitting_conscience_observation_is_persisted(warm_db, minimal_au
     """
     row_id = run_overfitting_conscience(minimal_autotune_run, [])
 
-    observations = db_module.get_advisor_observations_for_subject(
-        subject_type="autotune_run",
-        subject_id=str(minimal_autotune_run["id"]),
+    observations = advisor_observations_for_subject(
+        "autotune_run",
+        str(minimal_autotune_run["id"]),
     )
     assert len(observations) == 1, f"Expected 1 advisor_observation row, found {len(observations)}"
     obs = observations[0]

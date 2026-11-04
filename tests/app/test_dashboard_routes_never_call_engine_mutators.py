@@ -5,7 +5,7 @@ Plan deliverable (2): static import-graph test: every symbol called by an
 app.py route is checked against a denylist:
 
   DENYLIST = {
-    "record_exit_trigger", "record_shadow_observation", "record_autotune_run",
+    "record_exit_trigger", "record_shadow_observation", "save_autotune_run",
     "record_llm_suggestion", "save_state", "wipe_transient_state",
     "init_db", "run_migrations", "write_telemetry_row", "record_cvar_diagnostic",
     "wipe_*" (prefix match),
@@ -66,7 +66,7 @@ _DB_MUTATOR_DENYLIST: frozenset[str] = frozenset(
         # Record helpers — engine-only side effects
         "record_exit_trigger",
         "record_shadow_observation",
-        "record_autotune_run",
+        "save_autotune_run",
         "record_llm_suggestion",
         # Schema mutations
         "init_db",
@@ -368,7 +368,7 @@ class TestMutatorSpiesNeverCalledOnGetRoutes:
             flask_client.get("/api/autotune-runs")
 
         mock_db.save_state.assert_not_called()
-        mock_db.record_autotune_run.assert_not_called()
+        mock_db.save_autotune_run.assert_not_called()
 
     def test_fleet_alert_dismiss_dispatches_write_to_background_thread(self, flask_client):
         """POST /api/fleet-alert/dismiss must dispatch write_fleet_alert to a background thread.

@@ -1,0 +1,511 @@
+{
+  "base_sha": "7adc2c56953a3873c013425ebb06033375b62c53",
+  "migration_file_digests": {
+    "001_normalize_symphony_names.sql": "0706bfdb06eccebfb1146cf5bedc790249a1e12e33878361fd54b8fea774b38d",
+    "002_autotune_runs.sql": "4d4d3c6d1d567e6fe2f94b0d70e2ba64c9d812ab52df8c95d99c7815e39260f3",
+    "003_llm_suggestions.sql": "99ec7403728454c08c1910ddda26dd9b65fb932f6cb213f1f58734e68afc0c44",
+    "004_schema_migrations_tracker.sql": "dd2a6ce6f3e139add6ec3b611cbe32cf56f09cf56974b1e4b328f8f6c7c125e0",
+    "005_exit_triggers.sql": "ebd7a2522fc6fdeda33275f15beb13b61f70ad8581a761c7bd44eae6f01cbd77",
+    "006_autotune_runs_sharpe.sql": "8440f72f990a3bd7a7e733d402ebf0b2cd4c481ff3bf634cdc91559583bc666b",
+    "007_autotune_runs_frozen_eval.sql": "3829b5e98b233fd32ef18f3bac0d6cee73332eee2e94c1b2628f8d15bb56890f",
+    "008_shadow_history.sql": "a21406273a7c4103eba413019829aef4d86d8e6009600d72d0896c085924a045",
+    "009_fleet_alert_state.sql": "5ee59090655b034ef27069acc6204e1d9968583963e40f7ade904eeb1552e134",
+    "010_port_state.sql": "4666f05956c8fbff19aa9bcf6c90e4ccc7b03334b6f8d7c08ef18059b89bc4df",
+    "011_exit_triggers_port.sql": "3dab24fbd8c2f86fd61bfb25812648032381dd1f96cc3ecacb14e1e4767db75a",
+    "012_autotune_runs_portmode.sql": "1a0c20c036f4c9d40f58149f5023785f3fb8a3d7264f2a7b8b8cfc0d75d3b9a0",
+    "013_fleet_alert_tripped_symphonies.sql": "10ec282503262fed513bf26575faca584071570ac31c5c9d0978a707d8bb97d2",
+    "014_autotune_runs_selection_tstat.sql": "c8540ae66cf55b75c70e7236d3d172f16fb35f3320b3933bd5a9e81b01484f75",
+    "015_shadow_history_position_epoch.sql": "271c4b991a563cb325665add608185525d3d3b3758acf0b1f13c679794564e68",
+    "016_spec_bundles.sql": "045ac0529f490236e098b93abf21ab94de6a8a32b90926bd06b3323a05dd1232",
+    "017_advisor_observations.sql": "de8b3071547013cba1410d3e8f70b8a48e144e5c298bfcd3c74c83a4a008640e",
+    "018_researcher_dof_ledger.sql": "7d1c8680dcf16af65fcaeff556d146c45474d0d19aadff93f5834c0bf2682379",
+    "019_fold_role_columns.sql": "e72a6445a7ce6a2e3de1a02c20fd616846a7067dbc64689c6e05ddaa720895e9",
+    "020_autotune_runs_eut.sql": "8bcdb432f06458884242d6a13995f82316db43f2124cf1acc3e2ab5110294598",
+    "021_cvar_diagnostics.sql": "f8a28a74283485759d50be2264122ea1c4196f6400b552676da18bf83c712cf2",
+    "022_spec_bundles_add_id.sql": "89ee0394e09c9f9015fbcffbe859921dbd02bc0b9f3591a52834c533801afc94",
+    "023_autotune_runs_s_count.sql": "6f698f3d8a591a5ce9f3a5a310a994166b202c31c1a41e51a71f196fb3efda69",
+    "024_spec_facets_unique_constraint.sql": "576eed440bc0ce5c4225115c0ec31b8b3a2f475c3a3082cf110e2d93fd65d059",
+    "025_advisor_observations_symphony_id.sql": "78914bf0866caaeeea9b6c532f1333571d2f90a165b83a42525d562b54c10536",
+    "026_mc_regime_match_telemetry.sql": "d39643c12d4144cb46a425a6eab4fbd2576b04805084fc20cc3fdd0eedfb39ac",
+    "027_regime_label_cache.sql": "46b63e476670db9eb57afcccb6a15e8e78b8a9ddc08d7ca50680d6c2a26fe8d2",
+    "028_autotune_runs_pbo.sql": "4df9e3ba2ea9491426645f97cf741e218b8ed6d906d682c24d0a3e07b79bdfbb",
+    "029_exit_triggers_also_true.sql": "a236bfedb4b03ccd5aced73dab30c08462a7abf750c84be8443288e7efa56d8a",
+    "030_per_symphony_live_mode.sql": "11e0480058f635fa239498816fa792858798cdbefa7d38e96b5a19cd6c7746bb",
+    "031_shadow_history_sym_ts_index.sql": "8e7ee5fedbd482cfb6cefc2bef28e5b714ca560af494448e890a3e18a7e35815",
+    "032_prism_audit_log.sql": "ae40824c3c6fb25d7516c545a70437621b01421671d61e0e9b648c4fc6cdee71",
+    "033_candidate_alert_state.sql": "a098d8b1f032b82a8a36deaacaea21910ed18c493c9b7c9b32a4f3556ce6e7bc",
+    "034_frontrunner_proposals.sql": "d949889b00cf3e929ae7c0bb788d2741f57a65e13314390edceab5ea9429af1a",
+    "035_sleeves.sql": "ce948bd5773bcc8fe03a94028f7050a0d4daa98629e703ba8d0f4b04f6af4828",
+    "036_sleeve_rule_fires.sql": "83a2adab14624ee5caffc7084f0ce99d83b967d97958f6bbb52e0eb4456ca333",
+    "037_strategy_incubation.sql": "188e90ea4e442aa1f021df64e1d5697340dec0bd3e67582f71813a0e27793b78",
+    "038_retirement_decisions.sql": "fd4e5f0e6f75d6776d3b2f1af22620a58b16c9a04b6248377f4efcddbd44e0e6",
+    "039_close_account_totals.sql": "084f8192b94167f85324975bf08b373a41dac9aa5b5ab8aac0bd5e420b3a06f0",
+    "optuna_001_archive_accumulated_studies.sql": "d0221225ccd964237dbb494b76cd8b2cfd3b36744cf0d0cc87d0b9577ff0669e"
+  },
+  "migration_order": [
+    "004_schema_migrations_tracker.sql",
+    "005_exit_triggers.sql",
+    "006_autotune_runs_sharpe.sql",
+    "007_autotune_runs_frozen_eval.sql",
+    "008_shadow_history.sql",
+    "009_fleet_alert_state.sql",
+    "010_port_state.sql",
+    "011_exit_triggers_port.sql",
+    "012_autotune_runs_portmode.sql",
+    "013_fleet_alert_tripped_symphonies.sql",
+    "014_autotune_runs_selection_tstat.sql",
+    "015_shadow_history_position_epoch.sql",
+    "016_spec_bundles.sql",
+    "017_advisor_observations.sql",
+    "018_researcher_dof_ledger.sql",
+    "019_fold_role_columns.sql",
+    "021_cvar_diagnostics.sql",
+    "020_autotune_runs_eut.sql",
+    "022_spec_bundles_add_id.sql",
+    "023_autotune_runs_s_count.sql",
+    "024_spec_facets_unique_constraint.sql",
+    "025_advisor_observations_symphony_id.sql",
+    "026_mc_regime_match_telemetry.sql",
+    "027_regime_label_cache.sql",
+    "028_autotune_runs_pbo.sql",
+    "029_exit_triggers_also_true.sql",
+    "030_per_symphony_live_mode.sql",
+    "031_shadow_history_sym_ts_index.sql",
+    "032_prism_audit_log.sql",
+    "033_candidate_alert_state.sql",
+    "034_frontrunner_proposals.sql",
+    "035_sleeves.sql",
+    "036_sleeve_rule_fires.sql",
+    "037_strategy_incubation.sql",
+    "038_retirement_decisions.sql",
+    "039_close_account_totals.sql"
+  ],
+  "sqlite_master": [
+    [
+      "index",
+      "idx_cvar_diag_cycle",
+      "cvar_diagnostics",
+      "CREATE INDEX idx_cvar_diag_cycle\n    ON cvar_diagnostics (cycle_id)"
+    ],
+    [
+      "index",
+      "idx_cvar_diag_symphony_ts",
+      "cvar_diagnostics",
+      "CREATE INDEX idx_cvar_diag_symphony_ts\n    ON cvar_diagnostics (symphony_id, ts_utc DESC)"
+    ],
+    [
+      "index",
+      "idx_exit_triggers_port_trigger_id",
+      "exit_triggers",
+      "CREATE INDEX idx_exit_triggers_port_trigger_id ON exit_triggers (port_trigger_id) WHERE port_trigger_id IS NOT NULL"
+    ],
+    [
+      "index",
+      "idx_exit_triggers_symphony_ts",
+      "exit_triggers",
+      "CREATE INDEX idx_exit_triggers_symphony_ts ON exit_triggers (symphony_id, ts_utc DESC)"
+    ],
+    [
+      "index",
+      "idx_exit_triggers_ts",
+      "exit_triggers",
+      "CREATE INDEX idx_exit_triggers_ts ON exit_triggers (ts_utc DESC)"
+    ],
+    [
+      "index",
+      "idx_frontrunner_proposals_approval_status",
+      "frontrunner_proposals",
+      "CREATE INDEX idx_frontrunner_proposals_approval_status\n    ON frontrunner_proposals (approval_status)"
+    ],
+    [
+      "index",
+      "idx_frontrunner_proposals_symphony_id",
+      "frontrunner_proposals",
+      "CREATE INDEX idx_frontrunner_proposals_symphony_id\n    ON frontrunner_proposals (symphony_id)"
+    ],
+    [
+      "index",
+      "idx_prism_audit_log_run_id",
+      "prism_audit_log",
+      "CREATE INDEX idx_prism_audit_log_run_id\n    ON prism_audit_log (run_id)"
+    ],
+    [
+      "index",
+      "idx_shadow_history_day",
+      "shadow_history",
+      "CREATE INDEX idx_shadow_history_day     ON shadow_history (trading_day, ts_utc)"
+    ],
+    [
+      "index",
+      "idx_shadow_history_sym_day",
+      "shadow_history",
+      "CREATE INDEX idx_shadow_history_sym_day ON shadow_history (symphony_id, trading_day, ts_utc)"
+    ],
+    [
+      "index",
+      "idx_shadow_history_sym_ts",
+      "shadow_history",
+      "CREATE INDEX idx_shadow_history_sym_ts\n    ON shadow_history (symphony_id, ts_utc)"
+    ],
+    [
+      "index",
+      "idx_shadow_history_ts_utc",
+      "shadow_history",
+      "CREATE INDEX idx_shadow_history_ts_utc  ON shadow_history (ts_utc)"
+    ],
+    [
+      "index",
+      "idx_sleeve_fills_broker_fill_id",
+      "sleeve_fills",
+      "CREATE UNIQUE INDEX idx_sleeve_fills_broker_fill_id\n    ON sleeve_fills (broker_fill_id) WHERE broker_fill_id IS NOT NULL"
+    ],
+    [
+      "index",
+      "idx_sleeve_fills_order_id",
+      "sleeve_fills",
+      "CREATE INDEX idx_sleeve_fills_order_id ON sleeve_fills (order_id)"
+    ],
+    [
+      "index",
+      "idx_sleeve_orders_alpaca_order_id",
+      "sleeve_orders",
+      "CREATE UNIQUE INDEX idx_sleeve_orders_alpaca_order_id\n    ON sleeve_orders (alpaca_order_id) WHERE alpaca_order_id IS NOT NULL"
+    ],
+    [
+      "index",
+      "idx_sleeve_orders_client_order_id",
+      "sleeve_orders",
+      "CREATE UNIQUE INDEX idx_sleeve_orders_client_order_id ON sleeve_orders (client_order_id)"
+    ],
+    [
+      "index",
+      "idx_sleeve_orders_rule_id",
+      "sleeve_orders",
+      "CREATE INDEX idx_sleeve_orders_rule_id ON sleeve_orders (rule_id) WHERE rule_id IS NOT NULL"
+    ],
+    [
+      "index",
+      "idx_sleeve_orders_sleeve_id",
+      "sleeve_orders",
+      "CREATE INDEX idx_sleeve_orders_sleeve_id ON sleeve_orders (sleeve_id)"
+    ],
+    [
+      "index",
+      "idx_sleeve_rule_fires_episode_id",
+      "sleeve_rule_fires",
+      "CREATE INDEX idx_sleeve_rule_fires_episode_id\n    ON sleeve_rule_fires (episode_id) WHERE episode_id IS NOT NULL"
+    ],
+    [
+      "index",
+      "idx_sleeve_rule_fires_order_id",
+      "sleeve_rule_fires",
+      "CREATE INDEX idx_sleeve_rule_fires_order_id\n    ON sleeve_rule_fires (order_id) WHERE order_id IS NOT NULL"
+    ],
+    [
+      "index",
+      "idx_sleeve_rule_fires_rule_id",
+      "sleeve_rule_fires",
+      "CREATE INDEX idx_sleeve_rule_fires_rule_id ON sleeve_rule_fires (rule_id, fired_at)"
+    ],
+    [
+      "index",
+      "idx_sleeve_rule_fires_sleeve_id",
+      "sleeve_rule_fires",
+      "CREATE INDEX idx_sleeve_rule_fires_sleeve_id ON sleeve_rule_fires (sleeve_id)"
+    ],
+    [
+      "index",
+      "idx_sleeve_rules_sleeve_id",
+      "sleeve_rules",
+      "CREATE INDEX idx_sleeve_rules_sleeve_id ON sleeve_rules (sleeve_id)"
+    ],
+    [
+      "index",
+      "idx_sleeves_name",
+      "sleeves",
+      "CREATE UNIQUE INDEX idx_sleeves_name ON sleeves (name)"
+    ],
+    [
+      "index",
+      "idx_spec_facets_bundle_facet",
+      "spec_facets",
+      "CREATE UNIQUE INDEX idx_spec_facets_bundle_facet\n    ON spec_facets (bundle_hash, facet_name)"
+    ],
+    [
+      "index",
+      "idx_strategy_incubation_status",
+      "strategy_incubation",
+      "CREATE INDEX idx_strategy_incubation_status ON strategy_incubation (status)"
+    ],
+    [
+      "index",
+      "sqlite_autoindex_chart_archive_1",
+      "chart_archive",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_close_account_totals_1",
+      "close_account_totals",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_incubation_daily_1",
+      "incubation_daily",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_port_state_1",
+      "port_state",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_regime_label_cache_1",
+      "regime_label_cache",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_retirement_decisions_1",
+      "retirement_decisions",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_schema_migrations_1",
+      "schema_migrations",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_sleeve_runtime_1",
+      "sleeve_runtime",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_spec_bundles_1",
+      "spec_bundles",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_strategy_incubation_1",
+      "strategy_incubation",
+      null
+    ],
+    [
+      "index",
+      "sqlite_autoindex_symphony_strategies_1",
+      "symphony_strategies",
+      null
+    ],
+    [
+      "table",
+      "advisor_observations",
+      "advisor_observations",
+      "CREATE TABLE advisor_observations (\n    id                INTEGER PRIMARY KEY AUTOINCREMENT,\n    created_at        TEXT    NOT NULL DEFAULT (datetime('now')),\n    advisor_role      TEXT    NOT NULL,  -- OVERFITTING_CONSCIENCE | SPEC_CRITIC | DIVERGENCE_EXPLAINER | NARRATOR\n    subject_type      TEXT    NOT NULL,  -- e.g. autotune_run, cvar_diagnostic, shadow_decision\n    subject_id        TEXT    NOT NULL,  -- soft FK into the subject table\n    verdict           TEXT,              -- computed verdict label; NULL for LLM-only rows if not applicable\n    raw_response      TEXT    NOT NULL DEFAULT '{}',  -- JSON; '{}' for computed rows, populated for LLM rows\n    is_advisory_only  INTEGER NOT NULL DEFAULT 1,     -- always 1; structural declaration that Advisor never acts\n    spec_bundle_id    TEXT                             -- soft FK to spec_bundles.bundle_hash; NULL when not applicable\n, symphony_id TEXT DEFAULT NULL)"
+    ],
+    [
+      "table",
+      "autotune_runs",
+      "autotune_runs",
+      "CREATE TABLE autotune_runs (\n            id                        INTEGER PRIMARY KEY AUTOINCREMENT,\n            run_timestamp             TEXT    NOT NULL,\n            symphony_id               TEXT    NOT NULL,\n            oos_alpha                 REAL    DEFAULT NULL,\n            train_alpha               REAL    DEFAULT NULL,\n            baseline_decision         TEXT    DEFAULT NULL,\n            fallback_oos_alpha        REAL    DEFAULT NULL,\n            default_oos_alpha         REAL    DEFAULT NULL,\n            selection_tstat           REAL    DEFAULT NULL,\n            naive_sharpe              REAL    DEFAULT NULL,\n            validation_sharpe         REAL    DEFAULT NULL,\n            frozen_eval_sharpe        REAL    DEFAULT NULL,\n            spec_bundle_id            TEXT    DEFAULT NULL,\n            d_spec                    INTEGER DEFAULT NULL,\n            n_effective               INTEGER DEFAULT NULL,\n            -- BL-10 (DE-AUDIT-BL10-001): ce_metric/cvar_feasible/lambda_budget\n            -- are never wired anywhere in the repo -- no writer, no reader\n            -- beyond this bare schema column. Never populated by the current\n            -- save_autotune_run path -- a legacy row could theoretically be\n            -- non-NULL from a historical accessor no longer in use, so this\n            -- is not a blanket every-row-is-NULL guarantee.\n            ce_metric                 REAL    DEFAULT NULL,\n            cvar_feasible             INTEGER DEFAULT NULL,\n            gamma                     REAL    DEFAULT NULL,\n            lambda_budget             REAL    DEFAULT NULL,\n            overfitting_verdict       TEXT    DEFAULT NULL,\n            paired_heuristic_study_name TEXT  DEFAULT NULL,\n            s_count                   INTEGER DEFAULT NULL,\n            -- migration 028: pbo column (H1 DUAL-WRITE HAZARD \u2014 also added via ALTER TABLE)\n            pbo                       REAL    DEFAULT NULL\n        , deflated_sharpe REAL DEFAULT NULL, math_mode TEXT NULL DEFAULT 'per_symphony', account_id TEXT NULL DEFAULT NULL, sortino_sentinel_pct REAL NULL DEFAULT NULL, fold_role TEXT DEFAULT NULL)"
+    ],
+    [
+      "table",
+      "bot_state",
+      "bot_state",
+      "CREATE TABLE bot_state (id INTEGER PRIMARY KEY, data TEXT)"
+    ],
+    [
+      "table",
+      "candidate_alert_state",
+      "candidate_alert_state",
+      "CREATE TABLE candidate_alert_state (\n            id                          INTEGER PRIMARY KEY CHECK (id = 1),\n            last_viewed_observation_id  INTEGER NOT NULL DEFAULT 0,\n            updated_at                  TEXT\n        )"
+    ],
+    [
+      "table",
+      "chart_archive",
+      "chart_archive",
+      "CREATE TABLE chart_archive (date TEXT, symphony_id TEXT, data TEXT, UNIQUE(date, symphony_id))"
+    ],
+    [
+      "table",
+      "chart_history",
+      "chart_history",
+      "CREATE TABLE chart_history (id INTEGER PRIMARY KEY, data TEXT)"
+    ],
+    [
+      "table",
+      "close_account_totals",
+      "close_account_totals",
+      "CREATE TABLE close_account_totals (\n    trading_day     TEXT NOT NULL,                       -- the close snapshot's session day\n    captured_at_et  TEXT NOT NULL,                       -- the snapshot's capture time (\"16:00:42 ET\")\n    totals_json     TEXT NOT NULL,                       -- the account totals dict, as latched\n    as_of           TEXT,                                -- the ET stamp of the Composer read\n    latched_at      TEXT NOT NULL DEFAULT (datetime('now')),\n    PRIMARY KEY (trading_day, captured_at_et)\n)"
+    ],
+    [
+      "table",
+      "config_audit_log",
+      "config_audit_log",
+      "CREATE TABLE config_audit_log (\n            id           INTEGER PRIMARY KEY AUTOINCREMENT,\n            symphony     TEXT    NOT NULL,\n            field        TEXT    NOT NULL,\n            before_value TEXT,\n            after_value  TEXT    NOT NULL,\n            operator     TEXT    NOT NULL,\n            ts_utc       TEXT    NOT NULL\n        )"
+    ],
+    [
+      "table",
+      "cvar_diagnostics",
+      "cvar_diagnostics",
+      "CREATE TABLE cvar_diagnostics (\n    id               INTEGER PRIMARY KEY AUTOINCREMENT,\n    cycle_id         TEXT    NOT NULL,                           -- ISO-8601 cycle timestamp; primary query key\n    ts_utc           TEXT    NOT NULL DEFAULT (datetime('now')), -- write timestamp (UTC)\n    symphony_id      TEXT    NOT NULL,                           -- Composer symphony identifier\n    cvar_5pct        REAL    DEFAULT NULL,                       -- 5th-percentile CVaR (Phase 2)\n    cvar_5pct_stderr REAL    DEFAULT NULL,                       -- CVaR bootstrap std error (Phase 2)\n    cvar_n_tail      INTEGER NOT NULL DEFAULT 0,                 -- tail observation count; 0 = insufficient sentinel (F-4 \u2605)\n    cvar_5pct_long   REAL    DEFAULT NULL,                       -- long-window 5th-pct CVaR (Phase 2 \u00a7B.6)\n    cvar_n_tail_long INTEGER DEFAULT NULL                        -- long-window tail obs count (Phase 2 \u00a7B.6)\n, mc_regime_match_mean_dist2 REAL DEFAULT NULL, mc_regime_match_suppressed INTEGER DEFAULT NULL)"
+    ],
+    [
+      "table",
+      "execution_lock",
+      "execution_lock",
+      "CREATE TABLE execution_lock (id INTEGER PRIMARY KEY, is_locked INTEGER, timestamp REAL)"
+    ],
+    [
+      "table",
+      "exit_triggers",
+      "exit_triggers",
+      "CREATE TABLE exit_triggers (\n            id               INTEGER PRIMARY KEY AUTOINCREMENT,\n            ts_utc           TEXT    NOT NULL,\n            ts_et            TEXT    NOT NULL,\n            symphony_id      TEXT    NOT NULL,\n            account_id       TEXT    DEFAULT NULL,\n            triggered_reason TEXT    NOT NULL,\n            at_return        REAL    DEFAULT NULL,\n            gate_state_json  TEXT    DEFAULT NULL,\n            cycle_id         TEXT    DEFAULT NULL,\n            math_mode        TEXT    DEFAULT NULL,\n            port_trigger_id  TEXT    DEFAULT NULL,\n            -- migration 029: also_true co-fire list (H1 DUAL-WRITE \u2014 also added via ALTER TABLE)\n            also_true_json   TEXT    DEFAULT NULL\n        )"
+    ],
+    [
+      "table",
+      "fleet_alert_state",
+      "fleet_alert_state",
+      "CREATE TABLE fleet_alert_state (\n    id               INTEGER PRIMARY KEY CHECK(id = 1),\n    tripped_at_et    TEXT NOT NULL,\n    triggered_reason TEXT NOT NULL,\n    tripped_count    INTEGER NOT NULL,\n    active_count     INTEGER NOT NULL,\n    dismissed_at_et  TEXT NULL DEFAULT NULL\n, tripped_symphonies TEXT NULL DEFAULT NULL)"
+    ],
+    [
+      "table",
+      "frontrunner_proposals",
+      "frontrunner_proposals",
+      "CREATE TABLE frontrunner_proposals (\n    id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n    created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n    updated_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n    symphony_id         TEXT    NOT NULL,  -- the incumbent Composer symphony this proposal targets\n    proposal_source     TEXT    NOT NULL,  -- 'frontrunner_builder' | 'strategy_builder_retrofit'\n    approval_status     TEXT    NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | uploaded\n    candidate_tree      TEXT    NOT NULL,  -- JSON: the full spliced candidate symphony (raw_value)\n    metrics_json        TEXT    NOT NULL DEFAULT '{}',  -- JSON: incumbent-vs-candidate Calmar/CAGR/MDD/node-count deltas\n    created_symphony_id TEXT,              -- Composer symphony_id once uploaded (NULL until 'uploaded')\n    error_message       TEXT               -- set when a Composer create attempt fails (AC-11); never marks 'uploaded' on failure\n)"
+    ],
+    [
+      "table",
+      "incubation_daily",
+      "incubation_daily",
+      "CREATE TABLE incubation_daily (\n    id                   INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    candidate_hash       TEXT    NOT NULL,                   -- soft FK to\n                                                              -- strategy_incubation.candidate_hash\n    trading_day          TEXT    NOT NULL,                   -- ISO date string, a genuine NYSE\n                                                              -- trading day (market_calendar\n                                                              -- .is_trading_day), never a weekday\n                                                              -- proxy\n    forward_return_pct   REAL    NOT NULL,                   -- candidate's simple daily return for\n                                                              -- that day, PCT scale (x100 of the raw\n                                                              -- fraction composer_backtest_client\n                                                              -- returns)\n    spy_return_pct       REAL,                                -- shared SPY benchmark return for that\n                                                              -- same day, same pct scale; NULLable\n                                                              -- when the shared SPY call failed that\n                                                              -- tick -- candidate rows are still\n                                                              -- recorded, promotion evaluation defers\n    UNIQUE(candidate_hash, trading_day)                       -- idempotency guard: a tick re-run or\n                                                              -- a same-day double-fire never\n                                                              -- double-inserts (append_incubation_day\n                                                              -- relies on this via INSERT OR IGNORE)\n)"
+    ],
+    [
+      "table",
+      "llm_suggestions",
+      "llm_suggestions",
+      "CREATE TABLE llm_suggestions (\n            id                  INTEGER PRIMARY KEY AUTOINCREMENT,\n            session_id          TEXT    NOT NULL,\n            created_at          TEXT    NOT NULL,\n            symphony_name       TEXT    NOT NULL,\n            operator_identity   TEXT    NOT NULL DEFAULT '',\n            prompt_inputs       TEXT    NOT NULL DEFAULT '{}',\n            model_id            TEXT    NOT NULL DEFAULT '',\n            generation_settings TEXT    NOT NULL DEFAULT '{}',\n            raw_response        TEXT    NOT NULL DEFAULT '{}',\n            validation_results  TEXT    NOT NULL DEFAULT '{}',\n            param_name          TEXT    NOT NULL DEFAULT '',\n            operator_decision   TEXT    NOT NULL DEFAULT 'pending',\n            decision_at         TEXT    DEFAULT NULL,\n            operator_note       TEXT    DEFAULT NULL,\n            before_value        TEXT    DEFAULT NULL,\n            after_value         TEXT    DEFAULT NULL,\n            oos_revalidation    TEXT    DEFAULT NULL\n        )"
+    ],
+    [
+      "table",
+      "port_state",
+      "port_state",
+      "CREATE TABLE port_state (\n    account_id                TEXT    PRIMARY KEY,\n    composition_hash          TEXT    DEFAULT NULL,\n    high_water_mark           REAL    DEFAULT NULL,\n    safe_hwm                  REAL    DEFAULT NULL,\n    shadow_hwm                REAL    DEFAULT NULL,\n    vwap_ticks_json           TEXT    DEFAULT NULL,\n    vwap_bleed_ticks_json     TEXT    DEFAULT NULL,\n    mc_history_json           TEXT    DEFAULT NULL,\n    mc_prob                   REAL    DEFAULT NULL,\n    armed                     INTEGER DEFAULT NULL,\n    para_armed                INTEGER DEFAULT NULL,\n    port_breakeven_active     INTEGER DEFAULT NULL,\n    triggered                 INTEGER DEFAULT NULL,\n    triggered_reason          TEXT    DEFAULT NULL,\n    prev_return               REAL    DEFAULT NULL,\n    current_return            REAL    DEFAULT NULL,\n    last_target_reduction_json TEXT   DEFAULT NULL,\n    last_selected_symphony_id TEXT    DEFAULT NULL,\n    stop_trigger              REAL    DEFAULT NULL,\n    updated_at                TEXT    DEFAULT NULL\n)"
+    ],
+    [
+      "table",
+      "prism_audit_log",
+      "prism_audit_log",
+      "CREATE TABLE prism_audit_log (\n    id          INTEGER PRIMARY KEY AUTOINCREMENT,\n    run_id      TEXT    NOT NULL,\n    agent_role  TEXT    NOT NULL,\n    phase       TEXT    NOT NULL,\n    content     TEXT    NOT NULL,\n    created_at  TEXT    NOT NULL DEFAULT (datetime('now'))\n)"
+    ],
+    [
+      "table",
+      "regime_label_cache",
+      "regime_label_cache",
+      "CREATE TABLE regime_label_cache (\n    symphony_id TEXT PRIMARY KEY,                       -- one current label per symphony\n    label       TEXT NOT NULL,                          -- 'trending' | 'mean-reverting' | 'high-vol'\n    as_of_date  TEXT NOT NULL,                          -- ISO date (YYYY-MM-DD) the label was computed for\n    updated_at  TEXT NOT NULL DEFAULT (datetime('now')) -- audit: when the row was last written\n)"
+    ],
+    [
+      "table",
+      "researcher_dof_ledger",
+      "researcher_dof_ledger",
+      "CREATE TABLE researcher_dof_ledger (\n    id                  INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),\n    facet_name          TEXT    NOT NULL,\n    facet_category      TEXT    NOT NULL,   -- 'specification' | 'parameter'\n    decision_type       TEXT    NOT NULL,   -- 'FIXED' | 'SEARCHED' | 'REVISED' | 'OOS_PEEK'\n    evidence_source     TEXT    NOT NULL,   -- 'THEORY' | 'MANDATE' | 'STYLIZED_FACT' |\n                                            -- 'CALIBRATION' | 'BACKTEST_SELECTION' | 'OOS'\n    n_configs_searched  INTEGER NOT NULL DEFAULT 1,\n    touched_frozen_eval INTEGER NOT NULL DEFAULT 0,  -- boolean; 1 = wall-breach tripwire fired\n    spec_bundle_id      TEXT    DEFAULT NULL,         -- soft FK to spec_bundles.bundle_hash\n    justification       TEXT    DEFAULT NULL\n)"
+    ],
+    [
+      "table",
+      "retirement_decisions",
+      "retirement_decisions",
+      "CREATE TABLE retirement_decisions (\n    id               INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    candidate_id     TEXT    NOT NULL UNIQUE,              -- Composer symphony hash; the\n                                                             -- stable natural join key (see\n                                                             -- retirement_recommender's\n                                                             -- raw_response.candidate_id)\n    sibling_id       TEXT,                                  -- informational only, NOT part of\n                                                             -- the key \u2014 a candidate's sibling\n                                                             -- can vary night to night; no\n                                                             -- production writer this cycle\n                                                             -- (the approve/reject routes pass\n                                                             -- only candidate_id) \u2014 reserved for\n                                                             -- future use, see\n                                                             -- upsert_retirement_decision's\n                                                             -- COALESCE-preserve contract\n    approval_status  TEXT    NOT NULL DEFAULT 'pending',     -- 'pending' | 'approved' |\n                                                             -- 'rejected' \u2014 validated in Python\n                                                             -- (app-level, not a SQL CHECK\n                                                             -- constraint), same convention as\n                                                             -- strategy_incubation.status\n    decided_at       TEXT,                                  -- NULL while pending; stamped\n                                                             -- datetime('now') whenever the\n                                                             -- WRITTEN approval_status is\n                                                             -- 'approved' or 'rejected'\n    updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))  -- stamped datetime('now') on\n                                                             -- every write, including a\n                                                             -- re-decision\n)"
+    ],
+    [
+      "table",
+      "schema_migrations",
+      "schema_migrations",
+      "CREATE TABLE schema_migrations (  migration_name TEXT PRIMARY KEY,  applied_at     TEXT NOT NULL DEFAULT (datetime('now')))"
+    ],
+    [
+      "table",
+      "shadow_history",
+      "shadow_history",
+      "CREATE TABLE shadow_history (\n    id              INTEGER PRIMARY KEY AUTOINCREMENT,\n    ts_utc          TEXT    NOT NULL,\n    ts_et           TEXT    NOT NULL,\n    trading_day     TEXT    NOT NULL,\n    symphony_id     TEXT    NOT NULL,\n    account_id      TEXT,\n    cycle_id        TEXT,\n    current_return  REAL    NOT NULL,\n    shadow_return   REAL    NOT NULL,\n    is_post_trigger INTEGER NOT NULL DEFAULT 0,\n    trigger_id      INTEGER,\n    math_mode       TEXT    NOT NULL DEFAULT 'per_symphony'\n, position_epoch TEXT)"
+    ],
+    [
+      "table",
+      "sleeve_fills",
+      "sleeve_fills",
+      "CREATE TABLE sleeve_fills (\n    id              INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    order_id        INTEGER NOT NULL,   -- soft FK to sleeve_orders.id (the internal id, not alpaca_order_id)\n    broker_fill_id  TEXT    DEFAULT NULL, -- Alpaca Account Activities (activity_type=FILL) `id` --\n                                          -- one row per discrete fill event, incl. partials. Nullable\n                                          -- so a hypothetical non-activities fill source can still insert;\n                                          -- reconciliation.py polls activities and uses this for dedup\n                                          -- across overlapping poll windows.\n    fill_price      REAL    NOT NULL,\n    filled_qty      REAL    NOT NULL,\n    filled_at       TEXT    NOT NULL,   -- broker-reported fill timestamp\n    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))  -- row-insert time, distinct from filled_at\n)"
+    ],
+    [
+      "table",
+      "sleeve_orders",
+      "sleeve_orders",
+      "CREATE TABLE sleeve_orders (\n    id              INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    client_order_id TEXT    NOT NULL,        -- our own pre-broker correlation key (Alpaca's own client_order_id field, forwarded verbatim)\n    alpaca_order_id TEXT    DEFAULT NULL,    -- broker-assigned order id; NULL until broker ack\n    sleeve_id       INTEGER NOT NULL,        -- soft FK to sleeves.id\n    rule_id         INTEGER DEFAULT NULL,    -- soft FK to sleeve_rules.id; nullable (P1 has no rules yet)\n    symbol          TEXT    NOT NULL,\n    side            TEXT    NOT NULL,        -- 'buy' | 'sell'\n    qty             REAL    NOT NULL,        -- requested qty; fractional shares supported\n    reserved_price  REAL    DEFAULT NULL,    -- estimated fill price used to size the cash reservation\n                                             -- at insert time (ledger.reserve()); distinct from the\n                                             -- actual fill price, which lives in sleeve_fills.fill_price\n    order_class     TEXT    NOT NULL DEFAULT 'simple', -- 'simple' | 'bracket' | 'trailing_stop' | ...\n    status          TEXT    NOT NULL DEFAULT 'RESERVED', -- 'RESERVED' (pre-ack, sleeve-side only) then\n                                             -- Alpaca's own native status enum verbatim once broker-acked\n                                             -- (new/accepted/partially_filled/filled/canceled/rejected/\n                                             -- expired/... -- see tests/sleeves/_alpaca_fixtures.py). No\n                                             -- separate SUBMITTED/OPEN synonyms invented for post-ack\n                                             -- states -- Alpaca already names those.\n    submitted_at    TEXT    NOT NULL DEFAULT (datetime('now')),\n    raw_json        TEXT    NOT NULL DEFAULT '{}',      -- full broker submit/poll response, for audit\n    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))\n)"
+    ],
+    [
+      "table",
+      "sleeve_rule_fires",
+      "sleeve_rule_fires",
+      "CREATE TABLE sleeve_rule_fires (\n    id                    INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    rule_id               INTEGER NOT NULL,              -- soft FK to sleeve_rules.id\n    sleeve_id             INTEGER NOT NULL,              -- soft FK to sleeves.id (denormalized off\n                                                           -- rule_id, mirrors sleeve_orders' sleeve_id\n                                                           -- + rule_id pairing -- avoids a join for\n                                                           -- per-sleeve panel queries)\n    fired_at              TEXT    NOT NULL DEFAULT (datetime('now')),  -- tick logical timestamp; caller\n                                                           -- may pass the tick's own timestamp\n                                                           -- explicitly, falls back to insert-time\n    action                TEXT    NOT NULL,               -- the rule's `then` action attempted, e.g.\n                                                           -- 'buy'/'sell'/'scale'/'set_stop'/\n                                                           -- 'go_to_cash'/'notify'\n    rule_class            TEXT    NOT NULL,               -- 'DEFENSIVE'|'ENTRY' -- re-derived from the\n                                                           -- rule's action set AT FIRE TIME (AC-20);\n                                                           -- an immutable per-fire audit snapshot, never\n                                                           -- re-trusted as the rule's CURRENT class\n    mode_at_fire          TEXT    NOT NULL,               -- 'SHADOW'|'PAPER'|'LIVE' -- the rule's mode\n                                                           -- AT FIRE TIME, snapshotted so a later mode\n                                                           -- change never rewrites history\n    sensed_snapshot_json  TEXT    NOT NULL DEFAULT '{}',  -- senses/condition values read this tick\n                                                           -- (symphony/portfolio state, indicators,\n                                                           -- time-of-day, cached FRED series) -- market/\n                                                           -- portfolio values ONLY, never env/credentials\n    outcome_json          TEXT    NOT NULL DEFAULT '{}',  -- what happened: would-have-ordered sizing\n                                                           -- (SHADOW), broker result, rejection/skip\n                                                           -- reason -- one flexible envelope so a new\n                                                           -- action's outcome shape never needs a migration\n    clamped               INTEGER NOT NULL DEFAULT 0,     -- 0/1 -- whether envelope.clamp() reduced\n                                                           -- the attempted sizing (AC-2)\n    clamp_reason          TEXT    DEFAULT NULL,           -- populated only when clamped = 1\n    episode_id            TEXT    DEFAULT NULL,           -- groups fires belonging to one latch\n                                                           -- episode (AC-10 flat-latch, AC-11\n                                                           -- churn-brake round-trip grouping); minted\n                                                           -- and formatted by the runner, NULL for\n                                                           -- fires outside any episode\n    order_id              INTEGER DEFAULT NULL,           -- soft FK to sleeve_orders.id -- the INTERNAL\n                                                           -- id, matching sleeve_fills.order_id's\n                                                           -- established convention (NOT client_order_id\n                                                           -- or alpaca_order_id); NULL for SHADOW fires\n                                                           -- and for fires whose action placed no order\n                                                           -- (notify, skip, envelope refusal)\n    created_at            TEXT    NOT NULL DEFAULT (datetime('now'))  -- row-insert time, distinct from\n                                                           -- fired_at (sleeve_fills.filled_at/created_at\n                                                           -- precedent, migration 033)\n)"
+    ],
+    [
+      "table",
+      "sleeve_rules",
+      "sleeve_rules",
+      "CREATE TABLE sleeve_rules (\n    id         INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    sleeve_id  INTEGER NOT NULL,             -- soft FK to sleeves.id\n    name       TEXT    NOT NULL,\n    json_doc   TEXT    NOT NULL DEFAULT '{}',\n    mode       TEXT    NOT NULL DEFAULT 'SHADOW',\n    enabled    INTEGER NOT NULL DEFAULT 1,\n    created_at TEXT    NOT NULL DEFAULT (datetime('now')),\n    updated_at TEXT    NOT NULL DEFAULT (datetime('now'))\n)"
+    ],
+    [
+      "table",
+      "sleeve_runtime",
+      "sleeve_runtime",
+      "CREATE TABLE sleeve_runtime (\n    rule_id    INTEGER NOT NULL,   -- soft FK to sleeve_rules.id\n    key        TEXT    NOT NULL,\n    value      TEXT    NOT NULL,\n    updated_at TEXT    NOT NULL DEFAULT (datetime('now')),\n    PRIMARY KEY (rule_id, key)\n)"
+    ],
+    [
+      "table",
+      "sleeves",
+      "sleeves",
+      "CREATE TABLE sleeves (\n    id            INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    name          TEXT    NOT NULL,\n    capital_usd   REAL    NOT NULL,\n    status        TEXT    NOT NULL DEFAULT 'SHADOW',\n    envelope_json TEXT    NOT NULL DEFAULT '{}',\n    created_at    TEXT    NOT NULL DEFAULT (datetime('now')),\n    updated_at    TEXT    NOT NULL DEFAULT (datetime('now'))\n)"
+    ],
+    [
+      "table",
+      "spec_bundles",
+      "spec_bundles",
+      "CREATE TABLE spec_bundles (\n    bundle_hash       TEXT NOT NULL PRIMARY KEY,               -- SHA-256 hex of canonical facets_json\n    frozen_at         TEXT NOT NULL DEFAULT (datetime('now')), -- freeze timestamp; set once on INSERT\n    facets_json       TEXT NOT NULL,                           -- canonical-serialised JSON blob\n    horizon_bars      INTEGER,                                  -- optional: horizon convention (bars)\n    cvar_alpha        REAL,                                     -- optional: CVaR alpha level\n    generator_family  TEXT                                      -- optional: generator family identifier\n, id INTEGER)"
+    ],
+    [
+      "table",
+      "spec_facets",
+      "spec_facets",
+      "CREATE TABLE spec_facets (\n    id                   INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    bundle_hash          TEXT NOT NULL,    -- soft FK to spec_bundles.bundle_hash\n    facet_name           TEXT NOT NULL,\n    facet_value          TEXT NOT NULL,    -- JSON-serialised value\n    freeze_discipline    TEXT NOT NULL,    -- THEORY|MANDATE|STYLIZED_FACT|CALIBRATION|BACKTEST_SELECTION\n    justification        TEXT,\n    calibration_evidence TEXT\n)"
+    ],
+    [
+      "table",
+      "sqlite_sequence",
+      "sqlite_sequence",
+      "CREATE TABLE sqlite_sequence(name,seq)"
+    ],
+    [
+      "table",
+      "strategy_incubation",
+      "strategy_incubation",
+      "CREATE TABLE strategy_incubation (\n    id                 INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n    candidate_hash     TEXT    NOT NULL UNIQUE,             -- tree-structural SHA-256,\n                                                              -- MUST match\n                                                              -- community_strats._composition_hash\n                                                              -- exactly (see database.py accessor\n                                                              -- comments) -- NOT\n                                                              -- compute_composition_hash (that hashes\n                                                              -- list[str] symphony IDs, unrelated)\n    tree_json          TEXT    NOT NULL,                    -- the compiled Composer raw_value tree,\n                                                              -- JSON-serialized (server-side only --\n                                                              -- never exposed via the API route)\n    objective           TEXT    NOT NULL,                    -- matches\n                                                              -- strategy_builder_engine.Objective enum\n                                                              -- value\n    provenance          TEXT    NOT NULL,                    -- 'built-new' | 'atlas-suggested' (never\n                                                              -- 'T1'-'T7', never 'community' -- same\n                                                              -- provenance-tag rule as the rest of\n                                                              -- Strategy Builder)\n    admitted_at         TEXT    NOT NULL DEFAULT (datetime('now')),  -- incubation clock anchor; never\n                                                              -- reset while status is INCUBATING or\n                                                              -- PROMOTED; reset on a refractory\n                                                              -- reentry (a genuinely fresh attempt)\n    backtest_mdd_pct    REAL,                                -- gate-time backtest max drawdown,\n                                                              -- stored as a POSITIVE PERCENTAGE\n                                                              -- MAGNITUDE (e.g. 8.0 = an 8% drawdown)\n                                                              -- -- caller converts from quantstats'\n                                                              -- negative-fraction convention before\n                                                              -- insert; see database.py accessor\n                                                              -- comments\n    status               TEXT    NOT NULL DEFAULT 'INCUBATING',  -- 'INCUBATING' | 'PROMOTED' |\n                                                              -- 'FAILED' | 'EXPIRED'\n    status_reason        TEXT,                               -- static token only, NEVER str(exc)\n                                                              -- (C5 sanitized-error precedent); NULL\n                                                              -- while INCUBATING or PROMOTED\n    status_changed_at    TEXT,                                -- timestamp of the last status\n                                                              -- transition (set by\n                                                              -- set_incubation_status()); the\n                                                              -- refractory-window anchor; NULL until\n                                                              -- the first transition away from\n                                                              -- INCUBATING\n    promoted_at          TEXT,                                -- set only on the transition to\n                                                              -- PROMOTED\n    fetch_failure_count  INTEGER NOT NULL DEFAULT 0            -- durable consecutive-Composer-\n                                                              -- fetch-failure counter for the daily\n                                                              -- tick (TICK4/TICK5) -- cannot be\n                                                              -- derived from incubation_daily gaps\n                                                              -- (a genuine fetch failure leaves ZERO\n                                                              -- rows there, no data trail); an\n                                                              -- in-memory-only counter would silently\n                                                              -- reset on every app.py restart, so it\n                                                              -- lives here instead. The ONLY sanctioned\n                                                              -- writer is database.py's\n                                                              -- record_incubation_fetch_outcome() --\n                                                              -- no raw SQL against this column from\n                                                              -- advisors/incubation.py or elsewhere\n)"
+    ],
+    [
+      "table",
+      "symphony_strategies",
+      "symphony_strategies",
+      "CREATE TABLE symphony_strategies (\n            symphony_name TEXT PRIMARY KEY,\n            parameters    TEXT,\n            locked_vars   TEXT,\n            live_mode     INTEGER DEFAULT 0\n        )"
+    ],
+    [
+      "trigger",
+      "spec_bundles_backfill_id",
+      "spec_bundles",
+      "CREATE TRIGGER spec_bundles_backfill_id\nAFTER INSERT ON spec_bundles\nFOR EACH ROW\nWHEN NEW.id IS NULL\nBEGIN\n    UPDATE spec_bundles SET id = NEW.rowid WHERE bundle_hash = NEW.bundle_hash;\nEND"
+    ]
+  ]
+}

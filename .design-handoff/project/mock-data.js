@@ -3,7 +3,7 @@
 
 window.PLANET_STOPPER_DATA = {
   meta: {
-    account: { label: 'Roth IRA', uuid_short: '880be47e' },
+    account: { label: 'Roth IRA', uuid_short: 'ACCOUNT_ID_REDACTED' },
     mode: 'DRY RUN', // 'DRY RUN' | 'LIVE'
     market_state: 'closed', // 'open' | 'closed' | 'pre' | 'post'
     market_state_label: 'Market closed · frozen at 16:00:01 ET',

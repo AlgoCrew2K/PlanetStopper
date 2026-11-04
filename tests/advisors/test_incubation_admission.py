@@ -39,6 +39,7 @@ import database as db_module
 from advisors import community_strats, symphony_schema
 from advisors import strategy_builder_engine as sbe
 from database import init_db, run_migrations
+from tests._row_readback import advisor_observations_for_subject
 
 _WORKTREE_ROOT = pathlib.Path(__file__).parent.parent.parent
 
@@ -290,7 +291,7 @@ class TestAdmissionWiringEndToEnd:
         _run_propose_strategies_against_real_db(monkeypatch)
         expected_hash = candidate_hash(_spy_tree())
 
-        rows = db_module.get_advisor_observations_for_subject("strategy_proposal", "cand-1")
+        rows = advisor_observations_for_subject("strategy_proposal", "cand-1")
         assert rows, "Expected at least one persisted advisor_observations row for cand-1."
         raw = rows[-1]["raw_response"]
         assert raw.get("candidate_hash") == expected_hash, (
@@ -462,9 +463,7 @@ class TestStep4bDeclinesOnNoneSeamResult:
 
         # D-1: the underlying advisor_observations persist must still succeed
         # -- declining admission is not the same as a broken persist.
-        declined_rows = db_module.get_advisor_observations_for_subject(
-            "strategy_proposal", "cand-declined"
-        )
+        declined_rows = advisor_observations_for_subject("strategy_proposal", "cand-declined")
         assert declined_rows, (
             "Declining admission must not break the existing "
             "advisor_observations persist for the candidate (D-1)."

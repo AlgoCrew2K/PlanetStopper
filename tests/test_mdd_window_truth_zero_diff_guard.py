@@ -68,9 +68,11 @@ _MATH_ENGINE = _REPO_ROOT / "math_engine.py"
 _PINNED_HASHES = {
     # Pinned to the current engine file: the close-snapshot builder keeps only dict values
     # that carry `name`, and the regime read passes the `session_date` keyword. The hash
-    # follows those changes; math_engine.py is unchanged.
-    "alpha_bot_execution.py": "7f6b2df373628aca0281c6007d432c8764ef1050b29ec95c1e45bfd6151a8fec",
-    "math_engine.py": "772886ead636e67e2c801339268608b39180d846a749fee924debd27c915de5e",
+    # follows those changes plus the hygiene-waves-3-4 edits (shared env-flag parse, dip line
+    # names the confirmation count in force); math_engine.py follows the shared z-score helper
+    # and the deleted dead function from the same plan.
+    "alpha_bot_execution.py": "80ae3ea16623ad1f44665541afff93ff882535df61ebbd047f037cc6244ae44e",
+    "math_engine.py": "343d303c29ee9aa4c9f390791603a12f3130eec456fe589b3959732cd4477f79",
 }
 
 

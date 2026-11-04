@@ -113,6 +113,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import database
+import env_flags
 import sleeves.alpaca_orders as alpaca_orders
 import sleeves.ledger as ledger
 import sleeves.reconciliation as reconciliation
@@ -184,9 +185,9 @@ def _compute_live_gates(sleeve_row: dict) -> tuple[bool, bool]:
     vars AND a dedicated flag" posture: a sleeve armed LIVE with the flag
     unset (or vice versa) still resolves to the paper host.
     """
-    live_mode = sleeve_row.get("status") == "LIVE" and os.getenv(
-        "SLEEVE_LIVE_EXECUTION", "False"
-    ).lower() in ("true", "1", "yes")
+    live_mode = sleeve_row.get("status") == "LIVE" and env_flags.is_true(
+        os.getenv("SLEEVE_LIVE_EXECUTION", "False")
+    )
     live_keys_present = bool(os.getenv("ALPACA_LIVE_KEY")) and bool(os.getenv("ALPACA_LIVE_SECRET"))
     return live_mode, live_keys_present
 

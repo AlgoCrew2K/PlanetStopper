@@ -31,6 +31,7 @@ import sqlite3
 from pathlib import Path
 
 import database as db_module
+from tests._row_readback import advisor_observations_for_subject
 
 _MIGRATION_FILENAME = "025_advisor_observations_symphony_id.sql"
 _MIGRATION_PATH = Path(__file__).parents[2] / "migrations" / _MIGRATION_FILENAME
@@ -223,7 +224,7 @@ def test_insert_advisor_observation_persists_symphony_id():
     )
     assert isinstance(row_id, int) and row_id > 0
 
-    rows = db_module.get_advisor_observations_for_subject("autotune_run", "7")
+    rows = advisor_observations_for_subject("autotune_run", "7")
     assert rows, "Expected one row by subject"
     assert rows[0].get("symphony_id") == "DefensiveAlpha", (
         f"symphony_id did not round-trip: stored={rows[0].get('symphony_id')!r}, "

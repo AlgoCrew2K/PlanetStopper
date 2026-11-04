@@ -2,7 +2,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -14,7 +14,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:04Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -26,7 +26,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "5XjzXjdGnjh99MIsdM97",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:04Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -38,7 +38,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -50,7 +50,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:04Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -62,7 +62,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "8FAXAnQmYi1INDubazeC",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:04Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -74,7 +74,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -86,7 +86,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:05Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -98,7 +98,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:05Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -110,7 +110,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -122,7 +122,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:04Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -134,7 +134,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "INfCn3eKsu6i4oTTqdUp",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:04Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -146,7 +146,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -158,7 +158,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:05Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -170,7 +170,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:05Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -182,7 +182,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -194,7 +194,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:04Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -206,7 +206,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "hvPiGP1O7AHfutHE3Fjy",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:04Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -218,7 +218,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -230,7 +230,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:04Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -242,7 +242,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "nOyb55RMGVCKPiYXv7TI",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:04Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -254,7 +254,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1552",
   "ts_utc": "2026-06-23T19:52:03Z",
   "ts_et": "2026-06-23T15:52:01",
@@ -266,7 +266,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1551",
   "ts_utc": "2026-06-23T19:51:04Z",
   "ts_et": "2026-06-23T15:51:02",
@@ -278,7 +278,7 @@
  {
   "trading_day": "2026-06-23",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260623_1550",
   "ts_utc": "2026-06-23T19:50:05Z",
   "ts_et": "2026-06-23T15:50:01",
@@ -290,7 +290,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1552",
   "ts_utc": "2026-06-24T19:52:04Z",
   "ts_et": "2026-06-24T15:52:01",
@@ -302,7 +302,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1551",
   "ts_utc": "2026-06-24T19:51:05Z",
   "ts_et": "2026-06-24T15:51:02",
@@ -314,7 +314,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "Gpaw3IhZghQPRE6AdEKx",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1550",
   "ts_utc": "2026-06-24T19:50:05Z",
   "ts_et": "2026-06-24T15:50:01",
@@ -326,7 +326,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1552",
   "ts_utc": "2026-06-24T19:52:04Z",
   "ts_et": "2026-06-24T15:52:01",
@@ -338,7 +338,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1551",
   "ts_utc": "2026-06-24T19:51:05Z",
   "ts_et": "2026-06-24T15:51:02",
@@ -350,7 +350,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "MoAkUHnavSYw3oONiUxe",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1550",
   "ts_utc": "2026-06-24T19:50:05Z",
   "ts_et": "2026-06-24T15:50:01",
@@ -362,7 +362,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1552",
   "ts_utc": "2026-06-24T19:52:03Z",
   "ts_et": "2026-06-24T15:52:01",
@@ -374,7 +374,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1551",
   "ts_utc": "2026-06-24T19:51:05Z",
   "ts_et": "2026-06-24T15:51:02",
@@ -386,7 +386,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "iaSOOUsmnCJHiZvbrWfs",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1550",
   "ts_utc": "2026-06-24T19:50:05Z",
   "ts_et": "2026-06-24T15:50:01",
@@ -398,7 +398,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1552",
   "ts_utc": "2026-06-24T19:52:03Z",
   "ts_et": "2026-06-24T15:52:01",
@@ -410,7 +410,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1551",
   "ts_utc": "2026-06-24T19:51:05Z",
   "ts_et": "2026-06-24T15:51:02",
@@ -422,7 +422,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "lW4ZzWuqR8tEO2DhXbil",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1550",
   "ts_utc": "2026-06-24T19:50:05Z",
   "ts_et": "2026-06-24T15:50:01",
@@ -434,7 +434,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1552",
   "ts_utc": "2026-06-24T19:52:03Z",
   "ts_et": "2026-06-24T15:52:01",
@@ -446,7 +446,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1551",
   "ts_utc": "2026-06-24T19:51:05Z",
   "ts_et": "2026-06-24T15:51:02",
@@ -458,7 +458,7 @@
  {
   "trading_day": "2026-06-24",
   "symphony_id": "qF5ZU7ALjrlhxrGEwsyJ",
-  "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+  "account_id": "ACCOUNT_ID_REDACTED",
   "cycle_id": "20260624_1550",
   "ts_utc": "2026-06-24T19:50:05Z",
   "ts_et": "2026-06-24T15:50:01",

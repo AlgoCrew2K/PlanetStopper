@@ -71,6 +71,7 @@ from pathlib import Path
 import pytest
 
 import database as db_module
+from tests._row_readback import advisor_observations_for_subject
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -424,16 +425,13 @@ def test_observation_with_spec_bundle_id_references_existing_bundle():
     verifies that the column accepts the value and it survives the round-trip;
     referential integrity is the application's responsibility.
     """
-    from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
-        insert_advisor_observation,
-    )
+    from database import insert_advisor_observation  # noqa: PLC0415
 
     bundle_hash = "deadbeef1234567890abcdef"  # representative hash string
     row_id = insert_advisor_observation(**_computed_row_kwargs(spec_bundle_id=bundle_hash))
     assert isinstance(row_id, int) and row_id > 0
 
-    rows = get_advisor_observations_for_subject("autotune_run", "run-001")
+    rows = advisor_observations_for_subject("autotune_run", "run-001")
     assert rows, "Expected at least one observation row"
     assert rows[0]["spec_bundle_id"] == bundle_hash, (
         f"spec_bundle_id not stored correctly; "
@@ -443,13 +441,10 @@ def test_observation_with_spec_bundle_id_references_existing_bundle():
 
 def test_observation_with_null_spec_bundle_id_is_legal():
     """spec_bundle_id=None is permitted (not all observations reference a bundle)."""
-    from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
-        insert_advisor_observation,
-    )
+    from database import insert_advisor_observation  # noqa: PLC0415
 
     insert_advisor_observation(**_computed_row_kwargs(spec_bundle_id=None))
-    rows = get_advisor_observations_for_subject("autotune_run", "run-001")
+    rows = advisor_observations_for_subject("autotune_run", "run-001")
     assert rows, "Expected one row"
     assert rows[0]["spec_bundle_id"] is None, "spec_bundle_id must be NULL when not supplied"
 
@@ -512,13 +507,10 @@ def test_insert_advisor_observation_ids_are_monotonically_increasing():
 
 def test_is_advisory_only_stored_as_1_when_caller_omits_it():
     """When the caller does not supply is_advisory_only, it must default to 1."""
-    from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
-        insert_advisor_observation,
-    )
+    from database import insert_advisor_observation  # noqa: PLC0415
 
     insert_advisor_observation(**_computed_row_kwargs())
-    rows = get_advisor_observations_for_subject("autotune_run", "run-001")
+    rows = advisor_observations_for_subject("autotune_run", "run-001")
     assert rows, "Expected one row"
     assert rows[0]["is_advisory_only"] == 1, (
         f"is_advisory_only must be 1 (got {rows[0].get('is_advisory_only')!r}). "
@@ -537,10 +529,7 @@ def test_is_advisory_only_cannot_be_set_to_0():
     """
     import os
 
-    from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
-        insert_advisor_observation,
-    )
+    from database import insert_advisor_observation  # noqa: PLC0415
 
     db_path = os.environ["DB_PATH"]
 
@@ -555,7 +544,7 @@ def test_is_advisory_only_cannot_be_set_to_0():
         return
 
     # If no exception, verify that 0 was NOT persisted.
-    rows = get_advisor_observations_for_subject("autotune_run", "run-advisory-test")
+    rows = advisor_observations_for_subject("autotune_run", "run-advisory-test")
     assert rows, "Precondition: row must have been inserted"
     stored = rows[0]["is_advisory_only"]
     assert stored != 0, (
@@ -577,13 +566,10 @@ def test_computed_row_raw_response_empty_dict_round_trips():
     read so callers receive a Python dict — consistent with the llm_suggestions
     precedent for JSON-blob columns (database.py:660-676).
     """
-    from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
-        insert_advisor_observation,
-    )
+    from database import insert_advisor_observation  # noqa: PLC0415
 
     insert_advisor_observation(**_computed_row_kwargs())
-    rows = get_advisor_observations_for_subject("autotune_run", "run-001")
+    rows = advisor_observations_for_subject("autotune_run", "run-001")
     assert rows, "Expected one row"
 
     raw = rows[0]["raw_response"]
@@ -613,16 +599,13 @@ def test_llm_authored_row_raw_response_payload_round_trips():
     """
     import json  # noqa: PLC0415
 
-    from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
-        insert_advisor_observation,
-    )
+    from database import insert_advisor_observation  # noqa: PLC0415
 
     kwargs = _llm_authored_row_kwargs(subject_id="run-llm-001")
     expected_payload = kwargs["raw_response"]
 
     insert_advisor_observation(**kwargs)
-    rows = get_advisor_observations_for_subject("autotune_run", "run-llm-001")
+    rows = advisor_observations_for_subject("autotune_run", "run-llm-001")
     assert rows, "Expected one row"
 
     raw = rows[0]["raw_response"]
@@ -808,75 +791,52 @@ def test_insert_advisor_observation_returns_positive_int():
 
 
 # ---------------------------------------------------------------------------
-# 14. get_advisor_observations_for_subject filters by subject_type AND subject_id
+# 14. get_advisor_observations_for_symphony filters by symphony_id and returns every column
 # ---------------------------------------------------------------------------
 
 
-def test_get_advisor_observations_for_subject_filters_correctly():
-    """get_advisor_observations_for_subject must filter by BOTH subject_type and subject_id.
-
-    Rows with a matching subject_type but a different subject_id must be excluded,
-    and vice versa.  A query that joins on only one dimension would return false
-    positives — this test catches that.
-    """
+def test_get_advisor_observations_for_symphony_filters_correctly():
+    """The symphony reader returns the rows of its symphony_id and no other row."""
     from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
+        get_advisor_observations_for_symphony,
         insert_advisor_observation,
     )
 
-    # Three rows: two for the target (type=autotune_run, id=run-target),
-    # one decoy with same type but different id, one decoy with different type.
-    insert_advisor_observation(**_computed_row_kwargs(subject_id="run-target"))
-    insert_advisor_observation(**_llm_authored_row_kwargs(subject_id="run-target"))
-    insert_advisor_observation(**_computed_row_kwargs(subject_id="run-decoy"))
+    insert_advisor_observation(**_computed_row_kwargs(subject_id="run-a"), symphony_id="sym-target")
     insert_advisor_observation(
-        **_computed_row_kwargs(subject_type="shadow_decision", subject_id="run-target")
+        **_llm_authored_row_kwargs(subject_id="run-b"), symphony_id="sym-target"
     )
+    insert_advisor_observation(**_computed_row_kwargs(subject_id="run-c"), symphony_id="sym-decoy")
+    insert_advisor_observation(**_computed_row_kwargs(subject_id="run-d"))
 
-    target_rows = get_advisor_observations_for_subject("autotune_run", "run-target")
-    assert len(target_rows) == 2, (
-        f"Expected 2 rows for (autotune_run, run-target); got {len(target_rows)}"
+    rows = get_advisor_observations_for_symphony("sym-target")
+
+    assert [r["subject_id"] for r in rows] == ["run-a", "run-b"], (
+        "the reader must return exactly the rows of its symphony_id, oldest first"
     )
-
-    for row in target_rows:
-        assert row["subject_type"] == "autotune_run", (
-            f"Returned row has wrong subject_type: {row['subject_type']!r}"
-        )
-        assert row["subject_id"] == "run-target", (
-            f"Returned row has wrong subject_id: {row['subject_id']!r}"
-        )
+    assert all(r["symphony_id"] == "sym-target" for r in rows)
 
 
-def test_get_advisor_observations_for_subject_returns_empty_for_no_match():
-    """Querying a subject with no observations must return an empty list, not raise."""
-    from database import get_advisor_observations_for_subject  # noqa: PLC0415
+def test_get_advisor_observations_for_symphony_returns_empty_for_no_match():
+    """A symphony with no observations yields an empty list, never an exception."""
+    from database import get_advisor_observations_for_symphony  # noqa: PLC0415
 
-    result = get_advisor_observations_for_subject("autotune_run", "nonexistent-run")
-    assert isinstance(result, list) and result == [], (
-        f"Expected [] for a subject with no observations; got {result!r}"
-    )
+    assert get_advisor_observations_for_symphony("nonexistent-symphony") == []
 
 
-def test_get_advisor_observations_for_subject_returns_all_expected_keys():
-    """Each dict returned by get_advisor_observations_for_subject must carry all schema columns.
-
-    This prevents the accessor from silently dropping fields (e.g. SELECT of a
-    subset of columns instead of SELECT *).
-    """
+def test_get_advisor_observations_for_symphony_returns_all_expected_keys():
+    """Each dict the symphony reader returns carries every schema column."""
     from database import (  # noqa: PLC0415
-        get_advisor_observations_for_subject,
+        get_advisor_observations_for_symphony,
         insert_advisor_observation,
     )
 
-    insert_advisor_observation(**_computed_row_kwargs())
-    rows = get_advisor_observations_for_subject("autotune_run", "run-001")
+    insert_advisor_observation(**_computed_row_kwargs(), symphony_id="sym-keys")
+    rows = get_advisor_observations_for_symphony("sym-keys")
     assert rows, "Precondition: at least one row must be returned"
 
     missing = _EXPECTED_COLUMNS - set(rows[0].keys())
-    assert not missing, (
-        f"get_advisor_observations_for_subject returned a row missing columns: {missing}. "
-        "The accessor must return all schema columns."
-    )
+    assert not missing, f"get_advisor_observations_for_symphony returned a row missing {missing}"
 
 
 # ---------------------------------------------------------------------------
@@ -973,22 +933,18 @@ def test_init_db_source_does_not_mention_advisor_observations():
 # ---------------------------------------------------------------------------
 
 
-def test_get_advisor_observations_for_subject_uses_ro_connection():
-    """get_advisor_observations_for_subject must use get_ro_connection.
+def test_get_advisor_observations_for_symphony_uses_ro_connection():
+    """get_advisor_observations_for_symphony must use get_ro_connection.
 
     Read-only query paths use get_ro_connection() (mode=ro at SQLite driver level)
-    per architecture constraint 5 and Advisor scope-boundary integrity I-3 ★.
-    Using get_connection() on a read path would allow accidental writes through
-    the same code path.
+    per architecture constraint 5 and Advisor scope-boundary integrity I-3.
     """
-    source = inspect.getsource(db_module.get_advisor_observations_for_subject)
+    source = inspect.getsource(db_module.get_advisor_observations_for_symphony)
     assert "get_ro_connection" in source, (
-        "get_advisor_observations_for_subject must use get_ro_connection(), not get_connection(). "
-        "Read paths must be enforced at the driver level."
+        "get_advisor_observations_for_symphony must use get_ro_connection(), not get_connection()."
     )
     assert "get_connection()" not in source, (
-        "get_advisor_observations_for_subject must not call get_connection() — "
-        "use get_ro_connection() for all read-only query paths."
+        "get_advisor_observations_for_symphony must not call get_connection()."
     )
 
 
@@ -1185,12 +1141,12 @@ def test_insert_advisor_observation_does_not_reference_optimization_db():
         )
 
 
-def test_get_advisor_observations_for_subject_does_not_reference_optimization_db():
-    """get_advisor_observations_for_subject must not reference alphabot_opt or opt.db."""
-    source = inspect.getsource(db_module.get_advisor_observations_for_subject)
+def test_get_advisor_observations_for_symphony_does_not_reference_optimization_db():
+    """get_advisor_observations_for_symphony must not reference alphabot_opt or opt.db."""
+    source = inspect.getsource(db_module.get_advisor_observations_for_symphony)
     for forbidden in ("alphabot_opt", "opt.db"):
         assert forbidden not in source, (
-            f"get_advisor_observations_for_subject must not reference {forbidden!r}. "
+            f"get_advisor_observations_for_symphony must not reference {forbidden!r}. "
             "Two-DB boundary: advisory reads come from the state DB only."
         )
 

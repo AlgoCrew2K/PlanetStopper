@@ -2,7 +2,7 @@
   "cycle_id": "20261021_1604",
   "rows": [
     {
-      "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account_id": "ACCOUNT_ID_REDACTED",
       "current_return": -0.31,
       "cycle_id": "20261021_1604",
       "id": 357074,
@@ -17,7 +17,7 @@
       "ts_utc": "2026-10-21T20:04:04Z"
     },
     {
-      "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account_id": "ACCOUNT_ID_REDACTED",
       "current_return": 0.64,
       "cycle_id": "20261021_1604",
       "id": 357075,

@@ -41,7 +41,6 @@ Fixture provenance:
   database._ADVISOR_OBSERVATION_COLUMNS.  Values are test sentinels.
 
 Mocking strategy:
-  - database.get_advisor_observations_for_subject patched for route tests
   - database.get_advisor_observations_for_role patched where relevant
   - No live DB connections; no live network calls
   - math engine is NOT touched — this is a UI surface test
@@ -131,7 +130,6 @@ def _get_ai_advisor_page(flask_client, observations: list[dict]) -> object:
     """
     with (
         patch("database.get_advisor_observations_for_role", return_value=observations),
-        patch("database.get_advisor_observations_for_subject", return_value=observations),
         patch("market_calendar.get_market_state", return_value="open"),
     ):
         return flask_client.get("/ai-advisor")
@@ -389,9 +387,6 @@ class TestAdvisorObservationsApiRoute:
         """GET /api/advisor-observations must return 200."""
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch(
-                "database.get_advisor_observations_for_subject", return_value=observations_fixture
-            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         assert resp.status_code == 200, (
@@ -403,9 +398,6 @@ class TestAdvisorObservationsApiRoute:
         """Response must be a JSON array (list)."""
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch(
-                "database.get_advisor_observations_for_subject", return_value=observations_fixture
-            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         data = resp.get_json()
@@ -427,9 +419,6 @@ class TestAdvisorObservationsApiRoute:
         }
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch(
-                "database.get_advisor_observations_for_subject", return_value=observations_fixture
-            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         data = resp.get_json()
@@ -446,9 +435,6 @@ class TestAdvisorObservationsApiRoute:
         structural declaration that the Advisor never moves money."""
         with (
             patch("database.get_advisor_observations_for_role", return_value=observations_fixture),
-            patch(
-                "database.get_advisor_observations_for_subject", return_value=observations_fixture
-            ),
         ):
             resp = flask_client.get("/api/advisor-observations")
         data = resp.get_json()
@@ -470,7 +456,7 @@ class TestSymphonyIdFilter:
     advisor_observations.symphony_id column (migration 025, S3-AUDIT-004).
 
     Prior to the audit-fix cycle, this test class asserted that the route
-    used `get_advisor_observations_for_subject` with a 3x fan-out across
+    used a per-subject reader with a 3x fan-out across
     subject_types — that path was structurally broken because the user-supplied
     symphony_id never matched producer-persisted subject_ids (numeric PKs and
     bundle hashes).  The new contract: route calls
@@ -504,7 +490,6 @@ class TestSymphonyIdFilter:
             patch(
                 "database.get_advisor_observations_for_symphony", return_value=[]
             ) as mock_symphony,
-            patch("database.get_advisor_observations_for_subject", return_value=[]) as mock_subject,
             patch("database.get_advisor_observations_for_role", return_value=[]) as mock_role,
         ):
             flask_client.get("/api/advisor-observations?symphony_id=sym-B")
@@ -513,9 +498,9 @@ class TestSymphonyIdFilter:
             "GET /api/advisor-observations?symphony_id=sym-B must call "
             "database.get_advisor_observations_for_symphony (S3-AUDIT-004 fix)."
         )
-        assert not mock_subject.called, (
-            "Route must NOT call the legacy get_advisor_observations_for_subject "
-            "fan-out for symphony filtering (S3-AUDIT-010: single-query path)."
+        assert not mock_role.called, (
+            "Route must NOT fan out over the per-role reader for symphony filtering "
+            "(S3-AUDIT-010: single-query path)."
         )
 
     def test_symphony_filter_empty_result_returns_empty_list(self, flask_client):
@@ -578,7 +563,6 @@ class TestHostileEdges:
         ]
         with (
             patch("database.get_advisor_observations_for_role", return_value=large_batch),
-            patch("database.get_advisor_observations_for_subject", return_value=large_batch),
             patch("market_calendar.get_market_state", return_value="open"),
         ):
             resp = flask_client.get("/api/advisor-observations")
@@ -630,7 +614,6 @@ class TestHostileEdges:
         }
         with (
             patch("database.get_advisor_observations_for_role", return_value=[legacy_row]),
-            patch("database.get_advisor_observations_for_subject", return_value=[legacy_row]),
             patch("market_calendar.get_market_state", return_value="open"),
         ):
             resp = flask_client.get("/ai-advisor")

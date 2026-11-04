@@ -36,3 +36,5 @@ The closed-market scenario builds its snapshot from `tests/fixtures/dashboard/fr
 (hand-authored, schema-derived) with its `accounts_map` replaced by the four records above.
 
 Tests derive every expected count and id from this file at run time.
+
+The UUIDs `5b0e9c2d-7a41-4f68-9d3e-1c8a64f2b7d0` and `e2f4a1c7-93b8-4d05-a6c1-0b7d58e93a42` are invented; neither is a real account id.

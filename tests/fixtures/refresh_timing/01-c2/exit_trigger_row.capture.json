@@ -21,9 +21,9 @@
     "symphony_source": "shadow-rows capture sidecar in --out"
   },
   "record": {
-    "bytes": 536,
+    "bytes": 519,
     "file": "exit_trigger_row.json",
-    "sha256": "79729713552c14990d4ac65ed96dcf18099fb7ffbb248962714a6a81efdb45a9"
+    "sha256": "1925a6454a9585d9f426862aa04836f9f5b9ab640cc74fdbc5586cd0f3bd6de1"
   },
   "script": "tests/fixtures/refresh_timing/capture.py",
   "source": {

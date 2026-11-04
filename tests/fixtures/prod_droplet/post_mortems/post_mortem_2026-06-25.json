@@ -54,7 +54,7 @@
         {
             "symphony_name": "(INVEST) LQD + EYEG 5 ways Full Market",
             "symphony_value": 1183.53,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.13,
             "attempted_trigger_level": 1.13,
@@ -87,7 +87,7 @@
         {
             "symphony_name": "Planet of the Paragons: EYEG of the LQD",
             "symphony_value": 1076.82,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.14,
             "attempted_trigger_level": 1.14,
@@ -118,7 +118,7 @@
         {
             "symphony_name": "Corporate Chaos 5 ways ",
             "symphony_value": 968.15,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 0.71,
             "attempted_trigger_level": 0.71,
@@ -151,7 +151,7 @@
         {
             "symphony_name": "Planet of the Golden Age (Buy Copy)",
             "symphony_value": 1492.74,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.75,
             "attempted_trigger_level": 1.75,
@@ -199,7 +199,7 @@
         {
             "symphony_name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
             "symphony_value": 1363.58,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.34,
             "attempted_trigger_level": 1.34,
@@ -234,7 +234,7 @@
         {
             "symphony_name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
             "symphony_value": 1087.63,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 0.63,
             "attempted_trigger_level": 0.63,
@@ -274,7 +274,7 @@
         {
             "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
             "symphony_value": 1614.39,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 1.24,
             "attempted_trigger_level": 2.59,
@@ -321,7 +321,7 @@
         {
             "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
             "symphony_value": 1127.74,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.79,
             "attempted_trigger_level": 1.79,
@@ -366,7 +366,7 @@
         {
             "symphony_name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
             "symphony_value": 1604.37,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 0.92,
             "attempted_trigger_level": 0.92,

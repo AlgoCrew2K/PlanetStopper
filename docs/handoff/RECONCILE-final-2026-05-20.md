@@ -7,7 +7,7 @@
 **Branch:** feat/studio-design-handoff
 **Date:** 2026-05-20T20:48 UTC
 **Fixtures:** `tests/fixtures/composer/reconcile-final-2026-05-20/symphony_stats_meta.json` (captured live), `tests/fixtures/composer/reconcile-final-2026-05-20/total_stats.json` (captured live)
-**Account:** ROTH IRA (`880be47e-efe4-4b44-9d83-b6d86098fe0d`)
+**Account:** ROTH IRA (`ACCOUNT_ID_REDACTED`)
 **Endpoints:** `GET /api/v0.1/portfolio/accounts/{id}/symphony-stats-meta`, `GET /api/v0.1/portfolio/accounts/{id}/total-stats`
 **Dashboard:** `GET /api/state` (http://127.0.0.1:5000)
 **Prior pass:** `docs/handoff/RECONCILE-2026-05-20.md`

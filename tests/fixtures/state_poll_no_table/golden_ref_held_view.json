@@ -1,6 +1,6 @@
 {
   "accounts_map": {
-    "880be47e-efe4-4b44-9d83-b6d86098fe0d": [
+    "ACCOUNT_ID_REDACTED": [
       {
         "_cr": {
           "_twr_fallback": false,
@@ -22,7 +22,7 @@
           "if_held": 2.14
         },
         "above_tp_count": 2,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.3249692225562325,
         "armed": false,
         "below_stop_count": 0,
@@ -162,7 +162,7 @@
           "if_held": 1.19
         },
         "above_tp_count": 0,
-        "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account": "ACCOUNT_ID_REDACTED",
         "active_stop_distance": 0.733335140954921,
         "armed": true,
         "below_stop_count": 0,
@@ -284,7 +284,7 @@
         "if_held": 1.19
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.733335140954921,
       "armed": true,
       "below_stop_count": 0,
@@ -403,7 +403,7 @@
         "if_held": 2.14
       },
       "above_tp_count": 2,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.3249692225562325,
       "armed": false,
       "below_stop_count": 0,
@@ -921,7 +921,7 @@
         "if_held": 1.19
       },
       "above_tp_count": 0,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.733335140954921,
       "armed": true,
       "below_stop_count": 0,
@@ -1040,7 +1040,7 @@
         "if_held": 2.14
       },
       "above_tp_count": 2,
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "active_stop_distance": 0.3249692225562325,
       "armed": false,
       "below_stop_count": 0,
@@ -1163,7 +1163,7 @@
   "status": "active",
   "symphonies": [
     {
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "armed": true,
       "cr_bot": 1.1616874838794269,
       "cr_held": -4.342,
@@ -1184,7 +1184,7 @@
       "triggered_reason": "VWAP Bleed Cut"
     },
     {
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "armed": false,
       "cr_bot": -16.330643887701456,
       "cr_held": -15.226999999999999,

@@ -896,7 +896,6 @@ def test_objective_kind_crra_eu_routes_to_crra_not_sortino():
         mock_db.normalize_name.side_effect = lambda x: x.lower().replace(" ", "_")
         mock_db.load_chart_history.return_value = {}
         mock_db.save_chart_archive.return_value = None
-        mock_db.record_autotune_run.return_value = None
         mock_db.update_symphony_strategy.return_value = None
         mock_db.save_autotune_run.return_value = 1
         # DEFAULT_STRATEGY is a module-level dict attribute on database, not a callable.
