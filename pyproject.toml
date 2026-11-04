@@ -66,7 +66,6 @@ ignore = []
 
 # Standalone modules with un-wrappable E501.
 "ai_advisor.py"       = ["E501"]
-"composer_backtest.py" = ["E501"]
 "prism_scheduler.py"  = ["E501"]
 "reporting.py"        = ["B007","E501"]  # B007 side-effects-only; E501 Discord/embed strings
 "synthetic_history.py" = ["E501"]

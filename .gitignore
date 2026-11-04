@@ -83,3 +83,4 @@ credentials.json
 *credentials*.json
 # ...but captured-from-producer test fixtures are versioned (an invalid-credentials 401 answer is not a credential)
 !tests/fixtures/**/*credentials*.json
+.claude/archive/

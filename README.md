@@ -101,7 +101,6 @@ Planet Stopper is a **monolithic Flask daemon** built around a one-minute schedu
 | `dashboard/` | Row-building helpers for the dashboard tables. |
 | `market_calendar.py` | NYSE trading-day calendar helpers used throughout the scheduler and engine. |
 | `regime_classifier.py` | kNN regime classification — identifies the k nearest-neighbor historical days for MC gating and CVaR estimation. |
-| `composer_backtest.py` | Thin client for Composer's stateless backtest endpoint; used by the AI Advisor proposal suite. |
 
 ### Reference documentation
 
