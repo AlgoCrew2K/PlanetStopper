@@ -1,0 +1,534 @@
+{
+ "sha": "ff69445af2a9028fb67a6d0eb4f13348bab625a5",
+ "role": "test-writer",
+ "plans": [
+  "feature-plans/regime-label-producer.md"
+ ],
+ "approach": "feature-plans/approach/regime-label-producer.md",
+ "cycle": "C2",
+ "round": 1,
+ "batch": [
+  "S-1.1",
+  "S-1.6",
+  "S-1.7",
+  "S-1.8",
+  "S-1.9",
+  "S-1.10",
+  "S-5.1",
+  "S-5.3",
+  "S-5.4",
+  "S-5.8",
+  "S-5.9",
+  "S-6.5",
+  "S-6.6",
+  "S-6.7",
+  "S-6.8",
+  "S-7.1",
+  "S-7.2",
+  "S-7.3",
+  "S-7.4",
+  "S-7.5"
+ ],
+ "rows": [
+  {
+   "scenario": "S-1.1",
+   "criterion": "AC-1",
+   "requirements": [
+    "R-1",
+    "R-11",
+    "R-12",
+    "R-17",
+    "R-28"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestSlotWritesRows::test_the_slot_writes_one_row_per_symphony_keyed_by_hash_with_its_own_label"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestSlotWritesRows::test_each_symphony_gets_the_label_of_its_own_holdings"
+    },
+    {
+     "file": "tests/app/test_regime_label_scheduling.py",
+     "name": "TestTheRegisteredCallableRunsTheWholeJob::test_the_scheduler_firing_the_slot_writes_the_rows_for_the_stored_symphonies"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-1.6",
+   "criterion": "AC-1",
+   "requirements": [
+    "R-1",
+    "R-11",
+    "R-12",
+    "R-17",
+    "R-28"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestRepeatedRuns::test_a_second_run_keeps_one_row_per_symphony_with_the_same_label_and_a_later_stamp"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-1.7",
+   "criterion": "AC-1",
+   "requirements": [
+    "R-1",
+    "R-11",
+    "R-12",
+    "R-17",
+    "R-28"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestRepeatedRuns::test_rows_dated_the_previous_session_are_replaced_by_the_new_label_and_date"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-1.8",
+   "criterion": "AC-1",
+   "requirements": [
+    "R-1",
+    "R-11",
+    "R-12",
+    "R-17",
+    "R-28"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestStoredStateShape::test_the_slot_loader_returns_symphony_entries_only"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestStoredStateShape::test_the_slot_loader_reads_through_the_read_only_connection"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestStoredStateShape::test_metadata_keys_get_no_row_and_no_log_line"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-1.9",
+   "criterion": "AC-1",
+   "requirements": [
+    "R-1",
+    "R-11",
+    "R-12",
+    "R-17",
+    "R-28"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestNothingElseIsWritten::test_every_other_table_and_the_post_mortem_files_are_unchanged"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-1.10",
+   "criterion": "AC-1",
+   "requirements": [
+    "R-1",
+    "R-11",
+    "R-12",
+    "R-17",
+    "R-28"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestSessionOpenCutoff::test_a_symphony_finished_after_the_open_gets_no_row_while_the_one_before_it_keeps_its_own"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestSessionOpenCutoff::test_the_open_arriving_during_the_price_fetch_decides_every_write"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-5.1",
+   "criterion": "AC-5",
+   "requirements": [
+    "R-8",
+    "R-9",
+    "R-10"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestOneSymphonyNeverStopsTheOthers::test_a_price_batch_that_fails_costs_only_the_symphony_it_covers"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-5.3",
+   "criterion": "AC-5",
+   "requirements": [
+    "R-8",
+    "R-9",
+    "R-10"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestOneSymphonyNeverStopsTheOthers::test_a_symphony_without_holdings_gets_no_row_and_adds_nothing_to_the_fetch"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-5.4",
+   "criterion": "AC-5",
+   "requirements": [
+    "R-8",
+    "R-9",
+    "R-10"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestOneSymphonyNeverStopsTheOthers::test_an_unreachable_price_source_leaves_every_symphony_unlabelled"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-5.8",
+   "criterion": "AC-5",
+   "requirements": [
+    "R-8",
+    "R-9",
+    "R-10"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestOneSymphonyNeverStopsTheOthers::test_a_malformed_holding_is_an_unexpected_error_for_that_symphony_alone"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-5.9",
+   "criterion": "AC-5",
+   "requirements": [
+    "R-8",
+    "R-9",
+    "R-10"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestOneSymphonyNeverStopsTheOthers::test_a_failed_write_costs_only_that_symphony_and_the_rest_are_still_written"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_run.py",
+     "name": "TestOneSymphonyNeverStopsTheOthers::test_a_missing_cache_table_fails_each_write_and_the_run_still_completes"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-6.5",
+   "criterion": "AC-6",
+   "requirements": [
+    "R-7",
+    "R-19",
+    "R-20",
+    "R-24",
+    "R-25"
+   ],
+   "tests": [
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "TestNoRouteReachesTheJob::test_the_scheduler_registration_reaches_the_job_and_the_write"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "TestNoRouteReachesTheJob::test_no_route_function_reaches_the_job_the_worker_the_slot_or_the_cache_write"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "TestNoRouteReachesTheJob::test_no_url_rule_exposes_the_job"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "test_a_route_that_calls_the_slot_callable_fails_the_route_scan"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "test_a_route_that_writes_the_cache_directly_fails_the_route_scan"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-6.6",
+   "criterion": "AC-6",
+   "requirements": [
+    "R-7",
+    "R-19",
+    "R-20",
+    "R-24",
+    "R-25"
+   ],
+   "tests": [
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "test_a_forbidden_statement_planted_on_the_walked_graph_fails_the_scan"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "test_no_order_deploy_symphony_write_or_live_flag_is_reachable_from_the_entry_point"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "test_every_scanned_entry_point_is_defined"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "TestTheWalkCoversTheJob::test_the_job_reaches_its_price_fetch_its_cache_write_and_the_classifier"
+    },
+    {
+     "file": "tests/security/test_regime_label_job_no_trade_boundary.py",
+     "name": "test_the_job_module_imports_no_engine_order_composer_write_app_or_advisor_module"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-6.7",
+   "criterion": "AC-6",
+   "requirements": [
+    "R-7",
+    "R-19",
+    "R-20",
+    "R-24",
+    "R-25"
+   ],
+   "tests": [
+    {
+     "file": "tests/app/test_regime_label_scheduling.py",
+     "name": "TestTheSlotCallableDoesNotWait::test_it_returns_while_the_job_is_still_running_on_a_daemon_thread"
+    },
+    {
+     "file": "tests/app/test_regime_label_scheduling.py",
+     "name": "TestTheSlotNeverDelaysTheMinuteJobs::test_with_the_job_held_the_engine_spawn_and_account_refresh_still_fire_every_minute"
+    },
+    {
+     "file": "tests/app/test_regime_label_scheduling.py",
+     "name": "TestTheWorker::test_it_runs_the_job_over_the_symphony_entries_loader"
+    },
+    {
+     "file": "tests/app/test_regime_label_scheduling.py",
+     "name": "TestTheWorker::test_a_job_that_raises_is_logged_by_class_name_and_never_escapes"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-6.8",
+   "criterion": "AC-6",
+   "requirements": [
+    "R-7",
+    "R-19",
+    "R-20",
+    "R-24",
+    "R-25"
+   ],
+   "tests": [
+    {
+     "file": "tests/app/test_regime_label_scheduling.py",
+     "name": "TestTheSlotTimeIsOffHoursInEveryHostZone::test_the_registered_time_maps_outside_the_session_in_eastern_time"
+    },
+    {
+     "file": "tests/app/test_scheduler_survival.py",
+     "name": "TestRegistrations::test_every_slot_is_guarded_registered_once_and_keeps_its_time"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-7.1",
+   "criterion": "AC-7",
+   "requirements": [
+    "R-16"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestPerSymphonyAndSummaryLines::test_two_labelled_and_one_short_history_give_three_lines_and_one_summary"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestPerSymphonyAndSummaryLines::test_a_display_name_with_a_newline_cannot_split_or_forge_a_line"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-7.2",
+   "criterion": "AC-7",
+   "requirements": [
+    "R-16"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestEveryReasonCode::test_each_reason_is_named_on_its_own_line_and_counted_once_in_the_summary"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-7.3",
+   "criterion": "AC-7",
+   "requirements": [
+    "R-16"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestRunLevelFailureAndEmptyRoster::test_a_state_that_cannot_be_read_gives_one_summary_naming_the_class_only"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-7.4",
+   "criterion": "AC-7",
+   "requirements": [
+    "R-16"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestNoSecretReachesTheLog::test_a_clean_run_never_logs_the_credentials_it_sent"
+    },
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestNoSecretReachesTheLog::test_a_failure_logs_its_class_name_and_status_never_its_text"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  },
+  {
+   "scenario": "S-7.5",
+   "criterion": "AC-7",
+   "requirements": [
+    "R-16"
+   ],
+   "tests": [
+    {
+     "file": "tests/regime_label_job/test_job_logging.py",
+     "name": "TestRunLevelFailureAndEmptyRoster::test_an_empty_roster_gives_no_symphony_line_and_a_summary_of_zero"
+    }
+   ],
+   "red": {
+    "sha": "e44e39e751065b3e691a3b3b02147ea20ba000fd",
+    "failed": true
+   },
+   "state": "tested"
+  }
+ ],
+ "reads_beyond_seams": [
+  {
+   "location": "tests/app/conftest.py",
+   "why": "the approach named stub_engine and join_engine_threads; the minute-job timing test also needed the module-level state reset and the _start_account_refresh seam"
+  },
+  {
+   "location": "app.py:2716",
+   "why": "run_scheduler starts a closed-warm-up thread through threading.Thread, which the scheduler tests' thread recorder also sees"
+  }
+ ]
+}
