@@ -63,6 +63,8 @@ ALLOWED_FILES = frozenset(
         "tests/database/test_bl10_dead_autotune_columns_documented.py",
         "tests/test_hygiene_protected_surfaces.py",
         "tests/math_engine/test_zscore_shared_definition.py",
+        # Holds the absence assertion that run_autotuner has no local _n_jobs_raw read.
+        "tests/autotuner/test_optuna_sampler_pin_and_n_jobs.py",
     }
 )
 ALLOWED_PREFIXES = ("tests/fixtures/hygiene_waves_3_4/",)
