@@ -9,8 +9,8 @@ Coverage targets (all tests must FAIL until the GREEN implementation lands):
       OOS result fields populated).
   3b. record_llm_suggestion() inserts a REJECTED row (decision logged; before/
       after/OOS fields remain NULL).
-  4a. get_suggestions_for_symphony() retrieves all rows for a given symphony.
-  4b. get_suggestions_for_session() retrieves all rows for a given session_id.
+  4a. llm_suggestions_for_symphony() retrieves all rows for a given symphony.
+  4b. llm_suggestions_for_session() retrieves all rows for a given session_id.
   5.  Append-only integrity — no UPDATE or DELETE path exposed by the accessor
       layer.  Directly modifying an existing audit row via the public API must
       be impossible.
@@ -45,11 +45,11 @@ Accessor signatures proposed (binding contract for the GREEN phase):
         oos_revalidation: dict | None = None,
     ) -> int                        # returns the new row id
 
-    get_suggestions_for_symphony(
+    llm_suggestions_for_symphony(
         symphony_name: str,
     ) -> list[dict]                 # list of row dicts, oldest-first
 
-    get_suggestions_for_session(
+    llm_suggestions_for_session(
         session_id: str,
     ) -> list[dict]                 # list of row dicts for one Claude call batch
 """
@@ -64,6 +64,7 @@ import pytest
 
 import database as db_module
 from database import init_db
+from tests._row_readback import llm_suggestions_for_session, llm_suggestions_for_symphony
 
 # ---------------------------------------------------------------------------
 # Lazy imports for the accessors under test — they don't exist yet (RED phase).
@@ -582,16 +583,16 @@ def test_record_multiple_suggestions_same_session(isolated_db):
 
 
 # ---------------------------------------------------------------------------
-# Test 4a: get_suggestions_for_symphony
+# Test 4a: the symphony read-back
 # ---------------------------------------------------------------------------
 
 
-def test_get_suggestions_for_symphony_returns_matching_rows(isolated_db):
+def test_stored_rows_by_symphony_returns_matching_rows(isolated_db):
     """
-    get_suggestions_for_symphony(symphony_name) must return all rows for that
+    llm_suggestions_for_symphony(symphony_name) must return all rows for that
     symphony and no rows for a different symphony.
     """
-    from database import get_suggestions_for_symphony, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     sym_a = "symphony-alpha"
     sym_b = "symphony-beta"
@@ -600,48 +601,46 @@ def test_get_suggestions_for_symphony_returns_matching_rows(isolated_db):
     record_llm_suggestion(**_make_accepted_kwargs(session_id="sess-002", symphony=sym_a))
     record_llm_suggestion(**_make_rejected_kwargs(session_id="sess-003", symphony=sym_b))
 
-    results_a = get_suggestions_for_symphony(sym_a)
-    results_b = get_suggestions_for_symphony(sym_b)
+    results_a = llm_suggestions_for_symphony(sym_a)
+    results_b = llm_suggestions_for_symphony(sym_b)
 
     assert isinstance(results_a, list), (
-        f"get_suggestions_for_symphony must return a list; got {type(results_a)}"
+        f"the symphony read-back must return a list; got {type(results_a)}"
     )
     assert len(results_a) == 2, f"Expected 2 rows for {sym_a!r}; got {len(results_a)}"
     assert len(results_b) == 1, f"Expected 1 row for {sym_b!r}; got {len(results_b)}"
 
     for row in results_a:
         assert isinstance(row, dict), (
-            "Each element returned by get_suggestions_for_symphony must be a dict"
+            "Each element returned by the symphony read-back must be a dict"
         )
         assert row.get("symphony_name") == sym_a, (
             f"Returned row has symphony_name={row.get('symphony_name')!r}; expected {sym_a!r}"
         )
 
 
-def test_get_suggestions_for_symphony_returns_empty_list_for_unknown(isolated_db):
+def test_stored_rows_by_symphony_returns_empty_list_for_unknown(isolated_db):
     """
     Querying a symphony with no recorded suggestions must return an empty list,
     not None, not raise.
     """
-    from database import get_suggestions_for_symphony  # noqa: PLC0415
-
-    result = get_suggestions_for_symphony("no-such-symphony")
+    result = llm_suggestions_for_symphony("no-such-symphony")
 
     assert isinstance(result, list), (
-        f"get_suggestions_for_symphony must return a list for unknown symphony; got {type(result)}"
+        f"the symphony read-back must return a list for unknown symphony; got {type(result)}"
     )
     assert result == [], f"Expected empty list for unknown symphony; got {result!r}"
 
 
-def test_get_suggestions_for_symphony_contains_required_keys(isolated_db):
+def test_stored_rows_by_symphony_contains_required_keys(isolated_db):
     """
-    Each dict returned by get_suggestions_for_symphony must contain at minimum
+    Each dict returned by the symphony read-back must contain at minimum
     the full audit-trail fields — shape assertion, not value assertion.
     """
-    from database import get_suggestions_for_symphony, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     record_llm_suggestion(**_make_accepted_kwargs())
-    results = get_suggestions_for_symphony("test-sym")
+    results = llm_suggestions_for_symphony("test-sym")
 
     assert results, "Precondition: at least one row must be returned"
     row = results[0]
@@ -649,21 +648,21 @@ def test_get_suggestions_for_symphony_contains_required_keys(isolated_db):
     for col in _EXPECTED_COLUMNS:
         assert col in row, (
             f"Column {col!r} missing from dict returned by "
-            f"get_suggestions_for_symphony; got keys: {sorted(row.keys())}"
+            f"the symphony read-back; got keys: {sorted(row.keys())}"
         )
 
 
 # ---------------------------------------------------------------------------
-# Test 4b: get_suggestions_for_session
+# Test 4b: the session read-back
 # ---------------------------------------------------------------------------
 
 
-def test_get_suggestions_for_session_returns_rows_for_session(isolated_db):
+def test_stored_rows_by_session_returns_rows_for_session(isolated_db):
     """
-    get_suggestions_for_session(session_id) must return all rows sharing that
+    llm_suggestions_for_session(session_id) must return all rows sharing that
     session_id and exclude rows from a different session.
     """
-    from database import get_suggestions_for_session, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     sess_x = "sess-x"
     sess_y = "sess-y"
@@ -672,8 +671,8 @@ def test_get_suggestions_for_session_returns_rows_for_session(isolated_db):
     record_llm_suggestion(**_make_rejected_kwargs(session_id=sess_x))
     record_llm_suggestion(**_make_accepted_kwargs(session_id=sess_y))
 
-    results_x = get_suggestions_for_session(sess_x)
-    results_y = get_suggestions_for_session(sess_y)
+    results_x = llm_suggestions_for_session(sess_x)
+    results_y = llm_suggestions_for_session(sess_y)
 
     assert len(results_x) == 2, f"Expected 2 rows for session {sess_x!r}; got {len(results_x)}"
     assert len(results_y) == 1, f"Expected 1 row for session {sess_y!r}; got {len(results_y)}"
@@ -684,13 +683,11 @@ def test_get_suggestions_for_session_returns_rows_for_session(isolated_db):
         )
 
 
-def test_get_suggestions_for_session_returns_empty_list_for_unknown(isolated_db):
+def test_stored_rows_by_session_returns_empty_list_for_unknown(isolated_db):
     """
     Querying an unknown session_id must return an empty list, not raise.
     """
-    from database import get_suggestions_for_session  # noqa: PLC0415
-
-    result = get_suggestions_for_session("no-such-session")
+    result = llm_suggestions_for_session("no-such-session")
     assert isinstance(result, list) and result == [], (
         f"Expected [] for unknown session; got {result!r}"
     )
@@ -791,12 +788,12 @@ def test_large_prompt_inputs_round_trip_exactly(isolated_db):
     re-serialisation to a canonical form).  A lossy round-trip (e.g. float
     precision loss, key reordering) would make audit records unreliable.
     """
-    from database import get_suggestions_for_session, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     kwargs = _make_accepted_kwargs(session_id="sess-roundtrip")
     row_id = record_llm_suggestion(**kwargs)
 
-    results = get_suggestions_for_session("sess-roundtrip")
+    results = llm_suggestions_for_session("sess-roundtrip")
     assert results, f"Expected row with id={row_id} to be returned"
 
     row = results[0]
@@ -818,12 +815,12 @@ def test_large_raw_response_round_trip_exactly(isolated_db):
     raw_response carries the full Claude API response — analysis text + all
     suggestions.  It must round-trip without truncation or modification.
     """
-    from database import get_suggestions_for_session, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     kwargs = _make_accepted_kwargs(session_id="sess-response-rt")
     record_llm_suggestion(**kwargs)
 
-    results = get_suggestions_for_session("sess-response-rt")
+    results = llm_suggestions_for_session("sess-response-rt")
     assert results, "Expected at least one row"
 
     stored_response = results[0].get("raw_response")
@@ -843,12 +840,12 @@ def test_generation_settings_round_trip_exactly(isolated_db):
     survive the round-trip — these are part of the audit record of how the
     model was invoked.
     """
-    from database import get_suggestions_for_session, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     kwargs = _make_accepted_kwargs(session_id="sess-gensettings")
     record_llm_suggestion(**kwargs)
 
-    results = get_suggestions_for_session("sess-gensettings")
+    results = llm_suggestions_for_session("sess-gensettings")
     stored = results[0].get("generation_settings")
     if isinstance(stored, str):
         stored = json.loads(stored)
@@ -864,14 +861,14 @@ def test_before_and_after_value_round_trip_for_accepted(isolated_db):
     without type coercion.  These are stored as JSON-encoded scalars; reading
     them back must yield the original Python values (not strings).
     """
-    from database import get_suggestions_for_session, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     kwargs = _make_accepted_kwargs(session_id="sess-before-after")
     expected_before = kwargs["before_value"]  # 5.0
     expected_after = kwargs["after_value"]  # 4.5
     record_llm_suggestion(**kwargs)
 
-    results = get_suggestions_for_session("sess-before-after")
+    results = llm_suggestions_for_session("sess-before-after")
     row = results[0]
 
     stored_before = row.get("before_value")
@@ -905,45 +902,45 @@ def test_before_and_after_value_round_trip_for_accepted(isolated_db):
 # carry all expected keys, not just the raw DB schema.
 
 
-def test_get_suggestions_for_symphony_row_dict_has_all_expected_keys(isolated_db):
+def test_stored_rows_by_symphony_row_dict_has_all_expected_keys(isolated_db):
     """
-    The dicts returned by get_suggestions_for_symphony must carry ALL columns
+    The dicts returned by the symphony read-back must carry ALL columns
     from _EXPECTED_COLUMNS — not a subset.
 
     This prevents the accessor from silently dropping audit fields (e.g. a
     SELECT of only a few columns instead of SELECT *).
     """
-    from database import get_suggestions_for_symphony, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     record_llm_suggestion(**_make_accepted_kwargs())
-    rows = get_suggestions_for_symphony("test-sym")
+    rows = llm_suggestions_for_symphony("test-sym")
 
     assert rows, "Precondition: query must return at least one row"
     row = rows[0]
 
     missing_keys = _EXPECTED_COLUMNS - set(row.keys())
     assert not missing_keys, (
-        f"get_suggestions_for_symphony returned a row dict missing columns: {missing_keys}. "
+        f"the symphony read-back returned a row dict missing columns: {missing_keys}. "
         "The accessor must return all audit columns, not a subset."
     )
 
 
-def test_get_suggestions_for_session_row_dict_has_all_expected_keys(isolated_db):
+def test_stored_rows_by_session_row_dict_has_all_expected_keys(isolated_db):
     """
-    Same canary for get_suggestions_for_session — the return dicts must carry
+    Same canary for the session read-back — the return dicts must carry
     all _EXPECTED_COLUMNS.
     """
-    from database import get_suggestions_for_session, record_llm_suggestion  # noqa: PLC0415
+    from database import record_llm_suggestion  # noqa: PLC0415
 
     record_llm_suggestion(**_make_accepted_kwargs(session_id="sess-key-check"))
-    rows = get_suggestions_for_session("sess-key-check")
+    rows = llm_suggestions_for_session("sess-key-check")
 
     assert rows, "Precondition: query must return at least one row"
     row = rows[0]
 
     missing_keys = _EXPECTED_COLUMNS - set(row.keys())
     assert not missing_keys, (
-        f"get_suggestions_for_session returned a row dict missing columns: {missing_keys}. "
+        f"the session read-back returned a row dict missing columns: {missing_keys}. "
         "The accessor must return all audit columns."
     )
 

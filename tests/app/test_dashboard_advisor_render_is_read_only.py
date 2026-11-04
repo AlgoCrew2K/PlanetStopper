@@ -259,7 +259,7 @@ class TestAdvisorAcceptWriteIsNarrow:
         mock_db.write_fleet_alert.assert_not_called()
         mock_db.record_exit_trigger.assert_not_called()
         mock_db.record_shadow_observation.assert_not_called()
-        mock_db.record_autotune_run.assert_not_called()
+        mock_db.save_autotune_run.assert_not_called()
         # AC-5: record_llm_suggestion IS now called on /accept — audit trail write.
         mock_db.record_llm_suggestion.assert_called_once()
 

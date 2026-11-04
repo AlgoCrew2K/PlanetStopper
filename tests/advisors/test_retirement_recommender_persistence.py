@@ -35,6 +35,7 @@ import math
 import pytest
 
 import database as db_module
+from tests._row_readback import advisor_observations_for_subject
 from tests.advisors._retirement_recommender_reference import seed_state_db, trading_days
 
 _RAW_RESPONSE_KEYS = {
@@ -190,7 +191,7 @@ class TestPersistenceEndToEndReadback:
         rr.persist_recommendations(recs, db_file=db_file)
 
         candidate_id = _rec_raw_response(recs[0])["candidate_id"]
-        rows = db_module.get_advisor_observations_for_subject("symphony", candidate_id)
+        rows = advisor_observations_for_subject("symphony", candidate_id)
         matching = [r for r in rows if r.get("advisor_role") == "RETIREMENT_RECOMMENDATION"]
         assert matching, (
             f"No RETIREMENT_RECOMMENDATION row found for subject {candidate_id!r} "
@@ -206,7 +207,7 @@ class TestPersistenceEndToEndReadback:
         rr.persist_recommendations(recs, db_file=db_file)
 
         candidate_id = _rec_raw_response(recs[0])["candidate_id"]
-        rows = db_module.get_advisor_observations_for_subject("symphony", candidate_id)
+        rows = advisor_observations_for_subject("symphony", candidate_id)
         matching = [r for r in rows if r.get("advisor_role") == "RETIREMENT_RECOMMENDATION"]
         raw = matching[0]["raw_response"]
         assert isinstance(raw, dict)

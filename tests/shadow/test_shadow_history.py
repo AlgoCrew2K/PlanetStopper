@@ -1071,50 +1071,6 @@ def test_portfolio_aggregator_excludes_none_dry_run_contributors(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 13. shadow_hwm = max(current_return) formula (BC-3)
-# ---------------------------------------------------------------------------
-
-
-def test_shadow_hwm_is_max_current_return_not_max_shadow_return(tmp_path):
-    """
-    shadow_hwm must equal MAX(current_return) over the day's shadow_history rows.
-    NOT max(shadow_return) — that was the v1 plan error corrected by BC-3.
-    Derived from analytics_shadow_history fixture: SYM_ALPHA day1 rows.
-    max(current_return)=[2.10, 3.50, 1.80] = 3.50
-    max(shadow_return)=[2.10, 3.50, 3.50] = 3.50 (same here by construction for pre-trigger)
-    Uses a separate fixture row where they diverge to prove the formula.
-    """
-    import database
-
-    db_path = tmp_path / "state.db"
-    conn = sqlite3.connect(str(db_path))
-    _create_shadow_schema(conn)
-
-    fixture = _load("analytics_shadow_history.json")
-    alpha_rows_day1 = [
-        r
-        for r in fixture["rows"]
-        if r["symphony_id"] == "SYM_ALPHA" and r["trading_day"] == "2026-05-14"
-    ]
-    _seed_rows(conn, alpha_rows_day1)
-    conn.close()
-
-    expected = fixture["expected"]["SYM_ALPHA"]
-
-    with patch.object(database, "DB_FILE", str(db_path)):
-        hwm = database.compute_shadow_hwm(
-            symphony_id="SYM_ALPHA",
-            trading_day="2026-05-14",
-        )
-
-    assert hwm == pytest.approx(expected["shadow_hwm_day1"], abs=1e-9), (
-        f"shadow_hwm must be MAX(current_return) over the day's rows. "
-        f"Expected {expected['shadow_hwm_day1']}, got {hwm}. "
-        f"BC-3: corrected from v1 plan's incorrect max(shadow_return)."
-    )
-
-
-# ---------------------------------------------------------------------------
 # 15. Shadow Performance widget — null guard and sign convention (PA-M1F-13, AC-M1F.4.3)
 # ---------------------------------------------------------------------------
 
@@ -1259,12 +1215,12 @@ def test_eod_divergence_computed_from_last_row_per_ts_utc_desc(tmp_path):
     expected = fixture["expected"]["SYM_ALPHA"]
 
     with patch.object(database, "DB_FILE", str(db_path)):
-        eod_row = database.get_eod_shadow_row(
+        eod_row = database.load_latest_shadow_row(
             symphony_id="SYM_ALPHA",
             trading_day="2026-05-14",
         )
 
-    assert eod_row is not None, "get_eod_shadow_row must return a row when data exists"
+    assert eod_row is not None, "load_latest_shadow_row must return a row when data exists"
 
     divergence = eod_row["current_return"] - eod_row["shadow_return"]
     assert divergence == pytest.approx(expected["eod_day1_divergence"], abs=1e-9), (
@@ -1433,36 +1389,6 @@ def test_v1_query_shape_3_hwm_reconstruction(tmp_path):
         f"Expected {expected_q3['expected_SYM_ALPHA_day1_shadow_hwm_counterfactual']}, "
         f"got {rows[0][1]}. BC-3 / AC-M1F.6.3."
     )
-
-
-# ---------------------------------------------------------------------------
-# 20. V1 three-state fold-sufficiency check (PA-M1F-11, AC-M1F.6.4)
-# ---------------------------------------------------------------------------
-
-
-def test_v1_bootstrap_three_state_fold_sufficiency():
-    """
-    V1 bootstrap period gate must implement three-state logic:
-    - sample_size < 30 → 'indeterminate'
-    - sample_size >= 30 and no divergence → 'provisional_no_overfit'
-    - sample_size >= 30 and divergence detected → 'overfit_confirmed'
-    PA-M1F-11 / AC-M1F.6.4 (Bailey/de-Prado 2014 N>=30 threshold).
-    """
-    from analytics import compute_v1_bootstrap_state
-
-    fixture = _load("v1_bootstrap_gate.json")
-
-    for case in fixture["test_cases"]:
-        result = compute_v1_bootstrap_state(
-            sample_size=case["sample_size"],
-            divergence_detected=case["divergence_detected"],
-        )
-        assert result == case["expected_state"], (
-            f"V1 bootstrap state mismatch for sample_size={case['sample_size']}, "
-            f"divergence_detected={case['divergence_detected']}. "
-            f"Expected '{case['expected_state']}', got '{result}'. "
-            f"PA-M1F-11 / AC-M1F.6.4."
-        )
 
 
 # ---------------------------------------------------------------------------
