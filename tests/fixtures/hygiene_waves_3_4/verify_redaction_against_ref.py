@@ -22,7 +22,9 @@ Checks:
   checked for holding no id;
 * S-6.10: the five re-produced goldens equal the reference goldens with the id replaced,
   every non-float value exactly and every float within ``math.isclose(rel_tol=1e-12,
-  abs_tol=0)``; the largest difference is printed.
+  abs_tol=0)``; the largest difference is printed. The one reorder allowed is the move of
+  whole account groups in ``symphonies``, which the producer orders by account key, and
+  ``daemon_started_at`` is excluded because the tests drop it.
 
 Exit status 0 only when every count is zero and every check is true.
 """
@@ -292,7 +294,15 @@ def main() -> int:
             _replace(_git(repo_default, "show", f"{args.ref}:{rel}"), secret, prefix)
         )
         head = _lf(path.read_bytes()).decode("utf-8")
-        s610_ok &= _compare(expect, json.loads(head), state)
+        head_obj = json.loads(head)
+        # The producer lists `symphonies` by account key and then name, so the redacted account key
+        # moves its whole group; a stable sort of the reference list by account is the one reorder
+        # allowed. `daemon_started_at` is the producing process's start time, which the tests drop.
+        if isinstance(expect.get("symphonies"), list):
+            expect["symphonies"] = sorted(expect["symphonies"], key=lambda e: str(e.get("account")))
+        expect.pop("daemon_started_at", None)
+        head_obj.pop("daemon_started_at", None)
+        s610_ok &= _compare(expect, head_obj, state)
         s610_ok &= head == _sorted_dump(json.loads(head))
     print(
         f"S-6.10 {s610_ok} ({len(GOLDENS)} goldens, {state['float_pairs']} float pairs, "
