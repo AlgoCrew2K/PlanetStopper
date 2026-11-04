@@ -1,4 +1,4 @@
-"""Local checks that need the reference commit (hygiene-waves-3-4, C1). Prints counts and booleans.
+"""Local checks that need the reference commit. Prints counts and booleans.
 
 Not collected by pytest: CI checks out at depth 1 and has no ``7adc2c56``, so a collected test
 would skip there and trip the zero-skip meta check. Run it from the repository root::
@@ -6,9 +6,9 @@ would skip there and trip the zero-skip meta check. Run it from the repository r
     python tests/fixtures/hygiene_waves_3_4/verify_against_ref.py
 
 Prints, per protected file, whether the file with its listed edits cut equals the reference with the
-same cut (S-10.1), and the hunk list against the reference (``git diff -U0``); whether the verbatim
+same cut, and the hunk list against the reference (``git diff -U0``); whether the verbatim
 z-score oracle of ``tests/math_engine/test_zscore_shared_definition.py`` equals the reference
-closure (S-3.2); and whether the files C1 must not touch are unchanged. Exit status 1 when any
+closure; and whether the files C1 must not touch are unchanged. Exit status 1 when any
 check is false.
 """
 

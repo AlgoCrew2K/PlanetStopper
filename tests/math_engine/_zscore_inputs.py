@@ -1,4 +1,4 @@
-"""Inputs and a recorder for the z-score characterization (hygiene-waves-3-4, S-3.1).
+"""Inputs and a recorder for the z-score characterization.
 
 The three Monte Carlo family functions standardize two kNN features with a z-score
 (``run_monte_carlo``, ``compute_portfolio_cvar``, ``compute_regime_match_quality``). Every case

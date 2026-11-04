@@ -1,4 +1,4 @@
-"""Engine cycle sequences recorded at the reference and compared at GREEN (hygiene-waves-3-4, S-5.4).
+"""Engine cycle sequences recorded at the reference and compared at GREEN.
 
 ``run_sequences`` drives real ``alpha_bot_execution.main()`` cycles through the harness of
 ``tests/execution/test_regime_label_session_read.py`` and returns, per scenario and tick, the

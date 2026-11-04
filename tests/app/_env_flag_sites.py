@@ -1,4 +1,4 @@
-"""Drivers for the app's boolean environment-flag sites (hygiene-waves-3-4, AC-3).
+"""Drivers for the app's boolean environment-flag sites.
 
 One implementation shared by ``tests/app/test_env_flag_parse_sites.py`` and by the ref-record
 producer ``tests/fixtures/hygiene_waves_3_4/engine_math/produce_ref_records.py``, so the producer

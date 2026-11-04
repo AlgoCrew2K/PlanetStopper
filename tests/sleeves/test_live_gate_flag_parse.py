@@ -1,4 +1,4 @@
-"""``sleeves.tick_orchestrator._compute_live_gates`` flag parse (hygiene-waves-3-4, AC-3, S-3.9).
+"""``sleeves.tick_orchestrator._compute_live_gates`` flag parse.
 
 ``live_mode`` is true only for a sleeve whose stored status is ``LIVE`` AND whose
 ``SLEEVE_LIVE_EXECUTION`` environment variable parses true (``tests/_env_flag_spellings``, the

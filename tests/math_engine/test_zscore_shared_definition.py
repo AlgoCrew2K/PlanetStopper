@@ -1,4 +1,4 @@
-"""One shared z-score definition in ``math_engine`` (hygiene-waves-3-4, AC-3, S-3.1 to S-3.3).
+"""One shared z-score definition in ``math_engine``.
 
 The reference carries three nested ``_z`` closures (in ``run_monte_carlo``,
 ``compute_portfolio_cvar`` and ``compute_regime_match_quality``), each::
@@ -8,14 +8,14 @@ The reference carries three nested ``_z`` closures (in ``run_monte_carlo``,
 
 The slice replaces them with one module-level ``math_engine._zscore(values, mean, std)``.
 
-* S-3.1 compares the exact output bits (``float.hex``) of the three functions with the outputs the
+* compares the exact output bits (``float.hex``) of the three functions with the outputs the
   reference produced on the same inputs (``tests/fixtures/hygiene_waves_3_4/engine_math``, produced
   by ``produce_ref_records.py``; inputs in ``tests/math_engine/_zscore_inputs.py``). It passes on
   the reference code by design.
-* S-3.2 compares ``_zscore`` with a verbatim copy of the reference closure over the std family
+* compares ``_zscore`` with a verbatim copy of the reference closure over the std family
   (0.0, -0.0, NaN, positive with NaN/inf/-inf values, an empty array, a 2-D array): elementwise,
   dtype and shape included. Fails until ``_zscore`` exists.
-* S-3.3 scans the ``math_engine.py`` AST: exactly one z-score definition, no nested ``_z`` and the
+* scans the ``math_engine.py`` AST: exactly one z-score definition, no nested ``_z`` and the
   three functions call it. Fails until the closures are replaced.
 """
 

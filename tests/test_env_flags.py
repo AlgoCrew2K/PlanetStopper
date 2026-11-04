@@ -1,6 +1,6 @@
 """The shared boolean environment-flag definition and the two process-environment flag reads.
 
-Plan: feature-plans/hygiene-waves-3-4.md, AC-3 (S-3.4, S-3.13) and the shape of ``env_flags``.
+The shape of ``env_flags``.
 
 Two sites read a flag from the process environment at import: ``alpha_bot_execution.LIVE_EXECUTION``
 (``alpha_bot_execution.py:75``) and ``app.config["SESSION_COOKIE_SECURE"]`` (``app.py:175``). Each is
@@ -116,7 +116,7 @@ def app_flag_results(tmp_path_factory) -> list:
 
 
 class TestEngineLiveExecutionFlag:
-    """S-3.4: ``alpha_bot_execution.LIVE_EXECUTION`` equals the reference for every spelling."""
+    """``alpha_bot_execution.LIVE_EXECUTION`` equals the reference for every spelling."""
 
     @pytest.mark.parametrize("index", range(len(SPELLINGS) + 1))
     def test_engine_live_execution_flag_matches_reference_expression(
@@ -136,7 +136,7 @@ class TestEngineLiveExecutionFlag:
 
 
 class TestSessionCookieSecureFlag:
-    """S-3.13: ``app.config["SESSION_COOKIE_SECURE"]``; the absent case reads "" and gives False."""
+    """``app.config["SESSION_COOKIE_SECURE"]``; the absent case reads "" and gives False."""
 
     @pytest.mark.parametrize("index", range(len(SPELLINGS) + 1))
     def test_session_cookie_secure_flag_matches_reference_expression(self, app_flag_results, index):
@@ -154,7 +154,7 @@ class TestSessionCookieSecureFlag:
 
 
 class TestEnvFlagsDefinition:
-    """The one shared definition (AC-3): ``env_flags`` at the repository root, stdlib only."""
+    """The one shared definition: ``env_flags`` at the repository root, stdlib only."""
 
     def test_true_spellings_are_the_three_reference_spellings(self):
         import env_flags

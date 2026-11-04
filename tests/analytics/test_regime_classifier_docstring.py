@@ -1,4 +1,4 @@
-"""The ``regime_classifier`` module docstring states its real callers (hygiene-waves-3-4, AC-9 S-9.1).
+"""The ``regime_classifier`` module docstring states its real callers.
 
 At the reference the docstring says the module is "surfaced only as an operator/analytics
 diagnostic" and "NEVER called on the 1-minute execution path". Two code callers exist: the

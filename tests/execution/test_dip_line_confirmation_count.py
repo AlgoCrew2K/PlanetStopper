@@ -1,9 +1,9 @@
-"""The engine's dip line names the confirmation count in force (hygiene-waves-3-4, AC-5).
+"""The engine's dip line names the confirmation count in force.
 
 When an armed, untriggered symphony's below-stop count goes 0 to 1 the engine prints a warning
 line. At the reference it ends ``Awaiting 3-tick confirmation...`` whatever the regime label; the
 slice makes it name ``_regime_exit_ticks``, the count handed to ``compute_exit_confirmation`` on
-that tick (S-5.1 to S-5.3), and nothing else changes (S-5.4 to S-5.6).
+that tick, and nothing else changes.
 
 Harness: the real ``alpha_bot_execution.main()`` cycles of
 ``tests/execution/test_regime_label_session_read.py`` (``_Engine`` and its ``engine`` fixture):
@@ -12,10 +12,10 @@ Composer, Alpaca, Discord and the clock are faked there, label rows are written 
 
 Expected values: the count of a label is the real ``math_engine.apply_regime_exit_adjustment``
 result; the count handed to the stop is recorded off the real ``compute_exit_confirmation`` call;
-the transitions of S-5.4 are the reference's, recorded by
+the transitions of the decision sequences are the reference's, recorded by
 ``tests/fixtures/hygiene_waves_3_4/engine_math/produce_ref_records.py``.
 
-At the reference only the default-count labels pass S-5.1 to S-5.3; the labels that change the
+At the reference only the default-count labels pass the count checks; the labels that change the
 count (2 and 5) fail until the line names the count in force.
 """
 
@@ -58,7 +58,7 @@ _DIP_PREFIX = f"  ⚠️ {_SYMPHONY_NAME[:35]} dipped below stop. Awaiting "
 _DIP_LINE = re.compile(re.escape(_DIP_PREFIX) + r"(\d+)-tick confirmation\.\.\.$")
 _REF_FORMAT = f"{_DIP_PREFIX}3-tick confirmation..."
 
-# label cases of S-5.2: (id, label to save or None, session date of the row)
+# label cases: (id, label to save or None, session date of the row)
 _LABEL_CASES = [
     ("trending", "trending", _D),
     ("mean_reverting", "mean-reverting", _D),

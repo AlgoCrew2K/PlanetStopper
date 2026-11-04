@@ -1,14 +1,14 @@
-"""Scope pins for the hygiene-waves-3-4 engine, math and regime edits (AC-10, S-10.1 to S-10.10).
+"""Scope pins for the engine, math and regime edits.
 
 The slice edits four protected files in listed, behavior-identical ways:
 
 * ``alpha_bot_execution.py`` -- the ``env_flags`` import, the ``LIVE_EXECUTION`` assignment, and the
-  dip-line ``print`` (AC-3, AC-5).
+  dip-line ``print``.
 * ``math_engine.py`` -- ``filter_sortino_sentinels`` deleted, one shared ``_zscore`` added, the three
-  nested ``_z`` closures and the six call statements replaced (AC-1, AC-3).
+  nested ``_z`` closures and the six call statements replaced.
 * ``autotuner.py`` -- ``_build_optuna_sampler_from_env`` and ``build_symphony_study_name`` deleted,
-  the seed read through its named constant, ``_n_jobs_raw`` and its comment deleted (AC-1).
-* ``regime_classifier.py`` -- the module docstring only (AC-9).
+  the seed read through its named constant, ``_n_jobs_raw`` and its comment deleted.
+* ``regime_classifier.py`` -- the module docstring only.
 
 A full-file pin cannot tell "only the listed edits" from "something else too", so each file is pinned
 here with its listed edit nodes CUT. The cut is by AST (the pattern of
@@ -25,9 +25,8 @@ slice may touch. The three FULL-file pins (``tests/test_mdd_window_truth_zero_di
 ``tests/engine/test_close_snapshot_builder_scope.py``, ``tests/test_regime_label_protected_files.py``)
 are re-taken by the closer after GREEN only once these scope pins pass.
 
-Also pinned: the replay (S-10.7), ``regime_classifier.py`` minus its docstring (S-10.8), the phase-1.5
-M3 bundle surfaces of ``database.py`` (S-10.10), and the two files the regime pin keeps byte-identical
-(S-10.3).
+Also pinned: the replay, ``regime_classifier.py`` minus its docstring, the phase-1.5
+M3 bundle surfaces of ``database.py``, and the two files the regime pin keeps byte-identical.
 """
 
 from __future__ import annotations
@@ -219,7 +218,7 @@ class TestScopePinsHoldOnlyTheListedEdits:
 
 
 class TestTheCutIsSensitiveToTheRightThings:
-    """S-10.2: a byte changed outside a listed edit moves the digest; one inside does not."""
+    """a byte changed outside a listed edit moves the digest; one inside does not."""
 
     @pytest.mark.parametrize("rel", sorted(_SCOPE))
     def test_a_comment_planted_outside_every_cut_node_moves_the_digest(self, rel):
@@ -273,7 +272,7 @@ class TestTheCutIsSensitiveToTheRightThings:
 
 
 # --------------------------------------------------------------------------------------
-# S-10.7 the replay, S-10.8 the classifier, S-10.10 the M3 bundle, S-10.3 the two pinned files
+# the replay, the classifier, the M3 bundle and the two pinned files
 # --------------------------------------------------------------------------------------
 
 

@@ -283,7 +283,7 @@ def test_run_autotuner_sampler_seed_sourced_from_env_constant(
 def test_run_autotuner_reads_the_seed_through_the_named_constant_not_a_literal(
     autotuner_source: str, pin_contract: dict
 ):
-    """hygiene-waves-3-4 S-1.8: the named constant is live. ``run_autotuner`` reads
+    """the named constant is live. ``run_autotuner`` reads
     ``os.environ.get(<the constant>)`` and carries no second copy of the variable name,
     so ``test_autotuner_exposes_named_env_var_constants`` holds for the reason it was
     written (the call site and the constant cannot drift apart)."""
@@ -313,7 +313,7 @@ def test_run_autotuner_reads_the_seed_through_the_named_constant_not_a_literal(
 
 
 def test_run_autotuner_has_no_local_n_jobs_raw_read(autotuner_source: str, pin_contract: dict):
-    """hygiene-waves-3-4 S-1.9: ``_n_jobs_raw`` existed only to satisfy a source-literal
+    """``_n_jobs_raw`` existed only to satisfy a source-literal
     test while the value used came from ``_resolve_optuna_n_jobs_from_env()``. The raw
     read and the second literal of the variable name are gone; the resolver is the one
     source."""
@@ -373,7 +373,7 @@ def test_run_autotuner_study_optimize_n_jobs_not_hardcoded_minus_one(autotuner_a
 
 
 def test_run_autotuner_n_jobs_sourced_from_env_constant(autotuner_source: str):
-    """hygiene-waves-3-4 S-1.9: ``study.optimize(..., n_jobs=...)`` inside run_autotuner
+    """``study.optimize(..., n_jobs=...)`` inside run_autotuner
     takes its value from ``_resolve_optuna_n_jobs_from_env()`` (the resolver reads the
     ``OPTUNA_N_JOBS`` constant), directly or through one local bound to that call.
 
@@ -450,7 +450,7 @@ def _ref_seed(raw):
 
 @pytest.mark.parametrize("raw", ["1234567", None, "", "   "])
 def test_run_autotuner_study_sampler_seed_follows_the_env_variable(monkeypatch, raw):
-    """S-1.6: the sampler handed to ``optuna.create_study`` carries the seed the
+    """the sampler handed to ``optuna.create_study`` carries the seed the
     reference expression gives (an int for a number, None for unset, empty or blank)."""
     captured, _optimize, _result = _drive_run_autotuner(
         monkeypatch, seed_raw=_UNSET_ENV if raw is None else raw
@@ -462,8 +462,8 @@ def test_run_autotuner_study_sampler_seed_follows_the_env_variable(monkeypatch, 
 def test_run_autotuner_with_a_non_numeric_seed_builds_no_study_and_isolates_the_symphony(
     monkeypatch,
 ):
-    """S-1.6, the ``abc`` case: at the reference the ``int()`` raises inside the
-    per-symphony loop, the loop's isolation (DE-AUDIT-BL2-001) catches it, no sampler or
+    """The ``abc`` case: at the reference the ``int()`` raises inside the
+    per-symphony loop, the loop's isolation catches it, no sampler or
     study is built, ``study.optimize`` never runs and the run returns only its batch summary.
     The deletion must leave exactly that outcome."""
     captured, optimize_kwargs, result = _drive_run_autotuner(monkeypatch, seed_raw="abc")
@@ -479,7 +479,7 @@ def test_run_autotuner_with_a_non_numeric_seed_builds_no_study_and_isolates_the_
 def test_run_autotuner_optimize_n_jobs_follows_the_env_variable(
     monkeypatch, pin_contract, raw, expected_kind
 ):
-    """S-1.9: the ``n_jobs`` handed to ``study.optimize`` is the resolver's value: the
+    """the ``n_jobs`` handed to ``study.optimize`` is the resolver's value: the
     number for ``3``, the SQLite-safe default (from the contract fixture) for unset, empty
     and non-numeric."""
     _captured, optimize_kwargs, _result = _drive_run_autotuner(

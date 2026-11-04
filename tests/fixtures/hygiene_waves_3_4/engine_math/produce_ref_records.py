@@ -1,4 +1,4 @@
-"""Producer of the C1 Batch A reference records (hygiene-waves-3-4).
+"""Producer of the the engine and math cycle reference records.
 
 Refuses unless the production files the records exercise equal the reference commit and carry no
 uncommitted change (the refusal pattern of

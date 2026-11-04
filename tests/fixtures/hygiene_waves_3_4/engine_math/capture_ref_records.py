@@ -1,4 +1,4 @@
-"""Capture of the reference records of C1 Batch A (run by ``produce_ref_records.py``).
+"""Capture of the reference records of the engine and math cycle (run by ``produce_ref_records.py``).
 
 Not collected by a default run (the file name does not match the collection pattern); the producer
 passes it to pytest explicitly so the ``tests/conftest.py`` isolation (temp state database, auth

@@ -1,6 +1,6 @@
-"""The spelling families of the boolean environment-flag parse (hygiene-waves-3-4, S-3.4).
+"""The spelling families of the boolean environment-flag parse.
 
-Shared by every characterization of the ten flag sites (AC-3). The oracle is the expression the
+Shared by every characterization of the ten flag sites. The oracle is the expression the
 ten sites carried at the reference commit, copied verbatim: ``raw.lower() in ("true", "1", "yes")``.
 A value is never stripped, so ``" true"`` and ``"true "`` are false.
 

@@ -1,15 +1,15 @@
-"""Characterization of the app's boolean environment-flag sites (hygiene-waves-3-4, AC-3).
+"""Characterization of the app's boolean environment-flag sites.
 
 Sites covered, each through its real route:
 
-* S-3.5  page meta (``_build_meta``, ``app.py:3639``) for ``GET /``, ``/history``, ``/performance``,
+* page meta (``_build_meta``, ``app.py:3639``) for ``GET /``, ``/history``, ``/performance``,
          ``/settings`` and ``GET /api/header-status`` (the API route that reaches the same site).
-* S-3.6  ``GET /api/state`` live and frozen (``app.py:5465``, ``:5546``, ``:5642``).
-* S-3.7  ``POST /api/sell_account`` (``app.py:8826``).
-* S-3.8  ``GET /api/symphony-settings/<name>`` (``app.py:9625``).
-* S-3.10 a ``.env`` key with no ``=`` (the mapping holds ``None``) at every unguarded site.
-* S-3.12 ``POST /api/sell_account`` refusals that precede the edited line.
-* S-3.14 ``POST /api/sleeves/<id>/arm-live`` (``app.py:9096``).
+* ``GET /api/state`` live and frozen (``app.py:5465``, ``:5546``, ``:5642``).
+* ``POST /api/sell_account`` (``app.py:8826``).
+* ``GET /api/symphony-settings/<name>`` (``app.py:9625``).
+* a ``.env`` key with no ``=`` (the mapping holds ``None``) at every unguarded site.
+* ``POST /api/sell_account`` refusals that precede the edited line.
+* ``POST /api/sleeves/<id>/arm-live`` (``app.py:9096``).
 
 Expected values: the reference expression copied verbatim (``tests/_env_flag_spellings``), the
 canonical spelling's own response for the same oracle value, and the outcomes the bare key had at
@@ -84,7 +84,7 @@ def no_network(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# S-3.5 page meta
+# page meta
 # ---------------------------------------------------------------------------
 
 
@@ -129,7 +129,7 @@ class TestPageMetaFlagParse:
 
 
 # ---------------------------------------------------------------------------
-# S-3.6 GET /api/state, live and frozen
+# GET /api/state, live and frozen
 # ---------------------------------------------------------------------------
 
 
@@ -165,7 +165,7 @@ class TestApiStateFlagParse:
 
 
 # ---------------------------------------------------------------------------
-# S-3.7 / S-3.12 POST /api/sell_account
+# POST /api/sell_account
 # ---------------------------------------------------------------------------
 
 
@@ -232,7 +232,7 @@ class TestSellAccountFlagParse:
 
 
 # ---------------------------------------------------------------------------
-# S-3.8 GET /api/symphony-settings/<name>
+# GET /api/symphony-settings/<name>
 # ---------------------------------------------------------------------------
 
 
@@ -254,7 +254,7 @@ class TestSymphonySettingsFlagParse:
 
 
 # ---------------------------------------------------------------------------
-# S-3.14 POST /api/sleeves/<id>/arm-live
+# POST /api/sleeves/<id>/arm-live
 # ---------------------------------------------------------------------------
 
 
@@ -285,12 +285,12 @@ class TestArmLiveFlagParse:
 
 
 # ---------------------------------------------------------------------------
-# S-3.10 a bare key (the mapping holds None)
+# a bare key (the mapping holds None)
 # ---------------------------------------------------------------------------
 
 
 class TestBareKeyOutcomes:
-    """Each unguarded site answers as it did at the reference (Q-9: a raise stays a raise)."""
+    """Each unguarded site answers as it did at the reference (a raise stays a raise)."""
 
     @pytest.mark.parametrize("site", BARE_KEY_SITES)
     def test_bare_key_outcome_equals_reference(
