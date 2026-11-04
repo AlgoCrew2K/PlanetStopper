@@ -26,5 +26,5 @@ The capture harness account `7c2607c5-4583-4c1b-ae55-e5a05bb49f0d` is invented; 
 - Reason: the security-and-controls slice removes the control (AC-6), so the census no longer drives it
   (`tests/ui/_post_controls.py`) and `tests/ui/test_post_controls_request_bytes.py` compares every remaining
   control with its recorded base. Re-capturing at the new head would compare the record with itself.
-- Commit: the RED commit of cycle C2 on `feat/security-and-controls-c2` (its SHA is in the next line once known).
+- Commit: `ee38b5d6fd47b8c6324d3dcfb4dacce58ee9aca9` (`test(security-and-controls): RED for Cash Now removal (C2)`, on `feat/security-and-controls-c2`).
 - Sign-off: PM approval of the derived edit for this slice, given in the C2 RED plan review.

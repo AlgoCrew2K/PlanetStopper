@@ -112,13 +112,17 @@ def _body_with(symphony_id: str, **fields) -> dict:
 
 class TestThePollNeitherReadsNorWritesCashNowState:
     def test_a_card_turning_triggered_and_back_leaves_a_stray_cash_now_element_untouched(self):
-        # The page no longer renders the control, so one is planted in a card: any poll code still
-        # keyed on it would disable it, re-label it or stamp state on it.
+        # The page no longer renders the control (any still rendered is removed first, so the probe is
+        # the only match): one is planted in a card, and any poll code still keyed on it would disable
+        # it, re-label it or stamp state on it.
         target = hx.UNTRIGGERED_ID
         result = sup.run(
             POLL_PRELUDE
             + r"""
             await H.boot({ extras: true });
+            D.querySelectorAll('[data-testid="cash-now-btn"]').forEach(function (b) {
+              b.parentNode.removeChild(b);
+            });
             const card = D.querySelector('.sym-card[data-sym-id="' + __ID__ + '"]');
             const probe = D.createElement('button');
             probe.setAttribute('data-testid', 'cash-now-btn');
