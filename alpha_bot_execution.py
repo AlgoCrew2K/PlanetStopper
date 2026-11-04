@@ -1524,7 +1524,9 @@ def main():
                 # never current_below_stop_count or any other stateful counter, so the
                 # adjustment cannot compound across ticks (risk-3c ISSUE 1b).
                 _regime_exit_ticks = math_engine.apply_regime_exit_adjustment(
-                    regime_label=database.get_cached_regime_label(symphony_id),
+                    regime_label=database.get_cached_regime_label(
+                        symphony_id, session_date=current_date_str
+                    ),
                     base_ticks=math_engine.EXIT_CONFIRM_TICKS,  # named constant, not stateful
                 )
                 _prev_below_stop_count = bot_state[symphony_id]["below_stop_count"]
