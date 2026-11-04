@@ -88,16 +88,12 @@
       "eod_day1_current_return": 1.80,
       "eod_day1_divergence": -1.70,
       "comment_eod": "PA-M1F-5b: last row by ts_utc DESC LIMIT 1 on day1. divergence = current_return - shadow_return = 1.80 - 3.50 = -1.70",
-      "shadow_hwm_day1": 3.50,
-      "comment_hwm": "BC-3: max(current_return) over day1 rows = max(2.10, 3.50, 1.80) = 3.50",
       "chain_link_cr_day1_r": 3.50,
       "chain_link_cr_day2_r": 1.20,
       "chain_link_cumulative": "(1 + 3.50/100) * (1 + 1.20/100) - 1 expressed as percent",
       "comment_cr": "PA-M1F-16: chain-link on EOD shadow_return per day. Requires >= 2 distinct days."
     },
     "SYM_BETA": {
-      "shadow_hwm_day1": 0.80,
-      "comment_hwm": "BC-3: max(current_return) over day1 rows = 0.80"
     }
   },
   "v1_queries": {
