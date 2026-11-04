@@ -7,8 +7,9 @@ naming it (``firefox`` comes from the dashboard browser module).
 The server is the app in this process (``tests/ui/_browser_server.py``) on the per-test
 database. Every request the page makes to anything but that server is aborted, so the chart
 library's CDN request never completes and no outside host is contacted. The developer
-``.env`` is never read: ``app.ENV_FILE_PATH`` points at an empty temporary file and every
-credential variable is removed from the environment.
+``.env`` is never read: ``app.ENV_FILE_PATH`` points at an empty temporary file, every
+credential variable is removed from the environment and every module value the environment set
+at import is put back to what an import without ``.env`` gives (``restore_credential_free_module_state``).
 
 A module imports these names and lists them (``# noqa: F401``): the two autouse overrides
 (this directory's conftest stubs ``database.load_state`` and the state dict, which the page
@@ -48,6 +49,43 @@ _CREDENTIAL_VARIABLES = (
 )
 
 
+# What an import with no ``.env`` and none of the variables above leaves in each module value
+# that is read from the environment once, at import. Importing the app loads the developer's
+# ``.env`` and these values keep what it held, which the Advisor pages read (a Composer key
+# present or absent changes what the Strategy Builder, Asset Swaps and Logic Changes tabs say), so
+# a capture made on a machine with a ``.env`` differs from one made without it. A new value that
+# the environment sets at import joins this table; the test of this module names the full set.
+_NO_ENV_MODULE_VALUES = (
+    ("alpha_bot_execution", "COMPOSER_KEY_ID", lambda: None),
+    ("alpha_bot_execution", "COMPOSER_SECRET", lambda: None),
+    ("alpha_bot_execution", "acc_ind", lambda: ""),
+    ("alpha_bot_execution", "acc_roth", lambda: ""),
+    ("alpha_bot_execution", "acc_trad", lambda: ""),
+    ("alpha_bot_execution", "ACCOUNT_UUIDS", list),
+    ("alpha_bot_execution", "ALPACA_KEY", lambda: None),
+    ("alpha_bot_execution", "ALPACA_SECRET", lambda: None),
+    ("alpha_bot_execution", "DISCORD_WEBHOOK_URL", lambda: None),
+    ("alpha_bot_execution", "LIVE_EXECUTION", lambda: False),
+    ("alpha_bot_execution", "EXECUTION_START_TIME", lambda: "09:30"),
+    ("synthetic_history", "ALPACA_KEY", lambda: None),
+    ("synthetic_history", "ALPACA_SECRET", lambda: None),
+)
+
+
+def restore_credential_free_module_state(setter) -> None:
+    """Put every environment-derived module value back to what an import without ``.env`` gives.
+
+    ``setter(module, name, value)`` is ``monkeypatch.setattr`` in a test, so the value is put
+    back at the test's end, and plain ``setattr`` in a one-shot script. Call it after the app
+    has been imported and after the variables of ``_CREDENTIAL_VARIABLES`` are removed from the
+    environment, so the module values and the environment agree.
+    """
+    import importlib
+
+    for module_name, name, fresh in _NO_ENV_MODULE_VALUES:
+        setter(importlib.import_module(module_name), name, fresh())
+
+
 @pytest.fixture(autouse=True)
 def _stub_get_api_state_dict():
     yield
@@ -62,6 +100,7 @@ def _stub_database_load_state_for_advisor_routes():
 def advisor_server(tmp_path, monkeypatch):
     for name in _CREDENTIAL_VARIABLES:
         monkeypatch.delenv(name, raising=False)
+    restore_credential_free_module_state(monkeypatch.setattr)
     env_file = tmp_path / "advisor_page.env"
     env_file.write_text("", encoding="utf-8")
     monkeypatch.setattr(app_module, "ENV_FILE_PATH", str(env_file))

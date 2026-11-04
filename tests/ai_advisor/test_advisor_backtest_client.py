@@ -2,10 +2,8 @@
 
 Module under test: ``advisors.composer_backtest_client.run_backtest``.
 
-DISTINCT from tests/ai_advisor/test_composer_backtest_client.py which tests
-``composer_backtest.submit_backtest``.  The two modules have DIFFERENT error contracts:
+Error contract:
 
-  - ``composer_backtest.submit_backtest``: raises ``requests.RequestException`` on errors
   - ``advisors.composer_backtest_client.run_backtest``: NEVER raises; returns
     ``BacktestResult(stats=None, error=<reason>)`` on all failures (AC-X5 contract)
 
@@ -25,7 +23,7 @@ Fixture: tests/fixtures/composer/backtest_inline_v1.json (real captured response
 Mocking strategy:
   - ``requests.post`` patched at module call site — the client uses bare requests.post,
     not a Session, so standard patch("requests.post") works.
-  - No Session injection required (different design from composer_backtest.py).
+  - No Session injection required: the client calls ``requests.post`` directly.
   - The math engine and acceptance_gate are NOT imported or mocked here.
 """
 
@@ -1222,3 +1220,148 @@ class TestStatedWaitBound:
             and ("min_retry_wait_seconds" in sentence or "minimum wait" in sentence)
             for sentence in claims
         ), f"the bound is stated for a caller with the default minimum wait only: {claims}"
+
+
+# ---------------------------------------------------------------------------
+# Live-daemon E2E regression (2026-06-12) — inline-backtest key mismatch
+# ---------------------------------------------------------------------------
+
+
+class TestDvmCapitalKeyMismatchFallback:
+    """dvm_capital key semantics for INLINE synthetic-tree backtests are
+    unattested. The exact-match-only lookup silently produced empty returns
+    (all candidates withheld, None metrics) whenever the response key differed
+    from the requested symphony_id. With exactly one returned series, that
+    series is structurally the answer to the one posted tree.
+    """
+
+    def test_single_series_used_despite_key_mismatch(self):
+        _ensure_repo_on_path()
+        from advisors.composer_backtest_client import _extract_returns
+
+        dvm = {"SOME-OPAQUE-COMPOSER-ID": {"19000": 100.0, "19001": 101.0, "19004": 102.0}}
+        values, returns = _extract_returns(dvm, symphony_id="my-requested-id")
+        assert len(values) == 3, "single returned series must be used on key mismatch"
+        assert len(returns) == 2
+
+    def test_exact_match_still_preferred_with_multiple_series(self):
+        _ensure_repo_on_path()
+        from advisors.composer_backtest_client import _extract_returns
+
+        dvm = {
+            "other": {"19000": 1.0, "19001": 2.0},
+            "mine": {"19000": 100.0, "19001": 110.0},
+        }
+        values, _ = _extract_returns(dvm, symphony_id="mine")
+        assert list(values.values()) == [100.0, 110.0]
+
+    def test_multiple_series_no_match_returns_empty(self):
+        _ensure_repo_on_path()
+        from advisors.composer_backtest_client import _extract_returns
+
+        dvm = {"a": {"19000": 1.0}, "b": {"19000": 2.0}}
+        values, returns = _extract_returns(dvm, symphony_id="zzz")
+        assert values == {} and returns == {}, (
+            "ambiguous multi-series mismatch must stay empty — guessing would "
+            "attribute another symphony's returns to the candidate"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The canonical client is the only Composer backtest client
+# ---------------------------------------------------------------------------
+
+_LF_DIGESTS = {
+    "advisors/composer_backtest_client.py": (
+        "bf1281b030e215e4f779697fd46849e854b46692f8945781c15e59cf2ab87661"
+    ),
+    "tests/fixtures/composer/backtest_inline_v1.json": (
+        "a2dfa7992f11d0a008476591a526f0e20386e29b227fcfe61ff93940aa7ee7bf"
+    ),
+    "tests/fixtures/composer/backtest_response_v1.json": (
+        "8112a737dbc56827b18d1dda7d4a825e383700dfb3a7a92706de2af4af0ada21"
+    ),
+}
+
+
+def _lf_sha256(relpath: str) -> str:
+    import hashlib
+
+    data = (_REPO_ROOT / relpath).read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
+
+
+class TestRootBacktestModuleIsGone:
+    """The unused root module ``composer_backtest`` no longer exists anywhere."""
+
+    def test_importing_it_in_a_fresh_interpreter_at_the_repository_root_fails(self):
+        import subprocess
+
+        done = subprocess.run(
+            [sys.executable, "-c", "import composer_backtest"],
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+        assert done.returncode != 0, (
+            "composer_backtest is still importable from the repository root"
+        )
+        assert "No module named 'composer_backtest'" in done.stderr
+
+    def test_the_module_file_does_not_exist(self):
+        assert not (_REPO_ROOT / "composer_backtest.py").exists()
+
+    def test_pyproject_keeps_no_per_file_ignore_for_it(self):
+        text = (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        assert not re.search(r"\bcomposer_backtest\.py", text)
+
+    def test_the_readme_lists_no_row_for_it(self):
+        text = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        assert not re.search(r"\bcomposer_backtest\.py", text)
+
+    def test_this_modules_docstring_compares_the_client_with_no_module_that_is_gone(self):
+        docstring = ast.get_docstring(ast.parse((pathlib.Path(__file__)).read_text("utf-8"))) or ""
+        assert not re.search(r"\bcomposer_backtest\b", docstring), docstring
+
+    def test_no_tracked_python_file_imports_it(self):
+        import subprocess
+
+        listed = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "ls-files", "*.py"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        importers = []
+        for relpath in listed:
+            path = _REPO_ROOT / relpath
+            if not path.is_file():
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import):
+                    names = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    names = [node.module or ""]
+                if any(
+                    name == "composer_backtest" or name.startswith("composer_backtest.")
+                    for name in names
+                ):
+                    importers.append(relpath)
+        assert importers == []
+
+
+class TestCanonicalClientIsUnchanged:
+    @pytest.mark.parametrize("relpath", sorted(_LF_DIGESTS))
+    def test_the_client_and_its_captured_fixtures_keep_their_content(self, relpath):
+        assert _lf_sha256(relpath) == _LF_DIGESTS[relpath], (
+            f"{relpath} changed: removing the root module must leave the canonical client and "
+            "its captured fixtures byte for byte as they were (line ends normalized)"
+        )

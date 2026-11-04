@@ -336,3 +336,59 @@ class TestRunStartedInsideATradingSession:
         assert "session=none" in summary
         assert (_count(summary, "seen"), _count(summary, "labelled")) == (0, 0)
         assert _symphony_lines(log) == {}
+
+
+class TestLinesAreTheDocumentedFormatInFull:
+    """Whole-line equality against lines built from the module docstring's format and from
+    fixture-derived parts (the golden file's own label, the session window), so a change to
+    batch failure handling cannot also change a line that was not meant to change."""
+
+    @staticmethod
+    def _window() -> tuple[str, int]:
+        sessions = _sip.sessions_ending(_sip.NEWEST_ELIGIBLE, 21)
+        return f"{sessions[1].isoformat()}..{sessions[-1].isoformat()}", 20
+
+    def test_a_run_of_good_pages_logs_exactly_one_line_per_symphony_and_one_summary(
+        self, job_harness, log
+    ):
+        job_harness.serve(
+            {"AAA": golden_closes("trending"), "BBB": golden_closes("mean-reverting")}
+        )
+        entries = _entries_for(
+            (ID_ONE, "Alpha Test Symphony", [("AAA", 1.0)]),
+            (ID_TWO, "Beta Test Symphony", [("BBB", 1.0)]),
+        )
+
+        job_harness.run(entries)
+
+        window, count = self._window()
+        expected = [
+            f"regime_label symphony={ID_ONE} name='Alpha Test Symphony' session={D_ISO}"
+            f" label={golden_label('trending')} window={window} sessions={count}",
+            f"regime_label symphony={ID_TWO} name='Beta Test Symphony' session={D_ISO}"
+            f" label={golden_label('mean-reverting')} window={window} sessions={count}",
+            f"regime_label summary session={D_ISO} seen=2 labelled=2",
+        ]
+        assert [r.getMessage() for r in _job_records(log)] == expected
+
+    def test_a_transport_failure_on_page_two_logs_the_failure_line_and_the_counted_summary(
+        self, job_harness, log
+    ):
+        def page_two_unreachable(params):
+            if "page_token" in params:
+                return requests.ConnectionError("host unreachable")
+            body = _sip.page_body({"AAA": golden_closes("trending")}, "next-page")
+            return _sip.Resp(200, body)
+
+        job_harness.serve({"AAA": golden_closes("trending")}, rule=page_two_unreachable)
+        entries = _entries_for((ID_ONE, "Alpha Test Symphony", [("AAA", 1.0)]))
+
+        job_harness.run(entries)
+
+        expected = [
+            f"regime_label symphony={ID_ONE} name='Alpha Test Symphony' session={D_ISO}"
+            " reason=price_fetch_failed error=ConnectionError",
+            f"regime_label summary session={D_ISO} seen=1 labelled=0 price_fetch_failed=1",
+        ]
+        assert [r.getMessage() for r in _job_records(log)] == expected
+        assert job_harness.rows() == {}, "a failed batch writes no label"

@@ -247,3 +247,81 @@ def test_the_comment_above_a_re_pinned_hash_names_the_session_date_keyword_chang
         block.append(lines[row])
         row -= 1
     assert "session_date" in " ".join(block), "the pin comment must describe the current re-pin"
+
+
+# ---------------------------------------------------------------------------
+# The summary line's `outcomes` annotation names what the function does with it
+# ---------------------------------------------------------------------------
+
+
+def _outcome(reason: str | None, label: str | None = None) -> regime_label_job.SymphonyOutcome:
+    labelled = reason is None
+    return regime_label_job.SymphonyOutcome(
+        "kJ2hG8dS5aQ1wE9rT4yU",
+        "Alpha Test Symphony",
+        label if labelled else None,
+        reason,
+        _sip.NEWEST_ELIGIBLE if labelled else None,
+        _sip.NEWEST_ELIGIBLE if labelled else None,
+        20 if labelled else 0,
+        None,
+    )
+
+
+def test_the_summary_outcomes_annotation_supports_len_and_repeated_iteration():
+    import collections.abc
+    import typing
+
+    hint = typing.get_type_hints(regime_label_job._log_summary)["outcomes"]
+    origin = typing.get_origin(hint) or hint
+
+    assert isinstance(origin, type), f"outcomes is annotated {hint!r}, not a single class"
+    assert issubclass(origin, collections.abc.Sized), (
+        f"{hint!r} has no len(), yet the summary counts the outcomes with it"
+    )
+    assert issubclass(origin, collections.abc.Iterable)
+    assert not issubclass(origin, collections.abc.Iterator), (
+        f"{hint!r} may be iterated once, yet the summary iterates it three times"
+    )
+
+
+def _summary_message(caplog) -> str:
+    (line,) = [r.getMessage() for r in caplog.records if r.name == LOGGER]
+    return line
+
+
+def test_the_summary_of_an_empty_run_and_of_a_run_of_outcomes_keeps_its_lines(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    session = _sip.TARGET_D
+    outcomes = (
+        _outcome(None, "trending"),
+        _outcome("price_fetch_failed"),
+        _outcome("insufficient_history"),
+        _outcome("price_fetch_failed"),
+    )
+
+    regime_label_job._log_summary(session, (), None)
+    empty = _summary_message(caplog)
+    caplog.clear()
+    regime_label_job._log_summary(session, outcomes, None)
+    full = _summary_message(caplog)
+    caplog.clear()
+    regime_label_job._log_summary(session, (), "OperationalError")
+    failed = _summary_message(caplog)
+
+    day = session.isoformat()
+    assert empty == f"regime_label summary session={day} seen=0 labelled=0"
+    assert full == (
+        f"regime_label summary session={day} seen=4 labelled=1"
+        " insufficient_history=1 price_fetch_failed=2"
+    )
+    assert failed == f"regime_label summary session={day} seen=0 labelled=0 failed=OperationalError"
+
+
+def test_the_summary_counts_a_list_of_outcomes_the_same_as_a_tuple(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER)
+    outcomes = [_outcome(None, "trending"), _outcome("no_holdings")]
+
+    regime_label_job._log_summary(_sip.TARGET_D, outcomes, None)
+
+    assert _summary_message(caplog).endswith("seen=2 labelled=1 no_holdings=1")
