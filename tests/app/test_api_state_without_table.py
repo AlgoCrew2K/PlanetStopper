@@ -517,7 +517,7 @@ def test_the_held_snapshot_a_poll_sorted_is_the_one_the_page_reads_next(monkeypa
     built = build("closed_missing_defaults", monkeypatch, tmp_path)
 
     first = built.body()
-    built.page()
+    assert built.get("/").status_code == 200, "the page must answer between the two polls"
     second = built.body()
 
     assert comparable(first) == comparable(second)

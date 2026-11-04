@@ -121,11 +121,6 @@ class StateWorld:
         )
         return response.get_json()
 
-    def page(self) -> str:
-        response = self.client.get("/")
-        assert response.status_code == 200, f"/ answered {response.status_code}"
-        return response.get_data(as_text=True)
-
     @property
     def first_account_id(self) -> str:
         """The account of the first symphony entry of the record the world was seeded from."""
