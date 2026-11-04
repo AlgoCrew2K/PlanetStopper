@@ -16,6 +16,8 @@ Fixture provenance: the worlds are rendered by the real producers over the captu
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 from pathlib import Path
 from unittest.mock import patch
 
@@ -39,6 +41,12 @@ PLACEHOLDER_ENV = {
 # The words and attribute names the control and its per-poll state went by, compared lower-cased.
 REMOVED_TOKENS = ["cashnow", "cash-now", "cash_now", "cash now", "data-cash-state"]
 SCANNED_SUFFIXES = {".js", ".css", ".html"}
+# sha256 of inspect.getsource(app.sell_account) with CRLF normalized to LF, recorded from the branch
+# base (bed4d7bb) with: git show bed4d7bb:app.py, the decorator through the last line of the function.
+# The route is protected: stop and ask before re-pinning.
+SELL_ACCOUNT_SOURCE_AT_BRANCH_BASE_SHA256 = (
+    "f4ef8466d51596213954cc9c3e197f1c231055ad6f307178b078a29071eca80c"
+)
 
 
 def _rendered_page() -> str:
@@ -253,3 +261,12 @@ class TestAScriptedSymphonyOnlyRequestIsStillRefused:
             tokenless = client.post(SELL_ROUTE, json=_old_control_body())
         assert tokenless.status_code == 403
         assert not thread.called
+
+
+class TestTheLiquidationRouteIsUntouchedByTheRemoval:
+    def test_the_sell_route_source_is_the_one_at_the_branch_base(self):
+        source = inspect.getsource(app_module.sell_account).replace("\r\n", "\n")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        assert digest == SELL_ACCOUNT_SOURCE_AT_BRANCH_BASE_SHA256, (
+            "app.sell_account changed. STOP: the liquidation route is protected; ask before re-pinning."
+        )
