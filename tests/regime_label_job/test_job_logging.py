@@ -314,3 +314,25 @@ class TestNoSecretReachesTheLog:
             assert secret not in log.text, f"{secret} reached the log"
         (line,) = _symphony_lines(log).values()
         assert f"reason={outcome.reason}" in line
+
+
+class TestRunStartedInsideATradingSession:
+    """AC-1 S-1.5 / AC-7 S-7.2 (PM ruling): the in-session skip IS that run's summary line."""
+
+    def test_an_in_session_run_emits_one_summary_line_with_the_reason_and_no_symphony_line(
+        self, job_harness, log
+    ):
+        in_session = datetime(2026, 11, 4, 10, 0, tzinfo=ET)
+        entries = _entries_for((ID_ONE, "Alpha Test Symphony", [("AAA", 1.0)]))
+
+        run = job_harness.run(entries, clock=lambda: in_session)
+
+        assert run.session is None
+        records = _job_records(log)
+        assert len(records) == 1, [r.getMessage() for r in records]
+        assert records[0].levelno == logging.INFO
+        (summary,) = _summary_lines(log)
+        assert "reason=session_in_progress" in summary
+        assert "session=none" in summary
+        assert (_count(summary, "seen"), _count(summary, "labelled")) == (0, 0)
+        assert _symphony_lines(log) == {}

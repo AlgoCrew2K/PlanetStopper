@@ -371,8 +371,60 @@ class TestS3_8OnlyTheTrailingStopCountMoves:
         assert engine.sym()["triggered_reason"] == "Trailing Stop"
 
 
+class TestS3_8TakeProfitConfirmationIsUntouchedByTheLabel:
+    """The label moves the trailing-stop count only. The Monte Carlo result is seamed so the
+    take-profit machine really runs (the harness's history is too short for a real MC)."""
+
+    _TP_ARM_PROB = 1.0  # below TAKE_PROFIT_MC_PCT: arms the take-profit
+    # At or above TAKE_PROFIT_MC_PCT and below every label's tick count scaled threshold, so a
+    # threshold that varied with the label would read this as "still below" and count differently.
+    _TP_ABOVE_PROB = 7.0
+
+    @pytest.mark.parametrize("label", ["trending", "mean-reverting"])
+    def test_take_profit_state_and_trigger_match_the_no_row_run_tick_by_tick(self, engine, label):
+        assert alpha_bot_execution.TAKE_PROFIT_MC_PCT < self._TP_ABOVE_PROB
+        probs = [self._TP_ARM_PROB, self._TP_ARM_PROB] + [self._TP_ABOVE_PROB] * 6
+
+        def run(with_row: bool):
+            conn = sqlite3.connect(os.environ["DB_PATH"])
+            try:
+                conn.execute("DELETE FROM regime_label_cache")
+                conn.commit()
+            finally:
+                conn.close()
+            engine.seed()
+            if with_row:
+                _save(label, _D)
+            feed = iter(probs)
+            traj = []
+            with patch.object(
+                math_engine, "run_monte_carlo", side_effect=lambda *a, **k: next(feed)
+            ):
+                for _ in probs:
+                    engine.tick(_ABOVE_STOP_PCT)
+                    sym = engine.sym()
+                    traj.append(
+                        {
+                            "tp_armed": sym.get("tp_armed"),
+                            "above_tp_count": sym.get("above_tp_count"),
+                            "triggered": sym.get("triggered"),
+                            "triggered_reason": sym.get("triggered_reason"),
+                        }
+                    )
+            return traj
+
+        without_row = run(False)
+        with_row = run(True)
+
+        assert with_row == without_row
+        # Non-vacuous: the take-profit armed, counted and fired in the reference run.
+        assert any(step["tp_armed"] for step in without_row)
+        assert any(step["above_tp_count"] for step in without_row)
+        assert any(step["triggered_reason"] for step in without_row)
+
+
 class TestS3_9NoRowsMeansRefBehaviour:
-    def test_decisions_equal_a_run_where_the_accessor_always_returns_none(self, engine):
+    def test_decisions_equal_a_run_where_the_only_row_is_dated_another_session(self, engine):
         q, a = _QUALIFYING_PCT, _ABOVE_STOP_PCT
         pcts = [q, q, a, q, q, q, q]
 
@@ -385,11 +437,12 @@ class TestS3_9NoRowsMeansRefBehaviour:
             return traj
 
         with_empty_table = run()
-        engine.env["db"].get_cached_regime_label.side_effect = lambda *a, **k: None
-        ref_behaviour = run()
-        assert with_empty_table == ref_behaviour
+        # A real row for this symphony that is NOT for today's session: the reference behaviour.
+        _save("trending", _PREV)
+        with_other_date_row = run()
+        assert with_empty_table == with_other_date_row
         # Non-vacuous: the sequence reaches a trigger in both runs.
-        assert any(step["triggered"] for step in ref_behaviour)
+        assert any(step["triggered"] for step in with_other_date_row)
 
 
 class TestS3_10DryRunStatesApplyTheLabel:
@@ -471,7 +524,7 @@ class TestS4_3NoRowForTodayAtAnyClock:
         assert engine.sym()["below_stop_count"] == 0
         assert engine.fire_tick() == _DEFAULT_TICKS
 
-    def test_a_trending_row_for_a_later_session_is_not_borrowed_at_midday(self, engine):
+    def test_a_trending_row_from_the_previous_session_is_not_borrowed_at_midday(self, engine):
         _save("trending", _PREV)
         late = _FIXED_ET.replace(hour=15, minute=30)
         for _ in range(_DEFAULT_TICKS - 1):
