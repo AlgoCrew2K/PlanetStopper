@@ -17,9 +17,10 @@ Three kinds of check:
   * live siblings (characterization): each name a production path reaches still exists with
     the value or output it had.
 
-Not scanned: this file, which has to name them, and the two files whose absence assertions name
-them on purpose (tests/ai_advisor/test_logic_l_2_api_docstring.py and
-tests/app/test_retirement_recommendations_route.py). The files that pin which source nodes may
+Not scanned: this file, which has to name them, and the three files whose absence assertions name
+them on purpose (tests/ai_advisor/test_logic_l_2_api_docstring.py,
+tests/app/test_retirement_recommendations_route.py and
+tests/database/test_bl10_dead_autotune_columns_documented.py). The files that pin which source nodes may
 change in the same slice name them to cut them out, so they are listed too.
 """
 
@@ -59,6 +60,7 @@ ALLOWED_FILES = frozenset(
         "tests/test_hygiene_dead_names_absent.py",
         "tests/ai_advisor/test_logic_l_2_api_docstring.py",
         "tests/app/test_retirement_recommendations_route.py",
+        "tests/database/test_bl10_dead_autotune_columns_documented.py",
         "tests/test_hygiene_protected_surfaces.py",
         "tests/math_engine/test_zscore_shared_definition.py",
     }
