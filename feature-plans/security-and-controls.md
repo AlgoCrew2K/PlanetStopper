@@ -1,5 +1,5 @@
 # Feature: Security findings S-9, S-10, S-11 and S-17, Cash Now removal, and the tenure review market gate
-Status: gate-1
+Status: ready
 Story: none: the request is the 2026-11-02 final-gate report and the security audit of build 38b0cbe8, saved verbatim in feature-plans/security-and-controls.source.md
 Type: security
 Suite: none
@@ -383,16 +383,16 @@ Questions: none
 
 ## Not Building
 Non-goals:
-- NB-1: Fixing Cash Now so that each card button sends `account_id`, `confirm_account_id` and LIQUIDATE to `/api/sell_account` (option a; excludes part of R-1; proposed, PM ruling D-1). The route liquidates every symphony in the account (`app.py:8757-8801`), the operator runs one account holding all symphonies, so each card button would equal the header Emergency Liquidate, and filling in LIQUIDATE for the operator would bypass the typed-phrase gate (`static/chrome.js:237`).
-- NB-2: A per-symphony sell route (option b; excludes part of R-1; proposed, PM ruling D-1). It adds a dashboard-originated order path, against the dashboard zero-order guarantee in `tests/app/test_dashboard_no_order_path.py`, where only `/api/sell_account` is exempt.
-- NB-3: An engine-mediated "manual exit request" from a card (excludes part of R-1; proposed, PM ruling D-1), for the reason of NB-2.
-- NB-4: A new header logout control (excludes part of R-16; proposed, PM ruling D-2). New header UI is Claude Design's call; the confirm page at `GET /logout` is the way to sign out.
-- NB-5: A new auth mechanism: more than one user, two-factor login, OAuth, or a per-browser sign-out that leaves other browsers signed in (proposed).
-- NB-6: Any other audit finding, S-1 to S-8 and S-12 to S-16 (proposed).
-- NB-7: A static market-hours hint beside "Run tenure review" like the one beside "Run recommender" (`templates/ai_advisor.html:2084-2090`); the refusal message on click is the only notice (proposed).
-- NB-8: The other items of the order of work: hygiene and dead code, the engine item, the UI items, replay fidelity and the provenance wire (proposed; other plans).
-- NB-9: Re-writing explanations stored before this change; an unchanged pair keeps its stored text under the existing reuse rule (proposed).
-- NB-10: A settings-page or `/api/settings` control for the session lifetime (proposed; R-12 makes the key `.env` only).
+- NB-1: Fixing Cash Now so that each card button sends `account_id`, `confirm_account_id` and LIQUIDATE to `/api/sell_account` (option a; excludes part of R-1; approved by the PM, [PM-ASSUMED], ruling D-1). The route liquidates every symphony in the account (`app.py:8757-8801`), the operator runs one account holding all symphonies, so each card button would equal the header Emergency Liquidate, and filling in LIQUIDATE for the operator would bypass the typed-phrase gate (`static/chrome.js:237`).
+- NB-2: A per-symphony sell route (option b; excludes part of R-1; approved by the PM, [PM-ASSUMED], ruling D-1). It adds a dashboard-originated order path, against the dashboard zero-order guarantee in `tests/app/test_dashboard_no_order_path.py`, where only `/api/sell_account` is exempt.
+- NB-3: An engine-mediated "manual exit request" from a card (excludes part of R-1; approved by the PM, [PM-ASSUMED], ruling D-1), for the reason of NB-2.
+- NB-4: A new header logout control (excludes part of R-16; approved by the PM, [PM-ASSUMED], ruling D-2). New header UI is Claude Design's call; the confirm page at `GET /logout` is the way to sign out.
+- NB-5: A new auth mechanism: more than one user, two-factor login, OAuth, or a per-browser sign-out that leaves other browsers signed in (approved by the PM, [PM-ASSUMED]).
+- NB-6: Any other audit finding, S-1 to S-8 and S-12 to S-16 (approved by the PM, [PM-ASSUMED]).
+- NB-7: A static market-hours hint beside "Run tenure review" like the one beside "Run recommender" (`templates/ai_advisor.html:2084-2090`); the refusal message on click is the only notice (approved by the PM, [PM-ASSUMED]).
+- NB-8: The other items of the order of work: hygiene and dead code, the engine item, the UI items, replay fidelity and the provenance wire (approved by the PM, [PM-ASSUMED]; other plans).
+- NB-9: Re-writing explanations stored before this change; an unchanged pair keeps its stored text under the existing reuse rule (approved by the PM, [PM-ASSUMED]).
+- NB-10: A settings-page or `/api/settings` control for the session lifetime (approved by the PM, [PM-ASSUMED]; R-12 makes the key `.env` only).
 
 Behavior that stays exactly as it is:
 - NB-11: `POST /api/sell_account` and `perform_account_liquidation` (`app.py:8757-8880`), `LIVE_EXECUTION` gating, the header Emergency Liquidate control and its panic modal (`templates/_chrome.html`, `static/chrome.js:200-260`); all byte-identical under their existing pins.
@@ -543,11 +543,11 @@ Hidden scenarios: this plan is Sensitive, so qa writes hidden scenarios after ap
 ## Open Questions
 | Q-n | Question | Blocks (AC ids or "plan") | Proposed default | Answer |
 |---|---|---|---|---|
-| Q-1 | How does the confirm page send its token? | AC-5 | in the `X-CSRF-Token` header, with the page's script submitting the form; the form-field channel stays login-only (`app.py:470`). The alternative, accepting a `csrf_token` form field on logout, lets a page on a sibling sslip.io host post the public token and, on a browser that sends no `Sec-Fetch-Site`, end every session on every browser: worse than today's GET logout, which ends one browser's session. The cost of the default is that signing out needs JavaScript, which every dashboard page already needs | |
-| Q-2 | What does the confirm page show when its POST is refused (stale token after a restart)? | AC-5 | "This page expired after a restart; choose Sign out again", with the current token used for the next click and nothing re-sent, as the dashboard's other POST controls do after a restart | |
-| Q-3 | What does `GET /logout` answer without a valid session? | AC-5 | 302 to `/login`: there is nothing to sign out | |
-| Q-4 | What happens when the revocation record cannot be written at logout or read at start? | AC-3 | write failure: every earlier session stays refused for the life of the process, an ERROR log names the exception type, and the login page says other sessions are ended until the daemon restarts; read failure at start: every session issued before the start is refused | |
-| Q-5 | What range does `DASHBOARD_SESSION_LIFETIME_HOURS` accept? | AC-2 | whole numbers from 1 to 720 (30 days, under Flask's 31-day default); any other value means 12 hours with a WARNING | |
+| Q-1 | How does the confirm page send its token? | AC-5 | in the `X-CSRF-Token` header, with the page's script submitting the form; the form-field channel stays login-only (`app.py:470`). The alternative, accepting a `csrf_token` form field on logout, lets a page on a sibling sslip.io host post the public token and, on a browser that sends no `Sec-Fetch-Site`, end every session on every browser: worse than today's GET logout, which ends one browser's session. The cost of the default is that signing out needs JavaScript, which every dashboard page already needs | default approved (PM, [PM-ASSUMED]) |
+| Q-2 | What does the confirm page show when its POST is refused (stale token after a restart)? | AC-5 | "This page expired after a restart; choose Sign out again", with the current token used for the next click and nothing re-sent, as the dashboard's other POST controls do after a restart | default approved (PM, [PM-ASSUMED]) |
+| Q-3 | What does `GET /logout` answer without a valid session? | AC-5 | 302 to `/login`: there is nothing to sign out | default approved (PM, [PM-ASSUMED]) |
+| Q-4 | What happens when the revocation record cannot be written at logout or read at start? | AC-3 | write failure: every earlier session stays refused for the life of the process, an ERROR log names the exception type, and the login page says other sessions are ended until the daemon restarts; read failure at start: every session issued before the start is refused | default approved (PM, [PM-ASSUMED]) |
+| Q-5 | What range does `DASHBOARD_SESSION_LIFETIME_HOURS` accept? | AC-2 | whole numbers from 1 to 720 (30 days, under Flask's 31-day default); any other value means 12 hours with a WARNING | default approved (PM, [PM-ASSUMED]) |
 
 ## Decisions
 | ID | Decision | Rationale |
@@ -575,3 +575,4 @@ Hidden scenarios: this plan is Sensitive, so qa writes hidden scenarios after ap
 ## Follow-Ups
 - NB-18: remove Cash Now from the never-click lists of the behavioral-evidence-capturer and ux-expert agent files and their harness pins; tracked as one line in the harness backlog, raised by the PM at ship.
 - NB-7: a static market-hours hint beside "Run tenure review", if the operator wants one; tracked in this plan's review packet.
+- HYG-017 (relative `.env` reads in `get_state` and `sell_account`) and hygiene Q-9 (a bare `LIVE_EXECUTION` key raises at six `app.py` sites) are not carried here, because NB-11 keeps `sell_account` byte-identical; they move to the next slice, the engine and settings-read slice with `VWAP_BLEED` (PM ruling at approval, [PM-ASSUMED]).
