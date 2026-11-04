@@ -11598,3 +11598,39 @@ All five verdict files at `f3a699965cca` (qa, code-reviewer, ux-expert, integrat
 ### Files changed
 
 `app.py`, `templates/table_partial.html` (deleted), `static/layout.css`, `static/settings-modal.js`, `templates/ai_advisor.html`, `templates/history.html`, `templates/performance.html`, `templates/settings.html`, tests and fixtures under `tests/`, `feature-plans/`, and the docs: `docs/generated/app.md`, `docs/generated/static_index_js.md`, `docs/generated/alpha_bot_execution.md`, `docs/generated/INDEX.md`, `.claude/CLAUDE.md` (Key Files row for `app.py`).
+
+## DE-REGIME-LABEL-001 — Regime label producer: nightly SIP-based labels for the live trailing-stop count (2026-11-03)
+
+### Defect
+
+`database.save_regime_label` had zero production callers. The droplet `regime_label_cache` held 0 rows (PM live read), so the live engine always resolved no label and always used the base 3 confirm ticks, while the autotuner replay has used the regime-conditional counts 2/5/3 since `DE-MATH-R1-001`. Live and replay were therefore tuned and run on different exit counts.
+
+### Fix
+
+- New `regime_label_job.py`: a nightly job run from a new 04:30 `run_scheduler` slot (droplet host is `Etc/UTC`, so 23:30 ET). It fetches consolidated SIP daily closes from Alpaca `/v2/stocks/bars` (end = job start minus 20 minutes), computes allocation-weighted close-to-close returns of each symphony's current holdings over the 20 computable NYSE sessions within the 30 strictly before the target session, classifies with `regime_classifier.classify_regime`, and writes through `database.save_regime_label`. A failed batch gives `price_fetch_failed`; paging is bounded (`MAX_PAGES_PER_BATCH=5`, repeated token fails the batch); no write while a session is in progress (`session_in_progress`) or at or after the open for a pre-open start (`after_open`). One log line per symphony at decision time plus one summary line.
+- `database.get_cached_regime_label` gains keyword-only `session_date` (exact `as_of_date` match). `alpha_bot_execution.py` passes `session_date=current_date_str` at the regime read; this is the only engine change. `math_engine.py` and `regime_classifier.py` carry no diff against the fork point. The engine sha256 pins were re-pinned with comments naming the change, and `tests/test_mdd_window_truth_zero_diff_guard.py` plus `tests/test_regime_label_protected_files.py` pass at the reviewed head (14 passed, `-n0`, run by doc-gen).
+
+### Design-basis ruling
+
+Live uses SIP daily close-to-close, not the replay's last-1-minute-IEX-tick approximation. PM live reads of IEX versus SIP close gaps: DULL 12.8%, RCG 5.9%, XMPT 1.9%, DHS 0.60%, STPZ 0.36%, KMLM 0.20%, QQQ 0.06%. The SIP end-bound rule (a request ending inside the last 15 minutes is refused) set the 20-minute lag. All 50 stored holdings returned SIP bars.
+
+### Not claimed
+
+Live and replay do not now match exactly. The replay's regime input is still the first holding's last 1-minute IEX tick, matched to other holdings by position, with a window from the dates present in its history, a fold-head default, and synthetic history built from `feed=iex`. The job has not yet run in production; first-night evidence is owed.
+
+### Tests and review
+
+New suites: `tests/regime_label_job/`, `tests/app/test_regime_label_scheduling.py`, `tests/execution/test_regime_label_session_read.py`, `tests/execution/test_regime_cache_isolation.py`, the no-trade-boundary scan and the protected-files pin. At head `d615e0941f25`: qa (verify plus 39 hidden rows), code-reviewer and pipelines-expert PASS; quant-code-reviewer PASS at `2107fc272ea2` (math and engine unchanged since). Ledger 23 entries, 0 open blocking.
+
+### Follow-ups (not fixed here)
+
+- Replay-fidelity math cycle: move the replay's regime input and history onto the SIP basis and the job's window rule.
+- PIPE-3: the repeated-token check sits outside the parse `try` in `_fetch_batch`.
+- CR-5: `_log_summary` annotates `Iterable` but needs `Sequence`.
+- `tests/app/test_scheduler_survival.py::TestSlotsThatRaise::test_composer_held_for_the_whole_run_does_not_delay_either_engine_spawn` is a wall-clock test that failed once under load and passed on rerun; it predates the slice.
+- Q-7: the engine console text "Awaiting 3-tick confirmation" is wrong for counts 2 and 5.
+- Unconfirmed: whether a ticker rejected with 400 by the SIP endpoint exists among stored holdings; the first run's summary line settles it.
+
+### Files changed
+
+`regime_label_job.py`, `app.py`, `database.py`, `alpha_bot_execution.py`, tests and fixtures under `tests/`, `feature-plans/regime-label-producer*`, and the docs: `docs/generated/regime_label_job.md`, `docs/generated/app.md`, `docs/generated/database.md`, `docs/generated/alpha_bot_execution.md`, `docs/generated/INDEX.md`, `.claude/CLAUDE.md` (Key Files rows for `alpha_bot_execution.py`, `database.py`, `app.py`, new row `regime_label_job.py`).

@@ -117,10 +117,10 @@ Sets the per-symphony live_mode flag and writes an immutable `config_audit_log` 
 ### Regime Cache (migration 027)
 
 #### `save_regime_label(symphony_id: str, label: str, as_of_date: str) → None`
-Persists the regime classifier label for a symphony on a given date in the `regime_label_cache` table.
+Persists the regime classifier label for a symphony in the `regime_label_cache` table, one row per symphony (upsert on `symphony_id`). `as_of_date` is the ISO date of the session the label is for. Its production caller is `regime_label_job.run_regime_label_job` (nightly 04:30 slot); see [regime_label_job.md](regime_label_job.md).
 
-#### `get_cached_regime_label(symphony_id: str, as_of_date: str) → str | None`
-Returns the cached regime label for a symphony/date pair, or `None` if not yet computed.
+#### `get_cached_regime_label(symphony_id: str, staleness_cutoff_days: int | None = None, *, session_date: str | None = None) → str | None`
+Returns the cached label, or `None` when absent, stale or unparseable (never raises). `staleness_cutoff_days=None` applies no age check. `session_date` (keyword-only): when a string, the label is returned only if the stored `as_of_date` equals it exactly; any other date returns `None`. The engine passes the current ET date string, so a label written for another session is never used. `None` (default) leaves behavior unchanged.
 
 ---
 

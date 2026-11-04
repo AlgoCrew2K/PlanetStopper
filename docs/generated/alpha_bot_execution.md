@@ -202,6 +202,10 @@ See `DE-AUDIT-BL9-001` in `DECISIONS.md`.
 
 ---
 
+## Regime Label Read
+
+The per-cycle trailing-stop confirm count comes from `math_engine.apply_regime_exit_adjustment`, fed by `database.get_cached_regime_label(symphony_id, session_date=current_date_str)`. The `session_date` keyword is the only engine change in the regime-label-producer slice: the label counts only when its stored `as_of_date` equals the current ET session date, otherwise the read returns `None` and the base count applies. The cache is now filled nightly by `regime_label_job` ([regime_label_job.md](regime_label_job.md)); before that the table was empty and the base 3 ticks always applied. Not yet observed in production. The console text "Awaiting 3-tick confirmation" is hardcoded and is wrong when the count is 2 or 5 (follow-up). `math_engine.py` carries no diff in this slice.
+
 ## Module-Level Configuration Constants
 
 | Constant | Source | Description |
