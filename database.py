@@ -1743,7 +1743,10 @@ def save_regime_label(symphony_id: str, label: str, as_of_date: str) -> None:
 
 
 def get_cached_regime_label(
-    symphony_id: str, staleness_cutoff_days: int | None = None
+    symphony_id: str,
+    staleness_cutoff_days: int | None = None,
+    *,
+    session_date: str | None = None,
 ) -> str | None:
     """Return the cached regime label for a symphony, or None if absent/stale.
 
@@ -1755,6 +1758,10 @@ def get_cached_regime_label(
       - 0: always return None (safety escape hatch — treat every label as stale).
       - N > 0: return None when as_of_date is more than N days before today (UTC);
         otherwise return the label.
+
+    session_date (keyword-only): when a string, return the label only if the stored
+    as_of_date equals it exactly; any other date, or none, returns None. None (default)
+    leaves behaviour unchanged.
 
     Never raises: any missing table, missing row, or unparseable date returns None
     so the caller (apply_regime_exit_adjustment) falls back to the safe default
@@ -1776,6 +1783,9 @@ def get_cached_regime_label(
         return None
 
     label, as_of_date = row[0], row[1]
+
+    if session_date is not None and as_of_date != session_date:
+        return None
 
     if staleness_cutoff_days is None:
         return label

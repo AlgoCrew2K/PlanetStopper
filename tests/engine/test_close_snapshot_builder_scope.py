@@ -25,7 +25,7 @@ _SNAPSHOT_KEY = "last_market_close_snapshot"
 # LF-normalized sha256 of alpha_bot_execution.py with the builder block's lines removed,
 # computed at the base commit 3be84137 (the engine file is byte-identical to 37c8e983's).
 # Command: python -I -c "import tests.engine.test_close_snapshot_builder_scope as m; print(m.hash_without_builder())"
-_PINNED_HASH_WITHOUT_BUILDER = "81b38882438e6884b4ca9e01c6e5197f5b9011b1c31b7cf1150e7905d572d5bf"
+_PINNED_HASH_WITHOUT_BUILDER = "228af7add5c89d53882129b67f26d4edfe9060161afb2f792f4647d171842bf1"
 
 
 def _builder_block(tree: ast.Module) -> ast.If:

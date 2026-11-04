@@ -366,3 +366,139 @@ def test_no_staleness_cutoff_returns_label_regardless_of_age() -> None:
         f"Without staleness_cutoff_days, get_cached_regime_label must return "
         f"the stored label regardless of age, got {result!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# 12+. Session-scoped read (regime-label-producer C1, AC-4: S-4.5, S-4.6, S-4.9)
+#
+# get_cached_regime_label(symphony_id, *, session_date=...) returns the stored
+# label only when the row's as_of_date equals session_date exactly. With
+# session_date omitted the accessor behaves as in items 5-11 above.
+# ---------------------------------------------------------------------------
+
+_SESSION = "2026-11-04"
+_PREV_SESSION = "2026-11-03"
+_NEXT_SESSION = "2026-11-05"
+
+
+def _insert_raw(symphony_id: str, label: str, as_of_date: str) -> None:
+    """Direct insert: save_regime_label accepts any string, this bypasses nothing
+    but keeps the malformed-date cases independent of the writer under test."""
+    import sqlite3
+
+    conn = sqlite3.connect(database._db_file())
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO regime_label_cache (symphony_id, label, as_of_date) "
+            "VALUES (?, ?, ?)",
+            (symphony_id, label, as_of_date),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_session_date_is_a_keyword_only_parameter_defaulting_to_none() -> None:
+    import inspect
+
+    param = inspect.signature(database.get_cached_regime_label).parameters.get("session_date")
+    assert param is not None, "get_cached_regime_label must accept session_date"
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert param.default is None
+
+
+def test_row_dated_the_session_is_returned() -> None:
+    database.save_regime_label("sess-match", "trending", _SESSION)
+    assert database.get_cached_regime_label("sess-match", session_date=_SESSION) == "trending"
+
+
+@pytest.mark.parametrize("row_date", [_PREV_SESSION, _NEXT_SESSION, "2099-01-01", "2000-01-01"])
+def test_row_dated_any_other_day_returns_none_for_the_session(row_date: str) -> None:
+    database.save_regime_label("sess-other", "trending", row_date)
+    assert database.get_cached_regime_label("sess-other", session_date=_SESSION) is None
+
+
+@pytest.mark.parametrize(
+    "row_date",
+    ["", "2026/11/04", "not-a-date", "2026-11-04T00:00:00", " 2026-11-04", "2026-11-4", "20261104"],
+)
+def test_row_with_empty_or_malformed_date_returns_none_for_the_session(row_date: str) -> None:
+    _insert_raw("sess-malformed", "trending", row_date)
+    assert database.get_cached_regime_label("sess-malformed", session_date=_SESSION) is None
+
+
+def test_absent_row_returns_none_for_the_session() -> None:
+    assert database.get_cached_regime_label("sess-absent", session_date=_SESSION) is None
+
+
+def test_session_date_none_keeps_the_no_filter_behaviour() -> None:
+    database.save_regime_label("sess-default", "mean-reverting", "2020-01-01")
+    assert database.get_cached_regime_label("sess-default") == "mean-reverting"
+    assert database.get_cached_regime_label("sess-default", session_date=None) == "mean-reverting"
+
+
+def test_session_date_and_staleness_cutoff_both_must_pass() -> None:
+    database.save_regime_label("sess-both", "trending", _SESSION)
+    assert (
+        database.get_cached_regime_label(
+            "sess-both", staleness_cutoff_days=0, session_date=_SESSION
+        )
+        is None
+    )
+    database.save_regime_label("sess-both", "trending", _PREV_SESSION)
+    assert (
+        database.get_cached_regime_label(
+            "sess-both", staleness_cutoff_days=100000, session_date=_SESSION
+        )
+        is None
+    )
+
+
+def test_session_match_is_per_symphony() -> None:
+    database.save_regime_label("sess-a", "trending", _SESSION)
+    database.save_regime_label("sess-b", "mean-reverting", _PREV_SESSION)
+    assert database.get_cached_regime_label("sess-a", session_date=_SESSION) == "trending"
+    assert database.get_cached_regime_label("sess-b", session_date=_SESSION) is None
+
+
+def test_accessor_never_raises_for_the_session_read_when_the_table_is_missing() -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(database._db_file())
+    try:
+        conn.execute("DROP TABLE regime_label_cache")
+        conn.commit()
+    finally:
+        conn.close()
+    assert database.get_cached_regime_label("sess-gone", session_date=_SESSION) is None
+
+
+def test_concurrent_row_replacement_never_yields_a_mixed_label_and_date() -> None:
+    """Writer alternates (trending, X) and (mean-reverting, Y). A read for X sees
+    the X row's label or nothing; the Y row's label can only appear if the label
+    and the date were taken from different moments."""
+    import threading
+
+    sid = "sess-race"
+    database.save_regime_label(sid, "trending", _SESSION)
+    stop = threading.Event()
+    failures: list[BaseException] = []
+
+    def writer() -> None:
+        try:
+            while not stop.is_set():
+                database.save_regime_label(sid, "trending", _SESSION)
+                database.save_regime_label(sid, "mean-reverting", _PREV_SESSION)
+        except BaseException as exc:  # noqa: BLE001 - surfaced by the assertion below
+            failures.append(exc)
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    try:
+        seen = {database.get_cached_regime_label(sid, session_date=_SESSION) for _ in range(300)}
+    finally:
+        stop.set()
+        thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert not failures
+    assert seen <= {"trending", None}, seen
