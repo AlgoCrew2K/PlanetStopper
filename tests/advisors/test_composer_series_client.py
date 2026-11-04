@@ -1199,7 +1199,7 @@ class TestComposerCallLatencyLines:
     def test_the_route_is_the_template_and_no_id_key_or_token_reaches_a_line(
         self, client_mod, monkeypatch, timing_records, timing_clock
     ):
-        account, symphony = "880be47e-efe4-4b44-9d83-b6d86098fe0d", "iaSOOUsmnCJHiZvbrWfs"
+        account, symphony = "ACCOUNT_ID_REDACTED", "iaSOOUsmnCJHiZvbrWfs"
         http = _Http([_resp(401), requests.exceptions.ConnectionError(f"for {account}")])
         timed = _TimedHttp(http, timing_clock, [0.125, 0.125])
 
