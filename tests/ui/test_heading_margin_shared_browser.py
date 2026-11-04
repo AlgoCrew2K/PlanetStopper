@@ -87,8 +87,13 @@ def differences(expected: dict[str, list], actual: dict[str, list]) -> list[str]
 
 
 @pytest.fixture
-def world(advisor_server, tmp_path, monkeypatch):
-    """The server over the seeded state, both clocks fixed (the browser's at capture time)."""
+def world(advisor_server, tmp_path, monkeypatch, unresolved_models):
+    """The server over the seeded state, both clocks fixed (the browser's at capture time).
+
+    ``unresolved_models`` opts out of the suite's model seed: the base was read in a process
+    that never listed models, so the Advisor shows "model unavailable" there, and the head must
+    be read in the same state or its label and one notice would differ for no reason of CSS.
+    """
     capture.prepare(tmp_path, monkeypatch.setattr)
     return advisor_server
 

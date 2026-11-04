@@ -41,6 +41,8 @@ _CREDENTIAL_VARIABLES = (
     "ACCOUNT_INDIVIDUAL",
     "ACCOUNT_ROTH",
     "ACCOUNT_TRAD",
+    "ADVISOR_SUGGESTION_MODEL",
+    "ADVISOR_SYNTHESIS_MODEL",
 )
 
 
@@ -62,8 +64,6 @@ def main() -> None:
     scratch = pathlib.Path(tempfile.mkdtemp(prefix="heading_margin_baseline_"))
     os.environ.setdefault("DB_PATH", str(scratch / "state.db"))
     os.environ.setdefault("ATLAS_CACHE_DB_PATH", str(scratch / "atlas.db"))
-    for name in _CREDENTIAL_VARIABLES:
-        os.environ.pop(name, None)
 
     import database
 
@@ -73,6 +73,12 @@ def main() -> None:
     import app as app_module
     from tests.ui import _heading_margin_capture as capture
     from tests.ui._browser_server import running_server
+
+    # After the imports: importing the app loads the developer's .env, which would put the
+    # credentials back. The pages read them (the Frontrunner tab shows a notice without a key), so
+    # the capture runs with none, as the checking test does (advisor_server).
+    for name in _CREDENTIAL_VARIABLES:
+        os.environ.pop(name, None)
 
     env_file = scratch / "heading_margin.env"
     env_file.write_text("", encoding="utf-8")

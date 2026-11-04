@@ -13,18 +13,23 @@ that wrote it, `produce_heading_margin_baseline.py`, is committed beside it.
   `git status --porcelain -- static templates app.py` is empty.
 - Producer call, from the repository root of a tree at that state:
   `DB_PATH=<scratch>/state.db ATLAS_CACHE_DB_PATH=<scratch>/atlas.db python tests/fixtures/dashboard/heading_margin_baseline/produce_heading_margin_baseline.py`.
-- Time: `2026-11-04T00:09:17Z` (also `captured_at_utc` in the file). Browser: Firefox `148.0.2`
+- Time: `2026-11-04T00:17:53Z` (also `captured_at_utc` in the file). Browser: Firefox `148.0.2`
   (`browser_version` in the file; the check refuses to compare on a different version).
 - sha256 of `baseline.json` (LF line ends, written with `newline="\n"`):
-  `e2dd11a8772d80e95a25a309266a875e76877cb67d0feaf05ac55da1a08c0e7e`.
+  `90b68a5e17eb715724cb21ff1f032b0a8110289313242c62b5faff778a0336e9`.
 - Determinism: the producer was run repeatedly on the same tree and two consecutive runs gave records equal
   apart from `captured_at_utc`. Two sources of difference were found and removed before this capture: the
   date the History and Performance windows count back from (now pinned, `WINDOW_ANCHOR`), and the wall-clock
-  time a stored Advisor observation shows (masked in each element's text, `_WALL_CLOCK`).
+  time a stored Advisor observation shows (masked in each element's text, `_WALL_CLOCK`). A third, found when
+  the head was first read inside pytest, is the environment the pages read: the producer now removes every
+  credential and model override variable after importing the app (the import reloads the developer's `.env`),
+  and the check runs with the suite's model seed off (`unresolved_models`), so both read the same state: no
+  Anthropic key (the Frontrunner tab shows its no-key notice in place of its run controls) and the model
+  label "model unavailable".
 - Views: `/`, `/history`, `/performance`, `/login` on load; `/ai-advisor` on load and once per tab after its
   `button[data-tab]` is pressed (8 tabs); `/settings` on load and once per section after its
   `button[data-section]` is pressed (5 sections). Each at 1440x900 and 375x812, in the light and the dark
-  theme: 76 views, 544 elements.
+  theme: 76 views, 540 elements.
 - Elements per view: every element matching `.section-header, .hero-section > *` that the view shows, in
   document order; for `/login` every element of the body (the selector matches nothing there, so the page is
   read whole). Per element: tag, sorted classes, the classes of its parent, whether the shared rule's own

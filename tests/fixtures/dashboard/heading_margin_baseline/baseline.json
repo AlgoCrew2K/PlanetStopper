@@ -1,6 +1,6 @@
 {
  "base_sha": "758f7f9551ff3a15a292debb7bfd4f00b3ecf1e7",
- "captured_at_utc": "2026-11-04T00:09:17Z",
+ "captured_at_utc": "2026-11-04T00:17:53Z",
  "capture_instant": "2026-10-21T11:00:00-04:00",
  "browser_version": "148.0.2",
  "views": {
@@ -4412,64 +4412,42 @@
    {
     "tag": "div",
     "classes": [
-     "adv-heading",
-     "run-controls-header",
-     "section-header"
+     "no-api-key-title"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
-    "shared_rule_matches": true,
-    "text": "Run frontrunner build",
+    "shared_rule_matches": false,
+    "text": "Frontrunner Builder Unavailable",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "8px",
+     "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "db6531fd04993bc9c91f6f3d122599643db0e1b8ce3fc25528dee6c05010e3de"
+    "style_digest": "500a52962a4657c48707ac8e59cfab165454a80207d65838f4862bf4394e9194"
    },
    {
     "tag": "div",
     "classes": [
-     "run-controls-row"
+     "no-api-key-body"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "Run build",
+    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "5c0ed65a8f626a2b9dd04671a8e34f4fa6e13ccb0886644adeb3f6263edd3f44"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "run-controls-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "run-controls-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "Runs over every live symphony in the bac",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "7bce49907ac3a924fdad37f38ac82e5fff39bf3356928a905cdb69035b7c17a1"
+    "style_digest": "a0e825ffdee906a97cc32763edf2c3b6744022a45d824a58512a5ddff0471f56"
    },
    {
     "tag": "div",
@@ -5604,64 +5582,42 @@
    {
     "tag": "div",
     "classes": [
-     "adv-heading",
-     "run-controls-header",
-     "section-header"
+     "no-api-key-title"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
-    "shared_rule_matches": true,
-    "text": "Run frontrunner build",
+    "shared_rule_matches": false,
+    "text": "Frontrunner Builder Unavailable",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "8px",
+     "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "536ebcf5a1032c1afc0895334b4b4b5ee26839a558c7c0fd16e1d29123d58ba0"
+    "style_digest": "a99865ca82d1d81cfbda9ba399e1c4e14f8012b951557434a2171cb8bfcbf2c4"
    },
    {
     "tag": "div",
     "classes": [
-     "run-controls-row"
+     "no-api-key-body"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "Run build",
+    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "0f99aff9445ea522b54be5e70adafd9edb38d4663d83bf85dd684d7b4ed9e9d2"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "run-controls-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "run-controls-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "Runs over every live symphony in the bac",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "a1357f3f7aa8769f3c61ce9bb1d61dcf964fad28a55d46bd2df5f3db5e01358a"
+    "style_digest": "b5070a7a93b2780b743219613e5c8682e3f2618f57664bf878351d8b89287f95"
    },
    {
     "tag": "div",
@@ -6796,64 +6752,42 @@
    {
     "tag": "div",
     "classes": [
-     "adv-heading",
-     "run-controls-header",
-     "section-header"
+     "no-api-key-title"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
-    "shared_rule_matches": true,
-    "text": "Run frontrunner build",
+    "shared_rule_matches": false,
+    "text": "Frontrunner Builder Unavailable",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "8px",
+     "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "5e85cbc4b014ecb74f47957785c37ea8d9cbe44510ee7d124a5a1f37e8df3ae6"
+    "style_digest": "ef92afede4c65dcb8a1ef31761aaa9c00f92b42e7f7f5a28c039a4f036b97783"
    },
    {
     "tag": "div",
     "classes": [
-     "run-controls-row"
+     "no-api-key-body"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "Run build",
+    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "93080b4858e7ffd87d14eda808860bd16838b2b6487cbd90e1ea1653f90778be"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "run-controls-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "run-controls-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "Runs over every live symphony in the bac",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "8e23f96a27ee217f9221df58508930a2f178655fb744e860ff78cbb28abe5367"
+    "style_digest": "922433979995533bee2435ec5b6e0a23e6dff04316d703c4cec296ec69fe22ce"
    },
    {
     "tag": "div",
@@ -7988,64 +7922,42 @@
    {
     "tag": "div",
     "classes": [
-     "adv-heading",
-     "run-controls-header",
-     "section-header"
+     "no-api-key-title"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
-    "shared_rule_matches": true,
-    "text": "Run frontrunner build",
+    "shared_rule_matches": false,
+    "text": "Frontrunner Builder Unavailable",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
-     "margin-bottom": "8px",
+     "margin-bottom": "4px",
      "margin-left": "0px"
     },
-    "style_digest": "b60c8f54f639d2bc03a88237e8d788d3abab896f0075b5df5aa43320ef3e013d"
+    "style_digest": "93db522351ba09126389f93b15bf965b3758c4ba2d9651b39e719f772550cc89"
    },
    {
     "tag": "div",
     "classes": [
-     "run-controls-row"
+     "no-api-key-body"
     ],
     "parent_classes": [
      "adv-panel",
      "hero-section",
-     "run-controls-panel"
+     "no-api-key-state"
     ],
     "shared_rule_matches": false,
-    "text": "Run build",
+    "text": "ANTHROPIC_API_KEY not configured \u2014 the b",
     "margins": {
      "margin-top": "0px",
      "margin-right": "0px",
      "margin-bottom": "0px",
      "margin-left": "0px"
     },
-    "style_digest": "e3aa28b961bc8507b3281dc1ceee02fa7ce4dc59783b2a247d86147b07beedde"
-   },
-   {
-    "tag": "p",
-    "classes": [
-     "run-controls-note"
-    ],
-    "parent_classes": [
-     "adv-panel",
-     "hero-section",
-     "run-controls-panel"
-    ],
-    "shared_rule_matches": false,
-    "text": "Runs over every live symphony in the bac",
-    "margins": {
-     "margin-top": "12px",
-     "margin-right": "0px",
-     "margin-bottom": "0px",
-     "margin-left": "0px"
-    },
-    "style_digest": "4e5c2b32d1fcf8de196b6993799908f5c54ee53aa6da8965d57c9d635b260e9e"
+    "style_digest": "e0e5ba4c2a7fd5ce57ddea742ce97885cd883d750672c04fa0aa754113d1401f"
    },
    {
     "tag": "div",
