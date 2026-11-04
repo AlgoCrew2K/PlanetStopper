@@ -405,6 +405,39 @@ class TestDecisions:
             "Review started: reload this page when it finishes"
         )
 
+    def test_a_review_request_during_the_session_shows_the_market_hours_refusal(
+        self, client, isolated_db, tmp_path
+    ):
+        html = w.get_page(client)
+        result = run_advisor_page(
+            html,
+            tmp_path,
+            steps=[
+                {
+                    "op": "call",
+                    "fn": "retRunReview",
+                    "target": '[data-testid="tenure-review-run-btn"]',
+                }
+            ],
+            routes={
+                "/ai-advisor/retirement/review/run": {
+                    "status": 409,
+                    "body": {"status": "market_open"},
+                }
+            },
+            watch=_WATCH,
+        )
+        step = result["steps"][0]
+        posts = [r for r in step["requests"] if r["method"] == "POST"]
+        assert len(posts) == 1, "a refused request is not sent again"
+        message = step["obs"]["watched"]["review_msg"][0]
+        assert message["text"] == (
+            "Run tenure review is available outside market hours: "
+            "the Composer API is shared with the live engine."
+        )
+        assert "tenure-review-run-message--refused" in message["classes"]
+        assert step["obs"]["watched"]["review_btn"][0]["disabled"] is False
+
 
 # ===========================================================================
 # The #<tab> fragment

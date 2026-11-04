@@ -3150,6 +3150,49 @@ class TestMarketGateScope:
         wrapper = _find_function_def(tree, _RETIREMENT_TICK_WRAPPER_FN_NAME)
         assert not _references_name_or_attr(wrapper, _MARKET_STATE_FN_NAME)
 
+    def test_the_tenure_review_route_consults_the_market_state(self):
+        tree = _parse_app_py()
+        node = _find_function_def(tree, _TENURE_REVIEW_RUN_ROUTE_FN_NAME)
+        assert node is not None
+        assert _references_name_or_attr(node, _MARKET_STATE_FN_NAME), (
+            f"{_TENURE_REVIEW_RUN_ROUTE_FN_NAME} must call {_MARKET_STATE_FN_NAME}() "
+            "(the on-demand review is refused while the market is open)"
+        )
+
+    def test_the_route_check_fails_on_a_route_without_the_reference(self):
+        """Non-vacuity for the check above: a route that never asks for the market state."""
+        route = _TENURE_REVIEW_RUN_ROUTE_FN_NAME
+        gate = _MARKET_STATE_FN_NAME
+        without = ast.parse(f"def {route}(): return 202")
+        with_it = ast.parse(f"def {route}(): return 409 if {gate}(now) == 'open' else 202")
+        assert not _references_name_or_attr(
+            _find_function_def(without, _TENURE_REVIEW_RUN_ROUTE_FN_NAME), _MARKET_STATE_FN_NAME
+        )
+        assert _references_name_or_attr(
+            _find_function_def(with_it, _TENURE_REVIEW_RUN_ROUTE_FN_NAME), _MARKET_STATE_FN_NAME
+        )
+
+    def test_a_market_check_planted_in_the_review_job_is_found_on_the_tick_path(self):
+        """The check belongs in the route. Put in the job the tick also runs, it would gate the
+        03:45 review; the tick-path scan has to see it there."""
+        tree = _parse_app_py()
+        target = _thread_target_name(tree, _RETIREMENT_TICK_WRAPPER_FN_NAME)
+        assert target
+
+        def tick_path_hits(candidate: ast.Module) -> list[str]:
+            return [
+                getattr(subtree, "name", "?")
+                for subtree in _collect_transitive_local_call_subtrees(candidate, target)
+                if _references_name_or_attr(subtree, _MARKET_STATE_FN_NAME)
+            ]
+
+        assert tick_path_hits(tree) == [], "premise: the tick path is clean"
+        planted = copy.deepcopy(tree)
+        job = _find_function_def(planted, _TENURE_REVIEW_JOB_FN_NAME)
+        assert job is not None
+        job.body.insert(0, ast.parse(f"{_MARKET_STATE_FN_NAME}(None)").body[0])
+        assert _TENURE_REVIEW_JOB_FN_NAME in tick_path_hits(planted)
+
 
 # ===========================================================================
 # Group I (Cycle 2e, ret5-doc finding): name-pattern SWEEP over every

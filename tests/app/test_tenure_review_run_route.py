@@ -24,6 +24,14 @@ Contract pinned here (the implementer reads this file and the handoff, not the p
   last, so a run that is abandoned (the daemon stops while the thread works) leaves no run row.
 * Every path out of the job gives the slot back, including a lazy import of the job that fails.
 * Authentication and CSRF come from the global hooks; the route calls neither.
+* The market gate: while ``app_module.get_market_state(<now ET>)`` is ``"open"`` the route answers 409
+  ``{"status": "market_open"}`` and does nothing else. ``get_market_state`` is read as the bare name
+  bound in the app module (the patch target ``app_module.get_market_state``), called with the current
+  Eastern time (``datetime.now(_ET)``). The check comes before ``REVIEW_RUN_STATE.try_start``, so a
+  refusal claims no slot, starts no thread and writes nothing, and it answers ``market_open`` even
+  while a review holds the slot. The check is in the route only: ``_tenure_review_job`` and the 03:45
+  tick never read the market state. A market-state read that raises is not caught: the request fails
+  with HTTP 500.
 """
 
 from __future__ import annotations
@@ -32,13 +40,15 @@ import copy
 import inspect
 import logging
 import threading
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
+import advisors.retirement_explainer as explainer_module
 import advisors.retirement_recommender as recommender_module
 import app as app_module
 import database as db_module
+import market_calendar
 from tests.app import _tenure_review_job_builders as jb
 from tests.app import _tenure_review_panel_builders as pb
 
@@ -648,3 +658,351 @@ class TestARequestWhenAuthenticationIsNotConfiguredIsRefused:
         assert xhr.get_json() == {"error": "misconfigured"}
         assert page.status_code == 302 and "/login" in page.headers["Location"]
         _nothing_started(threads, calls, ids_before)
+
+
+# ---------------------------------------------------------------------------
+# The market gate: the review is refused between the open and the close
+# ---------------------------------------------------------------------------
+
+MARKET_OPEN = {"status": "market_open"}
+RUN_NOW_ROUTE = "/ai-advisor/retirement/run"
+TRADING_DAY = date(2026, 10, 20)  # a Tuesday; the premise test below reads the real calendar
+
+
+def _at(hour: int, minute: int, second: int = 0, *, day: date = TRADING_DAY) -> datetime:
+    return datetime(day.year, day.month, day.day, hour, minute, second, tzinfo=jb.ET)
+
+
+def _calendar_days(first: date, count: int = 120):
+    return [first + timedelta(days=n) for n in range(count)]
+
+
+def _an_early_close_day() -> date:
+    """A day the real exchange calendar closes at the half-day time."""
+    return next(
+        d
+        for d in _calendar_days(date(2026, 10, 1))
+        if market_calendar.is_trading_day(d)
+        and market_calendar.session_close(d) == market_calendar.HALF_DAY_CLOSE_TIME
+    )
+
+
+def _a_weekday_holiday() -> date:
+    """A Monday to Friday the real exchange calendar has closed."""
+    return next(
+        d
+        for d in _calendar_days(date(2026, 10, 1))
+        if d.weekday() < 5 and not market_calendar.is_trading_day(d)
+    )
+
+
+def _a_saturday() -> date:
+    return next(d for d in _calendar_days(date(2026, 10, 1)) if d.weekday() == 5)
+
+
+# (instant, the state the real calendar reports, the status the route answers)
+_BOUNDARIES = [
+    pytest.param(_at(9, 29, 59), "pre_market", 202, id="one second before the open"),
+    pytest.param(_at(9, 30, 0), "open", 409, id="at the open"),
+    pytest.param(_at(11, 0), "open", 409, id="mid session"),
+    pytest.param(_at(15, 59, 59), "open", 409, id="one second before a full-day close"),
+    pytest.param(_at(16, 0, 0), "closed_frozen", 202, id="at a full-day close"),
+    pytest.param(
+        _at(12, 59, 59, day=_an_early_close_day()), "open", 409, id="before an early close"
+    ),
+    pytest.param(
+        _at(13, 0, 0, day=_an_early_close_day()), "closed_frozen", 202, id="at an early close"
+    ),
+    pytest.param(_at(11, 0, day=_a_saturday()), "closed_frozen", 202, id="a Saturday"),
+    pytest.param(
+        _at(11, 0, day=_a_weekday_holiday()), "closed_frozen", 202, id="a weekday holiday"
+    ),
+]
+
+
+@pytest.fixture()
+def gated(store, threads, monkeypatch):
+    """The runner replaced, and every claim of the run slot recorded: ``claims`` collects the
+    trigger of each ``try_start`` call, so a test can tell a refusal that came before the claim
+    from one that claimed the slot and gave it back."""
+    calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
+    state = jb.the_run_state()
+    claims: list[str] = []
+    real_try_start = state.try_start
+
+    def recording_try_start(trigger):
+        claims.append(trigger)
+        return real_try_start(trigger)
+
+    monkeypatch.setattr(state, "try_start", recording_try_start)
+
+    class World:
+        pass
+
+    world = World()
+    world.calls, world.claims = calls, claims
+    return world
+
+
+class TestTheCalendarPremises:
+    @pytest.mark.parametrize("instant, state, _status", _BOUNDARIES)
+    def test_each_instant_is_in_the_state_the_cases_below_claim(self, instant, state, _status):
+        assert market_calendar.get_market_state(instant) == state
+
+    def test_the_early_close_day_closes_earlier_than_a_full_day(self):
+        assert market_calendar.session_close(_an_early_close_day()) < (
+            market_calendar.session_close(TRADING_DAY)
+        )
+
+
+class TestTheRouteIsRefusedWhileTheMarketIsOpen:
+    def test_a_request_gets_409_market_open_and_nothing_happens_and_the_slot_stays_free(
+        self, gated, client, threads, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, _at(11, 0))
+        ids_before = jb.all_row_ids()
+
+        response = _post(client)
+
+        assert response.status_code == 409
+        assert response.is_json and response.get_json() == MARKET_OPEN, (
+            "the body is exactly the one Run recommender answers with: not already_running"
+        )
+        assert gated.claims == [], "the market check comes before the run slot is claimed"
+        assert threads == [] and gated.calls == [], "no thread is built and no review starts"
+        assert jb.new_rows_since(ids_before) == [], "no advisory row is written"
+        assert jb.state_is_idle() and jb.the_run_state().snapshot()["last_failed_attempt"] is None
+        jb.freeze_app_clock(monkeypatch, _at(16, 0))
+        assert _post(client).status_code == 202, "a request after the close can start a review"
+        assert len(gated.calls) == 1
+
+    def test_an_open_market_wins_over_a_review_that_holds_the_slot(
+        self, gated, client, threads, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, _at(11, 0))
+        state = jb.the_run_state()
+        token = state.try_start("nightly")
+        assert token
+        held = state.snapshot()
+        ids_before = jb.all_row_ids()
+
+        response = _post(client)
+
+        assert response.status_code == 409
+        assert response.get_json() == MARKET_OPEN, "not already_running"
+        assert gated.claims == ["nightly"], "only the test's own claim; the route made none"
+        assert threads == [] and gated.calls == []
+        assert jb.new_rows_since(ids_before) == []
+        assert state.snapshot() == held, "the running review is untouched"
+        state.finish_success(token)
+
+    @pytest.mark.parametrize("instant, state, status", _BOUNDARIES)
+    def test_the_answer_follows_the_exchange_calendar_at_each_boundary(
+        self, gated, client, threads, monkeypatch, instant, state, status
+    ):
+        jb.freeze_app_clock(monkeypatch, instant)
+
+        response = _post(client)
+
+        assert response.status_code == status
+        if status == 409:
+            assert response.get_json() == MARKET_OPEN
+            assert gated.calls == [] and threads == []
+        else:
+            assert response.get_json() == STARTED
+            assert len(gated.calls) == 1 and gated.calls[0]["trigger"] == "on_demand"
+            assert jb.state_is_idle()
+
+    def test_the_gate_asks_the_calendar_about_the_current_eastern_time(
+        self, gated, client, threads, monkeypatch
+    ):
+        instant = _at(11, 0)
+        jb.freeze_app_clock(monkeypatch, instant)
+        seen: list = []
+        real = app_module.get_market_state
+
+        def recording(current_et, *args, **kwargs):
+            seen.append(current_et)
+            return real(current_et, *args, **kwargs)
+
+        monkeypatch.setattr(app_module, "get_market_state", recording)
+
+        _post(client)
+
+        assert seen, "the route never consulted app_module.get_market_state"
+        assert getattr(seen[-1].tzinfo, "key", None) == "America/New_York"
+        assert seen[-1] == instant, "the time asked about is the clock's now"
+
+    def test_a_market_state_read_that_fails_fails_the_request_and_starts_nothing(
+        self, gated, client, threads, monkeypatch
+    ):
+        """The same fault in Run recommender fails its request (HTTP 500) because the read is not
+        wrapped, and the plan states 500 for this case; a gate that swallowed the error would
+        fail open and start a review during the session."""
+        monkeypatch.setitem(app_module.app.config, "TESTING", False)
+        monkeypatch.setitem(app_module.app.config, "PROPAGATE_EXCEPTIONS", False)
+
+        def failing(_current_et, *_args, **_kwargs):
+            raise RuntimeError(f"calendar said {LEAK}")
+
+        monkeypatch.setattr(app_module, "get_market_state", failing)
+        ids_before = jb.all_row_ids()
+
+        response = _post(client)
+
+        assert response.status_code == 500
+        assert LEAK not in response.get_data(as_text=True)
+        assert threads == [] and gated.calls == []
+        assert jb.new_rows_since(ids_before) == []
+        assert jb.state_is_idle() and jb.taken_then_released(), "the slot stays free"
+
+
+class TestARunThatStartedBeforeTheOpenIsLeftAlone:
+    def test_the_open_arrives_mid_run_the_run_finishes_and_a_second_request_is_refused(
+        self, store, client, monkeypatch
+    ):
+        recorded = jb.install_recording_threads(monkeypatch)
+        blocked = jb.BlockingRunner(_live_recs()).install(monkeypatch)
+        jb.freeze_app_clock(monkeypatch, _at(9, 25))
+        try:
+            assert _post(client).status_code == 202
+            assert blocked.entered.wait(30)
+            running = jb.the_run_state().snapshot()
+            assert running["running"] is True and running["trigger"] == "on_demand"
+
+            jb.freeze_app_clock(monkeypatch, _at(9, 31))
+            second = _post(client)
+
+            assert second.status_code == 409
+            assert second.get_json() == MARKET_OPEN, "the open is reported, not already_running"
+            assert jb.the_run_state().snapshot() == running, "the running review is not touched"
+            assert len(blocked.calls) == 1 and len(recorded) == 1
+        finally:
+            blocked.release.set()
+            jb.join_threads(recorded)
+
+        assert jb.state_is_idle()
+        assert jb.the_run_state().snapshot()["last_failed_attempt"] is None
+        assert len(jb.run_rows()) == 1, "the held review finished and recorded its run"
+
+
+class TestThePageRendersTheSameDuringTheSession:
+    def test_the_panel_lists_the_stored_review_and_offers_the_run_button_at_11_00(
+        self, store, client, monkeypatch
+    ):
+        record = pb.store_full_run(pb.RUN_ID_FIRST)
+        pb.seed_roster_state(record)
+        jb.freeze_app_clock(monkeypatch, _at(11, 0))
+
+        panel = jb.panel(client)
+
+        assert len(panel.find_all("tenure-review-entry")) == len(record["entries"])
+        assert panel.find("tenure-review-run-btn") is not None
+        assert panel.find("tenure-review-run-message") is not None
+        assert panel.find("retirement-run-now-btn") is not None
+
+
+class TestTheMarketGateFollowsTheAuthenticationAndCsrfChecks:
+    """At 11:00 on a trading day a request the global hooks refuse is refused by them, before the
+    route's market check ever runs."""
+
+    @pytest.fixture()
+    def during_the_session(self, gated, threads, client, monkeypatch):
+        jb.freeze_app_clock(monkeypatch, _at(11, 0))
+        asked: list = []
+        real = app_module.get_market_state
+
+        def spy(current_et, *args, **kwargs):
+            asked.append(current_et)
+            return real(current_et, *args, **kwargs)
+
+        monkeypatch.setattr(app_module, "get_market_state", spy)
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _SECRET_KEY)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        return asked
+
+    def test_no_session_with_the_xhr_marker_gets_401_before_the_market_check(
+        self, during_the_session, gated, client, threads
+    ):
+        ids_before = jb.all_row_ids()
+
+        response = _post(client, headers=XHR)
+
+        assert response.status_code == 401
+        assert during_the_session == [], "the route's market check ran for a refused request"
+        _nothing_started(threads, gated.calls, ids_before)
+
+    def test_a_signed_in_request_without_the_token_gets_403_before_the_market_check(
+        self, during_the_session, gated, client, threads, monkeypatch
+    ):
+        login = client.post("/login", data={"password": _PASSWORD}, follow_redirects=False)
+        assert login.status_code in (302, 303)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        ids_before = jb.all_row_ids()
+
+        response = _post(client, headers=XHR)
+
+        assert response.status_code == 403
+        assert during_the_session == []
+        _nothing_started(threads, gated.calls, ids_before)
+
+    def test_a_signed_in_request_with_the_token_reaches_the_market_check(
+        self, during_the_session, gated, client, threads, monkeypatch
+    ):
+        login = client.post("/login", data={"password": _PASSWORD}, follow_redirects=False)
+        assert login.status_code in (302, 303)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        token = client.get("/api/csrf-token").get_json()["csrf_token"]
+
+        response = _post(client, headers={**XHR, "X-CSRF-Token": token})
+
+        assert response.status_code == 409 and response.get_json() == MARKET_OPEN
+        assert len(during_the_session) == 1
+
+
+@pytest.mark.parametrize("route", [RUN_ROUTE, RUN_NOW_ROUTE], ids=["tenure review", "recommender"])
+class TestARefusedRunNeverReachesTheExplainer:
+    """The two requests that lead to the explainer (the tenure job and the recommender worker)
+    start nothing and call no explainer when the global hooks refuse them."""
+
+    @pytest.fixture()
+    def world(self, store, monkeypatch):
+        explained: list = []
+        # Installed first: patch_runner leaves an explainer that is not the module's own alone.
+        monkeypatch.setattr(
+            explainer_module, "explain_recommendation", lambda rec: explained.append(rec)
+        )
+        started = jb.install_inline_threads(monkeypatch)
+        calls = jb.patch_runner(monkeypatch, _live_recs(), isolate=False)
+        monkeypatch.setenv("DASHBOARD_PASSWORD", _PASSWORD)
+        monkeypatch.setenv("SECRET_KEY", _SECRET_KEY)
+        monkeypatch.setattr(app_module, "_auth_check_enabled", True)
+        return explained, started, calls
+
+    def test_no_session_is_refused_and_nothing_starts(self, world, client, route):
+        explained, started, calls = world
+        ids_before = jb.all_row_ids()
+
+        response = client.post(route, headers=XHR)
+
+        assert response.status_code == 401
+        assert explained == [] and started == [] and calls == []
+        assert not app_module._RETIREMENT_RUN_LOCK.locked()
+        assert jb.new_rows_since(ids_before) == [] and jb.state_is_idle()
+
+    def test_a_signed_in_request_without_the_token_is_refused_and_nothing_starts(
+        self, world, client, route, monkeypatch
+    ):
+        explained, started, calls = world
+        login = client.post("/login", data={"password": _PASSWORD}, follow_redirects=False)
+        assert login.status_code in (302, 303)
+        monkeypatch.setattr(app_module, "_csrf_check_enabled", True)
+        ids_before = jb.all_row_ids()
+
+        response = client.post(route, headers=XHR)
+
+        assert response.status_code == 403
+        assert explained == [] and started == [] and calls == []
+        assert not app_module._RETIREMENT_RUN_LOCK.locked()
+        assert jb.new_rows_since(ids_before) == [] and jb.state_is_idle()

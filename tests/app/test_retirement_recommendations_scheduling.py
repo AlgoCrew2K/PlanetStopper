@@ -667,6 +667,42 @@ class TestAnOnDemandRunIsNeverSkipped:
         )
 
 
+class TestTheNightlyTickIsNeverMarketGated:
+    """Only the on-demand route refuses a review while the market is open. The tick and the job it
+    starts read no market state, so they run whatever the state reads."""
+
+    def test_a_tick_that_finds_the_market_open_still_runs_both_stages(
+        self, isolated_db, monkeypatch, _recommender_stage_runs_are_recorded
+    ):
+        jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        asked: list = []
+
+        def always_open(current_et, *args, **kwargs):
+            asked.append(current_et)
+            return "open"
+
+        monkeypatch.setattr(app_module, "get_market_state", always_open)
+
+        _tick()
+
+        assert [c["trigger"] for c in calls] == ["nightly"], "the review ran"
+        assert len(jb.run_rows()) == 1 and jb.state_is_idle()
+        assert _recommender_stage_runs_are_recorded == ["recommender"]
+        assert asked == [], "nothing on the tick path asked for the market state"
+
+    def test_the_review_job_called_directly_runs_while_the_market_reads_open(
+        self, isolated_db, monkeypatch
+    ):
+        jb.freeze_app_clock(monkeypatch, NIGHT_ONE)
+        calls = jb.patch_runner(monkeypatch, [], isolate=False)
+        monkeypatch.setattr(app_module, "get_market_state", lambda *a, **k: "open")
+
+        app_module._tenure_review_job("on_demand")
+
+        assert len(calls) == 1 and len(jb.run_rows()) == 1
+
+
 class TestAStoredRunTheTickCannotReadDoesNotStopIt:
     @pytest.mark.parametrize(
         "stored",
