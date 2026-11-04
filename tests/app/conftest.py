@@ -156,20 +156,22 @@ class ComposerTotalStatsStub:
     """requests.get stand-in for Composer's account total-stats route.
 
     `mode` selects the reply: ok | hold | status_503 | read_timeout |
-    connection_error.  `hold` blocks on `release` (up to HOLD_TIMEOUT_S) and
-    then serves the captured 200 body.  The 200 body is the captured producer
-    record, deep-copied per call so a caller cannot mutate the fixture.
+    connection_error.  `hold` blocks on `release` (up to `hold_timeout_s`, HOLD_TIMEOUT_S unless
+    a test sets its own) and then serves the captured 200 body; `returned` is set once a held
+    call has stopped holding, so a test can say whether something finished while Composer was
+    still held.  The 200 body is the captured producer record, deep-copied per call so a caller
+    cannot mutate the fixture.
     """
-
-    hold_timeout_s = HOLD_TIMEOUT_S
 
     def __init__(self, payload: dict, account_id: str) -> None:
         self.payload = payload
         self.account_id = account_id
         self.mode = "ok"
+        self.hold_timeout_s = HOLD_TIMEOUT_S
         self.urls: list[str] = []
         self.started = threading.Event()
         self.release = threading.Event()
+        self.returned = threading.Event()
         self._lock = threading.Lock()
 
     def _ok(self):
@@ -183,7 +185,8 @@ class ComposerTotalStatsStub:
             self.urls.append(url)
         if self.mode == "hold":
             self.started.set()
-            self.release.wait(timeout=HOLD_TIMEOUT_S)
+            self.release.wait(timeout=self.hold_timeout_s)
+            self.returned.set()
             return self._ok()
         if self.mode == "status_503":
             return SimpleNamespace(status_code=503)

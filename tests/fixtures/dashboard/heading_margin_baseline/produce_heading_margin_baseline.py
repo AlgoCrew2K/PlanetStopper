@@ -79,6 +79,12 @@ def main() -> None:
     # the capture runs with none, as the checking test does (advisor_server).
     for name in _CREDENTIAL_VARIABLES:
         os.environ.pop(name, None)
+    # The import also left the module values the environment sets once, at import (the Composer
+    # key the Advisor tabs test for among them); put them back to what no ``.env`` gives, as the
+    # checking test does, so the record does not depend on a ``.env`` in the checkout.
+    from tests.ui._advisor_browser_support import restore_credential_free_module_state
+
+    restore_credential_free_module_state(setattr)
 
     env_file = scratch / "heading_margin.env"
     env_file.write_text("", encoding="utf-8")

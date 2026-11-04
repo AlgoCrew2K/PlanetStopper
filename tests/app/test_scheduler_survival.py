@@ -28,6 +28,7 @@ from __future__ import annotations
 import datetime as dt
 import functools
 import logging
+import threading
 import time
 from datetime import time as dtime
 from types import SimpleNamespace
@@ -36,6 +37,13 @@ import pytest
 import schedule
 
 import app as app_module
+
+# Bounds on waiting for something that must happen; none of them is a time a verdict is judged by.
+# The first is how long the stub holds Composer unless the test releases it, longer than the other
+# two together, so an early end of the hold can only be the test's own release.
+HELD_FOR_S = 120.0
+LOOP_JOIN_S = 20.0
+SETTLE_S = 30.0
 
 
 class _StopLoop(BaseException):
@@ -220,10 +228,20 @@ class TestSlotsThatRaise:
     def test_composer_held_for_the_whole_run_does_not_delay_either_engine_spawn(
         self, monkeypatch, stub_engine, composer_total_stats, join_engine_threads
     ):
+        """Both passes finish while Composer is still held. The proof is the order of events, the
+        loop thread ending before the stub's held call returns, never a count of seconds, so a
+        busy machine cannot change the verdict."""
         composer_total_stats.mode = "hold"
+        # Longer than any wait below, so the hold ends only when this test releases it.
+        composer_total_stats.hold_timeout_s = HELD_FOR_S
 
         def _before(tick, jobs):
             join_engine_threads()
+            if tick == 2:
+                # The second :00 must meet a refresh that is really in flight.
+                assert composer_total_stats.started.wait(timeout=SETTLE_S), (
+                    "the first :00 pass started no account refresh"
+                )
             _set_due(jobs, {})
             for job in jobs:
                 if (
@@ -231,19 +249,37 @@ class TestSlotsThatRaise:
                 ):  # the engine spawn and the account refresh, whatever it is
                     job.next_run = dt.datetime.now() - dt.timedelta(seconds=1)
 
-        started = time.perf_counter()
+        outcome: dict = {}
+
+        def _loop_under_test():
+            try:
+                _run_loop(monkeypatch, ticks=2, before_tick=_before)
+            except BaseException as exc:  # noqa: BLE001 -- handed to the test thread below
+                outcome["error"] = exc
+            # Read on this thread at the instant the loop ended.
+            outcome["composer_still_held"] = not composer_total_stats.returned.is_set()
+
+        loop = threading.Thread(target=_loop_under_test, name="scheduler-under-test", daemon=True)
+        loop.start()
         try:
-            _run_loop(monkeypatch, ticks=2, before_tick=_before)
-            elapsed = time.perf_counter() - started
-            assert composer_total_stats.started.wait(timeout=5.0), "the refresh must have started"
-            join_engine_threads()
+            loop.join(timeout=LOOP_JOIN_S)
+            loop_ended_in_time = not loop.is_alive()
         finally:
             composer_total_stats.release.set()
-
-        assert elapsed < 2.0, (
-            f"two :00 passes took {elapsed:.1f} s with Composer held: the refresh ran on the "
+            loop.join(timeout=SETTLE_S)
+        assert not loop.is_alive(), (
+            "the scheduler loop did not end even after Composer was released"
+        )
+        assert "error" not in outcome, f"the scheduler loop raised {outcome.get('error')!r}"
+        assert loop_ended_in_time, (
+            "the two :00 passes had not finished while Composer was held: the refresh ran on the "
             "scheduler thread"
         )
+        assert outcome["composer_still_held"], (
+            "the loop ended only after the held Composer call returned"
+        )
+        join_engine_threads()
+
         assert stub_engine.starts == 2
         assert composer_total_stats.call_count == 1, (
             "the second :00 must find the first refresh still in flight and start no second one"

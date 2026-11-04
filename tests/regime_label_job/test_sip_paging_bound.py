@@ -150,3 +150,119 @@ def test_a_cut_off_batch_fails_only_its_own_tickers(job, monkeypatch):
 
     assert set(sip.failed) == set(first_batch)
     assert sip.closes == {other: {NEWEST: 10.0}}
+
+
+# ---------------------------------------------------------------------------
+# A page token the job cannot check or use fails only that batch
+# ---------------------------------------------------------------------------
+
+
+class _ParsedResp:
+    """A 200 whose parsed body is handed back as it is. A JSON body cannot hold a set, so the
+    set case needs a response whose ``json()`` returns Python values directly."""
+
+    status_code = 200
+    headers: dict = {}
+    text = ""
+    content = b""
+
+    def __init__(self, body: dict) -> None:
+        self._body = body
+
+    def json(self):
+        import copy
+
+        return copy.deepcopy(self._body)
+
+
+def _captured_page(token) -> dict:
+    """The captured SIP page (QQQ, DULL and STPZ, 24 bars each) with only ``next_page_token``
+    replaced; ``_ABSENT`` removes the key."""
+    body = S.load_captured("sip_1day")["body"]
+    assert set(body["bars"]) == {"QQQ", "DULL", "STPZ"}, "fixture sanity: the captured symbols"
+    body = dict(body)
+    if token is _ABSENT:
+        body.pop("next_page_token", None)
+    else:
+        body["next_page_token"] = token
+    return body
+
+
+_ABSENT = object()
+_CAPTURED_TICKERS = ("QQQ", "DULL", "STPZ")
+
+
+def _good_second_page() -> _ParsedResp:
+    return _ParsedResp(_captured_page(None))
+
+
+@pytest.mark.parametrize(
+    "token",
+    [["page-2"], {"cursor": "page-2"}, {"page-2"}],
+    ids=["non-empty-list", "non-empty-dict", "non-empty-set"],
+)
+def test_an_unhashable_page_token_fails_the_batch_naming_the_exception_type(
+    job, monkeypatch, token
+):
+    http = Scripted([_ParsedResp(_captured_page(token)), _good_second_page()])
+
+    sip = _fetch(job, monkeypatch, http, tickers=_CAPTURED_TICKERS)
+
+    assert set(sip.failed) == set(_CAPTURED_TICKERS), "every ticker of the batch fails"
+    assert set(sip.failed.values()) == {"TypeError"}, "the reason names the exception type only"
+    assert sip.closes == {}, "a failed batch never yields a partial label"
+    assert len(http.calls) == 1, "no page is requested with a token that cannot be sent"
+
+
+@pytest.mark.parametrize(
+    "token",
+    [[], {}, set(), None, "", _ABSENT],
+    ids=["empty-list", "empty-dict", "empty-set", "none", "empty-string", "absent-key"],
+)
+def test_an_empty_or_missing_page_token_ends_the_batch_with_its_bars(job, monkeypatch, token):
+    http = Scripted([_ParsedResp(_captured_page(token)), _good_second_page()])
+
+    sip = _fetch(job, monkeypatch, http, tickers=_CAPTURED_TICKERS)
+
+    assert sip.failed == {}
+    assert set(sip.closes) == set(_CAPTURED_TICKERS)
+    assert len(http.calls) == 1, "no second page is requested"
+
+
+def test_an_integer_page_token_is_sent_as_the_next_page_token(job, monkeypatch):
+    http = Scripted([_ParsedResp(_captured_page(7)), _good_second_page()])
+
+    sip = _fetch(job, monkeypatch, http, tickers=_CAPTURED_TICKERS)
+
+    assert sip.failed == {}
+    assert len(http.calls) == 2
+    assert http.calls[1]["params"]["page_token"] == 7
+
+
+def test_a_token_seen_before_on_the_same_batch_fails_naming_the_repeat(job, monkeypatch):
+    http = Scripted([_ParsedResp(_captured_page("same")), _ParsedResp(_captured_page("same"))])
+
+    sip = _fetch(job, monkeypatch, http, tickers=_CAPTURED_TICKERS)
+
+    assert set(sip.failed.values()) == {"RepeatedPageToken"}
+    assert set(sip.failed) == set(_CAPTURED_TICKERS)
+    assert sip.closes == {}
+
+
+def test_an_unusable_token_in_one_batch_leaves_the_next_batch_fetched(job, monkeypatch):
+    first_batch = [f"A{i:03d}" for i in range(job.SIP_BATCH_SIZE)]
+    other = "Z999"
+
+    def route(url=None, **kwargs):
+        symbols = kwargs["params"]["symbols"].split(",")
+        if other in symbols:
+            return _ok(None, ticker=other)
+        return _ParsedResp({"bars": {"A000": []}, "next_page_token": ["unusable"]})
+
+    monkeypatch.setattr(requests, "get", route)
+
+    sip = job.fetch_sip_daily_closes([*first_batch, other], START, END)
+
+    assert set(sip.failed) == set(first_batch)
+    assert set(sip.failed.values()) == {"TypeError"}
+    assert sip.closes == {other: {NEWEST: 10.0}}
