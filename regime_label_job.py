@@ -347,7 +347,10 @@ def run_regime_label_job(load_symphonies, *, clock=None) -> RegimeLabelRun:
     started = clock()
     session = target_session(started)
     if session is None:
-        logger.info("regime_label skipped reason=%s", REASON_SESSION_IN_PROGRESS)
+        logger.info(
+            "regime_label summary session=none seen=0 labelled=0 reason=%s",
+            REASON_SESSION_IN_PROGRESS,
+        )
         return RegimeLabelRun(None)
     try:
         entries = load_symphonies()
