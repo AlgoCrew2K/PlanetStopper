@@ -5506,108 +5506,17 @@ def get_state():
                         sd_by_sym[sym_id] = entry
                         entry["name"] = (_state.get(sym_id) or {}).get("name") or sym_id
 
-                # Build accounts_map + account_labels for table rendering.
-                # Reuse snapshot.accounts_map directly (already per-account lists).
+                # Each account list of the snapshot is ordered by name in place: the view is
+                # held per snapshot and shared with GET /, so a sorted copy would change what
+                # the page reads.
                 _snap_accounts_map = snapshot.get("accounts_map") or {}
-
-                # Sorting: honour sortCol / sortDir query params, same as live branch.
-                _sort_col = request.args.get("sortCol", "name")
-                _sort_dir = request.args.get("sortDir", "asc")
-                _is_desc = _sort_dir == "desc"
-
-                def _frozen_status_rank(s: dict) -> int:
-                    if s.get("triggered"):
-                        if s.get("triggered_reason") == "VWAP Breakdown":
-                            return 5
-                        return 4
-                    if s.get("para_armed"):
-                        return 3
-                    if s.get("tp_armed"):
-                        return 2
-                    if s.get("armed"):
-                        return 1
-                    return 0
-
-                def _frozen_exit_ret(s: dict) -> float:
-                    if s.get("triggered"):
-                        r = s.get("triggered_at_return")
-                        return r if r is not None else (s.get("current_return") or -999.0)
-                    return (
-                        s.get("current_return") if s.get("current_return") is not None else -999.0
-                    )
-
-                for _acc_id in _snap_accounts_map:
-                    _syms = _snap_accounts_map[_acc_id]
-                    if _sort_col == "mc_prob":
-                        _syms.sort(
-                            key=lambda s: (
-                                s.get("mc_prob") if s.get("mc_prob") is not None else -999.0
-                            ),
-                            reverse=_is_desc,
-                        )
-                    elif _sort_col == "status":
-                        _syms.sort(key=_frozen_status_rank, reverse=_is_desc)
-                    elif _sort_col == "stop_level":
-                        _syms.sort(
-                            key=lambda s: (
-                                s.get("triggered_at_stop")
-                                if s.get("triggered") and s.get("triggered_at_stop") is not None
-                                else (
-                                    s.get("stop_trigger")
-                                    if s.get("stop_trigger") is not None
-                                    else -999.0
-                                )
-                            ),
-                            reverse=_is_desc,
-                        )
-                    elif _sort_col == "current_return":
-                        _syms.sort(key=_frozen_exit_ret, reverse=_is_desc)
-                    elif _sort_col == "shadow_hwm":
-                        _syms.sort(key=lambda s: s.get("shadow_hwm", -999.0), reverse=_is_desc)
-                    elif _sort_col == "shadow":
-                        _syms.sort(
-                            key=lambda s: (
-                                s.get("current_return")
-                                if s.get("current_return") is not None
-                                else -999.0
-                            ),
-                            reverse=_is_desc,
-                        )
-                    else:  # name (default)
-                        _syms.sort(
-                            key=lambda s: (s.get("name") or s.get("id", "")).lower(),
-                            reverse=_is_desc,
-                        )
-
-                # Account labels: read from env (same as live branch; scrub raw IDs from UI).
-                _env_vars_frozen = dotenv_values(ENV_FILE_PATH)
-                _account_labels_frozen: dict = {}
-                _acc_ind = _env_vars_frozen.get("ACCOUNT_INDIVIDUAL", "").strip()
-                _acc_roth = _env_vars_frozen.get("ACCOUNT_ROTH", "").strip()
-                _acc_trad = _env_vars_frozen.get("ACCOUNT_TRAD", "").strip()
-                if _acc_ind:
-                    _account_labels_frozen[_acc_ind] = "Individual"
-                if _acc_roth:
-                    _account_labels_frozen[_acc_roth] = "Roth IRA"
-                if _acc_trad:
-                    _account_labels_frozen[_acc_trad] = "Trad. IRA"
+                for _syms in _snap_accounts_map.values():
+                    _syms.sort(key=lambda s: (s.get("name") or s.get("id", "")).lower())
 
                 # Before the defaults fill a missing current_return with 0.0.
                 _inject_guard_alpha(_state)
                 _normalize_frozen_symphonies(snapshot)
                 _frozen_stamps = _snapshot_stamps(snapshot, _req_now_et)
-
-                try:
-                    _frozen_html = render_template(
-                        "table_partial.html",
-                        accounts_map=_snap_accounts_map,
-                        account_labels=_account_labels_frozen,
-                        sort_col=_sort_col,
-                        sort_dir=_sort_dir,
-                        data_as_of=_frozen_stamps["data_as_of"],
-                    )
-                except Exception:
-                    _frozen_html = "<table><tbody></tbody></table>"
 
                 _frozen_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
                 _frozen_live_mode = _frozen_env.get("LIVE_EXECUTION", "False").lower() in (
@@ -5637,7 +5546,6 @@ def get_state():
                             if isinstance(_e, dict)
                         ],
                         "fleet_correlation_alert": _alert,
-                        "html": _frozen_html,
                         "meta": _build_meta(
                             _state,
                             market_state=market_state,
@@ -5698,7 +5606,7 @@ def get_state():
             _waiting_body["portfolio_strip"] = _meta_strip
             return jsonify(_waiting_body)
 
-        # Optional ?account=<id> narrows the per-symphony outputs: cards (html),
+        # Optional ?account=<id> narrows the per-symphony outputs: cards,
         # state, bot_state and symphonies. Dict-valued non-symphony metadata keys
         # (last_market_close_snapshot) are dropped from a filtered state/bot_state,
         # as the shared predicate treats them as non-members; string metadata
@@ -5715,98 +5623,16 @@ def get_state():
         # schedule.get_jobs() introspection returned a stale 0 on a live daemon.
         next_run_seconds = _seconds_to_next_minute(datetime.now())
 
-        # Render HTML for UI
         # AC-4d: name-guard so phantom non-symphony top-level dicts (e.g.
         # last_market_close_snapshot) cannot leak into the cards/standby list.
         # Matches the SSR/meta paths (app.py:433/544) which already require "name".
         symphony_keys = [
             k for k, v in state_data.items() if _is_symphony_in_account(v, _account_filter)
         ]
-        accounts_map = {}
         for k in symphony_keys:
             sym = state_data[k]
-            acc_id = sym.get("account", "Unknown Account")
-            if acc_id not in accounts_map:
-                accounts_map[acc_id] = []
             sym["id"] = k
             sym["normalized_name"] = database.normalize_name(sym.get("name", ""))
-            accounts_map[acc_id].append(sym)
-
-        account_labels = {}
-        acc_ind = env_vars.get("ACCOUNT_INDIVIDUAL", "").strip()
-        acc_roth = env_vars.get("ACCOUNT_ROTH", "").strip()
-        acc_trad = env_vars.get("ACCOUNT_TRAD", "").strip()
-
-        if acc_ind:
-            account_labels[acc_ind] = "Individual"
-        if acc_roth:
-            account_labels[acc_roth] = "Roth IRA"
-        if acc_trad:
-            account_labels[acc_trad] = "Trad. IRA"
-
-        # Sorting logic
-        sort_col = request.args.get("sortCol", "name")
-        sort_dir = request.args.get("sortDir", "asc")
-        is_desc = sort_dir == "desc"
-
-        def get_status_rank(s):
-            if s.get("triggered"):
-                if s.get("triggered_reason") == "VWAP Breakdown":
-                    return 5
-                return 4
-            if s.get("para_armed"):
-                return 3
-            if s.get("tp_armed"):
-                return 2
-            if s.get("armed"):
-                return 1
-            return 0
-
-        def get_exit_ret(s):
-            if s.get("triggered"):
-                return (
-                    s.get("triggered_at_return")
-                    if s.get("triggered_at_return") is not None
-                    else (s.get("current_return") or -999.0)
-                )
-            return s.get("current_return") if s.get("current_return") is not None else -999.0
-
-        for acc_id in accounts_map:
-            if sort_col == "mc_prob":
-                accounts_map[acc_id].sort(
-                    key=lambda s: s.get("mc_prob") if s.get("mc_prob") is not None else -999.0,
-                    reverse=is_desc,
-                )
-            elif sort_col == "status":
-                accounts_map[acc_id].sort(key=get_status_rank, reverse=is_desc)
-            elif sort_col == "stop_level":
-                accounts_map[acc_id].sort(
-                    key=lambda s: (
-                        s.get("triggered_at_stop")
-                        if s.get("triggered") and s.get("triggered_at_stop") is not None
-                        else (
-                            s.get("stop_trigger") if s.get("stop_trigger") is not None else -999.0
-                        )
-                    ),
-                    reverse=is_desc,
-                )
-            elif sort_col == "current_return":
-                accounts_map[acc_id].sort(key=get_exit_ret, reverse=is_desc)
-            elif sort_col == "shadow_hwm":
-                accounts_map[acc_id].sort(
-                    key=lambda s: s.get("shadow_hwm", -999.0), reverse=is_desc
-                )
-            elif sort_col == "shadow":
-                accounts_map[acc_id].sort(
-                    key=lambda s: (
-                        s.get("current_return") if s.get("current_return") is not None else -999.0
-                    ),
-                    reverse=is_desc,
-                )
-            else:  # name
-                accounts_map[acc_id].sort(
-                    key=lambda s: (s.get("name") or s.get("id", "")).lower(), reverse=is_desc
-                )
 
         # Build symphonies list for M1 analytics helpers from bot_state.
         # Fields derived: last_percent_change from current_return/100, value from current_value.
@@ -5888,18 +5714,6 @@ def get_state():
         # observation of the completed cycle (never the request time).
         data_as_of = _portfolio_strip.get("data_as_of", _NO_STAMP)
 
-        try:
-            rendered_html = render_template(
-                "table_partial.html",
-                accounts_map=accounts_map,
-                account_labels=account_labels,
-                sort_col=sort_col,
-                sort_dir=sort_dir,
-                data_as_of=data_as_of,
-            )
-        except Exception:
-            rendered_html = "<table><tbody></tbody></table>"
-
         # PA-M1F-14: shadow_divergence — one lightweight GROUP BY query, not on execution path.
         try:
             shadow_divergence = database.get_shadow_divergence(today_str)
@@ -5935,7 +5749,6 @@ def get_state():
                 "live_mode": live_mode,
                 "execution_start_time": env_vars.get("EXECUTION_START_TIME", "09:30"),
                 "next_run_seconds": next_run_seconds,
-                "html": rendered_html,
                 "portfolio_strip": _portfolio_strip,
                 "data_as_of": data_as_of,
                 "last_successful_cycle_at": state_data.get("last_successful_cycle_at"),

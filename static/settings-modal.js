@@ -1,8 +1,7 @@
 /**
  * Per-symphony Settings Modal — settings-modal.js
  *
- * Opens via the gear icon on each symphony card (index.html) or table row
- * (table_partial.html).  Fetches state from GET /api/symphony-settings/<sym>,
+ * Opens via the gear icon on each symphony card (index.html).  Fetches state from GET /api/symphony-settings/<sym>,
  * saves via POST /api/symphony-settings/<sym>.
  *
  * Design source of truth:
