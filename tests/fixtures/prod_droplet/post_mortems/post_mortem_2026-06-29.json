@@ -57,7 +57,7 @@
         {
             "symphony_name": "Planet of the Paragons: EYEG of the LQD",
             "symphony_value": 988.76,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -6.72,
             "attempted_trigger_level": -3.0,
@@ -85,7 +85,7 @@
         {
             "symphony_name": "Corporate Chaos 5 ways ",
             "symphony_value": 930.69,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -3.25,
             "attempted_trigger_level": -3.0,
@@ -121,7 +121,7 @@
         {
             "symphony_name": "Land of Feaver'd Allocations: Intelligent Novas",
             "symphony_value": 1040.98,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -3.96,
             "attempted_trigger_level": -3.0,
@@ -152,7 +152,7 @@
         {
             "symphony_name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
             "symphony_value": 1117.26,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 0.43,
             "attempted_trigger_level": 0.43,
@@ -186,7 +186,7 @@
         {
             "symphony_name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
             "symphony_value": 1091.35,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.72,
             "attempted_trigger_level": 1.16,
@@ -229,7 +229,7 @@
         {
             "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
             "symphony_value": 1065.0,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -3.94,
             "attempted_trigger_level": -3.0,
@@ -264,7 +264,7 @@
         {
             "symphony_name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
             "symphony_value": 1621.06,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.48,
             "attempted_trigger_level": 1.51,

@@ -15,7 +15,7 @@
 | Field (JSX path) | Source in design mock-data | Live `/api/state` status | Decision |
 |---|---|---|---|
 | `data.meta.account.label` | `meta.account.label = "Roth IRA"` | NOT in `/api/state` — `account_labels` is a dict keyed by account UUID | **EXTEND**: Add `meta.account` obj `{label, uuid_short}` to `/api/state` active response |
-| `data.meta.account.uuid_short` | `meta.account.uuid_short = "880be47e"` | NOT in `/api/state` | **EXTEND**: derive from first account key in `accounts_map`, truncate to 8 chars |
+| `data.meta.account.uuid_short` | `meta.account.uuid_short = "ACCOUNT_ID_REDACTED"` | NOT in `/api/state` | **EXTEND**: derive from first account key in `accounts_map`, truncate to 8 chars |
 | `data.meta.mode` | `"DRY RUN"` / `"LIVE"` | Present as `live_mode: bool` | **EXTEND**: add `meta.mode` string: `"LIVE"` if `live_mode` else `"DRY RUN"` |
 | `data.meta.system_online` | `meta.system_online: bool` | NOT present explicitly | **EXTEND**: derive as `status == "active"` |
 | `data.meta.next_run` | `meta.next_run = "00:00"` | Present as `next_run_seconds: int` | **EXTEND**: add `meta.next_run` as mm:ss formatted string from `next_run_seconds` |

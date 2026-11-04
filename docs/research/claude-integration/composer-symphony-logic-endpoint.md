@@ -34,7 +34,7 @@ The endpoint name "score" is misleading. It does **not** return a ranking or a n
 
 ## Validation Procedure (executed)
 
-1. `GET /api/v0.1/accounts/list` → `HTTP 200`. Account UUID `880be47e-efe4-4b44-9d83-b6d86098fe0d` confirmed (`account_type: ROTH_IRA`, `status: ACTIVE`, `has_active_position: true`).
+1. `GET /api/v0.1/accounts/list` → `HTTP 200`. Account UUID `ACCOUNT_ID_REDACTED` confirmed (`account_type: ROTH_IRA`, `status: ACTIVE`, `has_active_position: true`).
 2. `GET /api/v0.1/portfolio/accounts/{uuid}/symphony-stats-meta` → `HTTP 200`, 11 live symphonies returned. Extracted real symphony IDs (e.g., `hvPiGP1O7AHfutHE3Fjy` = "(INVEST) Planet of Hunted Cascades").
 3. `GET /api/v0.1/symphonies/hvPiGP1O7AHfutHE3Fjy/score` → `HTTP 200`, **1,044,312-byte JSON body**. Parsed and walked the tree.
 4. `GET .../score?score_version=v2` → `HTTP 200`, 958,881 bytes (same structural shape, see Notes).

@@ -3,7 +3,7 @@
 **Date:** 2026-05-14
 **Author:** composer-alpaca-integration (diagnosis only — no code, no edits)
 **Method:** Doc review + empirical read-only GET against live Composer API
-**Account UUID:** `880be47e-...` (redacted)
+**Account UUID:** `ACCOUNT_ID_REDACTED-...` (redacted)
 **Endpoint hit:** `GET /api/v0.1/portfolio/accounts/{account-id}/symphony-stats-meta` (via `fetch_symphony_stats()` in `alpha_bot_execution.py`)
 
 ---

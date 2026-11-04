@@ -53,7 +53,7 @@
         {
             "symphony_name": "Corporate Chaos 5 ways ",
             "symphony_value": 965.41,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -2.15,
             "attempted_trigger_level": -2.1,
@@ -86,7 +86,7 @@
         {
             "symphony_name": "Planet of the Golden Age (Buy Copy)",
             "symphony_value": 1451.24,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 6.27,
             "attempted_trigger_level": 7.46,
@@ -134,7 +134,7 @@
         {
             "symphony_name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
             "symphony_value": 1370.25,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 5.7,
             "attempted_trigger_level": 7.33,
@@ -168,7 +168,7 @@
         {
             "symphony_name": "Land of Feaver'd Allocations: Intelligent Novas",
             "symphony_value": 1095.86,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.16,
             "attempted_trigger_level": 1.16,
@@ -202,7 +202,7 @@
         {
             "symphony_name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
             "symphony_value": 1123.48,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.16,
             "attempted_trigger_level": 1.16,
@@ -236,7 +236,7 @@
         {
             "symphony_name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
             "symphony_value": 1088.25,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -2.7,
             "attempted_trigger_level": -2.57,
@@ -278,7 +278,7 @@
         {
             "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
             "symphony_value": 1590.54,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 2.07,
             "attempted_trigger_level": 2.33,
@@ -325,7 +325,7 @@
         {
             "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
             "symphony_value": 1130.19,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -5.31,
             "attempted_trigger_level": -3.0,

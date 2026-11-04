@@ -3,7 +3,7 @@
     "source_key": "iaSOOUsmnCJHiZvbrWfs",
     "record": {
       "name": "Copper Ridge #5 Rotation",
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "current_value": 1098.42,
       "current_return": 0.13999999999999999,
       "triggered": false,
@@ -52,7 +52,7 @@
     "source_key": "iaSOOUsmnCJHiZvbrWfs",
     "record": {
       "name": "Réserve Östra 日本 Rotation",
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "current_value": 1098.42,
       "current_return": 0.13999999999999999,
       "triggered": false,
@@ -101,7 +101,7 @@
     "source_key": "iaSOOUsmnCJHiZvbrWfs",
     "record": {
       "name": "Copper <b>Ridge</b> & Co",
-      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "account": "ACCOUNT_ID_REDACTED",
       "current_value": 1098.42,
       "current_return": 0.13999999999999999,
       "triggered": false,

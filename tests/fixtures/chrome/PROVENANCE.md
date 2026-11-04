@@ -42,3 +42,5 @@ The five 400 bodies, the 403 HTML page from the CSRF hook, the 401 and 503 JSON 
 the 500 page from Flask's own handler (route's env read made to raise, exceptions not propagated), the
 200 dry-run and live-start bodies, and the `/api/trigger` bodies. The live-start body needs
 `threading.Thread` replaced for the duration of the request; no thread runs.
+
+The capture harness account `7c2607c5-4583-4c1b-ae55-e5a05bb49f0d` is invented; it is not a real account id.

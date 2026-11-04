@@ -57,7 +57,7 @@
         {
             "symphony_name": "(INVEST) LQD + EYEG 5 ways Full Market",
             "symphony_value": 1127.87,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.26,
             "attempted_trigger_level": 1.09,
@@ -92,7 +92,7 @@
         {
             "symphony_name": "Planet of the Paragons: EYEG of the LQD",
             "symphony_value": 960.45,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 2.67,
             "attempted_trigger_level": 4.98,
@@ -120,7 +120,7 @@
         {
             "symphony_name": "Corporate Chaos 5 ways ",
             "symphony_value": 917.25,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.83,
             "attempted_trigger_level": 1.82,
@@ -155,7 +155,7 @@
         {
             "symphony_name": "Land of Feaver'd Allocations: Intelligent Novas",
             "symphony_value": 1027.78,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 1.77,
             "attempted_trigger_level": 3.03,
@@ -186,7 +186,7 @@
         {
             "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
             "symphony_value": 1587.99,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 2.22,
             "attempted_trigger_level": 3.49,
@@ -228,7 +228,7 @@
         {
             "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
             "symphony_value": 1049.52,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 1.56,
             "attempted_trigger_level": 2.74,

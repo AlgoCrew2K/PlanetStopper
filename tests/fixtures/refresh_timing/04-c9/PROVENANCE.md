@@ -14,3 +14,5 @@ Plan: refresh-timing 04, cycle C9 (cross-control close).
   differ from `HEAD`.
 - Base SHA: `7d8db3cd123397c1d013b693d7921c115e00ef07`; captured at `2026-10-31T09:35:32Z`.
 - Scenarios served: S-2.11, S-6.5, S-7.4. Edits: none. Sign-off: not needed (no derived record).
+
+The capture harness account `7c2607c5-4583-4c1b-ae55-e5a05bb49f0d` is invented; it is not a real account id.

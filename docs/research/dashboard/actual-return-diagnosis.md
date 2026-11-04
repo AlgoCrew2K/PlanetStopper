@@ -3,7 +3,7 @@
 **Date:** 2026-05-14
 **Analyst:** composer-alpaca-integration
 **Scope:** Research/diagnosis only — no production code written.
-**Account under test:** `880be47e-efe4-4b44-9d83-b6d86098fe0d`
+**Account under test:** `ACCOUNT_ID_REDACTED`
 
 ---
 

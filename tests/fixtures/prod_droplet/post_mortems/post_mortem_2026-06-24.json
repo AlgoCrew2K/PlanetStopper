@@ -56,7 +56,7 @@
         {
             "symphony_name": "(INVEST) LQD + EYEG 5 ways Full Market",
             "symphony_value": 1157.91,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.27,
             "attempted_trigger_level": 1.21,
@@ -89,7 +89,7 @@
         {
             "symphony_name": "Planet of the Paragons: EYEG of the LQD",
             "symphony_value": 1053.46,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.27,
             "attempted_trigger_level": 1.22,
@@ -120,7 +120,7 @@
         {
             "symphony_name": "Planet of the Golden Age (Buy Copy)",
             "symphony_value": 1462.61,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.62,
             "attempted_trigger_level": 1.28,
@@ -168,7 +168,7 @@
         {
             "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
             "symphony_value": 1589.81,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.71,
             "attempted_trigger_level": 1.01,
@@ -215,7 +215,7 @@
         {
             "symphony_name": "Planet of Erased History: Nova's Feaver'd Golden Age of EYEG",
             "symphony_value": 1110.81,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": -2.48,
             "attempted_trigger_level": 1.73,

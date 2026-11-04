@@ -56,7 +56,7 @@
         {
             "symphony_name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
             "symphony_value": 1290.05,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -2.15,
             "attempted_trigger_level": -1.89,
@@ -90,7 +90,7 @@
         {
             "symphony_name": "(INVEST) Planet of Hunted Cascades - Land of Intelligent Allocations",
             "symphony_value": 1171.02,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.69,
             "attempted_trigger_level": 1.01,
@@ -123,7 +123,7 @@
         {
             "symphony_name": "Planet of the Reasonabilists: Era of the Erased Golden Age",
             "symphony_value": 1595.35,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.97,
             "attempted_trigger_level": 1.97,

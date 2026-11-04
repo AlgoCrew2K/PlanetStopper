@@ -57,7 +57,7 @@
         {
             "symphony_name": "Planet of the Paragons: EYEG of the LQD",
             "symphony_value": 942.86,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Bleed Cut",
             "exit_return": -3.55,
             "attempted_trigger_level": -3.0,
@@ -85,7 +85,7 @@
         {
             "symphony_name": "Planet LQD: Run of the Feaver'd WaltAnansi USDs 2/3 Mixup",
             "symphony_value": 1339.57,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "VWAP Breakdown",
             "exit_return": 0.53,
             "attempted_trigger_level": 1.11,
@@ -121,7 +121,7 @@
         {
             "symphony_name": "(INVEST) Planet of Projected Inflation: Corporate Chaos 2060",
             "symphony_value": 1102.31,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 0.59,
             "attempted_trigger_level": 0.59,
@@ -163,7 +163,7 @@
         {
             "symphony_name": "(INVEST:CRYPTO) We do a Little Trolling Planet's Mix v1.4 | 10.19.2022",
             "symphony_value": 1668.79,
-            "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+            "account_id": "ACCOUNT_ID_REDACTED",
             "exit_reason": "Take-Profit",
             "exit_return": 1.39,
             "attempted_trigger_level": 1.39,

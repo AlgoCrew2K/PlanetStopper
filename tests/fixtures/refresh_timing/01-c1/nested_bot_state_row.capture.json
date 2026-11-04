@@ -2,7 +2,7 @@
   "captured_at_utc": "2026-10-23T00:55:19Z",
   "case": "01-c1-bot-state-row",
   "facts": {
-    "gzip_bytes": 275429,
+    "gzip_bytes": 275064,
     "json_round_trip_identical": true,
     "last_market_close_snapshot_occurrences": 1,
     "max_json_depth": 265,
@@ -13,8 +13,8 @@
       "last_successful_cycle_at",
       "post_mortem_run"
     ],
-    "raw_bytes": 2065179,
-    "raw_sha256": "f9de4ca66297eaf909914353fd45ea2752d2fd145979e18bc2758aad9b0d4fa7",
+    "raw_bytes": 2046700,
+    "raw_sha256": "ab5a2eebe83c41ecaf2594d7be75cd661c5113b315792c3b1d99e7a562c62f31",
     "storage_class": "text",
     "symphony_entry_count": 12,
     "top_level_key_count": 17,
@@ -30,9 +30,9 @@
     "utf8_decodable": true
   },
   "record": {
-    "bytes": 275429,
+    "bytes": 275064,
     "file": "nested_bot_state_row.json.gz",
-    "sha256": "534b7838bca588e533736bcb77360fc920baf273307854c7ca42998690ba0be7"
+    "sha256": "22cc4b094abe0c2c51f924d89ca5c8afcca859369c6812fbea30d958cc6708d4"
   },
   "script": "tests/fixtures/refresh_timing/capture.py",
   "source": {

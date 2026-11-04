@@ -576,7 +576,7 @@ def seed_shadow_rows(db_path: str, rows: list[dict]) -> None:
 def shadow_row(symphony_id: str, day: str, current_return: float, shadow_return: float) -> dict:
     return {
         "symphony_id": symphony_id,
-        "account_id": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+        "account_id": "ACCOUNT_ID_REDACTED",
         "cycle_id": f"{day.replace('-', '')}_1604",
         "ts_utc": f"{day}T20:04:03Z",
         "ts_et": f"{day}T16:04:01",
