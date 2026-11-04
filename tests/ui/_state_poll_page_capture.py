@@ -55,6 +55,8 @@ _CREDENTIAL_VARIABLES = (
 FALLBACK_POLL_MS = 30_000
 WAIT_MS = 20_000
 SSE_CONNECT_TIMEOUT_S = 15.0
+QUIET_MS = 600
+POLL_STEP_MS = 100
 
 _READ_PAGE = """
 () => {
@@ -111,13 +113,46 @@ def _path_and_query(url: str) -> str:
     return parts.path + (f"?{parts.query}" if parts.query else "")
 
 
+class _InFlight:
+    """The requests the page has sent and not yet seen end, leaving out the event stream (it ends
+    only when the page does)."""
+
+    def __init__(self, page) -> None:
+        self.pending: set = set()
+        page.on("request", self._start)
+        page.on("requestfinished", self._end)
+        page.on("requestfailed", self._end)
+
+    def _start(self, request) -> None:
+        if "/api/events" not in request.url:
+            self.pending.add(request)
+
+    def _end(self, request) -> None:
+        self.pending.discard(request)
+
+    def settle(self, page) -> None:
+        """Wait until nothing has been in flight for a whole quiet period, so every figure that a
+        late answer fills in (the guard effect, the risk profile) has been written."""
+        quiet_ms = 0
+        waited_ms = 0
+        while quiet_ms < QUIET_MS:
+            page.wait_for_timeout(POLL_STEP_MS)
+            waited_ms += POLL_STEP_MS
+            quiet_ms = 0 if self.pending else quiet_ms + POLL_STEP_MS
+            if waited_ms > WAIT_MS:
+                raise AssertionError(
+                    f"requests still in flight: {sorted(r.url for r in self.pending)}"
+                )
+
+
 def _wait_refresh(page, count: int) -> None:
     page.wait_for_function(
         "(n) => document.body.dataset.refreshCount === String(n)", arg=count, timeout=WAIT_MS
     )
 
 
-def _read(page) -> dict:
+def _settled_read(page, in_flight: _InFlight) -> dict:
+    in_flight.settle(page)
     return page.evaluate(_READ_PAGE)
 
 
@@ -169,6 +204,7 @@ def capture_scenario(firefox, name: str, monkeypatch, tmp_path) -> dict:
         page = probe.page
         requests: list[str] = []
         page.on("request", lambda request: requests.append(_path_and_query(request.url)))
+        in_flight = _InFlight(page)
         probe.context.clock.install(time=instant)
         page.goto(server.base_url + "/")
         page.wait_for_selector(READY_SELECTOR, timeout=READY_TIMEOUT_MS)
@@ -176,28 +212,28 @@ def capture_scenario(firefox, name: str, monkeypatch, tmp_path) -> dict:
         record: dict = {"world": spec.world, "mode": spec.mode}
 
         if spec.mode == "load":
-            record.update(_read(page))
+            record.update(_settled_read(page, in_flight))
         elif spec.mode == "fallback":
             mark = len(requests)
             probe.context.clock.run_for(FALLBACK_POLL_MS)
             _wait_refresh(page, 2)
-            record.update(_read(page))
+            record.update(_settled_read(page, in_flight))
             record.update(_since(requests, mark))
         elif spec.mode == "sse":
             _wait_for_event_stream(app_module)
             mark = len(requests)
             _put_cycle_complete(app_module)
             _wait_refresh(page, 2)
-            record.update(_read(page))
+            record.update(_settled_read(page, in_flight))
             record.update(_since(requests, mark))
         elif spec.mode == "detail":
             page.click('[data-testid="sym-card"][data-sym-id]')
             page.wait_for_selector("#detail-panel.open", timeout=WAIT_MS)
-            record["before_poll"] = _read(page)
+            record["before_poll"] = _settled_read(page, in_flight)
             mark = len(requests)
             page.evaluate("window.loadState()")
             _wait_refresh(page, 2)
-            record.update(_read(page))
+            record.update(_settled_read(page, in_flight))
             record.update(_since(requests, mark))
         elif spec.mode == "poll_500":
             page.route(
@@ -210,7 +246,7 @@ def capture_scenario(firefox, name: str, monkeypatch, tmp_path) -> dict:
             )
             page.evaluate("window.loadState()")
             _wait_refresh(page, 2)
-            record.update(_read(page))
+            record.update(_settled_read(page, in_flight))
         elif spec.mode == "poll_401":
             page.route(
                 "**/api/state*",

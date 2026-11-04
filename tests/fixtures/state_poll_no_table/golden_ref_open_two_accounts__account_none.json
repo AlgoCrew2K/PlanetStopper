@@ -1,0 +1,153 @@
+{
+  "bot_state": {
+    "date": "2026-10-21",
+    "last_execution_mode": false,
+    "last_successful_cycle_at": "2026-10-21T16:04:01.413198-04:00"
+  },
+  "daemon_started_at": "2026-11-04T00:05:53Z",
+  "dashboard_panels": {
+    "cvar": {
+      "diagnostic": null,
+      "ok": true
+    },
+    "sleeves": [],
+    "vars_locked_count": 3
+  },
+  "data_as_of": "2026-10-21 16:04 ET",
+  "degraded_reasons": [],
+  "engine_phase": "running",
+  "execution_start_time": "09:30",
+  "exit_authority": "per_symphony",
+  "fleet_correlation_alert": null,
+  "frozen_at": null,
+  "last_successful_cycle_at": "2026-10-21T16:04:01.413198-04:00",
+  "live_mode": false,
+  "market_state": "open",
+  "meta": {
+    "account": {
+      "label": "Account",
+      "uuid_short": ""
+    },
+    "armed": 1,
+    "clock_et": "04:04:20 PM ET",
+    "market_state": "open",
+    "market_state_label": "Market open",
+    "mode": "DRY RUN",
+    "next_run": "00:40",
+    "portfolio": {
+      "account_all_time_cr": 69.27264759777975,
+      "account_value": 12893.7,
+      "cr": 69.20072610052364,
+      "cr_if_held": 69.27264759777975,
+      "data_as_of": "2026-10-21 16:04 ET",
+      "guard_alpha": -0.2766452878182668,
+      "hist_bot": [
+        -0.1922,
+        -0.3328
+      ],
+      "hist_dates": [
+        "2026-10-20",
+        "2026-10-21"
+      ],
+      "hist_held": [
+        -0.1922,
+        -0.0562
+      ],
+      "hist_source": "shadow_history",
+      "history_days": 2,
+      "insufficient_history": true,
+      "mdd": 0.33282140373891433,
+      "mdd_if_held": 0.19221779349973822,
+      "mdd_if_held_lifetime": 24.47,
+      "mdd_n_obs": 2,
+      "mdd_row": {
+        "bot": null,
+        "held": null,
+        "insufficient": true
+      },
+      "tc": -2.059417568182757,
+      "tc_if_held": -2.020585293505977,
+      "vol_bot": 0.005763282087343487,
+      "vol_held": null,
+      "window": "30d",
+      "window_anchor": "2026-10-21",
+      "window_vol_bot": null,
+      "window_vol_held": null
+    },
+    "session_wording_day": null,
+    "system_online": true,
+    "tracked": 3,
+    "triggered": 1
+  },
+  "next_run_seconds": 40,
+  "port_state": {},
+  "portfolio_strip": {
+    "account_all_time_cr": 69.27264759777975,
+    "account_value": 12893.7,
+    "cumulative_return": {
+      "dry_run": 69.20072610052364,
+      "if_held": 69.27264759777975
+    },
+    "data_as_of": "2026-10-21 16:04 ET",
+    "guard_alpha": -0.2766452878182668,
+    "hist_bot": [
+      -0.1922,
+      -0.3328
+    ],
+    "hist_dates": [
+      "2026-10-20",
+      "2026-10-21"
+    ],
+    "hist_held": [
+      -0.1922,
+      -0.0562
+    ],
+    "hist_source": "shadow_history",
+    "max_drawdown": {
+      "dry_run": 0.33282140373891433,
+      "if_held": 0.19221779349973822,
+      "if_held_lifetime": 24.47,
+      "n_obs": 2
+    },
+    "today_change": {
+      "dry_run": -2.059417568182757,
+      "if_held": -2.020585293505977
+    },
+    "vol_bot": 0.005763282087343487,
+    "vol_held": null,
+    "window": "30d",
+    "window_max_drawdown": {
+      "dry_run": null,
+      "if_held": null,
+      "n_obs": 2
+    },
+    "window_vol_bot": null,
+    "window_vol_held": null,
+    "windowed_cumulative_return": {
+      "dry_run": -9.733183526741183,
+      "if_held": -9.45570055746544
+    }
+  },
+  "shadow_divergence": {
+    "by_symphony": {
+      "5XjzXjdGnjh99MIsdM97": {
+        "cumulative": null,
+        "name": "Land of Feaver'd Allocations: Intelligent Novas",
+        "today": null
+      },
+      "nOyb55RMGVCKPiYXv7TI": {
+        "cumulative": null,
+        "name": "Corporate Chaos 5 ways ",
+        "today": 0.59
+      }
+    },
+    "portfolio_today": 0.59
+  },
+  "state": {
+    "date": "2026-10-21",
+    "last_execution_mode": false,
+    "last_successful_cycle_at": "2026-10-21T16:04:01.413198-04:00"
+  },
+  "status": "active",
+  "symphonies": []
+}

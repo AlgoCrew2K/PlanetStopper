@@ -1,0 +1,135 @@
+{
+  "accounts_map": null,
+  "bot_state": {},
+  "daemon_started_at": "2026-11-04T00:05:53Z",
+  "dashboard_panels": {
+    "cvar": {
+      "diagnostic": null,
+      "ok": true
+    },
+    "sleeves": [],
+    "vars_locked_count": 2
+  },
+  "data_as_of": "2026-10-21 16:05 ET",
+  "degraded_reasons": [],
+  "engine_phase": "closed",
+  "exit_authority": "per_symphony",
+  "fleet_correlation_alert": null,
+  "frozen_at": "2026-10-21 16:05:00 ET",
+  "live_mode": false,
+  "market_state": "closed_frozen",
+  "meta": {
+    "account": {
+      "label": "Account",
+      "uuid_short": ""
+    },
+    "armed": 0,
+    "clock_et": "06:00:00 PM ET",
+    "market_state": "closed_frozen",
+    "market_state_label": "Market closed",
+    "mode": "DRY RUN",
+    "next_run": "00:00",
+    "portfolio": {
+      "account_all_time_cr": 69.27264759777975,
+      "account_value": 12893.7,
+      "cr": null,
+      "cr_if_held": null,
+      "data_as_of": "2026-10-21 16:05 ET",
+      "guard_alpha": -0.2944837499999853,
+      "hist_bot": [
+        -0.175,
+        -0.3048
+      ],
+      "hist_dates": [
+        "2026-10-20",
+        "2026-10-21"
+      ],
+      "hist_held": [
+        -0.175,
+        -0.0103
+      ],
+      "hist_source": "shadow_history",
+      "history_days": 2,
+      "insufficient_history": true,
+      "mdd": 0.30477249999999456,
+      "mdd_if_held": 0.17500000000000293,
+      "mdd_if_held_lifetime": null,
+      "mdd_n_obs": 2,
+      "mdd_row": {
+        "bot": null,
+        "held": null,
+        "insufficient": true
+      },
+      "tc": -2.020585293505977,
+      "tc_if_held": -2.020585293505977,
+      "vol_bot": 0.005051237472144819,
+      "vol_held": null,
+      "window": "30d",
+      "window_anchor": "2026-10-21",
+      "window_vol_bot": null,
+      "window_vol_held": null
+    },
+    "session_wording_day": "2026-10-21",
+    "system_online": false,
+    "tracked": 0,
+    "triggered": 0
+  },
+  "port_state": {},
+  "portfolio_strip": {
+    "account_all_time_cr": 69.27264759777975,
+    "account_basis_as_of": "--",
+    "account_basis_stale": true,
+    "account_value": 12893.7,
+    "cumulative_return": {
+      "dry_run": null,
+      "if_held": null
+    },
+    "data_as_of": "2026-10-21 16:05 ET",
+    "guard_alpha": -0.2944837499999853,
+    "hist_bot": [
+      -0.175,
+      -0.3048
+    ],
+    "hist_dates": [
+      "2026-10-20",
+      "2026-10-21"
+    ],
+    "hist_held": [
+      -0.175,
+      -0.0103
+    ],
+    "hist_source": "shadow_history",
+    "max_drawdown": {
+      "dry_run": 0.30477249999999456,
+      "if_held": 0.17500000000000293,
+      "if_held_lifetime": null,
+      "n_obs": 2
+    },
+    "today_change": {
+      "dry_run": -2.020585293505977,
+      "if_held": -2.020585293505977
+    },
+    "vol_bot": 0.005051237472144819,
+    "vol_held": null,
+    "window": "30d",
+    "window_max_drawdown": {
+      "dry_run": null,
+      "if_held": null,
+      "n_obs": 2
+    },
+    "window_vol_bot": null,
+    "window_vol_held": null
+  },
+  "shadow_divergence": {
+    "by_symphony": {
+      "5XjzXjdGnjh99MIsdM97": -0.43000000000000016,
+      "nOyb55RMGVCKPiYXv7TI": 0.61
+    },
+    "portfolio_today": -1.2283010233184548
+  },
+  "snapshot_is_previous_session": false,
+  "state": {},
+  "status": "active",
+  "symphonies": [],
+  "trading_day": "2026-10-21"
+}

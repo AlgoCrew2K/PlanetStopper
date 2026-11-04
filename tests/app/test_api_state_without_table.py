@@ -538,9 +538,13 @@ def test_a_close_snapshot_ignores_every_sort_parameter(monkeypatch, tmp_path, la
         )
 
 
+# The first world holds a captured entry that lacks `stop_trigger`, which the retired table could
+# not render, so its table was always the empty fallback; the second holds two complete entries,
+# so the sort changed the table there. The parameters must change nothing in either.
+@pytest.mark.parametrize("world_name", ["open_two_accounts", "open_with_snapshot_key"])
 @pytest.mark.parametrize("label", SORT_QUERIES)
-def test_the_live_branch_ignores_every_sort_parameter(monkeypatch, tmp_path, label):
-    built = build("open_two_accounts", monkeypatch, tmp_path)
+def test_the_live_branch_ignores_every_sort_parameter(monkeypatch, tmp_path, label, world_name):
+    built = build(world_name, monkeypatch, tmp_path)
 
     _same_as_without(built, SORT_QUERIES[label])
 

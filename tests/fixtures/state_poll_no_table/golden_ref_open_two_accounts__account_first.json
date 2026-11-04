@@ -1,0 +1,720 @@
+{
+  "bot_state": {
+    "5XjzXjdGnjh99MIsdM97": {
+      "_cr": {
+        "_twr_fallback": false,
+        "dry_run": -4.342,
+        "if_held": -4.342
+      },
+      "_last_trigger_id": 505,
+      "_maperf15_last_raw_return": -2.98,
+      "_maperf15_static_streak": 0,
+      "_maperf15_warned": false,
+      "_mdd": {
+        "dry_run": 0.7685739999999996,
+        "if_held": 0.7685739999999996,
+        "if_held_lifetime": 27.18,
+        "n_obs": 2
+      },
+      "_tc": {
+        "dry_run": -0.31,
+        "if_held": -0.31
+      },
+      "above_tp_count": 0,
+      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "active_stop_distance": 0.733335140954921,
+      "armed": true,
+      "below_stop_count": 0,
+      "breakeven_locked": false,
+      "current_holdings": [
+        {
+          "allocation": 0.19956634,
+          "ticker": "BTAL"
+        },
+        {
+          "allocation": 0.300077409,
+          "ticker": "UVIX"
+        },
+        {
+          "allocation": 0.149871895,
+          "ticker": "UVXY"
+        },
+        {
+          "allocation": 0.349468507,
+          "ticker": "VIXY"
+        }
+      ],
+      "current_return": -0.31,
+      "current_return_is_reconstructed": false,
+      "current_value": 957.76,
+      "disarm_confirm_count": 0,
+      "high_water_mark": -999.0,
+      "hwm_hold_ticks": 0,
+      "id": "5XjzXjdGnjh99MIsdM97",
+      "last_holdings_positive": true,
+      "last_trigger": null,
+      "max_drawdown": 0.2718,
+      "mc_history": [
+        98.56,
+        99.02,
+        98.76,
+        98.56,
+        98.54
+      ],
+      "mc_prob": null,
+      "name": "Land of Feaver'd Allocations: Intelligent Novas",
+      "net_deposits": 1000.0,
+      "normalized_name": "land of feaver'd allocations: intelligent novas",
+      "para_armed": false,
+      "para_velocity": 2.24,
+      "position_epoch": "28eb287dcb294a9a96e3975b5af6d345",
+      "prev_return": -2.55,
+      "shadow_hwm": -1.5599999999999998,
+      "simple_return": -0.04342,
+      "stop_trigger": -999.0,
+      "symphony_vol": 3.4216137226529315,
+      "time_weighted_return": -0.04155,
+      "tp_armed": false,
+      "trigger_prices": {
+        "SHY": 81.42,
+        "UGL": 43.37,
+        "YINN": 21.14
+      },
+      "triggered": false,
+      "triggered_at_hwm": -1.5599999999999998,
+      "triggered_at_return": -2.55,
+      "triggered_at_stop": -1.5282089704632358,
+      "triggered_at_time": "09:50",
+      "triggered_basket_snapshot": [
+        {
+          "allocation": 0.196001003,
+          "price": 0.0,
+          "ticker": "EDC"
+        },
+        {
+          "allocation": 0.13625988,
+          "price": 0.0,
+          "ticker": "EVT"
+        },
+        {
+          "allocation": 0.20403979,
+          "price": 81.42,
+          "ticker": "SHY"
+        },
+        {
+          "allocation": 0.065347169,
+          "price": 43.37,
+          "ticker": "UGL"
+        },
+        {
+          "allocation": 0.203894972,
+          "price": 0.0,
+          "ticker": "UUP"
+        },
+        {
+          "allocation": 0.18520989,
+          "price": 21.14,
+          "ticker": "YINN"
+        }
+      ],
+      "triggered_reason": "VWAP Bleed Cut",
+      "vwap_bleed_ticks": 16,
+      "vwap_ticks": 0
+    },
+    "date": "2026-10-21",
+    "last_execution_mode": false,
+    "last_successful_cycle_at": "2026-10-21T16:04:01.413198-04:00",
+    "nOyb55RMGVCKPiYXv7TI": {
+      "_cr": {
+        "_twr_fallback": false,
+        "dry_run": -15.817649000000008,
+        "if_held": -15.226999999999999
+      },
+      "_last_trigger_id": 509,
+      "_maperf15_last_raw_return": 0.74,
+      "_maperf15_static_streak": 0,
+      "_maperf15_warned": false,
+      "_mdd": {
+        "dry_run": 0.0,
+        "if_held": 0.0,
+        "if_held_lifetime": 27.07,
+        "n_obs": 2
+      },
+      "_tc": {
+        "dry_run": 0.05,
+        "if_held": 0.64
+      },
+      "above_tp_count": 2,
+      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "active_stop_distance": 0.3249692225562325,
+      "armed": false,
+      "below_stop_count": 0,
+      "breakeven_locked": false,
+      "current_holdings": [
+        {
+          "allocation": 0.024961637,
+          "ticker": "VO"
+        },
+        {
+          "allocation": 0.099690037,
+          "ticker": "UCO"
+        },
+        {
+          "allocation": 0.099876107,
+          "ticker": "XLB"
+        },
+        {
+          "allocation": 0.099832512,
+          "ticker": "XLF"
+        },
+        {
+          "allocation": 0.099865151,
+          "ticker": "XLP"
+        },
+        {
+          "allocation": 0.074695582,
+          "ticker": "XLY"
+        },
+        {
+          "allocation": 0.099774415,
+          "ticker": "TECL"
+        },
+        {
+          "allocation": 0.400238253,
+          "ticker": "UVIX"
+        }
+      ],
+      "current_return": 0.64,
+      "current_return_is_reconstructed": false,
+      "current_value": 848.63,
+      "disarm_confirm_count": 0,
+      "high_water_mark": -999.0,
+      "hwm_hold_ticks": 0,
+      "id": "nOyb55RMGVCKPiYXv7TI",
+      "last_holdings_positive": true,
+      "last_trigger": null,
+      "max_drawdown": 0.2707,
+      "mc_history": [
+        3.9600000000000004,
+        4.42,
+        3.92,
+        5.52,
+        5.1
+      ],
+      "mc_prob": null,
+      "name": "Corporate Chaos 5 ways ",
+      "net_deposits": 1000.0,
+      "normalized_name": "corporate chaos 5 ways",
+      "para_armed": false,
+      "para_velocity": 0.51,
+      "position_epoch": "35768ca02e2e4075b297e77da45fc424",
+      "prev_return": 0.13,
+      "shadow_hwm": 0.74,
+      "simple_return": -0.15227,
+      "stop_trigger": -999.0,
+      "symphony_vol": 1.9669290568032651,
+      "time_weighted_return": -0.15082,
+      "tp_armed": false,
+      "trigger_prices": {
+        "QQQ": 707.86,
+        "XLY": 115.16
+      },
+      "triggered": true,
+      "triggered_at_hwm": 0.22,
+      "triggered_at_return": 0.13,
+      "triggered_at_stop": 0.13,
+      "triggered_at_time": "11:33",
+      "triggered_basket_snapshot": [
+        {
+          "allocation": 0.184436796,
+          "price": 0.0,
+          "ticker": "VO"
+        },
+        {
+          "allocation": 0.061356031,
+          "price": 707.86,
+          "ticker": "QQQ"
+        },
+        {
+          "allocation": 0.124349044,
+          "price": 0.0,
+          "ticker": "XLB"
+        },
+        {
+          "allocation": 0.188786224,
+          "price": 0.0,
+          "ticker": "XLF"
+        },
+        {
+          "allocation": 0.060379322,
+          "price": 0.0,
+          "ticker": "XLK"
+        },
+        {
+          "allocation": 0.252664768,
+          "price": 0.0,
+          "ticker": "XLP"
+        },
+        {
+          "allocation": 0.124072888,
+          "price": 115.16,
+          "ticker": "XLY"
+        }
+      ],
+      "triggered_reason": "Take-Profit",
+      "vwap_bleed_ticks": 0,
+      "vwap_ticks": 0
+    }
+  },
+  "daemon_started_at": "2026-11-04T00:05:53Z",
+  "dashboard_panels": {
+    "cvar": {
+      "diagnostic": null,
+      "ok": true
+    },
+    "sleeves": [],
+    "vars_locked_count": 3
+  },
+  "data_as_of": "2026-10-21 16:04 ET",
+  "degraded_reasons": [],
+  "engine_phase": "running",
+  "execution_start_time": "09:30",
+  "exit_authority": "per_symphony",
+  "fleet_correlation_alert": null,
+  "frozen_at": null,
+  "last_successful_cycle_at": "2026-10-21T16:04:01.413198-04:00",
+  "live_mode": false,
+  "market_state": "open",
+  "meta": {
+    "account": {
+      "label": "Account",
+      "uuid_short": ""
+    },
+    "armed": 1,
+    "clock_et": "04:04:20 PM ET",
+    "market_state": "open",
+    "market_state_label": "Market open",
+    "mode": "DRY RUN",
+    "next_run": "00:40",
+    "portfolio": {
+      "account_all_time_cr": 69.27264759777975,
+      "account_value": 12893.7,
+      "cr": 69.20072610052364,
+      "cr_if_held": 69.27264759777975,
+      "data_as_of": "2026-10-21 16:04 ET",
+      "guard_alpha": -0.2766452878182668,
+      "hist_bot": [
+        -0.1922,
+        -0.3328
+      ],
+      "hist_dates": [
+        "2026-10-20",
+        "2026-10-21"
+      ],
+      "hist_held": [
+        -0.1922,
+        -0.0562
+      ],
+      "hist_source": "shadow_history",
+      "history_days": 2,
+      "insufficient_history": true,
+      "mdd": 0.33282140373891433,
+      "mdd_if_held": 0.19221779349973822,
+      "mdd_if_held_lifetime": 24.47,
+      "mdd_n_obs": 2,
+      "mdd_row": {
+        "bot": null,
+        "held": null,
+        "insufficient": true
+      },
+      "tc": -2.059417568182757,
+      "tc_if_held": -2.020585293505977,
+      "vol_bot": 0.005763282087343487,
+      "vol_held": null,
+      "window": "30d",
+      "window_anchor": "2026-10-21",
+      "window_vol_bot": null,
+      "window_vol_held": null
+    },
+    "session_wording_day": null,
+    "system_online": true,
+    "tracked": 3,
+    "triggered": 1
+  },
+  "next_run_seconds": 40,
+  "port_state": {},
+  "portfolio_strip": {
+    "account_all_time_cr": 69.27264759777975,
+    "account_value": 12893.7,
+    "cumulative_return": {
+      "dry_run": 69.20072610052364,
+      "if_held": 69.27264759777975
+    },
+    "data_as_of": "2026-10-21 16:04 ET",
+    "guard_alpha": -0.2766452878182668,
+    "hist_bot": [
+      -0.1922,
+      -0.3328
+    ],
+    "hist_dates": [
+      "2026-10-20",
+      "2026-10-21"
+    ],
+    "hist_held": [
+      -0.1922,
+      -0.0562
+    ],
+    "hist_source": "shadow_history",
+    "max_drawdown": {
+      "dry_run": 0.33282140373891433,
+      "if_held": 0.19221779349973822,
+      "if_held_lifetime": 24.47,
+      "n_obs": 2
+    },
+    "today_change": {
+      "dry_run": -2.059417568182757,
+      "if_held": -2.020585293505977
+    },
+    "vol_bot": 0.005763282087343487,
+    "vol_held": null,
+    "window": "30d",
+    "window_max_drawdown": {
+      "dry_run": null,
+      "if_held": null,
+      "n_obs": 2
+    },
+    "window_vol_bot": null,
+    "window_vol_held": null,
+    "windowed_cumulative_return": {
+      "dry_run": -9.733183526741183,
+      "if_held": -9.45570055746544
+    }
+  },
+  "shadow_divergence": {
+    "by_symphony": {
+      "5XjzXjdGnjh99MIsdM97": {
+        "cumulative": null,
+        "name": "Land of Feaver'd Allocations: Intelligent Novas",
+        "today": null
+      },
+      "nOyb55RMGVCKPiYXv7TI": {
+        "cumulative": null,
+        "name": "Corporate Chaos 5 ways ",
+        "today": 0.59
+      }
+    },
+    "portfolio_today": 0.59
+  },
+  "state": {
+    "5XjzXjdGnjh99MIsdM97": {
+      "_cr": {
+        "_twr_fallback": false,
+        "dry_run": -4.342,
+        "if_held": -4.342
+      },
+      "_last_trigger_id": 505,
+      "_maperf15_last_raw_return": -2.98,
+      "_maperf15_static_streak": 0,
+      "_maperf15_warned": false,
+      "_mdd": {
+        "dry_run": 0.7685739999999996,
+        "if_held": 0.7685739999999996,
+        "if_held_lifetime": 27.18,
+        "n_obs": 2
+      },
+      "_tc": {
+        "dry_run": -0.31,
+        "if_held": -0.31
+      },
+      "above_tp_count": 0,
+      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "active_stop_distance": 0.733335140954921,
+      "armed": true,
+      "below_stop_count": 0,
+      "breakeven_locked": false,
+      "current_holdings": [
+        {
+          "allocation": 0.19956634,
+          "ticker": "BTAL"
+        },
+        {
+          "allocation": 0.300077409,
+          "ticker": "UVIX"
+        },
+        {
+          "allocation": 0.149871895,
+          "ticker": "UVXY"
+        },
+        {
+          "allocation": 0.349468507,
+          "ticker": "VIXY"
+        }
+      ],
+      "current_return": -0.31,
+      "current_return_is_reconstructed": false,
+      "current_value": 957.76,
+      "disarm_confirm_count": 0,
+      "high_water_mark": -999.0,
+      "hwm_hold_ticks": 0,
+      "id": "5XjzXjdGnjh99MIsdM97",
+      "last_holdings_positive": true,
+      "last_trigger": null,
+      "max_drawdown": 0.2718,
+      "mc_history": [
+        98.56,
+        99.02,
+        98.76,
+        98.56,
+        98.54
+      ],
+      "mc_prob": null,
+      "name": "Land of Feaver'd Allocations: Intelligent Novas",
+      "net_deposits": 1000.0,
+      "normalized_name": "land of feaver'd allocations: intelligent novas",
+      "para_armed": false,
+      "para_velocity": 2.24,
+      "position_epoch": "28eb287dcb294a9a96e3975b5af6d345",
+      "prev_return": -2.55,
+      "shadow_hwm": -1.5599999999999998,
+      "simple_return": -0.04342,
+      "stop_trigger": -999.0,
+      "symphony_vol": 3.4216137226529315,
+      "time_weighted_return": -0.04155,
+      "tp_armed": false,
+      "trigger_prices": {
+        "SHY": 81.42,
+        "UGL": 43.37,
+        "YINN": 21.14
+      },
+      "triggered": false,
+      "triggered_at_hwm": -1.5599999999999998,
+      "triggered_at_return": -2.55,
+      "triggered_at_stop": -1.5282089704632358,
+      "triggered_at_time": "09:50",
+      "triggered_basket_snapshot": [
+        {
+          "allocation": 0.196001003,
+          "price": 0.0,
+          "ticker": "EDC"
+        },
+        {
+          "allocation": 0.13625988,
+          "price": 0.0,
+          "ticker": "EVT"
+        },
+        {
+          "allocation": 0.20403979,
+          "price": 81.42,
+          "ticker": "SHY"
+        },
+        {
+          "allocation": 0.065347169,
+          "price": 43.37,
+          "ticker": "UGL"
+        },
+        {
+          "allocation": 0.203894972,
+          "price": 0.0,
+          "ticker": "UUP"
+        },
+        {
+          "allocation": 0.18520989,
+          "price": 21.14,
+          "ticker": "YINN"
+        }
+      ],
+      "triggered_reason": "VWAP Bleed Cut",
+      "vwap_bleed_ticks": 16,
+      "vwap_ticks": 0
+    },
+    "date": "2026-10-21",
+    "last_execution_mode": false,
+    "last_successful_cycle_at": "2026-10-21T16:04:01.413198-04:00",
+    "nOyb55RMGVCKPiYXv7TI": {
+      "_cr": {
+        "_twr_fallback": false,
+        "dry_run": -15.817649000000008,
+        "if_held": -15.226999999999999
+      },
+      "_last_trigger_id": 509,
+      "_maperf15_last_raw_return": 0.74,
+      "_maperf15_static_streak": 0,
+      "_maperf15_warned": false,
+      "_mdd": {
+        "dry_run": 0.0,
+        "if_held": 0.0,
+        "if_held_lifetime": 27.07,
+        "n_obs": 2
+      },
+      "_tc": {
+        "dry_run": 0.05,
+        "if_held": 0.64
+      },
+      "above_tp_count": 2,
+      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "active_stop_distance": 0.3249692225562325,
+      "armed": false,
+      "below_stop_count": 0,
+      "breakeven_locked": false,
+      "current_holdings": [
+        {
+          "allocation": 0.024961637,
+          "ticker": "VO"
+        },
+        {
+          "allocation": 0.099690037,
+          "ticker": "UCO"
+        },
+        {
+          "allocation": 0.099876107,
+          "ticker": "XLB"
+        },
+        {
+          "allocation": 0.099832512,
+          "ticker": "XLF"
+        },
+        {
+          "allocation": 0.099865151,
+          "ticker": "XLP"
+        },
+        {
+          "allocation": 0.074695582,
+          "ticker": "XLY"
+        },
+        {
+          "allocation": 0.099774415,
+          "ticker": "TECL"
+        },
+        {
+          "allocation": 0.400238253,
+          "ticker": "UVIX"
+        }
+      ],
+      "current_return": 0.64,
+      "current_return_is_reconstructed": false,
+      "current_value": 848.63,
+      "disarm_confirm_count": 0,
+      "high_water_mark": -999.0,
+      "hwm_hold_ticks": 0,
+      "id": "nOyb55RMGVCKPiYXv7TI",
+      "last_holdings_positive": true,
+      "last_trigger": null,
+      "max_drawdown": 0.2707,
+      "mc_history": [
+        3.9600000000000004,
+        4.42,
+        3.92,
+        5.52,
+        5.1
+      ],
+      "mc_prob": null,
+      "name": "Corporate Chaos 5 ways ",
+      "net_deposits": 1000.0,
+      "normalized_name": "corporate chaos 5 ways",
+      "para_armed": false,
+      "para_velocity": 0.51,
+      "position_epoch": "35768ca02e2e4075b297e77da45fc424",
+      "prev_return": 0.13,
+      "shadow_hwm": 0.74,
+      "simple_return": -0.15227,
+      "stop_trigger": -999.0,
+      "symphony_vol": 1.9669290568032651,
+      "time_weighted_return": -0.15082,
+      "tp_armed": false,
+      "trigger_prices": {
+        "QQQ": 707.86,
+        "XLY": 115.16
+      },
+      "triggered": true,
+      "triggered_at_hwm": 0.22,
+      "triggered_at_return": 0.13,
+      "triggered_at_stop": 0.13,
+      "triggered_at_time": "11:33",
+      "triggered_basket_snapshot": [
+        {
+          "allocation": 0.184436796,
+          "price": 0.0,
+          "ticker": "VO"
+        },
+        {
+          "allocation": 0.061356031,
+          "price": 707.86,
+          "ticker": "QQQ"
+        },
+        {
+          "allocation": 0.124349044,
+          "price": 0.0,
+          "ticker": "XLB"
+        },
+        {
+          "allocation": 0.188786224,
+          "price": 0.0,
+          "ticker": "XLF"
+        },
+        {
+          "allocation": 0.060379322,
+          "price": 0.0,
+          "ticker": "XLK"
+        },
+        {
+          "allocation": 0.252664768,
+          "price": 0.0,
+          "ticker": "XLP"
+        },
+        {
+          "allocation": 0.124072888,
+          "price": 115.16,
+          "ticker": "XLY"
+        }
+      ],
+      "triggered_reason": "Take-Profit",
+      "vwap_bleed_ticks": 0,
+      "vwap_ticks": 0
+    }
+  },
+  "status": "active",
+  "symphonies": [
+    {
+      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "armed": true,
+      "cr_bot": -4.342,
+      "cr_held": -4.342,
+      "current_return": -0.31,
+      "guard_alpha": null,
+      "id": "5XjzXjdGnjh99MIsdM97",
+      "mc_prob": null,
+      "mdd_bot": 0.7685739999999996,
+      "mdd_held": 0.7685739999999996,
+      "mdd_lifetime": 27.18,
+      "para_armed": false,
+      "status": "armed",
+      "stop_trigger": -999.0,
+      "tc_bot": -0.31,
+      "tc_held": -0.31,
+      "tp_armed": false,
+      "triggered": false,
+      "triggered_reason": "VWAP Bleed Cut"
+    },
+    {
+      "account": "880be47e-efe4-4b44-9d83-b6d86098fe0d",
+      "armed": false,
+      "cr_bot": -15.817649000000008,
+      "cr_held": -15.226999999999999,
+      "current_return": 0.64,
+      "guard_alpha": null,
+      "id": "nOyb55RMGVCKPiYXv7TI",
+      "mc_prob": null,
+      "mdd_bot": 0.0,
+      "mdd_held": 0.0,
+      "mdd_lifetime": 27.07,
+      "para_armed": false,
+      "status": "triggered",
+      "stop_trigger": -999.0,
+      "tc_bot": 0.05,
+      "tc_held": 0.64,
+      "tp_armed": false,
+      "triggered": true,
+      "triggered_reason": "Take-Profit"
+    }
+  ]
+}
