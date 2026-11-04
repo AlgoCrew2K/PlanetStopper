@@ -96,7 +96,9 @@ def main() -> None:
         "capture_instant": capture.CAPTURE_INSTANT.isoformat(),
         **record,
     }
-    (HERE / "baseline.json").write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")
+    # LF line ends on every host: a CRLF file differs byte for byte on the CI runner.
+    with open(HERE / "baseline.json", "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(out, indent=1) + "\n")
     counts = {k: len(v) for k, v in record["views"].items()}
     print(
         f"wrote baseline.json at {BASE_SHA}: {len(counts)} views, "

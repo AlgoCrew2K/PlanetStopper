@@ -15,24 +15,31 @@ the shared rule's own selector matches it, the first 40 characters of its text, 
 longhands and the sha256 of its computed style (every property but the box-size-resolved ones
 named in :data:`BOX_SIZE_RESOLVED`).
 
-The app clock and the browser clock are both fixed at :data:`CAPTURE_INSTANT`, so the market
-state and every clock-derived text are the same on every run. The record holds the browser
+The app clock and the browser clock are both fixed at :data:`CAPTURE_INSTANT`, and the date the
+pages' windows count back from at :data:`WINDOW_ANCHOR`, so the market state, the exits shown and
+every clock-derived text are the same on every run. The record holds the browser
 version: a different version is a different render, and the check says so instead of comparing.
 """
 
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+import re
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from tests.app._refresh_timing_state_world import frozen_datetime_class
+from tests.app._refresh_timing_state_world import _pinned_window_cutoff, frozen_datetime_class
 from tests.ui._shell_support import NARROW, WIDE, open_page, open_probe, seed_every_page
 
 ET = ZoneInfo("America/New_York")
 
 # A Wednesday inside the regular session, so the dashboard renders its open-market state.
 CAPTURE_INSTANT = datetime(2026, 10, 21, 11, 0, 0, tzinfo=ET)
+
+# The date History's and Performance's windows are counted back from. The captured post-mortem
+# days end on 2026-06-30; counting from the wall clock would age them out of every window as
+# calendar time passes, and the exit panels would stop rendering.
+WINDOW_ANCHOR = date(2026, 7, 1)
 
 WIDTHS = {"1440": WIDE, "375": NARROW}
 THEMES = ("light", "dark")
@@ -76,6 +83,11 @@ _INSET_PREFIX = "inset"
 
 MARGINS = ("margin-top", "margin-right", "margin-bottom", "margin-left")
 TEXT_CHARS = 40
+# A stored row shows the wall-clock time it was written (the seeded Advisor observation), which
+# differs on every run; the text is only the element's name in the record, so a date and its hour
+# are masked before it is cut.
+_WALL_CLOCK = re.compile(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}(?::\d{2}){0,2})?")
+_WALL_CLOCK_MASK = "<date>"
 SETTLE_MS = 1500
 SWITCH_SETTLE_MS = 500
 
@@ -109,10 +121,12 @@ _READ_ELEMENTS = """
 def prepare(tmp_path, setattr_fn) -> None:
     """Seed every page's state and fix the app clock; ``setattr_fn`` is ``monkeypatch.setattr``
     in a test (undone at teardown) or ``setattr`` in the producer."""
+    import analytics
     import app as app_module
 
     seed_every_page(tmp_path, setattr_fn)
     setattr_fn(app_module, "datetime", frozen_datetime_class(CAPTURE_INSTANT))
+    setattr_fn(analytics, "_window_cutoff_date", _pinned_window_cutoff(WINDOW_ANCHOR))
 
 
 def _digest(props: list[list[str]]) -> str:
@@ -134,7 +148,7 @@ def read_elements(page, selector: str, *, visible_only: bool) -> list[dict]:
             "classes": item["classes"],
             "parent_classes": item["parent_classes"],
             "shared_rule_matches": item["shared_rule_matches"],
-            "text": item["text"][:TEXT_CHARS],
+            "text": _WALL_CLOCK.sub(_WALL_CLOCK_MASK, item["text"])[:TEXT_CHARS],
             "margins": item["margins"],
             "style_digest": _digest(item["props"]),
         }

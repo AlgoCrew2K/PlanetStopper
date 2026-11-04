@@ -76,7 +76,7 @@ def differences(expected: dict[str, list], actual: dict[str, list]) -> list[str]
             continue
         for index, (a, b) in enumerate(zip(want, got, strict=True)):
             who = f"{key}[{index}] <{a['tag']} class='{' '.join(a['classes'])}'> {a['text']!r}"
-            for field in ("tag", "classes", "parent_classes", "text"):
+            for field in ("tag", "classes", "parent_classes", "shared_rule_matches", "text"):
                 if a[field] != b[field]:
                     found.append(f"{who}: {field} {a[field]!r} became {b[field]!r}")
             if a["margins"] != b["margins"]:
@@ -138,11 +138,19 @@ class TestBaselineCanFail:
         inside = [e for es in views.values() for e in es if _is_panel_head_heading(e)]
         assert inside, f"the baseline of {page_id} holds no .section-header inside .hp-head"
 
-    def test_login_is_read_whole_and_holds_no_heading_the_rule_reaches(self):
-        views = capture.views_of_group(BASELINE["views"], "login", "1440", "light")
+    @pytest.mark.parametrize("page_id", _PAGES_WITHOUT_THE_RULE)
+    def test_dashboard_and_login_hold_no_heading_the_rule_reaches(self, page_id):
+        views = capture.views_of_group(BASELINE["views"], page_id, "1440", "light")
         elements = [e for es in views.values() for e in es]
-        assert elements, "the baseline holds no element of /login"
+        assert elements, f"the baseline holds no element of {page_id}"
         assert not [e for e in elements if e["shared_rule_matches"]]
+
+    @pytest.mark.parametrize("page_id", _HEAD_PANEL_PAGES)
+    def test_the_heading_inside_the_panel_head_is_not_one_the_rule_reaches(self, page_id):
+        views = capture.views_of_group(BASELINE["views"], page_id, "1440", "light")
+        inside = [e for es in views.values() for e in es if _is_panel_head_heading(e)]
+        assert inside
+        assert not [e for e in inside if e["shared_rule_matches"]]
 
     def test_a_changed_margin_digest_or_element_count_is_seen(self):
         element = {
