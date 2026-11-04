@@ -269,8 +269,9 @@ def test_api_state_existing_fields_preserved_after_symphonies_added(
     body = resp.get_json()
 
     # These fields must survive the additive symphonies addition.
-    required_existing = ["status", "state", "bot_state", "html", "live_mode", "market_state"]
+    required_existing = ["status", "state", "bot_state", "live_mode", "market_state"]
     missing = [f for f in required_existing if f not in body]
+    assert "html" not in body, "the body still carries a table"
     assert not missing, (
         f"AC-CL.3 FAIL: the following existing /api/state fields are missing after "
         f"the symphonies field was added: {missing}. "
