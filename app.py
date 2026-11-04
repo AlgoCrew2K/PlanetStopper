@@ -2783,8 +2783,7 @@ def run_scheduler():
     # Daily re-list (only when the registry is stale) so new model releases reach the badges.
     _guard(schedule.every().day.at("04:15").do(_start_model_warmup), "04:15 model warmup")
     # Regime label job: after the warm-up, outside every session in UTC and New York host time.
-    # Regime label job: after the warm-up, outside every session in UTC and New York host time.
-    _guard(schedule.every().day.at("04:30").do(_run_regime_label_tick), "04:30 regime label")
+    _guard(schedule.every().day.at("04:30").do(_run_regime_label_tick), "04:30 regime label job")
     while True:
         _scheduler_tick()
         time.sleep(1)

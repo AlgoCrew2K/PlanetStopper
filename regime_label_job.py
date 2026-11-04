@@ -32,6 +32,7 @@ REASON_NO_CLASSIFIER_LABEL = "no_classifier_label"
 REASON_WRITE_FAILED = "write_failed"
 REASON_AFTER_OPEN = "after_open"
 REASON_UNEXPECTED_ERROR = "unexpected_error"
+REASON_SESSION_IN_PROGRESS = "session_in_progress"
 
 # The SIP feed refuses a request whose end is inside the last 15 minutes; 20 leaves margin.
 SIP_END_LAG = timedelta(minutes=20)
@@ -346,7 +347,7 @@ def run_regime_label_job(load_symphonies, *, clock=None) -> RegimeLabelRun:
     started = clock()
     session = target_session(started)
     if session is None:
-        logger.info("regime_label skipped reason=session_in_progress")
+        logger.info("regime_label skipped reason=%s", REASON_SESSION_IN_PROGRESS)
         return RegimeLabelRun(None)
     try:
         entries = load_symphonies()
