@@ -6,10 +6,11 @@ coarse 3-state taxonomy: 'mean-reverting', 'trending', or 'high-vol'. The label
 describes the realized character of the supplied window (volatility level +
 lag-1 autocorrelation sign); it makes no claim about subsequent returns.
 
-This is an OFFLINE DIAGNOSTIC. It is intentionally NOT imported by
+This is an OFFLINE LABELLER. It is intentionally NOT imported by
 alpha_bot_execution.py or math_engine.py and is NEVER called on the 1-minute
-execution path (PHASE3_DECISIONS.md §Sub-phase 3a). It is surfaced only as an
-operator/analytics diagnostic.
+execution path (PHASE3_DECISIONS.md §Sub-phase 3a). Its callers are the autotuner
+replay (autotuner.py, which labels each replay day) and the nightly regime label
+job (regime_label_job.py, which writes the cached label the engine reads).
 
 Method (lowest-degrees-of-freedom transparent buckets, per
 PHASE3_DECISIONS.md / 00-ADAPTIVE-RECOMMENDATION.md §1A):
@@ -36,9 +37,9 @@ classify_regime uses the module constant HIGH_VOL_DAILY_THRESHOLD = 0.04 as its
 vol boundary. This is a theory-anchored, zero-degrees-of-freedom constant (3x
 the normal ~1-1.5%/day equity vol). It does NOT use a threshold fitted from
 external_data. fit_regime_classifier() is a SEPARATE, standalone operator
-diagnostic that derives a data-driven quantile threshold from the real (non-
-synthetic) broad daily history — its output is informational and is not wired
-into classify_regime by default. This is a deliberate design decision: keeping
+diagnostic with no code caller; it derives a data-driven quantile threshold from
+the real (non-synthetic) broad daily history, and its output is informational and
+is not wired into classify_regime by default. This is a deliberate design decision: keeping
 classify_regime parameter-free means it adds ~0 estimation DoF
 (00-ADAPTIVE-RECOMMENDATION.md §1A, 'theory-fixed label (~0 added DoF)').
 

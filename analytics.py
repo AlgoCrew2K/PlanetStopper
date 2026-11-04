@@ -699,12 +699,7 @@ def _load_latest_shadow_row_for_analytics(
             _prior_row_factory = _conn.row_factory
             try:
                 _conn.row_factory = sqlite3.Row
-                row = _conn.execute(
-                    "SELECT * FROM shadow_history "
-                    "WHERE symphony_id = ? AND trading_day = ? "
-                    "ORDER BY ts_utc DESC LIMIT 1",
-                    (symphony_id, trading_day),
-                ).fetchone()
+                row = database.select_latest_shadow_row(_conn, symphony_id, trading_day)
                 return dict(row) if row is not None else None
             finally:
                 _conn.row_factory = _prior_row_factory
@@ -2740,21 +2735,6 @@ def get_history_summary(
     stats["todays_exits"] = todays_exits
 
     return stats
-
-
-def compute_v1_bootstrap_state(sample_size: int, divergence_detected: bool) -> str:
-    """Return V1 bootstrap state string based on shadow_history sample size.
-
-    States (PA-M1F-11 / AC-M1F.6.4):
-      'indeterminate'         — sample_size < 30 (below Bailey/de-Prado 2014 threshold)
-      'provisional_no_overfit' — sample_size >= 30 and no divergence detected
-      'overfit_confirmed'     — sample_size >= 30 and divergence detected
-    """
-    if sample_size < _V1_BOOTSTRAP_MIN_DAYS:
-        return "indeterminate"
-    if divergence_detected:
-        return "overfit_confirmed"
-    return "provisional_no_overfit"
 
 
 _NEVER_ADOPTED_ADOPTED_TOKEN = "Adopted AI"

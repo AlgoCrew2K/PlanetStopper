@@ -41,6 +41,7 @@ from werkzeug.security import check_password_hash
 import ai_advisor
 import analytics
 import database
+import env_flags
 import llm_request
 import market_calendar
 import model_config
@@ -172,11 +173,7 @@ app.add_template_filter(retirement_basis, name="retirement_basis")
 # operator can enable it when terminating TLS in a reverse proxy.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = os.environ.get("SESSION_COOKIE_SECURE", "").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+app.config["SESSION_COOKIE_SECURE"] = env_flags.is_true(os.environ.get("SESSION_COOKIE_SECURE", ""))
 
 # ---------------------------------------------------------------------------
 # Dashboard auth gate — must be declared before CSRF so its @before_request
@@ -3636,7 +3633,7 @@ def _build_meta(
     """
     # Use module-qualified call so test patches on dotenv.dotenv_values take effect.
     env_vars = _dotenv_module.dotenv_values(ENV_FILE_PATH)
-    live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+    live_mode = env_flags.is_true(env_vars.get("LIVE_EXECUTION", "False"))
 
     # Count only symphony dicts (those with a 'name' key).
     symphony_entries = [v for v in state_data.values() if isinstance(v, dict) and "name" in v]
@@ -4460,8 +4457,8 @@ def _frozen_symphony_inputs(snapshot: dict) -> tuple[list[dict], dict]:
     return symphonies, bot_state
 
 
-# Fields a snapshot entry may lack; the template's numeric filters need float or None,
-# never a Jinja Undefined (which passes `is not none` and then breaks format()).
+# Fields a snapshot entry may lack; _normalize_frozen_symphonies reads these defaults and
+# fills each missing field, so a consumer sees a float or None, never an absent key.
 _FROZEN_SYM_DEFAULTS: dict = {
     "mc_prob": None,
     "shadow_hwm": 0.0,
@@ -5462,11 +5459,7 @@ def get_state():
         # AC-P2.12.2: additive fields — computed once, merged into every response branch.
         _api_state = get_api_state_dict()
         _additive_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
-        _additive_live_mode = _additive_env.get("LIVE_EXECUTION", "False").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
+        _additive_live_mode = env_flags.is_true(_additive_env.get("LIVE_EXECUTION", "False"))
         _additive = {
             "port_state": _api_state.get("port_state", {}),
             "exit_authority": _api_state.get("exit_authority", {}),
@@ -5530,9 +5523,9 @@ def get_state():
                         sd_by_sym[sym_id] = entry
                         entry["name"] = (_state.get(sym_id) or {}).get("name") or sym_id
 
-                # Each account list of the snapshot is ordered by name in place: the view is
-                # held per snapshot and shared with GET /, so a sorted copy would change what
-                # the page reads.
+                # Each account list of the snapshot is ordered by name in place: get_or_build
+                # hands out deep copies, so these lists are this request's own and sorting
+                # them touches no one else's.
                 _snap_accounts_map = snapshot.get("accounts_map") or {}
                 for _syms in _snap_accounts_map.values():
                     _syms.sort(key=lambda s: (s.get("name") or s.get("id", "")).lower())
@@ -5543,11 +5536,7 @@ def get_state():
                 _frozen_stamps = _snapshot_stamps(snapshot, _req_now_et)
 
                 _frozen_env = _dotenv_module.dotenv_values(ENV_FILE_PATH)
-                _frozen_live_mode = _frozen_env.get("LIVE_EXECUTION", "False").lower() in (
-                    "true",
-                    "1",
-                    "yes",
-                )
+                _frozen_live_mode = env_flags.is_true(_frozen_env.get("LIVE_EXECUTION", "False"))
                 return jsonify(
                     {
                         "status": "active",
@@ -5639,7 +5628,7 @@ def get_state():
         _account_filter = request.args.get("account")
 
         env_vars = dotenv_values(".env")
-        live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+        live_mode = env_flags.is_true(env_vars.get("LIVE_EXECUTION", "False"))
 
         # Seconds until the next engine cycle. The minute scheduler fires at
         # :00 of every minute, so the wait is always wall-clock time to the
@@ -5702,7 +5691,7 @@ def get_state():
         for k in symphony_keys:
             state_data[k]["last_trigger"] = last_trigger_by_sym.get(k)
 
-        # Attach per-symphony TC/CR/MDD to each sym dict so the template can render them.
+        # Attach per-symphony TC/CR/MDD to each sym dict of the response body.
         _today_et = figures_day
         for k in symphony_keys:
             s = state_data[k]
@@ -8823,7 +8812,7 @@ def sell_account():
         ), 400
 
     env_vars = dotenv_values(".env")
-    live_mode = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+    live_mode = env_flags.is_true(env_vars.get("LIVE_EXECUTION", "False"))
 
     if not (account_id and env_vars.get("COMPOSER_KEY_ID")):
         return jsonify({"status": "error", "message": "Missing credentials or account ID."}), 400
@@ -9093,10 +9082,8 @@ def arm_sleeve_live(sleeve_id):
             }
         ), 400
 
-    sleeve_live_execution = (env_vars.get("SLEEVE_LIVE_EXECUTION", "False") or "False").lower() in (
-        "true",
-        "1",
-        "yes",
+    sleeve_live_execution = env_flags.is_true(
+        env_vars.get("SLEEVE_LIVE_EXECUTION", "False") or "False"
     )
     if not sleeve_live_execution:
         return jsonify({"status": "error", "message": "SLEEVE_LIVE_EXECUTION is not enabled"}), 400
@@ -9622,7 +9609,7 @@ def get_symphony_settings(symphony_name: str):
     # Use module-level dotenv_values so test patches on app_module.dotenv_values take effect
     # (same convention as save_settings and other dashboard routes).
     env_vars = dotenv_values(ENV_FILE_PATH)
-    global_live = env_vars.get("LIVE_EXECUTION", "False").lower() in ("true", "1", "yes")
+    global_live = env_flags.is_true(env_vars.get("LIVE_EXECUTION", "False"))
 
     strategy = database.get_symphony_strategy(symphony_name)
     # get_symphony_strategy defaults live_mode=False (arch rule 4: explicit, never by omission).
