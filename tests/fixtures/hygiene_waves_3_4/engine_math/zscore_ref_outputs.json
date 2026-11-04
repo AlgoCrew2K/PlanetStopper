@@ -1,0 +1,87 @@
+{
+  "constant_zero_variance": {
+    "compute_portfolio_cvar": {
+      "breach": false,
+      "cvar_pct": null,
+      "insufficient_reason": "Degenerate tail: all tail observations are identical (std=0); stderr undefined for this pool.",
+      "stderr": null,
+      "tail_obs_count": 0
+    },
+    "compute_regime_match_quality": {
+      "insufficient_reason": null,
+      "is_unprecedented": false,
+      "mean_sq_mahalanobis": "0x0.0p+0",
+      "neighbor_k": 150,
+      "threshold_used": "0x1.26bb1bbb55514p+3"
+    },
+    "run_monte_carlo": "0x1.9000000000000p+6"
+  },
+  "random_calm": {
+    "compute_portfolio_cvar": {
+      "breach": false,
+      "cvar_pct": "-0x1.eaf1634f6424dp-1",
+      "insufficient_reason": null,
+      "stderr": "0x1.d358a8d4019a5p-4",
+      "tail_obs_count": 3
+    },
+    "compute_regime_match_quality": {
+      "insufficient_reason": null,
+      "is_unprecedented": false,
+      "mean_sq_mahalanobis": "0x1.f2cb443c613cfp+1",
+      "neighbor_k": 150,
+      "threshold_used": "0x1.26bb1bbb55514p+3"
+    },
+    "run_monte_carlo": "0x1.e088888888889p+5"
+  },
+  "random_extreme_today": {
+    "compute_portfolio_cvar": {
+      "breach": false,
+      "cvar_pct": "-0x1.808f48863a2d1p+0",
+      "insufficient_reason": null,
+      "stderr": "0x1.3904cc69e1f29p-3",
+      "tail_obs_count": 3
+    },
+    "compute_regime_match_quality": {
+      "insufficient_reason": null,
+      "is_unprecedented": true,
+      "mean_sq_mahalanobis": "0x1.aa05e86e665fcp+6",
+      "neighbor_k": 150,
+      "threshold_used": "0x1.26bb1bbb55514p+3"
+    },
+    "run_monte_carlo": "0x1.6333333333333p+5"
+  },
+  "random_volatile": {
+    "compute_portfolio_cvar": {
+      "breach": false,
+      "cvar_pct": "-0x1.cbb64264f0c04p+1",
+      "insufficient_reason": null,
+      "stderr": "0x1.6f326a88b65eap-5",
+      "tail_obs_count": 3
+    },
+    "compute_regime_match_quality": {
+      "insufficient_reason": null,
+      "is_unprecedented": true,
+      "mean_sq_mahalanobis": "0x1.373398e42d58fp+3",
+      "neighbor_k": 150,
+      "threshold_used": "0x1.26bb1bbb55514p+3"
+    },
+    "run_monte_carlo": "0x1.84ccccccccccdp+5"
+  },
+  "two_regime_fixture": {
+    "compute_portfolio_cvar": {
+      "breach": false,
+      "cvar_pct": null,
+      "insufficient_reason": "Degenerate tail: all tail observations are identical (std=0); stderr undefined for this pool.",
+      "stderr": null,
+      "tail_obs_count": 0
+    },
+    "compute_regime_match_quality": {
+      "insufficient_reason": null,
+      "is_unprecedented": false,
+      "mean_sq_mahalanobis": "0x1.7b8a03ac41b0fp+1",
+      "neighbor_k": 150,
+      "threshold_used": "0x1.26bb1bbb55514p+3"
+    },
+    "run_monte_carlo": "0x1.a222222222221p+4"
+  }
+}
