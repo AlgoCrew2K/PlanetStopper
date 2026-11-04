@@ -456,7 +456,10 @@ class TestUnusablePageTokenFailsOnlyItsBatch:
         closes = {t: golden_closes("trending", base=40.0 + i) for i, t in enumerate(fillers)}
         closes["ZZLATE"] = golden_closes("mean-reverting")
         entries = {
-            ID_ONE: captured_entry("Early Test Symphony", _sip.holdings_of((fillers[0], 1.0))),
+            ID_ONE: captured_entry(
+                "Early Test Symphony",
+                _sip.holdings_of(*[(t, 1.0 / len(fillers)) for t in fillers]),
+            ),
             ID_TWO: captured_entry(
                 "Mixed Test Symphony", _sip.holdings_of((fillers[1], 0.5), ("ZZLATE", 0.5))
             ),
