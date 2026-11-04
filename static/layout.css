@@ -154,6 +154,9 @@ summary:focus-visible,
   margin: 28px 0 12px;
 }
 
+/* A panel's first heading sits flush to the panel top, on every page. */
+.hero-section > .section-header:first-child { margin-top: 0; }
+
 /* Symphony card */
 .sym-card {
   background: var(--studio-paper);
