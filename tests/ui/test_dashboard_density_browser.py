@@ -13,8 +13,7 @@ What is asserted, on the live render:
 * at 1440 px the cards are single rows, each at most 112 px tall (the card layout it replaced
   measured 319 px), and the dollar-saved panel is a short block of at most 160 px (it was 212);
 * at 375 px the document is as wide as the viewport, and no visible text is smaller than 11 px;
-* the Today figures are one text per card, the Cash Now control is a visible 28 px button on a
-  card that has not exited, and the status words carry a dot and no fill.
+* the Today figures are one text per card, and the status words carry a dot and no fill.
 """
 
 from __future__ import annotations
@@ -65,19 +64,6 @@ _SMALL_TEXT = """
 }
 """
 
-_CASH_NOW = """
-() => {
-  const card = [...document.querySelectorAll('[data-testid="sym-card"]')]
-    .find((c) => !c.querySelector('[data-testid="cash-now-btn"]').disabled);
-  if (!card) return null;
-  const btn = card.querySelector('[data-testid="cash-now-btn"]');
-  const r = btn.getBoundingClientRect();
-  const cs = getComputedStyle(btn);
-  return { text: btn.textContent.trim(), height: r.height, width: r.width,
-           border: cs.borderTopWidth, display: cs.display };
-}
-"""
-
 _STATUS = """
 () => [...document.querySelectorAll('[data-testid="status-pill"]')].map((el) => {
   const cs = getComputedStyle(el);
@@ -112,18 +98,6 @@ def test_the_phone_layout_does_not_scroll_sideways_and_has_no_tiny_text(firefox,
         small = probe.page.evaluate(_SMALL_TEXT, MIN_TEXT_PX)
     assert scroll == viewport, f"scrolls sideways: {scroll} px in a {viewport} px viewport"
     assert small == [], f"text under {MIN_TEXT_PX} px at 375: {small}"
-
-
-def test_cash_now_stays_a_visible_button_on_a_card_that_has_not_exited(firefox, advisor_server):  # noqa: F811
-    seed_dashboard_state()
-    with open_probe(firefox, advisor_server, width=WIDE[0], height=WIDE[1]) as probe:
-        open_page(probe, "/")
-        button = probe.page.evaluate(_CASH_NOW)
-    assert button is not None, "premise: a card that has not exited has an enabled Cash Now"
-    assert button["text"] == "Cash Now"
-    assert button["height"] == 28
-    assert button["border"] == "1px"
-    assert button["display"] != "none"
 
 
 def test_a_status_is_a_dot_and_a_word_with_no_fill(firefox, advisor_server):  # noqa: F811

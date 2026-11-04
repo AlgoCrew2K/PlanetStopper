@@ -5,7 +5,7 @@ real scripts and templates and the one request it sends is compared with the rec
 drivers wrote over the plan's base files (``tests/fixtures/refresh_timing/04-c9/
 post_requests_at_base.json``, ``capture_post_requests.py``, ``PROVENANCE.md``): URL, method, every
 header except the token's value, body, ``keepalive`` and the keys of the init object. The money controls
-(Emergency Liquidate, Cash Now, the settings saves, Go live) are in the census; their requests may not
+(Emergency Liquidate, the settings saves, Go live) are in the census; their requests may not
 change by a byte.
 
 The page harness additionally fails any driver that sends a POST without a click or twice for one click.
@@ -36,7 +36,6 @@ BASE = json.loads(
 
 MONEY_CONTROLS = [
     "emergency_liquidate",
-    "cash_now",
     "settings_save",
     "modal_save",
     "modal_save_go_live",
@@ -51,6 +50,18 @@ def test_the_census_is_the_set_the_base_record_holds():
 
 def test_the_money_controls_are_in_the_census():
     assert set(MONEY_CONTROLS) <= set(controls.NAMES)
+
+
+def test_the_removed_per_symphony_sell_control_is_in_neither_the_census_nor_the_record():
+    assert "cash_now" not in controls.NAMES
+    assert "cash_now" not in BASE["controls"]
+
+
+def test_the_header_control_is_the_only_census_control_that_posts_to_the_sell_route():
+    sellers = sorted(
+        name for name, request in BASE["controls"].items() if request["url"] == "/api/sell_account"
+    )
+    assert sellers == ["emergency_liquidate"]
 
 
 @pytest.mark.parametrize("name", controls.NAMES)

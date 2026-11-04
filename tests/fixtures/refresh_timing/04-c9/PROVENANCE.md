@@ -16,3 +16,15 @@ Plan: refresh-timing 04, cycle C9 (cross-control close).
 - Scenarios served: S-2.11, S-6.5, S-7.4. Edits: none. Sign-off: not needed (no derived record).
 
 The capture harness account `7c2607c5-4583-4c1b-ae55-e5a05bb49f0d` is invented; it is not a real account id.
+
+## Revision: the `cash_now` entry removed (derived edit)
+
+- Edit: the `cash_now` entry (the dashboard's per-symphony Cash Now button, `POST /api/sell_account` with the
+  symphony id alone) is deleted from `post_requests_at_base.json`, now 24 controls. Every other byte of the
+  record is unchanged; the file was edited by deleting that entry's lines, not re-captured, and `json.loads`
+  of the new file equals `json.loads` of the old file minus that one key.
+- Reason: the security-and-controls slice removes the control (AC-6), so the census no longer drives it
+  (`tests/ui/_post_controls.py`) and `tests/ui/test_post_controls_request_bytes.py` compares every remaining
+  control with its recorded base. Re-capturing at the new head would compare the record with itself.
+- Commit: the RED commit of cycle C2 on `feat/security-and-controls-c2` (its SHA is in the next line once known).
+- Sign-off: PM approval of the derived edit for this slice, given in the C2 RED plan review.

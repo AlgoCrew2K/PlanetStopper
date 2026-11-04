@@ -89,14 +89,6 @@ MODAL_CONTROLS = {
 }
 
 INDEX_CONTROLS = {
-    "cash_now": """
-        H.route('/api/sell_account', {status: 200, body: {status: 'success'}});
-        const btn = H.sandbox.document.querySelectorAll('[data-testid="cash-now-btn"]').find((b) => !b.hasAttribute('disabled'));
-        const card = btn.closest('[data-testid="sym-card"]');
-        H.sandbox.cashNow({stopPropagation() {}, currentTarget: btn}, card.getAttribute('data-sym-id') || 'sym-from-card');
-        await H.settle();
-        return H.fetchLog.filter((e) => e.method === 'POST');
-    """,
     "fleet_dismiss": """
         H.route('/api/fleet-alert/dismiss', {status: 200, body: {status: 'ok'}});
         H.sandbox._lastFleetAlert = {tripped_at_et: '2026-10-22T10:00:00-04:00'};
